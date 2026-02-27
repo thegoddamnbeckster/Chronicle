@@ -1,4 +1,5 @@
-import { apiClient } from './client'
+import client from './client'
+const apiClient = client
 
 export interface ApiTokenDto {
   id: number
