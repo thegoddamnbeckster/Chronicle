@@ -17,6 +17,7 @@ namespace Chronicle.Data
         public DbSet<UserLibrary> UserLibraries => Set<UserLibrary>();
         public DbSet<InteractionEvent> InteractionEvents => Set<InteractionEvent>();
         public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
+        public DbSet<Plugin> Plugins => Set<Plugin>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -155,6 +156,20 @@ namespace Chronicle.Data
                     .WithMany()
                     .HasForeignKey(e => e.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<Plugin>(entity =>
+            {
+                entity.ToTable("plugins");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => e.PluginId).IsUnique();
+                entity.Property(e => e.PluginId).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.Version).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.Author).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.DllPath).IsRequired();
+                entity.Property(e => e.InstalledAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             });
         }
     }
