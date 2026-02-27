@@ -19,6 +19,11 @@ Log.Logger = new LoggerConfiguration()
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Windows Service support ───────────────────────────────────────────────────
+// No-op when running as a console app; activates service lifetime when started
+// by the Windows Service Control Manager.
+builder.Host.UseWindowsService(options => options.ServiceName = "Chronicle");
+
 // ── Port configuration ────────────────────────────────────────────────────────
 // Reads ports.json from the project root (searched upward from working directory).
 // Must happen before any service or host configuration that depends on ports.
@@ -28,8 +33,12 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{portConfig.Api}");
 
 // ── Serilog ───────────────────────────────────────────────────────────────────
 // Reads retention from appsettings.json ("Serilog:RetainedLogDays").
-// Writes to logs/chronicle-YYYYMMDD.log (rolling daily) and to console.
+// Log path uses AppContext.BaseDirectory (next to the exe) so that logs are
+// written correctly when running as a Windows service — services start with
+// the working directory set to System32, not the install folder.
 var retainedLogDays = builder.Configuration.GetValue<int>("Serilog:RetainedLogDays", 30);
+var logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+var logPath = Path.Combine(logDir, "chronicle-.log");
 
 builder.Host.UseSerilog((ctx, services, cfg) => cfg
     .MinimumLevel.Information()
@@ -37,7 +46,7 @@ builder.Host.UseSerilog((ctx, services, cfg) => cfg
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
     .WriteTo.Console()
     .WriteTo.File(
-        path: "logs/chronicle-.log",
+        path: logPath,
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: retainedLogDays,
         outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")

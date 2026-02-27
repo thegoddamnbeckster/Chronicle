@@ -34,6 +34,11 @@ public static class PluginLoggerFactory
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
 
+        // Use AppContext.BaseDirectory so plugin logs land next to the exe,
+        // not relative to the working directory (which is System32 for services).
+        var pluginLogPath = Path.Combine(
+            AppContext.BaseDirectory, "logs", "plugins", pluginId, $"{pluginId}-.log");
+
         return new LoggerConfiguration()
             .MinimumLevel.Information()
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
@@ -42,7 +47,7 @@ public static class PluginLoggerFactory
             .WriteTo.Logger(Log.Logger)
             // Per-plugin rolling file — its own folder, same retention policy.
             .WriteTo.File(
-                path: $"logs/plugins/{pluginId}/{pluginId}-.log",
+                path: pluginLogPath,
                 rollingInterval: RollingInterval.Day,
                 retainedFileCountLimit: retainedLogDays,
                 outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
