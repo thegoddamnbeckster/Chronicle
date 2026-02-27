@@ -1,0 +1,83 @@
+# ── .NET ──────────────────────────────────────────────────────────────────────
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.db
+*.db-shm
+*.db-wal
+publish/
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!**/packages/repositories.config
+
+# dotnet tools
+.tool-manifest
+
+# ASP.NET
+wwwroot/
+
+# Rider
+.idea/
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+
+# ── React / Node ──────────────────────────────────────────────────────────────
+node_modules/
+dist/
+.next/
+out/
+build/
+
+# env files (keep examples, not actuals)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+
+# Vite
+*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Secrets (never commit) ────────────────────────────────────────────────────
+appsettings.Production.json
+secrets.json
+
+# ── Claude Code local settings (machine-specific) ─────────────────────────────
+.claude/settings.local.json

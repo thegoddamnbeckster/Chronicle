@@ -1,0 +1,46 @@
+import client from './client'
+import type { ApiResponse, MediaItem } from '@/types'
+
+export async function searchMedia(query: string, mediaTypeId?: number, page = 1): Promise<MediaItem[]> {
+  const { data } = await client.get<ApiResponse<MediaItem[]>>('/media/search', {
+    params: { query, mediaTypeId, page, perPage: 20 },
+  })
+  return data.data ?? []
+}
+
+export async function getMedia(id: number): Promise<MediaItem> {
+  const { data } = await client.get<ApiResponse<MediaItem>>(`/media/${id}`)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Media not found')
+  return data.data
+}
+
+export async function getMediaChildren(id: number): Promise<MediaItem[]> {
+  const { data } = await client.get<ApiResponse<MediaItem[]>>(`/media/${id}/children`)
+  return data.data ?? []
+}
+
+export async function createMedia(payload: {
+  mediaTypeId: number
+  parentId?: number
+  name: string
+  year?: number
+  overview?: string
+  posterUrl?: string
+  runtimeMinutes?: number
+  hierarchyLevel?: number
+  number?: number
+}): Promise<MediaItem> {
+  const { data } = await client.post<ApiResponse<MediaItem>>('/media', payload)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to create media')
+  return data.data
+}
+
+export async function updateMedia(id: number, payload: Partial<MediaItem>): Promise<MediaItem> {
+  const { data } = await client.patch<ApiResponse<MediaItem>>(`/media/${id}`, payload)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to update media')
+  return data.data
+}
+
+export async function deleteMedia(id: number): Promise<void> {
+  await client.delete(`/media/${id}`)
+}
