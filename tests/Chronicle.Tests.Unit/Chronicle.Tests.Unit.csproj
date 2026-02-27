@@ -28,6 +28,7 @@
     <ProjectReference Include="..\..\src\Chronicle.Core\Chronicle.Core.csproj" />
     <ProjectReference Include="..\..\src\Chronicle.Services\Chronicle.Services.csproj" />
     <ProjectReference Include="..\..\src\Chronicle.Data\Chronicle.Data.csproj" />
+    <ProjectReference Include="..\..\src\Chronicle.Plugins\Chronicle.Plugins.csproj" />
   </ItemGroup>
 
 </Project>
