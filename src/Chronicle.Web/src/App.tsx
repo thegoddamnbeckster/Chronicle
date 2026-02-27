@@ -6,6 +6,7 @@ import DashboardPage from '@/pages/dashboard/DashboardPage'
 import LibraryPage from '@/pages/library/LibraryPage'
 import AddMediaPage from '@/pages/media/AddMediaPage'
 import HistoryPage from '@/pages/media/HistoryPage'
+import ServiceSettingsPage from '@/pages/settings/ServiceSettingsPage'
 
 function isLoggedIn() {
   return !!localStorage.getItem('chronicle_token')
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="library" element={<LibraryPage />} />
         <Route path="history" element={<HistoryPage />} />
         <Route path="media/add" element={<AddMediaPage />} />
+        <Route path="settings/service" element={<ServiceSettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

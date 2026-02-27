@@ -1,0 +1,227 @@
+.page {
+  padding: 2rem;
+  max-width: 720px;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 1.5rem;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.loading,
+.errorMsg {
+  color: var(--text-muted, #888);
+  font-size: 0.95rem;
+}
+
+.card {
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.cardTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.notInstalledNote {
+  font-size: 0.875rem;
+  color: var(--text-muted, #888);
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: var(--surface-alt, #252535);
+  border-radius: 4px;
+  line-height: 1.5;
+}
+
+.notInstalledNote code {
+  font-family: 'Consolas', monospace;
+  background: #111;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+.statusGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.label {
+  width: 140px;
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  flex-shrink: 0;
+}
+
+.value {
+  font-size: 0.9rem;
+  color: var(--text-primary, #e0e0e0);
+}
+
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.running      { background: #1a3a1a; color: #4caf50; border: 1px solid #2e5e2e; }
+.stopped      { background: #3a1a1a; color: #f44336; border: 1px solid #5e2e2e; }
+.notInstalled { background: #2a2a2a; color: #888;    border: 1px solid #444; }
+.pending      { background: #2a2a1a; color: #ffc107; border: 1px solid #4a4a2e; }
+
+/* Change account section */
+.hint {
+  font-size: 0.875rem;
+  color: var(--text-muted, #888);
+  margin-bottom: 1.25rem;
+  line-height: 1.5;
+}
+
+.radioGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.radioLabel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+
+.radioLabel input[type="radio"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.radioText {
+  font-size: 0.875rem;
+  color: var(--text-primary, #e0e0e0);
+  line-height: 1.4;
+}
+
+.advancedToggle {
+  background: none;
+  border: none;
+  color: var(--text-muted, #888);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 0.75rem;
+}
+
+.advancedToggle:hover {
+  color: var(--accent, #5b9bd5);
+}
+
+.advancedPanel {
+  padding: 0.75rem;
+  background: var(--surface-alt, #252535);
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.textInput {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: #111;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 0.875rem;
+  box-sizing: border-box;
+}
+
+.textInput::placeholder {
+  color: #555;
+}
+
+.generateBtn {
+  padding: 0.5rem 1.25rem;
+  background: var(--accent, #5b9bd5);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.875rem;
+  cursor: pointer;
+  margin-bottom: 1rem;
+}
+
+.generateBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.generateBtn:hover:not(:disabled) {
+  background: #4a8ac4;
+}
+
+.commandBox {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 1rem;
+}
+
+.commandText {
+  font-family: 'Consolas', monospace;
+  font-size: 0.82rem;
+  color: #c8e6c9;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0 0 0.75rem 0;
+}
+
+.copyBtn {
+  padding: 0.4rem 1rem;
+  background: #2a3a2a;
+  border: 1px solid #4caf50;
+  border-radius: 4px;
+  color: #4caf50;
+  font-size: 0.8rem;
+  cursor: pointer;
+  margin-bottom: 0.75rem;
+}
+
+.copyBtn:hover {
+  background: #1a3a1a;
+}
+
+.commandNote {
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.commandNote code {
+  font-family: 'Consolas', monospace;
+  background: #222;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: #c8e6c9;
+}
