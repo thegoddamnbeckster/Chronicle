@@ -3,6 +3,7 @@ using Chronicle.API;
 using Chronicle.API.Authentication;
 using Chronicle.Data;
 using Chronicle.Services;
+using Chronicle.Services.Plugins;
 using Chronicle.Services.Security;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -72,6 +73,14 @@ builder.Services.AddScoped<IMediaService, MediaService>();
 builder.Services.AddScoped<ILibraryService, LibraryService>();
 builder.Services.AddScoped<IScrobbleService, ScrobbleService>();
 builder.Services.AddScoped<IStatsService, StatsService>();
+
+// ── Plugin system ─────────────────────────────────────────────────────────────
+// PluginRegistry is a singleton — it holds the in-process AssemblyLoadContexts.
+// PluginService is scoped so it can access the request-scoped DbContext.
+// PluginHostService loads all enabled plugins from the database on startup.
+builder.Services.AddSingleton<IPluginRegistry, PluginRegistry>();
+builder.Services.AddScoped<IPluginService, PluginService>();
+builder.Services.AddHostedService<PluginHostService>();
 
 // ── Authentication — JWT Bearer + API Key ─────────────────────────────────────
 // Both schemes are registered. The default authorization policy (below) accepts
