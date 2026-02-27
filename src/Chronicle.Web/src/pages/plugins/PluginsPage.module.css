@@ -1,0 +1,263 @@
+.page {
+  padding: 2rem;
+  max-width: 860px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.installBtn {
+  padding: 0.5rem 1.25rem;
+  background: var(--accent, #5b9bd5);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.installBtn:hover {
+  background: #4a8ac4;
+}
+
+/* Install panel */
+.installPanel {
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.installTitle {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  margin-bottom: 0.75rem;
+}
+
+.installHint {
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
+}
+
+.installRow {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.textInput {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  background: #111;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 0.875rem;
+  font-family: 'Consolas', monospace;
+}
+
+.textInput::placeholder {
+  color: #555;
+  font-family: inherit;
+}
+
+.submitBtn {
+  padding: 0.5rem 1.25rem;
+  background: var(--accent, #5b9bd5);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.875rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.submitBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancelBtn {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: var(--text-muted, #888);
+  font-size: 0.875rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cancelBtn:hover {
+  border-color: #666;
+  color: #ccc;
+}
+
+.errorMsg {
+  font-size: 0.82rem;
+  color: #f44336;
+  margin-top: 0.5rem;
+}
+
+/* Plugin list */
+.empty {
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 2.5rem 2rem;
+  text-align: center;
+}
+
+.emptyTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  margin-bottom: 0.5rem;
+}
+
+.emptyHint {
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  line-height: 1.5;
+}
+
+.pluginList {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.pluginCard {
+  background: var(--surface, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 1.25rem 1.5rem;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.cardLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.pluginName {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.versionBadge {
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  background: #252535;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: 'Consolas', monospace;
+}
+
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.enabled  { background: #1a3a1a; color: #4caf50; border: 1px solid #2e5e2e; }
+.disabled { background: #3a1a1a; color: #f44336; border: 1px solid #5e2e2e; }
+
+.healthOk   { background: #1a3a1a; color: #4caf50; border: 1px solid #2e5e2e; }
+.healthFail { background: #3a1a1a; color: #f44336; border: 1px solid #5e2e2e; }
+.healthUnk  { background: #2a2a2a; color: #888;    border: 1px solid #444; }
+
+.cardMeta {
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  margin-bottom: 0.75rem;
+}
+
+.pluginId {
+  font-family: 'Consolas', monospace;
+  font-size: 0.78rem;
+  color: #666;
+  margin-top: 0.2rem;
+}
+
+.description {
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
+}
+
+/* Action bar */
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.actionBtn {
+  padding: 0.3rem 0.85rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid #444;
+  background: transparent;
+  color: var(--text-muted, #888);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.actionBtn:hover:not(:disabled) {
+  border-color: #666;
+  color: #ccc;
+}
+
+.actionBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.enableBtn  { border-color: #2e5e2e; color: #4caf50; }
+.enableBtn:hover:not(:disabled) { background: #1a3a1a; }
+
+.disableBtn { border-color: #5e2e2e; color: #f44336; }
+.disableBtn:hover:not(:disabled) { background: #3a1a1a; }
+
+.uninstallBtn { border-color: #5e2e2e; color: #f44336; }
+.uninstallBtn:hover:not(:disabled) { background: #3a1a1a; }
+
+.loading {
+  color: var(--text-muted, #888);
+  font-size: 0.95rem;
+}
