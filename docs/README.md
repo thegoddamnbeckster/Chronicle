@@ -29,7 +29,7 @@ docker run -d \
   --name chronicle \
   -p 8080:8080 \
   -v /path/to/data:/data \
-  chronicle/chronicle:latest
+  ghcr.io/thegoddamnbeckster/chronicle:latest
 ```
 
 ### Windows
@@ -42,7 +42,7 @@ docker run -d \
 ### Linux
 
 ```bash
-wget https://github.com/chronicle/chronicle/releases/download/v1.0.0/chronicle-linux-x64.tar.gz
+wget https://github.com/thegoddamnbeckster/Chronicle/releases/latest/download/chronicle-linux-x64.tar.gz
 tar -xzf chronicle-linux-x64.tar.gz
 cd chronicle
 ./Chronicle
@@ -156,10 +156,8 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## Support
 
-- **Documentation:** [docs.chronicle.app](https://docs.chronicle.app) *(future)*
-- **Issues:** [GitHub Issues](https://github.com/chronicle/chronicle/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/chronicle/chronicle/discussions)
-- **Discord:** [discord.gg/chronicle](https://discord.gg/chronicle) *(future)*
+- **Issues:** [GitHub Issues](https://github.com/thegoddamnbeckster/Chronicle/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/thegoddamnbeckster/Chronicle/discussions)
 
 ---
 
