@@ -38,8 +38,8 @@ Thank you for your interest in contributing to Chronicle! This guide will help y
 
 **1. Clone Repository:**
 ```bash
-git clone https://github.com/chronicle/chronicle.git
-cd chronicle
+git clone https://github.com/thegoddamnbeckster/Chronicle.git
+cd Chronicle
 ```
 
 **2. Backend Setup:**
@@ -774,7 +774,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           push: true
-          tags: chronicle/chronicle:${{ github.ref_name }},chronicle/chronicle:latest
+          tags: ghcr.io/thegoddamnbeckster/chronicle:${{ github.ref_name }},ghcr.io/thegoddamnbeckster/chronicle:latest
 ```
 
 ---
@@ -919,7 +919,7 @@ We pledge to make participation in Chronicle a harassment-free experience for ev
 ### Enforcement
 
 Instances of unacceptable behavior may be reported to:
-- Email: conduct@chronicle.app
+- [GitHub Issues](https://github.com/thegoddamnbeckster/Chronicle/issues)
 - Direct message to maintainers
 
 All complaints will be reviewed and investigated promptly and fairly.
@@ -930,10 +930,8 @@ All complaints will be reviewed and investigated promptly and fairly.
 
 ### Resources
 
-- **Documentation:** [docs.chronicle.app](https://docs.chronicle.app)
-- **GitHub Discussions:** [github.com/chronicle/chronicle/discussions](https://github.com/chronicle/chronicle/discussions)
-- **Discord:** [discord.gg/chronicle](https://discord.gg/chronicle)
-- **Email:** dev@chronicle.app
+- **GitHub Discussions:** [github.com/thegoddamnbeckster/Chronicle/discussions](https://github.com/thegoddamnbeckster/Chronicle/discussions)
+- **Issues:** [github.com/thegoddamnbeckster/Chronicle/issues](https://github.com/thegoddamnbeckster/Chronicle/issues)
 
 ### Questions?
 
