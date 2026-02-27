@@ -8,6 +8,7 @@ import AddMediaPage from '@/pages/media/AddMediaPage'
 import HistoryPage from '@/pages/media/HistoryPage'
 import ServiceSettingsPage from '@/pages/settings/ServiceSettingsPage'
 import ApiKeysPage from '@/pages/settings/ApiKeysPage'
+import PluginsPage from '@/pages/plugins/PluginsPage'
 
 function isLoggedIn() {
   return !!localStorage.getItem('chronicle_token')
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="media/add" element={<AddMediaPage />} />
         <Route path="settings/service" element={<ServiceSettingsPage />} />
         <Route path="settings/api-keys" element={<ApiKeysPage />} />
+        <Route path="plugins" element={<PluginsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
