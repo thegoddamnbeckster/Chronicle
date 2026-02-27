@@ -34,6 +34,9 @@ export default function Layout() {
         <NavLink to="/media/add" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           Add Media
         </NavLink>
+        <NavLink to="/settings/service" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Settings
+        </NavLink>
       </nav>
 
       <main className={styles.content}>
