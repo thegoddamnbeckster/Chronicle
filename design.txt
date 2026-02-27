@@ -1,0 +1,31 @@
+We need to build a system that is capable of receiving scrobbled information from one or many Kodi installations, via our scrobbler (currently defaults to SIMKL)
+
+We need to store
+ - Movies
+ - Movie Collections
+ - TV Shows
+ - TV Episodes
+ - Artwork for the videos
+ - Actor, support crew for the videos.
+
+We must gather and store as much information as we can about the above items.
+		- Actors
+		- Support staff (Producer, director, etc, anything available)
+		- Any ID we can use to identify the movie.  Trakt, IMDB, TMDB, SIMKL, literally anything.  
+		- The score from any of these sites.
+		- Personal ratings.
+		- Metadata (length, format, file type, format, encoding, etc)
+		- Data about the movie (release date, plot, etc)
+		- Allow for rewatching of videos.
+		- Keep track of play counts of each video and datetime of plays
+		- Video paths can change, but the identified videos must remain the same video.  We just update to a new path.
+		- Track which source the scrobble came from
+		- Any corresponding art from any available source attributed to the video
+		
+We must ensure that access from the scrobbler is allowed.  The scrobbler will have to provide crendentials to authenticate with the system, similar to how trakt and SIMKL operate.
+
+The system will use a webserver (whatever is easy to install and manage, similar to the arr's).  
+The system will run as a service.  It will run on windows first, but ideally will run on any operating system (Linux, Mac, whatever).
+The webserver will require a login system.
+
+The webserver will use Sonarr or Radarr as a template.
