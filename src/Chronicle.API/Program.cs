@@ -7,6 +7,15 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Serilog;
+using Serilog.Events;
+
+// ── Bootstrap logger (before host is built) ───────────────────────────────────
+// Captures startup errors before full Serilog configuration is ready.
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +25,23 @@ var builder = WebApplication.CreateBuilder(args);
 var portConfig = PortManager.LoadConfig(Directory.GetCurrentDirectory());
 PortManager.CheckPort(portConfig.Api);
 builder.WebHost.UseUrls($"http://0.0.0.0:{portConfig.Api}");
+
+// ── Serilog ───────────────────────────────────────────────────────────────────
+// Reads retention from appsettings.json ("Serilog:RetainedLogDays").
+// Writes to logs/chronicle-YYYYMMDD.log (rolling daily) and to console.
+var retainedLogDays = builder.Configuration.GetValue<int>("Serilog:RetainedLogDays", 30);
+
+builder.Host.UseSerilog((ctx, services, cfg) => cfg
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+    .WriteTo.Console()
+    .WriteTo.File(
+        path: "logs/chronicle-.log",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: retainedLogDays,
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
+    .Enrich.FromLogContext());
 
 // ── Database ──────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<ChronicleDbContext>(options =>
@@ -102,6 +128,13 @@ using (var scope = app.Services.CreateScope())
 }
 
 // ── Middleware pipeline ───────────────────────────────────────────────────────
+// Request logging must come before routing so it captures all requests.
+app.UseSerilogRequestLogging(options =>
+{
+    options.MessageTemplate =
+        "{RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+});
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
