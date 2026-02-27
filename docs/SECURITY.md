@@ -753,9 +753,7 @@ secrets:
 ## Vulnerability Reporting
 
 **Security Contact:**
-- Email: security@chronicle.app
-- PGP Key: [Public key]
-- GitHub Security Advisories
+- [GitHub Security Advisories](https://github.com/thegoddamnbeckster/Chronicle/security/advisories)
 
 **Responsible Disclosure:**
 1. Report vulnerability privately

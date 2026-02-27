@@ -34,7 +34,7 @@
 
 1. **Download:**
    ```
-   https://github.com/chronicle/chronicle/releases/download/v1.0.0/Chronicle-v1.0.0-windows-x64.zip
+   https://github.com/thegoddamnbeckster/Chronicle/releases/latest
    ```
 
 2. **Extract:**
@@ -90,7 +90,7 @@ New-NetFirewallRule -DisplayName "Chronicle" -Direction Inbound -Protocol TCP -L
 
 ```bash
 # Download
-wget https://github.com/chronicle/chronicle/releases/download/v1.0.0/chronicle-v1.0.0-linux-x64.tar.gz
+wget https://github.com/thegoddamnbeckster/Chronicle/releases/latest/download/chronicle-linux-x64.tar.gz
 
 # Extract
 tar -xzf chronicle-v1.0.0-linux-x64.tar.gz
@@ -175,7 +175,7 @@ version: '3.8'
 
 services:
   chronicle:
-    image: chronicle/chronicle:latest
+    image: ghcr.io/thegoddamnbeckster/chronicle:latest
     container_name: chronicle
     restart: unless-stopped
     ports:
@@ -242,7 +242,7 @@ docker run -d \
   -v $(pwd)/logs:/logs \
   -v $(pwd)/backups:/backups \
   -e TZ=America/Edmonton \
-  chronicle/chronicle:latest
+  ghcr.io/thegoddamnbeckster/chronicle:latest
 ```
 
 ---
@@ -253,7 +253,7 @@ docker run -d \
 
 ```bash
 # Download
-curl -L https://github.com/chronicle/chronicle/releases/download/v1.0.0/chronicle-v1.0.0-macos-x64.tar.gz -o chronicle.tar.gz
+curl -L https://github.com/thegoddamnbeckster/Chronicle/releases/latest/download/chronicle-macos-x64.tar.gz -o chronicle.tar.gz
 
 # Extract
 tar -xzf chronicle.tar.gz
@@ -269,15 +269,9 @@ cd /Applications/Chronicle
 http://localhost:8080
 ```
 
-**Method 2: Homebrew (Future)**
+**Method 2: Homebrew**
 
-```bash
-# Install via Homebrew
-brew tap chronicle/chronicle
-brew install chronicle
-
-# Run
-chronicle
+Not currently available.
 
 # Run as service
 brew services start chronicle
