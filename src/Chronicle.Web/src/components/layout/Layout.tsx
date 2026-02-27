@@ -37,6 +37,9 @@ export default function Layout() {
         <NavLink to="/settings/service" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           Settings
         </NavLink>
+        <NavLink to="/settings/api-keys" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          API Keys
+        </NavLink>
       </nav>
 
       <main className={styles.content}>

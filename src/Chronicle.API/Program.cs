@@ -1,9 +1,12 @@
 using System.Text;
 using Chronicle.API;
+using Chronicle.API.Authentication;
 using Chronicle.Data;
 using Chronicle.Services;
 using Chronicle.Services.Security;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -12,10 +15,13 @@ using Serilog.Events;
 
 // ── Bootstrap logger (before host is built) ───────────────────────────────────
 // Captures startup errors before full Serilog configuration is ready.
+// NOTE: CreateLogger() rather than CreateBootstrapLogger() — using the reloadable
+// bootstrap logger causes a "logger already frozen" exception when WebApplicationFactory
+// reconstructs the host a second time during integration tests.
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
     .WriteTo.Console()
-    .CreateBootstrapLogger();
+    .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -60,13 +66,16 @@ builder.Services.AddDbContext<ChronicleDbContext>(options =>
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<IApiTokenService, ApiTokenService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IMediaService, MediaService>();
 builder.Services.AddScoped<ILibraryService, LibraryService>();
 builder.Services.AddScoped<IScrobbleService, ScrobbleService>();
 builder.Services.AddScoped<IStatsService, StatsService>();
 
-// ── JWT Authentication ────────────────────────────────────────────────────────
+// ── Authentication — JWT Bearer + API Key ─────────────────────────────────────
+// Both schemes are registered. The default authorization policy (below) accepts
+// either, so [Authorize] on any controller works with both JWT and X-API-Key.
 var jwtSecret = builder.Configuration["Security:JwtSecret"]
     ?? throw new InvalidOperationException("Security:JwtSecret must be configured.");
 
@@ -84,9 +93,20 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero
         };
-    });
+    })
+    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+        ApiKeyAuthenticationHandler.SchemeName, _ => { });
 
-builder.Services.AddAuthorization();
+// Default policy accepts either Bearer JWT or X-API-Key authentication.
+builder.Services.AddAuthorization(options =>
+{
+    options.DefaultPolicy = new AuthorizationPolicyBuilder()
+        .AddAuthenticationSchemes(
+            JwtBearerDefaults.AuthenticationScheme,
+            ApiKeyAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser()
+        .Build();
+});
 
 // ── Controllers + Swagger ─────────────────────────────────────────────────────
 builder.Services.AddControllers();
@@ -94,9 +114,11 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Chronicle API", Version = "v1" });
+
+    // JWT Bearer
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme.",
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
@@ -108,6 +130,25 @@ builder.Services.AddSwaggerGen(c =>
             new OpenApiSecurityScheme
             {
                 Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        }
+    });
+
+    // API Key (X-API-Key header)
+    c.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
+    {
+        Description = "API key for scrobblers. Supply via the X-API-Key header. Example: \"chr_live_…\"",
+        Name = "X-API-Key",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "ApiKey" }
             },
             Array.Empty<string>()
         }
