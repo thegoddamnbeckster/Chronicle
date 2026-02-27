@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getServiceStatus, getChangeAccountCommand, ServiceStatus } from '@/api/settings'
+import AdvancedToggle from '@/components/ui/AdvancedToggle'
 import styles from './ServiceSettingsPage.module.css'
 
 type AccountType = 'LocalService' | 'NetworkService' | 'LocalSystem' | 'Custom'
@@ -21,7 +22,6 @@ export default function ServiceSettingsPage() {
   // Change account panel
   const [selectedAccount, setSelectedAccount] = useState<AccountType>('LocalService')
   const [customUsername, setCustomUsername] = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
   const [generatedCommand, setGeneratedCommand] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [cmdLoading, setCmdLoading] = useState(false)
@@ -135,36 +135,27 @@ export default function ServiceSettingsPage() {
           </div>
 
           {/* Advanced toggle */}
-          <button
-            className={styles.advancedToggle}
-            onClick={() => setShowAdvanced((v) => !v)}
-          >
-            {showAdvanced ? '▼' : '▶'} Advanced: Custom account
-          </button>
-
-          {showAdvanced && (
-            <div className={styles.advancedPanel}>
-              <label className={styles.radioLabel}>
-                <input
-                  type="radio"
-                  name="accountType"
-                  value="Custom"
-                  checked={selectedAccount === 'Custom'}
-                  onChange={() => setSelectedAccount('Custom')}
-                />
-                <span className={styles.radioText}><strong>Custom account</strong> (domain or local user)</span>
-              </label>
-              {selectedAccount === 'Custom' && (
-                <input
-                  type="text"
-                  className={styles.textInput}
-                  placeholder="DOMAIN\username  or  .\localuser"
-                  value={customUsername}
-                  onChange={(e) => setCustomUsername(e.target.value)}
-                />
-              )}
-            </div>
-          )}
+          <AdvancedToggle label="Advanced: Custom account">
+            <label className={styles.radioLabel}>
+              <input
+                type="radio"
+                name="accountType"
+                value="Custom"
+                checked={selectedAccount === 'Custom'}
+                onChange={() => setSelectedAccount('Custom')}
+              />
+              <span className={styles.radioText}><strong>Custom account</strong> (domain or local user)</span>
+            </label>
+            {selectedAccount === 'Custom' && (
+              <input
+                type="text"
+                className={styles.textInput}
+                placeholder="DOMAIN\username  or  .\localuser"
+                value={customUsername}
+                onChange={(e) => setCustomUsername(e.target.value)}
+              />
+            )}
+          </AdvancedToggle>
 
           <button
             className={styles.generateBtn}
