@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Chronicle API",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/Chronicle.API/Chronicle.API.csproj"],
+      "port": 8080
+    },
+    {
+      "name": "Chronicle Web",
+      "runtimeExecutable": "cmd.exe",
+      "runtimeArgs": ["/c", "src\\Chronicle.Web\\dev.bat"],
+      "port": 3000
+    }
+  ]
+}
