@@ -166,6 +166,14 @@
   min-width: 0;
 }
 
+.pluginIcon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
 .pluginName {
   font-size: 1rem;
   font-weight: 600;

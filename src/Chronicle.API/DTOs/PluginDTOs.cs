@@ -11,7 +11,12 @@ public record PluginDto(
     string? Description,
     bool IsEnabled,
     DateTime InstalledAt,
-    DateTime UpdatedAt
+    DateTime UpdatedAt,
+    /// <summary>
+    /// Favicon/icon URL from the plugin's manifest.json.
+    /// Null when the plugin is not currently loaded or has no iconUrl set.
+    /// </summary>
+    string? IconUrl = null
 );
 
 public record InstallPluginRequest(
