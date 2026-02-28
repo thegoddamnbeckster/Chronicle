@@ -89,6 +89,18 @@ public static class PortManager
 
     private static string? GetProcessUsingPort(int port)
     {
+        if (OperatingSystem.IsWindows())
+            return GetProcessUsingPortWindows(port);
+
+        if (OperatingSystem.IsLinux())
+            return GetProcessUsingPortLinux(port);
+
+        return null;    // macOS / unknown — skip identification
+    }
+
+    private static string? GetProcessUsingPortWindows(int port)
+    {
+        // netstat -ano lists all TCP listeners with PIDs on Windows
         try
         {
             var psi = new ProcessStartInfo("netstat", "-ano")
@@ -104,25 +116,55 @@ public static class PortManager
 
             foreach (var line in output.Split('\n'))
             {
-                // Match lines containing ":PORT " or ":PORT\t" that are in LISTENING state
                 if (!line.Contains($":{port} ") && !line.Contains($":{port}\t")) continue;
                 if (!line.Contains("LISTENING")) continue;
 
                 var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (!int.TryParse(parts.Last(), out int pid)) continue;
 
-                try
-                {
-                    var p = Process.GetProcessById(pid);
-                    return $"{p.ProcessName} (PID {pid})";
-                }
-                catch
-                {
-                    return $"PID {pid}";
-                }
+                try   { return $"{Process.GetProcessById(pid).ProcessName} (PID {pid})"; }
+                catch { return $"PID {pid}"; }
             }
         }
-        catch { /* netstat unavailable — skip process identification */ }
+        catch { /* netstat unavailable */ }
+
+        return null;
+    }
+
+    private static string? GetProcessUsingPortLinux(int port)
+    {
+        // ss -tlnp lists TCP listeners with process info on Linux
+        try
+        {
+            var psi = new ProcessStartInfo("ss", $"-tlnp sport = :{port}")
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var proc = Process.Start(psi)!;
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit();
+
+            // ss output example:
+            //   State  Recv-Q Send-Q Local Address:Port   ...  users:(("dotnet",pid=12345,fd=9))
+            foreach (var line in output.Split('\n'))
+            {
+                // Extract pid=NNNN from the users:((...)) section
+                var pidMatch = System.Text.RegularExpressions.Regex.Match(line, @"pid=(\d+)");
+                if (!pidMatch.Success) continue;
+
+                if (!int.TryParse(pidMatch.Groups[1].Value, out int pid)) continue;
+
+                // Also grab process name from users:(("name",...))
+                var nameMatch = System.Text.RegularExpressions.Regex.Match(line, @"""([^""]+)""");
+                var name = nameMatch.Success ? nameMatch.Groups[1].Value : "unknown";
+
+                return $"{name} (PID {pid})";
+            }
+        }
+        catch { /* ss unavailable */ }
 
         return null;
     }
