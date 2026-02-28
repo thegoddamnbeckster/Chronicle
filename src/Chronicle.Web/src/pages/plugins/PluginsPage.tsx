@@ -208,6 +208,14 @@ export default function PluginsPage() {
               <div key={plugin.id} className={styles.pluginCard}>
                 <div className={styles.cardHeader}>
                   <div className={styles.cardLeft}>
+                    {plugin.iconUrl && (
+                      <img
+                        src={plugin.iconUrl}
+                        alt={`${plugin.name} icon`}
+                        className={styles.pluginIcon}
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                      />
+                    )}
                     <span className={styles.pluginName}>{plugin.name}</span>
                     <span className={styles.versionBadge}>v{plugin.version}</span>
                     <span className={`${styles.badge} ${plugin.isEnabled ? styles.enabled : styles.disabled}`}>

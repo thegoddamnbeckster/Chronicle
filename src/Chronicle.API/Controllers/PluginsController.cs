@@ -135,7 +135,14 @@ public class PluginsController : ControllerBase
         return Ok(ApiResponse<PluginHealthDto>.Ok(new PluginHealthDto(result)));
     }
 
-    private static PluginDto ToDto(Chronicle.Core.Models.Plugin p) =>
-        new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
-            p.IsEnabled, p.InstalledAt, p.UpdatedAt);
+    private PluginDto ToDto(Chronicle.Core.Models.Plugin p)
+    {
+        // Look up the loaded plugin so we can include the iconUrl from its manifest.
+        // Disabled / unloaded plugins will have IconUrl = null.
+        var loaded = _registry.GetLoadedPlugins()
+            .FirstOrDefault(lp => lp.DbId == p.Id);
+
+        return new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
+            p.IsEnabled, p.InstalledAt, p.UpdatedAt, loaded?.Manifest.IconUrl);
+    }
 }

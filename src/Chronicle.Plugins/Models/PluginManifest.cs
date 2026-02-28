@@ -34,4 +34,12 @@ public class PluginManifest
     /// </summary>
     [JsonPropertyName("entry_type")]
     public string EntryType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// URL of the plugin's icon (typically the favicon of the service's website).
+    /// Chronicle's UI displays this icon on the Plugins page. Optional.
+    /// Example: "https://trakt.tv/favicon.ico"
+    /// </summary>
+    [JsonPropertyName("iconUrl")]
+    public string? IconUrl { get; set; }
 }
