@@ -93,6 +93,8 @@ builder.Services.AddScoped<IScrobbleService, ScrobbleService>();
 builder.Services.AddScoped<IStatsService, StatsService>();
 builder.Services.AddScoped<IImportService, ImportService>();
 builder.Services.AddScoped<IReportService, ReportService>();
+builder.Services.AddScoped<IMediaListService, MediaListService>();
+builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();
