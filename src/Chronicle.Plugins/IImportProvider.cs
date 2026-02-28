@@ -42,7 +42,12 @@ public record DeviceAuthPollResult(
 public record ImportCapabilities(
     bool SupportsHistory,
     bool SupportsRatings,
-    bool SupportsWatchlist
+    bool SupportsWatchlist,
+    /// <summary>
+    /// True if the provider requires the device/PIN OAuth flow (Trakt, Simkl).
+    /// False for providers that authenticate via a username or API key only (Letterboxd).
+    /// </summary>
+    bool RequiresDeviceAuth = true
 );
 
 /// <summary>A single watch event imported from the tracking service.</summary>

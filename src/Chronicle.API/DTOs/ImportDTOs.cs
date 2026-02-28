@@ -1,5 +1,22 @@
 namespace Chronicle.API.DTOs;
 
+// ── Provider list ─────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Summary of a loaded import provider shown in GET /import/providers.
+/// The frontend uses this to render the import management page.
+/// </summary>
+public record ImportProviderDto(
+    string PluginId,
+    string Name,
+    string Version,
+    string Description,
+    bool   SupportsHistory,
+    bool   SupportsRatings,
+    bool   SupportsWatchlist,
+    bool   RequiresDeviceAuth
+);
+
 // ── Auth flow ─────────────────────────────────────────────────────────────────
 
 /// <summary>

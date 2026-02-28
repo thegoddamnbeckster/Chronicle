@@ -6,6 +6,9 @@ public record ImportResult(int Imported, int Skipped, List<string> Errors);
 
 public interface IImportService
 {
+    /// <summary>Returns all currently loaded import providers with their capabilities.</summary>
+    IReadOnlyList<IImportProvider> GetProviders();
+
     /// <summary>Starts the device/PIN auth flow for the given import plugin.</summary>
     Task<DeviceAuthStart> StartAuthAsync(string pluginId, CancellationToken ct = default);
 

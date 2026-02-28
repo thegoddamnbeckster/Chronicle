@@ -27,6 +27,11 @@ public class ImportService : IImportService
         _registry = registry;
     }
 
+    // ── Provider discovery ────────────────────────────────────────────────────
+
+    public IReadOnlyList<IImportProvider> GetProviders() =>
+        _registry.GetImportProviders();
+
     // ── Auth delegation ───────────────────────────────────────────────────────
 
     public async Task<DeviceAuthStart> StartAuthAsync(string pluginId, CancellationToken ct = default)
