@@ -22,18 +22,23 @@ public sealed class LoadedPlugin : IDisposable
     /// <summary>All <see cref="IWidgetPlugin"/> instances discovered in the assembly.</summary>
     public IReadOnlyList<IWidgetPlugin> WidgetPlugins { get; }
 
+    /// <summary>All <see cref="IImportProvider"/> instances discovered in the assembly.</summary>
+    public IReadOnlyList<IImportProvider> ImportProviders { get; }
+
     public LoadedPlugin(
         PluginLoadContext loadContext,
         int dbId,
         PluginManifest manifest,
         IReadOnlyList<IMetadataProvider> metadataProviders,
-        IReadOnlyList<IWidgetPlugin> widgetPlugins)
+        IReadOnlyList<IWidgetPlugin> widgetPlugins,
+        IReadOnlyList<IImportProvider>? importProviders = null)
     {
         LoadContext = loadContext;
         DbId = dbId;
         Manifest = manifest;
         MetadataProviders = metadataProviders;
         WidgetPlugins = widgetPlugins;
+        ImportProviders = importProviders ?? [];
     }
 
     /// <summary>Unloads the plugin's <see cref="AssemblyLoadContext"/>.</summary>

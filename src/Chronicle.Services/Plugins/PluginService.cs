@@ -73,14 +73,21 @@ public class PluginService : IPluginService
         plugin.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        // Reconfigure the live provider if it's loaded
+        // Reconfigure live providers (metadata + import) if the plugin is loaded
         if (plugin.IsEnabled)
         {
-            var provider = _registry.GetMetadataProvider(plugin.PluginId);
-            if (provider != null)
+            var metaProvider = _registry.GetMetadataProvider(plugin.PluginId);
+            if (metaProvider != null)
             {
-                provider.Configure(settings);
-                _log.Information("Reconfigured live provider {PluginId}", plugin.PluginId);
+                metaProvider.Configure(settings);
+                _log.Information("Reconfigured live metadata provider {PluginId}", plugin.PluginId);
+            }
+
+            var importProvider = _registry.GetImportProvider(plugin.PluginId);
+            if (importProvider != null)
+            {
+                importProvider.Configure(settings);
+                _log.Information("Reconfigured live import provider {PluginId}", plugin.PluginId);
             }
         }
     }
