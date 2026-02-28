@@ -42,6 +42,22 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<IImportProvider> GetImportProviders()
+    {
+        lock (_lock)
+            return _plugins.Values.SelectMany(p => p.ImportProviders).ToList();
+    }
+
+    /// <inheritdoc/>
+    public IImportProvider? GetImportProvider(string pluginId)
+    {
+        lock (_lock)
+            return _plugins.Values
+                .SelectMany(p => p.ImportProviders)
+                .FirstOrDefault(ip => ip.PluginId == pluginId);
+    }
+
+    /// <inheritdoc/>
     public IReadOnlyList<LoadedPlugin> GetLoadedPlugins()
     {
         lock (_lock)
@@ -83,24 +99,38 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         var loadContext = new PluginLoadContext(dllPath);
         var assembly = loadContext.LoadFromAssemblyPath(dllPath);
 
-        var providers = DiscoverAndInstantiate<IMetadataProvider>(assembly, _log);
-        var widgets = DiscoverAndInstantiate<IWidgetPlugin>(assembly, _log);
+        var providers      = DiscoverAndInstantiate<IMetadataProvider>(assembly, _log);
+        var widgets        = DiscoverAndInstantiate<IWidgetPlugin>(assembly, _log);
+        var importProviders = DiscoverAndInstantiate<IImportProvider>(assembly, _log);
 
-        // Configure all metadata providers with the supplied settings
+        // Configure all providers with the supplied settings
         foreach (var provider in providers)
         {
             try
             {
                 provider.Configure(settings);
-                _log.Information("Configured provider {PluginId}", provider.PluginId);
+                _log.Information("Configured metadata provider {PluginId}", provider.PluginId);
             }
             catch (Exception ex)
             {
-                _log.Error(ex, "Failed to configure provider {PluginId}", provider.PluginId);
+                _log.Error(ex, "Failed to configure metadata provider {PluginId}", provider.PluginId);
             }
         }
 
-        var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets);
+        foreach (var ip in importProviders)
+        {
+            try
+            {
+                ip.Configure(settings);
+                _log.Information("Configured import provider {PluginId}", ip.PluginId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "Failed to configure import provider {PluginId}", ip.PluginId);
+            }
+        }
+
+        var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets, importProviders);
 
         lock (_lock)
         {

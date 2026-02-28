@@ -19,6 +19,14 @@ public interface IPluginRegistry
     /// <summary>Returns all loaded <see cref="IWidgetPlugin"/> instances across all plugins.</summary>
     IReadOnlyList<IWidgetPlugin> GetWidgetPlugins();
 
+    /// <summary>Returns all loaded <see cref="IImportProvider"/> instances across all plugins.</summary>
+    IReadOnlyList<IImportProvider> GetImportProviders();
+
+    /// <summary>
+    /// Returns the <see cref="IImportProvider"/> whose <c>PluginId</c> matches, or <c>null</c>.
+    /// </summary>
+    IImportProvider? GetImportProvider(string pluginId);
+
     /// <summary>Returns all currently loaded plugins.</summary>
     IReadOnlyList<LoadedPlugin> GetLoadedPlugins();
 
