@@ -3,6 +3,7 @@ using Chronicle.API;
 using Chronicle.API.Authentication;
 using Chronicle.Data;
 using Chronicle.Services;
+using Chronicle.Services.Import;
 using Chronicle.Services.Plugins;
 using Chronicle.Services.Security;
 using Microsoft.AspNetCore.Authentication;
@@ -89,6 +90,7 @@ builder.Services.AddScoped<IMediaService, MediaService>();
 builder.Services.AddScoped<ILibraryService, LibraryService>();
 builder.Services.AddScoped<IScrobbleService, ScrobbleService>();
 builder.Services.AddScoped<IStatsService, StatsService>();
+builder.Services.AddScoped<IImportService, ImportService>();
 
 // ── Plugin system ─────────────────────────────────────────────────────────────
 // PluginRegistry is a singleton — it holds the in-process AssemblyLoadContexts.
