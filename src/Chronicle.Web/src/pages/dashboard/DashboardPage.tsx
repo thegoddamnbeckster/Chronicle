@@ -1,7 +1,17 @@
 import { useQuery } from '@tanstack/react-query'
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts'
 import { getStats } from '@/api/stats'
 import { getHistory } from '@/api/scrobble'
 import { getLibrary } from '@/api/library'
+import { buildWeeklyActivity } from '@/api/reports'
 import styles from './DashboardPage.module.css'
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -28,6 +38,8 @@ export default function DashboardPage() {
     queryFn: () => getLibrary('Watching'),
   })
 
+  const weeklyData = history ? buildWeeklyActivity(history) : []
+
   return (
     <div className={styles.page}>
       <h2 className={styles.heading}>Dashboard</h2>
@@ -40,6 +52,53 @@ export default function DashboardPage() {
           <StatCard label="This Week" value={stats.scrobblesThisWeek} />
           <StatCard label="This Month" value={stats.scrobblesThisMonth} />
           <StatCard label="Watch Time" value={formatMinutes(stats.totalMinutesWatched)} />
+        </div>
+      )}
+
+      {/* 7-day activity chart */}
+      {weeklyData.length > 0 && (
+        <div className={styles.chartPanel}>
+          <h3 className={styles.panelTitle}>Activity — Last 7 Days</h3>
+          <ResponsiveContainer width="100%" height={160}>
+            <AreaChart data={weeklyData} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
+              <defs>
+                <linearGradient id="actGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="var(--accent)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis
+                dataKey="day"
+                tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                allowDecimals={false}
+                tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  fontSize: 12,
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="count"
+                name="Scrobbles"
+                stroke="var(--accent)"
+                fill="url(#actGrad)"
+                strokeWidth={2}
+                dot={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       )}
 

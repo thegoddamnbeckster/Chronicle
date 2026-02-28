@@ -37,6 +37,33 @@ public class ImportController : ControllerBase
         _pluginService = pluginService;
     }
 
+    // ── Provider list ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns all currently loaded import providers with their capabilities.
+    /// Use this to populate the import management page.
+    /// </summary>
+    [HttpGet("providers")]
+    public IActionResult GetProviders()
+    {
+        var providers = _importService.GetProviders();
+        var dtos = providers.Select(p =>
+        {
+            var caps = p.GetCapabilities();
+            return new ImportProviderDto(
+                p.PluginId,
+                p.Name,
+                p.Version,
+                p.Description,
+                caps.SupportsHistory,
+                caps.SupportsRatings,
+                caps.SupportsWatchlist,
+                caps.RequiresDeviceAuth);
+        }).ToList();
+
+        return Ok(ApiResponse<List<ImportProviderDto>>.Ok(dtos));
+    }
+
     // ── Auth ──────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -56,6 +83,10 @@ public class ImportController : ControllerBase
                 result.ExpiresInSeconds,
                 result.PollingIntervalSeconds,
                 result.PollCode)));
+        }
+        catch (NotSupportedException ex)
+        {
+            return BadRequest(ApiResponse<StartAuthResponse>.Fail("AUTH_NOT_SUPPORTED", ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -84,6 +115,10 @@ public class ImportController : ControllerBase
 
             return Ok(ApiResponse<PollAuthResponse>.Ok(
                 new PollAuthResponse(result.Status.ToString().ToLowerInvariant(), result.ErrorMessage)));
+        }
+        catch (NotSupportedException ex)
+        {
+            return BadRequest(ApiResponse<PollAuthResponse>.Fail("AUTH_NOT_SUPPORTED", ex.Message));
         }
         catch (InvalidOperationException ex)
         {
