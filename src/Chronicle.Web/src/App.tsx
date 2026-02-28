@@ -5,7 +5,10 @@ import RegisterPage from '@/pages/auth/RegisterPage'
 import DashboardPage from '@/pages/dashboard/DashboardPage'
 import LibraryPage from '@/pages/library/LibraryPage'
 import AddMediaPage from '@/pages/media/AddMediaPage'
+import MediaDetailPage from '@/pages/media/MediaDetailPage'
 import HistoryPage from '@/pages/media/HistoryPage'
+import ImportPage from '@/pages/import/ImportPage'
+import ReportsPage from '@/pages/reports/ReportsPage'
 import ServiceSettingsPage from '@/pages/settings/ServiceSettingsPage'
 import ApiKeysPage from '@/pages/settings/ApiKeysPage'
 import PluginsPage from '@/pages/plugins/PluginsPage'
@@ -35,6 +38,9 @@ export default function App() {
         <Route path="library" element={<LibraryPage />} />
         <Route path="history" element={<HistoryPage />} />
         <Route path="media/add" element={<AddMediaPage />} />
+        <Route path="media/:id" element={<MediaDetailPage />} />
+        <Route path="import" element={<ImportPage />} />
+        <Route path="reports" element={<ReportsPage />} />
         <Route path="settings/service" element={<ServiceSettingsPage />} />
         <Route path="settings/api-keys" element={<ApiKeysPage />} />
         <Route path="plugins" element={<PluginsPage />} />

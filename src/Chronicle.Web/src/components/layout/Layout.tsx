@@ -40,6 +40,12 @@ export default function Layout() {
         <NavLink to="/settings/api-keys" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           API Keys
         </NavLink>
+        <NavLink to="/import" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Import
+        </NavLink>
+        <NavLink to="/reports" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Reports
+        </NavLink>
         <NavLink to="/plugins" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           Plugins
         </NavLink>

@@ -35,6 +35,14 @@
   margin-top: 4px;
 }
 
+.chartPanel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
 .panels {
   display: grid;
   grid-template-columns: 1fr 1fr;
