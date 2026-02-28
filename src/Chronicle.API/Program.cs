@@ -60,9 +60,25 @@ builder.Host.UseSerilog((ctx, services, cfg) => cfg
     .Enrich.FromLogContext());
 
 // ── Database ──────────────────────────────────────────────────────────────────
+// Provider is selected by checking (in order):
+//   1. "Database:Provider" in appsettings.json  (sqlite | postgresql)
+//   2. DATABASE_PROVIDER environment variable
+//   3. Connection string shape — starts with "Host=" → PostgreSQL
+//   4. Default → SQLite
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? "Data Source=chronicle.db";
+
+var dbProvider = builder.Configuration.GetValue<string>("Database:Provider")
+    ?? Environment.GetEnvironmentVariable("DATABASE_PROVIDER")
+    ?? (connectionString.StartsWith("Host=", StringComparison.OrdinalIgnoreCase) ? "postgresql" : "sqlite");
+
 builder.Services.AddDbContext<ChronicleDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")
-        ?? "Data Source=chronicle.db"));
+{
+    if (dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
+        options.UseNpgsql(connectionString);
+    else
+        options.UseSqlite(connectionString);
+});
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
