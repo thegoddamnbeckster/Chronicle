@@ -34,6 +34,24 @@ export default function Layout() {
         <NavLink to="/media/add" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           Add Media
         </NavLink>
+        <NavLink to="/settings/service" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Settings
+        </NavLink>
+        <NavLink to="/settings/api-keys" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          API Keys
+        </NavLink>
+        <NavLink to="/import" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Import
+        </NavLink>
+        <NavLink to="/reports" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Reports
+        </NavLink>
+        <NavLink to="/lists" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Lists
+        </NavLink>
+        <NavLink to="/plugins" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Plugins
+        </NavLink>
       </nav>
 
       <main className={styles.content}>

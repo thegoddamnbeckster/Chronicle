@@ -3,11 +3,15 @@
   <ItemGroup>
     <ProjectReference Include="..\Chronicle.Core\Chronicle.Core.csproj" />
     <ProjectReference Include="..\Chronicle.Data\Chronicle.Data.csproj" />
+    <ProjectReference Include="..\Chronicle.Plugins\Chronicle.Plugins.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.3" />
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.*" />
+    <PackageReference Include="Serilog" Version="4.3.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.*" />
   </ItemGroup>
 

@@ -59,6 +59,65 @@ namespace Chronicle.Data.Migrations
                     b.ToTable("api_tokens", (string)null);
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.DeviceAuthCode", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ApiTokenId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("ApprovedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("DeviceName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayCode")
+                        .IsRequired()
+                        .HasMaxLength(9)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RawApiKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiTokenId");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("device_auth_codes", (string)null);
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.InteractionEvent", b =>
                 {
                     b.Property<int>("Id")
@@ -189,6 +248,78 @@ namespace Chronicle.Data.Migrations
                     b.ToTable("media_items", (string)null);
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.MediaList", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsOrdered")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("media_lists", (string)null);
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.MediaListItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("AddedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<int>("ListId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaItemId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ListId");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.HasIndex("ListId", "MediaItemId")
+                        .IsUnique();
+
+                    b.ToTable("media_list_items", (string)null);
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.MediaType", b =>
                 {
                     b.Property<int>("Id")
@@ -258,6 +389,63 @@ namespace Chronicle.Data.Migrations
                             Name = "tv",
                             ProgressUnit = "minutes"
                         });
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.Plugin", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Author")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DllPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("InstalledAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PluginId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SettingsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PluginId")
+                        .IsUnique();
+
+                    b.ToTable("plugins", (string)null);
                 });
 
             modelBuilder.Entity("Chronicle.Core.Models.User", b =>
@@ -372,6 +560,23 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.DeviceAuthCode", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.ApiToken", "ApiToken")
+                        .WithMany()
+                        .HasForeignKey("ApiTokenId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Chronicle.Core.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("ApiToken");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.InteractionEvent", b =>
                 {
                     b.HasOne("Chronicle.Core.Models.MediaItem", "MediaItem")
@@ -420,6 +625,36 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("Parent");
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.MediaList", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.MediaListItem", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.MediaList", "List")
+                        .WithMany("Items")
+                        .HasForeignKey("ListId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chronicle.Core.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("List");
+
+                    b.Navigation("MediaItem");
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.UserLibrary", b =>
                 {
                     b.HasOne("Chronicle.Core.Models.MediaItem", "MediaItem")
@@ -444,6 +679,11 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("Children");
 
                     b.Navigation("ExternalIds");
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.MediaList", b =>
+                {
+                    b.Navigation("Items");
                 });
 #pragma warning restore 612, 618
         }

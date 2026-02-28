@@ -1,0 +1,30 @@
+.wrapper {
+  /* Provides consistent bottom spacing so the toggle + panel
+     sit comfortably above whatever follows it in the form. */
+  margin-bottom: 1rem;
+}
+
+.toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted, #888);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 0.75rem;
+  display: block;
+  text-align: left;
+}
+
+.toggle:hover {
+  color: var(--accent, #5b9bd5);
+}
+
+.panel {
+  padding: 0.75rem;
+  background: var(--surface-alt, #252535);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}

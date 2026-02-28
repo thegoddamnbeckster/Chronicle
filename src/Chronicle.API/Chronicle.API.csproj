@@ -11,6 +11,9 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.3" />
+    <PackageReference Include="QRCoder" Version="1.*" />
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.*" />
   </ItemGroup>
 
@@ -18,6 +21,17 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Chronicle application icon — not user-configurable -->
+    <ApplicationIcon>chronicle.ico</ApplicationIcon>
+    <Win32Resource></Win32Resource>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embed the icon so it travels with the published output -->
+    <Content Include="chronicle.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
 
 </Project>

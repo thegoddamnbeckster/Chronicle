@@ -73,6 +73,37 @@ export interface UserStats {
   scrobblesThisMonth: number
 }
 
+// ── Import ────────────────────────────────────────────────────────────────────
+export interface ImportProvider {
+  pluginId: string
+  name: string
+  version: string
+  description: string
+  supportsHistory: boolean
+  supportsRatings: boolean
+  supportsWatchlist: boolean
+  requiresDeviceAuth: boolean
+}
+
+export interface ImportAuthStart {
+  userCode: string
+  verificationUrl: string
+  expiresInSeconds: number
+  pollingIntervalSeconds: number
+  pollCode: string
+}
+
+export interface ImportPollResult {
+  status: 'pending' | 'authorized' | 'expired' | 'denied'
+  errorMessage: string | null
+}
+
+export interface ImportResult {
+  imported: number
+  skipped: number
+  errors: string[]
+}
+
 // ── API ───────────────────────────────────────────────────────────────────────
 export interface ApiResponse<T> {
   success: boolean
