@@ -58,6 +58,13 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<IReportPlugin> GetReportPlugins()
+    {
+        lock (_lock)
+            return _plugins.Values.SelectMany(p => p.ReportPlugins).ToList();
+    }
+
+    /// <inheritdoc/>
     public IReadOnlyList<LoadedPlugin> GetLoadedPlugins()
     {
         lock (_lock)
@@ -99,9 +106,10 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         var loadContext = new PluginLoadContext(dllPath);
         var assembly = loadContext.LoadFromAssemblyPath(dllPath);
 
-        var providers      = DiscoverAndInstantiate<IMetadataProvider>(assembly, _log);
-        var widgets        = DiscoverAndInstantiate<IWidgetPlugin>(assembly, _log);
+        var providers       = DiscoverAndInstantiate<IMetadataProvider>(assembly, _log);
+        var widgets         = DiscoverAndInstantiate<IWidgetPlugin>(assembly, _log);
         var importProviders = DiscoverAndInstantiate<IImportProvider>(assembly, _log);
+        var reportPlugins   = DiscoverAndInstantiate<IReportPlugin>(assembly, _log);
 
         // Configure all providers with the supplied settings
         foreach (var provider in providers)
@@ -130,7 +138,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             }
         }
 
-        var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets, importProviders);
+        var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets, importProviders, reportPlugins);
 
         lock (_lock)
         {
@@ -144,8 +152,9 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         }
 
         _log.Information(
-            "Plugin loaded: {Name} v{Version} — {Providers} provider(s), {Widgets} widget(s)",
-            manifest.Name, manifest.Version, providers.Count, widgets.Count);
+            "Plugin loaded: {Name} v{Version} — {Providers} metadata, {Widgets} widget(s), {Import} import, {Reports} report(s)",
+            manifest.Name, manifest.Version, providers.Count, widgets.Count,
+            importProviders.Count, reportPlugins.Count);
 
         return loaded;
     }

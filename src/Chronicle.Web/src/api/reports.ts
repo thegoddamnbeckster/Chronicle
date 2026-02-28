@@ -1,16 +1,63 @@
 /**
  * Reports API helpers.
  *
- * The reports page derives charts from existing endpoints:
- *   - /stats            → totals
- *   - /scrobble/history → per-event timestamps for activity charts
- *   - /library          → status breakdown
- *
- * All derived computations happen client-side so we don't need extra
- * backend endpoints until the IReportPlugin system is in place.
+ * Two layers:
+ *  1. Backend report API  (/reports, /reports/run) — built-in + plugin reports
+ *  2. Client-side helpers — derive charts from existing endpoints for the legacy
+ *     client-computed reports panel (shown when no backend report data is available)
  */
 import client from './client'
 import type { ApiResponse, HistoryItem, LibraryEntry, LibraryStatus, UserStats } from '@/types'
+
+// ── Backend report API ────────────────────────────────────────────────────────
+
+export interface ReportDefinition {
+  reportId: string
+  name: string
+  description: string
+  defaultChartType: string
+}
+
+export interface ReportDataPoint {
+  label: string
+  value: number
+}
+
+export interface ReportSeries {
+  name: string
+  points: ReportDataPoint[]
+}
+
+export interface ReportKpi {
+  label: string
+  value: string
+  trend: string | null
+}
+
+export interface BackendReportResult {
+  reportId: string
+  title: string
+  chartType: string
+  series: ReportSeries[]
+  kpis: ReportKpi[]
+  generatedAt: string
+}
+
+export async function getReportDefinitions(): Promise<ReportDefinition[]> {
+  const { data } = await client.get<ApiResponse<ReportDefinition[]>>('/reports')
+  return (data.data as ReportDefinition[] | undefined) ?? []
+}
+
+export async function runReport(
+  reportId: string,
+  params: Record<string, string> = {},
+): Promise<BackendReportResult> {
+  const { data } = await client.get<ApiResponse<BackendReportResult>>('/reports/run', {
+    params: { reportId, ...params },
+  })
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Report failed')
+  return data.data
+}
 
 /** Fetches up to `perPage` recent history items. */
 export async function getHistoryPage(page = 1, perPage = 100): Promise<HistoryItem[]> {
