@@ -10,6 +10,8 @@ export interface PluginDto {
   isEnabled: boolean
   installedAt: string
   updatedAt: string
+  /** Favicon URL from the plugin's manifest.json. Null when plugin is not loaded. */
+  iconUrl: string | null
 }
 
 export async function listPlugins(): Promise<PluginDto[]> {
