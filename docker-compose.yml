@@ -1,0 +1,52 @@
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       chronicle
+      POSTGRES_USER:     chronicle
+      POSTGRES_PASSWORD: chronicle      # Override via .env or secrets in production
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:     ["CMD", "pg_isready", "-U", "chronicle"]
+      interval: 5s
+      timeout:  5s
+      retries:  10
+    networks:
+      - chronicle_net
+
+  # ── Chronicle API ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # EF Core will pick "Host=..." and auto-select PostgreSQL provider
+      ConnectionStrings__DefaultConnection: >-
+        Host=db;Port=5432;Database=chronicle;Username=chronicle;Password=chronicle
+      # JWT secret — override with a real secret in production!
+      Security__JwtSecret: CHANGE_THIS_TO_A_LONG_RANDOM_SECRET_IN_PRODUCTION
+      ASPNETCORE_ENVIRONMENT: Production
+    volumes:
+      - chronicle_plugins:/app/plugins
+      - chronicle_logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - chronicle_net
+
+volumes:
+  postgres_data:
+  chronicle_plugins:
+  chronicle_logs:
+
+networks:
+  chronicle_net:
+    driver: bridge

@@ -1,0 +1,12 @@
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=db;Port=5432;Database=chronicle;Username=chronicle;Password=chronicle"
+  },
+  "Security": {
+    "JwtSecret": "REPLACE_WITH_A_REAL_SECRET_BEFORE_DEPLOYING",
+    "JwtExpirationHours": 24
+  },
+  "Serilog": {
+    "RetainedLogDays": 14
+  }
+}
