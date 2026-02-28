@@ -46,6 +46,9 @@ export default function Layout() {
         <NavLink to="/reports" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           Reports
         </NavLink>
+        <NavLink to="/lists" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+          Lists
+        </NavLink>
         <NavLink to="/plugins" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           Plugins
         </NavLink>
