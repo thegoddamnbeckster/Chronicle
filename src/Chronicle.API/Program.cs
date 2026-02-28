@@ -94,6 +94,18 @@ builder.Services.AddScoped<IStatsService, StatsService>();
 builder.Services.AddScoped<IImportService, ImportService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 
+// ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
+builder.Services.AddMemoryCache();
+
+// ── Named HttpClient for fetching external favicons ───────────────────────────
+// Separate named client so we can give it a short timeout and safe headers.
+builder.Services.AddHttpClient("favicon", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(10);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
+});
+
 // ── Plugin system ─────────────────────────────────────────────────────────────
 // PluginRegistry is a singleton — it holds the in-process AssemblyLoadContexts.
 // PluginService is scoped so it can access the request-scoped DbContext.
