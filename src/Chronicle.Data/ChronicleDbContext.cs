@@ -18,6 +18,9 @@ namespace Chronicle.Data
         public DbSet<InteractionEvent> InteractionEvents => Set<InteractionEvent>();
         public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
         public DbSet<Plugin> Plugins => Set<Plugin>();
+        public DbSet<MediaList> MediaLists => Set<MediaList>();
+        public DbSet<MediaListItem> MediaListItems => Set<MediaListItem>();
+        public DbSet<DeviceAuthCode> DeviceAuthCodes => Set<DeviceAuthCode>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -170,6 +173,63 @@ namespace Chronicle.Data
                 entity.Property(e => e.DllPath).IsRequired();
                 entity.Property(e => e.InstalledAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
                 entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            });
+
+            modelBuilder.Entity<MediaList>(entity =>
+            {
+                entity.ToTable("media_lists");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => e.UserId);
+                entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<MediaListItem>(entity =>
+            {
+                entity.ToTable("media_list_items");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.ListId, e.MediaItemId }).IsUnique();
+                entity.HasIndex(e => e.ListId);
+                entity.Property(e => e.AddedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasOne(e => e.List)
+                    .WithMany(e => e.Items)
+                    .HasForeignKey(e => e.ListId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasOne(e => e.MediaItem)
+                    .WithMany()
+                    .HasForeignKey(e => e.MediaItemId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<DeviceAuthCode>(entity =>
+            {
+                entity.ToTable("device_auth_codes");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => e.Code).IsUnique();
+                entity.HasIndex(e => e.Status);
+                entity.HasIndex(e => e.ExpiresAt);
+                entity.Property(e => e.Code).IsRequired().HasMaxLength(32);
+                entity.Property(e => e.DisplayCode).IsRequired().HasMaxLength(9);
+                entity.Property(e => e.Status).HasConversion<string>();
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.SetNull);
+
+                entity.HasOne(e => e.ApiToken)
+                    .WithMany()
+                    .HasForeignKey(e => e.ApiTokenId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
         }
     }
