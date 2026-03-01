@@ -49,21 +49,50 @@ namespace Chronicle.Data
                 entity.Property(e => e.ProgressUnit).HasDefaultValue("minutes");
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
-                // Seed: TV Shows built-in type
-                entity.HasData(new MediaType
-                {
-                    Id = 1,
-                    Name = "tv",
-                    DisplayName = "TV Shows",
-                    Description = "Television series, seasons, and episodes",
-                    HierarchyLevels = 3,
-                    HierarchyLabels = "Show,Season,Episode",
-                    InteractionVerb = "watched",
-                    ProgressUnit = "minutes",
-                    IsBuiltIn = true,
-                    IsActive = true,
-                    CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-                });
+                // Seed: built-in media types
+                entity.HasData(
+                    new MediaType
+                    {
+                        Id = 1,
+                        Name = "tv",
+                        DisplayName = "TV Shows",
+                        Description = "Television series, seasons, and episodes",
+                        HierarchyLevels = 3,
+                        HierarchyLabels = "Show,Season,Episode",
+                        InteractionVerb = "watched",
+                        ProgressUnit = "minutes",
+                        IsBuiltIn = true,
+                        IsActive = true,
+                        CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                    },
+                    new MediaType
+                    {
+                        Id = 2,
+                        Name = "movies",
+                        DisplayName = "Movies",
+                        Description = "Feature films and short films",
+                        HierarchyLevels = 1,
+                        HierarchyLabels = "Movie",
+                        InteractionVerb = "watched",
+                        ProgressUnit = "minutes",
+                        IsBuiltIn = true,
+                        IsActive = true,
+                        CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                    },
+                    new MediaType
+                    {
+                        Id = 3,
+                        Name = "music",
+                        DisplayName = "Music",
+                        Description = "Artists, albums, and tracks",
+                        HierarchyLevels = 3,
+                        HierarchyLabels = "Artist,Album,Track",
+                        InteractionVerb = "listened",
+                        ProgressUnit = "tracks",
+                        IsBuiltIn = true,
+                        IsActive = true,
+                        CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                    });
             });
 
             modelBuilder.Entity<MediaItem>(entity =>
