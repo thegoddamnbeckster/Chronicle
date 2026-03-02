@@ -217,7 +217,7 @@ Scrobblers are standalone services (not metadata plugins) that watch an
 external media player and push progress events to Chronicle.
 
 ```
-service.chronicle.{target}.scrobbler/
+Chronicle.Service.Scrobbler.{App}/
 ├── service.py              # entry point
 ├── config.ini.example
 ├── README.md
@@ -229,7 +229,7 @@ service.chronicle.{target}.scrobbler/
 
 | Scrobbler | Directory | Target | Language |
 |-----------|-----------|--------|----------|
-| Kodi | `service.chronicle.kodi.scrobbler` | Kodi Media Center | Python (Kodi addon) |
-| AudiobookShelf | `service.chronicle.audiobookshelf.scrobbler` | AudiobookShelf | Python (standalone) |
+| Kodi | `Chronicle.Service.Scrobbler.Kodi` | Kodi Media Center | Python (Kodi addon) |
+| AudiobookShelf | `Chronicle.Service.Scrobbler.Audiobookshelf` | AudiobookShelf | Python (standalone) |
 
-**Naming rule:** `service.chronicle.<target>.scrobbler` (lowercase, dot-separated)
+**Naming rule:** `Chronicle.Service.Scrobbler.<App>` (PascalCase)
