@@ -1,6 +1,6 @@
 # Chronicle Plugin Catalogue
 
-**Last Updated:** 2026-02-28
+**Last Updated:** 2026-03-01
 **Author:** Michael Beck with Anthropic Claude
 
 This document indexes every planned metadata provider plugin for Chronicle.
@@ -62,6 +62,8 @@ are noted accordingly.
 
 ## Music Plugins
 
+### Catalogue & Cross-Reference
+
 | Plugin | Directory | Scope | Auth | Status |
 |--------|-----------|-------|------|--------|
 | [Discogs](plugins/PLUGIN_DISCOGS.md) | `Chronicle.Plugin.Discogs` | 🎵 | OAuth / token | Scaffolded |
@@ -69,11 +71,70 @@ are noted accordingly.
 | [Soundcharts](plugins/PLUGIN_SOUNDCHARTS.md) | `Chronicle.Plugin.Soundcharts` | 🎵 | API key + secret | Scaffolded |
 | [Jaxsta](plugins/PLUGIN_JAXSTA.md) | `Chronicle.Plugin.Jaxsta` | 🎵 | API key | Scaffolded |
 | [OneMusicAPI](plugins/PLUGIN_ONEMUSICAPI.md) | `Chronicle.Plugin.OneMusicAPI` | 🎵 | API key | Scaffolded |
+| [MusicBrainz](plugins/PLUGIN_MUSICBRAINZ.md) | `Chronicle.Plugin.MusicBrainz` | 🎵 | None (public) | Scaffolded |
 
-> **Note:** Additional music database plugins sourced from
-> [List of online music databases (Wikipedia)](https://en.wikipedia.org/wiki/List_of_online_music_databases)
-> are planned. Each will be its own separate repository outside of Chronicle.
-> See `docs/plugins/PLUGIN_MUSIC_DATABASES_INDEX.md` for the full list.
+### Comprehensive / Multi-genre
+
+| Plugin | Directory | Scope | Auth | Status |
+|--------|-----------|-------|------|--------|
+| [AllMusic](plugins/PLUGIN_ALLMUSIC.md) | `Chronicle.Plugin.AllMusic` | 🎵 | None (scraping) | Scaffolded |
+| [Last.fm](plugins/PLUGIN_LASTFM.md) | `Chronicle.Plugin.LastFM` | 🎵 | API key (free) | Scaffolded |
+| [RateYourMusic](plugins/PLUGIN_RATEYOURMUSIC.md) | `Chronicle.Plugin.RateYourMusic` | 🎵 | None (scraping) | Scaffolded |
+| [Wikidata](plugins/PLUGIN_WIKIDATA.md) | `Chronicle.Plugin.Wikidata` | 🎵 | None (public SPARQL) | Scaffolded |
+| [ListenBrainz](plugins/PLUGIN_LISTENBRAINZ.md) | `Chronicle.Plugin.ListenBrainz` | 🎵 | API token (free) | Scaffolded |
+| [Setlist.fm](plugins/PLUGIN_SETLISTFM.md) | `Chronicle.Plugin.Setlistfm` | 🎵 | API key (free) | Scaffolded |
+| [SoundCloud](plugins/PLUGIN_SOUNDCLOUD.md) | `Chronicle.Plugin.SoundCloud` | 🎵 | OAuth 2.0 | Scaffolded |
+| [Bandcamp](plugins/PLUGIN_BANDCAMP.md) | `Chronicle.Plugin.Bandcamp` | 🎵 | None (scraping) | Scaffolded |
+| [Genius](plugins/PLUGIN_GENIUS.md) | `Chronicle.Plugin.Genius` | 🎵 | API token (free) | Scaffolded |
+| [AZLyrics](plugins/PLUGIN_AZLYRICS.md) | `Chronicle.Plugin.AZLyrics` | 🎵 | None (scraping) | Scaffolded |
+| [Musixmatch](plugins/PLUGIN_MUSIXMATCH.md) | `Chronicle.Plugin.Musixmatch` | 🎵 | API key (free tier) | Scaffolded |
+
+### Streaming Services
+
+| Plugin | Directory | Scope | Auth | Status |
+|--------|-----------|-------|------|--------|
+| [Spotify](plugins/PLUGIN_SPOTIFY.md) | `Chronicle.Plugin.Spotify` | 🎵 | OAuth 2.0 Client Creds | Scaffolded |
+| [Apple Music](plugins/PLUGIN_APPLEMUSIC.md) | `Chronicle.Plugin.AppleMusic` | 🎵 | MusicKit JWT | Scaffolded |
+| [Deezer](plugins/PLUGIN_DEEZER.md) | `Chronicle.Plugin.Deezer` | 🎵 | None (public endpoints) | Scaffolded |
+| [Tidal](plugins/PLUGIN_TIDAL.md) | `Chronicle.Plugin.Tidal` | 🎵 | OAuth 2.0 | Scaffolded |
+| [Amazon Music](plugins/PLUGIN_AMAZONMUSIC.md) | `Chronicle.Plugin.AmazonMusic` | 🎵 | AWS SigV4 (optional) | Scaffolded |
+| [YouTube Music](plugins/PLUGIN_YOUTUBEMUSIC.md) | `Chronicle.Plugin.YouTubeMusic` | 🎵 | YouTube Data API key | Scaffolded |
+| [Qobuz](plugins/PLUGIN_QOBUZ.md) | `Chronicle.Plugin.Qobuz` | 🎵 | app_id + HMAC secret | Scaffolded |
+
+### Electronic / Dance Music
+
+| Plugin | Directory | Scope | Auth | Status |
+|--------|-----------|-------|------|--------|
+| [Beatport](plugins/PLUGIN_BEATPORT.md) | `Chronicle.Plugin.Beatport` | 🎵 | OAuth 2.0 | Scaffolded |
+| [Traxsource](plugins/PLUGIN_TRAXSOURCE.md) | `Chronicle.Plugin.Traxsource` | 🎵 | None (unofficial JSON) | Scaffolded |
+| [Juno Download](plugins/PLUGIN_JUNODOWNLOAD.md) | `Chronicle.Plugin.JunoDownload` | 🎵 | None (scraping) | Scaffolded |
+
+### Classical Music
+
+| Plugin | Directory | Scope | Auth | Status |
+|--------|-----------|-------|------|--------|
+| [AllMusic Classical](plugins/PLUGIN_ALLMUSIC_CLASSICAL.md) | `Chronicle.Plugin.AllMusicClassical` | 🎵 | None (scraping) | Scaffolded |
+| [Presto Music](plugins/PLUGIN_PRESTOMUSIC.md) | `Chronicle.Plugin.PrestoMusic` | 🎵 | None (scraping) | Scaffolded |
+| [ClassicCat](plugins/PLUGIN_CLASSICCAT.md) | `Chronicle.Plugin.ClassicCat` | 🎵 | None (public) | Scaffolded |
+
+### Credits & Industry Standards
+
+| Plugin | Directory | Scope | Auth | Status |
+|--------|-----------|-------|------|--------|
+| [ASCAP](plugins/PLUGIN_ASCAP.md) | `Chronicle.Plugin.ASCAP` | 🎵 | None (public ACE) | Scaffolded |
+| [BMI](plugins/PLUGIN_BMI.md) | `Chronicle.Plugin.BMI` | 🎵 | None (public repertoire) | Scaffolded |
+| [SESAC](plugins/PLUGIN_SESAC.md) | `Chronicle.Plugin.SESAC` | 🎵 | None (public repertoire) | Scaffolded |
+| [ISRC Registry](plugins/PLUGIN_ISRC.md) | `Chronicle.Plugin.ISRC` | 🎵 | None (IFPI portal) | Scaffolded |
+| [GRid Registry](plugins/PLUGIN_GRID.md) | `Chronicle.Plugin.GRid` | 🎵 | None (DDEX portal) | Scaffolded |
+
+### Charts
+
+| Plugin | Directory | Scope | Auth | Status |
+|--------|-----------|-------|------|--------|
+| [Billboard](plugins/PLUGIN_BILLBOARD.md) | `Chronicle.Plugin.Billboard` | 🎵 | None (scraping) | Scaffolded |
+| [Official Charts (UK)](plugins/PLUGIN_OFFICIALCHARTS.md) | `Chronicle.Plugin.OfficialCharts` | 🎵 | None (scraping) | Scaffolded |
+| [IFPI Global Charts](plugins/PLUGIN_IFPI.md) | `Chronicle.Plugin.IFPI` | 🎵 | None (scraping) | Scaffolded |
+| [Metacritic Music](plugins/PLUGIN_METACRITICMUSIC.md) | `Chronicle.Plugin.MetacriticMusic` | 🎵 | None (scraping) | Scaffolded |
 
 ---
 
@@ -115,10 +176,16 @@ are noted accordingly.
 |----------|-------|
 | TV & Film | 12 |
 | General / Web | 7 |
-| Music | 5 + Wikipedia list |
+| Music — Catalogue & Cross-Reference | 6 |
+| Music — Comprehensive / Multi-genre | 11 |
+| Music — Streaming | 7 |
+| Music — Electronic / Dance | 3 |
+| Music — Classical | 3 |
+| Music — Credits & Industry | 5 |
+| Music — Charts | 4 |
 | Books | 10 |
 | Games | 8 |
-| **Total (explicit)** | **42** |
+| **Total** | **76** |
 
 ---
 
@@ -141,3 +208,28 @@ Chronicle.Plugin.{Name}/
 - **Namespace:** `Chronicle.Plugin.{Name}` (PascalCase)
 - **Assembly:** `Chronicle.Plugin.{Name}`
 - **Entry type:** `Chronicle.Plugin.{Name}.{Name}Plugin`
+
+---
+
+## Scrobbler Convention
+
+Scrobblers are standalone services (not metadata plugins) that watch an
+external media player and push progress events to Chronicle.
+
+```
+service.chronicle.{target}.scrobbler/
+├── service.py              # entry point
+├── config.ini.example
+├── README.md
+└── lib/
+    ├── chronicle_client.py
+    ├── progress_tracker.py
+    └── ...
+```
+
+| Scrobbler | Directory | Target | Language |
+|-----------|-----------|--------|----------|
+| Kodi | `service.chronicle.kodi.scrobbler` | Kodi Media Center | Python (Kodi addon) |
+| AudiobookShelf | `service.chronicle.audiobookshelf.scrobbler` | AudiobookShelf | Python (standalone) |
+
+**Naming rule:** `service.chronicle.<target>.scrobbler` (lowercase, dot-separated)
