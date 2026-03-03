@@ -28,3 +28,16 @@ public record UpdatePluginSettingsRequest(
 );
 
 public record PluginHealthDto(bool? Healthy);
+
+public record PluginCatalogEntry(
+    string PluginId,
+    string Name,
+    string Description,
+    string Author,
+    string? IconUrl,
+    string GithubRepo,
+    string AssetName,
+    string DllName,
+    string[] Tags,
+    bool IsInstalled = false
+);

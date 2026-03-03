@@ -34,6 +34,10 @@ namespace Chronicle.Services
             _context.UserLibraries.Add(entry);
             await _context.SaveChangesAsync();
 
+            await _context.Entry(entry).Reference(e => e.MediaItem).LoadAsync();
+            if (entry.MediaItem != null)
+                await _context.Entry(entry.MediaItem).Reference(m => m.MediaType).LoadAsync();
+
             return entry;
         }
 

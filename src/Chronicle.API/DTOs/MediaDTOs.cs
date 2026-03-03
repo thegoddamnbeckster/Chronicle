@@ -50,6 +50,8 @@ namespace Chronicle.API.DTOs
         string? Notes
     );
 
+    public record MediaTypeDto(int Id, string Name, string DisplayName);
+
     public record LibraryEntryDto(
         int Id,
         int UserId,

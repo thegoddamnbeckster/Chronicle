@@ -35,6 +35,8 @@ namespace Chronicle.Services
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync();
 
+            await _context.Entry(item).Reference(i => i.MediaType).LoadAsync();
+
             return item;
         }
 
