@@ -1,3 +1,5 @@
+using System.IO.Compression;
+using System.Text.Json;
 using Chronicle.API.DTOs;
 using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
@@ -11,10 +13,11 @@ namespace Chronicle.API.Controllers;
 [Authorize]
 public class PluginsController : ControllerBase
 {
-    private readonly IPluginService    _pluginService;
-    private readonly IPluginRegistry   _registry;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IMemoryCache       _cache;
+    private readonly IPluginService      _pluginService;
+    private readonly IPluginRegistry     _registry;
+    private readonly IHttpClientFactory  _httpClientFactory;
+    private readonly IMemoryCache        _cache;
+    private readonly IWebHostEnvironment _environment;
 
     // ── Icon proxy constants ───────────────────────────────────────────────────
 
@@ -55,12 +58,14 @@ public class PluginsController : ControllerBase
         IPluginService pluginService,
         IPluginRegistry registry,
         IHttpClientFactory httpClientFactory,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        IWebHostEnvironment environment)
     {
         _pluginService     = pluginService;
         _registry          = registry;
         _httpClientFactory = httpClientFactory;
         _cache             = cache;
+        _environment       = environment;
     }
 
     // ── GET /api/v1/plugins ───────────────────────────────────────────────────
@@ -300,6 +305,139 @@ public class PluginsController : ControllerBase
         if (result is null)
             return NotFound(ApiResponse<PluginHealthDto>.Fail("PLUGIN_NOT_LOADED", "Plugin not found or not loaded."));
         return Ok(ApiResponse<PluginHealthDto>.Ok(new PluginHealthDto(result)));
+    }
+
+    // ── Static plugin catalog ─────────────────────────────────────────────────
+
+    private static readonly PluginCatalogEntry[] PluginCatalog =
+    [
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.tmdb",
+            Name:        "TMDB",
+            Description: "Metadata from The Movie Database (TMDB) for movies and TV shows.",
+            Author:      "Chronicle",
+            IconUrl:     "https://www.themoviedb.org/favicon.ico",
+            GithubRepo:  "thegoddamnbeckster/Chronicle",
+            AssetName:   "Chronicle.Plugins.TMDB.zip",
+            DllName:     "Chronicle.Plugins.TMDB.dll",
+            Tags:        ["movies", "tv", "metadata"]
+        ),
+    ];
+
+    // ── GET /api/v1/plugins/catalog ───────────────────────────────────────────
+
+    /// <summary>Lists all plugins available in the Chronicle plugin catalog.</summary>
+    [HttpGet("catalog")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetCatalog()
+    {
+        var installed = await _pluginService.GetAllPluginsAsync();
+        var installedIds = installed.Select(p => p.PluginId).ToHashSet();
+
+        var entries = PluginCatalog
+            .Select(e => e with { IsInstalled = installedIds.Contains(e.PluginId) })
+            .ToList();
+
+        return Ok(ApiResponse<List<PluginCatalogEntry>>.Ok(entries));
+    }
+
+    // ── POST /api/v1/plugins/catalog/{pluginId}/install ───────────────────────
+
+    /// <summary>
+    /// Downloads and installs a plugin from the Chronicle plugin catalog.
+    /// Fetches the latest GitHub release, extracts the ZIP, and installs the DLL.
+    /// </summary>
+    [HttpPost("catalog/{pluginId}/install")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> InstallFromCatalog(string pluginId, CancellationToken ct)
+    {
+        var entry = Array.Find(PluginCatalog, e => e.PluginId == pluginId);
+        if (entry is null)
+            return NotFound(ApiResponse<object>.Fail("CATALOG_ENTRY_NOT_FOUND",
+                $"No catalog entry found for plugin '{pluginId}'."));
+
+        // Resolve download URL from the latest GitHub release
+        string downloadUrl;
+        try
+        {
+            var github = _httpClientFactory.CreateClient("github");
+            var apiUrl = $"https://api.github.com/repos/{entry.GithubRepo}/releases/latest";
+            using var releaseResponse = await github.GetAsync(apiUrl, ct);
+
+            if (!releaseResponse.IsSuccessStatusCode)
+                return StatusCode(502, ApiResponse<object>.Fail("GITHUB_ERROR",
+                    $"GitHub returned HTTP {(int)releaseResponse.StatusCode} for the releases API."));
+
+            await using var releaseStream = await releaseResponse.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(releaseStream, cancellationToken: ct);
+
+            downloadUrl = string.Empty;
+            foreach (var asset in doc.RootElement.GetProperty("assets").EnumerateArray())
+            {
+                if (asset.GetProperty("name").GetString() == entry.AssetName)
+                {
+                    downloadUrl = asset.GetProperty("browser_download_url").GetString() ?? string.Empty;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(downloadUrl))
+                return StatusCode(502, ApiResponse<object>.Fail("ASSET_NOT_FOUND",
+                    $"Asset '{entry.AssetName}' not found in the latest release."));
+        }
+        catch (OperationCanceledException) { return StatusCode(504); }
+        catch (HttpRequestException)
+        {
+            return StatusCode(502, ApiResponse<object>.Fail("GITHUB_UNREACHABLE",
+                "Could not contact GitHub. Check the server's internet connection."));
+        }
+
+        // Download the ZIP archive
+        byte[] zipBytes;
+        try
+        {
+            var github = _httpClientFactory.CreateClient("github");
+            zipBytes = await github.GetByteArrayAsync(downloadUrl, ct);
+        }
+        catch (OperationCanceledException) { return StatusCode(504); }
+        catch (HttpRequestException)
+        {
+            return StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
+                "Failed to download the plugin archive from GitHub."));
+        }
+
+        // Extract to {ContentRoot}/plugins/{pluginId}/
+        var pluginDir = Path.Combine(_environment.ContentRootPath, "plugins", pluginId);
+        Directory.CreateDirectory(pluginDir);
+
+        using (var zipStream = new MemoryStream(zipBytes))
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read))
+        {
+            archive.ExtractToDirectory(pluginDir, overwriteFiles: true);
+        }
+
+        // Locate the DLL (search recursively in case the ZIP has a root folder)
+        var dllMatches = Directory.GetFiles(pluginDir, entry.DllName, SearchOption.AllDirectories);
+        if (dllMatches.Length == 0)
+            return StatusCode(502, ApiResponse<object>.Fail("DLL_NOT_FOUND",
+                $"'{entry.DllName}' was not found after extracting the archive."));
+
+        var dllPath = dllMatches[0];
+
+        // Install via the plugin service
+        try
+        {
+            var plugin = await _pluginService.InstallPluginAsync(dllPath);
+            return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
+        }
+        catch (FileNotFoundException ex)
+        {
+            return BadRequest(ApiResponse<PluginDto>.Fail("DLL_NOT_FOUND", ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<PluginDto>.Fail("ALREADY_INSTALLED", ex.Message));
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

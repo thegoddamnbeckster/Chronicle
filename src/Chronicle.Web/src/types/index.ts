@@ -104,6 +104,31 @@ export interface ImportResult {
   errors: string[]
 }
 
+// ── File Scanner ──────────────────────────────────────────────────────────────
+export interface FileScanStatus {
+  available: boolean
+  supportedMediaTypeNames: string[]
+}
+
+export interface SkippedFile {
+  filePath: string
+  parsedTitle: string
+  confidenceScore: number
+}
+
+export interface FileScanResult {
+  added: number
+  skipped: number
+  alreadyInLibrary: number
+  skippedFiles: SkippedFile[]
+}
+
+export interface MediaTypeOption {
+  id: number
+  name: string
+  displayName: string
+}
+
 // ── API ───────────────────────────────────────────────────────────────────────
 export interface ApiResponse<T> {
   success: boolean

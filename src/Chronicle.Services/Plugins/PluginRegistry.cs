@@ -65,6 +65,13 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<IFileScannerPlugin> GetFileScannerPlugins()
+    {
+        lock (_lock)
+            return _plugins.Values.SelectMany(p => p.FileScannerPlugins).ToList();
+    }
+
+    /// <inheritdoc/>
     public IReadOnlyList<LoadedPlugin> GetLoadedPlugins()
     {
         lock (_lock)
@@ -110,6 +117,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         var widgets         = DiscoverAndInstantiate<IWidgetPlugin>(assembly, _log);
         var importProviders = DiscoverAndInstantiate<IImportProvider>(assembly, _log);
         var reportPlugins   = DiscoverAndInstantiate<IReportPlugin>(assembly, _log);
+        var fileScanners    = DiscoverAndInstantiate<IFileScannerPlugin>(assembly, _log);
 
         // Configure all providers with the supplied settings
         foreach (var provider in providers)
@@ -138,7 +146,21 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             }
         }
 
-        var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets, importProviders, reportPlugins);
+        foreach (var fs in fileScanners)
+        {
+            try
+            {
+                fs.Configure(settings);
+                _log.Information("Configured file scanner {PluginId}", fs.PluginId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "Failed to configure file scanner {PluginId}", fs.PluginId);
+            }
+        }
+
+        var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets,
+            importProviders, reportPlugins, fileScanners);
 
         lock (_lock)
         {
@@ -152,9 +174,9 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         }
 
         _log.Information(
-            "Plugin loaded: {Name} v{Version} — {Providers} metadata, {Widgets} widget(s), {Import} import, {Reports} report(s)",
+            "Plugin loaded: {Name} v{Version} — {Providers} metadata, {Widgets} widget(s), {Import} import, {Reports} report(s), {Scanners} scanner(s)",
             manifest.Name, manifest.Version, providers.Count, widgets.Count,
-            importProviders.Count, reportPlugins.Count);
+            importProviders.Count, reportPlugins.Count, fileScanners.Count);
 
         return loaded;
     }

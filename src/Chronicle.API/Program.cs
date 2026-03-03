@@ -95,6 +95,7 @@ builder.Services.AddScoped<IImportService, ImportService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IMediaListService, MediaListService>();
 builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
+builder.Services.AddScoped<IFileScanService, FileScanService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();
@@ -106,6 +107,16 @@ builder.Services.AddHttpClient("favicon", c =>
     c.Timeout = TimeSpan.FromSeconds(10);
     c.DefaultRequestHeaders.UserAgent.ParseAdd(
         "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
+});
+
+// ── Named HttpClient for GitHub API (plugin catalog downloads) ─────────────────
+builder.Services.AddHttpClient("github", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(60);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
+    c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+    c.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
 });
 
 // ── Plugin system ─────────────────────────────────────────────────────────────
