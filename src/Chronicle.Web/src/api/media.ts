@@ -1,5 +1,10 @@
 import client from './client'
-import type { ApiResponse, MediaItem } from '@/types'
+import type { ApiResponse, MediaItem, MediaTypeOption } from '@/types'
+
+export async function getMediaTypes(): Promise<MediaTypeOption[]> {
+  const { data } = await client.get<ApiResponse<MediaTypeOption[]>>('/media/types')
+  return data.data ?? []
+}
 
 export async function searchMedia(query: string, mediaTypeId?: number, page = 1): Promise<MediaItem[]> {
   const { data } = await client.get<ApiResponse<MediaItem[]>>('/media/search', {

@@ -6,7 +6,10 @@ import {
   disablePlugin,
   uninstallPlugin,
   healthCheckPlugin,
+  listCatalog,
+  installFromCatalog,
   type PluginDto,
+  type PluginCatalogEntry,
 } from '@/api/plugins'
 import { useAuth } from '@/hooks/useAuth'
 import styles from './PluginsPage.module.css'
@@ -27,6 +30,13 @@ export default function PluginsPage() {
   const [dllPath, setDllPath] = useState('')
   const [installing, setInstalling] = useState(false)
   const [installError, setInstallError] = useState('')
+
+  // Browse catalog panel
+  const [showBrowse, setShowBrowse] = useState(false)
+  const [catalog, setCatalog] = useState<PluginCatalogEntry[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogError, setCatalogError] = useState('')
+  const [installingId, setInstallingId] = useState<string | null>(null)
 
   useEffect(() => {
     loadPlugins()
@@ -68,6 +78,40 @@ export default function PluginsPage() {
       setInstallError(msg ?? 'Installation failed. Check the DLL path and try again.')
     } finally {
       setInstalling(false)
+    }
+  }
+
+  async function openBrowse() {
+    const next = !showBrowse
+    setShowInstall(false)
+    setInstallError('')
+    setShowBrowse(next)
+    if (next && catalog.length === 0) {
+      setCatalogLoading(true)
+      setCatalogError('')
+      try {
+        const entries = await listCatalog()
+        setCatalog(entries)
+      } catch {
+        setCatalogError('Failed to load plugin catalog. Check your connection.')
+      } finally {
+        setCatalogLoading(false)
+      }
+    }
+  }
+
+  async function handleInstallFromCatalog(pluginId: string) {
+    setInstallingId(pluginId)
+    try {
+      const plugin = await installFromCatalog(pluginId)
+      setPlugins(prev => [plugin, ...prev])
+      setCatalog(prev => prev.map(e => e.pluginId === pluginId ? { ...e, isInstalled: true } : e))
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message
+      alert(msg ?? 'Installation failed.')
+    } finally {
+      setInstallingId(null)
     }
   }
 
@@ -142,11 +186,69 @@ export default function PluginsPage() {
       <div className={styles.header}>
         <h1 className={styles.title}>Plugins</h1>
         {isAdmin && (
-          <button className={styles.installBtn} onClick={() => { setShowInstall(v => !v); setInstallError('') }}>
-            {showInstall ? 'Cancel' : '+ Install Plugin'}
-          </button>
+          <div className={styles.headerActions}>
+            <button className={styles.browseBtn} onClick={openBrowse}>
+              {showBrowse ? 'Close Catalog' : 'Browse Catalog'}
+            </button>
+            <button
+              className={styles.installBtn}
+              onClick={() => { setShowInstall(v => !v); setShowBrowse(false); setInstallError('') }}
+            >
+              {showInstall ? 'Cancel' : '+ Install Plugin'}
+            </button>
+          </div>
         )}
       </div>
+
+      {/* ── Browse catalog panel ──────────────────────────────────── */}
+      {showBrowse && isAdmin && (
+        <div className={styles.browsePanel}>
+          <p className={styles.installTitle}>Plugin Catalog</p>
+          {catalogLoading && <p className={styles.loading}>Loading catalog…</p>}
+          {catalogError && <p className={styles.errorMsg}>{catalogError}</p>}
+          {!catalogLoading && !catalogError && (
+            <div className={styles.catalogList}>
+              {catalog.map(entry => (
+                <div key={entry.pluginId} className={styles.catalogCard}>
+                  <div className={styles.catalogCardLeft}>
+                    {entry.iconUrl && (
+                      <img
+                        src={entry.iconUrl}
+                        alt={`${entry.name} icon`}
+                        className={styles.catalogIcon}
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                      />
+                    )}
+                    <div className={styles.catalogInfo}>
+                      <div className={styles.catalogName}>{entry.name}</div>
+                      <div className={styles.catalogDesc}>{entry.description}</div>
+                      <div className={styles.catalogMeta}>by {entry.author}</div>
+                      <div className={styles.catalogTags}>
+                        {entry.tags.map(tag => (
+                          <span key={tag} className={styles.tag}>{tag}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className={styles.catalogCardRight}>
+                    {entry.isInstalled ? (
+                      <span className={`${styles.badge} ${styles.enabled}`}>Installed</span>
+                    ) : (
+                      <button
+                        className={styles.catalogInstallBtn}
+                        onClick={() => handleInstallFromCatalog(entry.pluginId)}
+                        disabled={installingId === entry.pluginId}
+                      >
+                        {installingId === entry.pluginId ? 'Installing…' : 'Install'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Install panel ─────────────────────────────────────────── */}
       {showInstall && isAdmin && (

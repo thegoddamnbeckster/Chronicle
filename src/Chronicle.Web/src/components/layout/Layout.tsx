@@ -1,10 +1,18 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
+import { getScanStatus } from '@/api/scan'
 import styles from './Layout.module.css'
 
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+
+  const { data: scanStatus } = useQuery({
+    queryKey: ['scan-status'],
+    queryFn: getScanStatus,
+    staleTime: 60_000,
+  })
 
   if (!user) {
     navigate('/login')
@@ -28,6 +36,11 @@ export default function Layout() {
         <NavLink to="/library" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           Library
         </NavLink>
+        {scanStatus?.available && (
+          <NavLink to="/scan" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+            File Scan
+          </NavLink>
+        )}
         <NavLink to="/history" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           History
         </NavLink>

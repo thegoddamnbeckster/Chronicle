@@ -1,8 +1,10 @@
 using Chronicle.API.DTOs;
 using Chronicle.Core.Exceptions;
+using Chronicle.Data;
 using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Chronicle.API.Controllers
 {
@@ -12,10 +14,23 @@ namespace Chronicle.API.Controllers
     public class MediaController : ControllerBase
     {
         private readonly IMediaService _mediaService;
+        private readonly ChronicleDbContext _context;
 
-        public MediaController(IMediaService mediaService)
+        public MediaController(IMediaService mediaService, ChronicleDbContext context)
         {
             _mediaService = mediaService;
+            _context = context;
+        }
+
+        [HttpGet("types")]
+        public async Task<IActionResult> GetMediaTypes()
+        {
+            var types = await _context.MediaTypes
+                .Where(t => t.IsActive)
+                .OrderBy(t => t.DisplayName)
+                .Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName))
+                .ToListAsync();
+            return Ok(ApiResponse<List<MediaTypeDto>>.Ok(types));
         }
 
         [HttpPost]

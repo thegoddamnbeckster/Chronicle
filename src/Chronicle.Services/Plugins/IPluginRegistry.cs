@@ -30,6 +30,9 @@ public interface IPluginRegistry
     /// <summary>Returns all loaded <see cref="IReportPlugin"/> instances across all plugins.</summary>
     IReadOnlyList<IReportPlugin> GetReportPlugins();
 
+    /// <summary>Returns all loaded <see cref="IFileScannerPlugin"/> instances across all plugins.</summary>
+    IReadOnlyList<IFileScannerPlugin> GetFileScannerPlugins();
+
     /// <summary>Returns all currently loaded plugins.</summary>
     IReadOnlyList<LoadedPlugin> GetLoadedPlugins();
 

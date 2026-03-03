@@ -1,0 +1,51 @@
+using Chronicle.Plugins.Models;
+
+namespace Chronicle.Plugins;
+
+/// <summary>
+/// Implemented by plugins that scan local file system directories and discover media files.
+/// All implementations must be stateless between calls.
+/// </summary>
+public interface IFileScannerPlugin
+{
+    // ── Identity ──────────────────────────────────────────────────────────────
+
+    /// <summary>Unique reverse-domain plugin identifier, e.g. "chronicle.plugin.filescanner".</summary>
+    string PluginId { get; }
+
+    string Name    { get; }
+    string Version { get; }
+    string Author  { get; }
+    string Description { get; }
+
+    // ── Capability declarations ───────────────────────────────────────────────
+
+    /// <summary>Returns the media types this scanner can discover (e.g. "movies", "tv").</summary>
+    MediaTypeSupport[] GetSupportedMediaTypes();
+
+    /// <summary>Returns the settings schema used to generate the configuration UI.</summary>
+    PluginSettingsSchema GetSettingsSchema();
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Called once after instantiation with the persisted settings.
+    /// Keys match <see cref="SettingDefinition.Key"/> values from the schema.
+    /// </summary>
+    void Configure(IReadOnlyDictionary<string, string> settings);
+
+    // ── Core operation ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Scans <paramref name="path"/> and returns all discovered media files with parsed metadata.
+    /// </summary>
+    /// <param name="path">Root directory to scan.</param>
+    /// <param name="recursive">Whether to recurse into sub-directories.</param>
+    Task<List<ScannedFile>> ScanDirectoryAsync(
+        string path,
+        bool recursive,
+        CancellationToken ct = default);
+
+    /// <summary>Verifies that the scanner can access the underlying file system.</summary>
+    Task<bool> HealthCheckAsync(CancellationToken ct = default);
+}

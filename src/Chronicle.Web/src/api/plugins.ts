@@ -47,3 +47,26 @@ export async function updatePluginSettings(
 ): Promise<void> {
   await client.put(`/plugins/${id}/settings`, { settings })
 }
+
+export interface PluginCatalogEntry {
+  pluginId: string
+  name: string
+  description: string
+  author: string
+  iconUrl: string | null
+  githubRepo: string
+  assetName: string
+  dllName: string
+  tags: string[]
+  isInstalled: boolean
+}
+
+export async function listCatalog(): Promise<PluginCatalogEntry[]> {
+  const res = await client.get<{ data: PluginCatalogEntry[] }>('/plugins/catalog')
+  return res.data.data
+}
+
+export async function installFromCatalog(pluginId: string): Promise<PluginDto> {
+  const res = await client.post<{ data: PluginDto }>(`/plugins/catalog/${pluginId}/install`)
+  return res.data.data
+}
