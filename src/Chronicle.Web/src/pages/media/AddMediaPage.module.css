@@ -31,9 +31,9 @@ textarea:focus { border-color: var(--accent); outline: none; }
   color: var(--danger);
   font-size: 13px;
   padding: 8px 12px;
-  background: rgba(231, 76, 60, 0.1);
+  background: var(--status-danger-bg);
   border-radius: var(--radius);
-  border: 1px solid rgba(231, 76, 60, 0.3);
+  border: 1px solid var(--status-danger-border);
 }
 
 .actions { display: flex; gap: 10px; margin-top: 8px; justify-content: flex-end; }

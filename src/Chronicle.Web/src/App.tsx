@@ -16,6 +16,7 @@ import ListsPage from '@/pages/lists/ListsPage'
 import ListDetailPage from '@/pages/lists/ListDetailPage'
 import DeviceAuthPage from '@/pages/device-auth/DeviceAuthPage'
 import ScanPage from '@/pages/scan/ScanPage'
+import PreferencesPage from '@/pages/preferences/PreferencesPage'
 
 function isLoggedIn() {
   return !!localStorage.getItem('chronicle_token')
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListDetailPage />} />
         <Route path="scan" element={<ScanPage />} />
+        <Route path="preferences" element={<PreferencesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

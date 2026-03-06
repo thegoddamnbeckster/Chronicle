@@ -7,18 +7,18 @@
   font-size: 1.5rem;
   font-weight: 600;
   margin-bottom: 1.5rem;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .loading,
 .errorMsg {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 0.95rem;
 }
 
 .card {
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1.5rem;
   margin-bottom: 1.5rem;
@@ -28,22 +28,22 @@
   font-size: 1rem;
   font-weight: 600;
   margin-bottom: 1rem;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .notInstalledNote {
   font-size: 0.875rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   margin-bottom: 1rem;
   padding: 0.75rem;
-  background: var(--surface-alt, #252535);
+  background: var(--bg-card);
   border-radius: 4px;
   line-height: 1.5;
 }
 
 .notInstalledNote code {
   font-family: 'Consolas', monospace;
-  background: #111;
+  background: var(--bg-secondary);
   padding: 0 3px;
   border-radius: 3px;
 }
@@ -63,13 +63,13 @@
 .label {
   width: 140px;
   font-size: 0.85rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .value {
   font-size: 0.9rem;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 /* Status badges */
@@ -83,15 +83,15 @@
   letter-spacing: 0.04em;
 }
 
-.running      { background: #1a3a1a; color: #4caf50; border: 1px solid #2e5e2e; }
-.stopped      { background: #3a1a1a; color: #f44336; border: 1px solid #5e2e2e; }
-.notInstalled { background: #2a2a2a; color: #888;    border: 1px solid #444; }
-.pending      { background: #2a2a1a; color: #ffc107; border: 1px solid #4a4a2e; }
+.running      { background: var(--status-success-bg); color: var(--status-success-fg); border: 1px solid var(--status-success-border); }
+.stopped      { background: var(--status-danger-bg);  color: var(--status-danger-fg);  border: 1px solid var(--status-danger-border); }
+.notInstalled { background: var(--status-neutral-bg); color: var(--status-neutral-fg); border: 1px solid var(--status-neutral-border); }
+.pending      { background: var(--status-warning-bg); color: var(--status-warning-fg); border: 1px solid var(--status-warning-border); }
 
 /* Change account section */
 .hint {
   font-size: 0.875rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   margin-bottom: 1.25rem;
   line-height: 1.5;
 }
@@ -117,14 +117,14 @@
 
 .radioText {
   font-size: 0.875rem;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   line-height: 1.4;
 }
 
 .advancedToggle {
   background: none;
   border: none;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 0.8rem;
   cursor: pointer;
   padding: 0;
@@ -137,7 +137,7 @@
 
 .advancedPanel {
   padding: 0.75rem;
-  background: var(--surface-alt, #252535);
+  background: var(--bg-card);
   border-radius: 4px;
   margin-bottom: 1rem;
   display: flex;
@@ -148,16 +148,16 @@
 .textInput {
   width: 100%;
   padding: 0.5rem 0.75rem;
-  background: #111;
-  border: 1px solid #444;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 0.875rem;
   box-sizing: border-box;
 }
 
 .textInput::placeholder {
-  color: #555;
+  color: var(--text-muted);
 }
 
 .generateBtn {
@@ -177,12 +177,12 @@
 }
 
 .generateBtn:hover:not(:disabled) {
-  background: #4a8ac4;
+  background: var(--accent-hover);
 }
 
 .commandBox {
-  background: #111;
-  border: 1px solid #333;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1rem;
 }
@@ -190,7 +190,7 @@
 .commandText {
   font-family: 'Consolas', monospace;
   font-size: 0.82rem;
-  color: #c8e6c9;
+  color: var(--status-success-fg);
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0 0 0.75rem 0;
@@ -198,30 +198,30 @@
 
 .copyBtn {
   padding: 0.4rem 1rem;
-  background: #2a3a2a;
-  border: 1px solid #4caf50;
+  background: var(--status-success-bg);
+  border: 1px solid var(--status-success-border);
   border-radius: 4px;
-  color: #4caf50;
+  color: var(--status-success-fg);
   font-size: 0.8rem;
   cursor: pointer;
   margin-bottom: 0.75rem;
 }
 
 .copyBtn:hover {
-  background: #1a3a1a;
+  background: var(--status-success-bg);
 }
 
 .commandNote {
   font-size: 0.8rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   line-height: 1.4;
   margin: 0;
 }
 
 .commandNote code {
   font-family: 'Consolas', monospace;
-  background: #222;
+  background: var(--bg-secondary);
   padding: 0 3px;
   border-radius: 3px;
-  color: #c8e6c9;
+  color: var(--status-success-fg);
 }
