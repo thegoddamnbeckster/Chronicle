@@ -9,6 +9,7 @@ import {
   importRatings,
   importWatchlist,
 } from '@/api/import'
+import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
 import type { ImportProvider, ImportAuthStart, ImportResult } from '@/types'
 import styles from './ImportPage.module.css'
 
@@ -20,6 +21,7 @@ function ProviderCard({ provider }: { provider: ImportProvider }) {
   const [pollError, setPollError] = useState<string | null>(null)
   const [result, setResult] = useState<{ type: string; data: ImportResult } | null>(null)
   const [importing, setImporting] = useState(false)
+  const { addJob, completeJob, failJob } = useBackgroundActivity()
 
   const { data: authenticated, refetch: recheckAuth } = useQuery({
     queryKey: ['import-auth', provider.pluginId],
@@ -67,6 +69,7 @@ function ProviderCard({ provider }: { provider: ImportProvider }) {
   // ── Import triggers ─────────────────────────────────────────────────────────
 
   async function runImport(type: 'history' | 'ratings' | 'watchlist') {
+    const jobId = addJob(`Importing ${type} from ${provider.name}…`)
     setImporting(true)
     setResult(null)
     try {
@@ -75,9 +78,11 @@ function ProviderCard({ provider }: { provider: ImportProvider }) {
       else if (type === 'ratings') data = await importRatings(provider.pluginId)
       else data = await importWatchlist(provider.pluginId)
       setResult({ type, data })
+      completeJob(jobId, `${data.imported} imported, ${data.skipped} skipped`)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Import failed'
       setResult({ type, data: { imported: 0, skipped: 0, errors: [msg] } })
+      failJob(jobId, msg)
     } finally {
       setImporting(false)
     }

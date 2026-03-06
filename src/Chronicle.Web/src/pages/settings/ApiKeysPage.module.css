@@ -7,12 +7,12 @@
   font-size: 1.5rem;
   font-weight: 600;
   margin-bottom: 1.5rem;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .card {
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1.5rem;
   margin-bottom: 1.5rem;
@@ -22,7 +22,7 @@
   font-size: 1rem;
   font-weight: 600;
   margin-bottom: 1rem;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 /* Create form */
@@ -44,22 +44,22 @@
 
 .label {
   font-size: 0.8rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 
 .textInput {
   width: 100%;
   padding: 0.5rem 0.75rem;
-  background: #111;
-  border: 1px solid #444;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 0.875rem;
   box-sizing: border-box;
 }
 
 .textInput::placeholder {
-  color: #555;
+  color: var(--text-muted);
 }
 
 .createBtn {
@@ -80,19 +80,19 @@
 }
 
 .createBtn:hover:not(:disabled) {
-  background: #4a8ac4;
+  background: var(--accent-hover);
 }
 
 .errorMsg {
   font-size: 0.85rem;
-  color: #f44336;
+  color: var(--status-danger-fg);
   margin-top: 0.25rem;
 }
 
 /* New token reveal */
 .newTokenBox {
-  background: #0d1f0d;
-  border: 1px solid #2e5e2e;
+  background: var(--status-success-bg);
+  border: 1px solid var(--status-success-border);
   border-radius: 4px;
   padding: 1rem;
   margin-top: 1rem;
@@ -100,14 +100,14 @@
 
 .newTokenLabel {
   font-size: 0.8rem;
-  color: #4caf50;
+  color: var(--status-success-fg);
   margin-bottom: 0.5rem;
   font-weight: 600;
 }
 
 .newTokenWarning {
   font-size: 0.8rem;
-  color: #888;
+  color: var(--text-muted);
   margin-bottom: 0.75rem;
   line-height: 1.4;
 }
@@ -115,23 +115,23 @@
 .tokenValue {
   font-family: 'Consolas', monospace;
   font-size: 0.82rem;
-  color: #c8e6c9;
+  color: var(--status-success-fg);
   word-break: break-all;
   margin-bottom: 0.75rem;
 }
 
 .copyBtn {
   padding: 0.35rem 0.9rem;
-  background: #2a3a2a;
-  border: 1px solid #4caf50;
+  background: var(--status-success-bg);
+  border: 1px solid var(--status-success-border);
   border-radius: 4px;
-  color: #4caf50;
+  color: var(--status-success-fg);
   font-size: 0.8rem;
   cursor: pointer;
 }
 
 .copyBtn:hover {
-  background: #1a3a1a;
+  background: var(--status-success-bg);
 }
 
 /* Token list */
@@ -143,7 +143,7 @@
 
 .emptyMsg {
   font-size: 0.9rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 
 .tokenRow {
@@ -151,7 +151,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1rem;
-  background: var(--surface-alt, #252535);
+  background: var(--bg-card);
   border-radius: 4px;
   gap: 1rem;
 }
@@ -166,20 +166,20 @@
 .tokenName {
   font-size: 0.9rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .tokenMeta {
   font-size: 0.78rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 
 .revokeBtn {
   padding: 0.3rem 0.8rem;
   background: transparent;
-  border: 1px solid #5e2e2e;
+  border: 1px solid var(--status-danger-border);
   border-radius: 4px;
-  color: #f44336;
+  color: var(--status-danger-fg);
   font-size: 0.78rem;
   cursor: pointer;
   white-space: nowrap;
@@ -187,17 +187,17 @@
 }
 
 .revokeBtn:hover {
-  background: #3a1a1a;
+  background: var(--status-danger-bg);
 }
 
 .hint {
   font-size: 0.85rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   line-height: 1.5;
   margin-bottom: 1rem;
 }
 
 .loading {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 0.95rem;
 }

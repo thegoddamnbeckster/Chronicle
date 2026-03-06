@@ -10,13 +10,13 @@
 .title {
   font-size: 1.5rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 /* Form card */
 .formCard {
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1.5rem;
   display: flex;
@@ -34,35 +34,35 @@
 
 .label {
   font-size: 0.85rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-weight: 500;
 }
 
 .textInput {
   padding: 0.5rem 0.75rem;
-  background: #111;
-  border: 1px solid #444;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 0.875rem;
   font-family: 'Consolas', monospace;
 }
 
 .textInput::placeholder {
-  color: #555;
+  color: var(--text-muted);
 }
 
 .select {
   padding: 0.5rem 0.75rem;
-  background: #111;
-  border: 1px solid #444;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 0.875rem;
 }
 
 .select option {
-  background: #1e1e2e;
+  background: var(--bg-secondary);
 }
 
 .row {
@@ -78,7 +78,7 @@
 
 .sliderHint {
   font-size: 0.78rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 
 .checkRow {
@@ -91,13 +91,13 @@
   align-items: center;
   gap: 0.5rem;
   font-size: 0.875rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   cursor: pointer;
 }
 
 .errorMsg {
   font-size: 0.82rem;
-  color: #f44336;
+  color: var(--status-danger-fg);
 }
 
 .scanBtn {
@@ -113,7 +113,7 @@
 }
 
 .scanBtn:hover:not(:disabled) {
-  background: #4a8ac4;
+  background: var(--accent-hover);
 }
 
 .scanBtn:disabled {
@@ -123,8 +123,8 @@
 
 /* Results */
 .resultCard {
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1.5rem;
 }
@@ -132,7 +132,7 @@
 .resultTitle {
   font-size: 1.1rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   margin-bottom: 1rem;
 }
 
@@ -159,19 +159,19 @@
 
 .statLabel {
   font-size: 0.8rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
 }
 
 /* Skipped files table */
 .skippedSection {
-  border-top: 1px solid var(--border, #333);
+  border-top: 1px solid var(--border);
   padding-top: 1rem;
 }
 
 .skippedTitle {
   font-size: 0.95rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   margin-bottom: 0.75rem;
 }
 
@@ -184,25 +184,25 @@
 .skippedTable th {
   text-align: left;
   padding: 0.4rem 0.6rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-weight: 500;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border);
 }
 
 .skippedTable td {
   padding: 0.4rem 0.6rem;
-  color: var(--text-primary, #e0e0e0);
-  border-bottom: 1px solid #222;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
 }
 
 .confidence {
   font-family: 'Consolas', monospace;
-  color: #f89406;
+  color: var(--status-warning-fg);
 }
 
 .filePath {
   font-family: 'Consolas', monospace;
   font-size: 0.75rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   word-break: break-all;
 }

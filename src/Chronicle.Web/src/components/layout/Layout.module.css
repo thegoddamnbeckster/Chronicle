@@ -75,13 +75,13 @@
 
 .link:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hover-bg);
 }
 
 .activeLink {
   color: var(--text-primary);
   border-left-color: var(--accent);
-  background: rgba(233, 69, 96, 0.08);
+  background: var(--accent-subtle);
   font-weight: 500;
 }
 

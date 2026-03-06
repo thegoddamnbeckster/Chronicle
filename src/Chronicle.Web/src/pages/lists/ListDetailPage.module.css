@@ -62,7 +62,7 @@
 .badge {
   font-size: 0.75rem;
   color: var(--text-secondary);
-  background: var(--surface-alt);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 20px;
   padding: 3px 10px;
@@ -98,7 +98,7 @@
 }
 
 .searchBox {
-  background: var(--surface);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px;
@@ -108,7 +108,7 @@
 }
 
 .searchInput {
-  background: var(--surface-alt);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text-primary);
@@ -165,7 +165,7 @@
   font-size: 0.75rem;
   color: var(--text-secondary);
   margin-left: 8px;
-  background: var(--surface-alt);
+  background: var(--bg-card);
   border-radius: 4px;
   padding: 1px 6px;
 }
@@ -204,7 +204,7 @@
 }
 
 .cancelSearchBtn:hover {
-  background: var(--surface-alt);
+  background: var(--bg-card);
 }
 
 /* ── Item list ─────────────────────────────────────────────────────────────────  */
@@ -227,7 +227,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  background: var(--surface);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px 14px;
@@ -308,7 +308,7 @@
 
 .removeBtn:hover {
   color: var(--danger, #e74c3c);
-  background: rgba(231, 76, 60, 0.08);
+  background: var(--status-danger-bg);
 }
 
 .dragHint {

@@ -6,6 +6,13 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chronicle</title>
+    <!-- Anti-flash: apply saved theme before React mounts -->
+    <script>
+      (function () {
+        var t = localStorage.getItem('chronicle_theme') || 'light';
+        document.documentElement.dataset.theme = t;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

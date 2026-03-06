@@ -31,7 +31,7 @@
 
 .table tr:last-child td { border-bottom: none; }
 
-.table tr:hover td { background: rgba(255,255,255,0.02); }
+.table tr:hover td { background: var(--hover-bg); }
 
 .titleCell { font-weight: 500; }
 
