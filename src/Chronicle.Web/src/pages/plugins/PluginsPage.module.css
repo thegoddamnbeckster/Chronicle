@@ -15,7 +15,7 @@
 .title {
   font-size: 1.5rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .headerActions {
@@ -49,13 +49,13 @@
 }
 
 .installBtn:hover {
-  background: #4a8ac4;
+  background: var(--accent-hover);
 }
 
 /* Install panel */
 .installPanel {
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1.25rem 1.5rem;
   margin-bottom: 1.5rem;
@@ -64,13 +64,13 @@
 .installTitle {
   font-size: 0.95rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   margin-bottom: 0.75rem;
 }
 
 .installHint {
   font-size: 0.8rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   margin-bottom: 0.75rem;
   line-height: 1.4;
 }
@@ -84,16 +84,16 @@
 .textInput {
   flex: 1;
   padding: 0.5rem 0.75rem;
-  background: #111;
-  border: 1px solid #444;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 0.875rem;
   font-family: 'Consolas', monospace;
 }
 
 .textInput::placeholder {
-  color: #555;
+  color: var(--text-muted);
   font-family: inherit;
 }
 
@@ -116,29 +116,29 @@
 .cancelBtn {
   padding: 0.5rem 1rem;
   background: transparent;
-  border: 1px solid #444;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 0.875rem;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .cancelBtn:hover {
-  border-color: #666;
-  color: #ccc;
+  border-color: var(--border);
+  color: var(--text-primary);
 }
 
 .errorMsg {
   font-size: 0.82rem;
-  color: #f44336;
+  color: var(--status-danger-fg);
   margin-top: 0.5rem;
 }
 
 /* Plugin list */
 .empty {
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 2.5rem 2rem;
   text-align: center;
@@ -147,13 +147,13 @@
 .emptyTitle {
   font-size: 1rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   margin-bottom: 0.5rem;
 }
 
 .emptyHint {
   font-size: 0.85rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   line-height: 1.5;
 }
 
@@ -164,8 +164,8 @@
 }
 
 .pluginCard {
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1.25rem 1.5rem;
 }
@@ -197,14 +197,14 @@
 .pluginName {
   font-size: 1rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
 }
 
 .versionBadge {
   font-size: 0.75rem;
-  color: var(--text-muted, #888);
-  background: #252535;
-  border: 1px solid #444;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 3px;
   padding: 1px 6px;
   font-family: 'Consolas', monospace;
@@ -221,29 +221,29 @@
   letter-spacing: 0.04em;
 }
 
-.enabled  { background: #1a3a1a; color: #4caf50; border: 1px solid #2e5e2e; }
-.disabled { background: #3a1a1a; color: #f44336; border: 1px solid #5e2e2e; }
+.enabled  { background: var(--status-success-bg); color: var(--status-success-fg); border: 1px solid var(--status-success-border); }
+.disabled { background: var(--status-danger-bg);  color: var(--status-danger-fg);  border: 1px solid var(--status-danger-border); }
 
-.healthOk   { background: #1a3a1a; color: #4caf50; border: 1px solid #2e5e2e; }
-.healthFail { background: #3a1a1a; color: #f44336; border: 1px solid #5e2e2e; }
-.healthUnk  { background: #2a2a2a; color: #888;    border: 1px solid #444; }
+.healthOk   { background: var(--status-success-bg); color: var(--status-success-fg); border: 1px solid var(--status-success-border); }
+.healthFail { background: var(--status-danger-bg);  color: var(--status-danger-fg);  border: 1px solid var(--status-danger-border); }
+.healthUnk  { background: var(--status-neutral-bg); color: var(--status-neutral-fg); border: 1px solid var(--status-neutral-border); }
 
 .cardMeta {
   font-size: 0.8rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   margin-bottom: 0.75rem;
 }
 
 .pluginId {
   font-family: 'Consolas', monospace;
   font-size: 0.78rem;
-  color: #666;
+  color: var(--text-secondary);
   margin-top: 0.2rem;
 }
 
 .description {
   font-size: 0.85rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   margin-bottom: 0.75rem;
   line-height: 1.4;
 }
@@ -260,15 +260,15 @@
   border-radius: 4px;
   font-size: 0.8rem;
   cursor: pointer;
-  border: 1px solid #444;
+  border: 1px solid var(--border);
   background: transparent;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .actionBtn:hover:not(:disabled) {
-  border-color: #666;
-  color: #ccc;
+  border-color: var(--border);
+  color: var(--text-primary);
 }
 
 .actionBtn:disabled {
@@ -276,24 +276,24 @@
   cursor: not-allowed;
 }
 
-.enableBtn  { border-color: #2e5e2e; color: #4caf50; }
-.enableBtn:hover:not(:disabled) { background: #1a3a1a; }
+.enableBtn  { border-color: var(--status-success-border); color: var(--status-success-fg); }
+.enableBtn:hover:not(:disabled) { background: var(--status-success-bg); }
 
-.disableBtn { border-color: #5e2e2e; color: #f44336; }
-.disableBtn:hover:not(:disabled) { background: #3a1a1a; }
+.disableBtn { border-color: var(--status-danger-border); color: var(--status-danger-fg); }
+.disableBtn:hover:not(:disabled) { background: var(--status-danger-bg); }
 
-.uninstallBtn { border-color: #5e2e2e; color: #f44336; }
-.uninstallBtn:hover:not(:disabled) { background: #3a1a1a; }
+.uninstallBtn { border-color: var(--status-danger-border); color: var(--status-danger-fg); }
+.uninstallBtn:hover:not(:disabled) { background: var(--status-danger-bg); }
 
 .loading {
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   font-size: 0.95rem;
 }
 
 /* Browse catalog panel */
 .browsePanel {
-  background: var(--surface, #1e1e2e);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1.25rem 1.5rem;
   margin-bottom: 1.5rem;
@@ -312,8 +312,8 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem 1.25rem;
-  background: #161624;
-  border: 1px solid #2a2a3a;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -340,20 +340,20 @@
 .catalogName {
   font-size: 0.95rem;
   font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   margin-bottom: 0.2rem;
 }
 
 .catalogDesc {
   font-size: 0.82rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   line-height: 1.4;
   margin-bottom: 0.4rem;
 }
 
 .catalogMeta {
   font-size: 0.78rem;
-  color: #666;
+  color: var(--text-secondary);
   margin-bottom: 0.5rem;
 }
 
@@ -367,9 +367,9 @@
   font-size: 0.72rem;
   padding: 1px 7px;
   border-radius: 10px;
-  background: #252535;
-  border: 1px solid #3a3a4a;
-  color: var(--text-muted, #888);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
   text-transform: lowercase;
 }
 
@@ -389,7 +389,7 @@
 }
 
 .catalogInstallBtn:hover:not(:disabled) {
-  background: #4a8ac4;
+  background: var(--accent-hover);
 }
 
 .catalogInstallBtn:disabled {

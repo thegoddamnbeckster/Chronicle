@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { getScanStatus, runScan } from '@/api/scan'
 import { getMediaTypes } from '@/api/media'
+import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
 import type { FileScanResult, MediaTypeOption } from '@/types'
 import styles from './ScanPage.module.css'
 
@@ -12,6 +13,8 @@ export default function ScanPage() {
   const [threshold, setThreshold] = useState(80)
   const [result, setResult] = useState<FileScanResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const jobIdRef = useRef<string | null>(null)
+  const { addJob, completeJob, failJob } = useBackgroundActivity()
 
   const { data: status } = useQuery({
     queryKey: ['scan-status'],
@@ -33,13 +36,25 @@ export default function ScanPage() {
       if (!mediaTypeId) throw new Error('Please select a media type.')
       return runScan({ path, recursive, mediaTypeId: Number(mediaTypeId), confidenceThreshold: threshold })
     },
+    onMutate: () => {
+      const label = `Scanning ${path.trim() || 'directory'}…`
+      jobIdRef.current = addJob(label)
+    },
     onSuccess: (data) => {
       setResult(data)
       setError(null)
+      if (jobIdRef.current) {
+        completeJob(jobIdRef.current, `${data.added} added, ${data.skipped} skipped`)
+        jobIdRef.current = null
+      }
     },
     onError: (err: Error) => {
       setError(err.message)
       setResult(null)
+      if (jobIdRef.current) {
+        failJob(jobIdRef.current, err.message)
+        jobIdRef.current = null
+      }
     },
   })
 

@@ -1,0 +1,45 @@
+.group {
+  margin-block: 4px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 16px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  transition: color 150ms ease;
+}
+
+.header:hover {
+  color: var(--text-secondary);
+}
+
+.chevron {
+  flex-shrink: 0;
+  transition: transform 150ms ease;
+  transform: rotate(-90deg); /* closed: pointing right */
+}
+
+.chevronOpen {
+  transform: rotate(0deg); /* open: pointing down */
+}
+
+.children {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 200ms ease;
+}
+
+.childrenOpen {
+  max-height: 400px; /* large enough for any realistic nav group */
+}

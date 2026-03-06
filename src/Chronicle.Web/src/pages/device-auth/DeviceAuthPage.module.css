@@ -3,12 +3,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg, #0f0f1a);
+  background: var(--bg-primary);
   padding: 24px;
 }
 
 .card {
-  background: var(--surface, #1a1a2e);
+  background: var(--bg-secondary);
   border: 1px solid var(--border, #2a2a3e);
   border-radius: 12px;
   padding: 40px 36px;
@@ -51,7 +51,7 @@
 /* ── Code box ──────────────────────────────────────────────────────────────── */
 
 .codeBox {
-  background: var(--surface-alt, #111128);
+  background: var(--bg-card);
   border: 1px solid var(--border, #2a2a3e);
   border-radius: 8px;
   padding: 16px 24px;
@@ -127,7 +127,7 @@
 }
 
 .denyBtn:hover:not(:disabled) {
-  background: rgba(231, 76, 60, 0.1);
+  background: var(--status-danger-bg);
 }
 
 .denyBtn:disabled {
@@ -141,20 +141,20 @@
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: rgba(34, 197, 94, 0.15);
-  border: 2px solid #22c55e;
+  background: var(--status-success-bg);
+  border: 2px solid var(--status-success-border);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 1.8rem;
-  color: #22c55e;
+  color: var(--status-success-fg);
 }
 
 .deniedIcon {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: rgba(231, 76, 60, 0.12);
+  background: var(--status-danger-bg);
   border: 2px solid var(--danger, #e74c3c);
   display: flex;
   align-items: center;
