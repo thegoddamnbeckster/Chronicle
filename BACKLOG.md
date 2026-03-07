@@ -8,9 +8,11 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 - **Browse button** — Every path input in the UI needs a folder-picker button. No exceptions. No manual typing of paths.
 - **Persistent scan folders** — Scan paths saved to DB/settings. Pre-populated on the scan page. Scanning re-runs automatically on a background schedule (configurable interval).
+- **Media Type** - It should not matter what kind of media is in a particular folder (although that is convenient).  The FileScanner plugin should determine the media type of each file.  Speed does not the most important factor as this should primarily be a background process.
 - **Background scanning** — Scans run silently in the background and notify the user when new items are found.
 - **Scan progress feedback** — Show current folder being scanned in real time, not a frozen spinner.
 - **Music support** — FileScanner plugin: add audio extensions (.mp3, .flac, .m4a, .ogg, .wav, .aac), music filename parsing (Artist - Album - Track, etc.), register "Music" as a supported media type.
+- **Other file support** - FileScanner plugin: allow user to add their own filetypes.
 - **Flexible pattern matching** — Handle messy/unorganized folder structures (e.g. `E:\Video Downloads\MCM Download Parser`). Smarter fallback when standard patterns fail.
 - **Scan results: accept items** — From the scan results page, user can approve/reject individual detected items before they're imported.
 - **Scan results: show media type** — Display the detected media type badge in scan results rows.
@@ -22,6 +24,8 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 ## Library
 
 - **Indent sub-items in tree** — When showing hierarchical media (show → season → episode), indent child items visually so the parent-child relationship is obvious.
+- **Content** - as media is added ot the library, the library should display it dynamically.
+- **Metadata** - Metadata can be downloaded by any metadata plugin, not just TMDB.  Each set of metadata per media item shall be shown in it's own box labelled for that metadata provider (TMDB, Trakt, SIMKL, TinyMediaManager, LastFM, etc).  Each box will be labelled for the metadata provider's name and have the metadata provider's icon.  
 
 ---
 
@@ -45,19 +49,23 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 - Settings section for managing users: add new users, set/reset passwords, associate API keys to users.
 - Admin-only. First registered user is already admin.
+- May specify user type (readonly, admin, metadata editor, etc)
 
 ---
 
 ## Media Detail
 
 - **All file paths** — Display every file path associated with a media item in the metadata page, both internal (Chronicle's data store) and external (original path on disk). If multiple files exist (e.g. different cuts, multiple episodes), list them all.
-- **Image thumbnails** — Show all available images (poster, backdrop, etc.) as actual thumbnails in the metadata page rather than links. Local images stored with the media should also be shown inline.
+- **Image thumbnails** — Show all available images (poster, backdrop, etc.) as actual thumbnails in the metadata page rather than links. Local images stored with the media should also be shown inline. Clicking on the thumbnail should show the full size image in a new window.
 
 ---
 
 ## Plugins
 
 - **Plugin catalog from GitHub** — Move the plugin catalog out of the hard-coded server array and into a `plugins.json` file stored in the Chronicle GitHub repo. The server should fetch this file at startup (or on demand) so new plugins can be listed by editing the file, without a code deploy. Users should be able to browse the catalog and choose which plugins to install.
+- **Adding and removing** - the user should be able to add new plugins based on plugins.json from github and remove them from the local Chronicle app.  Chronicle should immediately reflect the changes and add or remove menu items and UI elements depending on the plugin.
+- **plugin files** plugins are to be built in their own repos.  Finished files and their hashes are to be registered in plugins.json.
+- **Security ** When downloading files from github, Chronicle will confirm that the hash at github matches the downloaded file's hash.  Downloaded files will be treated as hostile until they can be verified as safe - we must ensure that the user's computer is never compromised.  Security is paramount.  If this means scanning the file with an external security service, then this should be an option.  Either locally or online.
 
 ---
 
