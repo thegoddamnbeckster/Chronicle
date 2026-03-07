@@ -46,6 +46,7 @@ tests/
 3. **Layer separation** — Domain models/interfaces in Core. Data access in Data. Business logic in Services. HTTP concerns in API only.
 4. **Async everywhere** — All I/O operations use async/await. Suffix with `Async`.
 5. **Stateless plugins** — Plugins don't store state between calls. Use settings and the database.
+6. **Lossless ingestion** — Chronicle stores everything it receives. Every field from every scrobbler payload, metadata provider response, and file scanner result must be persisted — nothing is silently discarded. Fields that don't map to first-class schema columns go into the item's `metadata_json` column, partitioned by source (e.g. `{"tmdb": {...}, "fileScanner": {...}}`). This guarantees that data is never lost at the point of ingestion and can be surfaced or re-processed later without a re-fetch.
 
 ---
 

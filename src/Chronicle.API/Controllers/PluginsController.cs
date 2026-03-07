@@ -307,19 +307,108 @@ public class PluginsController : ControllerBase
         return Ok(ApiResponse<PluginHealthDto>.Ok(new PluginHealthDto(result)));
     }
 
+    // ── GET /api/v1/plugins/{id}/settings-schema ──────────────────────────────
+
+    /// <summary>Returns the settings schema for the specified plugin.</summary>
+    [HttpGet("{id:int}/settings-schema")]
+    public async Task<IActionResult> GetSettingsSchema(int id)
+    {
+        var plugin = await _pluginService.GetPluginAsync(id);
+        if (plugin is null)
+            return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_FOUND", "Plugin not found."));
+
+        var loaded = _registry.GetLoadedPlugins().FirstOrDefault(lp => lp.DbId == id);
+        if (loaded is null)
+            return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_LOADED", "Plugin is not currently loaded."));
+
+        // Try metadata provider first, then other types
+        if (loaded.MetadataProviders.Count > 0)
+            return Ok(ApiResponse<object>.Ok(loaded.MetadataProviders[0].GetSettingsSchema()));
+
+        return Ok(ApiResponse<object>.Ok(new { settings = Array.Empty<object>() }));
+    }
+
+    // ── GET /api/v1/plugins/{id}/search ───────────────────────────────────────
+
+    /// <summary>
+    /// Searches for media metadata via the specified plugin's IMetadataProvider.
+    /// Returns a list of matching results from the upstream source (e.g. TMDB).
+    /// </summary>
+    [HttpGet("{id:int}/search")]
+    public async Task<IActionResult> SearchMetadata(
+        int id,
+        [FromQuery] string query,
+        [FromQuery] string mediaType = "movie",
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return BadRequest(ApiResponse<object>.Fail("QUERY_REQUIRED", "A search query is required."));
+
+        var loaded = _registry.GetLoadedPlugins().FirstOrDefault(lp => lp.DbId == id);
+        if (loaded is null)
+            return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_LOADED", "Plugin not found or not loaded."));
+
+        if (loaded.MetadataProviders.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("NOT_METADATA_PROVIDER", "This plugin does not provide metadata search."));
+
+        try
+        {
+            var result = await loaded.MetadataProviders[0].SearchAsync(query, mediaType, ct);
+            return Ok(ApiResponse<object>.Ok(result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("PLUGIN_NOT_CONFIGURED", ex.Message));
+        }
+    }
+
+    // ── GET /api/v1/plugins/{id}/metadata/{externalId} ────────────────────────
+
+    /// <summary>
+    /// Fetches full metadata for a specific item by its external ID.
+    /// The ID format is plugin-specific (e.g. "movie:550" or "tv:1399" for TMDB).
+    /// </summary>
+    [HttpGet("{id:int}/metadata/{externalId}")]
+    public async Task<IActionResult> GetMetadata(
+        int id,
+        string externalId,
+        CancellationToken ct = default)
+    {
+        var loaded = _registry.GetLoadedPlugins().FirstOrDefault(lp => lp.DbId == id);
+        if (loaded is null)
+            return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_LOADED", "Plugin not found or not loaded."));
+
+        if (loaded.MetadataProviders.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("NOT_METADATA_PROVIDER", "This plugin does not provide metadata lookup."));
+
+        try
+        {
+            var result = await loaded.MetadataProviders[0].GetByIdAsync(externalId, ct);
+            return Ok(ApiResponse<object>.Ok(result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("PLUGIN_NOT_CONFIGURED", ex.Message));
+        }
+        catch (HttpRequestException ex)
+        {
+            return StatusCode(502, ApiResponse<object>.Fail("UPSTREAM_ERROR", ex.Message));
+        }
+    }
+
     // ── Static plugin catalog ─────────────────────────────────────────────────
 
     private static readonly PluginCatalogEntry[] PluginCatalog =
     [
         new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.tmdb",
+            PluginId:    "tmdb",
             Name:        "TMDB",
             Description: "Metadata from The Movie Database (TMDB) for movies and TV shows.",
-            Author:      "Chronicle",
+            Author:      "Chronicle Contributors",
             IconUrl:     "https://www.themoviedb.org/favicon.ico",
-            GithubRepo:  "thegoddamnbeckster/Chronicle",
-            AssetName:   "Chronicle.Plugins.TMDB.zip",
-            DllName:     "Chronicle.Plugins.TMDB.dll",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.TMDB",
+            AssetName:   "Chronicle.Plugin.TMDB.zip",
+            DllName:     "Chronicle.Plugin.TMDB.dll",
             Tags:        ["movies", "tv", "metadata"]
         ),
     ];
