@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
 import { getScanStatus } from '@/api/scan'
@@ -7,8 +7,7 @@ import ActivityPanel from './ActivityPanel'
 import styles from './Layout.module.css'
 
 export default function Layout() {
-  const { user, loading, logout } = useAuth()
-  const navigate = useNavigate()
+  const { user, logout } = useAuth()
 
   const { data: scanStatus } = useQuery({
     queryKey: ['scan-status'],
@@ -16,12 +15,8 @@ export default function Layout() {
     staleTime: 60_000,
   })
 
-  if (loading) return null
-
-  if (!user) {
-    navigate('/login')
-    return null
-  }
+  // RequireAuth guarantees user is non-null before Layout mounts
+  if (!user) return null
 
   return (
     <div className={styles.shell}>

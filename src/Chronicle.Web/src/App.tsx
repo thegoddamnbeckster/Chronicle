@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth } from '@/hooks/useAuth'
 import Layout from '@/components/layout/Layout'
 import LoginPage from '@/pages/auth/LoginPage'
 import RegisterPage from '@/pages/auth/RegisterPage'
@@ -19,12 +20,10 @@ import DeviceAuthPage from '@/pages/device-auth/DeviceAuthPage'
 import ScanPage from '@/pages/scan/ScanPage'
 import PreferencesPage from '@/pages/preferences/PreferencesPage'
 
-function isLoggedIn() {
-  return !!localStorage.getItem('chronicle_token')
-}
-
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  return isLoggedIn() ? <>{children}</> : <Navigate to="/login" replace />
+  const { user, loading } = useAuth()
+  if (loading) return null
+  return user ? <>{children}</> : <Navigate to="/login" replace />
 }
 
 export default function App() {

@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { login } from '@/api/auth'
+import { useAuth } from '@/hooks/useAuth'
 import styles from './Auth.module.css'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const { setUser } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -15,8 +17,9 @@ export default function LoginPage() {
     setError(null)
     setLoading(true)
     try {
-      const { token } = await login(username, password)
+      const { token, user } = await login(username, password)
       localStorage.setItem('chronicle_token', token)
+      setUser(user)
       navigate('/')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Login failed')
