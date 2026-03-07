@@ -5,6 +5,16 @@
   padding: 40px 0;
 }
 
+/* ── Top navigation bar ── */
+
+.topNav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 16px;
+}
+
 .backBtn {
   background: none;
   border: none;
@@ -12,11 +22,48 @@
   cursor: pointer;
   font-size: 13px;
   padding: 0;
-  margin-bottom: 24px;
   transition: color 0.15s;
+  flex-shrink: 0;
 }
 
 .backBtn:hover { color: var(--text-primary); }
+
+.listNav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.navBtn {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
+
+.navBtnDisabled {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+
+.navPos {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.navLabel {
+  color: var(--text-secondary);
+}
 
 /* ── Hero ── */
 

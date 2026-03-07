@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, refreshMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
@@ -14,7 +14,14 @@ export default function MediaDetailPage() {
   const { id } = useParams<{ id: string }>()
   const mediaId = Number(id)
   const navigate = useNavigate()
+  const location = useLocation()
   const qc = useQueryClient()
+
+  const navState = (location.state as { listIds?: number[]; listLabel?: string } | null) ?? null
+  const listIds = navState?.listIds ?? []
+  const currentIndex = listIds.indexOf(mediaId)
+  const prevId = currentIndex > 0 ? listIds[currentIndex - 1] : null
+  const nextId = currentIndex < listIds.length - 1 ? listIds[currentIndex + 1] : null
 
   const { data: item, isLoading, error } = useQuery({
     queryKey: ['media', mediaId],
@@ -48,7 +55,10 @@ export default function MediaDetailPage() {
 
   const refreshMut = useMutation({
     mutationFn: () => refreshMedia(mediaId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['media', mediaId] }),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
   })
 
   const [tmdbLogoFailed, setTmdbLogoFailed] = useState(false)
@@ -68,7 +78,27 @@ export default function MediaDetailPage() {
 
   return (
     <div className={styles.page}>
-      <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
+      <div className={styles.topNav}>
+        <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
+        {listIds.length > 0 && (
+          <div className={styles.listNav}>
+            {prevId != null ? (
+              <Link to={`/media/${prevId}`} state={navState} className={styles.navBtn}>‹ Prev</Link>
+            ) : (
+              <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>‹ Prev</span>
+            )}
+            <span className={styles.navPos}>
+              {navState?.listLabel && <span className={styles.navLabel}>{navState.listLabel} · </span>}
+              {currentIndex + 1} / {listIds.length}
+            </span>
+            {nextId != null ? (
+              <Link to={`/media/${nextId}`} state={navState} className={styles.navBtn}>Next ›</Link>
+            ) : (
+              <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>Next ›</span>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className={styles.hero}>
         <div className={styles.posterWrap}>
