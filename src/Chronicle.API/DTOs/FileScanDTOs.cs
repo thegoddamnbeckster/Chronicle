@@ -91,4 +91,11 @@ namespace Chronicle.API.DTOs
         int Failed,
         List<string> Failures
     );
+
+    // ── Add from search ───────────────────────────────────────────────────────
+
+    public record AddFromSearchDto(
+        [Required] string ExternalId,
+        [Required] int MediaTypeId
+    );
 }

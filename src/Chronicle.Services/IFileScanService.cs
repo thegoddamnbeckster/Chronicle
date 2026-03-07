@@ -30,5 +30,17 @@ namespace Chronicle.Services
         /// Returns null if the item has no external IDs or no metadata provider is loaded.
         /// </summary>
         Task<Chronicle.Core.Models.MediaItem?> RefreshMetadataAsync(int mediaItemId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Queries the first available metadata provider for <paramref name="query"/> and
+        /// returns raw search results. Use this to power the "Add Media" search UI.
+        /// </summary>
+        Task<List<MetadataCandidate>> SearchMetadataAsync(string query, string mediaTypeHint, CancellationToken ct = default);
+
+        /// <summary>
+        /// Fetches full metadata for <paramref name="externalId"/>, creates (or updates) a
+        /// MediaItem, adds it to the user's library, and returns the saved item.
+        /// </summary>
+        Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(string externalId, int mediaTypeId, int userId, CancellationToken ct = default);
     }
 }

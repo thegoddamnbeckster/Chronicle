@@ -495,6 +495,98 @@ namespace Chronicle.Services
             return item;
         }
 
+        // ── Metadata search + direct add (for Add Media UI) ──────────────────────
+
+        public async Task<List<MetadataCandidate>> SearchMetadataAsync(
+            string query, string mediaTypeHint, CancellationToken ct = default)
+        {
+            var provider = _registry.GetMetadataProviders().FirstOrDefault()
+                ?? throw new InvalidOperationException(
+                    "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
+
+            var result = await provider.SearchAsync(query, mediaTypeHint, ct);
+
+            return result.Results
+                .Select(r => new MetadataCandidate(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, 0))
+                .ToList();
+        }
+
+        public async Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(
+            string externalId, int mediaTypeId, int userId, CancellationToken ct = default)
+        {
+            var provider = _registry.GetMetadataProviders().FirstOrDefault()
+                ?? throw new InvalidOperationException("No metadata provider is loaded.");
+
+            _ = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == mediaTypeId, ct)
+                ?? throw new InvalidOperationException($"Media type {mediaTypeId} not found.");
+
+            var meta = await provider.GetByIdAsync(externalId, ct);
+            var (source, extId) = ParseSuggestedExternalId(externalId);
+
+            // Re-use existing item if already imported
+            var existing = await _context.MediaExternalIds
+                .Include(e => e.MediaItem)
+                .FirstOrDefaultAsync(
+                    e => e.Source == source && e.ExternalId == extId
+                      && e.MediaItem!.MediaTypeId == mediaTypeId, ct);
+
+            Chronicle.Core.Models.MediaItem item;
+            if (existing?.MediaItem is not null)
+            {
+                item = existing.MediaItem;
+                item.Name           = meta.Title;
+                item.Year           = meta.Year;
+                item.Overview       = meta.Overview;
+                item.PosterUrl      = meta.PosterUrl;
+                item.RuntimeMinutes = meta.RuntimeMinutes;
+                item.MetadataJson   = SerializeMetadata(tmdbMeta: meta, existingJson: item.MetadataJson);
+                item.UpdatedAt      = DateTime.UtcNow;
+            }
+            else
+            {
+                item = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId    = mediaTypeId,
+                    Name           = meta.Title,
+                    Year           = meta.Year,
+                    Overview       = meta.Overview,
+                    PosterUrl      = meta.PosterUrl,
+                    RuntimeMinutes = meta.RuntimeMinutes,
+                    MetadataJson   = SerializeMetadata(tmdbMeta: meta),
+                    HierarchyLevel = 0,
+                    CreatedAt      = DateTime.UtcNow,
+                    UpdatedAt      = DateTime.UtcNow,
+                };
+                _context.MediaItems.Add(item);
+                await _context.SaveChangesAsync(ct);
+                await UpsertExternalIdAsync(item.Id, externalId, ct);
+            }
+
+            // Ensure library entry exists (default to PlanToWatch)
+            var libEntry = await _context.UserLibraries
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == item.Id, ct);
+
+            if (libEntry is null)
+            {
+                _context.UserLibraries.Add(new Chronicle.Core.Models.UserLibrary
+                {
+                    UserId      = userId,
+                    MediaItemId = item.Id,
+                    Status      = Chronicle.Core.Models.LibraryStatus.PlanToWatch,
+                    AddedAt     = DateTime.UtcNow,
+                    UpdatedAt   = DateTime.UtcNow,
+                });
+            }
+
+            await _context.SaveChangesAsync(ct);
+
+            // Return with navigation properties populated for DTO conversion
+            return await _context.MediaItems
+                .Include(m => m.MediaType)
+                .Include(m => m.ExternalIds)
+                .FirstAsync(m => m.Id == item.Id, ct);
+        }
+
         /// <summary>
         /// Parses Chronicle external-ID format into (source, externalId) for DB lookup.
         /// "movie:550"      → ("tmdb", "movie:550")
