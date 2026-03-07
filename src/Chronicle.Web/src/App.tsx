@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import Layout from '@/components/layout/Layout'
 import LoginPage from '@/pages/auth/LoginPage'
@@ -22,8 +23,14 @@ import PreferencesPage from '@/pages/preferences/PreferencesPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
-  if (loading) return null
-  return user ? <>{children}</> : <Navigate to="/login" replace />
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!loading && !user) navigate('/login', { replace: true })
+  }, [user, loading, navigate])
+
+  if (loading || !user) return null
+  return <>{children}</>
 }
 
 export default function App() {
