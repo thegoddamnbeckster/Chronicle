@@ -13,6 +13,26 @@ export interface AuthResponse {
 }
 
 // ── Media ─────────────────────────────────────────────────────────────────────
+export interface ExternalId {
+  source: string
+  externalId: string
+}
+
+export interface TmdbMeta {
+  rating: number | null
+  genres: string[]
+  cast: string[]
+  directors: string[]
+  posterUrl: string | null
+  backdropUrl: string | null
+}
+
+export interface FileScannerMeta {
+  filePath: string | null
+  localPosterPath: string | null
+  nfoPosterUrl: string | null
+}
+
 export interface MediaItem {
   id: number
   mediaTypeId: number
@@ -27,6 +47,9 @@ export interface MediaItem {
   number: number | null
   createdAt: string
   updatedAt: string
+  externalIds: ExternalId[]
+  tmdbMeta?: TmdbMeta | null
+  fileScannerMeta?: FileScannerMeta | null
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────

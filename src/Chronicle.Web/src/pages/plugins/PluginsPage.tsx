@@ -12,13 +12,47 @@ import {
   type PluginCatalogEntry,
 } from '@/api/plugins'
 import { useAuth } from '@/hooks/useAuth'
+import { useTheme, type Theme } from '@/contexts/ThemeContext'
 import styles from './PluginsPage.module.css'
+
+// ── Theme definitions ──────────────────────────────────────────────────────────
+
+interface ThemeDef {
+  key: Theme
+  label: string
+  description: string
+  swatches: [string, string, string]   // [bg, card, accent]
+}
+
+const THEMES: ThemeDef[] = [
+  {
+    key: 'light',
+    label: 'Light',
+    description: 'Clean light interface',
+    swatches: ['#f5f5f5', '#e8e8e8', '#6200ea'],
+  },
+  {
+    key: 'dark',
+    label: 'Dark',
+    description: 'Dark mode',
+    swatches: ['#121212', '#2a2a2a', '#bb86fc'],
+  },
+  {
+    key: 'navy-pink',
+    label: 'Navy & Pink',
+    description: 'Navy base with pink accent',
+    swatches: ['#1a1a2e', '#0f3460', '#e94560'],
+  },
+]
+
+// ── Plugin page types ──────────────────────────────────────────────────────────
 
 type HealthState = 'unknown' | 'checking' | true | false
 
 export default function PluginsPage() {
   const { user } = useAuth()
   const isAdmin = user?.isAdmin ?? false
+  const { theme: activeTheme, setTheme } = useTheme()
 
   const [plugins, setPlugins] = useState<PluginDto[]>([])
   const [loading, setLoading] = useState(true)
@@ -288,107 +322,155 @@ export default function PluginsPage() {
         </div>
       )}
 
-      {/* ── Plugin list ────────────────────────────────────────────── */}
-      {loading ? (
-        <p className={styles.loading}>Loading plugins…</p>
-      ) : plugins.length === 0 ? (
-        <div className={styles.empty}>
-          <p className={styles.emptyTitle}>No plugins installed</p>
-          <p className={styles.emptyHint}>
-            {isAdmin
-              ? 'Click "Install Plugin" above to add a metadata provider or widget plugin.'
-              : 'No plugins have been installed yet. Ask an administrator to install plugins.'}
-          </p>
-        </div>
-      ) : (
-        <div className={styles.pluginList}>
-          {plugins.map(plugin => {
-            const busy = busyIds.has(plugin.id)
-            const health = healthStates[plugin.id] ?? 'unknown'
-
+      {/* ── Themes section ────────────────────────────────────────── */}
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>Themes</h2>
+        <div className={styles.themeGrid}>
+          {THEMES.map(({ key, label, description, swatches }) => {
+            const isActive = activeTheme === key
             return (
-              <div key={plugin.id} className={styles.pluginCard}>
-                <div className={styles.cardHeader}>
-                  <div className={styles.cardLeft}>
-                    {plugin.iconUrl && (
-                      <img
-                        src={plugin.iconUrl}
-                        alt={`${plugin.name} icon`}
-                        className={styles.pluginIcon}
-                        onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+              <div
+                key={key}
+                className={`${styles.themeCard} ${isActive ? styles.themeCardActive : ''}`}
+              >
+                <div className={styles.themeCardLeft}>
+                  <div className={styles.swatchRow}>
+                    {swatches.map((color, i) => (
+                      <span
+                        key={i}
+                        className={styles.swatch}
+                        style={{ background: color }}
                       />
-                    )}
-                    <span className={styles.pluginName}>{plugin.name}</span>
-                    <span className={styles.versionBadge}>v{plugin.version}</span>
-                    <span className={`${styles.badge} ${plugin.isEnabled ? styles.enabled : styles.disabled}`}>
-                      {plugin.isEnabled ? 'Enabled' : 'Disabled'}
-                    </span>
-                    {health !== 'unknown' && (
-                      <span className={healthBadgeClass(health)}>
-                        {health === true ? '✓ Healthy' : health === false ? '✗ Unhealthy' : 'Checking…'}
-                      </span>
-                    )}
+                    ))}
+                  </div>
+                  <div>
+                    <div className={styles.themeName}>{label}</div>
+                    <div className={styles.themeDesc}>{description}</div>
                   </div>
                 </div>
-
-                <div className={styles.cardMeta}>
-                  by {plugin.author} · installed {formatDate(plugin.installedAt)}
-                </div>
-                <div className={styles.pluginId}>{plugin.pluginId}</div>
-
-                {plugin.description && (
-                  <p className={styles.description}>{plugin.description}</p>
-                )}
-
-                <div className={styles.actions}>
-                  {/* Enable / Disable toggle */}
-                  {isAdmin && (
-                    plugin.isEnabled ? (
+                <div className={styles.themeCardRight}>
+                  {isActive
+                    ? <span className={`${styles.badge} ${styles.enabled}`}>Active</span>
+                    : (
                       <button
-                        className={`${styles.actionBtn} ${styles.disableBtn}`}
-                        onClick={() => handleDisable(plugin.id)}
-                        disabled={busy}
+                        className={styles.activateBtn}
+                        onClick={() => setTheme(key)}
                       >
-                        Disable
-                      </button>
-                    ) : (
-                      <button
-                        className={`${styles.actionBtn} ${styles.enableBtn}`}
-                        onClick={() => handleEnable(plugin.id)}
-                        disabled={busy}
-                      >
-                        Enable
+                        Activate
                       </button>
                     )
-                  )}
-
-                  {/* Health check */}
-                  {plugin.isEnabled && (
-                    <button
-                      className={styles.actionBtn}
-                      onClick={() => handleHealthCheck(plugin.id)}
-                      disabled={busy || health === 'checking'}
-                    >
-                      {healthLabel(health)}
-                    </button>
-                  )}
-
-                  {/* Uninstall */}
-                  {isAdmin && (
-                    <button
-                      className={`${styles.actionBtn} ${styles.uninstallBtn}`}
-                      onClick={() => handleUninstall(plugin.id, plugin.name)}
-                      disabled={busy}
-                    >
-                      Uninstall
-                    </button>
-                  )}
+                  }
                 </div>
               </div>
             )
           })}
         </div>
-      )}
+      </div>
+
+      {/* ── Plugin list ────────────────────────────────────────────── */}
+      <div className={styles.section}>
+        <h2 className={styles.sectionTitle}>Installed Plugins</h2>
+        {loading ? (
+          <p className={styles.loading}>Loading plugins…</p>
+        ) : plugins.length === 0 ? (
+          <div className={styles.empty}>
+            <p className={styles.emptyTitle}>No plugins installed</p>
+            <p className={styles.emptyHint}>
+              {isAdmin
+                ? 'Click "Install Plugin" above to add a metadata provider or widget plugin.'
+                : 'No plugins have been installed yet. Ask an administrator to install plugins.'}
+            </p>
+          </div>
+        ) : (
+          <div className={styles.pluginList}>
+            {plugins.map(plugin => {
+              const busy = busyIds.has(plugin.id)
+              const health = healthStates[plugin.id] ?? 'unknown'
+
+              return (
+                <div key={plugin.id} className={styles.pluginCard}>
+                  <div className={styles.cardHeader}>
+                    <div className={styles.cardLeft}>
+                      {plugin.iconUrl && (
+                        <img
+                          src={plugin.iconUrl}
+                          alt={`${plugin.name} icon`}
+                          className={styles.pluginIcon}
+                          onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        />
+                      )}
+                      <span className={styles.pluginName}>{plugin.name}</span>
+                      <span className={styles.versionBadge}>v{plugin.version}</span>
+                      <span className={`${styles.badge} ${plugin.isEnabled ? styles.enabled : styles.disabled}`}>
+                        {plugin.isEnabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                      {health !== 'unknown' && (
+                        <span className={healthBadgeClass(health)}>
+                          {health === true ? '✓ Healthy' : health === false ? '✗ Unhealthy' : 'Checking…'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={styles.cardMeta}>
+                    by {plugin.author} · installed {formatDate(plugin.installedAt)}
+                  </div>
+                  <div className={styles.pluginId}>{plugin.pluginId}</div>
+
+                  {plugin.description && (
+                    <p className={styles.description}>{plugin.description}</p>
+                  )}
+
+                  <div className={styles.actions}>
+                    {/* Enable / Disable toggle */}
+                    {isAdmin && (
+                      plugin.isEnabled ? (
+                        <button
+                          className={`${styles.actionBtn} ${styles.disableBtn}`}
+                          onClick={() => handleDisable(plugin.id)}
+                          disabled={busy}
+                        >
+                          Disable
+                        </button>
+                      ) : (
+                        <button
+                          className={`${styles.actionBtn} ${styles.enableBtn}`}
+                          onClick={() => handleEnable(plugin.id)}
+                          disabled={busy}
+                        >
+                          Enable
+                        </button>
+                      )
+                    )}
+
+                    {/* Health check */}
+                    {plugin.isEnabled && (
+                      <button
+                        className={styles.actionBtn}
+                        onClick={() => handleHealthCheck(plugin.id)}
+                        disabled={busy || health === 'checking'}
+                      >
+                        {healthLabel(health)}
+                      </button>
+                    )}
+
+                    {/* Uninstall */}
+                    {isAdmin && (
+                      <button
+                        className={`${styles.actionBtn} ${styles.uninstallBtn}`}
+                        onClick={() => handleUninstall(plugin.id, plugin.name)}
+                        disabled={busy}
+                      >
+                        Uninstall
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

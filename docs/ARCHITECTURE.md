@@ -17,6 +17,7 @@ Chronicle is built as a self-hosted web application using modern, cross-platform
 3. **Privacy & Ownership** - User data stays on user's server
 4. **Safe Operations** - Automatic backups, rollback capability, safe mode
 5. **Cross-Platform** - Windows, Linux, macOS support
+6. **Lossless Ingestion** - Everything received is persisted; nothing silently discarded. Fields that don't map to first-class schema columns go into `metadata_json`, partitioned by source (e.g. `{"tmdb": {...}, "fileScanner": {...}}`). Data is never lost at the point of ingestion and can be re-processed later without a re-fetch.
 
 ---
 

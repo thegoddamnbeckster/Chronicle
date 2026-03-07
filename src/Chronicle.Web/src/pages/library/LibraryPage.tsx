@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library'
 import type { LibraryStatus } from '@/types'
@@ -54,14 +55,36 @@ export default function LibraryPage() {
       <div className={styles.grid}>
         {entries.map(entry => (
           <div key={entry.id} className={styles.card}>
-            <div className={styles.poster}>
-              {entry.mediaItem.posterUrl
-                ? <img src={entry.mediaItem.posterUrl} alt={entry.mediaItem.name} />
-                : <div className={styles.posterPlaceholder}>{entry.mediaItem.name.charAt(0)}</div>
-              }
-            </div>
+            <Link to={`/media/${entry.mediaItem.id}`} className={styles.posterLink}>
+              <div className={styles.poster}>
+                {entry.mediaItem.posterUrl
+                  ? (
+                    <img
+                      src={entry.mediaItem.posterUrl}
+                      alt={entry.mediaItem.name}
+                      onError={e => {
+                        const img = e.currentTarget
+                        img.style.display = 'none'
+                        const placeholder = img.nextElementSibling as HTMLElement | null
+                        if (placeholder) placeholder.style.display = 'flex'
+                      }}
+                    />
+                  )
+                  : null
+                }
+                <div
+                  className={styles.posterPlaceholder}
+                  style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
+                >
+                  {entry.mediaItem.name.charAt(0)}
+                </div>
+              </div>
+              <span className={styles.mediaTypeBadge}>{entry.mediaItem.mediaTypeName}</span>
+            </Link>
             <div className={styles.info}>
-              <div className={styles.name}>{entry.mediaItem.name}</div>
+              <Link to={`/media/${entry.mediaItem.id}`} className={styles.nameLink}>
+                <div className={styles.name}>{entry.mediaItem.name}</div>
+              </Link>
               {entry.mediaItem.year && <div className={styles.year}>{entry.mediaItem.year}</div>}
               <select
                 className={styles.statusSelect}

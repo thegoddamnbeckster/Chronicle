@@ -49,3 +49,9 @@ export async function updateMedia(id: number, payload: Partial<MediaItem>): Prom
 export async function deleteMedia(id: number): Promise<void> {
   await client.delete(`/media/${id}`)
 }
+
+export async function refreshMedia(id: number): Promise<MediaItem> {
+  const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/refresh`)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Refresh failed')
+  return data.data
+}

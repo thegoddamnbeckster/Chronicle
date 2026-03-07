@@ -10,7 +10,7 @@ export default function ScanPage() {
   const [path, setPath] = useState('')
   const [recursive, setRecursive] = useState(true)
   const [mediaTypeId, setMediaTypeId] = useState<number | ''>('')
-  const [threshold, setThreshold] = useState(80)
+  const [threshold, setThreshold] = useState(70)
   const [result, setResult] = useState<FileScanResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const jobIdRef = useRef<string | null>(null)
