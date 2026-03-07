@@ -25,6 +25,7 @@ function loadPorts(): { api: number; web: number } {
 }
 
 const ports = loadPorts()
+const webPort = process.env.PORT ? parseInt(process.env.PORT, 10) : ports.web
 
 export default defineConfig({
   plugins: [react()],
@@ -34,7 +35,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: ports.web,
+    port: webPort,
     strictPort: false,
     proxy: {
       '/api': {
