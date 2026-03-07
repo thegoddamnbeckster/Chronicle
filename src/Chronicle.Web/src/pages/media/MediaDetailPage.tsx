@@ -109,8 +109,8 @@ export default function MediaDetailPage() {
 
           {item.overview && <p className={styles.overview}>{item.overview}</p>}
 
-          {/* TMDB metadata box */}
-          {tmdbIds.length > 0 && (
+          {/* TMDB metadata box — always shown so Refresh is available even without metadata */}
+          {item && (
             <div className={styles.metadataBox}>
               <div className={styles.metadataBoxHeader}>
                 <div className={styles.metadataBoxBrand}>
@@ -171,16 +171,18 @@ export default function MediaDetailPage() {
                     </span>
                   </div>
                 )}
-                <div className={styles.tmdbRow}>
-                  <span className={styles.tmdbLabel}>ID</span>
-                  <div className={styles.externalIds}>
-                    {tmdbIds.map(eid => (
-                      <span key={eid.externalId} className={styles.externalIdChip}>
-                        <span className={styles.externalIdValue}>{eid.externalId}</span>
-                      </span>
-                    ))}
+                {tmdbIds.length > 0 && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>ID</span>
+                    <div className={styles.externalIds}>
+                      {tmdbIds.map(eid => (
+                        <span key={eid.externalId} className={styles.externalIdChip}>
+                          <span className={styles.externalIdValue}>{eid.externalId}</span>
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Image links — TMDB URLs only, no downloading */}
                 {(item.tmdbMeta?.posterUrl || item.tmdbMeta?.backdropUrl) && (
