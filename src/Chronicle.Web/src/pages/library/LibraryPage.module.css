@@ -45,11 +45,20 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transition: border-color 0.15s;
+}
+
+.card:hover { border-color: var(--accent); }
+
+.posterLink {
+  display: block;
+  text-decoration: none;
+  position: relative;
 }
 
 .poster { aspect-ratio: 2/3; background: var(--bg-card); overflow: hidden; }
 
-.poster img { width: 100%; height: 100%; object-fit: cover; }
+.poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 .posterPlaceholder {
   width: 100%;
@@ -61,6 +70,23 @@
   font-weight: 700;
   color: var(--text-muted);
 }
+
+.mediaTypeBadge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+}
+
+.nameLink { text-decoration: none; color: inherit; }
 
 .info { padding: 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 
