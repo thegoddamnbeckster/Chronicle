@@ -83,6 +83,15 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Database constraints** - Chronicle must monitor the size of the database.  If the database becomes too large for SQLite to handle, then Chronicle needs a way to migrate from sqlite to a more robust database system that is capable of handling the data.  Should the user wish to stay with sqlite, then Chronicle needs to provide options to free space in the database so that it can run.
 - **Database backups** - Chronicle should maintain 10 backups of it's database as a zip file.  The interface should expose the backups as downloads.  The user should be able to upload a backed up file and it should then be checked to ensure that it is a valid backup and then allow a restore to occur autmoatically through the interface.  The interface should then restart and reload itself using the new database as the current database file.
 
+--
+
+## Media
+
+- **Media Types** - The user may register any media type.  If there is a plugin available for that media type, Chronicle should ask to download something for it.
+- **Adding a plugin** - Adding a plugin that will handle a specific media type (or types) will register it automatically within Chronicle.  Chronicle will then use that plugin to scan existing media (if appropriate) and that metadata will then become available to Chronicle.
+- **Default media types** - Default media types will be Movies, Music and TV.  Plugins for these will be included as part of the Chronicle install, but they will be subject to updates as they become available.
+- **No Hardcoding** - Chronicle will not be hardcoded for any media types.  Specific UI for particular media types will not be added unless there is a plugin for that specific media type.  "Watches" on the dashboard, for example, should be tied to visual media only.  TV, Movies, etc.  "Watches" does not apply to music.  "Listens" would be more appropriate.
+
 ---
 
 ## Completed (recent)
