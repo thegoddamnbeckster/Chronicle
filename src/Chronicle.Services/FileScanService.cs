@@ -469,8 +469,19 @@ namespace Chronicle.Services
 
             if (extId is null)
             {
-                _log.Information("RefreshMetadata: item {Id} has no TMDB external ID", mediaItemId);
-                return item; // nothing to refresh, return as-is
+                // No external ID yet — try searching by name to find one
+                _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by name '{Name}'", mediaItemId, item.Name);
+                var hint = ToMediaTypeHint(item.MediaType?.Name ?? string.Empty);
+                var searchResult = await provider.SearchAsync(item.Name, hint, ct);
+                var top = searchResult.Results.FirstOrDefault();
+                if (top is null)
+                {
+                    _log.Information("RefreshMetadata: no TMDB match found for '{Name}'", item.Name);
+                    return item;
+                }
+                extId = top.ExternalId;
+                await UpsertExternalIdAsync(item.Id, extId, ct);
+                _log.Information("RefreshMetadata: matched '{Name}' → {ExtId}", item.Name, extId);
             }
 
             try
@@ -600,6 +611,15 @@ namespace Chronicle.Services
 
             // "movie:*" or "tv:*" — stored verbatim with source="tmdb"
             return ("tmdb", suggested);
+        }
+
+        /// <summary>Maps a Chronicle media type name to the hint expected by metadata providers.</summary>
+        private static string ToMediaTypeHint(string mediaTypeName)
+        {
+            var n = mediaTypeName.ToLowerInvariant();
+            if (n.Contains("tv") || n.Contains("show") || n.Contains("series")) return "tv";
+            if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";
+            return "movie";
         }
 
         // ── MetadataJson helpers ──────────────────────────────────────────────────
