@@ -7,7 +7,7 @@ import ActivityPanel from './ActivityPanel'
 import styles from './Layout.module.css'
 
 export default function Layout() {
-  const { user, logout } = useAuth()
+  const { user, loading, logout } = useAuth()
   const navigate = useNavigate()
 
   const { data: scanStatus } = useQuery({
@@ -15,6 +15,8 @@ export default function Layout() {
     queryFn: getScanStatus,
     staleTime: 60_000,
   })
+
+  if (loading) return null
 
   if (!user) {
     navigate('/login')

@@ -25,23 +25,10 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ---
 
-## Media Detail / File Metadata
-
-- **All file paths** — Display every file path associated with a media item in the metadata page, both internal (Chronicle's data store) and external (original path on disk). If multiple files exist (e.g. different cuts, multiple episodes), list them all.
-- **Image thumbnails** — Show all available images (poster, backdrop, etc.) as actual thumbnails in the metadata page rather than links. Local images stored with the media should also be shown inline.
-
----
-
 ## Lists
 
 - **Click-through to metadata** — When choosing items from a list, clicking an item should navigate to the same media detail page shown from the library.
 - **Editable list name** — Ability to rename a list inline or from a settings panel.
-
----
-
-## Add Media
-
-- **Multi-type support** — Add Media page is currently hardcoded to TV Show. Needs a type selector so the user can add Movies, TV Shows, Music, and any future media type dynamically from the API.
 
 ---
 
@@ -63,7 +50,8 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Media Detail
 
-- *(nothing pending beyond what was just shipped)*
+- **All file paths** — Display every file path associated with a media item in the metadata page, both internal (Chronicle's data store) and external (original path on disk). If multiple files exist (e.g. different cuts, multiple episodes), list them all.
+- **Image thumbnails** — Show all available images (poster, backdrop, etc.) as actual thumbnails in the metadata page rather than links. Local images stored with the media should also be shown inline.
 
 ---
 
@@ -83,3 +71,14 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - LibraryPage: broken image `onError` fallback
 - MediaDetailPage: external IDs / metadata source chips
 - MediaDetailPage: broken image `onError` fallback
+- LibraryPage: status filter, sort (9 options), per-section paging (6/24/100/all), Save as Preset, Manage Presets, Reset
+- LibraryPage: TMDB rating badge (★) on cards
+- Add Media: TMDB scraper-backed search with media type selector pills (Movies, TV Shows, Music + dynamic from API)
+- MediaDetailPage: TMDB metadata box always shown (not gated on existing external ID)
+- MediaDetailPage: Refresh works for items with no external ID — auto-searches TMDB by name, stores found ID, then fetches full metadata
+- MediaDetailPage: Refresh immediately updates poster and metadata in UI (`setQueryData`); also invalidates library so source list reflects new poster
+- MediaDetailPage: prev/next navigation bar when accessed from a list (library passes sorted+filtered item IDs as router state)
+- LibraryPage: card links pass sorted list + label as router nav state for prev/next traversal
+- Layout: loading guard — no longer redirects to /login during initial auth check (prevents redirect loop)
+- Background metadata refresh: `MetadataRefreshService` refreshes all library root items on a 24h staleness cycle; new items (`MetadataRefreshedAt = null`) processed first; 500ms delay between API calls; 30s startup delay
+- `MetadataRefreshedAt` column added to `media_items` (EF migration + model)
