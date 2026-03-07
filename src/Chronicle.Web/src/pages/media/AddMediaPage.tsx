@@ -114,7 +114,7 @@ export default function AddMediaPage() {
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder={selectedType ? `Search ${selectedType.displayName}s…` : 'Select a type above…'}
+          placeholder={selectedType ? `Search ${selectedType.displayName.replace(/s$/i, '')}s…` : 'Select a type above…'}
           disabled={!selectedType}
           autoFocus
         />
