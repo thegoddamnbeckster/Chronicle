@@ -25,6 +25,42 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ---
 
+## Media Detail / File Metadata
+
+- **All file paths** — Display every file path associated with a media item in the metadata page, both internal (Chronicle's data store) and external (original path on disk). If multiple files exist (e.g. different cuts, multiple episodes), list them all.
+- **Image thumbnails** — Show all available images (poster, backdrop, etc.) as actual thumbnails in the metadata page rather than links. Local images stored with the media should also be shown inline.
+
+---
+
+## Lists
+
+- **Click-through to metadata** — When choosing items from a list, clicking an item should navigate to the same media detail page shown from the library.
+- **Editable list name** — Ability to rename a list inline or from a settings panel.
+
+---
+
+## Add Media
+
+- **Multi-type support** — Add Media page is currently hardcoded to TV Show. Needs a type selector so the user can add Movies, TV Shows, Music, and any future media type dynamically from the API.
+
+---
+
+## Substack Plugin
+
+- Pull all subscribed podcasts and their episodes.
+- Track which episodes have been listened to and at what progress.
+- Locate a podcast from within Chronicle.
+- Scrobble source: if a podcast is played through the Substack website, report it to Chronicle as listened.
+
+---
+
+## User Management
+
+- Settings section for managing users: add new users, set/reset passwords, associate API keys to users.
+- Admin-only. First registered user is already admin.
+
+---
+
 ## Media Detail
 
 - *(nothing pending beyond what was just shipped)*
