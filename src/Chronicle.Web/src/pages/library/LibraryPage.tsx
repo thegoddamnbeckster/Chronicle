@@ -206,6 +206,11 @@ export default function LibraryPage() {
   const pageSize = PAGE_SIZES[prefs.pageSizePreset]
   const isDefault = prefsAreDefault(prefs)
 
+  const listNavState = useMemo(() => ({
+    listIds: sorted.map(e => e.mediaItem.id),
+    listLabel: prefs.statusFilter ? `Library – ${STATUS_LABELS[prefs.statusFilter]}` : 'Library',
+  }), [sorted, prefs.statusFilter])
+
   return (
     <div className={styles.page}>
 
@@ -349,7 +354,7 @@ export default function LibraryPage() {
             <div className={styles.grid}>
               {visible.map(entry => (
                 <div key={entry.id} className={styles.card}>
-                  <Link to={`/media/${entry.mediaItem.id}`} className={styles.posterLink}>
+                  <Link to={`/media/${entry.mediaItem.id}`} state={listNavState} className={styles.posterLink}>
                     <div className={styles.poster}>
                       {entry.mediaItem.posterUrl ? (
                         <img
@@ -372,7 +377,7 @@ export default function LibraryPage() {
                     </div>
                   </Link>
                   <div className={styles.info}>
-                    <Link to={`/media/${entry.mediaItem.id}`} className={styles.nameLink}>
+                    <Link to={`/media/${entry.mediaItem.id}`} state={listNavState} className={styles.nameLink}>
                       <div className={styles.name}>{entry.mediaItem.name}</div>
                     </Link>
                     <div className={styles.metaRow}>
