@@ -66,12 +66,22 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Adding and removing** - the user should be able to add new plugins based on plugins.json from github and remove them from the local Chronicle app.  Chronicle should immediately reflect the changes and add or remove menu items and UI elements depending on the plugin.
 - **plugin files** plugins are to be built in their own repos.  Finished files and their hashes are to be registered in plugins.json.
 - **Security ** When downloading files from github, Chronicle will confirm that the hash at github matches the downloaded file's hash.  Downloaded files will be treated as hostile until they can be verified as safe - we must ensure that the user's computer is never compromised.  Security is paramount.  If this means scanning the file with an external security service, then this should be an option.  Either locally or online.
+- **included plugins** - Filescanner must be included as part of the Chronicle install.  Filescanner will remain a separate project and repo, but the dll needs to be included with the main Chronicle installation.
 
 ---
 
 ## General UI
 
 - **No broken images** — All image elements need `onError` fallback to the letter-placeholder. Applied to: LibraryPage ✓, MediaDetailPage ✓. Audit remaining pages.
+
+---
+
+## Database
+
+- **Database Migration** - Chronicle will maintain a database schema build script.  Each version change of the database requires it's own unique database build script and upgrade and downgrade scripts for the previous version to the current version.  This will be updated with any new additions to the database as they're added.  As versions change, upgrade and downgrade scripts must also be provided for each version.  These will be version to version.  If version 3 adds a table, then if the user is at version 2, they will run the upgrade script to get to version 3.  If they desire to return to version 2, they will run the downgrade script.  Brand new installs, or when the user wishes to initialize their database, they would use the full schema build script.
+- **Maintenance** - Chronicle will maintain it's own database in the background automatically.  Rebuilding indexes, updating statistics...whatever needs to be maintained.  Chronicle will do this automatically.  The user may run these manually also, so this functionality needs to be exposed in a Database section under settings.  We must keep track of the last time that these maintenance steps were taken.
+- **Database constraints** - Chronicle must monitor the size of the database.  If the database becomes too large for SQLite to handle, then Chronicle needs a way to migrate from sqlite to a more robust database system that is capable of handling the data.  Should the user wish to stay with sqlite, then Chronicle needs to provide options to free space in the database so that it can run.
+- **Database backups** - Chronicle should maintain 10 backups of it's database as a zip file.  The interface should expose the backups as downloads.  The user should be able to upload a backed up file and it should then be checked to ensure that it is a valid backup and then allow a restore to occur autmoatically through the interface.  The interface should then restart and reload itself using the new database as the current database file.
 
 ---
 
