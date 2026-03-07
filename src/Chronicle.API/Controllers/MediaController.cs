@@ -14,11 +14,13 @@ namespace Chronicle.API.Controllers
     public class MediaController : ControllerBase
     {
         private readonly IMediaService _mediaService;
+        private readonly IFileScanService _fileScanService;
         private readonly ChronicleDbContext _context;
 
-        public MediaController(IMediaService mediaService, ChronicleDbContext context)
+        public MediaController(IMediaService mediaService, IFileScanService fileScanService, ChronicleDbContext context)
         {
             _mediaService = mediaService;
+            _fileScanService = fileScanService;
             _context = context;
         }
 
@@ -96,6 +98,22 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        [HttpPost("{id:int}/refresh")]
+        public async Task<IActionResult> RefreshMetadata(int id, CancellationToken ct)
+        {
+            try
+            {
+                var item = await _fileScanService.RefreshMetadataAsync(id, ct);
+                if (item == null)
+                    return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(502, ApiResponse<MediaItemDto>.Fail("REFRESH_FAILED", ex.Message));
+            }
+        }
+
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id)
         {
@@ -110,20 +128,49 @@ namespace Chronicle.API.Controllers
             }
         }
 
-        private static MediaItemDto ToDto(Chronicle.Core.Models.MediaItem m) => new(
-            m.Id,
-            m.MediaTypeId,
-            m.MediaType?.DisplayName ?? string.Empty,
-            m.ParentId,
-            m.Name,
-            m.Year,
-            m.Overview,
-            m.PosterUrl,
-            m.RuntimeMinutes,
-            m.HierarchyLevel,
-            m.Number,
-            m.CreatedAt,
-            m.UpdatedAt
-        );
+        private static MediaItemDto ToDto(Chronicle.Core.Models.MediaItem m)
+        {
+            var (tmdb, fs) = ParseMetaJson(m.MetadataJson);
+            return new MediaItemDto(
+                m.Id,
+                m.MediaTypeId,
+                m.MediaType?.DisplayName ?? string.Empty,
+                m.ParentId,
+                m.Name,
+                m.Year,
+                m.Overview,
+                m.PosterUrl,
+                m.RuntimeMinutes,
+                m.HierarchyLevel,
+                m.Number,
+                m.CreatedAt,
+                m.UpdatedAt,
+                m.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList(),
+                TmdbMeta: tmdb,
+                FileScannerMeta: fs
+            );
+        }
+
+        // Root wrapper for namespaced MetadataJson {"tmdb":{...},"fileScanner":{...}}
+        private sealed record MediaMetaJsonRoot(TmdbMetaDto? Tmdb, FileScannerMetaDto? FileScanner);
+
+        private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
+            new(System.Text.Json.JsonSerializerDefaults.Web);
+
+        private static (TmdbMetaDto? tmdb, FileScannerMetaDto? fs) ParseMetaJson(string? json)
+        {
+            if (json is null) return (null, null);
+            try
+            {
+                var root = System.Text.Json.JsonSerializer.Deserialize<MediaMetaJsonRoot>(json, _jsonOpts);
+                if (root?.Tmdb is not null)
+                    return (root.Tmdb, root.FileScanner);
+
+                // Old flat format fallback (rating/genres/cast/directors at root level)
+                var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
+                return (flat, null);
+            }
+            catch { return (null, null); }
+        }
     }
 }
