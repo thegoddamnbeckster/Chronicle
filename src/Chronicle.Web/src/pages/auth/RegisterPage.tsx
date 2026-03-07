@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { register } from '@/api/auth'
+import { useAuth } from '@/hooks/useAuth'
 import styles from './Auth.module.css'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
+  const { setUser } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [email, setEmail] = useState('')
@@ -16,8 +18,9 @@ export default function RegisterPage() {
     setError(null)
     setLoading(true)
     try {
-      const { token } = await register(username, password, email || undefined)
+      const { token, user } = await register(username, password, email || undefined)
       localStorage.setItem('chronicle_token', token)
+      setUser(user)
       navigate('/')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Registration failed')

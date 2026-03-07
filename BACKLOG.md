@@ -55,6 +55,12 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ---
 
+## Plugins
+
+- **Plugin catalog from GitHub** — Move the plugin catalog out of the hard-coded server array and into a `plugins.json` file stored in the Chronicle GitHub repo. The server should fetch this file at startup (or on demand) so new plugins can be listed by editing the file, without a code deploy. Users should be able to browse the catalog and choose which plugins to install.
+
+---
+
 ## General UI
 
 - **No broken images** — All image elements need `onError` fallback to the letter-placeholder. Applied to: LibraryPage ✓, MediaDetailPage ✓. Audit remaining pages.
@@ -62,6 +68,8 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 ---
 
 ## Completed (recent)
+
+- Auth: global `AuthContext` — auth state initialized once at app root; login/register call `setUser` directly so navigation to `/` never flashes blank; `RequireAuth` handles loading/redirect; Layout no longer needs auth checks
 
 - FileScanner confidence scores: Title(Year)=85, dotted=70, fallback=50
 - Default scan threshold lowered 80 → 70
