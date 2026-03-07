@@ -1,0 +1,164 @@
+.page { max-width: 760px; }
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.breadcrumbLink { color: var(--text-muted); text-decoration: none; }
+.breadcrumbLink:hover { color: var(--accent); }
+.breadcrumbSep { color: var(--border); }
+
+.heading { font-size: 22px; font-weight: 600; margin-bottom: 24px; }
+
+.section { margin-bottom: 32px; }
+
+.sectionHeader { margin-bottom: 16px; }
+
+.sectionTitle { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+
+.sectionDesc { font-size: 13px; color: var(--text-muted); }
+
+.inlineLink { color: var(--accent); text-decoration: none; }
+.inlineLink:hover { text-decoration: underline; }
+
+.empty {
+  padding: 24px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.empty strong { color: var(--text-secondary); }
+
+/* Preset list */
+.presetList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.presetRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.presetRow:last-child { border-bottom: none; }
+.presetRow:hover { background: var(--bg-card); }
+
+.presetReorder {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reorderBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 1px 4px;
+  cursor: pointer;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.reorderBtn:hover:not(:disabled) { color: var(--accent); }
+.reorderBtn:disabled { opacity: 0.25; cursor: default; }
+
+.presetInfo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.presetName {
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.presetName:hover { color: var(--accent); }
+
+.presetDesc {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editInput {
+  font-size: 14px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  width: 100%;
+}
+
+.editInput:focus { outline: none; }
+
+.presetActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.applyBtn {
+  padding: 4px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+
+.applyBtn:hover { background: var(--accent); color: white; }
+
+.editBtn {
+  padding: 4px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.editBtn:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+
+.deleteBtn {
+  padding: 4px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.deleteBtn:hover { border-color: var(--danger); color: var(--danger); }
