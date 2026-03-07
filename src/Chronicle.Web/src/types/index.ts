@@ -152,6 +152,17 @@ export interface MediaTypeOption {
   displayName: string
 }
 
+// ── Metadata search ───────────────────────────────────────────────────────────
+export interface MetadataSearchResult {
+  externalId: string
+  title: string
+  year: number | null
+  posterUrl: string | null
+  overview: string | null
+  rating: number | null
+  matchScore: number
+}
+
 // ── API ───────────────────────────────────────────────────────────────────────
 export interface ApiResponse<T> {
   success: boolean

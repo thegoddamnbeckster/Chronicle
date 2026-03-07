@@ -1,19 +1,183 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library'
-import type { LibraryStatus } from '@/types'
+import type { LibraryEntry, LibraryStatus } from '@/types'
 import styles from './LibraryPage.module.css'
 
-const STATUS_OPTIONS: LibraryStatus[] = ['Watching', 'PlanToWatch', 'Completed', 'Dropped', 'OnHold', 'Rewatching']
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const STATUS_OPTIONS: LibraryStatus[] = [
+  'Watching', 'PlanToWatch', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
+]
+
+const STATUS_LABELS: Record<LibraryStatus, string> = {
+  Watching: 'Watching',
+  PlanToWatch: 'Plan to Watch',
+  Completed: 'Completed',
+  Dropped: 'Dropped',
+  OnHold: 'On Hold',
+  Rewatching: 'Rewatching',
+}
+
+const PAGE_SIZES = { minimal: 6, medium: 24, maximal: 100, all: Infinity } as const
+type PageSizePreset = keyof typeof PAGE_SIZES
+
+type SortField = 'name' | 'year' | 'dateAdded' | 'rating' | 'status'
+type SortDir = 'asc' | 'desc'
+
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'name-asc',       label: 'Name A–Z' },
+  { value: 'name-desc',      label: 'Name Z–A' },
+  { value: 'year-desc',      label: 'Year (newest first)' },
+  { value: 'year-asc',       label: 'Year (oldest first)' },
+  { value: 'dateAdded-desc', label: 'Date Added (newest)' },
+  { value: 'dateAdded-asc',  label: 'Date Added (oldest)' },
+  { value: 'rating-desc',    label: 'My Rating (highest)' },
+  { value: 'rating-asc',     label: 'My Rating (lowest)' },
+  { value: 'status-asc',     label: 'Status A–Z' },
+]
+
+// ── Preferences (localStorage) ───────────────────────────────────────────────
+
+const PREFS_KEY = 'chronicle_library_prefs'
+const PRESETS_KEY = 'chronicle_library_presets'
+
+interface LibraryPrefs {
+  sortBy: SortField
+  sortDir: SortDir
+  statusFilter?: LibraryStatus
+  pageSizePreset: PageSizePreset
+}
+
+export interface LibraryPreset {
+  id: string
+  name: string
+  prefs: LibraryPrefs
+}
+
+const DEFAULT_PREFS: LibraryPrefs = {
+  sortBy: 'name',
+  sortDir: 'asc',
+  statusFilter: undefined,
+  pageSizePreset: 'medium',
+}
+
+function loadPrefs(): LibraryPrefs {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY)
+    if (raw) return { ...DEFAULT_PREFS, ...JSON.parse(raw) }
+  } catch { /* ignore */ }
+  return { ...DEFAULT_PREFS }
+}
+
+function savePrefs(prefs: LibraryPrefs) {
+  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
+}
+
+export function loadPresets(): LibraryPreset[] {
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch { /* ignore */ }
+  return []
+}
+
+export function savePresets(presets: LibraryPreset[]) {
+  localStorage.setItem(PRESETS_KEY, JSON.stringify(presets))
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function sortEntries(entries: LibraryEntry[], sortBy: SortField, sortDir: SortDir): LibraryEntry[] {
+  return [...entries].sort((a, b) => {
+    let cmp = 0
+    switch (sortBy) {
+      case 'name':      cmp = a.mediaItem.name.localeCompare(b.mediaItem.name); break
+      case 'year':      cmp = (a.mediaItem.year ?? 0) - (b.mediaItem.year ?? 0); break
+      case 'dateAdded': cmp = new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime(); break
+      case 'rating':    cmp = (a.userRating ?? 0) - (b.userRating ?? 0); break
+      case 'status':    cmp = a.status.localeCompare(b.status); break
+    }
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+}
+
+function groupByType(entries: LibraryEntry[]): Map<string, LibraryEntry[]> {
+  const map = new Map<string, LibraryEntry[]>()
+  for (const e of entries) {
+    const key = e.mediaItem.mediaTypeName
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(e)
+  }
+  return map
+}
+
+function prefsAreDefault(p: LibraryPrefs): boolean {
+  return (
+    p.sortBy === DEFAULT_PREFS.sortBy &&
+    p.sortDir === DEFAULT_PREFS.sortDir &&
+    p.statusFilter === DEFAULT_PREFS.statusFilter &&
+    p.pageSizePreset === DEFAULT_PREFS.pageSizePreset
+  )
+}
+
+function describePrefs(p: LibraryPrefs): string {
+  const parts: string[] = []
+  if (p.statusFilter) parts.push(STATUS_LABELS[p.statusFilter])
+  else parts.push('All statuses')
+  const sortLabel = SORT_OPTIONS.find(o => o.value === `${p.sortBy}-${p.sortDir}`)?.label ?? p.sortBy
+  parts.push(sortLabel)
+  parts.push(p.pageSizePreset === 'all' ? 'Show all' : `${PAGE_SIZES[p.pageSizePreset]} per section`)
+  return parts.join(' · ')
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
 
 export default function LibraryPage() {
-  const [filter, setFilter] = useState<LibraryStatus | undefined>(undefined)
+  const [prefs, setPrefsState] = useState<LibraryPrefs>(loadPrefs)
+  const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [showSavePreset, setShowSavePreset] = useState(false)
+  const [presetName, setPresetName] = useState('')
+
   const qc = useQueryClient()
 
-  const { data: entries = [], isLoading } = useQuery({
-    queryKey: ['library', filter],
-    queryFn: () => getLibrary(filter),
+  function setPrefs(updates: Partial<LibraryPrefs>) {
+    const next = { ...prefs, ...updates }
+    setPrefsState(next)
+    savePrefs(next)
+  }
+
+  function resetPrefs() {
+    setPrefsState({ ...DEFAULT_PREFS })
+    savePrefs({ ...DEFAULT_PREFS })
+    setExpanded({})
+  }
+
+  function applyPreset(preset: LibraryPreset) {
+    setPrefsState({ ...preset.prefs })
+    savePrefs({ ...preset.prefs })
+    setExpanded({})
+  }
+
+  function handleSavePreset() {
+    if (!presetName.trim()) return
+    const preset: LibraryPreset = {
+      id: crypto.randomUUID(),
+      name: presetName.trim(),
+      prefs: { ...prefs },
+    }
+    const next = [...presets, preset]
+    setPresets(next)
+    savePresets(next)
+    setShowSavePreset(false)
+    setPresetName('')
+  }
+
+  const { data: allEntries = [], isLoading } = useQuery({
+    queryKey: ['library', 'all'],
+    queryFn: () => getLibrary(undefined, 1, 500),
   })
 
   const updateMut = useMutation({
@@ -27,80 +191,233 @@ export default function LibraryPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
   })
 
+  const filtered = useMemo(() => {
+    if (!prefs.statusFilter) return allEntries
+    return allEntries.filter(e => e.status === prefs.statusFilter)
+  }, [allEntries, prefs.statusFilter])
+
+  const sorted = useMemo(
+    () => sortEntries(filtered, prefs.sortBy, prefs.sortDir),
+    [filtered, prefs.sortBy, prefs.sortDir],
+  )
+
+  const grouped = useMemo(() => groupByType(sorted), [sorted])
+  const mediaTypeNames = useMemo(() => Array.from(grouped.keys()).sort(), [grouped])
+  const pageSize = PAGE_SIZES[prefs.pageSizePreset]
+  const isDefault = prefsAreDefault(prefs)
+
   return (
     <div className={styles.page}>
-      <div className={styles.header}>
-        <h2 className={styles.heading}>Library</h2>
-        <div className={styles.filters}>
-          <button
-            className={filter === undefined ? styles.filterActive : styles.filter}
-            onClick={() => setFilter(undefined)}
-          >All</button>
-          {STATUS_OPTIONS.map(s => (
+
+      {/* ── Controls ── */}
+      <div className={styles.controls}>
+
+        {/* Heading row */}
+        <div className={styles.controlsTop}>
+          <h2 className={styles.heading}>Library</h2>
+          <div className={styles.controlsActions}>
+            {presets.length > 0 && (
+              <select
+                className={styles.presetSelect}
+                value=""
+                onChange={e => {
+                  const p = presets.find(x => x.id === e.target.value)
+                  if (p) applyPreset(p)
+                }}
+              >
+                <option value="" disabled>Apply preset…</option>
+                {presets.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+            {!showSavePreset && (
+              <button
+                className={styles.actionBtn}
+                onClick={() => { setShowSavePreset(true); setPresetName('') }}
+              >
+                Save as Preset
+              </button>
+            )}
+            {!isDefault && (
+              <button className={styles.resetBtn} onClick={resetPrefs}>Reset</button>
+            )}
+            <Link to="/settings/library" className={styles.settingsLink}>Manage Presets</Link>
+          </div>
+        </div>
+
+        {/* Save preset form */}
+        {showSavePreset && (
+          <div className={styles.savePresetRow}>
+            <span className={styles.savePresetDesc}>{describePrefs(prefs)}</span>
+            <input
+              className={styles.presetNameInput}
+              value={presetName}
+              onChange={e => setPresetName(e.target.value)}
+              placeholder="Preset name…"
+              autoFocus
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSavePreset()
+                if (e.key === 'Escape') setShowSavePreset(false)
+              }}
+            />
             <button
-              key={s}
-              className={filter === s ? styles.filterActive : styles.filter}
-              onClick={() => setFilter(s)}
-            >{s}</button>
-          ))}
+              className={styles.actionBtn}
+              onClick={handleSavePreset}
+              disabled={!presetName.trim()}
+            >Save</button>
+            <button className={styles.cancelBtn} onClick={() => setShowSavePreset(false)}>Cancel</button>
+          </div>
+        )}
+
+        {/* Status filter row */}
+        <div className={styles.filterRow}>
+          <span className={styles.rowLabel}>Status</span>
+          <div className={styles.filterBtns}>
+            <button
+              className={prefs.statusFilter === undefined ? styles.filterActive : styles.filter}
+              onClick={() => setPrefs({ statusFilter: undefined })}
+            >All</button>
+            {STATUS_OPTIONS.map(s => (
+              <button
+                key={s}
+                className={prefs.statusFilter === s ? styles.filterActive : styles.filter}
+                onClick={() => setPrefs({ statusFilter: s })}
+              >{STATUS_LABELS[s]}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Sort + page size row */}
+        <div className={styles.sortRow}>
+          <div className={styles.sortGroup}>
+            <span className={styles.rowLabel}>Sort</span>
+            <select
+              className={styles.sortSelect}
+              value={`${prefs.sortBy}-${prefs.sortDir}`}
+              onChange={e => {
+                const [sortBy, sortDir] = e.target.value.split('-') as [SortField, SortDir]
+                setPrefs({ sortBy, sortDir })
+              }}
+            >
+              {SORT_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.pageSizeGroup}>
+            <span className={styles.rowLabel}>Per section</span>
+            {(Object.keys(PAGE_SIZES) as PageSizePreset[]).map(preset => (
+              <button
+                key={preset}
+                className={prefs.pageSizePreset === preset ? styles.filterActive : styles.filter}
+                onClick={() => { setPrefs({ pageSizePreset: preset }); setExpanded({}) }}
+              >
+                {preset === 'minimal' ? 'Few (6)' : preset === 'medium' ? 'Medium (24)' : preset === 'maximal' ? 'Many (100)' : 'All'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
+      {/* ── Content ── */}
       {isLoading && <p className={styles.empty}>Loading…</p>}
 
-      {!isLoading && entries.length === 0 && (
+      {!isLoading && allEntries.length === 0 && (
         <p className={styles.empty}>No items in your library yet.</p>
       )}
 
-      <div className={styles.grid}>
-        {entries.map(entry => (
-          <div key={entry.id} className={styles.card}>
-            <Link to={`/media/${entry.mediaItem.id}`} className={styles.posterLink}>
-              <div className={styles.poster}>
-                {entry.mediaItem.posterUrl
-                  ? (
-                    <img
-                      src={entry.mediaItem.posterUrl}
-                      alt={entry.mediaItem.name}
-                      onError={e => {
-                        const img = e.currentTarget
-                        img.style.display = 'none'
-                        const placeholder = img.nextElementSibling as HTMLElement | null
-                        if (placeholder) placeholder.style.display = 'flex'
-                      }}
-                    />
-                  )
-                  : null
-                }
-                <div
-                  className={styles.posterPlaceholder}
-                  style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
-                >
-                  {entry.mediaItem.name.charAt(0)}
-                </div>
-              </div>
-              <span className={styles.mediaTypeBadge}>{entry.mediaItem.mediaTypeName}</span>
-            </Link>
-            <div className={styles.info}>
-              <Link to={`/media/${entry.mediaItem.id}`} className={styles.nameLink}>
-                <div className={styles.name}>{entry.mediaItem.name}</div>
-              </Link>
-              {entry.mediaItem.year && <div className={styles.year}>{entry.mediaItem.year}</div>}
-              <select
-                className={styles.statusSelect}
-                value={entry.status}
-                onChange={e => updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })}
-              >
-                {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <button
-                className={styles.removeBtn}
-                onClick={() => { if (confirm('Remove from library?')) removeMut.mutate(entry.id) }}
-              >Remove</button>
+      {!isLoading && allEntries.length > 0 && sorted.length === 0 && (
+        <p className={styles.empty}>No items match the current filter.</p>
+      )}
+
+      {mediaTypeNames.map(typeName => {
+        const typeEntries = grouped.get(typeName)!
+        const isExpanded = expanded[typeName] ?? false
+        const visible = pageSize === Infinity
+          ? typeEntries
+          : isExpanded ? typeEntries : typeEntries.slice(0, pageSize)
+        const hasMore = pageSize !== Infinity && typeEntries.length > pageSize
+
+        return (
+          <section key={typeName} className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h3 className={styles.sectionTitle}>{typeName}</h3>
+              <span className={styles.sectionCount}>{typeEntries.length}</span>
             </div>
-          </div>
-        ))}
-      </div>
+
+            <div className={styles.grid}>
+              {visible.map(entry => (
+                <div key={entry.id} className={styles.card}>
+                  <Link to={`/media/${entry.mediaItem.id}`} className={styles.posterLink}>
+                    <div className={styles.poster}>
+                      {entry.mediaItem.posterUrl ? (
+                        <img
+                          src={entry.mediaItem.posterUrl}
+                          alt={entry.mediaItem.name}
+                          onError={e => {
+                            const img = e.currentTarget
+                            img.style.display = 'none'
+                            const ph = img.nextElementSibling as HTMLElement | null
+                            if (ph) ph.style.display = 'flex'
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className={styles.posterPlaceholder}
+                        style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
+                      >
+                        {entry.mediaItem.name.charAt(0)}
+                      </div>
+                    </div>
+                  </Link>
+                  <div className={styles.info}>
+                    <Link to={`/media/${entry.mediaItem.id}`} className={styles.nameLink}>
+                      <div className={styles.name}>{entry.mediaItem.name}</div>
+                    </Link>
+                    <div className={styles.metaRow}>
+                      {entry.mediaItem.year && <span className={styles.year}>{entry.mediaItem.year}</span>}
+                      {entry.mediaItem.tmdbMeta?.rating != null && (
+                        <span className={styles.rating}>★ {entry.mediaItem.tmdbMeta.rating.toFixed(1)}</span>
+                      )}
+                    </div>
+                    <select
+                      className={styles.statusSelect}
+                      value={entry.status}
+                      onChange={e =>
+                        updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })
+                      }
+                    >
+                      {STATUS_OPTIONS.map(s => (
+                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                      ))}
+                    </select>
+                    <button
+                      className={styles.removeBtn}
+                      onClick={() => {
+                        if (confirm('Remove from library?')) removeMut.mutate(entry.id)
+                      }}
+                    >Remove</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {hasMore && (
+              <button
+                className={styles.showMoreBtn}
+                onClick={() =>
+                  setExpanded(prev => ({ ...prev, [typeName]: !prev[typeName] }))
+                }
+              >
+                {isExpanded
+                  ? `Show fewer`
+                  : `Show all ${typeEntries.length} items`}
+              </button>
+            )}
+          </section>
+        )
+      })}
     </div>
   )
 }
