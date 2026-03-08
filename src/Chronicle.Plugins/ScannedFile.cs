@@ -51,20 +51,32 @@ public class ScannedFile
     public string? EpisodeTitle { get; set; }
 
     // ── Music / Audio tags ──────────────────────────────────────────────────
+    /// <summary>Primary performer read from the file's embedded audio tags (e.g. ID3 TPE1).</summary>
     public string? AudioArtist { get; set; }
+    /// <summary>Album artist read from embedded tags (e.g. ID3 TPE2 / FLAC ALBUMARTIST).</summary>
     public string? AudioAlbumArtist { get; set; }
+    /// <summary>Album title read from embedded audio tags.</summary>
     public string? AudioAlbum { get; set; }
+    /// <summary>Track number within the album, read from embedded audio tags. Null when absent or zero.</summary>
     public int? AudioTrackNumber { get; set; }
+    /// <summary>Disc number within a multi-disc release, read from embedded audio tags. Null when absent or zero.</summary>
     public int? AudioDiscNumber { get; set; }
+    /// <summary>Release year read from embedded audio tags. Null when absent or zero.</summary>
     public int? AudioYear { get; set; }
+    /// <summary>Genre string read from embedded audio tags.</summary>
     public string? AudioGenre { get; set; }
 
     // ── Container / embedded video tags ────────────────────────────────────
+    /// <summary>Title embedded in the media container's tag (distinct from ParsedTitle, which is filename-derived).</summary>
     public string? ContainerTitle { get; set; }
+    /// <summary>Release year embedded in the media container's tag.</summary>
     public int? ContainerYear { get; set; }
+    /// <summary>Description or comment string embedded in the media container's tag.</summary>
     public string? ContainerDescription { get; set; }
 
     // ── Technical ───────────────────────────────────────────────────────────
+    /// <summary>Duration of the media file in whole seconds, as reported by the container. Null for formats TagLib# cannot probe.</summary>
     public int? DurationSeconds { get; set; }
+    /// <summary>Size of the media file in bytes at the time of scanning.</summary>
     public long? FileSizeBytes { get; set; }
 }
