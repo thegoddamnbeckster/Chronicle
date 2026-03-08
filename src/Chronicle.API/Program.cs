@@ -117,6 +117,14 @@ builder.Services.AddHttpClient("github", c =>
         "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
     c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
     c.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+
+    // Optional: authenticate with a GitHub token to raise the rate limit (5 000/hr vs 60/hr)
+    // and allow access to repos that require authentication.
+    // Configure via GitHub:Token in appsettings.Development.json (never commit that file).
+    var githubToken = builder.Configuration["GitHub:Token"];
+    if (!string.IsNullOrWhiteSpace(githubToken))
+        c.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", githubToken);
 });
 
 // ── Plugin system ─────────────────────────────────────────────────────────────
