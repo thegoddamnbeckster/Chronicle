@@ -39,5 +39,11 @@ public record PluginCatalogEntry(
     string AssetName,
     string DllName,
     string[] Tags,
-    bool IsInstalled = false
+    bool IsInstalled = false,
+    /// <summary>
+    /// Expected SHA-256 hex digest of the ZIP asset (lowercase, no prefix).
+    /// When set, Chronicle will reject the download if the computed hash does not match,
+    /// protecting against a compromised GitHub release or a man-in-the-middle attack.
+    /// </summary>
+    string? Sha256 = null
 );
