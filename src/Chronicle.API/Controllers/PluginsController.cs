@@ -478,7 +478,10 @@ public class PluginsController : ControllerBase
             {
                 if (asset.GetProperty("name").GetString() == entry.AssetName)
                 {
-                    downloadUrl = asset.GetProperty("browser_download_url").GetString() ?? string.Empty;
+                    // Use the API asset URL (not browser_download_url). When downloaded
+                    // with Accept: application/octet-stream the GitHub API redirects to a
+                    // presigned storage URL, which works even for repos that require auth.
+                    downloadUrl = asset.GetProperty("url").GetString() ?? string.Empty;
                     break;
                 }
             }
@@ -495,11 +498,19 @@ public class PluginsController : ControllerBase
         }
 
         // Download the ZIP archive
+        // Must request Accept: application/octet-stream so the GitHub API redirects to
+        // the actual binary rather than returning the asset metadata JSON.
         byte[] zipBytes;
         try
         {
             var github = _httpClientFactory.CreateClient("github");
-            zipBytes = await github.GetByteArrayAsync(downloadUrl, ct);
+            using var req = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+            req.Headers.Accept.ParseAdd("application/octet-stream");
+            using var resp = await github.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!resp.IsSuccessStatusCode)
+                return StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
+                    $"Failed to download the plugin archive (HTTP {(int)resp.StatusCode})."));
+            zipBytes = await resp.Content.ReadAsByteArrayAsync(ct);
         }
         catch (OperationCanceledException) { return StatusCode(504); }
         catch (HttpRequestException)
