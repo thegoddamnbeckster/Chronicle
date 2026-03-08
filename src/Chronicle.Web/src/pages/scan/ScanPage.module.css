@@ -439,3 +439,84 @@
   background: color-mix(in srgb, var(--status-danger-fg, #ef5350) 18%, transparent);
   color: var(--status-danger-fg, #ef5350);
 }
+
+/* ── Review step ──────────────────────────────────────────────────────────── */
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.secondaryBtn {
+  padding: 0.35rem 0.85rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.secondaryBtn:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.reviewHint {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  margin: 0 0 1rem;
+}
+
+.reviewList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.reviewRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.reviewRow:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--card-bg));
+}
+
+.reviewRowSkipped {
+  opacity: 0.45;
+}
+
+.reviewCheck {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.reviewInfo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.nfoTag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  flex-shrink: 0;
+}

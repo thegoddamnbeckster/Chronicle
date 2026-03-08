@@ -1,17 +1,12 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { getScanStatus, previewScan, identifyFiles, importApproved } from '@/api/scan'
+import { getScanStatus, previewScan, importDirect } from '@/api/scan'
 import { getMediaTypes } from '@/api/media'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
-import type {
-  ScannedFile,
-  FileIdentification,
-  MetadataCandidate,
-  MediaTypeOption,
-} from '@/types'
+import type { ScannedFile, MediaTypeOption } from '@/types'
 import styles from './ScanPage.module.css'
 
-type Step = 'configure' | 'preview' | 'identify' | 'review' | 'done'
+type Step = 'configure' | 'preview' | 'review' | 'done'
 
 export default function ScanPage() {
   // ── Configuration state ──────────────────────────────────────────────────
@@ -22,9 +17,8 @@ export default function ScanPage() {
   // ── Pipeline state ───────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>('configure')
   const [previewFiles, setPreviewFiles] = useState<ScannedFile[]>([])
-  const [identifications, setIdentifications] = useState<FileIdentification[]>([])
-  // Map of filePath → chosen externalId (undefined = skipped)
-  const [approvals, setApprovals] = useState<Record<string, string | undefined>>({})
+  // Set of file paths the user has unchecked (skipped). All checked by default.
+  const [skipped, setSkipped] = useState<Set<string>>(new Set())
   const [importResult, setImportResult] = useState<{ imported: number; failed: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -46,45 +40,30 @@ export default function ScanPage() {
     },
     onSuccess: (data) => {
       setPreviewFiles(data.files)
+      setSkipped(new Set())
       setError(null)
       setStep('preview')
     },
     onError: (err: Error) => setError(err.message),
   })
 
-  const identifyMut = useMutation({
-    mutationFn: () =>
-      identifyFiles({ files: previewFiles, mediaTypeId: Number(mediaTypeId) }),
-    onMutate: () => addJob(`Identifying ${previewFiles.length} files…`),
-    onSuccess: (data, _vars, jobId) => {
-      setIdentifications(data.results)
-      // Pre-select the top candidate for each file if score >= 60
-      const auto: Record<string, string | undefined> = {}
-      for (const id of data.results) {
-        const top = id.candidates[0]
-        auto[id.file.filePath] = top && top.matchScore >= 60 ? top.externalId : undefined
-      }
-      setApprovals(auto)
-      setError(null)
-      setStep('review')
-      completeJob(jobId as string, 'Identification complete')
-    },
-    onError: (err: Error, _vars, jobId) => {
-      setError(err.message)
-      failJob(jobId as string, err.message)
-    },
-  })
-
   const importMut = useMutation({
     mutationFn: () => {
-      const approved = Object.entries(approvals)
-        .filter(([, extId]) => extId !== undefined)
-        .map(([filePath, externalId]) => ({ filePath, externalId: externalId! }))
-      if (approved.length === 0) throw new Error('No files approved for import.')
-      return importApproved({ approvals: approved, mediaTypeId: Number(mediaTypeId) })
+      const toImport = previewFiles.filter((f) => !skipped.has(f.filePath))
+      if (toImport.length === 0) throw new Error('No files selected for import.')
+      return importDirect({
+        files: toImport.map((f) => ({
+          filePath: f.filePath,
+          parsedTitle: f.parsedTitle,
+          parsedYear: f.parsedYear ?? null,
+          suggestedExternalId: f.suggestedExternalId ?? null,
+          mediaTypeHint: f.mediaTypeHint,
+        })),
+        mediaTypeId: Number(mediaTypeId),
+      })
     },
     onMutate: () => {
-      const count = Object.values(approvals).filter(Boolean).length
+      const count = previewFiles.filter((f) => !skipped.has(f.filePath)).length
       return addJob(`Importing ${count} items…`)
     },
     onSuccess: (data, _vars, jobId) => {
@@ -100,12 +79,24 @@ export default function ScanPage() {
   })
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const selectCandidate = (filePath: string, externalId: string | undefined) => {
-    setApprovals((prev) => ({ ...prev, [filePath]: externalId }))
+  const toggleSkip = (filePath: string) => {
+    setSkipped((prev) => {
+      const next = new Set(prev)
+      next.has(filePath) ? next.delete(filePath) : next.add(filePath)
+      return next
+    })
   }
 
-  const approvedCount = Object.values(approvals).filter(Boolean).length
+  const approvedCount = previewFiles.filter((f) => !skipped.has(f.filePath)).length
   const canScan = path.trim() !== '' && mediaTypeId !== '' && !previewMut.isPending
+
+  function reset() {
+    setStep('configure')
+    setPreviewFiles([])
+    setSkipped(new Set())
+    setImportResult(null)
+    setError(null)
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -113,12 +104,7 @@ export default function ScanPage() {
       <div className={styles.header}>
         <h1 className={styles.title}>File Scan</h1>
         {step !== 'configure' && step !== 'done' && (
-          <button
-            className={styles.resetBtn}
-            onClick={() => { setStep('configure'); setPreviewFiles([]); setIdentifications([]); setApprovals({}); setError(null) }}
-          >
-            Start over
-          </button>
+          <button className={styles.resetBtn} onClick={reset}>Start over</button>
         )}
       </div>
 
@@ -190,10 +176,10 @@ export default function ScanPage() {
             <h2 className={styles.resultTitle}>Found {previewFiles.length} files</h2>
             <button
               className={styles.scanBtn}
-              disabled={previewFiles.length === 0 || identifyMut.isPending}
-              onClick={() => identifyMut.mutate()}
+              disabled={previewFiles.length === 0}
+              onClick={() => setStep('review')}
             >
-              {identifyMut.isPending ? 'Identifying…' : `Identify with TMDB →`}
+              Review {previewFiles.length} files →
             </button>
           </div>
 
@@ -220,31 +206,67 @@ export default function ScanPage() {
         </div>
       )}
 
-      {/* ── Step 3: Review / Approve ─────────────────────────────────────── */}
+      {/* ── Step 3: Review ───────────────────────────────────────────────── */}
       {step === 'review' && (
         <div className={styles.resultCard}>
           <div className={styles.resultHeader}>
             <h2 className={styles.resultTitle}>
-              Review matches — {approvedCount} of {identifications.length} approved
+              {approvedCount} of {previewFiles.length} selected for import
             </h2>
-            <button
-              className={styles.scanBtn}
-              disabled={approvedCount === 0 || importMut.isPending}
-              onClick={() => importMut.mutate()}
-            >
-              {importMut.isPending ? 'Importing…' : `Import ${approvedCount} items →`}
-            </button>
+            <div className={styles.headerActions}>
+              <button
+                className={styles.secondaryBtn}
+                onClick={() => setSkipped(new Set(previewFiles.map((f) => f.filePath)))}
+              >
+                Deselect all
+              </button>
+              <button
+                className={styles.secondaryBtn}
+                onClick={() => setSkipped(new Set())}
+              >
+                Select all
+              </button>
+              <button
+                className={styles.scanBtn}
+                disabled={approvedCount === 0 || importMut.isPending}
+                onClick={() => importMut.mutate()}
+              >
+                {importMut.isPending ? 'Importing…' : `Import ${approvedCount} items →`}
+              </button>
+            </div>
           </div>
 
-          <div className={styles.identifyList}>
-            {identifications.map((id) => (
-              <IdentifyRow
-                key={id.file.filePath}
-                identification={id}
-                selectedId={approvals[id.file.filePath]}
-                onSelect={(extId) => selectCandidate(id.file.filePath, extId)}
-              />
-            ))}
+          <p className={styles.reviewHint}>
+            All files are selected by default. Uncheck any you want to skip.
+            TMDB metadata will be downloaded automatically in the background after import.
+          </p>
+
+          <div className={styles.reviewList}>
+            {previewFiles.map((f) => {
+              const checked = !skipped.has(f.filePath)
+              return (
+                <label
+                  key={f.filePath}
+                  className={`${styles.reviewRow} ${!checked ? styles.reviewRowSkipped : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleSkip(f.filePath)}
+                    className={styles.reviewCheck}
+                  />
+                  <div className={styles.reviewInfo}>
+                    <span className={styles.identifyTitle}>{f.parsedTitle}</span>
+                    {f.parsedYear && <span className={styles.identifyYear}>({f.parsedYear})</span>}
+                    <span className={styles.confidence}>{f.confidenceScore}%</span>
+                    {f.suggestedExternalId && (
+                      <span className={styles.nfoTag} title="External ID from NFO sidecar">NFO</span>
+                    )}
+                  </div>
+                  <span className={styles.filePath}>{f.filePath}</span>
+                </label>
+              )
+            })}
           </div>
         </div>
       )}
@@ -253,6 +275,9 @@ export default function ScanPage() {
       {step === 'done' && importResult && (
         <div className={styles.resultCard}>
           <h2 className={styles.resultTitle}>Import complete</h2>
+          <p className={styles.reviewHint}>
+            TMDB metadata is being downloaded in the background. Check your library in a moment.
+          </p>
           <div className={styles.resultStats}>
             <div className={styles.stat}>
               <span className={styles.statValue}>{importResult.imported}</span>
@@ -263,10 +288,7 @@ export default function ScanPage() {
               <span className={styles.statLabel}>Failed</span>
             </div>
           </div>
-          <button
-            className={styles.scanBtn}
-            onClick={() => { setStep('configure'); setPreviewFiles([]); setIdentifications([]); setApprovals({}); setImportResult(null); setError(null) }}
-          >
+          <button className={styles.scanBtn} onClick={reset}>
             Scan another directory
           </button>
         </div>
@@ -275,105 +297,13 @@ export default function ScanPage() {
   )
 }
 
-// ── Sub-component: one file + its candidates ──────────────────────────────────
-
-interface IdentifyRowProps {
-  identification: FileIdentification
-  selectedId: string | undefined
-  onSelect: (externalId: string | undefined) => void
-}
-
-function IdentifyRow({ identification, selectedId, onSelect }: IdentifyRowProps) {
-  const { file, candidates } = identification
-
-  return (
-    <div className={styles.identifyRow}>
-      <div className={styles.identifyFile}>
-        <span className={styles.identifyTitle}>{file.parsedTitle}</span>
-        {file.parsedYear && <span className={styles.identifyYear}>({file.parsedYear})</span>}
-        <span className={styles.confidence}>{file.confidenceScore}%</span>
-        <span className={styles.filePath}>{file.filePath}</span>
-      </div>
-
-      {candidates.length === 0 ? (
-        <p className={styles.noMatch}>No matches found — file will be skipped.</p>
-      ) : (
-        <div className={styles.candidateList}>
-          {/* Skip option */}
-          <label className={`${styles.candidate} ${selectedId === undefined ? styles.candidateSelected : ''}`}>
-            <input
-              type="radio"
-              name={file.filePath}
-              checked={selectedId === undefined}
-              onChange={() => onSelect(undefined)}
-            />
-            <span className={styles.candidateSkip}>Skip this file</span>
-          </label>
-
-          {candidates.map((c) => (
-            <CandidateRow
-              key={c.externalId}
-              candidate={c}
-              filePath={file.filePath}
-              selected={selectedId === c.externalId}
-              onSelect={() => onSelect(c.externalId)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-interface CandidateRowProps {
-  candidate: MetadataCandidate
-  filePath: string
-  selected: boolean
-  onSelect: () => void
-}
-
-function CandidateRow({ candidate, filePath, selected, onSelect }: CandidateRowProps) {
-  return (
-    <label className={`${styles.candidate} ${selected ? styles.candidateSelected : ''}`}>
-      <input
-        type="radio"
-        name={filePath}
-        checked={selected}
-        onChange={onSelect}
-      />
-      {candidate.posterUrl && (
-        <img className={styles.poster} src={candidate.posterUrl} alt={candidate.title} loading="lazy" />
-      )}
-      <div className={styles.candidateInfo}>
-        <span className={styles.candidateTitle}>{candidate.title}</span>
-        {candidate.year && <span className={styles.candidateYear}>({candidate.year})</span>}
-        {candidate.rating != null && (
-          <span className={styles.candidateRating}>{candidate.rating.toFixed(1)}</span>
-        )}
-        {candidate.overview && (
-          <p className={styles.candidateOverview}>{candidate.overview.slice(0, 140)}{candidate.overview.length > 140 ? '…' : ''}</p>
-        )}
-      </div>
-      <span className={`${styles.matchScore} ${scoreClass(candidate.matchScore)}`}>
-        {candidate.matchScore}%
-      </span>
-    </label>
-  )
-}
-
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
-function stepLabel(s: 'configure' | 'preview' | 'review' | 'done'): string {
+function stepLabel(s: Step): string {
   return { configure: 'Configure', preview: 'Preview', review: 'Review', done: 'Done' }[s]
 }
 
-function isStepDone(current: Step, check: 'configure' | 'preview' | 'review' | 'done'): boolean {
-  const order: Step[] = ['configure', 'preview', 'identify', 'review', 'done']
+function isStepDone(current: Step, check: Step): boolean {
+  const order: Step[] = ['configure', 'preview', 'review', 'done']
   return order.indexOf(current) > order.indexOf(check)
-}
-
-function scoreClass(score: number): string {
-  if (score >= 80) return styles.scoreHigh
-  if (score >= 50) return styles.scoreMid
-  return styles.scoreLow
 }
