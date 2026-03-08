@@ -411,6 +411,17 @@ public class PluginsController : ControllerBase
             DllName:     "Chronicle.Plugin.TMDB.dll",
             Tags:        ["movies", "tv", "metadata"]
         ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.filescanner",
+            Name:        "File Scanner",
+            Description: "Scans local directories for media files. Parses NFO sidecars and filenames to extract title, year, and media type.",
+            Author:      "Chronicle",
+            IconUrl:     null,
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.FileScanner",
+            AssetName:   "Chronicle.Plugin.FileScanner.zip",
+            DllName:     "Chronicle.Plugin.FileScanner.dll",
+            Tags:        ["movies", "tv", "filescanner", "local"]
+        ),
     ];
 
     // ── GET /api/v1/plugins/catalog ───────────────────────────────────────────
