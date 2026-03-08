@@ -409,7 +409,20 @@ public class PluginsController : ControllerBase
             GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.TMDB",
             AssetName:   "Chronicle.Plugin.TMDB.zip",
             DllName:     "Chronicle.Plugin.TMDB.dll",
-            Tags:        ["movies", "tv", "metadata"]
+            Tags:        ["movies", "tv", "metadata"],
+            Sha256:      "600936c8c5e8bef83d2de4e51c29c975977feac57f80ed6d0d8fd0723b478480"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.filescanner",
+            Name:        "File Scanner",
+            Description: "Scans local directories for media files. Parses NFO sidecars and filenames to extract title, year, and media type.",
+            Author:      "Chronicle",
+            IconUrl:     null,
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.FileScanner",
+            AssetName:   "Chronicle.Plugin.FileScanner.zip",
+            DllName:     "Chronicle.Plugin.FileScanner.dll",
+            Tags:        ["movies", "tv", "filescanner", "local"],
+            Sha256:      "44cae749bcf896a07a305df1c9ffc2e39b15981d4653226f47f395e97c9f6c56"
         ),
     ];
 
@@ -493,6 +506,25 @@ public class PluginsController : ControllerBase
         {
             return StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
                 "Failed to download the plugin archive from GitHub."));
+        }
+
+        // ── SHA-256 integrity check ───────────────────────────────────────────
+        // The catalog entry carries the expected digest computed from the
+        // locally built and inspected ZIP.  Reject the download if it doesn't
+        // match — this catches a compromised GitHub release or a MITM attack.
+        if (!string.IsNullOrEmpty(entry.Sha256))
+        {
+            var actualHash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(zipBytes)
+            ).ToLowerInvariant();
+
+            if (actualHash != entry.Sha256.ToLowerInvariant())
+            {
+                return StatusCode(502, ApiResponse<object>.Fail("HASH_MISMATCH",
+                    $"Downloaded archive failed integrity check. " +
+                    $"Expected SHA-256 {entry.Sha256}, got {actualHash}. " +
+                    "The file may have been tampered with. Installation aborted."));
+            }
         }
 
         // Extract to {ContentRoot}/plugins/{pluginId}/
