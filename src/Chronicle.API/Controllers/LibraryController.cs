@@ -103,7 +103,8 @@ namespace Chronicle.API.Controllers
                 e.MediaItem.ParentId, e.MediaItem.Name, e.MediaItem.Year,
                 e.MediaItem.Overview, e.MediaItem.PosterUrl, e.MediaItem.RuntimeMinutes,
                 e.MediaItem.HierarchyLevel, e.MediaItem.Number,
-                e.MediaItem.CreatedAt, e.MediaItem.UpdatedAt);
+                e.MediaItem.CreatedAt, e.MediaItem.UpdatedAt,
+                e.MediaItem.ExternalIds.Select(x => new ExternalIdDto(x.Source, x.ExternalId)).ToList());
 
             return new LibraryEntryDto(
                 e.Id, e.UserId, mediaDto, e.Status.ToString(),

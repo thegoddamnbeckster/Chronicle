@@ -137,10 +137,20 @@ public class PluginService : IPluginService
         var plugin = await _db.Plugins.FindAsync(new object[] { id }, ct);
         if (plugin is null) return null;
 
-        var provider = _registry.GetMetadataProvider(plugin.PluginId);
-        if (provider is null) return null;
+        var loaded = _registry.GetLoadedPlugins().FirstOrDefault(lp => lp.DbId == id);
+        if (loaded is null) return null;
 
-        return await provider.HealthCheckAsync(ct);
+        // Try each plugin type in turn — first one with a health check wins
+        if (loaded.MetadataProviders.Count > 0)
+            return await loaded.MetadataProviders[0].HealthCheckAsync(ct);
+
+        if (loaded.FileScannerPlugins.Count > 0)
+            return await loaded.FileScannerPlugins[0].HealthCheckAsync(ct);
+
+        if (loaded.ImportProviders.Count > 0)
+            return await loaded.ImportProviders[0].HealthCheckAsync(ct);
+
+        return null;
     }
 
     private static IReadOnlyDictionary<string, string> DeserializeSettings(string? json)
