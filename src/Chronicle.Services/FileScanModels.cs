@@ -1,5 +1,7 @@
 namespace Chronicle.Services
 {
+    // ── Existing scan-and-import flow ─────────────────────────────────────────
+
     public record FileScanRequest(
         string Path,
         bool Recursive,
@@ -18,5 +20,71 @@ namespace Chronicle.Services
         string FilePath,
         string ParsedTitle,
         int ConfidenceScore
+    );
+
+    // ── Preview (scan without importing) ─────────────────────────────────────
+
+    public record ScanPreviewRequest(
+        string Path,
+        bool Recursive,
+        int MediaTypeId
+    );
+
+    public record ScannedFileResult(
+        string FilePath,
+        string ParsedTitle,
+        int? ParsedYear,
+        int ConfidenceScore,
+        string? SuggestedExternalId,
+        string MediaTypeHint
+    );
+
+    public record ScanPreview(
+        List<ScannedFileResult> Files
+    );
+
+    // ── Identify (match scanned files against a metadata provider) ────────────
+
+    public record IdentifyRequest(
+        List<ScannedFileResult> Files,
+        int MediaTypeId
+    );
+
+    public record MetadataCandidate(
+        string ExternalId,
+        string Title,
+        int? Year,
+        string? PosterUrl,
+        string? Overview,
+        double? Rating,
+        int MatchScore
+    );
+
+    public record FileIdentification(
+        ScannedFileResult File,
+        List<MetadataCandidate> Candidates
+    );
+
+    public record IdentifyResult(
+        List<FileIdentification> Results
+    );
+
+    // ── Import approved matches ───────────────────────────────────────────────
+
+    public record ImportApproval(
+        string FilePath,
+        string ExternalId
+    );
+
+    public record ImportApprovedRequest(
+        List<ImportApproval> Approvals,
+        int MediaTypeId,
+        int UserId
+    );
+
+    public record ImportApprovedSummary(
+        int Imported,
+        int Failed,
+        List<string> Failures
     );
 }

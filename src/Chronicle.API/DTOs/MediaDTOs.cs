@@ -23,6 +23,25 @@ namespace Chronicle.API.DTOs
         int? RuntimeMinutes
     );
 
+    public record ExternalIdDto(string Source, string ExternalId);
+
+    /// <summary>Rich metadata fetched from TMDB, stored in MetadataJson and surfaced here.</summary>
+    public record TmdbMetaDto(
+        double? Rating,
+        List<string> Genres,
+        List<string> Cast,
+        List<string> Directors,
+        string? PosterUrl,
+        string? BackdropUrl
+    );
+
+    /// <summary>Local file data discovered by the File Scanner plugin.</summary>
+    public record FileScannerMetaDto(
+        string? FilePath,
+        string? LocalPosterPath,
+        string? NfoPosterUrl
+    );
+
     public record MediaItemDto(
         int Id,
         int MediaTypeId,
@@ -36,7 +55,10 @@ namespace Chronicle.API.DTOs
         int HierarchyLevel,
         int? Number,
         DateTime CreatedAt,
-        DateTime UpdatedAt
+        DateTime UpdatedAt,
+        List<ExternalIdDto> ExternalIds,
+        TmdbMetaDto? TmdbMeta = null,
+        FileScannerMetaDto? FileScannerMeta = null
     );
 
     public record AddToLibraryRequestDto(
