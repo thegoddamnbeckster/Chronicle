@@ -62,6 +62,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Plugins
 
+- **Plugin catalog as child page** — Move the Browse Catalog UI out of the Plugins page and into its own dedicated child page under Plugins in the sidebar. The catalog should be a first-class navigation destination.
 - **Plugin catalog from GitHub** — Move the plugin catalog out of the hard-coded server array and into a `plugins.json` file stored in the Chronicle GitHub repo. The server should fetch this file at startup (or on demand) so new plugins can be listed by editing the file, without a code deploy. Users should be able to browse the catalog and choose which plugins to install.
 - **Adding and removing** - the user should be able to add new plugins based on plugins.json from github and remove them from the local Chronicle app.  Chronicle should immediately reflect the changes and add or remove menu items and UI elements depending on the plugin.
 - **plugin files** plugins are to be built in their own repos.  Finished files and their hashes are to be registered in plugins.json.
