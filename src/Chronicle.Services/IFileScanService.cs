@@ -32,6 +32,14 @@ namespace Chronicle.Services
         Task<Chronicle.Core.Models.MediaItem?> RefreshMetadataAsync(int mediaItemId, CancellationToken ct = default);
 
         /// <summary>
+        /// Imports scanned files directly into the library using only the data the file
+        /// scanner already collected (title, year, file path). No metadata provider call is
+        /// made — the background MetadataRefreshService will enrich each item with TMDB
+        /// (or another provider) data automatically after import.
+        /// </summary>
+        Task<ImportApprovedSummary> ImportDirectAsync(DirectImportRequest request, CancellationToken ct = default);
+
+        /// <summary>
         /// Queries the first available metadata provider for <paramref name="query"/> and
         /// returns raw search results. Use this to power the "Add Media" search UI.
         /// </summary>

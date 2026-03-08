@@ -235,6 +235,40 @@ public class FileScanController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Imports scanned files directly from scanner metadata (title, year, file path)
+    /// without calling a metadata provider first. Chronicle's background refresh
+    /// service will enrich each item with TMDB data automatically.
+    /// </summary>
+    [HttpPost("import-direct")]
+    public async Task<IActionResult> ImportDirect(
+        [FromBody] DirectImportRequestDto dto,
+        CancellationToken ct)
+    {
+        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                       ?? User.FindFirstValue("sub");
+        if (!int.TryParse(userIdClaim, out var userId))
+            return Unauthorized(ApiResponse<ImportSummaryDto>.Fail("UNAUTHORIZED", "User identity could not be determined."));
+
+        try
+        {
+            var files = dto.Files
+                .Select(f => new DirectImportFile(
+                    f.FilePath, f.ParsedTitle, f.ParsedYear, f.SuggestedExternalId, f.MediaTypeHint))
+                .ToList();
+
+            var request = new DirectImportRequest(files, dto.MediaTypeId, userId);
+            var summary = await _scanService.ImportDirectAsync(request, ct);
+
+            return Ok(ApiResponse<ImportSummaryDto>.Ok(
+                new ImportSummaryDto(summary.Imported, summary.Failed, summary.Failures)));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<ImportSummaryDto>.Fail("IMPORT_ERROR", ex.Message));
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private sealed record MediaMetaJsonRoot(TmdbMetaDto? Tmdb, FileScannerMetaDto? FileScanner);

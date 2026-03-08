@@ -55,6 +55,21 @@ export async function importApproved(payload: {
   return data.data
 }
 
+export async function importDirect(payload: {
+  files: {
+    filePath: string
+    parsedTitle: string
+    parsedYear: number | null
+    suggestedExternalId: string | null
+    mediaTypeHint: string
+  }[]
+  mediaTypeId: number
+}): Promise<ImportSummary> {
+  const { data } = await client.post<ApiResponse<ImportSummary>>('/scan/import-direct', payload)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Import failed')
+  return data.data
+}
+
 export async function searchMetadata(
   query: string,
   mediaTypeHint: string,

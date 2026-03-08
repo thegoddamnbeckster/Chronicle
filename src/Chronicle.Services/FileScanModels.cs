@@ -87,4 +87,24 @@ namespace Chronicle.Services
         int Failed,
         List<string> Failures
     );
+
+    // ── Direct import (scanner data only — no metadata provider required) ────────
+
+    /// <summary>
+    /// One file to import directly from scanner data, without a prior TMDB lookup.
+    /// The background MetadataRefreshService will enrich it with TMDB data automatically.
+    /// </summary>
+    public record DirectImportFile(
+        string FilePath,
+        string ParsedTitle,
+        int? ParsedYear,
+        string? SuggestedExternalId,
+        string MediaTypeHint
+    );
+
+    public record DirectImportRequest(
+        List<DirectImportFile> Files,
+        int MediaTypeId,
+        int UserId
+    );
 }
