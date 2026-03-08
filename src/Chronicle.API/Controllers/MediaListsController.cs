@@ -186,5 +186,6 @@ public class MediaListsController : ControllerBase
     private static MediaItemDto ToMediaDto(Chronicle.Core.Models.MediaItem m) =>
         new(m.Id, m.MediaTypeId, m.MediaType?.DisplayName ?? string.Empty,
             m.ParentId, m.Name, m.Year, m.Overview, m.PosterUrl,
-            m.RuntimeMinutes, m.HierarchyLevel, m.Number, m.CreatedAt, m.UpdatedAt);
+            m.RuntimeMinutes, m.HierarchyLevel, m.Number, m.CreatedAt, m.UpdatedAt,
+            m.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList());
 }
