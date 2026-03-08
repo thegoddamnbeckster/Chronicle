@@ -97,6 +97,13 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Completed (recent)
 
+- File Scan: direct import — removed mandatory TMDB identification step; files are imported immediately from scanner data (title, year, file path); TMDB metadata enrichment happens automatically in the background via MetadataRefreshService; `POST /api/v1/scan/import-direct` endpoint added
+- Plugin catalog: SHA-256 integrity verification on all catalog downloads — rejects ZIPs whose hash doesn't match the catalog entry; protects against compromised releases and MITM attacks
+- Plugin catalog: GitHub API asset URL download (replaces `browser_download_url`) — authenticated via optional `GitHub:Token` config; works for public and private repos
+- Plugin catalog: File Scanner plugin added — `chronicle.plugin.filescanner` available in Browse Catalog
+- FileScanner v1.0.0 and TMDB v1.0.0 plugins released to GitHub with ZIP assets
+- FileScanner README created
+
 - Auth: global `AuthContext` — auth state initialized once at app root; login/register call `setUser` directly so navigation to `/` never flashes blank; `RequireAuth` handles loading/redirect; Layout no longer needs auth checks
 
 - FileScanner confidence scores: Title(Year)=85, dotted=70, fallback=50
