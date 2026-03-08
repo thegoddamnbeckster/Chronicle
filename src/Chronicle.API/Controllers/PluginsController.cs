@@ -415,14 +415,14 @@ public class PluginsController : ControllerBase
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.filescanner",
             Name:        "File Scanner",
-            Description: "Scans local directories for media files. Parses NFO sidecars and filenames to extract title, year, and media type.",
+            Description: "Scans local directories for media files. Parses NFO sidecars and filenames to extract title, year, and media type. Supports TV hierarchy (SxxExx), audio files (MP3/FLAC/OGG/etc.), and embedded tag reading via TagLib#.",
             Author:      "Chronicle",
             IconUrl:     null,
             GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.FileScanner",
             AssetName:   "Chronicle.Plugin.FileScanner.zip",
             DllName:     "Chronicle.Plugin.FileScanner.dll",
-            Tags:        ["movies", "tv", "filescanner", "local"],
-            Sha256:      "44cae749bcf896a07a305df1c9ffc2e39b15981d4653226f47f395e97c9f6c56"
+            Tags:        ["movies", "tv", "audio", "filescanner", "local"],
+            Sha256:      "30f7996b2b3edd47f57084c1c774aa87d137fabdee50ffd3e0a185c2bef730e9"
         ),
     ];
 
