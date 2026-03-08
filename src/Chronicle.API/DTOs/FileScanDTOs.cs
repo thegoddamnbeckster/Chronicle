@@ -26,4 +26,76 @@ namespace Chronicle.API.DTOs
         bool Available,
         string[] SupportedMediaTypeNames
     );
+
+    // ── Preview ───────────────────────────────────────────────────────────────
+
+    public record ScanPreviewRequestDto(
+        [Required] string Path,
+        bool Recursive = true,
+        [Required] int MediaTypeId = 0
+    );
+
+    public record ScannedFileDto(
+        string FilePath,
+        string ParsedTitle,
+        int? ParsedYear,
+        int ConfidenceScore,
+        string? SuggestedExternalId,
+        string MediaTypeHint
+    );
+
+    public record ScanPreviewDto(
+        List<ScannedFileDto> Files
+    );
+
+    // ── Identify ──────────────────────────────────────────────────────────────
+
+    public record IdentifyRequestDto(
+        [Required] List<ScannedFileDto> Files,
+        [Required] int MediaTypeId
+    );
+
+    public record MetadataCandidateDto(
+        string ExternalId,
+        string Title,
+        int? Year,
+        string? PosterUrl,
+        string? Overview,
+        double? Rating,
+        int MatchScore
+    );
+
+    public record FileIdentificationDto(
+        ScannedFileDto File,
+        List<MetadataCandidateDto> Candidates
+    );
+
+    public record IdentifyResultDto(
+        List<FileIdentificationDto> Results
+    );
+
+    // ── Import approved ───────────────────────────────────────────────────────
+
+    public record ImportApprovalDto(
+        [Required] string FilePath,
+        [Required] string ExternalId
+    );
+
+    public record ImportRequestDto(
+        [Required] List<ImportApprovalDto> Approvals,
+        [Required] int MediaTypeId
+    );
+
+    public record ImportSummaryDto(
+        int Imported,
+        int Failed,
+        List<string> Failures
+    );
+
+    // ── Add from search ───────────────────────────────────────────────────────
+
+    public record AddFromSearchDto(
+        [Required] string ExternalId,
+        [Required] int MediaTypeId
+    );
 }
