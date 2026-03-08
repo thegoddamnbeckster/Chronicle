@@ -306,6 +306,110 @@ namespace Chronicle.Services
             return new ImportApprovedSummary(imported, failed, failures);
         }
 
+        // ── Direct import (no metadata provider) ─────────────────────────────────
+
+        public async Task<ImportApprovedSummary> ImportDirectAsync(
+            DirectImportRequest request, CancellationToken ct = default)
+        {
+            var mediaType = await _context.MediaTypes
+                .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
+                ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
+
+            var imported = 0;
+            var failed   = 0;
+            var failures = new List<string>();
+
+            foreach (var file in request.Files)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    MediaItem mediaItem;
+
+                    // If the scanner extracted an external ID (e.g. from an NFO file),
+                    // check whether we already have this item so we can update rather than duplicate.
+                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
+                    {
+                        var (source, extId) = ParseSuggestedExternalId(file.SuggestedExternalId);
+                        var existingExt = await _context.MediaExternalIds
+                            .Include(e => e.MediaItem)
+                            .FirstOrDefaultAsync(
+                                e => e.Source == source && e.ExternalId == extId
+                                  && e.MediaItem!.MediaTypeId == request.MediaTypeId, ct);
+
+                        if (existingExt?.MediaItem is not null)
+                        {
+                            // Update file-scanner metadata on the existing item and add to library.
+                            mediaItem = existingExt.MediaItem;
+                            mediaItem.MetadataJson = SerializeMetadata(
+                                scannerFilePath: file.FilePath, existingJson: mediaItem.MetadataJson);
+                            mediaItem.UpdatedAt = DateTime.UtcNow;
+                            await _context.SaveChangesAsync(ct);
+                            await UpsertLibraryEntryAsync(request.UserId, mediaItem.Id, ct);
+                            imported++;
+                            _log.Information("Updated (direct) existing '{Title}' from {FilePath}",
+                                mediaItem.Name, file.FilePath);
+                            continue;
+                        }
+                    }
+
+                    // Create a new MediaItem from scanner data alone.
+                    // Name + Year are enough for MetadataRefreshService to find and attach TMDB data.
+                    mediaItem = new MediaItem
+                    {
+                        MediaTypeId    = request.MediaTypeId,
+                        Name           = file.ParsedTitle,
+                        Year           = file.ParsedYear,
+                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
+                        HierarchyLevel = 0,
+                        CreatedAt      = DateTime.UtcNow,
+                        UpdatedAt      = DateTime.UtcNow,
+                    };
+                    _context.MediaItems.Add(mediaItem);
+                    await _context.SaveChangesAsync(ct);
+
+                    // Store any NFO-derived external ID so the refresh service can use it.
+                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
+                        await UpsertExternalIdAsync(mediaItem.Id, file.SuggestedExternalId, ct);
+
+                    await UpsertLibraryEntryAsync(request.UserId, mediaItem.Id, ct);
+
+                    imported++;
+                    _log.Information("Imported (direct) '{Title}' ({Year}) from {FilePath}",
+                        file.ParsedTitle, file.ParsedYear, file.FilePath);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    failures.Add($"{file.FilePath}: {ex.Message}");
+                    _log.Warning(ex, "Failed to direct-import {FilePath}", file.FilePath);
+                }
+            }
+
+            _log.Information("Direct import complete: {Imported} imported, {Failed} failed", imported, failed);
+            return new ImportApprovedSummary(imported, failed, failures);
+        }
+
+        /// <summary>Adds a UserLibrary entry for <paramref name="mediaItemId"/> if one doesn't already exist.</summary>
+        private async Task UpsertLibraryEntryAsync(int userId, int mediaItemId, CancellationToken ct)
+        {
+            var exists = await _context.UserLibraries
+                .AnyAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+            if (!exists)
+            {
+                _context.UserLibraries.Add(new UserLibrary
+                {
+                    UserId      = userId,
+                    MediaItemId = mediaItemId,
+                    Status      = LibraryStatus.Completed,
+                    AddedAt     = DateTime.UtcNow,
+                    CompletedAt = DateTime.UtcNow,
+                    UpdatedAt   = DateTime.UtcNow,
+                });
+                await _context.SaveChangesAsync(ct);
+            }
+        }
+
         // ── Helpers ───────────────────────────────────────────────────────────────
 
         private async Task<MediaItem?> FindExistingItemAsync(
@@ -640,11 +744,13 @@ namespace Chronicle.Services
         /// <summary>
         /// Builds the MetadataJson blob for a MediaItem.
         /// Pass <paramref name="existingJson"/> to preserve the other provider's data when only one changes.
+        /// Pass <paramref name="scannerFilePath"/> to record a plain file path without a full ScannedFile.
         /// </summary>
         private static string SerializeMetadata(
             Chronicle.Plugins.Models.MediaMetadata? tmdbMeta = null,
             string? existingJson = null,
-            Chronicle.Plugins.Models.ScannedFile? scannedFile = null)
+            Chronicle.Plugins.Models.ScannedFile? scannedFile = null,
+            string? scannerFilePath = null)
         {
             // Preserve existing filescanner section when refreshing TMDB only
             FileScannerMetaJson? fsData = null;
@@ -658,7 +764,7 @@ namespace Chronicle.Services
                 catch { /* old flat format — drop it */ }
             }
 
-            // Override with fresh scan data if provided
+            // Override with rich scan data if provided
             if (scannedFile is not null)
             {
                 fsData = new FileScannerMetaJson(
@@ -666,6 +772,10 @@ namespace Chronicle.Services
                     scannedFile.LocalPosterPath,
                     scannedFile.NfoPosterUrl);
             }
+
+            // Override with a plain file path (direct import without full ScannedFile)
+            if (scannerFilePath is not null)
+                fsData = new FileScannerMetaJson(scannerFilePath, null, null);
 
             var tmdbData = tmdbMeta is null ? null : new TmdbMetaJson(
                 tmdbMeta.Rating,

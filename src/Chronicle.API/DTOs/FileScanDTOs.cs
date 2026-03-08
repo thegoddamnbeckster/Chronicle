@@ -92,6 +92,21 @@ namespace Chronicle.API.DTOs
         List<string> Failures
     );
 
+    // ── Direct import (scanner data only) ────────────────────────────────────
+
+    public record DirectImportFileDto(
+        [Required] string FilePath,
+        [Required] string ParsedTitle,
+        int? ParsedYear,
+        string? SuggestedExternalId,
+        string MediaTypeHint = "movie"
+    );
+
+    public record DirectImportRequestDto(
+        [Required] List<DirectImportFileDto> Files,
+        [Required] int MediaTypeId
+    );
+
     // ── Add from search ───────────────────────────────────────────────────────
 
     public record AddFromSearchDto(
