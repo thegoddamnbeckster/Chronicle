@@ -48,6 +48,24 @@ export async function updatePluginSettings(
   await client.put(`/plugins/${id}/settings`, { settings })
 }
 
+export interface SettingDefinition {
+  key: string
+  label: string
+  type: 'string' | 'secret' | 'bool' | 'int'
+  required: boolean
+  description?: string
+  defaultValue?: string
+}
+
+export interface PluginSettingsSchema {
+  settings: SettingDefinition[]
+}
+
+export async function getPluginSettingsSchema(id: number): Promise<PluginSettingsSchema> {
+  const res = await client.get<{ data: PluginSettingsSchema }>(`/plugins/${id}/settings-schema`)
+  return res.data.data
+}
+
 export interface PluginCatalogEntry {
   pluginId: string
   name: string
