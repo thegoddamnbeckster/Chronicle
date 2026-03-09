@@ -157,13 +157,6 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   width: auto;
 }
 
-.tmdbFallback {
-  font-size: 12px;
-  font-weight: 700;
-  color: #01b4e4;
-  letter-spacing: 0.08em;
-}
-
 .refreshBtn {
   font-size: 12px;
   padding: 3px 10px;
