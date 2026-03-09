@@ -726,6 +726,76 @@ namespace Chronicle.Services
             return "movie";
         }
 
+        // ── Hierarchy grouping ────────────────────────────────────────────────────
+
+        internal record ShowGroup(string ShowTitle, Dictionary<int, SeasonGroup> Seasons);
+        internal record SeasonGroup(int SeasonNumber, List<Chronicle.Plugins.Models.ScannedFile> Episodes);
+
+        /// <summary>Exposed for unit testing only.</summary>
+        internal static List<ShowGroup> GroupByShowForTest(
+            IEnumerable<Chronicle.Plugins.Models.ScannedFile> files) => GroupByShow(files);
+
+        private static List<ShowGroup> GroupByShow(
+            IEnumerable<Chronicle.Plugins.Models.ScannedFile> files)
+        {
+            var shows = new Dictionary<string, ShowGroup>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var file in files)
+            {
+                var showTitle   = file.ShowTitle ?? file.ParsedTitle;
+                var seasonNum   = file.SeasonNumber ?? 0; // 0 = "Specials"
+
+                if (!shows.TryGetValue(showTitle, out var show))
+                {
+                    show = new ShowGroup(showTitle, new Dictionary<int, SeasonGroup>());
+                    shows[showTitle] = show;
+                }
+
+                if (!show.Seasons.TryGetValue(seasonNum, out var season))
+                {
+                    season = new SeasonGroup(seasonNum, new List<Chronicle.Plugins.Models.ScannedFile>());
+                    show.Seasons[seasonNum] = season;
+                }
+
+                season.Episodes.Add(file);
+            }
+
+            return shows.Values.ToList();
+        }
+
+        private async Task<MediaItem> FindOrCreateParentAsync(
+            string name,
+            int mediaTypeId,
+            int? parentId,
+            int hierarchyLevel,
+            CancellationToken ct)
+        {
+            // Case-insensitive match
+            var existing = await _context.MediaItems
+                .Where(m => m.MediaTypeId == mediaTypeId
+                         && m.ParentId == parentId
+                         && m.HierarchyLevel == hierarchyLevel
+                         && m.Name.ToLower() == name.ToLower())
+                .FirstOrDefaultAsync(ct);
+
+            if (existing is not null)
+                return existing;
+
+            var item = new MediaItem
+            {
+                Name           = name,
+                MediaTypeId    = mediaTypeId,
+                ParentId       = parentId,
+                HierarchyLevel = hierarchyLevel,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync(ct);
+            return item;
+        }
+
         // ── MetadataJson helpers ──────────────────────────────────────────────────
 
         private static readonly JsonSerializerOptions _metaJsonOpts =
