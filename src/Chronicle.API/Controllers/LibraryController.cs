@@ -35,7 +35,9 @@ namespace Chronicle.API.Controllers
         public async Task<IActionResult> GetLibrary(
             [FromQuery] string? status,
             [FromQuery] int page = 1,
-            [FromQuery] int perPage = 20)
+            [FromQuery] int perPage = 20,
+            [FromQuery] bool rootOnly = false,
+            CancellationToken ct = default)
         {
             var userId = GetUserId();
             LibraryStatus? parsedStatus = null;
@@ -47,7 +49,7 @@ namespace Chronicle.API.Controllers
                 parsedStatus = s;
             }
 
-            var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage);
+            var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, ct);
             return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(
                 entries.Select(ToDto).ToList(),
                 new PaginationInfo(page, perPage, null)));
@@ -90,6 +92,14 @@ namespace Chronicle.API.Controllers
             {
                 return NotFound(ApiResponse<object>.Fail("ENTRY_NOT_FOUND", ex.Message));
             }
+        }
+
+        [HttpDelete("all")]
+        public async Task<IActionResult> ClearAll(CancellationToken ct)
+        {
+            var userId = GetUserId();
+            var removed = await _libraryService.ClearAllAsync(userId, ct);
+            return Ok(ApiResponse<object>.Ok(new { removedItems = removed }));
         }
 
         private int GetUserId() =>
