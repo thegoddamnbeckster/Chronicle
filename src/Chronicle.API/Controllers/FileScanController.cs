@@ -277,6 +277,7 @@ public class FileScanController : ControllerBase
     private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
         new(System.Text.Json.JsonSerializerDefaults.Web);
 
+    // TODO: Extract ParseMetaJson and MediaMetaJsonRoot to a shared Chronicle.API helper to remove this duplication
     private static (TmdbMetaDto? tmdb, FileScannerMetaDto? fs) ParseMetaJson(string? json)
     {
         if (json is null) return (null, null);
@@ -285,7 +286,8 @@ public class FileScanController : ControllerBase
             var root = System.Text.Json.JsonSerializer.Deserialize<MediaMetaJsonRoot>(json, _jsonOpts);
             // Partitioned format: {"tmdb":{...},"fileScanner":{...}}
             // import-direct items have tmdb=null but fileScanner populated, so check either key.
-            if (root?.Tmdb is not null || root?.FileScanner is not null) return (root!.Tmdb, root.FileScanner);
+            if (root is not null && (root.Tmdb is not null || root.FileScanner is not null))
+                return (root.Tmdb, root.FileScanner);
             var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
             return (flat, null);
         }
