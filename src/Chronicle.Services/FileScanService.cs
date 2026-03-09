@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
-using Chronicle.Services.Exceptions;
+using Chronicle.Core.Exceptions;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
