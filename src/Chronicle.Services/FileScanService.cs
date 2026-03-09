@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Services.Exceptions;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -630,8 +631,9 @@ namespace Chronicle.Services
             var provider = _registry.GetMetadataProviders().FirstOrDefault();
             if (provider is null)
             {
-                _log.Warning("RefreshMetadata: no metadata provider loaded");
-                return null;
+                _log.Warning("RefreshMetadata: no metadata provider loaded for item {Id}", mediaItemId);
+                throw new NoProviderConfiguredException(
+                    "No metadata provider configured. Add an API key in Settings → Plugins.");
             }
 
             var item = await _context.MediaItems
