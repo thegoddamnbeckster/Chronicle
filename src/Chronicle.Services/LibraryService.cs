@@ -121,6 +121,10 @@ namespace Chronicle.Services
 
             var exclusiveIds = itemIds.Except(sharedIds).ToHashSet();
 
+            // NOTE: sharedIds only captures root-level sharing (UserLibrary stores root items only for
+            // hierarchical imports). Mid-level or leaf items manually added to a library are not protected.
+            // This is acceptable for the current import workflow.
+
             // Also gather all descendants of exclusive root items
             var allToDelete = new HashSet<int>(exclusiveIds);
             foreach (var rootId in exclusiveIds)
@@ -129,6 +133,8 @@ namespace Chronicle.Services
                 allToDelete.UnionWith(children);
             }
 
+            // NOTE: This delete sequence has a TOCTOU race if two users run ClearAll concurrently
+            // on items they share. For a single-user self-hosted deployment this is acceptable.
             _context.UserLibraries.RemoveRange(entries);
             var itemsToDelete = await _context.MediaItems
                 .Where(m => allToDelete.Contains(m.Id))
@@ -139,24 +145,26 @@ namespace Chronicle.Services
             return entries.Count;
         }
 
-        private async Task<List<int>> GetAllDescendantIdsAsync(int parentId, CancellationToken ct)
+        /// <summary>
+        /// Returns the IDs of all descendants of <paramref name="rootId"/> (not including rootId itself).
+        /// Uses level-by-level IN-clause batching to avoid N+1 queries.
+        /// </summary>
+        private async Task<List<int>> GetAllDescendantIdsAsync(int rootId, CancellationToken ct)
         {
+            // Fetch all descendants level by level using IN-clause batching
+            // (avoids N+1 queries by processing all nodes at each level together)
             var result = new List<int>();
-            var queue = new Queue<int>();
-            queue.Enqueue(parentId);
+            var currentLevel = new List<int> { rootId };
 
-            while (queue.Count > 0)
+            while (currentLevel.Count > 0)
             {
-                var current = queue.Dequeue();
                 var children = await _context.MediaItems
-                    .Where(m => m.ParentId == current)
+                    .Where(m => m.ParentId != null && currentLevel.Contains(m.ParentId!.Value))
                     .Select(m => m.Id)
                     .ToListAsync(ct);
-                foreach (var child in children)
-                {
-                    result.Add(child);
-                    queue.Enqueue(child);
-                }
+
+                result.AddRange(children);
+                currentLevel = children;
             }
 
             return result;
