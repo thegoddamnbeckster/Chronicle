@@ -349,13 +349,13 @@ namespace Chronicle.Services
             return new ImportApprovedSummary(imported, failed, failures);
         }
 
-        private async Task<(int imported, int skipped, List<string> failures)> ImportHierarchicalAsync(
+        private async Task<(int imported, int failed, List<string> failures)> ImportHierarchicalAsync(
             List<DirectImportFile> files,
             MediaType mediaType,
             int userId,
             CancellationToken ct)
         {
-            int imported = 0, skipped = 0;
+            int imported = 0, failed = 0;
             var failures = new List<string>();
 
             var showGroups = GroupByShow(files.Select(f => new Chronicle.Plugins.Models.ScannedFile
@@ -399,7 +399,7 @@ namespace Chronicle.Services
                                 if (!fileByPath.TryGetValue(ep.FilePath, out var file))
                                 {
                                     _log.Warning("Could not find original file for path {Path} — skipping", ep.FilePath);
-                                    skipped++;
+                                    failed++;
                                     continue;
                                 }
                                 var epName = ep.EpisodeTitle ?? ep.ParsedTitle;
@@ -413,7 +413,7 @@ namespace Chronicle.Services
                             {
                                 _log.Warning(ex, "Skipping episode {Path}", ep.FilePath);
                                 failures.Add($"{ep.FilePath}: {ex.Message}");
-                                skipped++;
+                                failed++;
                             }
                         }
                     }
@@ -422,11 +422,11 @@ namespace Chronicle.Services
                 {
                     _log.Warning(ex, "Skipping show group {Show}", show.ShowTitle);
                     failures.Add($"Show '{show.ShowTitle}': {ex.Message}");
-                    skipped += show.Seasons.Values.Sum(s => s.Episodes.Count);
+                    failed += show.Seasons.Values.Sum(s => s.Episodes.Count);
                 }
             }
 
-            return (imported, skipped, failures);
+            return (imported, failed, failures);
         }
 
         private async Task ImportSingleFileAsync(
