@@ -315,12 +315,13 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
 
-            int imported = 0, skipped = 0;
+            int imported = 0, failed = 0;
+            var failures = new List<string>();
 
             if (mediaType.HierarchyLevels >= 3)
             {
                 // Three-tier import: root (show/artist) → mid (season/album) → leaf (episode/track)
-                (imported, skipped) = await ImportHierarchicalAsync(
+                (imported, failed, failures) = await ImportHierarchicalAsync(
                     request.Files, mediaType, request.UserId, ct);
             }
             else
@@ -328,6 +329,7 @@ namespace Chronicle.Services
                 // Flat import: one library item per file (movies)
                 foreach (var file in request.Files)
                 {
+                    ct.ThrowIfCancellationRequested();
                     try
                     {
                         await ImportSingleFileAsync(file, mediaType.Id, parentId: null,
@@ -337,22 +339,24 @@ namespace Chronicle.Services
                     catch (Exception ex)
                     {
                         _log.Warning(ex, "Skipping file {Path}", file.FilePath);
-                        skipped++;
+                        failures.Add($"{file.FilePath}: {ex.Message}");
+                        failed++;
                     }
                 }
             }
 
-            _log.Information("Direct import complete: {Imported} imported, {Skipped} skipped", imported, skipped);
-            return new ImportApprovedSummary(imported, skipped, []);
+            _log.Information("Direct import complete: {Imported} imported, {Failed} failed", imported, failed);
+            return new ImportApprovedSummary(imported, failed, failures);
         }
 
-        private async Task<(int imported, int skipped)> ImportHierarchicalAsync(
+        private async Task<(int imported, int skipped, List<string> failures)> ImportHierarchicalAsync(
             List<DirectImportFile> files,
             MediaType mediaType,
             int userId,
             CancellationToken ct)
         {
             int imported = 0, skipped = 0;
+            var failures = new List<string>();
 
             var showGroups = GroupByShow(files.Select(f => new Chronicle.Plugins.Models.ScannedFile
             {
@@ -365,8 +369,12 @@ namespace Chronicle.Services
                 EpisodeTitle  = f.EpisodeTitle,
             }));
 
+            // Pre-index files by path for O(1) episode lookup (case-insensitive for Windows paths)
+            var fileByPath = files.ToDictionary(f => f.FilePath, StringComparer.OrdinalIgnoreCase);
+
             foreach (var show in showGroups)
             {
+                ct.ThrowIfCancellationRequested();
                 try
                 {
                     // Level 0 — root item (show / artist)
@@ -388,7 +396,12 @@ namespace Chronicle.Services
                             try
                             {
                                 // Find the original DirectImportFile to get all its fields
-                                var file = files.First(f => f.FilePath == ep.FilePath);
+                                if (!fileByPath.TryGetValue(ep.FilePath, out var file))
+                                {
+                                    _log.Warning("Could not find original file for path {Path} — skipping", ep.FilePath);
+                                    skipped++;
+                                    continue;
+                                }
                                 var epName = ep.EpisodeTitle ?? ep.ParsedTitle;
 
                                 await ImportSingleFileAsync(file with { ParsedTitle = epName },
@@ -399,6 +412,7 @@ namespace Chronicle.Services
                             catch (Exception ex)
                             {
                                 _log.Warning(ex, "Skipping episode {Path}", ep.FilePath);
+                                failures.Add($"{ep.FilePath}: {ex.Message}");
                                 skipped++;
                             }
                         }
@@ -407,11 +421,12 @@ namespace Chronicle.Services
                 catch (Exception ex)
                 {
                     _log.Warning(ex, "Skipping show group {Show}", show.ShowTitle);
+                    failures.Add($"Show '{show.ShowTitle}': {ex.Message}");
                     skipped += show.Seasons.Values.Sum(s => s.Episodes.Count);
                 }
             }
 
-            return (imported, skipped);
+            return (imported, skipped, failures);
         }
 
         private async Task ImportSingleFileAsync(
@@ -436,19 +451,15 @@ namespace Chronicle.Services
                 UpdatedAt      = DateTime.UtcNow,
             };
 
+            // TODO: Add deduplication check for flat (movie) re-imports (pre-Task7 ImportDirectAsync
+            // had an update-path that checked SuggestedExternalId before creating a new item).
+            // For now, re-importing the same movie directory creates duplicate MediaItems.
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct);
 
             if (!string.IsNullOrEmpty(file.SuggestedExternalId))
             {
-                var (source, externalId) = ParseSuggestedExternalId(file.SuggestedExternalId);
-                _context.MediaExternalIds.Add(new MediaExternalId
-                {
-                    MediaItemId = item.Id,
-                    Source      = source,
-                    ExternalId  = externalId,
-                });
-                await _context.SaveChangesAsync(ct);
+                await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
             }
 
             if (addLibraryEntry)
