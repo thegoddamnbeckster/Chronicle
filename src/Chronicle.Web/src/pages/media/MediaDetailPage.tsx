@@ -1,5 +1,5 @@
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
-import tmdbLogoFallback from '../../assets/tmdb-logo.svg'
+import tmdbLogoFallback from '@/assets/tmdb-logo.svg'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, refreshMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
@@ -146,7 +146,7 @@ export default function MediaDetailPage() {
                     src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb20f201ad3a6b4d0b6dcea5b0b95d9f3.svg"
                     alt="TMDB"
                     className={styles.tmdbLogo}
-                    onError={(e) => { (e.target as HTMLImageElement).src = tmdbLogoFallback; }}
+                    onError={(e) => { e.currentTarget.src = tmdbLogoFallback; }}
                   />
                 </div>
                 <button
