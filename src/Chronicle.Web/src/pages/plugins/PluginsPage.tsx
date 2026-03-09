@@ -8,8 +8,11 @@ import {
   healthCheckPlugin,
   listCatalog,
   installFromCatalog,
+  getPluginSettingsSchema,
+  updatePluginSettings,
   type PluginDto,
   type PluginCatalogEntry,
+  type PluginSettingsSchema,
 } from '@/api/plugins'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme, type Theme } from '@/contexts/ThemeContext'
@@ -71,6 +74,15 @@ export default function PluginsPage() {
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState('')
   const [installingId, setInstallingId] = useState<string | null>(null)
+
+  // Settings panel
+  const [configOpenId, setConfigOpenId] = useState<number | null>(null)
+  const [schema, setSchema] = useState<PluginSettingsSchema | null>(null)
+  const [schemaLoading, setSchemaLoading] = useState(false)
+  const [formValues, setFormValues] = useState<Record<string, string>>({})
+  const [secretVisible, setSecretVisible] = useState<Record<string, boolean>>({})
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     loadPlugins()
@@ -194,6 +206,61 @@ export default function PluginsPage() {
     } catch {
       setHealthStates(prev => ({ ...prev, [id]: false }))
     }
+  }
+
+  async function handleOpenConfig(id: number) {
+    if (configOpenId === id) {
+      // Toggle closed
+      setConfigOpenId(null)
+      setSchema(null)
+      setFormValues({})
+      setSaveError(null)
+      return
+    }
+    setConfigOpenId(id)
+    setSchema(null)
+    setFormValues({})
+    setSaveError(null)
+    setSchemaLoading(true)
+    try {
+      const s = await getPluginSettingsSchema(id)
+      setSchema(s)
+      // Pre-populate defaults for any fields that have them
+      const defaults: Record<string, string> = {}
+      for (const def of s.settings) {
+        if (def.defaultValue !== undefined) defaults[def.key] = def.defaultValue
+      }
+      setFormValues(defaults)
+    } catch {
+      setSchema({ settings: [] })
+    } finally {
+      setSchemaLoading(false)
+    }
+  }
+
+  async function handleSave(pluginId: number) {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await updatePluginSettings(pluginId, formValues)
+      setConfigOpenId(null)
+      setSchema(null)
+      setFormValues({})
+      // Refresh health state so badge updates after settings change
+      setHealthStates(prev => ({ ...prev, [pluginId]: 'unknown' }))
+    } catch {
+      setSaveError('Failed to save settings. Check the values and try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function handleFieldChange(key: string, value: string) {
+    setFormValues(prev => ({ ...prev, [key]: value }))
+  }
+
+  function toggleSecretVisible(key: string) {
+    setSecretVisible(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
   function healthLabel(state: HealthState): string {
@@ -387,6 +454,8 @@ export default function PluginsPage() {
               const busy = busyIds.has(plugin.id)
               const health = healthStates[plugin.id] ?? 'unknown'
 
+              const isConfigOpen = configOpenId === plugin.id
+
               return (
                 <div key={plugin.id} className={styles.pluginCard}>
                   <div className={styles.cardHeader}>
@@ -454,6 +523,17 @@ export default function PluginsPage() {
                       </button>
                     )}
 
+                    {/* Configure */}
+                    {isAdmin && (
+                      <button
+                        className={`${styles.actionBtn} ${isConfigOpen ? styles.configBtnActive : ''}`}
+                        onClick={() => handleOpenConfig(plugin.id)}
+                        disabled={busy}
+                      >
+                        {isConfigOpen ? 'Close Settings' : 'Configure'}
+                      </button>
+                    )}
+
                     {/* Uninstall */}
                     {isAdmin && (
                       <button
@@ -465,6 +545,132 @@ export default function PluginsPage() {
                       </button>
                     )}
                   </div>
+
+                  {/* ── Inline settings panel ── */}
+                  {isConfigOpen && (
+                    <div className={styles.settingsPanel}>
+                      {schemaLoading && (
+                        <p className={styles.loading}>Loading settings…</p>
+                      )}
+
+                      {!schemaLoading && schema && schema.settings.length === 0 && (
+                        <p className={styles.settingsEmpty}>
+                          This plugin has no configurable settings.
+                        </p>
+                      )}
+
+                      {!schemaLoading && schema && schema.settings.length > 0 && (
+                        <div className={styles.settingsForm}>
+                          {schema.settings.map(def => {
+                            const isTmdbApiKey =
+                              plugin.pluginId.toLowerCase().includes('tmdb') &&
+                              def.key === 'api_key'
+
+                            return (
+                              <div key={def.key} className={styles.fieldGroup}>
+                                <label className={styles.fieldLabel}>
+                                  {def.label}
+                                  {def.required && (
+                                    <span className={styles.requiredMark}> *</span>
+                                  )}
+                                </label>
+
+                                {def.type === 'bool' ? (
+                                  <div className={styles.checkboxRow}>
+                                    <input
+                                      type="checkbox"
+                                      id={`field-${plugin.id}-${def.key}`}
+                                      className={styles.checkboxInput}
+                                      checked={formValues[def.key] === 'true'}
+                                      onChange={e =>
+                                        handleFieldChange(def.key, e.target.checked ? 'true' : 'false')
+                                      }
+                                    />
+                                    <label
+                                      htmlFor={`field-${plugin.id}-${def.key}`}
+                                      className={styles.checkboxLabel}
+                                    >
+                                      {def.description ?? def.label}
+                                    </label>
+                                  </div>
+                                ) : def.type === 'secret' ? (
+                                  <div className={styles.secretRow}>
+                                    <input
+                                      type={secretVisible[def.key] ? 'text' : 'password'}
+                                      className={styles.settingsInput}
+                                      value={formValues[def.key] ?? ''}
+                                      onChange={e => handleFieldChange(def.key, e.target.value)}
+                                      placeholder={def.required ? 'Required' : 'Optional'}
+                                      autoComplete="off"
+                                    />
+                                    <button
+                                      type="button"
+                                      className={styles.showHideBtn}
+                                      onClick={() => toggleSecretVisible(def.key)}
+                                    >
+                                      {secretVisible[def.key] ? 'Hide' : 'Show'}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <input
+                                    type={def.type === 'int' ? 'number' : 'text'}
+                                    className={styles.settingsInput}
+                                    value={formValues[def.key] ?? ''}
+                                    onChange={e => handleFieldChange(def.key, e.target.value)}
+                                    placeholder={def.required ? 'Required' : 'Optional'}
+                                  />
+                                )}
+
+                                {def.type !== 'bool' && def.description && (
+                                  <p className={styles.fieldDesc}>{def.description}</p>
+                                )}
+
+                                {isTmdbApiKey && (
+                                  <p className={styles.fieldHint}>
+                                    Get a free API key at{' '}
+                                    <a
+                                      href="https://www.themoviedb.org/settings/api"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className={styles.fieldHintLink}
+                                    >
+                                      themoviedb.org/settings/api
+                                    </a>
+                                  </p>
+                                )}
+                              </div>
+                            )
+                          })}
+
+                          <div className={styles.settingsActions}>
+                            <button
+                              className={styles.submitBtn}
+                              onClick={() => handleSave(plugin.id)}
+                              disabled={saving}
+                            >
+                              {saving ? 'Saving…' : 'Save Settings'}
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.cancelBtn}
+                              onClick={() => {
+                                setConfigOpenId(null)
+                                setSchema(null)
+                                setFormValues({})
+                                setSaveError(null)
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+
+                          {saveError && (
+                            <p className={styles.errorMsg}>{saveError}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
