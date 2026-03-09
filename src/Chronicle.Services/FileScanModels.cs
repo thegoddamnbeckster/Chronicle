@@ -99,8 +99,13 @@ namespace Chronicle.Services
         string ParsedTitle,
         int? ParsedYear,
         string? SuggestedExternalId,
-        string MediaTypeHint
-    );
+        string MediaTypeHint,
+        // Hierarchy fields (populated by FileScanner v1.1.0+)
+        string? ShowTitle = null,
+        int? SeasonNumber = null,
+        int? EpisodeNumber = null,
+        string? EpisodeTitle = null,
+        int? AudioTrackNumber = null);
 
     public record DirectImportRequest(
         List<DirectImportFile> Files,

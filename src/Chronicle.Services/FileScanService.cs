@@ -315,79 +315,144 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
 
-            var imported = 0;
-            var failed   = 0;
-            var failures = new List<string>();
+            int imported = 0, skipped = 0;
 
-            foreach (var file in request.Files)
+            if (mediaType.HierarchyLevels >= 3)
             {
-                ct.ThrowIfCancellationRequested();
-                try
+                // Three-tier import: root (show/artist) → mid (season/album) → leaf (episode/track)
+                (imported, skipped) = await ImportHierarchicalAsync(
+                    request.Files, mediaType, request.UserId, ct);
+            }
+            else
+            {
+                // Flat import: one library item per file (movies)
+                foreach (var file in request.Files)
                 {
-                    MediaItem mediaItem;
-
-                    // If the scanner extracted an external ID (e.g. from an NFO file),
-                    // check whether we already have this item so we can update rather than duplicate.
-                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
+                    try
                     {
-                        var (source, extId) = ParseSuggestedExternalId(file.SuggestedExternalId);
-                        var existingExt = await _context.MediaExternalIds
-                            .Include(e => e.MediaItem)
-                            .FirstOrDefaultAsync(
-                                e => e.Source == source && e.ExternalId == extId
-                                  && e.MediaItem!.MediaTypeId == request.MediaTypeId, ct);
-
-                        if (existingExt?.MediaItem is not null)
-                        {
-                            // Update file-scanner metadata on the existing item and add to library.
-                            mediaItem = existingExt.MediaItem;
-                            mediaItem.MetadataJson = SerializeMetadata(
-                                scannerFilePath: file.FilePath, existingJson: mediaItem.MetadataJson);
-                            mediaItem.UpdatedAt = DateTime.UtcNow;
-                            await _context.SaveChangesAsync(ct);
-                            await UpsertLibraryEntryAsync(request.UserId, mediaItem.Id, ct);
-                            imported++;
-                            _log.Information("Updated (direct) existing '{Title}' from {FilePath}",
-                                mediaItem.Name, file.FilePath);
-                            continue;
-                        }
+                        await ImportSingleFileAsync(file, mediaType.Id, parentId: null,
+                            hierarchyLevel: 0, request.UserId, addLibraryEntry: true, ct);
+                        imported++;
                     }
-
-                    // Create a new MediaItem from scanner data alone.
-                    // Name + Year are enough for MetadataRefreshService to find and attach TMDB data.
-                    mediaItem = new MediaItem
+                    catch (Exception ex)
                     {
-                        MediaTypeId    = request.MediaTypeId,
-                        Name           = file.ParsedTitle,
-                        Year           = file.ParsedYear,
-                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
-                        HierarchyLevel = 0,
-                        CreatedAt      = DateTime.UtcNow,
-                        UpdatedAt      = DateTime.UtcNow,
-                    };
-                    _context.MediaItems.Add(mediaItem);
-                    await _context.SaveChangesAsync(ct);
-
-                    // Store any NFO-derived external ID so the refresh service can use it.
-                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
-                        await UpsertExternalIdAsync(mediaItem.Id, file.SuggestedExternalId, ct);
-
-                    await UpsertLibraryEntryAsync(request.UserId, mediaItem.Id, ct);
-
-                    imported++;
-                    _log.Information("Imported (direct) '{Title}' ({Year}) from {FilePath}",
-                        file.ParsedTitle, file.ParsedYear, file.FilePath);
-                }
-                catch (Exception ex)
-                {
-                    failed++;
-                    failures.Add($"{file.FilePath}: {ex.Message}");
-                    _log.Warning(ex, "Failed to direct-import {FilePath}", file.FilePath);
+                        _log.Warning(ex, "Skipping file {Path}", file.FilePath);
+                        skipped++;
+                    }
                 }
             }
 
-            _log.Information("Direct import complete: {Imported} imported, {Failed} failed", imported, failed);
-            return new ImportApprovedSummary(imported, failed, failures);
+            _log.Information("Direct import complete: {Imported} imported, {Skipped} skipped", imported, skipped);
+            return new ImportApprovedSummary(imported, skipped, []);
+        }
+
+        private async Task<(int imported, int skipped)> ImportHierarchicalAsync(
+            List<DirectImportFile> files,
+            MediaType mediaType,
+            int userId,
+            CancellationToken ct)
+        {
+            int imported = 0, skipped = 0;
+
+            var showGroups = GroupByShow(files.Select(f => new Chronicle.Plugins.Models.ScannedFile
+            {
+                FilePath      = f.FilePath,
+                ParsedTitle   = f.ParsedTitle,
+                ParsedYear    = f.ParsedYear,
+                ShowTitle     = f.ShowTitle,
+                SeasonNumber  = f.SeasonNumber,
+                EpisodeNumber = f.EpisodeNumber,
+                EpisodeTitle  = f.EpisodeTitle,
+            }));
+
+            foreach (var show in showGroups)
+            {
+                try
+                {
+                    // Level 0 — root item (show / artist)
+                    var rootItem = await FindOrCreateParentAsync(
+                        show.ShowTitle, mediaType.Id, parentId: null, hierarchyLevel: 0, ct);
+
+                    // Upsert library entry for root only
+                    await UpsertLibraryEntryAsync(userId, rootItem.Id, ct);
+
+                    foreach (var (seasonNum, season) in show.Seasons)
+                    {
+                        // Level 1 — mid item (season / album)
+                        var seasonName = seasonNum == 0 ? "Specials" : $"Season {seasonNum}";
+                        var midItem = await FindOrCreateParentAsync(
+                            seasonName, mediaType.Id, rootItem.Id, hierarchyLevel: 1, ct);
+
+                        foreach (var ep in season.Episodes)
+                        {
+                            try
+                            {
+                                // Find the original DirectImportFile to get all its fields
+                                var file = files.First(f => f.FilePath == ep.FilePath);
+                                var epName = ep.EpisodeTitle ?? ep.ParsedTitle;
+
+                                await ImportSingleFileAsync(file with { ParsedTitle = epName },
+                                    mediaType.Id, midItem.Id, hierarchyLevel: 2,
+                                    userId, addLibraryEntry: false, ct);
+                                imported++;
+                            }
+                            catch (Exception ex)
+                            {
+                                _log.Warning(ex, "Skipping episode {Path}", ep.FilePath);
+                                skipped++;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "Skipping show group {Show}", show.ShowTitle);
+                    skipped += show.Seasons.Values.Sum(s => s.Episodes.Count);
+                }
+            }
+
+            return (imported, skipped);
+        }
+
+        private async Task ImportSingleFileAsync(
+            DirectImportFile file,
+            int mediaTypeId,
+            int? parentId,
+            int hierarchyLevel,
+            int userId,
+            bool addLibraryEntry,
+            CancellationToken ct)
+        {
+            var item = new MediaItem
+            {
+                Name           = file.ParsedTitle,
+                MediaTypeId    = mediaTypeId,
+                ParentId       = parentId,
+                HierarchyLevel = hierarchyLevel,
+                Year           = file.ParsedYear,
+                Number         = file.EpisodeNumber ?? file.AudioTrackNumber,
+                MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync(ct);
+
+            if (!string.IsNullOrEmpty(file.SuggestedExternalId))
+            {
+                var (source, externalId) = ParseSuggestedExternalId(file.SuggestedExternalId);
+                _context.MediaExternalIds.Add(new MediaExternalId
+                {
+                    MediaItemId = item.Id,
+                    Source      = source,
+                    ExternalId  = externalId,
+                });
+                await _context.SaveChangesAsync(ct);
+            }
+
+            if (addLibraryEntry)
+                await UpsertLibraryEntryAsync(userId, item.Id, ct);
         }
 
         /// <summary>Adds a UserLibrary entry for <paramref name="mediaItemId"/> if one doesn't already exist.</summary>

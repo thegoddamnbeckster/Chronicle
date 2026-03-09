@@ -254,7 +254,8 @@ public class FileScanController : ControllerBase
         {
             var files = dto.Files
                 .Select(f => new DirectImportFile(
-                    f.FilePath, f.ParsedTitle, f.ParsedYear, f.SuggestedExternalId, f.MediaTypeHint))
+                    f.FilePath, f.ParsedTitle, f.ParsedYear, f.SuggestedExternalId, f.MediaTypeHint,
+                    f.ShowTitle, f.SeasonNumber, f.EpisodeNumber, f.EpisodeTitle, f.AudioTrackNumber))
                 .ToList();
 
             var request = new DirectImportRequest(files, dto.MediaTypeId, userId);
