@@ -742,8 +742,10 @@ namespace Chronicle.Services
 
             foreach (var file in files)
             {
-                var showTitle   = file.ShowTitle ?? file.ParsedTitle;
-                var seasonNum   = file.SeasonNumber ?? 0; // 0 = "Specials"
+                var showTitle = file.ShowTitle ?? file.ParsedTitle;
+                if (string.IsNullOrWhiteSpace(showTitle))
+                    continue; // skip files with no parseable title
+                var seasonNum = file.SeasonNumber ?? 0; // 0 = "Specials"
 
                 if (!shows.TryGetValue(showTitle, out var show))
                 {
@@ -770,12 +772,15 @@ namespace Chronicle.Services
             int hierarchyLevel,
             CancellationToken ct)
         {
-            // Case-insensitive match
+            var nameLower = name.ToLowerInvariant();
+
+            // NOTE: find-or-create has a TOCTOU race if scans run concurrently; acceptable until
+            // a unique index on (MediaTypeId, ParentId, HierarchyLevel, Name) is added.
             var existing = await _context.MediaItems
                 .Where(m => m.MediaTypeId == mediaTypeId
                          && m.ParentId == parentId
                          && m.HierarchyLevel == hierarchyLevel
-                         && m.Name.ToLower() == name.ToLower())
+                         && m.Name.ToLower() == nameLower)
                 .FirstOrDefaultAsync(ct);
 
             if (existing is not null)
