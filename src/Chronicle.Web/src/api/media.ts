@@ -1,3 +1,4 @@
+import axios from 'axios'
 import client from './client'
 import type { ApiResponse, MediaItem, MediaTypeOption } from '@/types'
 
@@ -51,7 +52,17 @@ export async function deleteMedia(id: number): Promise<void> {
 }
 
 export async function refreshMedia(id: number): Promise<MediaItem> {
-  const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/refresh`)
-  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Refresh failed')
-  return data.data
+  try {
+    const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/refresh`)
+    if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Refresh failed')
+    return data.data
+  } catch (err: unknown) {
+    if (axios.isAxiosError(err) && err.response?.status === 409) {
+      const apiResp = err.response.data as ApiResponse<unknown>
+      if (apiResp?.error?.code === 'NO_PROVIDER_CONFIGURED') {
+        throw new Error('No metadata provider configured. Add an API key in Settings → Plugins.')
+      }
+    }
+    throw err
+  }
 }

@@ -62,4 +62,9 @@ namespace Chronicle.Core.Exceptions
     {
         public DeviceAuthCodeAlreadyUsedException() : base("Device auth code has already been used.") { }
     }
+
+    public class NoProviderConfiguredException : ChronicleException
+    {
+        public NoProviderConfiguredException(string message) : base(message) { }
+    }
 }
