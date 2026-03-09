@@ -2,6 +2,7 @@ using Chronicle.API.DTOs;
 using Chronicle.Core.Exceptions;
 using Chronicle.Data;
 using Chronicle.Services;
+using Chronicle.Services.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -107,6 +108,10 @@ namespace Chronicle.API.Controllers
                 if (item == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
                 return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
+            }
+            catch (NoProviderConfiguredException ex)
+            {
+                return StatusCode(409, ApiResponse<MediaItemDto>.Fail("NO_PROVIDER_CONFIGURED", ex.Message));
             }
             catch (Exception ex)
             {

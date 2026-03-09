@@ -246,7 +246,9 @@ export default function MediaDetailPage() {
 
               {refreshMut.isError && (
                 <p className={styles.refreshError}>
-                  Refresh failed: {(refreshMut.error as Error).message}
+                  {(refreshMut.error as any)?.response?.status === 409
+                    ? 'No metadata provider configured. Add an API key in Settings → Plugins.'
+                    : `Refresh failed: ${(refreshMut.error as Error).message}`}
                 </p>
               )}
             </div>
