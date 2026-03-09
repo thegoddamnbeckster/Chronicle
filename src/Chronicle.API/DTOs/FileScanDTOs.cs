@@ -99,8 +99,12 @@ namespace Chronicle.API.DTOs
         [Required] string ParsedTitle,
         int? ParsedYear,
         string? SuggestedExternalId,
-        string MediaTypeHint = "movie"
-    );
+        string MediaTypeHint = "movie",
+        string? ShowTitle = null,
+        int? SeasonNumber = null,
+        int? EpisodeNumber = null,
+        string? EpisodeTitle = null,
+        int? AudioTrackNumber = null);
 
     public record DirectImportRequestDto(
         [Required] List<DirectImportFileDto> Files,
