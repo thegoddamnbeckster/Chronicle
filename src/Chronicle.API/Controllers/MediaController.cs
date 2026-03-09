@@ -167,8 +167,10 @@ namespace Chronicle.API.Controllers
             try
             {
                 var root = System.Text.Json.JsonSerializer.Deserialize<MediaMetaJsonRoot>(json, _jsonOpts);
-                if (root?.Tmdb is not null)
-                    return (root.Tmdb, root.FileScanner);
+                // Partitioned format: {"tmdb":{...},"fileScanner":{...}}
+                // import-direct items have tmdb=null but fileScanner populated, so check either key.
+                if (root?.Tmdb is not null || root?.FileScanner is not null)
+                    return (root!.Tmdb, root.FileScanner);
 
                 // Old flat format fallback (rating/genres/cast/directors at root level)
                 var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
