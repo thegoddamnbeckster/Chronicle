@@ -111,6 +111,8 @@ namespace Chronicle.Services
                 .Where(e => e.UserId == userId)
                 .ToListAsync(ct);
 
+            if (entries.Count == 0) return 0;
+
             // Find media items that are ONLY referenced by this user (no other user's library)
             var itemIds = entries.Select(e => e.MediaItemId).ToHashSet();
             var sharedIds = (await _context.UserLibraries
@@ -126,12 +128,9 @@ namespace Chronicle.Services
             // This is acceptable for the current import workflow.
 
             // Also gather all descendants of exclusive root items
+            var descendants = await GetAllDescendantIdsAsync(exclusiveIds, ct);
             var allToDelete = new HashSet<int>(exclusiveIds);
-            foreach (var rootId in exclusiveIds)
-            {
-                var children = await GetAllDescendantIdsAsync(rootId, ct);
-                allToDelete.UnionWith(children);
-            }
+            allToDelete.UnionWith(descendants);
 
             // NOTE: This delete sequence has a TOCTOU race if two users run ClearAll concurrently
             // on items they share. For a single-user self-hosted deployment this is acceptable.
@@ -146,15 +145,13 @@ namespace Chronicle.Services
         }
 
         /// <summary>
-        /// Returns the IDs of all descendants of <paramref name="rootId"/> (not including rootId itself).
+        /// Returns the IDs of all descendants of <paramref name="rootIds"/> (not including the root IDs themselves).
         /// Uses level-by-level IN-clause batching to avoid N+1 queries.
         /// </summary>
-        private async Task<List<int>> GetAllDescendantIdsAsync(int rootId, CancellationToken ct)
+        private async Task<List<int>> GetAllDescendantIdsAsync(IEnumerable<int> rootIds, CancellationToken ct)
         {
-            // Fetch all descendants level by level using IN-clause batching
-            // (avoids N+1 queries by processing all nodes at each level together)
             var result = new List<int>();
-            var currentLevel = new List<int> { rootId };
+            var currentLevel = rootIds.ToList();
 
             while (currentLevel.Count > 0)
             {
