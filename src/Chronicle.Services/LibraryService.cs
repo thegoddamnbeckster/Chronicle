@@ -41,7 +41,7 @@ namespace Chronicle.Services
             return entry;
         }
 
-        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20)
+        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, CancellationToken ct = default)
         {
             var q = _context.UserLibraries
                 .Include(l => l.MediaItem)
@@ -51,11 +51,14 @@ namespace Chronicle.Services
             if (status.HasValue)
                 q = q.Where(l => l.Status == status.Value);
 
+            if (rootOnly)
+                q = q.Where(l => l.MediaItem!.ParentId == null);
+
             return await q
                 .OrderByDescending(l => l.UpdatedAt)
                 .Skip((page - 1) * perPage)
                 .Take(perPage)
-                .ToListAsync();
+                .ToListAsync(ct);
         }
 
         public async Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId)
@@ -99,6 +102,64 @@ namespace Chronicle.Services
 
             _context.UserLibraries.Remove(entry);
             await _context.SaveChangesAsync();
+        }
+
+        public async Task<int> ClearAllAsync(int userId, CancellationToken ct = default)
+        {
+            // Remove all library entries for this user
+            var entries = await _context.UserLibraries
+                .Where(e => e.UserId == userId)
+                .ToListAsync(ct);
+
+            // Find media items that are ONLY referenced by this user (no other user's library)
+            var itemIds = entries.Select(e => e.MediaItemId).ToHashSet();
+            var sharedIds = (await _context.UserLibraries
+                .Where(e => e.UserId != userId && itemIds.Contains(e.MediaItemId))
+                .Select(e => e.MediaItemId)
+                .ToListAsync(ct))
+                .ToHashSet();
+
+            var exclusiveIds = itemIds.Except(sharedIds).ToHashSet();
+
+            // Also gather all descendants of exclusive root items
+            var allToDelete = new HashSet<int>(exclusiveIds);
+            foreach (var rootId in exclusiveIds)
+            {
+                var children = await GetAllDescendantIdsAsync(rootId, ct);
+                allToDelete.UnionWith(children);
+            }
+
+            _context.UserLibraries.RemoveRange(entries);
+            var itemsToDelete = await _context.MediaItems
+                .Where(m => allToDelete.Contains(m.Id))
+                .ToListAsync(ct);
+            _context.MediaItems.RemoveRange(itemsToDelete);
+
+            await _context.SaveChangesAsync(ct);
+            return entries.Count;
+        }
+
+        private async Task<List<int>> GetAllDescendantIdsAsync(int parentId, CancellationToken ct)
+        {
+            var result = new List<int>();
+            var queue = new Queue<int>();
+            queue.Enqueue(parentId);
+
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                var children = await _context.MediaItems
+                    .Where(m => m.ParentId == current)
+                    .Select(m => m.Id)
+                    .ToListAsync(ct);
+                foreach (var child in children)
+                {
+                    result.Add(child);
+                    queue.Enqueue(child);
+                }
+            }
+
+            return result;
         }
     }
 }
