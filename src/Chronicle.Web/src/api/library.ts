@@ -1,9 +1,9 @@
 import client from './client'
 import type { ApiResponse, LibraryEntry, LibraryStatus } from '@/types'
 
-export async function getLibrary(status?: LibraryStatus, page = 1, perPage = 500): Promise<LibraryEntry[]> {
+export async function getLibrary(status?: LibraryStatus, page = 1, perPage = 500, rootOnly = false): Promise<LibraryEntry[]> {
   const { data } = await client.get<ApiResponse<LibraryEntry[]>>('/library', {
-    params: { status, page, perPage },
+    params: { status, page, perPage, rootOnly },
   })
   return data.data ?? []
 }

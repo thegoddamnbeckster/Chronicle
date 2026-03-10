@@ -140,6 +140,14 @@ export default function LibraryPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [presetName, setPresetName] = useState('')
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem('chronicle.library.collapsed')
+      return stored ? JSON.parse(stored) : {}
+    } catch {
+      return {}
+    }
+  })
 
   const qc = useQueryClient()
 
@@ -161,6 +169,14 @@ export default function LibraryPage() {
     setExpanded({})
   }
 
+  function toggleSection(mediaTypeName: string) {
+    setCollapsedSections(prev => {
+      const next = { ...prev, [mediaTypeName]: !prev[mediaTypeName] }
+      localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
+      return next
+    })
+  }
+
   function handleSavePreset() {
     if (!presetName.trim()) return
     const preset: LibraryPreset = {
@@ -177,7 +193,7 @@ export default function LibraryPage() {
 
   const { data: allEntries = [], isLoading } = useQuery({
     queryKey: ['library', 'all'],
-    queryFn: () => getLibrary(undefined, 1, 500),
+    queryFn: () => getLibrary(undefined, 1, 500, true),
   })
 
   const updateMut = useMutation({
@@ -339,6 +355,7 @@ export default function LibraryPage() {
       {mediaTypeNames.map(typeName => {
         const typeEntries = grouped.get(typeName)!
         const isExpanded = expanded[typeName] ?? false
+        const isCollapsed = collapsedSections[typeName] ?? false
         const visible = pageSize === Infinity
           ? typeEntries
           : isExpanded ? typeEntries : typeEntries.slice(0, pageSize)
@@ -346,12 +363,21 @@ export default function LibraryPage() {
 
         return (
           <section key={typeName} className={styles.section}>
-            <div className={styles.sectionHeader}>
+            <div
+              className={styles.sectionHeader}
+              onClick={() => toggleSection(typeName)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && toggleSection(typeName)}
+            >
               <h3 className={styles.sectionTitle}>{typeName}</h3>
               <span className={styles.sectionCount}>{typeEntries.length}</span>
+              <span className={`${styles.chevron} ${isCollapsed ? styles.chevronCollapsed : ''}`}>
+                ▾
+              </span>
             </div>
 
-            <div className={styles.grid}>
+            {!isCollapsed && <div className={styles.grid}>
               {visible.map(entry => (
                 <div key={entry.id} className={styles.card}>
                   <Link to={`/media/${entry.mediaItem.id}`} state={listNavState} className={styles.posterLink}>
@@ -406,9 +432,9 @@ export default function LibraryPage() {
                   </div>
                 </div>
               ))}
-            </div>
+            </div>}
 
-            {hasMore && (
+            {!isCollapsed && hasMore && (
               <button
                 className={styles.showMoreBtn}
                 onClick={() =>
