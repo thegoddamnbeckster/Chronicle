@@ -192,7 +192,7 @@ export default function LibraryPage() {
   }
 
   const { data: allEntries = [], isLoading } = useQuery({
-    queryKey: ['library', 'all'],
+    queryKey: ['library', 'all', { rootOnly: true }],
     queryFn: () => getLibrary(undefined, 1, 500, true),
   })
 
@@ -368,7 +368,12 @@ export default function LibraryPage() {
               onClick={() => toggleSection(typeName)}
               role="button"
               tabIndex={0}
-              onKeyDown={(e) => e.key === 'Enter' && toggleSection(typeName)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  toggleSection(typeName)
+                }
+              }}
             >
               <h3 className={styles.sectionTitle}>{typeName}</h3>
               <span className={styles.sectionCount}>{typeEntries.length}</span>
