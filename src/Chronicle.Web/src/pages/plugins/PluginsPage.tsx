@@ -120,9 +120,7 @@ export default function PluginsPage() {
       setDllPath('')
       setShowInstall(false)
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
-        ?.response?.data?.error?.message
-      setInstallError(msg ?? 'Installation failed. Check the DLL path and try again.')
+      setInstallError(err instanceof Error ? err.message : 'Installation failed. Check the DLL path and try again.')
     } finally {
       setInstalling(false)
     }
@@ -154,9 +152,7 @@ export default function PluginsPage() {
       setPlugins(prev => [plugin, ...prev])
       setCatalog(prev => prev.map(e => e.pluginId === pluginId ? { ...e, isInstalled: true } : e))
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
-        ?.response?.data?.error?.message
-      alert(msg ?? 'Installation failed.')
+      alert(err instanceof Error ? err.message : 'Installation failed.')
     } finally {
       setInstallingId(null)
     }
@@ -192,8 +188,8 @@ export default function PluginsPage() {
     try {
       await uninstallPlugin(id)
       setPlugins(prev => prev.filter(p => p.id !== id))
-    } catch {
-      alert('Failed to uninstall plugin.')
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to uninstall plugin.')
     } finally {
       setBusy(id, false)
     }
