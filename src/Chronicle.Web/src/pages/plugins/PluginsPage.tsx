@@ -83,6 +83,7 @@ export default function PluginsPage() {
   const [secretVisible, setSecretVisible] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [schemaError, setSchemaError] = useState<string | null>(null)
 
   useEffect(() => {
     loadPlugins()
@@ -215,12 +216,15 @@ export default function PluginsPage() {
       setSchema(null)
       setFormValues({})
       setSaveError(null)
+      setSchemaError(null)
+      setSecretVisible({})
       return
     }
     setConfigOpenId(id)
     setSchema(null)
     setFormValues({})
     setSaveError(null)
+    setSchemaError(null)
     setSchemaLoading(true)
     try {
       const s = await getPluginSettingsSchema(id)
@@ -232,7 +236,7 @@ export default function PluginsPage() {
       }
       setFormValues(defaults)
     } catch {
-      setSchema({ settings: [] })
+      setSchemaError('Failed to load plugin settings. Please try again.')
     } finally {
       setSchemaLoading(false)
     }
@@ -553,13 +557,17 @@ export default function PluginsPage() {
                         <p className={styles.loading}>Loading settings…</p>
                       )}
 
-                      {!schemaLoading && schema && schema.settings.length === 0 && (
+                      {!schemaLoading && schemaError && (
+                        <p className={styles.errorMsg}>{schemaError}</p>
+                      )}
+
+                      {!schemaLoading && !schemaError && schema && schema.settings.length === 0 && (
                         <p className={styles.settingsEmpty}>
                           This plugin has no configurable settings.
                         </p>
                       )}
 
-                      {!schemaLoading && schema && schema.settings.length > 0 && (
+                      {!schemaLoading && !schemaError && schema && schema.settings.length > 0 && (
                         <div className={styles.settingsForm}>
                           {schema.settings.map(def => {
                             const isTmdbApiKey =
@@ -658,6 +666,8 @@ export default function PluginsPage() {
                                 setSchema(null)
                                 setFormValues({})
                                 setSaveError(null)
+                                setSchemaError(null)
+                                setSecretVisible({})
                               }}
                             >
                               Cancel
