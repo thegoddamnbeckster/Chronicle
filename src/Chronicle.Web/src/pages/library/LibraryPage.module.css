@@ -178,11 +178,30 @@
 
 .sectionHeader {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-bottom: 12px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  padding-top: 0.25rem;
+}
+
+.sectionHeader:hover {
+  opacity: 0.8;
+}
+
+.chevron {
+  margin-left: auto;
+  transition: transform 0.2s ease;
+  display: inline-block;
+  font-size: 1rem;
+  color: var(--text-muted, #888);
+}
+
+.chevronCollapsed {
+  transform: rotate(-90deg);
 }
 
 .sectionTitle { font-size: 16px; font-weight: 600; }
