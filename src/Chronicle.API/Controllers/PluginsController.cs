@@ -297,14 +297,19 @@ public class PluginsController : ControllerBase
 
     // ── GET /api/v1/plugins/{id}/health ───────────────────────────────────────
 
-    /// <summary>Runs the plugin's health check and returns the result.</summary>
+    /// <summary>
+    /// Runs the plugin's health check and returns the result.
+    /// Includes an optional FailureReason and IsCritical severity so the UI can render
+    /// a yellow badge for config issues and a red badge for unexpected failures.
+    /// </summary>
     [HttpGet("{id:int}/health")]
     public async Task<IActionResult> HealthCheck(int id)
     {
         var result = await _pluginService.HealthCheckAsync(id);
         if (result is null)
             return NotFound(ApiResponse<PluginHealthDto>.Fail("PLUGIN_NOT_LOADED", "Plugin not found or not loaded."));
-        return Ok(ApiResponse<PluginHealthDto>.Ok(new PluginHealthDto(result)));
+        return Ok(ApiResponse<PluginHealthDto>.Ok(
+            new PluginHealthDto(result.Healthy, result.FailureReason, result.IsCritical)));
     }
 
     // ── GET /api/v1/plugins/{id}/settings-schema ──────────────────────────────
