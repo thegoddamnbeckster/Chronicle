@@ -317,7 +317,29 @@
 
 .healthOk   { background: var(--status-success-bg); color: var(--status-success-fg); border: 1px solid var(--status-success-border); }
 .healthFail { background: var(--status-danger-bg);  color: var(--status-danger-fg);  border: 1px solid var(--status-danger-border); }
+.healthWarn { background: rgba(245, 158, 11, 0.12); color: #d97706;                  border: 1px solid rgba(245, 158, 11, 0.35); }
 .healthUnk  { background: var(--status-neutral-bg); color: var(--status-neutral-fg); border: 1px solid var(--status-neutral-border); }
+
+/* Health failure reason row — shown below the card header */
+.healthReasonRow {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin-bottom: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+}
+
+.healthReasonWarn {
+  background: rgba(245, 158, 11, 0.08);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.healthReasonCritical {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+  border: 1px solid var(--status-danger-border);
+}
 
 .cardMeta {
   font-size: 0.8rem;

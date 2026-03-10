@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import {
   getList,
   updateList,
@@ -15,7 +15,6 @@ import styles from './ListDetailPage.module.css'
 
 export default function ListDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const listId = Number(id)
 
   const [list, setList] = useState<MediaListDetailDto | null>(null)

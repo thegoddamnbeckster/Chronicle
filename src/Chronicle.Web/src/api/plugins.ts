@@ -36,9 +36,17 @@ export async function uninstallPlugin(id: number): Promise<void> {
   await client.delete(`/plugins/${id}`)
 }
 
-export async function healthCheckPlugin(id: number): Promise<boolean | null> {
-  const res = await client.get<{ data: { healthy: boolean | null } }>(`/plugins/${id}/health`)
-  return res.data.data.healthy
+export interface PluginHealthResult {
+  healthy: boolean | null
+  /** Human-readable reason the check failed. Null when healthy. */
+  failureReason: string | null
+  /** true = unexpected failure (red badge). false = config/auth issue (yellow badge). */
+  isCritical: boolean
+}
+
+export async function healthCheckPlugin(id: number): Promise<PluginHealthResult> {
+  const res = await client.get<{ data: PluginHealthResult }>(`/plugins/${id}/health`)
+  return res.data.data
 }
 
 export async function updatePluginSettings(
