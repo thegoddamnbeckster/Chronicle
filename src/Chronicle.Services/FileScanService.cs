@@ -12,12 +12,15 @@ namespace Chronicle.Services
     {
         private readonly ChronicleDbContext _context;
         private readonly IPluginRegistry _registry;
+        private readonly ScanProgressService _progress;
         private readonly ILogger _log = Log.ForContext<FileScanService>();
 
-        public FileScanService(ChronicleDbContext context, IPluginRegistry registry)
+        public FileScanService(ChronicleDbContext context, IPluginRegistry registry,
+            ScanProgressService progress)
         {
             _context = context;
             _registry = registry;
+            _progress = progress;
         }
 
         public async Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync()
@@ -129,8 +132,61 @@ namespace Chronicle.Services
             _log.Information("Preview scan of {Path} (recursive={Recursive}, mediaType={MediaType})",
                 request.Path, request.Recursive, mediaType.Name);
 
-            var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
+            // Build the ordered list of directories to scan.
+            // Scanning each directory non-recursively lets us report per-folder progress.
+            var dirsToScan = new List<string> { request.Path };
+            if (request.Recursive)
+            {
+                try
+                {
+                    dirsToScan.AddRange(
+                        Directory.GetDirectories(request.Path, "*", SearchOption.AllDirectories));
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "Failed to enumerate subdirectories of {Path} — " +
+                        "falling back to single recursive scan", request.Path);
+                    // Fall back: single call with recursive=true (no per-folder progress)
+                    _progress.Start(1);
+                    _progress.UpdateFolder(request.Path, 1, 0);
+                    var fallback = await scanner.ScanDirectoryAsync(request.Path, recursive: true, ct);
+                    _progress.Complete();
+                    return BuildPreview(fallback);
+                }
+            }
 
+            _progress.Start(dirsToScan.Count);
+            var allFiles = new List<Chronicle.Plugins.Models.ScannedFile>(capacity: 256);
+
+            for (int i = 0; i < dirsToScan.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var dir = dirsToScan[i];
+                _progress.UpdateFolder(dir, i + 1, allFiles.Count);
+
+                try
+                {
+                    var files = await scanner.ScanDirectoryAsync(dir, recursive: false, ct);
+                    allFiles.AddRange(files);
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "Skipping directory {Dir} during preview", dir);
+                }
+            }
+
+            _progress.Complete();
+
+            _log.Information("Preview complete: {Count} files found across {Dirs} directories",
+                allFiles.Count, dirsToScan.Count);
+
+            return BuildPreview(allFiles);
+        }
+
+        private static ScanPreview BuildPreview(
+            IEnumerable<Chronicle.Plugins.Models.ScannedFile> scannedFiles)
+        {
             var results = scannedFiles
                 .Select(f => new ScannedFileResult(
                     f.FilePath,
@@ -140,8 +196,6 @@ namespace Chronicle.Services
                     f.SuggestedExternalId,
                     string.IsNullOrEmpty(f.MediaTypeHint) ? "movie" : f.MediaTypeHint))
                 .ToList();
-
-            _log.Information("Preview complete: {Count} files found", results.Count);
             return new ScanPreview(results);
         }
 
@@ -327,23 +381,68 @@ namespace Chronicle.Services
             }
             else
             {
-                // Flat import: one library item per file (movies)
+                // Flat import: batch all items to avoid one SaveChangesAsync per file.
+                // 1. Add all MediaItems → 1 save (IDs are auto-populated by EF Core).
+                // 2. Upsert ExternalIds  → individual queries but no saves yet.
+                // 3. Bulk-check library  → 1 query + 1 final save.
+                var pairs = new List<(DirectImportFile file, MediaItem item)>(request.Files.Count);
+
                 foreach (var file in request.Files)
                 {
                     ct.ThrowIfCancellationRequested();
-                    try
+                    var item = new MediaItem
                     {
-                        await ImportSingleFileAsync(file, mediaType.Id, parentId: null,
-                            hierarchyLevel: 0, request.UserId, addLibraryEntry: true, ct);
-                        imported++;
-                    }
-                    catch (Exception ex)
+                        Name           = file.ParsedTitle,
+                        MediaTypeId    = mediaType.Id,
+                        ParentId       = null,
+                        HierarchyLevel = 0,
+                        Year           = file.ParsedYear,
+                        Number         = file.EpisodeNumber ?? file.AudioTrackNumber,
+                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
+                        CreatedAt      = DateTime.UtcNow,
+                        UpdatedAt      = DateTime.UtcNow,
+                    };
+                    _context.MediaItems.Add(item);
+                    pairs.Add((file, item));
+                }
+
+                // Single round-trip — EF Core populates all generated IDs.
+                await _context.SaveChangesAsync(ct);
+                imported = pairs.Count;
+
+                // Upsert ExternalIds for any file that carries an NFO/external ID hint.
+                foreach (var (file, item) in pairs)
+                {
+                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
+                        await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
+                }
+
+                // Determine which items already have a library entry (batch SELECT).
+                var newItemIds = pairs.Select(p => p.item.Id).ToList();
+                var existingLibSet = new HashSet<int>(
+                    await _context.UserLibraries
+                        .Where(l => l.UserId == request.UserId && newItemIds.Contains(l.MediaItemId))
+                        .Select(l => l.MediaItemId)
+                        .ToListAsync(ct));
+
+                foreach (var (_, item) in pairs)
+                {
+                    if (!existingLibSet.Contains(item.Id))
                     {
-                        _log.Warning(ex, "Skipping file {Path}", file.FilePath);
-                        failures.Add($"{file.FilePath}: {ex.Message}");
-                        failed++;
+                        _context.UserLibraries.Add(new UserLibrary
+                        {
+                            UserId      = request.UserId,
+                            MediaItemId = item.Id,
+                            Status      = LibraryStatus.Completed,
+                            AddedAt     = DateTime.UtcNow,
+                            CompletedAt = DateTime.UtcNow,
+                            UpdatedAt   = DateTime.UtcNow,
+                        });
                     }
                 }
+
+                // Final save: ExternalIds + UserLibrary entries in one round-trip.
+                await _context.SaveChangesAsync(ct);
             }
 
             _log.Information("Direct import complete: {Imported} imported, {Failed} failed", imported, failed);

@@ -41,6 +41,11 @@ export default defineConfig({
       '/api': {
         target: `http://localhost:${ports.api}`,
         changeOrigin: true,
+        // Long-running requests (bulk import, preview scan) can take >30 s on
+        // large libraries.  Set generous timeouts so the proxy does not abort
+        // before the API responds.
+        timeout: 120_000,
+        proxyTimeout: 120_000,
       },
     },
   },

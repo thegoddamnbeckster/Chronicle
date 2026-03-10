@@ -12,10 +12,12 @@ namespace Chronicle.API.Controllers;
 public class FileScanController : ControllerBase
 {
     private readonly IFileScanService _scanService;
+    private readonly ScanProgressService _progress;
 
-    public FileScanController(IFileScanService scanService)
+    public FileScanController(IFileScanService scanService, ScanProgressService progress)
     {
         _scanService = scanService;
+        _progress = progress;
     }
 
     /// <summary>
@@ -268,6 +270,25 @@ public class FileScanController : ControllerBase
         {
             return BadRequest(ApiResponse<ImportSummaryDto>.Fail("IMPORT_ERROR", ex.Message));
         }
+    }
+
+    /// <summary>
+    /// Returns a snapshot of the currently-running preview scan (folder being scanned,
+    /// how many folders have been processed, how many files found so far).
+    /// Returns IsScanning=false when no scan is in progress.
+    /// Polled by the frontend every 500 ms while the "Scan Directory" request is pending.
+    /// </summary>
+    [HttpGet("progress")]
+    [AllowAnonymous]
+    public IActionResult GetProgress()
+    {
+        var snap = _progress.GetSnapshot();
+        return Ok(ApiResponse<ScanProgressDto>.Ok(new ScanProgressDto(
+            snap.IsScanning,
+            snap.CurrentFolder,
+            snap.FoldersScanned,
+            snap.TotalFolders,
+            snap.FilesFound)));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

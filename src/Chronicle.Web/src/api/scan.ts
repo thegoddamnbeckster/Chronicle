@@ -16,6 +16,19 @@ export async function getScanStatus(): Promise<FileScanStatus> {
   return data.data ?? { available: false, supportedMediaTypeNames: [] }
 }
 
+export interface ScanProgress {
+  isScanning: boolean
+  currentFolder: string | null
+  foldersScanned: number
+  totalFolders: number
+  filesFound: number
+}
+
+export async function getScanProgress(): Promise<ScanProgress> {
+  const { data } = await client.get<ApiResponse<ScanProgress>>('/scan/progress')
+  return data.data ?? { isScanning: false, currentFolder: null, foldersScanned: 0, totalFolders: 0, filesFound: 0 }
+}
+
 export async function runScan(payload: {
   path: string
   recursive: boolean

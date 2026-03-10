@@ -117,4 +117,18 @@ namespace Chronicle.API.DTOs
         [Required] string ExternalId,
         [Required] int MediaTypeId
     );
+
+    // ── Scan progress ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Real-time snapshot of an in-progress directory scan.
+    /// Polled by the frontend every 500 ms while a preview scan is running.
+    /// </summary>
+    public record ScanProgressDto(
+        bool IsScanning,
+        string? CurrentFolder,
+        int FoldersScanned,
+        int TotalFolders,
+        int FilesFound
+    );
 }

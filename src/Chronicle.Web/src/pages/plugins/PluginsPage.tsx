@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   listPlugins,
   installPlugin,
@@ -56,6 +57,7 @@ export default function PluginsPage() {
   const { user } = useAuth()
   const isAdmin = user?.isAdmin ?? false
   const { theme: activeTheme, setTheme } = useTheme()
+  const queryClient = useQueryClient()
 
   const [plugins, setPlugins] = useState<PluginDto[]>([])
   const [loading, setLoading] = useState(true)
@@ -119,6 +121,8 @@ export default function PluginsPage() {
       setPlugins(prev => [plugin, ...prev])
       setDllPath('')
       setShowInstall(false)
+      // Refresh nav immediately so File Scan appears without a page reload
+      void queryClient.invalidateQueries({ queryKey: ['scan-status'] })
     } catch (err: unknown) {
       setInstallError(err instanceof Error ? err.message : 'Installation failed. Check the DLL path and try again.')
     } finally {
@@ -151,6 +155,8 @@ export default function PluginsPage() {
       const plugin = await installFromCatalog(pluginId)
       setPlugins(prev => [plugin, ...prev])
       setCatalog(prev => prev.map(e => e.pluginId === pluginId ? { ...e, isInstalled: true } : e))
+      // Refresh nav immediately so File Scan appears without a page reload
+      void queryClient.invalidateQueries({ queryKey: ['scan-status'] })
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Installation failed.')
     } finally {
