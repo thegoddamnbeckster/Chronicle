@@ -1,5 +1,4 @@
-import axios from 'axios'
-import client from './client'
+import client, { ApiError } from './client'
 import type { ApiResponse, MediaItem, MediaTypeOption } from '@/types'
 
 export async function getMediaTypes(): Promise<MediaTypeOption[]> {
@@ -57,11 +56,8 @@ export async function refreshMedia(id: number): Promise<MediaItem> {
     if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Refresh failed')
     return data.data
   } catch (err: unknown) {
-    if (axios.isAxiosError(err) && err.response?.status === 409) {
-      const apiResp = err.response.data as ApiResponse<unknown>
-      if (apiResp?.error?.code === 'NO_PROVIDER_CONFIGURED') {
-        throw new Error('No metadata provider configured. Add an API key in Settings → Plugins.')
-      }
+    if (err instanceof ApiError && err.statusCode === 409 && err.errorCode === 'NO_PROVIDER_CONFIGURED') {
+      throw new Error('No metadata provider configured. Add an API key in Settings → Plugins.')
     }
     throw err
   }
