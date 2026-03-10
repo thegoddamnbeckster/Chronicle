@@ -14,6 +14,7 @@ import {
   type PluginDto,
   type PluginCatalogEntry,
   type PluginSettingsSchema,
+  type PluginHealthResult,
 } from '@/api/plugins'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme, type Theme } from '@/contexts/ThemeContext'
@@ -51,7 +52,7 @@ const THEMES: ThemeDef[] = [
 
 // ── Plugin page types ──────────────────────────────────────────────────────────
 
-type HealthState = 'unknown' | 'checking' | true | false
+type HealthState = 'unknown' | 'checking' | PluginHealthResult
 
 export default function PluginsPage() {
   const { user } = useAuth()
@@ -205,9 +206,12 @@ export default function PluginsPage() {
     setHealthStates(prev => ({ ...prev, [id]: 'checking' }))
     try {
       const result = await healthCheckPlugin(id)
-      setHealthStates(prev => ({ ...prev, [id]: result ?? 'unknown' }))
+      setHealthStates(prev => ({ ...prev, [id]: result }))
     } catch {
-      setHealthStates(prev => ({ ...prev, [id]: false }))
+      setHealthStates(prev => ({
+        ...prev,
+        [id]: { healthy: false, failureReason: 'Health check request failed.', isCritical: true },
+      }))
     }
   }
 
@@ -271,15 +275,15 @@ export default function PluginsPage() {
 
   function healthLabel(state: HealthState): string {
     if (state === 'checking') return 'Checking…'
-    if (state === true) return 'Healthy'
-    if (state === false) return 'Unhealthy'
-    return 'Test'
+    if (state === 'unknown') return 'Test'
+    return state.healthy ? 'Healthy' : 'Unhealthy'
   }
 
   function healthBadgeClass(state: HealthState): string {
-    if (state === true) return `${styles.badge} ${styles.healthOk}`
-    if (state === false) return `${styles.badge} ${styles.healthFail}`
-    return `${styles.badge} ${styles.healthUnk}`
+    if (state === 'unknown' || state === 'checking') return `${styles.badge} ${styles.healthUnk}`
+    if (state.healthy) return `${styles.badge} ${styles.healthOk}`
+    if (!state.isCritical) return `${styles.badge} ${styles.healthWarn}`
+    return `${styles.badge} ${styles.healthFail}`
   }
 
   function formatDate(iso: string): string {
@@ -480,12 +484,29 @@ export default function PluginsPage() {
                         {plugin.isEnabled ? 'Enabled' : 'Disabled'}
                       </span>
                       {health !== 'unknown' && (
-                        <span className={healthBadgeClass(health)}>
-                          {health === true ? '✓ Healthy' : health === false ? '✗ Unhealthy' : 'Checking…'}
+                        <span
+                          className={healthBadgeClass(health)}
+                          title={
+                            typeof health === 'object' && !health.healthy && health.failureReason
+                              ? health.failureReason
+                              : undefined
+                          }
+                        >
+                          {health === 'checking'
+                            ? 'Checking…'
+                            : typeof health === 'object' && health.healthy
+                              ? '✓ Healthy'
+                              : '✗ Unhealthy'}
                         </span>
                       )}
                     </div>
                   </div>
+
+                  {typeof health === 'object' && !health.healthy && health.failureReason && (
+                    <div className={`${styles.healthReasonRow} ${health.isCritical ? styles.healthReasonCritical : styles.healthReasonWarn}`}>
+                      {health.failureReason}
+                    </div>
+                  )}
 
                   <div className={styles.cardMeta}>
                     by {plugin.author} · installed {formatDate(plugin.installedAt)}

@@ -33,8 +33,10 @@ public interface IPluginService
     Task UninstallPluginAsync(int id);
 
     /// <summary>
-    /// Runs the health check for the loaded metadata provider matching the given database id.
-    /// Returns null if the plugin is not loaded or has no metadata provider.
+    /// Runs the health check for the loaded plugin matching the given database id.
+    /// Returns null if the plugin is not loaded or exposes no checkable provider.
+    /// The result includes an optional failure reason and a severity flag so the
+    /// UI can distinguish configuration issues (yellow) from hard failures (red).
     /// </summary>
-    Task<bool?> HealthCheckAsync(int id, CancellationToken ct = default);
+    Task<PluginHealthResult?> HealthCheckAsync(int id, CancellationToken ct = default);
 }

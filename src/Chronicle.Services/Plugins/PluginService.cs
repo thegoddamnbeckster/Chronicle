@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Plugins.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -132,7 +133,7 @@ public class PluginService : IPluginService
         _log.Information("Uninstalled plugin {PluginId} (db id {Id})", plugin.PluginId, id);
     }
 
-    public async Task<bool?> HealthCheckAsync(int id, CancellationToken ct = default)
+    public async Task<PluginHealthResult?> HealthCheckAsync(int id, CancellationToken ct = default)
     {
         var plugin = await _db.Plugins.FindAsync(new object[] { id }, ct);
         if (plugin is null) return null;
@@ -140,17 +141,51 @@ public class PluginService : IPluginService
         var loaded = _registry.GetLoadedPlugins().FirstOrDefault(lp => lp.DbId == id);
         if (loaded is null) return null;
 
-        // Try each plugin type in turn — first one with a health check wins
-        if (loaded.MetadataProviders.Count > 0)
-            return await loaded.MetadataProviders[0].HealthCheckAsync(ct);
+        // ── Detect missing required settings before hitting the network ─────────
+        // A plugin that has never been configured returns false/throws without a
+        // useful message; checking the schema first gives the user clear guidance.
+        var missingLabels = GetMissingRequiredSettings(loaded, plugin.SettingsJson);
+        if (missingLabels.Count > 0)
+        {
+            var noun = missingLabels.Count == 1 ? "setting" : "settings";
+            return new PluginHealthResult(
+                Healthy: false,
+                FailureReason: $"Missing required {noun}: {string.Join(", ", missingLabels)}",
+                IsCritical: false);
+        }
 
-        if (loaded.FileScannerPlugins.Count > 0)
-            return await loaded.FileScannerPlugins[0].HealthCheckAsync(ct);
+        // ── Delegate to the plugin ───────────────────────────────────────────────
+        // Try each provider type in turn — first one wins.
+        try
+        {
+            bool result;
+            if (loaded.MetadataProviders.Count > 0)
+                result = await loaded.MetadataProviders[0].HealthCheckAsync(ct);
+            else if (loaded.FileScannerPlugins.Count > 0)
+                result = await loaded.FileScannerPlugins[0].HealthCheckAsync(ct);
+            else if (loaded.ImportProviders.Count > 0)
+                result = await loaded.ImportProviders[0].HealthCheckAsync(ct);
+            else
+                return null;
 
-        if (loaded.ImportProviders.Count > 0)
-            return await loaded.ImportProviders[0].HealthCheckAsync(ct);
-
-        return null;
+            return result
+                ? new PluginHealthResult(Healthy: true)
+                : new PluginHealthResult(
+                    Healthy: false,
+                    FailureReason: "Health check returned unhealthy.",
+                    IsCritical: true);
+        }
+        catch (Exception ex)
+        {
+            // Classify: auth/config exceptions are non-critical (yellow).
+            // Network, unexpected exceptions are critical (red).
+            var isCritical = !IsConfigurationError(ex.Message);
+            _log.Warning(ex, "Health check failed for plugin db-id {Id} (critical={Critical})", id, isCritical);
+            return new PluginHealthResult(
+                Healthy: false,
+                FailureReason: ex.Message,
+                IsCritical: isCritical);
+        }
     }
 
     private static IReadOnlyDictionary<string, string> DeserializeSettings(string? json)
@@ -159,5 +194,58 @@ public class PluginService : IPluginService
             return new Dictionary<string, string>();
         return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
             ?? new Dictionary<string, string>();
+    }
+
+    /// <summary>
+    /// Returns the human-readable labels of required settings that are missing or blank.
+    /// Only inspects the first metadata provider's schema (covers the primary use-case of
+    /// e.g. TMDB needing an API key).
+    /// </summary>
+    private static List<string> GetMissingRequiredSettings(LoadedPlugin loaded, string? settingsJson)
+    {
+        if (loaded.MetadataProviders.Count == 0) return [];
+
+        PluginSettingsSchema? schema;
+        try { schema = loaded.MetadataProviders[0].GetSettingsSchema(); }
+        catch { return []; }
+
+        if (schema is null || schema.Settings.Count == 0) return [];
+
+        Dictionary<string, string> current;
+        try
+        {
+            current = string.IsNullOrWhiteSpace(settingsJson)
+                ? []
+                : JsonSerializer.Deserialize<Dictionary<string, string>>(settingsJson) ?? [];
+        }
+        catch { current = []; }
+
+        return schema.Settings
+            .Where(s => s.Required &&
+                        (!current.ContainsKey(s.Key) || string.IsNullOrWhiteSpace(current[s.Key])))
+            .Select(s => s.Label)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when the exception message suggests a configuration or
+    /// authentication problem (non-critical → yellow badge) rather than an unexpected
+    /// runtime failure (critical → red badge).
+    /// </summary>
+    private static bool IsConfigurationError(string message)
+    {
+        var m = message.ToLowerInvariant();
+        return m.Contains("api key")        ||
+               m.Contains("apikey")         ||
+               m.Contains("api_key")        ||
+               m.Contains("token")          ||
+               m.Contains("unauthorized")   ||
+               m.Contains("unauthenticated")||
+               m.Contains("not configured") ||
+               m.Contains("configure")      ||
+               m.Contains("credentials")    ||
+               m.Contains("authentication") ||
+               m.Contains(" 401")           ||
+               m.Contains(" 403");
     }
 }
