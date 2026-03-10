@@ -95,6 +95,31 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ---
 
+## Planned
+
+### Movie Collections
+Group movies into named collections (e.g. "Alien Collection"). TMDB returns
+`belongs_to_collection` on each movie response. Collections use `media_groups`
+table. Each member movie links to the collection. Collections show their own
+art, synopsis, and member list.
+Touches: Chronicle.Plugin.TMDB, MetadataRefreshService, library UI.
+
+### Dynamic Library Loading
+Replace the single `getLibrary(undefined, 1, 500, true)` call with paginated/virtual
+scroll. Count badges appear immediately; cards fill in progressively as the user
+scrolls. Prevents page freeze on large libraries (1000+ items).
+
+### FileScanner Audio Support Extensions
+FileScanner v1.1.0 added basic audio file scanning (MP3, FLAC, OGG, etc.) and
+embedded tag reading. Future improvements:
+- Multi-disc album support (disc number grouping)
+- Compilation album handling (Various Artists)
+- Classical music metadata (composer, conductor fields from tags)
+- Album art extraction and caching
+- Podcast/audiobook file format support
+
+---
+
 ## Completed (recent)
 
 - File Scan: direct import — removed mandatory TMDB identification step; files are imported immediately from scanner data (title, year, file path); TMDB metadata enrichment happens automatically in the background via MetadataRefreshService; `POST /api/v1/scan/import-direct` endpoint added
