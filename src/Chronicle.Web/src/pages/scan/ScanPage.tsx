@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { getScanStatus, previewScan, importDirect } from '@/api/scan'
+import { getScanStatus, getScanProgress, previewScan, importDirect } from '@/api/scan'
+import type { ScanProgress } from '@/api/scan'
 import { getMediaTypes } from '@/api/media'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
 import type { ScannedFile, MediaTypeOption } from '@/types'
@@ -21,6 +22,10 @@ export default function ScanPage() {
   const [skipped, setSkipped] = useState<Set<string>>(new Set())
   const [importResult, setImportResult] = useState<{ imported: number; failed: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // ── Scan progress (polled while preview mutation is pending) ─────────────
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const { addJob, completeJob, failJob } = useBackgroundActivity()
 
@@ -77,6 +82,36 @@ export default function ScanPage() {
       failJob(jobId as string, err.message)
     },
   })
+
+  // ── Scan progress polling ────────────────────────────────────────────────
+  // While a preview scan is in-flight, poll /scan/progress every 500 ms and
+  // display the folder being scanned below the button.
+  useEffect(() => {
+    if (previewMut.isPending) {
+      setScanProgress(null)
+      pollRef.current = setInterval(async () => {
+        try {
+          const p = await getScanProgress()
+          setScanProgress(p)
+        } catch {
+          // ignore polling errors — the main mutation error handler covers failures
+        }
+      }, 500)
+    } else {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+      // Keep the last progress visible briefly, then clear
+      if (!previewMut.isPending) setScanProgress(null)
+    }
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [previewMut.isPending])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const toggleSkip = (filePath: string) => {
@@ -166,6 +201,31 @@ export default function ScanPage() {
           >
             {previewMut.isPending ? 'Scanning…' : 'Scan Directory'}
           </button>
+
+          {/* Real-time per-folder progress shown while the scan runs */}
+          {previewMut.isPending && (
+            <div className={styles.progressPanel}>
+              {scanProgress?.currentFolder ? (
+                <>
+                  <div className={styles.progressRow}>
+                    <span className={styles.progressSpinner} />
+                    <span className={styles.progressLabel}>
+                      Folder {scanProgress.foldersScanned} of {scanProgress.totalFolders}
+                      {scanProgress.filesFound > 0 && ` · ${scanProgress.filesFound} files found`}
+                    </span>
+                  </div>
+                  <div className={styles.progressFolder} title={scanProgress.currentFolder}>
+                    {scanProgress.currentFolder}
+                  </div>
+                </>
+              ) : (
+                <div className={styles.progressRow}>
+                  <span className={styles.progressSpinner} />
+                  <span className={styles.progressLabel}>Enumerating directories…</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
