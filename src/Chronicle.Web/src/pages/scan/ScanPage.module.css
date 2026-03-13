@@ -521,6 +521,18 @@
   flex-shrink: 0;
 }
 
+.mediaTypeBadge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-fg);
+  border: 1px solid var(--status-neutral-border);
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+
 /* ── Scan progress panel ──────────────────────────────────────────────────── */
 
 .progressPanel {

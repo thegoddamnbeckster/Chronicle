@@ -15,7 +15,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Other file support** - FileScanner plugin: allow user to add their own filetypes.
 - **Flexible pattern matching** — Handle messy/unorganized folder structures (e.g. `E:\Video Downloads\MCM Download Parser`). Smarter fallback when standard patterns fail.
 - **Scan results: accept items** — From the scan results page, user can approve/reject individual detected items before they're imported.
-- **Scan results: show media type** — Display the detected media type badge in scan results rows.
+- **Scan results: show media type** — ✓ Implemented: `mediaTypeHint` badge shown in Preview table (Type column) and Review list rows.
 - **Scan results: type mismatch correction** — If the movie scanner detects something that looks like TV (S01E01, etc.), automatically re-classify and match against the correct type.
 - **Confidence score info** — Show the scoring formula somewhere accessible (e.g. a small info popup on the scan page). Formula: NFO+ID=100, Title(Year) filename=85, NFO+title+year=85, dotted/spaced filename=70, title only=50.
 

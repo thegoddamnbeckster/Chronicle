@@ -248,6 +248,7 @@ export default function ScanPage() {
               <tr>
                 <th>Parsed title</th>
                 <th>Year</th>
+                <th>Type</th>
                 <th>Confidence</th>
                 <th>File</th>
               </tr>
@@ -257,6 +258,7 @@ export default function ScanPage() {
                 <tr key={i}>
                   <td>{f.parsedTitle}</td>
                   <td>{f.parsedYear ?? '—'}</td>
+                  <td><span className={styles.mediaTypeBadge}>{f.mediaTypeHint}</span></td>
                   <td className={styles.confidence}>{f.confidenceScore}%</td>
                   <td className={styles.filePath}>{f.filePath}</td>
                 </tr>
@@ -318,6 +320,7 @@ export default function ScanPage() {
                   <div className={styles.reviewInfo}>
                     <span className={styles.identifyTitle}>{f.parsedTitle}</span>
                     {f.parsedYear && <span className={styles.identifyYear}>({f.parsedYear})</span>}
+                    <span className={styles.mediaTypeBadge}>{f.mediaTypeHint}</span>
                     <span className={styles.confidence}>{f.confidenceScore}%</span>
                     {f.suggestedExternalId && (
                       <span className={styles.nfoTag} title="External ID from NFO sidecar">NFO</span>
