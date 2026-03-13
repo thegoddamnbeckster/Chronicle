@@ -103,8 +103,19 @@ export default function MediaDetailPage() {
     )
   }
 
+  const hasBackdrop = Boolean(item.tmdbMeta?.backdropUrl)
+
   return (
     <div className={styles.page}>
+      <div className={`${styles.backdropSection}${hasBackdrop ? ` ${styles.backdropActive}` : ''}`}>
+        {hasBackdrop && (
+          <div
+            className={styles.backdropImg}
+            style={{ backgroundImage: `url("${item.tmdbMeta!.backdropUrl}")` }}
+            aria-hidden
+          />
+        )}
+        <div className={`${styles.backdropContent}${hasBackdrop ? ` ${styles.backdropContentActive}` : ''}`}>
       <div className={styles.topNav}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
         <Link
@@ -471,6 +482,8 @@ export default function MediaDetailPage() {
           </div>
         </div>
       </div>
+        </div>{/* backdropContent */}
+      </div>{/* backdropSection */}
 
       {/* Children (seasons, episodes, etc.) */}
       {children.length > 0 && (
