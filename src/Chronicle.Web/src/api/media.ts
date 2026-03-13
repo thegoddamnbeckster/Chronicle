@@ -62,3 +62,16 @@ export async function refreshMedia(id: number): Promise<MediaItem> {
     throw err
   }
 }
+
+export async function reidentifyMedia(id: number, input: string): Promise<MediaItem> {
+  try {
+    const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/reidentify`, { input })
+    if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Re-identification failed')
+    return data.data
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.statusCode === 409 && err.errorCode === 'NO_PROVIDER_CONFIGURED') {
+      throw new Error('No metadata provider configured. Add an API key in Settings → Plugins.')
+    }
+    throw err
+  }
+}

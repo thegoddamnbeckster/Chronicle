@@ -1,7 +1,8 @@
+import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import tmdbLogoFallback from '@/assets/tmdb-logo.svg'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, reidentifyMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import type { LibraryStatus } from '@/types'
 import styles from './MediaDetailPage.module.css'
@@ -60,6 +61,24 @@ export default function MediaDetailPage() {
       qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
+
+  const [fixMatchOpen, setFixMatchOpen] = useState(false)
+  const [fixMatchInput, setFixMatchInput] = useState('')
+  const fixMatchInputRef = useRef<HTMLInputElement>(null)
+
+  const reidentifyMut = useMutation({
+    mutationFn: () => reidentifyMedia(mediaId, fixMatchInput),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+      setFixMatchOpen(false)
+      setFixMatchInput('')
+    },
+  })
+
+  useEffect(() => {
+    if (fixMatchOpen) fixMatchInputRef.current?.focus()
+  }, [fixMatchOpen])
 
   const tmdbIds = item?.externalIds.filter(e => e.source === 'tmdb') ?? []
   const otherIds = item?.externalIds.filter(e => e.source !== 'tmdb') ?? []
@@ -149,14 +168,59 @@ export default function MediaDetailPage() {
                     onError={(e) => { e.currentTarget.src = tmdbLogoFallback; }}
                   />
                 </div>
-                <button
-                  className={styles.refreshBtn}
-                  onClick={() => refreshMut.mutate()}
-                  disabled={refreshMut.isPending}
-                >
-                  {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
-                </button>
+                <div className={styles.metadataBoxActions}>
+                  <button
+                    className={styles.fixMatchBtn}
+                    onClick={() => { setFixMatchOpen(v => !v); reidentifyMut.reset() }}
+                    title="Manually specify the correct TMDB match"
+                  >
+                    ✎ Fix Match
+                  </button>
+                  <button
+                    className={styles.refreshBtn}
+                    onClick={() => refreshMut.mutate()}
+                    disabled={refreshMut.isPending}
+                  >
+                    {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
+                  </button>
+                </div>
               </div>
+
+              {fixMatchOpen && (
+                <div className={styles.fixMatchPanel}>
+                  <p className={styles.fixMatchHint}>
+                    Enter a TMDB ID, typed ID, or URL:
+                    <code> 1159831</code> · <code>movie:1159831</code> · <code>tv:1396</code> ·
+                    <code> https://www.themoviedb.org/movie/1159831</code>
+                  </p>
+                  <div className={styles.fixMatchRow}>
+                    <input
+                      ref={fixMatchInputRef}
+                      className={styles.fixMatchInput}
+                      type="text"
+                      placeholder="TMDB ID or URL…"
+                      value={fixMatchInput}
+                      onChange={e => { setFixMatchInput(e.target.value); reidentifyMut.reset() }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && fixMatchInput.trim()) reidentifyMut.mutate()
+                        if (e.key === 'Escape') { setFixMatchOpen(false); setFixMatchInput('') }
+                      }}
+                    />
+                    <button
+                      className={styles.fixMatchApplyBtn}
+                      onClick={() => reidentifyMut.mutate()}
+                      disabled={reidentifyMut.isPending || !fixMatchInput.trim()}
+                    >
+                      {reidentifyMut.isPending ? 'Applying…' : 'Apply'}
+                    </button>
+                  </div>
+                  {reidentifyMut.isError && (
+                    <p className={styles.refreshError}>
+                      {(reidentifyMut.error as Error).message}
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div className={styles.tmdbGrid}>
                 {item.tmdbMeta?.rating != null && (

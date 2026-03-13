@@ -157,6 +157,12 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   width: auto;
 }
 
+.metadataBoxActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .refreshBtn {
   font-size: 12px;
   padding: 3px 10px;
@@ -175,6 +181,85 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .refreshBtn:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fixMatchBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.fixMatchBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+/* ── Fix Match panel ── */
+
+.fixMatchPanel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+}
+
+.fixMatchHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.fixMatchHint code {
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.fixMatchRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.fixMatchInput {
+  flex: 1;
+  background: var(--bg-input, #1a1a2e);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 5px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.fixMatchInput:focus {
+  border-color: var(--accent);
+}
+
+.fixMatchApplyBtn {
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.fixMatchApplyBtn:hover:not(:disabled) { opacity: 0.85; }
+
+.fixMatchApplyBtn:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 

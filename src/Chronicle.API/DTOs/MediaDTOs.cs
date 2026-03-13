@@ -74,6 +74,11 @@ namespace Chronicle.API.DTOs
 
     public record MediaTypeDto(int Id, string Name, string DisplayName);
 
+    /// <summary>Body for POST /api/v1/media/{id}/reidentify.</summary>
+    public record ReidentifyRequestDto(
+        [Required] string Input
+    );
+
     public record LibraryEntryDto(
         int Id,
         int UserId,

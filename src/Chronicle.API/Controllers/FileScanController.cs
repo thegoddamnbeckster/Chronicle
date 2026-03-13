@@ -72,6 +72,14 @@ public class FileScanController : ControllerBase
         {
             return BadRequest(ApiResponse<FileScanSummaryDto>.Fail("SCAN_ERROR", ex.Message));
         }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(499, ApiResponse<FileScanSummaryDto>.Fail("SCAN_CANCELLED", "Scan was cancelled."));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<FileScanSummaryDto>.Fail("SCAN_ERROR", ex.Message));
+        }
     }
 
     /// <summary>
@@ -103,6 +111,14 @@ public class FileScanController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResponse<ScanPreviewDto>.Fail("SCAN_ERROR", ex.Message));
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(499, ApiResponse<ScanPreviewDto>.Fail("SCAN_CANCELLED", "Scan was cancelled."));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<ScanPreviewDto>.Fail("SCAN_ERROR", ex.Message));
         }
     }
 
