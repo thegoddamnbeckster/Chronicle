@@ -41,6 +41,22 @@
 
 .backdropContentActive {
   padding: 24px 24px 48px;
+  /*
+   * The backdrop image is always rendered at brightness(0.3), making it a very
+   * dark surface regardless of which theme is active.  Override the theme color
+   * variables here so every child element that uses var(--text-*) / var(--bg-*)
+   * / var(--border) automatically gets light, readable values — no JSX changes
+   * required.  The overrides apply only within this section; everything below
+   * the backdrop (children grid, etc.) continues to use the active theme.
+   */
+  --text-primary:   #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.78);
+  --text-muted:     rgba(255, 255, 255, 0.50);
+  --bg-secondary:   rgba(255, 255, 255, 0.10);
+  --bg-card:        rgba(255, 255, 255, 0.08);
+  --border:         rgba(255, 255, 255, 0.18);
+  --bg-input:       rgba(255, 255, 255, 0.10);
+  --hover-bg:       rgba(255, 255, 255, 0.06);
 }
 
 .loading, .error {
