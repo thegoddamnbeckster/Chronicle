@@ -277,6 +277,66 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   cursor: not-allowed;
 }
 
+/* ── Delete (single item) ── */
+
+.deleteArea { margin-bottom: 12px; }
+
+.deleteBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.deleteBtn:hover {
+  color: var(--status-danger-fg, #e05555);
+  border-color: var(--status-danger-fg, #e05555);
+}
+
+.deleteConfirmStrip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: rgba(224, 85, 85, 0.08);
+  border: 1px solid rgba(224, 85, 85, 0.35);
+}
+
+.deleteConfirmText { font-size: 13px; flex: 1; }
+
+.deleteConfirmCancel {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.deleteConfirmCancel:hover { color: var(--text-primary); }
+
+.deleteConfirmOk {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  background: var(--status-danger-fg, #e05555);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.deleteConfirmOk:hover:not(:disabled) { opacity: 0.85; }
+.deleteConfirmOk:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .refreshError {
   font-size: 11px;
   color: var(--status-danger-fg);
