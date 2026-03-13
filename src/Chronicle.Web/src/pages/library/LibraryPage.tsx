@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library'
+import { deleteMedia } from '@/api/media'
 import type { LibraryEntry, LibraryStatus } from '@/types'
 import styles from './LibraryPage.module.css'
 
@@ -148,6 +149,10 @@ export default function LibraryPage() {
       return {}
     }
   })
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const qc = useQueryClient()
 
@@ -175,6 +180,45 @@ export default function LibraryPage() {
       localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
       return next
     })
+  }
+
+  function enterSelectMode() {
+    setSelectMode(true)
+    setSelectedIds(new Set())
+    setDeleteConfirm(false)
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+    setDeleteConfirm(false)
+  }
+
+  function toggleSelected(mediaId: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(mediaId)) next.delete(mediaId)
+      else next.add(mediaId)
+      return next
+    })
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(sorted.map(e => e.mediaItem.id)))
+  }
+
+  async function confirmDelete() {
+    setIsDeleting(true)
+    try {
+      for (const id of selectedIds) {
+        await deleteMedia(id)
+      }
+      qc.invalidateQueries({ queryKey: ['library'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
+    } finally {
+      setIsDeleting(false)
+      exitSelectMode()
+    }
   }
 
   function handleSavePreset() {
@@ -277,6 +321,22 @@ export default function LibraryPage() {
         <div className={styles.controlsTop}>
           <h2 className={styles.heading}>Library</h2>
           <div className={styles.controlsActions}>
+            {/* Select mode toggle */}
+            {!selectMode ? (
+              <button className={styles.actionBtn} onClick={enterSelectMode}>Select</button>
+            ) : (
+              <>
+                <button className={styles.actionBtn} onClick={selectAll}>Select All</button>
+                <button
+                  className={styles.deleteModeBtn}
+                  disabled={selectedIds.size === 0 || isDeleting}
+                  onClick={() => setDeleteConfirm(true)}
+                >
+                  Delete ({selectedIds.size})
+                </button>
+                <button className={styles.cancelBtn} onClick={exitSelectMode}>✕ Cancel</button>
+              </>
+            )}
             {presets.length > 0 && (
               <select
                 className={styles.presetSelect}
@@ -381,6 +441,34 @@ export default function LibraryPage() {
         </div>
       </div>
 
+      {/* ── Delete confirmation modal ── */}
+      {deleteConfirm && (
+        <div className={styles.deleteModal}>
+          <div className={styles.deleteModalBox}>
+            <p className={styles.deleteModalText}>
+              Delete <strong>{selectedIds.size}</strong> item{selectedIds.size !== 1 ? 's' : ''}?
+              This cannot be undone.
+            </p>
+            <div className={styles.deleteModalActions}>
+              <button
+                className={styles.cancelBtn}
+                onClick={() => setDeleteConfirm(false)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.deleteConfirmOk}
+                onClick={confirmDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Content ── */}
       {isLoading && <p className={styles.empty}>Loading…</p>}
 
@@ -428,56 +516,100 @@ export default function LibraryPage() {
 
             {!isCollapsed && <div className={styles.grid}>
               {visible.map(entry => (
-                <div key={entry.id} id={`media-${entry.mediaItem.id}`} className={styles.card}>
-                  <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
-                    <div className={styles.poster}>
-                      {entry.mediaItem.posterUrl ? (
-                        <img
-                          src={entry.mediaItem.posterUrl}
-                          alt={entry.mediaItem.name}
-                          onError={e => {
-                            const img = e.currentTarget
-                            img.style.display = 'none'
-                            const ph = img.nextElementSibling as HTMLElement | null
-                            if (ph) ph.style.display = 'flex'
-                          }}
-                        />
-                      ) : null}
-                      <div
-                        className={styles.posterPlaceholder}
-                        style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
-                      >
-                        {entry.mediaItem.name.charAt(0)}
+                <div
+                  key={entry.id}
+                  id={`media-${entry.mediaItem.id}`}
+                  className={`${styles.card} ${selectMode && selectedIds.has(entry.mediaItem.id) ? styles.cardSelected : ''}`}
+                  onClick={selectMode ? () => toggleSelected(entry.mediaItem.id) : undefined}
+                  style={selectMode ? { cursor: 'pointer' } : undefined}
+                >
+                  {selectMode ? (
+                    <div className={styles.posterLink} style={{ position: 'relative' }}>
+                      <div className={styles.poster}>
+                        {entry.mediaItem.posterUrl ? (
+                          <img
+                            src={entry.mediaItem.posterUrl}
+                            alt={entry.mediaItem.name}
+                            onError={e => {
+                              const img = e.currentTarget
+                              img.style.display = 'none'
+                              const ph = img.nextElementSibling as HTMLElement | null
+                              if (ph) ph.style.display = 'flex'
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={styles.posterPlaceholder}
+                          style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
+                        >
+                          {entry.mediaItem.name.charAt(0)}
+                        </div>
                       </div>
+                      {selectedIds.has(entry.mediaItem.id) && (
+                        <div className={styles.selectOverlay}>✓</div>
+                      )}
                     </div>
-                  </Link>
-                  <div className={styles.info}>
-                    <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.nameLink}>
-                      <div className={styles.name}>{entry.mediaItem.name}</div>
+                  ) : (
+                    <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
+                      <div className={styles.poster}>
+                        {entry.mediaItem.posterUrl ? (
+                          <img
+                            src={entry.mediaItem.posterUrl}
+                            alt={entry.mediaItem.name}
+                            onError={e => {
+                              const img = e.currentTarget
+                              img.style.display = 'none'
+                              const ph = img.nextElementSibling as HTMLElement | null
+                              if (ph) ph.style.display = 'flex'
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={styles.posterPlaceholder}
+                          style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
+                        >
+                          {entry.mediaItem.name.charAt(0)}
+                        </div>
+                      </div>
                     </Link>
+                  )}
+                  <div className={styles.info}>
+                    {selectMode ? (
+                      <div className={styles.name}>{entry.mediaItem.name}</div>
+                    ) : (
+                      <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.nameLink}>
+                        <div className={styles.name}>{entry.mediaItem.name}</div>
+                      </Link>
+                    )}
                     <div className={styles.metaRow}>
                       {entry.mediaItem.year && <span className={styles.year}>{entry.mediaItem.year}</span>}
                       {entry.mediaItem.tmdbMeta?.rating != null && (
                         <span className={styles.rating}>★ {entry.mediaItem.tmdbMeta.rating.toFixed(1)}</span>
                       )}
                     </div>
-                    <select
-                      className={styles.statusSelect}
-                      value={entry.status}
-                      onChange={e =>
-                        updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })
-                      }
-                    >
-                      {STATUS_OPTIONS.map(s => (
-                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                      ))}
-                    </select>
-                    <button
-                      className={styles.removeBtn}
-                      onClick={() => {
-                        if (confirm('Remove from library?')) removeMut.mutate(entry.id)
-                      }}
-                    >Remove</button>
+                    {!selectMode && (
+                      <>
+                        <select
+                          className={styles.statusSelect}
+                          value={entry.status}
+                          onChange={e =>
+                            updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })
+                          }
+                        >
+                          {STATUS_OPTIONS.map(s => (
+                            <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                          ))}
+                        </select>
+                        <button
+                          className={styles.removeBtn}
+                          onClick={() => {
+                            if (confirm('Remove from library?')) removeMut.mutate(entry.id)
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
