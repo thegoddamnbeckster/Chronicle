@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useMemo, useEffect } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library'
 import type { LibraryEntry, LibraryStatus } from '@/types'
@@ -222,6 +222,49 @@ export default function LibraryPage() {
   const pageSize = PAGE_SIZES[prefs.pageSizePreset]
   const isDefault = prefsAreDefault(prefs)
 
+  const location = useLocation()
+
+  useEffect(() => {
+    if (isLoading) return
+    const hash = location.hash  // e.g. "#media-42"
+    if (!hash.startsWith('#media-')) return
+    const targetId = parseInt(hash.slice('#media-'.length), 10)
+    if (isNaN(targetId)) return
+
+    // Find which section this item belongs to
+    let targetTypeName: string | undefined
+    for (const [typeName, entries] of grouped) {
+      if (entries.some(e => e.mediaItem.id === targetId)) {
+        targetTypeName = typeName
+        break
+      }
+    }
+    if (!targetTypeName) return
+
+    // Un-collapse the section if it is collapsed
+    setCollapsedSections(prev => {
+      if (!prev[targetTypeName!]) return prev
+      const next = { ...prev, [targetTypeName!]: false }
+      localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
+      return next
+    })
+
+    // Expand the section if the item is beyond the current page size
+    const typeEntries = grouped.get(targetTypeName)!
+    const itemIndex = typeEntries.findIndex(e => e.mediaItem.id === targetId)
+    if (pageSize !== Infinity && itemIndex >= pageSize) {
+      setExpanded(prev => ({ ...prev, [targetTypeName!]: true }))
+    }
+
+    // Scroll after a brief delay to allow render
+    setTimeout(() => {
+      document.getElementById(`media-${targetId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    }, 150)
+  }, [isLoading, location.hash, grouped, pageSize])
+
   return (
     <div className={styles.page}>
 
@@ -383,7 +426,7 @@ export default function LibraryPage() {
 
             {!isCollapsed && <div className={styles.grid}>
               {visible.map(entry => (
-                <div key={entry.id} className={styles.card}>
+                <div key={entry.id} id={`media-${entry.mediaItem.id}`} className={styles.card}>
                   <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
                     <div className={styles.poster}>
                       {entry.mediaItem.posterUrl ? (
