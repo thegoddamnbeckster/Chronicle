@@ -18,6 +18,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Scan results: show media type** — ✓ Implemented: `mediaTypeHint` badge shown in Preview table (Type column) and Review list rows.
 - **Scan results: type mismatch correction** — If the movie scanner detects something that looks like TV (S01E01, etc.), automatically re-classify and match against the correct type.
 - **Confidence score info** — Show the scoring formula somewhere accessible (e.g. a small info popup on the scan page). Formula: NFO+ID=100, Title(Year) filename=85, NFO+title+year=85, dotted/spaced filename=70, title only=50.
+- **Related-files assumption** — When scanning for movies, a checkbox option: "Assume all files in a folder containing a matched movie are related to that movie (images, NFO, subtitles, etc.)." Similar per-media-type rules for TV shows (all files in a season folder belong to that season), Music Albums (all files in an album folder belong to that album), Audiobooks, etc. The rule is: opt-in permission to treat the containing folder as a media bundle rather than individual file matches.
 
 ---
 
@@ -55,7 +56,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 ## Media Detail
 
 - **All file paths** — Display every file path associated with a media item in the metadata page, both internal (Chronicle's data store) and external (original path on disk). If multiple files exist (e.g. different cuts, multiple episodes), list them all.
-- **Image thumbnails** — Show all available images (poster, backdrop, etc.) as actual thumbnails in the metadata page rather than links. Local images stored with the media should also be shown inline. Clicking on the thumbnail should show the full size image in a new window.
+- **Image thumbnails** — ✓ Implemented: TMDB poster/backdrop shown as 80px thumbnails; clicking opens full size in new tab. (Local images still outstanding — requires backend to serve them.)
 
 ---
 
