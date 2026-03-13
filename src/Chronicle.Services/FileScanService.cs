@@ -1039,5 +1039,104 @@ namespace Chronicle.Services
 
             return JsonSerializer.Serialize(new MediaMetaJsonRoot(tmdbData, fsData), _metaJsonOpts);
         }
+
+        // ── Re-identify ───────────────────────────────────────────────────────────
+
+        public async Task<MediaItem> ReidentifyAsync(int mediaItemId, string input, CancellationToken ct = default)
+        {
+            var provider = _registry.GetMetadataProviders().FirstOrDefault();
+            if (provider is null)
+                throw new NoProviderConfiguredException(
+                    "No metadata provider configured. Add an API key in Settings → Plugins.");
+
+            var item = await _context.MediaItems
+                .Include(m => m.MediaType)
+                .Include(m => m.ExternalIds)
+                .FirstOrDefaultAsync(m => m.Id == mediaItemId, ct)
+                ?? throw new KeyNotFoundException($"Media item {mediaItemId} not found.");
+
+            var externalId = ParseUserInput(input, item.MediaType?.Name ?? string.Empty);
+
+            _log.Information("Re-identifying item {Id} ({Name}) with input='{Input}' → externalId='{ExtId}'",
+                mediaItemId, item.Name, input, externalId);
+
+            var meta = await provider.GetByIdAsync(externalId, ct);
+
+            // Replace the TMDB external ID — remove old ones first, then upsert the new one
+            var oldTmdbIds = item.ExternalIds.Where(e => e.Source == "tmdb").ToList();
+            foreach (var old in oldTmdbIds)
+                _context.MediaExternalIds.Remove(old);
+
+            item.Name           = meta.Title;
+            item.Year           = meta.Year;
+            item.Overview       = meta.Overview;
+            item.PosterUrl      = meta.PosterUrl;
+            item.RuntimeMinutes = meta.RuntimeMinutes;
+            item.MetadataJson   = SerializeMetadata(tmdbMeta: meta, existingJson: item.MetadataJson);
+            item.UpdatedAt      = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync(ct);
+            await UpsertExternalIdAsync(item.Id, externalId, ct);
+            await _context.SaveChangesAsync(ct);
+
+            _log.Information("Re-identified item {Id} → '{Title}' ({Year}) [{ExtId}]",
+                mediaItemId, meta.Title, meta.Year, externalId);
+
+            return await _context.MediaItems
+                .Include(m => m.MediaType)
+                .Include(m => m.ExternalIds)
+                .FirstAsync(m => m.Id == mediaItemId, ct);
+        }
+
+        /// <summary>
+        /// Resolves a user-supplied TMDB reference to the canonical "movie:NNN" / "tv:NNN" format.
+        /// Handles:
+        ///   • TMDB URL  https://www.themoviedb.org/movie/1159831-the-bride
+        ///   • TMDB URL  https://www.themoviedb.org/tv/1396-breaking-bad
+        ///   • Typed ID  movie:1159831  |  tv:1396
+        ///   • Bare number  1159831  (media-type hint used to pick movie vs tv)
+        /// </summary>
+        private static string ParseUserInput(string input, string mediaTypeName)
+        {
+            input = input.Trim();
+
+            // Full TMDB URL
+            if (input.Contains("themoviedb.org/", StringComparison.OrdinalIgnoreCase))
+            {
+                // Extract the numeric segment immediately after the media-type slug
+                // e.g. ".../movie/1159831-the-bride" → "movie:1159831"
+                //      ".../tv/1396-breaking-bad"    → "tv:1396"
+                var uri = new Uri(input);
+                var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (segments.Length >= 2)
+                {
+                    var kind = segments[^2].ToLowerInvariant(); // "movie" or "tv"
+                    var rawId = segments[^1].Split('-')[0];     // "1159831-the-bride" → "1159831"
+                    if ((kind == "movie" || kind == "tv") && int.TryParse(rawId, out _))
+                        return $"{kind}:{rawId}";
+                }
+                throw new ArgumentException($"Could not parse TMDB ID from URL: {input}");
+            }
+
+            // Already typed format: "movie:1159831" or "tv:1396"
+            if (input.StartsWith("movie:", StringComparison.OrdinalIgnoreCase) ||
+                input.StartsWith("tv:", StringComparison.OrdinalIgnoreCase))
+            {
+                return input.ToLowerInvariant();
+            }
+
+            // Bare number — infer type from media type name
+            if (int.TryParse(input, out _))
+            {
+                var hint = ToMediaTypeHint(mediaTypeName);
+                var prefix = hint == "tv" ? "tv" : "movie";
+                return $"{prefix}:{input}";
+            }
+
+            throw new ArgumentException(
+                $"Could not parse '{input}' as a TMDB ID or URL. " +
+                "Use a bare number (e.g. 1159831), a typed ID (movie:1159831 or tv:1396), " +
+                "or a full TMDB URL (https://www.themoviedb.org/movie/1159831).");
+        }
     }
 }

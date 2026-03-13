@@ -118,6 +118,37 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Re-identifies a media item using a user-supplied TMDB reference.
+        /// Accepts a bare numeric ID, a typed ID (movie:NNN / tv:NNN), or a full TMDB URL.
+        /// Replaces name, year, overview, poster, and TMDB metadata in-place.
+        /// </summary>
+        [HttpPost("{id:int}/reidentify")]
+        public async Task<IActionResult> Reidentify(int id, [FromBody] ReidentifyRequestDto dto, CancellationToken ct)
+        {
+            try
+            {
+                var item = await _fileScanService.ReidentifyAsync(id, dto.Input, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+            }
+            catch (NoProviderConfiguredException ex)
+            {
+                return Conflict(ApiResponse<MediaItemDto>.Fail("NO_PROVIDER_CONFIGURED", ex.Message));
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("INVALID_INPUT", ex.Message));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(502, ApiResponse<MediaItemDto>.Fail("REIDENTIFY_FAILED", ex.Message));
+            }
+        }
+
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id)
         {
