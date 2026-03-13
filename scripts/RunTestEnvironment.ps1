@@ -50,8 +50,12 @@ if (-not $WebOnly) {
     }
     Write-Host ""
     Write-Host "Starting Chronicle API (port 8080)..." -ForegroundColor Cyan
+    # Set ASPNETCORE_ENVIRONMENT=Development explicitly so appsettings.Development.json
+    # is loaded (and appsettings.Production.json with its Docker PostgreSQL string is NOT).
+    # --launch-profile is intentionally omitted — the 'Development' profile does not exist
+    # in launchSettings.json, which caused the env var to never be set.
     Start-Process powershell -ArgumentList "-NoExit", "-Command",
-        "cd '$RepoRoot'; dotnet run --project '$ApiProject' --launch-profile 'Development' 2>&1" `
+        "`$env:ASPNETCORE_ENVIRONMENT='Development'; cd '$RepoRoot'; dotnet run --project '$ApiProject' 2>&1" `
         -WindowStyle Normal
 }
 
