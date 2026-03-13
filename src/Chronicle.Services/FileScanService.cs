@@ -276,10 +276,11 @@ namespace Chronicle.Services
                     }
                     else
                     {
-                        // Title (+ year) search
-                        var query = file.ParsedYear.HasValue
-                            ? $"{file.ParsedTitle} {file.ParsedYear}"
-                            : file.ParsedTitle;
+                        // Title-only search — do NOT append the year to the query string.
+                        // TMDB treats the query as plain text; the year is not in the
+                        // stored title so appending it returns zero results.  ScoreCandidate
+                        // already handles year matching on the returned candidates.
+                        var query = file.ParsedTitle;
 
                         var searchResult = await provider.SearchAsync(query, file.MediaTypeHint, ct);
 
@@ -820,8 +821,12 @@ namespace Chronicle.Services
 
             if (extId is null)
             {
-                // No external ID yet — search by name + year (if known) to find one
-                var query = item.Year.HasValue ? $"{item.Name} {item.Year}" : item.Name;
+                // No external ID yet — search by name only.
+                // The TMDB search API treats the entire query string as text; appending
+                // the year (e.g. "Alien - Romulus 2024") returns zero results because
+                // the year is not part of the stored title.  Search by title only, then
+                // let ScoreByNameYear pick the correct year from the returned candidates.
+                var query = item.Name;
                 _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by '{Query}'", mediaItemId, query);
                 var hint = ToMediaTypeHint(item.MediaType?.Name ?? string.Empty);
                 var searchResult = await provider.SearchAsync(query, hint, ct);
