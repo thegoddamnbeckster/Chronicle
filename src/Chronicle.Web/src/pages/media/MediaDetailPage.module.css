@@ -1,4 +1,47 @@
-.page { max-width: 1100px; }
+.page { max-width: 1100px; position: relative; }
+
+/* ── Backdrop hero ── */
+
+.backdropSection {
+  position: relative;
+  isolation: isolate;
+}
+
+.backdropActive {
+  margin: -24px -24px 0;
+}
+
+.backdropImg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 20%;
+  background-repeat: no-repeat;
+  filter: brightness(0.3);
+  z-index: 0;
+}
+
+/* Gradient fade at the bottom of the backdrop area */
+.backdropActive::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 55%;
+  background: linear-gradient(to bottom, transparent, var(--bg-primary));
+  z-index: 1;
+  pointer-events: none;
+}
+
+.backdropContent {
+  position: relative;
+  z-index: 2;
+}
+
+.backdropContentActive {
+  padding: 24px 24px 48px;
+}
 
 .loading, .error {
   color: var(--text-muted);
