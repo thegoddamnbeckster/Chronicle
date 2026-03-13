@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type Theme = 'light' | 'dark' | 'navy-pink'
+export type Theme = 'light' | 'dark' | 'navy-pink' | 'dark-teal'
 
 interface ThemeContextValue {
   theme: Theme
@@ -21,7 +21,7 @@ function applyTheme(t: Theme) {
 
 function readStoredTheme(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY)
-  if (stored === 'light' || stored === 'dark' || stored === 'navy-pink') return stored
+  if (stored === 'light' || stored === 'dark' || stored === 'navy-pink' || stored === 'dark-teal') return stored
   return DEFAULT_THEME
 }
 
