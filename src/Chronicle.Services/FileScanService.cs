@@ -725,6 +725,31 @@ namespace Chronicle.Services
 
         // ── Refresh metadata ──────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Scores a TMDB search result against a known item name + year.
+        /// Mirrors <see cref="ScoreCandidate"/> but works with plain strings instead of <see cref="ScannedFileResult"/>.
+        /// </summary>
+        private static int ScoreByNameYear(string? candidateTitle, int? candidateYear, string itemName, int? itemYear)
+        {
+            var exactTitle = string.Equals(candidateTitle, itemName, StringComparison.OrdinalIgnoreCase);
+            var partialTitle = candidateTitle?.Contains(itemName, StringComparison.OrdinalIgnoreCase) == true
+                            || itemName.Contains(candidateTitle ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            var score = exactTitle ? 60 : partialTitle ? 35 : 10;
+
+            if (itemYear.HasValue && candidateYear.HasValue)
+            {
+                if (candidateYear == itemYear) score += 40;
+                else if (Math.Abs(candidateYear.Value - itemYear.Value) <= 1) score += 20;
+            }
+            else if (!itemYear.HasValue)
+            {
+                score += 15; // No year to penalise against
+            }
+
+            return Math.Min(score, 100);
+        }
+
         public async Task<MediaItem?> RefreshMetadataAsync(int mediaItemId, CancellationToken ct = default)
         {
             var provider = _registry.GetMetadataProviders().FirstOrDefault();
@@ -750,19 +775,26 @@ namespace Chronicle.Services
 
             if (extId is null)
             {
-                // No external ID yet — try searching by name to find one
-                _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by name '{Name}'", mediaItemId, item.Name);
+                // No external ID yet — search by name + year (if known) to find one
+                var query = item.Year.HasValue ? $"{item.Name} {item.Year}" : item.Name;
+                _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by '{Query}'", mediaItemId, query);
                 var hint = ToMediaTypeHint(item.MediaType?.Name ?? string.Empty);
-                var searchResult = await provider.SearchAsync(item.Name, hint, ct);
-                var top = searchResult.Results.FirstOrDefault();
-                if (top is null)
+                var searchResult = await provider.SearchAsync(query, hint, ct);
+
+                // Score each candidate by title + year accuracy, prefer exact year match
+                var best = searchResult.Results
+                    .Select(r => new { Result = r, Score = ScoreByNameYear(r.Title, r.Year, item.Name, item.Year) })
+                    .OrderByDescending(x => x.Score)
+                    .FirstOrDefault();
+
+                if (best is null)
                 {
                     _log.Information("RefreshMetadata: no TMDB match found for '{Name}'", item.Name);
                     return item;
                 }
-                extId = top.ExternalId;
+                extId = best.Result.ExternalId;
                 await UpsertExternalIdAsync(item.Id, extId, ct);
-                _log.Information("RefreshMetadata: matched '{Name}' → {ExtId}", item.Name, extId);
+                _log.Information("RefreshMetadata: matched '{Name}' → {ExtId} (score={Score})", item.Name, extId, best.Score);
             }
 
             try
