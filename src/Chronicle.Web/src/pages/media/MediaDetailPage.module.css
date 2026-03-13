@@ -18,7 +18,26 @@
   background-position: center 20%;
   background-repeat: no-repeat;
   filter: brightness(0.3);
-  z-index: 0;
+  z-index: 1;
+}
+
+/*
+ * Uniform dark scrim sits above the dimmed image but below the content.
+ * Combined with brightness(0.3) this ensures adequate contrast even for
+ * very bright source images (fire, snow, white skies, etc.).
+ * z-index ladder within the isolated stacking context:
+ *   1 — .backdropImg (image)
+ *   2 — ::before (scrim)
+ *   3 — ::after  (gradient fade)
+ *   4 — .backdropContent (all page content)
+ */
+.backdropActive::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 2;
+  pointer-events: none;
 }
 
 /* Gradient fade at the bottom of the backdrop area */
@@ -30,26 +49,35 @@
   bottom: 0;
   height: 55%;
   background: linear-gradient(to bottom, transparent, var(--bg-primary));
-  z-index: 1;
+  z-index: 3;
   pointer-events: none;
 }
 
 .backdropContent {
   position: relative;
-  z-index: 2;
+  z-index: 4;
 }
 
 .backdropContentActive {
   padding: 24px 24px 48px;
   /*
-   * The backdrop image is always rendered at brightness(0.3), making it a very
-   * dark surface regardless of which theme is active.  Override the theme color
-   * variables here so every child element that uses var(--text-*) / var(--bg-*)
-   * / var(--border) automatically gets light, readable values — no JSX changes
-   * required.  The overrides apply only within this section; everything below
-   * the backdrop (children grid, etc.) continues to use the active theme.
+   * Two-part contrast strategy for the darkened backdrop hero:
+   *
+   * 1. Override CSS custom properties so every element that reads
+   *    var(--text-*) / var(--bg-*) / var(--border) gets a light value
+   *    regardless of which theme is active.
+   *
+   * 2. Set `color` explicitly so that elements with NO color declaration
+   *    (e.g. .title, which relies purely on CSS inheritance) also receive
+   *    the white value.  Without this, the body's pre-resolved computed
+   *    color (#212121 in light theme) is inherited instead of the overridden
+   *    custom-property value.
+   *
+   * The overrides apply only within this section; everything below the
+   * backdrop (children grid, etc.) continues to use the active theme.
    */
   --text-primary:   #ffffff;
+  color:            var(--text-primary);
   --text-secondary: rgba(255, 255, 255, 0.78);
   --text-muted:     rgba(255, 255, 255, 0.50);
   --bg-secondary:   rgba(255, 255, 255, 0.10);
