@@ -240,29 +240,31 @@ export default function LibraryPage() {
       }
     }
     if (!targetTypeName) return
+    const resolvedTypeName = targetTypeName   // narrow from string | undefined to string
 
     // Un-collapse the section if it is collapsed
     setCollapsedSections(prev => {
-      if (!prev[targetTypeName!]) return prev
-      const next = { ...prev, [targetTypeName!]: false }
+      if (!prev[resolvedTypeName]) return prev
+      const next = { ...prev, [resolvedTypeName]: false }
       localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
       return next
     })
 
     // Expand the section if the item is beyond the current page size
-    const typeEntries = grouped.get(targetTypeName)!
+    const typeEntries = grouped.get(resolvedTypeName)!
     const itemIndex = typeEntries.findIndex(e => e.mediaItem.id === targetId)
     if (pageSize !== Infinity && itemIndex >= pageSize) {
-      setExpanded(prev => ({ ...prev, [targetTypeName!]: true }))
+      setExpanded(prev => ({ ...prev, [resolvedTypeName]: true }))
     }
 
     // Scroll after a brief delay to allow render
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       document.getElementById(`media-${targetId}`)?.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       })
     }, 150)
+    return () => clearTimeout(timer)
   }, [isLoading, location.hash, grouped, pageSize])
 
   return (
