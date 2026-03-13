@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import tmdbLogoFallback from '@/assets/tmdb-logo.svg'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, reidentifyMedia } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, reidentifyMedia, deleteMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import type { LibraryStatus } from '@/types'
 import styles from './MediaDetailPage.module.css'
@@ -73,6 +73,16 @@ export default function MediaDetailPage() {
       qc.invalidateQueries({ queryKey: ['library'] })
       setFixMatchOpen(false)
       setFixMatchInput('')
+    },
+  })
+
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+
+  const deleteMut = useMutation({
+    mutationFn: () => deleteMedia(mediaId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['library'] })
+      navigate('/library')
     },
   })
 
@@ -151,6 +161,30 @@ export default function MediaDetailPage() {
 
         <div className={styles.meta}>
           <h1 className={styles.title}>{item.name}</h1>
+
+          <div className={styles.deleteArea}>
+            {!deleteConfirm ? (
+              <button className={styles.deleteBtn} onClick={() => setDeleteConfirm(true)}>
+                Delete
+              </button>
+            ) : (
+              <div className={styles.deleteConfirmStrip}>
+                <span className={styles.deleteConfirmText}>
+                  Delete <strong>{item.name}</strong>? This cannot be undone.
+                </span>
+                <button className={styles.deleteConfirmCancel} onClick={() => setDeleteConfirm(false)}>
+                  Cancel
+                </button>
+                <button
+                  className={styles.deleteConfirmOk}
+                  onClick={() => deleteMut.mutate()}
+                  disabled={deleteMut.isPending}
+                >
+                  {deleteMut.isPending ? 'Deleting…' : 'Delete'}
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className={styles.metaRow}>
             {item.year && <span className={styles.chip}>{item.year}</span>}
