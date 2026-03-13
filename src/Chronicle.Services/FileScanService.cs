@@ -40,6 +40,13 @@ namespace Chronicle.Services
 
         public async Task<FileScanSummary> ScanAsync(FileScanRequest request, int userId, CancellationToken ct = default)
         {
+            if (!Directory.Exists(request.Path))
+            {
+                var hint = BuildMappedDriveHint(request.Path);
+                throw new DirectoryNotFoundException(
+                    $"Scan path does not exist or is not accessible: {request.Path}.{hint}");
+            }
+
             // Verify media type exists
             var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
@@ -121,6 +128,18 @@ namespace Chronicle.Services
 
         public async Task<ScanPreview> PreviewAsync(ScanPreviewRequest request, CancellationToken ct = default)
         {
+            // Validate path accessibility before handing off to the scanner plugin.
+            // On Windows, mapped network drives (e.g. H:\) may not be visible to child
+            // processes that were started in a different session.  Providing a clear error
+            // here — along with the UNC equivalent — is much more helpful than the raw
+            // "Scan path does not exist" message that the plugin would otherwise surface.
+            if (!Directory.Exists(request.Path))
+            {
+                var hint = BuildMappedDriveHint(request.Path);
+                throw new DirectoryNotFoundException(
+                    $"Scan path does not exist or is not accessible: {request.Path}.{hint}");
+            }
+
             var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
 
@@ -149,7 +168,17 @@ namespace Chronicle.Services
                     // Fall back: single call with recursive=true (no per-folder progress)
                     _progress.Start(1);
                     _progress.UpdateFolder(request.Path, 1, 0);
-                    var fallback = await scanner.ScanDirectoryAsync(request.Path, recursive: true, ct);
+                    List<Chronicle.Plugins.Models.ScannedFile> fallback;
+                    try
+                    {
+                        fallback = await scanner.ScanDirectoryAsync(request.Path, recursive: true, ct);
+                    }
+                    catch (DirectoryNotFoundException dnfe)
+                    {
+                        var hint = BuildMappedDriveHint(request.Path);
+                        throw new DirectoryNotFoundException(
+                            $"Scan path is not accessible: {request.Path}.{hint}", dnfe);
+                    }
                     _progress.Complete();
                     return BuildPreview(fallback);
                 }
@@ -197,6 +226,22 @@ namespace Chronicle.Services
                     string.IsNullOrEmpty(f.MediaTypeHint) ? "movie" : f.MediaTypeHint))
                 .ToList();
             return new ScanPreview(results);
+        }
+
+        /// <summary>
+        /// Returns an optional hint message when a path looks like a mapped drive letter.
+        /// Mapped drives are per-user-session; a spawned process may not inherit them.
+        /// The hint recommends switching to the equivalent UNC path.
+        /// </summary>
+        private static string BuildMappedDriveHint(string path)
+        {
+            if (path.Length >= 2 && path[1] == ':' && char.IsLetter(path[0]))
+            {
+                return $" If '{char.ToUpper(path[0])}:' is a mapped network drive, " +
+                       "try entering the UNC path instead (e.g. \\\\server\\share\\...). " +
+                       "Mapped drives may not be visible to background processes.";
+            }
+            return string.Empty;
         }
 
         // ── Identify ──────────────────────────────────────────────────────────────
