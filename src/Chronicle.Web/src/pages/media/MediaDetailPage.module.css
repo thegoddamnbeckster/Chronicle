@@ -55,6 +55,20 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   pointer-events: none;
 }
 
+.upBtn {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.upBtn:hover { color: var(--text-primary); border-color: var(--accent); }
+
 .navPos {
   font-size: 12px;
   color: var(--text-muted);
