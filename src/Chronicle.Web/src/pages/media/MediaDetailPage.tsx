@@ -97,6 +97,12 @@ export default function MediaDetailPage() {
     <div className={styles.page}>
       <div className={styles.topNav}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
+        <Link
+          to={item.parentId != null ? `/media/${item.parentId}` : `/library#media-${item.id}`}
+          className={styles.upBtn}
+        >
+          {item.parentId != null ? '↑ Up' : '↑ Library'}
+        </Link>
         {listIds.length > 0 && (
           <div className={styles.listNav}>
             {prevId != null ? (
