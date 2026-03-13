@@ -285,6 +285,7 @@ export default function ListDetailPage() {
                   src={item.mediaItem.posterUrl}
                   alt={item.mediaItem.name}
                   className={styles.poster}
+                  onError={e => { e.currentTarget.style.display = 'none' }}
                 />
               )}
               <button
