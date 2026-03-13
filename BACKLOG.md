@@ -31,8 +31,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Lists
 
-- **Click-through to metadata** — When choosing items from a list, clicking an item should navigate to the same media detail page shown from the library.
-- **Editable list name** — Ability to rename a list inline or from a settings panel.
+- **Editable list name** — ✓ Already implemented (click title to rename inline)
 
 ---
 
@@ -72,7 +71,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## General UI
 
-- **No broken images** — All image elements need `onError` fallback to the letter-placeholder. Applied to: LibraryPage ✓, MediaDetailPage ✓. Audit remaining pages.
+- **No broken images** — All image elements need `onError` fallback to the letter-placeholder. Applied to: LibraryPage ✓, MediaDetailPage ✓, AddMediaPage ✓, PluginsPage ✓, ListDetailPage ✓, MediaDetailPage child grid ✓. All pages covered.
 
 ---
 
@@ -123,3 +122,6 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - LibraryPage: multi-select batch delete — select mode with checkmark overlay, Select All, Delete (N) toolbar button, modal confirmation
 - `scripts/RunTestEnvironment.ps1` — dev startup script (was `dev.ps1` at repo root); launches API on :8080 and Web on :3000 in separate windows
 - Dark Teal theme — dark teal backgrounds, white primary text, neon green (#00ff88) accent; added to Preferences theme picker
+- Lists: click-through to metadata — already implemented via `<Link to="/media/{id}">` on each row
+- Lists: editable list name — already implemented (click title to rename inline)
+- General UI: broken image `onError` fallback — all img tags across all pages now covered (ListDetailPage, MediaDetailPage child grid)

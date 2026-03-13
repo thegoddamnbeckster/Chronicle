@@ -468,11 +468,24 @@ export default function MediaDetailPage() {
             {children.map(child => (
               <Link key={child.id} to={`/media/${child.id}`} className={styles.childCard}>
                 {child.posterUrl
-                  ? <img className={styles.childPoster} src={child.posterUrl} alt={child.name} />
-                  : <div className={styles.childPosterPlaceholder}>
-                      {child.number ?? child.name.charAt(0)}
-                    </div>
-                }
+                  ? <img
+                      className={styles.childPoster}
+                      src={child.posterUrl}
+                      alt={child.name}
+                      onError={e => {
+                        const img = e.currentTarget
+                        img.style.display = 'none'
+                        const ph = img.nextElementSibling as HTMLElement | null
+                        if (ph) ph.style.display = 'flex'
+                      }}
+                    />
+                  : null}
+                <div
+                  className={styles.childPosterPlaceholder}
+                  style={{ display: child.posterUrl ? 'none' : 'flex' }}
+                >
+                  {child.number ?? child.name.charAt(0)}
+                </div>
                 <div className={styles.childName}>{child.name}</div>
                 {child.year && <div className={styles.childYear}>{child.year}</div>}
               </Link>
