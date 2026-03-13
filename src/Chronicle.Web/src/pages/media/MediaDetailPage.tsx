@@ -312,9 +312,9 @@ export default function MediaDetailPage() {
                   </div>
                 )}
 
-                {/* Image links — TMDB URLs only, no downloading */}
+                {/* Image thumbnails — click opens full size in new tab */}
                 {(item.tmdbMeta?.posterUrl || item.tmdbMeta?.backdropUrl) && (
-                  <div className={styles.tmdbRow}>
+                  <div className={`${styles.tmdbRow} ${styles.tmdbRowImages}`}>
                     <span className={styles.tmdbLabel}>Images</span>
                     <div className={styles.tmdbImageLinks}>
                       {item.tmdbMeta?.posterUrl && (
@@ -323,8 +323,15 @@ export default function MediaDetailPage() {
                           target="_blank"
                           rel="noreferrer"
                           className={styles.tmdbImageLink}
+                          title="Open full-size poster"
                         >
-                          Poster ↗
+                          <img
+                            src={item.tmdbMeta.posterUrl}
+                            alt="Poster"
+                            className={styles.tmdbThumbnail}
+                            onError={e => { e.currentTarget.style.display = 'none' }}
+                          />
+                          <span className={styles.tmdbThumbnailLabel}>Poster ↗</span>
                         </a>
                       )}
                       {item.tmdbMeta?.backdropUrl && (
@@ -333,8 +340,15 @@ export default function MediaDetailPage() {
                           target="_blank"
                           rel="noreferrer"
                           className={styles.tmdbImageLink}
+                          title="Open full-size backdrop"
                         >
-                          Backdrop ↗
+                          <img
+                            src={item.tmdbMeta.backdropUrl}
+                            alt="Backdrop"
+                            className={styles.tmdbThumbnail}
+                            onError={e => { e.currentTarget.style.display = 'none' }}
+                          />
+                          <span className={styles.tmdbThumbnailLabel}>Backdrop ↗</span>
                         </a>
                       )}
                     </div>
