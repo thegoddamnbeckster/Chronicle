@@ -10,7 +10,7 @@
     Both processes run in separate console windows so you can see their logs.
     Close either window or press Ctrl+C in it to stop that process.
 
-    Run this script from the repository root.
+    Run this script from anywhere — it locates the repo root automatically.
 
 .PARAMETER ApiOnly
     Start only the API, not the frontend.
@@ -23,7 +23,7 @@ param(
     [switch]$WebOnly
 )
 
-$RepoRoot = $PSScriptRoot
+$RepoRoot   = Split-Path $PSScriptRoot -Parent
 $ApiProject = Join-Path $RepoRoot "src\Chronicle.API\Chronicle.API.csproj"
 $WebDir     = Join-Path $RepoRoot "src\Chronicle.Web"
 
