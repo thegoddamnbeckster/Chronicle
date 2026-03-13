@@ -317,16 +317,18 @@ export default function ScanPage() {
                     onChange={() => toggleSkip(f.filePath)}
                     className={styles.reviewCheck}
                   />
-                  <div className={styles.reviewInfo}>
-                    <span className={styles.identifyTitle}>{f.parsedTitle}</span>
-                    {f.parsedYear && <span className={styles.identifyYear}>({f.parsedYear})</span>}
-                    <span className={styles.mediaTypeBadge}>{f.mediaTypeHint}</span>
-                    <span className={styles.confidence}>{f.confidenceScore}%</span>
-                    {f.suggestedExternalId && (
-                      <span className={styles.nfoTag} title="External ID from NFO sidecar">NFO</span>
-                    )}
+                  <div className={styles.reviewContent}>
+                    <div className={styles.reviewInfo}>
+                      <span className={styles.identifyTitle}>{f.parsedTitle}</span>
+                      {f.parsedYear && <span className={styles.identifyYear}>({f.parsedYear})</span>}
+                      <span className={styles.mediaTypeBadge}>{f.mediaTypeHint}</span>
+                      <span className={styles.confidence}>{f.confidenceScore}%</span>
+                      {f.suggestedExternalId && (
+                        <span className={styles.nfoTag} title="External ID from NFO sidecar">NFO</span>
+                      )}
+                    </div>
+                    <div className={styles.reviewPath}>{f.filePath}</div>
                   </div>
-                  <span className={styles.filePath}>{f.filePath}</span>
                 </label>
               )
             })}

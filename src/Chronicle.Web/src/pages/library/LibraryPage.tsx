@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library'
 import { deleteMedia } from '@/api/media'
 import type { LibraryEntry, LibraryStatus } from '@/types'
+import { loadSortSettings, stripLeadingArticle } from '@/utils/sortSettings'
 import styles from './LibraryPage.module.css'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -91,10 +92,20 @@ export function savePresets(presets: LibraryPreset[]) {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function sortEntries(entries: LibraryEntry[], sortBy: SortField, sortDir: SortDir): LibraryEntry[] {
+  const sortSettings = loadSortSettings()
   return [...entries].sort((a, b) => {
     let cmp = 0
     switch (sortBy) {
-      case 'name':      cmp = a.mediaItem.name.localeCompare(b.mediaItem.name); break
+      case 'name': {
+        const nameA = sortSettings.ignoreArticles
+          ? stripLeadingArticle(a.mediaItem.name, sortSettings.ignoredArticles)
+          : a.mediaItem.name
+        const nameB = sortSettings.ignoreArticles
+          ? stripLeadingArticle(b.mediaItem.name, sortSettings.ignoredArticles)
+          : b.mediaItem.name
+        cmp = nameA.localeCompare(nameB)
+        break
+      }
       case 'year':      cmp = (a.mediaItem.year ?? 0) - (b.mediaItem.year ?? 0); break
       case 'dateAdded': cmp = new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime(); break
       case 'rating':    cmp = (a.userRating ?? 0) - (b.userRating ?? 0); break
