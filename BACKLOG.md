@@ -117,3 +117,9 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - Layout: loading guard — no longer redirects to /login during initial auth check (prevents redirect loop)
 - Background metadata refresh: `MetadataRefreshService` refreshes all library root items on a 24h staleness cycle; new items (`MetadataRefreshedAt = null`) processed first; 500ms delay between API calls; 30s startup delay
 - `MetadataRefreshedAt` column added to `media_items` (EF migration + model)
+- LibraryPage: fold-scoped prev/next — navigating to detail page passes only the IDs visible in the current fold (not the full list)
+- MediaDetailPage: hierarchical Up button — navigates to parent item (`↑ Up`) or back to library at the card's position (`↑ Library`) with hash-scroll restoration
+- MediaDetailPage: single-item delete with inline confirmation strip; navigates to `/library` on success
+- LibraryPage: multi-select batch delete — select mode with checkmark overlay, Select All, Delete (N) toolbar button, modal confirmation
+- `scripts/RunTestEnvironment.ps1` — dev startup script (was `dev.ps1` at repo root); launches API on :8080 and Web on :3000 in separate windows
+- Dark Teal theme — dark teal backgrounds, white primary text, neon green (#00ff88) accent; added to Preferences theme picker
