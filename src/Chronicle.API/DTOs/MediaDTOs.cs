@@ -42,6 +42,13 @@ namespace Chronicle.API.DTOs
         string? NfoPosterUrl
     );
 
+    public record RefreshLogDto(
+        string ProviderName,
+        DateTime RefreshedAt,
+        bool Succeeded,
+        string? ErrorMessage
+    );
+
     public record MediaItemDto(
         int Id,
         int MediaTypeId,
@@ -58,7 +65,8 @@ namespace Chronicle.API.DTOs
         DateTime UpdatedAt,
         List<ExternalIdDto> ExternalIds,
         TmdbMetaDto? TmdbMeta = null,
-        FileScannerMetaDto? FileScannerMeta = null
+        FileScannerMetaDto? FileScannerMeta = null,
+        List<RefreshLogDto>? RefreshLogs = null
     );
 
     public record AddToLibraryRequestDto(
