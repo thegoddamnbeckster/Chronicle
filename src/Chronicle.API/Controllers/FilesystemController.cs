@@ -43,6 +43,11 @@ public class FilesystemController : ControllerBase
             return BadRequest(ApiResponse<FilesystemListingDto>.Fail(
                 "ACCESS_DENIED", $"Access denied: {path}"));
         }
+        catch (Exception ex) when (ex is IOException or PathTooLongException or System.Security.SecurityException)
+        {
+            return BadRequest(ApiResponse<FilesystemListingDto>.Fail(
+                "FILESYSTEM_ERROR", ex.Message));
+        }
 
         subdirs.Sort((a, b) =>
             string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
