@@ -5,6 +5,7 @@ import type { ScanProgress } from '@/api/scan'
 import { getMediaTypes } from '@/api/media'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
 import type { ScannedFile, MediaTypeOption } from '@/types'
+import PathInput from '@/components/PathInput'
 import styles from './ScanPage.module.css'
 
 type Step = 'configure' | 'preview' | 'review' | 'done'
@@ -160,13 +161,12 @@ export default function ScanPage() {
         <div className={styles.formCard}>
           <div className={styles.field}>
             <label className={styles.label} htmlFor="scan-path">Directory path</label>
-            <input
+            <PathInput
               id="scan-path"
               className={styles.textInput}
-              type="text"
               placeholder="C:\Movies or /mnt/media/movies"
               value={path}
-              onChange={(e) => setPath(e.target.value)}
+              onChange={setPath}
             />
           </div>
 
