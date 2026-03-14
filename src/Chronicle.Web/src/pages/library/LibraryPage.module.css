@@ -45,7 +45,7 @@
   transition: all 0.15s;
 }
 
-.actionBtn:hover:not(:disabled) { background: var(--accent); color: white; }
+.actionBtn:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); }
 .actionBtn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .resetBtn {
@@ -149,7 +149,7 @@
 .filterActive {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
 
 .sortRow { gap: 16px; }

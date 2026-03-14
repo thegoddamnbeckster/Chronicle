@@ -415,7 +415,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   border-radius: 4px;
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   cursor: pointer;
   white-space: nowrap;
   transition: opacity 0.15s;
@@ -672,7 +672,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .primaryBtn {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border: none;
   border-radius: var(--radius);
   padding: 8px 18px;
