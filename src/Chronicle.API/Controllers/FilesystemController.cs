@@ -34,8 +34,7 @@ public class FilesystemController : ControllerBase
         {
             foreach (var sub in dir.EnumerateDirectories())
             {
-                try { subdirs.Add(new FilesystemEntryDto(sub.Name, sub.FullName)); }
-                catch (UnauthorizedAccessException) { /* skip inaccessible entries */ }
+                subdirs.Add(new FilesystemEntryDto(sub.Name, sub.FullName));
             }
         }
         catch (UnauthorizedAccessException)
