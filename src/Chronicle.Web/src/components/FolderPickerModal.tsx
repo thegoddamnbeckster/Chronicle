@@ -31,8 +31,6 @@ export default function FolderPickerModal({
       setListing(result)
       setCurrentPath(result.path ?? '')
       setInputPath(result.path ?? '')
-    } catch (err) {
-      setListError(err instanceof Error ? err.message : 'Failed to load directory')
     } finally {
       setIsLoading(false)
     }
@@ -40,7 +38,10 @@ export default function FolderPickerModal({
 
   // Load on mount
   useEffect(() => {
-    navigate(initialPath ?? '')
+    // intentionally run once on mount; initialPath is only an opening hint, not a controlled prop
+    navigate(initialPath ?? '').catch((err) =>
+      setListError(err instanceof Error ? err.message : 'Failed to load directory')
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -54,7 +55,7 @@ export default function FolderPickerModal({
   const handlePathKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return
     const typed = inputPath.trim()
-    navigate(typed).catch(() => setInputError('Path not found'))
+    navigate(typed).catch((err) => setInputError(err instanceof Error ? err.message : 'Path not found'))
   }
 
   const handleSelect = () => {
@@ -113,10 +114,11 @@ export default function FolderPickerModal({
               {listing.parent !== null && (
                 <div
                   className={`${styles.dirRow} ${styles.upRow}`}
-                  onClick={() => navigate(listing.parent!)}
+                  onClick={() => navigate(listing.parent!).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => e.key === 'Enter' && navigate(listing.parent!)}
+                  aria-label="Navigate up to parent directory"
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate(listing.parent!).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
                 >
                   <span className={styles.dirIcon}>📁</span>
                   <span>.. (Up)</span>
@@ -136,10 +138,10 @@ export default function FolderPickerModal({
                 <div
                   key={dir.path}
                   className={styles.dirRow}
-                  onClick={() => navigate(dir.path)}
+                  onClick={() => navigate(dir.path).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => e.key === 'Enter' && navigate(dir.path)}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate(dir.path).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
                 >
                   <span className={styles.dirIcon}>📁</span>
                   <span>{dir.name}</span>
