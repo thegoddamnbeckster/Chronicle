@@ -83,5 +83,8 @@ secrets.json
 # Plugin binaries (deployed at runtime, not source-controlled)
 src/Chronicle.API/plugins/
 
+# ── Test output ───────────────────────────────────────────────────────────────
+**/TestResults/
+
 # ── Claude Code local settings (machine-specific) ─────────────────────────────
 .claude/settings.local.json
