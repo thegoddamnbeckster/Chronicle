@@ -118,7 +118,12 @@ export default function FolderPickerModal({
                   role="button"
                   tabIndex={0}
                   aria-label="Navigate up to parent directory"
-                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate(listing.parent!).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      navigate(listing.parent!).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))
+                    }
+                  }}
                 >
                   <span className={styles.dirIcon}>📁</span>
                   <span>.. (Up)</span>
@@ -141,7 +146,12 @@ export default function FolderPickerModal({
                   onClick={() => navigate(dir.path).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate(dir.path).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      navigate(dir.path).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))
+                    }
+                  }}
                 >
                   <span className={styles.dirIcon}>📁</span>
                   <span>{dir.name}</span>
