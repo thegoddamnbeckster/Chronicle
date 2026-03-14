@@ -137,7 +137,7 @@
   transition: all 0.15s;
 }
 
-.applyBtn:hover { background: var(--accent); color: white; }
+.applyBtn:hover { background: var(--accent); color: var(--accent-fg); }
 
 .editBtn {
   padding: 4px 12px;
@@ -345,5 +345,5 @@
 
 .articleAddBtn:hover {
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
