@@ -7,8 +7,8 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 ## File Scanner
 
 - **Browse button** — Every path input in the UI needs a folder-picker button. No exceptions. No manual typing of paths.
-- **Persistent scan folders** — Scan paths saved to DB/settings. Pre-populated on the scan page. Scanning re-runs automatically on a background schedule (configurable interval).
-- **Media Type** - It should not matter what kind of media is in a particular folder (although that is convenient).  The FileScanner plugin should determine the media type of each file.  Speed does not the most important factor as this should primarily be a background process.
+- **Persistent scan folders / watched folders list** — Scan paths saved to DB/settings (e.g. `E:\Music`, `G:\Videos\Movies`, `J:\Videos\TV`). Pre-populated on the scan page. Each new folder the user scans is automatically added to the watched list. The background scan cycle re-walks every watched folder; any new files found above the detection confidence threshold are auto-imported into the library and immediately queued for metadata scraping. Removed files should be flagged (not silently deleted).
+- **Media Type auto-detection** — FileScanner must determine the media type of each file on its own (extension + embedded tags + folder name heuristics). It should not rely on the user declaring which type of media is in a folder. Speed is secondary — this runs as a background process.
 - **Background scanning** — Scans run silently in the background and notify the user when new items are found.
 - **Scan progress feedback** — Show current folder being scanned in real time, not a frozen spinner.
 - **Music support** — FileScanner plugin: add audio extensions (.mp3, .flac, .m4a, .ogg, .wav, .aac), music filename parsing (Artist - Album - Track, etc.), register "Music" as a supported media type.
@@ -18,6 +18,9 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Scan results: show media type** — Display the detected media type badge in scan results rows.
 - **Scan results: type mismatch correction** — If the movie scanner detects something that looks like TV (S01E01, etc.), automatically re-classify and match against the correct type.
 - **Confidence score info** — Show the scoring formula somewhere accessible (e.g. a small info popup on the scan page). Formula: NFO+ID=100, Title(Year) filename=85, NFO+title+year=85, dotted/spaced filename=70, title only=50.
+- **Scan performance** — Scanning a folder should take only as long as it takes to enumerate filenames on disk. Metadata fetching (TMDB lookups, etc.) must move entirely to a background step so a large folder (e.g. H:\Movies with 500+ files) doesn't time out the scan request or cause a "Network error" in the UI.
+- **Related files & NFO parsing** — The file scanner metadata box on the media detail page should list all related files found in the same folder (e.g. subtitle files, companion images). Picture files (.jpg/.png) in the folder should be selectable and attachable to the media item. NFO files in the same folder should be detected, parsed, and their fields displayed inside the file scanner metadata box.
+- **Folder-relative file listing** — Show every file in the same folder as the scanned media item, directly inside the scanner metadata box on the detail page.
 
 ---
 
@@ -25,7 +28,8 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 - **Indent sub-items in tree** — When showing hierarchical media (show → season → episode), indent child items visually so the parent-child relationship is obvious.
 - **Content** - as media is added ot the library, the library should display it dynamically.
-- **Metadata** - Metadata can be downloaded by any metadata plugin, not just TMDB.  Each set of metadata per media item shall be shown in it's own box labelled for that metadata provider (TMDB, Trakt, SIMKL, TinyMediaManager, LastFM, etc).  Each box will be labelled for the metadata provider's name and have the metadata provider's icon.  
+- **Metadata** - Metadata can be downloaded by any metadata plugin, not just TMDB.  Each set of metadata per media item shall be shown in it's own box labelled for that metadata provider (TMDB, Trakt, SIMKL, TinyMediaManager, LastFM, etc).  Each box will be labelled for the metadata provider's name and have the metadata provider's icon.
+- **Prev/next navigation end-of-section behaviour** — When the user reaches the last item in a folded library section and presses Next (or first item and presses Prev), let the user choose the behaviour in Library Settings: (a) wrap back to the beginning of the same section (current default), (b) automatically continue into the next/previous folded section, or (c) grey out the button when there are no more items (clearest, safest).
 
 ---
 
@@ -57,6 +61,14 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 - **All file paths** — Display every file path associated with a media item in the metadata page, both internal (Chronicle's data store) and external (original path on disk). If multiple files exist (e.g. different cuts, multiple episodes), list them all.
 - **Image thumbnails** — Show all available images (poster, backdrop, etc.) as actual thumbnails in the metadata page rather than links. Local images stored with the media should also be shown inline. Clicking on the thumbnail should show the full size image in a new window.
+- **Collections / sets / lists as clickable links** — On the media detail page, any collection, set, or curated list the item belongs to (e.g. TMDB `belongs_to_collection`) should appear as a clickable link underneath the title and above the delete button. The delete button should be right-aligned. Clicking the collection link navigates to a collection detail view that lists all member items.
+
+---
+
+## Metadata
+
+- **Automatic background refresh from all sources** — The background metadata refresh service runs every 4 hours (configurable in Settings) and walks every library item. For each item it runs every active metadata plugin that is appropriate for that media type (e.g. TMDB for movies/TV, LastFM for music, Trakt/SIMKL for tracked media, FileScanner to detect file changes and new files in watched folders). All plugins run in the same cycle — no per-plugin scheduling. New files discovered by FileScanner that exceed the confidence threshold are auto-imported and immediately queued for the other metadata scrapers. Track the last successful refresh timestamp per item per plugin in a `media_item_refresh_log` table (`item_id`, `provider_name`, `refreshed_at`). Display these per-plugin timestamps in the metadata detail box for each provider on the media detail page. Show subtle progress feedback in the bottom-left corner of the UI only (not a modal or blocking spinner).
+- **Metadata source API (Kodi / external callers)** — Expose a per-item metadata endpoint that returns all stored metadata fields, partitioned by source (TMDB, MusicBrainz, etc.). Allow the caller (e.g. a Kodi plugin) to query which Chronicle field maps to which Kodi metadata purpose (e.g. "poster", "fanart", "rating"). The mapping should be user-configurable in Settings so different providers can be prioritised per field per media type.
 
 ---
 
@@ -74,6 +86,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 ## General UI
 
 - **No broken images** — All image elements need `onError` fallback to the letter-placeholder. Applied to: LibraryPage ✓, MediaDetailPage ✓. Audit remaining pages.
+- **Dev environment launch script** — Keep a script (e.g. `scripts/start-dev.ps1`) updated that always points to the active worktree and starts both the API (port 8080) and frontend (port 3000). User should be able to run one script to get the exact environment that was being worked on when a session ended.
 
 ---
 
