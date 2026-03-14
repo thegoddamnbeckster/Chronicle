@@ -33,6 +33,13 @@ export interface FileScannerMeta {
   nfoPosterUrl: string | null
 }
 
+export interface RefreshLog {
+  providerName: string
+  refreshedAt: string
+  succeeded: boolean
+  errorMessage?: string | null
+}
+
 export interface MediaItem {
   id: number
   mediaTypeId: number
@@ -50,6 +57,7 @@ export interface MediaItem {
   externalIds: ExternalId[]
   tmdbMeta?: TmdbMeta | null
   fileScannerMeta?: FileScannerMeta | null
+  refreshLogs?: RefreshLog[] | null
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────
