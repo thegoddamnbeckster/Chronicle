@@ -41,8 +41,13 @@
   color: var(--text-muted, #888);
   font-size: 20px;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0;
   line-height: 1;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .closeBtn:hover { color: var(--text-primary, #fff); }
