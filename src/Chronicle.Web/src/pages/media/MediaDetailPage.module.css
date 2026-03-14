@@ -306,12 +306,20 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .metadataBoxBrand {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .tmdbLogo {
   height: 14px;
   width: auto;
+}
+
+.refreshTimestamp {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
 }
 
 .metadataBoxActions {
