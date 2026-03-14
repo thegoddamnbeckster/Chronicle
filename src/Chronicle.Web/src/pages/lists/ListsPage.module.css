@@ -113,7 +113,7 @@
 
 .createBtn {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border: none;
   border-radius: 6px;
   padding: 8px 16px;

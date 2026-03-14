@@ -94,7 +94,7 @@
 .allowBtn {
   flex: 1;
   background: var(--accent, #6366f1);
-  color: #fff;
+  color: var(--accent-fg);
   border: none;
   border-radius: 8px;
   padding: 12px 20px;
