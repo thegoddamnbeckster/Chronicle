@@ -15,13 +15,16 @@ namespace Chronicle.API.Controllers
     {
         private readonly IMediaService _mediaService;
         private readonly IFileScanService _fileScanService;
+        private readonly IMetadataRefreshService _refreshService;
         private readonly ChronicleDbContext _context;
 
-        public MediaController(IMediaService mediaService, IFileScanService fileScanService, ChronicleDbContext context)
+        public MediaController(IMediaService mediaService, IFileScanService fileScanService,
+            IMetadataRefreshService refreshService, ChronicleDbContext context)
         {
-            _mediaService = mediaService;
+            _mediaService    = mediaService;
             _fileScanService = fileScanService;
-            _context = context;
+            _refreshService  = refreshService;
+            _context         = context;
         }
 
         [HttpGet("types")]
@@ -55,13 +58,14 @@ namespace Chronicle.API.Controllers
         }
 
         [HttpGet("{id:int}")]
-        public async Task<IActionResult> GetById(int id)
+        public async Task<IActionResult> GetById(int id, CancellationToken ct)
         {
             var item = await _mediaService.GetByIdAsync(id);
             if (item == null)
                 return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
+            var refreshLogs = await _refreshService.GetRefreshLogsAsync(id, ct);
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, refreshLogs)));
         }
 
         [HttpGet("search")]
@@ -72,7 +76,7 @@ namespace Chronicle.API.Controllers
             [FromQuery] int perPage = 20)
         {
             var results = await _mediaService.SearchAsync(query ?? string.Empty, mediaTypeId, page, perPage);
-            var dtos = results.Select(ToDto).ToList();
+            var dtos = results.Select(m => ToDto(m)).ToList();
             return Ok(ApiResponse<List<MediaItemDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }
 
@@ -80,7 +84,7 @@ namespace Chronicle.API.Controllers
         public async Task<IActionResult> GetChildren(int id)
         {
             var children = await _mediaService.GetChildrenAsync(id);
-            return Ok(ApiResponse<List<MediaItemDto>>.Ok(children.Select(ToDto).ToList()));
+            return Ok(ApiResponse<List<MediaItemDto>>.Ok(children.Select(m => ToDto(m)).ToList()));
         }
 
         [HttpPatch("{id:int}")]
@@ -103,14 +107,12 @@ namespace Chronicle.API.Controllers
         {
             try
             {
-                var item = await _fileScanService.RefreshMetadataAsync(id, ct);
+                await _refreshService.RefreshItemAsync(id, ct);
+                var item = await _mediaService.GetByIdAsync(id);
                 if (item == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
-            }
-            catch (NoProviderConfiguredException ex)
-            {
-                return Conflict(ApiResponse<MediaItemDto>.Fail("NO_PROVIDER_CONFIGURED", ex.Message));
+                var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs)));
             }
             catch (Exception ex)
             {
@@ -163,9 +165,14 @@ namespace Chronicle.API.Controllers
             }
         }
 
-        private static MediaItemDto ToDto(Chronicle.Core.Models.MediaItem m)
+        private static MediaItemDto ToDto(
+            Chronicle.Core.Models.MediaItem m,
+            IReadOnlyList<Chronicle.Core.Models.MediaItemRefreshLog>? refreshLogs = null)
         {
             var (tmdb, fs) = ParseMetaJson(m.MetadataJson);
+            var logDtos = refreshLogs?
+                .Select(l => new RefreshLogDto(l.ProviderName, l.RefreshedAt, l.Succeeded, l.ErrorMessage))
+                .ToList();
             return new MediaItemDto(
                 m.Id,
                 m.MediaTypeId,
@@ -182,7 +189,8 @@ namespace Chronicle.API.Controllers
                 m.UpdatedAt,
                 m.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList(),
                 TmdbMeta: tmdb,
-                FileScannerMeta: fs
+                FileScannerMeta: fs,
+                RefreshLogs: logDtos
             );
         }
 
