@@ -218,6 +218,15 @@ export default function MediaDetailPage() {
                     className={styles.tmdbLogo}
                     onError={(e) => { e.currentTarget.src = tmdbLogoFallback; }}
                   />
+                  {(() => {
+                    const tmdbLog = item.refreshLogs?.find(l => l.providerName === 'TMDB')
+                    if (!tmdbLog) return null
+                    const dt = new Date(tmdbLog.refreshedAt)
+                    const label = tmdbLog.succeeded
+                      ? `Last refreshed ${dt.toLocaleDateString()} ${dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                      : `Last refresh failed: ${tmdbLog.errorMessage ?? 'unknown error'}`
+                    return <p className={styles.refreshTimestamp}>{label}</p>
+                  })()}
                 </div>
                 <div className={styles.metadataBoxActions}>
                   <button
