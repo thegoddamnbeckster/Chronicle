@@ -27,7 +27,6 @@ public class MetadataRefreshServiceTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(db);
-        services.AddSingleton<ChronicleDbContext>(sp => sp.GetRequiredService<ChronicleDbContext>());
         services.AddSingleton(registry);
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
