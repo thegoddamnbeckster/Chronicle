@@ -115,6 +115,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - MediaDetailPage: prev/next navigation bar when accessed from a list (library passes sorted+filtered item IDs as router state)
 - LibraryPage: card links pass sorted list + label as router nav state for prev/next traversal
 - Layout: loading guard — no longer redirects to /login during initial auth check (prevents redirect loop)
+- Background metadata refresh v2: `MetadataRefreshService` runs every 4h (configurable via `app_settings`), cycles all library root items × all active metadata plugins, writes per-plugin timestamps to `media_item_refresh_log`, surfaces last-refresh date in each provider's metadata box; `GET /api/v1/settings/app` + `PUT /api/v1/settings/app/{key}` (Admin) expose the interval setting
 - Background metadata refresh: `MetadataRefreshService` refreshes all library root items on a 24h staleness cycle; new items (`MetadataRefreshedAt = null`) processed first; 500ms delay between API calls; 30s startup delay
 - `MetadataRefreshedAt` column added to `media_items` (EF migration + model)
 - LibraryPage: fold-scoped prev/next — navigating to detail page passes only the IDs visible in the current fold (not the full list)
