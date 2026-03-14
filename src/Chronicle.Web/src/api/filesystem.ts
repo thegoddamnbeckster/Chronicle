@@ -1,4 +1,4 @@
-import client from './client'
+import client, { ApiError } from './client'
 import type { ApiResponse } from '@/types'
 
 export interface FilesystemEntry {
@@ -16,6 +16,6 @@ export async function listDirectory(path: string): Promise<FilesystemListing> {
   const params = path ? { path } : {}
   const { data } = await client.get<ApiResponse<FilesystemListing>>('/filesystem', { params })
   if (!data.success || !data.data)
-    throw new Error(data.error?.message ?? 'Failed to list directory')
+    throw new ApiError(data.error?.message ?? 'Failed to list directory', 0, data.error?.code)
   return data.data
 }
