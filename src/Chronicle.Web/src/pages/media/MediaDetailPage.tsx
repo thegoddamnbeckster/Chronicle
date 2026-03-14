@@ -116,7 +116,7 @@ export default function MediaDetailPage() {
           />
         )}
         <div className={`${styles.backdropContent}${hasBackdrop ? ` ${styles.backdropContentActive}` : ''}`}>
-      <div className={styles.topNav}>
+      <div className={`${styles.topNav}${hasBackdrop ? ` ${styles.topNavBoxed}` : ''}`}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
         <Link
           to={item.parentId != null ? `/media/${item.parentId}` : `/library#media-${item.id}`}
@@ -170,7 +170,7 @@ export default function MediaDetailPage() {
           </div>
         </div>
 
-        <div className={styles.meta}>
+        <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
           <h1 className={styles.title}>{item.name}</h1>
 
           <div className={styles.deleteArea}>

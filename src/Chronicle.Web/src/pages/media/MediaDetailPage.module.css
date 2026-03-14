@@ -115,6 +115,34 @@
   --hover-bg:       rgba(255, 255, 255, 0.06);
 }
 
+/* ── Backdrop content boxes ──────────────────────────────────────────────── */
+
+/*
+ * When a backdrop is active, place fully-opaque theme-coloured panels behind
+ * the text-heavy sections.  This guarantees readability regardless of how
+ * bright or dark the backdrop image is, and works identically in every theme:
+ *   dark themes  → dark panel + white text  (both from theme vars)
+ *   light themes → light panel + dark text  (both from theme vars)
+ *
+ * Both classes re-anchor `color` to var(--text-primary) so elements that
+ * rely on CSS inheritance pick up the correct value from within the box
+ * rather than inheriting the resolved white/dark colour set on
+ * .backdropContentActive's parent.
+ */
+.topNavBoxed {
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  color: var(--text-primary);
+}
+
+.metaBoxed {
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  color: var(--text-primary);
+}
+
 .loading, .error {
   color: var(--text-muted);
   padding: 40px 0;
