@@ -138,6 +138,14 @@ builder.Services.AddSingleton<IPluginRegistry, PluginRegistry>();
 builder.Services.AddScoped<IPluginService, PluginService>();
 builder.Services.AddHostedService<PluginHostService>();
 
+// ── Background metadata refresh ───────────────────────────────────────────────
+// MetadataRefreshService is both an IHostedService (background timer) and
+// IMetadataRefreshService (injectable for on-demand single-item refresh).
+// Register as a singleton so both aliases share the same instance.
+builder.Services.AddSingleton<MetadataRefreshService>();
+builder.Services.AddSingleton<IMetadataRefreshService>(sp => sp.GetRequiredService<MetadataRefreshService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
+
 // ── Authentication — JWT Bearer + API Key ─────────────────────────────────────
 // Both schemes are registered. The default authorization policy (below) accepts
 // either, so [Authorize] on any controller works with both JWT and X-API-Key.
