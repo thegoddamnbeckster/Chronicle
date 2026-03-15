@@ -79,7 +79,14 @@ logs/
 
 # ── Secrets (never commit) ────────────────────────────────────────────────────
 appsettings.Production.json
+appsettings.Development.json
 secrets.json
+
+# Plugin binaries (deployed at runtime, not source-controlled)
+src/Chronicle.API/plugins/
+
+# ── Test output ───────────────────────────────────────────────────────────────
+**/TestResults/
 
 # ── Claude Code local settings (machine-specific) ─────────────────────────────
 .claude/settings.local.json

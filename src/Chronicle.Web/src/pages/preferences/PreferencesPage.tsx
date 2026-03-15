@@ -25,6 +25,11 @@ const THEMES: ThemeDef[] = [
     label: 'Navy & Pink',
     swatches: ['#1a1a2e', '#0f3460', '#e94560'],
   },
+  {
+    key: 'dark-teal',
+    label: 'Dark Teal',
+    swatches: ['#0a2424', '#183c3c', '#00ff88'],
+  },
 ]
 
 // ── Page ──────────────────────────────────────────────────────────────────────

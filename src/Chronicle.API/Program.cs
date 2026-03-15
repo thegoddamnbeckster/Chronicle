@@ -95,6 +95,9 @@ builder.Services.AddScoped<IImportService, ImportService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IMediaListService, MediaListService>();
 builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
+// ScanProgressService is a singleton so the scoped FileScanService (writer) and the
+// FileScanController progress endpoint (reader) share the same in-memory state.
+builder.Services.AddSingleton<ScanProgressService>();
 builder.Services.AddScoped<IFileScanService, FileScanService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
@@ -135,6 +138,20 @@ builder.Services.AddSingleton<IPluginRegistry, PluginRegistry>();
 builder.Services.AddScoped<IPluginService, PluginService>();
 builder.Services.AddHostedService<PluginHostService>();
 
+// ── Background duplicate cleanup ──────────────────────────────────────────────
+// Runs once at startup (after a 5-minute delay) and then every 24 hours.
+// Finds MediaItems sharing the same physical file path and removes duplicates,
+// reassigning all user data (library entries, scrobble events) to the survivor.
+builder.Services.AddHostedService<DuplicateCleanupService>();
+
+// ── Background metadata refresh ───────────────────────────────────────────────
+// MetadataRefreshService is both an IHostedService (background timer) and
+// IMetadataRefreshService (injectable for on-demand single-item refresh).
+// Register as a singleton so both aliases share the same instance.
+builder.Services.AddSingleton<MetadataRefreshService>();
+builder.Services.AddSingleton<IMetadataRefreshService>(sp => sp.GetRequiredService<MetadataRefreshService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
+
 // ── Authentication — JWT Bearer + API Key ─────────────────────────────────────
 // Both schemes are registered. The default authorization policy (below) accepts
 // either, so [Authorize] on any controller works with both JWT and X-API-Key.
@@ -171,7 +188,8 @@ builder.Services.AddAuthorization(options =>
 });
 
 // ── Controllers + Swagger ─────────────────────────────────────────────────────
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new UtcDateTimeConverter()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {

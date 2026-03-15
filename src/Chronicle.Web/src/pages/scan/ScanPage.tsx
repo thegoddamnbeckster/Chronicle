@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { getScanStatus, previewScan, importDirect } from '@/api/scan'
+import { getScanStatus, getScanProgress, previewScan, importDirect } from '@/api/scan'
+import type { ScanProgress } from '@/api/scan'
 import { getMediaTypes } from '@/api/media'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
 import type { ScannedFile, MediaTypeOption } from '@/types'
+import PathInput from '@/components/PathInput'
 import styles from './ScanPage.module.css'
 
 type Step = 'configure' | 'preview' | 'review' | 'done'
@@ -19,8 +21,12 @@ export default function ScanPage() {
   const [previewFiles, setPreviewFiles] = useState<ScannedFile[]>([])
   // Set of file paths the user has unchecked (skipped). All checked by default.
   const [skipped, setSkipped] = useState<Set<string>>(new Set())
-  const [importResult, setImportResult] = useState<{ imported: number; failed: number } | null>(null)
+  const [importResult, setImportResult] = useState<{ imported: number; failed: number; duplicates: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // ── Scan progress (polled while preview mutation is pending) ─────────────
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const { addJob, completeJob, failJob } = useBackgroundActivity()
 
@@ -67,7 +73,7 @@ export default function ScanPage() {
       return addJob(`Importing ${count} items…`)
     },
     onSuccess: (data, _vars, jobId) => {
-      setImportResult({ imported: data.imported, failed: data.failed })
+      setImportResult({ imported: data.imported, failed: data.failed, duplicates: data.duplicates })
       setError(null)
       setStep('done')
       completeJob(jobId as string, `${data.imported} imported`)
@@ -77,6 +83,36 @@ export default function ScanPage() {
       failJob(jobId as string, err.message)
     },
   })
+
+  // ── Scan progress polling ────────────────────────────────────────────────
+  // While a preview scan is in-flight, poll /scan/progress every 500 ms and
+  // display the folder being scanned below the button.
+  useEffect(() => {
+    if (previewMut.isPending) {
+      setScanProgress(null)
+      pollRef.current = setInterval(async () => {
+        try {
+          const p = await getScanProgress()
+          setScanProgress(p)
+        } catch {
+          // ignore polling errors — the main mutation error handler covers failures
+        }
+      }, 500)
+    } else {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+      // Keep the last progress visible briefly, then clear
+      if (!previewMut.isPending) setScanProgress(null)
+    }
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [previewMut.isPending])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const toggleSkip = (filePath: string) => {
@@ -125,13 +161,12 @@ export default function ScanPage() {
         <div className={styles.formCard}>
           <div className={styles.field}>
             <label className={styles.label} htmlFor="scan-path">Directory path</label>
-            <input
+            <PathInput
               id="scan-path"
               className={styles.textInput}
-              type="text"
               placeholder="C:\Movies or /mnt/media/movies"
               value={path}
-              onChange={(e) => setPath(e.target.value)}
+              onChange={setPath}
             />
           </div>
 
@@ -166,6 +201,31 @@ export default function ScanPage() {
           >
             {previewMut.isPending ? 'Scanning…' : 'Scan Directory'}
           </button>
+
+          {/* Real-time per-folder progress shown while the scan runs */}
+          {previewMut.isPending && (
+            <div className={styles.progressPanel}>
+              {scanProgress?.currentFolder ? (
+                <>
+                  <div className={styles.progressRow}>
+                    <span className={styles.progressSpinner} />
+                    <span className={styles.progressLabel}>
+                      Folder {scanProgress.foldersScanned} of {scanProgress.totalFolders}
+                      {scanProgress.filesFound > 0 && ` · ${scanProgress.filesFound} files found`}
+                    </span>
+                  </div>
+                  <div className={styles.progressFolder} title={scanProgress.currentFolder}>
+                    {scanProgress.currentFolder}
+                  </div>
+                </>
+              ) : (
+                <div className={styles.progressRow}>
+                  <span className={styles.progressSpinner} />
+                  <span className={styles.progressLabel}>Enumerating directories…</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -188,6 +248,7 @@ export default function ScanPage() {
               <tr>
                 <th>Parsed title</th>
                 <th>Year</th>
+                <th>Type</th>
                 <th>Confidence</th>
                 <th>File</th>
               </tr>
@@ -197,6 +258,7 @@ export default function ScanPage() {
                 <tr key={i}>
                   <td>{f.parsedTitle}</td>
                   <td>{f.parsedYear ?? '—'}</td>
+                  <td><span className={styles.mediaTypeBadge}>{f.mediaTypeHint}</span></td>
                   <td className={styles.confidence}>{f.confidenceScore}%</td>
                   <td className={styles.filePath}>{f.filePath}</td>
                 </tr>
@@ -255,15 +317,18 @@ export default function ScanPage() {
                     onChange={() => toggleSkip(f.filePath)}
                     className={styles.reviewCheck}
                   />
-                  <div className={styles.reviewInfo}>
-                    <span className={styles.identifyTitle}>{f.parsedTitle}</span>
-                    {f.parsedYear && <span className={styles.identifyYear}>({f.parsedYear})</span>}
-                    <span className={styles.confidence}>{f.confidenceScore}%</span>
-                    {f.suggestedExternalId && (
-                      <span className={styles.nfoTag} title="External ID from NFO sidecar">NFO</span>
-                    )}
+                  <div className={styles.reviewContent}>
+                    <div className={styles.reviewInfo}>
+                      <span className={styles.identifyTitle}>{f.parsedTitle}</span>
+                      {f.parsedYear && <span className={styles.identifyYear}>({f.parsedYear})</span>}
+                      <span className={styles.mediaTypeBadge}>{f.mediaTypeHint}</span>
+                      <span className={styles.confidence}>{f.confidenceScore}%</span>
+                      {f.suggestedExternalId && (
+                        <span className={styles.nfoTag} title="External ID from NFO sidecar">NFO</span>
+                      )}
+                    </div>
+                    <div className={styles.reviewPath}>{f.filePath}</div>
                   </div>
-                  <span className={styles.filePath}>{f.filePath}</span>
                 </label>
               )
             })}
@@ -283,6 +348,12 @@ export default function ScanPage() {
               <span className={styles.statValue}>{importResult.imported}</span>
               <span className={styles.statLabel}>Imported</span>
             </div>
+            {importResult.duplicates > 0 && (
+              <div className={styles.stat}>
+                <span className={styles.statValue}>{importResult.duplicates}</span>
+                <span className={styles.statLabel}>Already in library</span>
+              </div>
+            )}
             <div className={styles.stat}>
               <span className={styles.statValue}>{importResult.failed}</span>
               <span className={styles.statLabel}>Failed</span>

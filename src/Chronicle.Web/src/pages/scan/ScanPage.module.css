@@ -72,7 +72,7 @@
 .stepActive .stepNum {
   background: var(--accent, #5b9bd5);
   border-color: var(--accent, #5b9bd5);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .stepDone {
@@ -187,7 +187,7 @@
   background: var(--accent, #5b9bd5);
   border: none;
   border-radius: 4px;
-  color: #fff;
+  color: var(--accent-fg);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -477,7 +477,7 @@
 
 .reviewRow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.75rem;
   padding: 0.55rem 0.75rem;
   border: 1px solid var(--border);
@@ -501,14 +501,30 @@
   flex-shrink: 0;
   accent-color: var(--accent);
   cursor: pointer;
+  margin-top: 0.2rem;
+}
+
+.reviewContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .reviewInfo {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex: 1;
-  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.reviewPath {
+  font-family: 'Consolas', monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  word-break: break-all;
+  line-height: 1.4;
 }
 
 .nfoTag {
@@ -519,4 +535,64 @@
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--accent);
   flex-shrink: 0;
+}
+
+.mediaTypeBadge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-fg);
+  border: 1px solid var(--status-neutral-border);
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+
+/* ── Scan progress panel ──────────────────────────────────────────────────── */
+
+.progressPanel {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary, #2a2a2a);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.progressSpinner {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent, #5b9bd5);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.progressLabel {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.progressFolder {
+  font-family: 'Consolas', monospace;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

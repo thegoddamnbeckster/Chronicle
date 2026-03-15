@@ -13,6 +13,7 @@
   --accent: #6200ea;
   --accent-hover: #4a00b3;
   --accent-subtle: rgba(98, 0, 234, 0.08);
+  --accent-fg: #fff;
   --hover-bg: rgba(0, 0, 0, 0.04);
   --text-primary: #212121;
   --text-secondary: #616161;
@@ -48,6 +49,7 @@
   --accent: #bb86fc;
   --accent-hover: #a070dc;
   --accent-subtle: rgba(187, 134, 252, 0.12);
+  --accent-fg: #fff;
   --hover-bg: rgba(255, 255, 255, 0.05);
   --text-primary: #e0e0e0;
   --text-secondary: #a0a0a0;
@@ -79,6 +81,7 @@
   --accent: #e94560;
   --accent-hover: #c73652;
   --accent-subtle: rgba(233, 69, 96, 0.08);
+  --accent-fg: #fff;
   --hover-bg: rgba(255, 255, 255, 0.04);
   --text-primary: #eaeaea;
   --text-secondary: #a0a0b0;
@@ -100,6 +103,38 @@
   --status-neutral-fg:     #a0a0b0;
   --status-neutral-border: #3a3a5a;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Dark Teal theme ─────────────────────────────────────────────────────── */
+[data-theme="dark-teal"] {
+  --bg-primary: #0a2424;
+  --bg-secondary: #112e2e;
+  --bg-card: #183c3c;
+  --accent: #00ff88;
+  --accent-hover: #00cc6e;
+  --accent-subtle: rgba(0, 255, 136, 0.1);
+  --accent-fg: #000;
+  --hover-bg: rgba(255, 255, 255, 0.05);
+  --text-primary: #ffffff;
+  --text-secondary: #a8c4c4;
+  --text-muted: #5a8080;
+  --border: #265050;
+  --success: #00ff88;
+  --warning: #ffa726;
+  --danger: #ef5350;
+  --status-success-bg:     rgba(0, 255, 136, 0.1);
+  --status-success-fg:     #00ff88;
+  --status-success-border: rgba(0, 255, 136, 0.3);
+  --status-danger-bg:      #3a1a1a;
+  --status-danger-fg:      #f44336;
+  --status-danger-border:  #5e2e2e;
+  --status-warning-bg:     #2a2a1a;
+  --status-warning-fg:     #ffc107;
+  --status-warning-border: #4a4a2e;
+  --status-neutral-bg:     #1a3030;
+  --status-neutral-fg:     #a8c4c4;
+  --status-neutral-border: #265050;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 html, body, #root {

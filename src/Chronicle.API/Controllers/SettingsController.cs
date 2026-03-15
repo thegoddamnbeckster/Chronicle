@@ -1,6 +1,10 @@
+using Chronicle.Core.Models;
+using Chronicle.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Win32;
+using System.ComponentModel.DataAnnotations;
 using System.ServiceProcess;
 
 namespace Chronicle.API.Controllers;
@@ -11,6 +15,39 @@ namespace Chronicle.API.Controllers;
 public class SettingsController : ControllerBase
 {
     private const string ServiceName = "Chronicle";
+
+    private readonly ChronicleDbContext _db;
+
+    public SettingsController(ChronicleDbContext db)
+    {
+        _db = db;
+    }
+
+    // ── App settings (key/value store) ───────────────────────────────────────
+
+    /// <summary>Returns all app settings as a key/value dictionary.</summary>
+    [HttpGet("app")]
+    public async Task<IActionResult> GetAppSettings()
+    {
+        var settings = await _db.AppSettings.ToListAsync();
+        var dict = settings.ToDictionary(s => s.Key, s => s.Value);
+        return Ok(dict);
+    }
+
+    /// <summary>Creates or updates a single app setting. Admin only.</summary>
+    [HttpPut("app/{key}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> PutAppSetting(string key, [FromBody] AppSettingUpdateRequest body)
+    {
+        var setting = await _db.AppSettings.FindAsync(key);
+        if (setting is null)
+            _db.AppSettings.Add(new AppSetting { Key = key, Value = body.Value });
+        else
+            setting.Value = body.Value;
+
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
 
     /// <summary>
     /// Returns the current Windows service status for Chronicle.
@@ -109,6 +146,8 @@ public class SettingsController : ControllerBase
         return $"{ts.Minutes}m {ts.Seconds}s";
     }
 }
+
+public record AppSettingUpdateRequest([Required] string Value);
 
 public record ServiceStatusDto(
     bool IsInstalled,
