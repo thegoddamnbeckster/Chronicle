@@ -57,7 +57,21 @@ public class FilesystemController : ControllerBase
 
     private static FilesystemListingDto GetDriveRoots()
     {
-        var drives = DriveInfo.GetDrives()
+        var allDrives = DriveInfo.GetDrives();
+
+        // Probe sleeping drives (e.g. idle network shares) in parallel so they
+        // report IsReady after the access attempt.  2-second cap prevents hangs.
+        var notReady = allDrives.Where(d => !d.IsReady).ToArray();
+        if (notReady.Length > 0)
+        {
+            var probes = notReady.Select(d => Task.Run(() =>
+            {
+                try { _ = Directory.Exists(d.RootDirectory.FullName); } catch { }
+            }));
+            Task.WhenAll(probes).Wait(TimeSpan.FromSeconds(2));
+        }
+
+        var drives = allDrives
             .Where(d => d.IsReady)
             .Select(d => new FilesystemEntryDto(d.Name, d.RootDirectory.FullName))
             .ToList();
