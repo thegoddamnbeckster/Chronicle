@@ -5,53 +5,31 @@ using Chronicle.Data;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace Chronicle.Services;
 
 /// <summary>
-/// Hosted background service that periodically refreshes metadata for all
+/// Scheduled task that periodically refreshes metadata for all
 /// library items using every active, applicable IMetadataProvider plugin.
 /// </summary>
-public sealed class MetadataRefreshService : BackgroundService, IMetadataRefreshService
+public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger _log = Log.ForContext<MetadataRefreshService>();
-
-    private static readonly TimeSpan StartupDelay    = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan DefaultInterval = TimeSpan.FromHours(4);
 
     public MetadataRefreshService(IServiceScopeFactory scopeFactory)
     {
         _scopeFactory = scopeFactory;
     }
 
-    // ── BackgroundService ─────────────────────────────────────────────────────
+    // ── IScheduledTask ────────────────────────────────────────────────────────────
+    public string TaskId      => "metadata_refresh";
+    public string DisplayName => "Metadata Refresh";
+    public string Description => "Refreshes titles, posters, and metadata for all library items using active metadata plugins.";
+    public string DefaultCron => "0 */4 * * *";
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        _log.Information("MetadataRefreshService starting (startup delay {Delay}s)", StartupDelay.TotalSeconds);
-        await Task.Delay(StartupDelay, stoppingToken);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            _log.Information("MetadataRefreshService: starting full library refresh pass");
-            try
-            {
-                await RefreshAllAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
-            {
-                _log.Error(ex, "MetadataRefreshService: unhandled error in refresh pass");
-            }
-
-            var interval = await GetIntervalAsync(stoppingToken);
-            _log.Information("MetadataRefreshService: next pass in {Hours}h", interval.TotalHours);
-            await Task.Delay(interval, stoppingToken);
-        }
-    }
+    async Task IScheduledTask.ExecuteAsync(CancellationToken ct) => await RefreshAllAsync(ct);
 
     // ── IMetadataRefreshService ───────────────────────────────────────────────
 
@@ -259,21 +237,6 @@ public sealed class MetadataRefreshService : BackgroundService, IMetadataRefresh
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private async Task<TimeSpan> GetIntervalAsync(CancellationToken ct)
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
-            var setting = await db.AppSettings
-                .FirstOrDefaultAsync(s => s.Key == "metadata_refresh_interval_hours", ct);
-            if (setting is not null && double.TryParse(setting.Value, out var hours) && hours > 0)
-                return TimeSpan.FromHours(hours);
-        }
-        catch { /* fall back to default */ }
-        return DefaultInterval;
-    }
 
     private static async Task UpsertExternalIdAsync(
         ChronicleDbContext db, int mediaItemId, string source, string externalId, CancellationToken ct)
