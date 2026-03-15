@@ -151,6 +151,96 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Removes a specific external ID (e.g. TMDB match) from a media item without
+        /// deleting the item itself.  Also clears the corresponding metadata from MetadataJson.
+        /// </summary>
+        [HttpDelete("{id:int}/external-ids/{source}")]
+        public async Task<IActionResult> ClearExternalId(int id, string source, CancellationToken ct)
+        {
+            var item = await _context.MediaItems
+                .Include(m => m.ExternalIds)
+                .FirstOrDefaultAsync(m => m.Id == id, ct);
+
+            if (item is null)
+                return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+            var toRemove = item.ExternalIds
+                .Where(e => string.Equals(e.Source, source, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (toRemove.Count == 0)
+                return NoContent(); // already absent — idempotent
+
+            _context.MediaExternalIds.RemoveRange(toRemove);
+
+            // Strip the provider's block from MetadataJson so stale data doesn't linger.
+            if (!string.IsNullOrWhiteSpace(item.MetadataJson))
+            {
+                try
+                {
+                    var root = System.Text.Json.JsonSerializer.Deserialize<
+                        System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
+                    if (root is not null && root.Remove(source.ToLowerInvariant()))
+                        item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+                }
+                catch { /* malformed JSON — leave as-is */ }
+            }
+
+            item.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            return NoContent();
+        }
+
+        /// <summary>
+        /// Suppresses auto-matching for a specific provider by storing a sentinel external ID.
+        /// The metadata refresh service will skip this item for that provider permanently.
+        /// Use ClearExternalId (DELETE) to un-suppress and allow auto-matching again.
+        /// </summary>
+        [HttpPost("{id:int}/suppress/{source}")]
+        public async Task<IActionResult> SuppressMatch(int id, string source, CancellationToken ct)
+        {
+            var item = await _context.MediaItems
+                .Include(m => m.ExternalIds)
+                .FirstOrDefaultAsync(m => m.Id == id, ct);
+
+            if (item is null)
+                return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+            // Remove any existing ID for this source (real or previous suppress sentinel).
+            var existing = item.ExternalIds
+                .Where(e => string.Equals(e.Source, source, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            _context.MediaExternalIds.RemoveRange(existing);
+
+            // Also strip cached metadata for this provider.
+            if (!string.IsNullOrWhiteSpace(item.MetadataJson))
+            {
+                try
+                {
+                    var root = System.Text.Json.JsonSerializer.Deserialize<
+                        System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
+                    if (root is not null && root.Remove(source.ToLowerInvariant()))
+                        item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+                }
+                catch { /* malformed JSON — leave as-is */ }
+            }
+
+            // Store the suppress sentinel.
+            _context.MediaExternalIds.Add(new Chronicle.Core.Models.MediaExternalId
+            {
+                MediaItemId = item.Id,
+                Source      = source.ToLowerInvariant(),
+                ExternalId  = "__suppress__"
+            });
+
+            item.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            return NoContent();
+        }
+
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id)
         {

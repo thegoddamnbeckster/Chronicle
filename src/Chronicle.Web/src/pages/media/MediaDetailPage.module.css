@@ -365,6 +365,69 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   border-color: var(--accent);
 }
 
+.clearMatchBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.clearMatchBtn:hover:not(:disabled) {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+
+.clearMatchBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.suppressMatchBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.suppressMatchBtn:hover:not(:disabled) {
+  color: #ffa94d;
+  border-color: #ffa94d;
+}
+
+.suppressMatchBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.resumeMatchBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #ffa94d;
+  background: transparent;
+  color: #ffa94d;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.resumeMatchBtn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.resumeMatchBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ── Fix Match panel ── */
 
 .fixMatchPanel {
