@@ -103,9 +103,8 @@ namespace Chronicle.Services
                     {
                         UserId = userId,
                         MediaItemId = mediaItem!.Id,
-                        Status = LibraryStatus.Completed,
+                        Status = LibraryStatus.Unwatched,
                         AddedAt = DateTime.UtcNow,
-                        CompletedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow,
                     });
                     added++;
@@ -383,9 +382,8 @@ namespace Chronicle.Services
                         {
                             UserId = request.UserId,
                             MediaItemId = mediaItem.Id,
-                            Status = LibraryStatus.Completed,
+                            Status = LibraryStatus.Unwatched,
                             AddedAt = DateTime.UtcNow,
-                            CompletedAt = DateTime.UtcNow,
                             UpdatedAt = DateTime.UtcNow,
                         });
                     }
@@ -416,26 +414,38 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
 
-            int imported = 0, failed = 0;
+            int imported = 0, failed = 0, duplicates = 0;
             var failures = new List<string>();
 
             if (mediaType.HierarchyLevels >= 3)
             {
                 // Three-tier import: root (show/artist) → mid (season/album) → leaf (episode/track)
-                (imported, failed, failures) = await ImportHierarchicalAsync(
+                (imported, failed, duplicates, failures) = await ImportHierarchicalAsync(
                     request.Files, mediaType, request.UserId, ct);
             }
             else
             {
-                // Flat import: batch all items to avoid one SaveChangesAsync per file.
-                // 1. Add all MediaItems → 1 save (IDs are auto-populated by EF Core).
-                // 2. Upsert ExternalIds  → individual queries but no saves yet.
-                // 3. Bulk-check library  → 1 query + 1 final save.
+                // Flat import.
+                // Pass 1: check for duplicates and create only new items.
+                // Pass 2: upsert external IDs.
+                // Pass 3: bulk-upsert library entries.
                 var pairs = new List<(DirectImportFile file, MediaItem item)>(request.Files.Count);
 
                 foreach (var file in request.Files)
                 {
                     ct.ThrowIfCancellationRequested();
+
+                    // Skip files whose path is already registered in the database.
+                    var existingItem = await FindItemByFilePathAsync(file.FilePath, mediaType.Id, ct);
+                    if (existingItem is not null)
+                    {
+                        _log.Information("Duplicate file '{Path}' already imported as '{Title}' (id={Id}) — skipping",
+                            file.FilePath, existingItem.Name, existingItem.Id);
+                        duplicates++;
+                        pairs.Add((file, existingItem));
+                        continue;
+                    }
+
                     var item = new MediaItem
                     {
                         Name           = file.ParsedTitle,
@@ -452,9 +462,11 @@ namespace Chronicle.Services
                     pairs.Add((file, item));
                 }
 
-                // Single round-trip — EF Core populates all generated IDs.
-                await _context.SaveChangesAsync(ct);
-                imported = pairs.Count;
+                // Save new items (EF Core populates auto-generated IDs).
+                var newCount = pairs.Count - duplicates;
+                if (newCount > 0)
+                    await _context.SaveChangesAsync(ct);
+                imported = newCount;
 
                 // Upsert ExternalIds for any file that carries an NFO/external ID hint.
                 foreach (var (file, item) in pairs)
@@ -464,10 +476,10 @@ namespace Chronicle.Services
                 }
 
                 // Determine which items already have a library entry (batch SELECT).
-                var newItemIds = pairs.Select(p => p.item.Id).ToList();
+                var allItemIds = pairs.Select(p => p.item.Id).ToList();
                 var existingLibSet = new HashSet<int>(
                     await _context.UserLibraries
-                        .Where(l => l.UserId == request.UserId && newItemIds.Contains(l.MediaItemId))
+                        .Where(l => l.UserId == request.UserId && allItemIds.Contains(l.MediaItemId))
                         .Select(l => l.MediaItemId)
                         .ToListAsync(ct));
 
@@ -479,9 +491,8 @@ namespace Chronicle.Services
                         {
                             UserId      = request.UserId,
                             MediaItemId = item.Id,
-                            Status      = LibraryStatus.Completed,
+                            Status      = LibraryStatus.Unwatched,
                             AddedAt     = DateTime.UtcNow,
-                            CompletedAt = DateTime.UtcNow,
                             UpdatedAt   = DateTime.UtcNow,
                         });
                     }
@@ -491,17 +502,18 @@ namespace Chronicle.Services
                 await _context.SaveChangesAsync(ct);
             }
 
-            _log.Information("Direct import complete: {Imported} imported, {Failed} failed", imported, failed);
-            return new ImportApprovedSummary(imported, failed, failures);
+            _log.Information("Direct import complete: {Imported} imported, {Duplicates} skipped (duplicate), {Failed} failed",
+                imported, duplicates, failed);
+            return new ImportApprovedSummary(imported, failed, failures, duplicates);
         }
 
-        private async Task<(int imported, int failed, List<string> failures)> ImportHierarchicalAsync(
+        private async Task<(int imported, int failed, int duplicates, List<string> failures)> ImportHierarchicalAsync(
             List<DirectImportFile> files,
             MediaType mediaType,
             int userId,
             CancellationToken ct)
         {
-            int imported = 0, failed = 0;
+            int imported = 0, failed = 0, duplicates = 0;
             var failures = new List<string>();
 
             var showGroups = GroupByShow(files.Select(f => new Chronicle.Plugins.Models.ScannedFile
@@ -550,10 +562,11 @@ namespace Chronicle.Services
                                 }
                                 var epName = ep.EpisodeTitle ?? ep.ParsedTitle;
 
-                                await ImportSingleFileAsync(file with { ParsedTitle = epName },
+                                var wasNew = await ImportSingleFileAsync(file with { ParsedTitle = epName },
                                     mediaType.Id, midItem.Id, hierarchyLevel: 2,
                                     userId, addLibraryEntry: false, ct);
-                                imported++;
+                                if (wasNew) imported++;
+                                else duplicates++;
                             }
                             catch (Exception ex)
                             {
@@ -572,10 +585,10 @@ namespace Chronicle.Services
                 }
             }
 
-            return (imported, failed, failures);
+            return (imported, failed, duplicates, failures);
         }
 
-        private async Task ImportSingleFileAsync(
+        private async Task<bool> ImportSingleFileAsync(
             DirectImportFile file,
             int mediaTypeId,
             int? parentId,
@@ -584,6 +597,17 @@ namespace Chronicle.Services
             bool addLibraryEntry,
             CancellationToken ct)
         {
+            // Skip if a media item with the same file path already exists.
+            var existing = await FindItemByFilePathAsync(file.FilePath, mediaTypeId, ct);
+            if (existing is not null)
+            {
+                _log.Information("Duplicate file '{Path}' already imported as '{Title}' (id={Id}) — skipping",
+                    file.FilePath, existing.Name, existing.Id);
+                if (addLibraryEntry)
+                    await UpsertLibraryEntryAsync(userId, existing.Id, ct);
+                return false;
+            }
+
             var item = new MediaItem
             {
                 Name           = file.ParsedTitle,
@@ -596,20 +620,16 @@ namespace Chronicle.Services
                 CreatedAt      = DateTime.UtcNow,
                 UpdatedAt      = DateTime.UtcNow,
             };
-
-            // TODO: Add deduplication check for flat (movie) re-imports (pre-Task7 ImportDirectAsync
-            // had an update-path that checked SuggestedExternalId before creating a new item).
-            // For now, re-importing the same movie directory creates duplicate MediaItems.
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct);
 
             if (!string.IsNullOrEmpty(file.SuggestedExternalId))
-            {
                 await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
-            }
 
             if (addLibraryEntry)
                 await UpsertLibraryEntryAsync(userId, item.Id, ct);
+
+            return true;
         }
 
         /// <summary>Adds a UserLibrary entry for <paramref name="mediaItemId"/> if one doesn't already exist.</summary>
@@ -623,9 +643,8 @@ namespace Chronicle.Services
                 {
                     UserId      = userId,
                     MediaItemId = mediaItemId,
-                    Status      = LibraryStatus.Completed,
+                    Status      = LibraryStatus.Unwatched,
                     AddedAt     = DateTime.UtcNow,
-                    CompletedAt = DateTime.UtcNow,
                     UpdatedAt   = DateTime.UtcNow,
                 });
                 await _context.SaveChangesAsync(ct);
@@ -633,6 +652,40 @@ namespace Chronicle.Services
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the first <see cref="MediaItem"/> whose <c>fileScanner.filePath</c>
+        /// in <c>MetadataJson</c> matches <paramref name="filePath"/> (case-insensitive).
+        /// Used to prevent duplicate imports of the same physical file.
+        /// </summary>
+        private async Task<MediaItem?> FindItemByFilePathAsync(
+            string filePath, int mediaTypeId, CancellationToken ct)
+        {
+            // LIKE '%fileScanner%' narrows the result set before in-memory comparison.
+            var candidates = await _context.MediaItems
+                .Where(m => m.MediaTypeId == mediaTypeId
+                         && m.MetadataJson != null
+                         && EF.Functions.Like(m.MetadataJson, "%fileScanner%"))
+                .ToListAsync(ct);
+
+            return candidates.FirstOrDefault(m =>
+                string.Equals(ExtractFilePath(m.MetadataJson), filePath, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>Extracts <c>fileScanner.filePath</c> from a <c>MetadataJson</c> blob.</summary>
+        private static string? ExtractFilePath(string? metadataJson)
+        {
+            if (metadataJson is null) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(metadataJson);
+                if (doc.RootElement.TryGetProperty("fileScanner", out var scanner)
+                    && scanner.TryGetProperty("filePath", out var fp))
+                    return fp.GetString();
+            }
+            catch { /* malformed JSON — treat as no path */ }
+            return null;
+        }
 
         private async Task<MediaItem?> FindExistingItemAsync(
             Chronicle.Plugins.Models.ScannedFile file, int mediaTypeId, CancellationToken ct)

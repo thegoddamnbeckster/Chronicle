@@ -85,7 +85,8 @@ namespace Chronicle.Services
     public record ImportApprovedSummary(
         int Imported,
         int Failed,
-        List<string> Failures
+        List<string> Failures,
+        int Duplicates = 0
     );
 
     // ── Direct import (scanner data only — no metadata provider required) ────────
