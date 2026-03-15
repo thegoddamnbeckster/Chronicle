@@ -60,7 +60,8 @@ public class FilesystemController : ControllerBase
         var allDrives = DriveInfo.GetDrives();
 
         // Probe sleeping drives (e.g. idle network shares) in parallel so they
-        // report IsReady after the access attempt.  2-second cap prevents hangs.
+        // wake up before we filter.  DriveInfo.IsReady is a snapshot, so we
+        // re-query after probing.  2-second cap prevents hangs on dead shares.
         var notReady = allDrives.Where(d => !d.IsReady).ToArray();
         if (notReady.Length > 0)
         {
@@ -71,7 +72,8 @@ public class FilesystemController : ControllerBase
             Task.WhenAll(probes).Wait(TimeSpan.FromSeconds(2));
         }
 
-        var drives = allDrives
+        // Re-query so freshly-woken drives show up with IsReady = true.
+        var drives = DriveInfo.GetDrives()
             .Where(d => d.IsReady)
             .Select(d => new FilesystemEntryDto(d.Name, d.RootDirectory.FullName))
             .ToList();
