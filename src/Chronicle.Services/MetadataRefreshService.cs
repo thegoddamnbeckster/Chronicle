@@ -135,13 +135,16 @@ public sealed class MetadataRefreshService : BackgroundService, IMetadataRefresh
         MediaItem item,
         CancellationToken ct)
     {
-        var providers     = registry.GetMetadataProviders();
-        var mediaTypeName = item.MediaType?.Name ?? string.Empty;
+        var providers          = registry.GetMetadataProviders();
+        var mediaTypeName      = item.MediaType?.Name ?? string.Empty;
+        var normalizedTypeName = ToMediaTypeHint(mediaTypeName);
 
         foreach (var provider in providers)
         {
+            // Normalize the Chronicle media type name (e.g. "movies" → "movie") before
+            // checking provider support, so that pluralised DB names don't silently skip items.
             var supported = provider.GetSupportedMediaTypes()
-                .Any(m => string.Equals(m.MediaTypeName, mediaTypeName, StringComparison.OrdinalIgnoreCase));
+                .Any(m => string.Equals(m.MediaTypeName, normalizedTypeName, StringComparison.OrdinalIgnoreCase));
 
             if (!supported)
             {
