@@ -13,7 +13,6 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Scan progress feedback** — Show current folder being scanned in real time, not a frozen spinner.
 - **Music support** — FileScanner plugin: add audio extensions (.mp3, .flac, .m4a, .ogg, .wav, .aac), music filename parsing (Artist - Album - Track, etc.), register "Music" as a supported media type.
 - **Other file support** - FileScanner plugin: allow user to add their own filetypes.
-- **Duplicate detection** — If the user attempts to add files that are already registered in Chronicle, recognize them as duplicates and skip to the next file rather than creating duplicate entries.
 - **Flexible pattern matching** — Handle messy/unorganized folder structures (e.g. `E:\Video Downloads\MCM Download Parser`). Smarter fallback when standard patterns fail.
 - **Scan results: accept items** — From the scan results page, user can approve/reject individual detected items before they're imported.
 - **Scan results: show media type** — ✓ Implemented: `mediaTypeHint` badge shown in Preview table (Type column) and Review list rows.
