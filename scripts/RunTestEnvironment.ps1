@@ -12,6 +12,10 @@
 
     Run this script from anywhere — it locates the repo root automatically.
 
+    IMPORTANT: Run from a NON-elevated (non-Admin) shell. Windows hides
+    network drive mappings from elevated processes, so H: and other mapped
+    drives will be missing from the folder picker if run as Administrator.
+
 .PARAMETER ApiOnly
     Start only the API, not the frontend.
 
