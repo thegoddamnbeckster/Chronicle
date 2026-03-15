@@ -63,6 +63,14 @@ export async function refreshMedia(id: number): Promise<MediaItem> {
   }
 }
 
+export async function clearMediaExternalId(id: number, source: string): Promise<void> {
+  await client.delete(`/media/${id}/external-ids/${encodeURIComponent(source)}`)
+}
+
+export async function suppressMediaMatch(id: number, source: string): Promise<void> {
+  await client.post(`/media/${id}/suppress/${encodeURIComponent(source)}`)
+}
+
 export async function reidentifyMedia(id: number, input: string): Promise<MediaItem> {
   try {
     const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/reidentify`, { input })
