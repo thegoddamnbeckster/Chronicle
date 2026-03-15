@@ -140,19 +140,25 @@ builder.Services.AddSingleton<IPluginRegistry, PluginRegistry>();
 builder.Services.AddScoped<IPluginService, PluginService>();
 builder.Services.AddHostedService<PluginHostService>();
 
-// ── Background duplicate cleanup ──────────────────────────────────────────────
-// Runs once at startup (after a 5-minute delay) and then every 24 hours.
-// Finds MediaItems sharing the same physical file path and removes duplicates,
-// reassigning all user data (library entries, scrobble events) to the survivor.
-builder.Services.AddHostedService<DuplicateCleanupService>();
-
-// ── Background metadata refresh ───────────────────────────────────────────────
-// MetadataRefreshService is both an IHostedService (background timer) and
-// IMetadataRefreshService (injectable for on-demand single-item refresh).
-// Register as a singleton so both aliases share the same instance.
+// ── Scheduled background tasks ────────────────────────────────────────────────
+// Each IScheduledTask is registered as a singleton so both its IScheduledTask role
+// (consumed by TaskSchedulerService via IEnumerable<IScheduledTask>) and any
+// additional service interfaces share the same instance.
 builder.Services.AddSingleton<MetadataRefreshService>();
-builder.Services.AddSingleton<IMetadataRefreshService>(sp => sp.GetRequiredService<MetadataRefreshService>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<MetadataRefreshService>());
+builder.Services.AddSingleton<IMetadataRefreshService>(
+    sp => sp.GetRequiredService<MetadataRefreshService>());
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<MetadataRefreshService>());
+
+builder.Services.AddSingleton<DuplicateCleanupService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<DuplicateCleanupService>());
+
+builder.Services.AddSingleton<TaskSchedulerService>();
+builder.Services.AddSingleton<ITaskSchedulerService>(
+    sp => sp.GetRequiredService<TaskSchedulerService>());
+builder.Services.AddHostedService(
+    sp => sp.GetRequiredService<TaskSchedulerService>());
 
 // ── Authentication — JWT Bearer + API Key ─────────────────────────────────────
 // Both schemes are registered. The default authorization policy (below) accepts
