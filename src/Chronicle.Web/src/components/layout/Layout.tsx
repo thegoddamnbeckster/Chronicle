@@ -60,6 +60,9 @@ export default function Layout() {
 
         {/* Settings group — default closed */}
         <NavGroup label="Settings" storageKey="nav_group_settings" defaultOpen={false}>
+          <NavLink to="/settings/background-tasks" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+            Background Tasks
+          </NavLink>
           <NavLink to="/settings/api-keys" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             API Keys
           </NavLink>
