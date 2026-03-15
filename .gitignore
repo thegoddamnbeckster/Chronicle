@@ -8,6 +8,8 @@ obj/
 *.db-shm
 *.db-wal
 publish/
+# Local dev config — may contain secrets (tokens, keys). Never commit.
+appsettings.Development.json
 
 # Build results
 [Dd]ebug/
