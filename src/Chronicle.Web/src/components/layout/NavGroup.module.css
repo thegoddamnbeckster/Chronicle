@@ -38,6 +38,7 @@
   overflow: hidden;
   max-height: 0;
   transition: max-height 200ms ease;
+  padding-left: 12px;
 }
 
 .childrenOpen {
