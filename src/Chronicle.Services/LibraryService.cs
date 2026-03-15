@@ -54,11 +54,13 @@ namespace Chronicle.Services
             if (rootOnly)
                 q = q.Where(l => l.MediaItem!.ParentId == null);
 
-            return await q
-                .OrderByDescending(l => l.UpdatedAt)
-                .Skip((page - 1) * perPage)
-                .Take(perPage)
-                .ToListAsync(ct);
+            q = q.OrderByDescending(l => l.UpdatedAt);
+
+            // perPage == 0 means "no limit" — return the full result set
+            if (perPage > 0)
+                q = q.Skip((page - 1) * perPage).Take(perPage);
+
+            return await q.ToListAsync(ct);
         }
 
         public async Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId)
