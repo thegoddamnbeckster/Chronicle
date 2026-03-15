@@ -24,7 +24,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Library
 
-- **Indent sub-items in tree** — When showing hierarchical media (show → season → episode), indent child items visually so the parent-child relationship is obvious.
+- **Indent sub-items in tree** — ✓ Implemented: sidebar nav children (under Media/Settings groups) are indented 12px relative to group headers and top-level links.
 - **Content** - as media is added ot the library, the library should display it dynamically.
 - **Metadata** - Metadata can be downloaded by any metadata plugin, not just TMDB.  Each set of metadata per media item shall be shown in it's own box labelled for that metadata provider (TMDB, Trakt, SIMKL, TinyMediaManager, LastFM, etc).  Each box will be labelled for the metadata provider's name and have the metadata provider's icon.  
 
@@ -134,3 +134,4 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - Lists: click-through to metadata — already implemented via `<Link to="/media/{id}">` on each row
 - Lists: editable list name — already implemented (click title to rename inline)
 - General UI: broken image `onError` fallback — all img tags across all pages now covered (ListDetailPage, MediaDetailPage child grid)
+- Sidebar nav: sub-items under Media/Settings groups indented 12px (`NavGroup.module.css` padding-left)
