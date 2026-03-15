@@ -61,8 +61,10 @@ public class FilesystemController : ControllerBase
 
     private static FilesystemListingDto GetDriveRoots()
     {
-        // Include network drives even when IsReady=false — mapped NAS shares
-        // report not-ready while sleeping but the mapping still exists.
+        // Include a drive if it's ready OR if it's a network drive (mapped
+        // network shares report IsReady=false when the NAS is sleeping but the
+        // mapping still exists; Windows wakes the share on first access).
+        // This intentionally excludes empty CD-ROM/removable slots.
         var drives = DriveInfo.GetDrives()
             .Where(d => d.IsReady || d.DriveType == DriveType.Network)
             .Select(d => new FilesystemEntryDto(d.Name, d.RootDirectory.FullName))
