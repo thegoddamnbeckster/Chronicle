@@ -2,6 +2,7 @@ namespace Chronicle.Core.Models
 {
     public enum LibraryStatus
     {
+        Unwatched,
         PlanToWatch,
         Watching,
         Completed,
