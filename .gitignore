@@ -90,3 +90,4 @@ src/Chronicle.API/plugins/
 
 # ── Claude Code local settings (machine-specific) ─────────────────────────────
 .claude/settings.local.json
+.claude/worktrees/
