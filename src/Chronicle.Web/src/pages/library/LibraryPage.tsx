@@ -248,7 +248,7 @@ export default function LibraryPage() {
 
   const { data: allEntries = [], isLoading } = useQuery({
     queryKey: ['library', 'all', { rootOnly: true }],
-    queryFn: () => getLibrary(undefined, 1, 500, true),
+    queryFn: () => getLibrary(undefined, 1, 0, true),
   })
 
   const updateMut = useMutation({
