@@ -62,6 +62,7 @@ export interface MediaItem {
 
 // ── Library ───────────────────────────────────────────────────────────────────
 export type LibraryStatus =
+  | 'Unwatched'
   | 'PlanToWatch'
   | 'Watching'
   | 'Completed'
@@ -190,6 +191,7 @@ export interface ImportSummary {
   imported: number
   failed: number
   failures: string[]
+  duplicates: number
 }
 
 export interface MediaTypeOption {
