@@ -13,12 +13,13 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Scan progress feedback** — Show current folder being scanned in real time, not a frozen spinner.
 - **Music support** — FileScanner plugin: add audio extensions (.mp3, .flac, .m4a, .ogg, .wav, .aac), music filename parsing (Artist - Album - Track, etc.), register "Music" as a supported media type.
 - **Other file support** - FileScanner plugin: allow user to add their own filetypes.
+- **Duplicate detection** — If the user attempts to add files that are already registered in Chronicle, recognize them as duplicates and skip to the next file rather than creating duplicate entries.
 - **Flexible pattern matching** — Handle messy/unorganized folder structures (e.g. `E:\Video Downloads\MCM Download Parser`). Smarter fallback when standard patterns fail.
 - **Scan results: accept items** — From the scan results page, user can approve/reject individual detected items before they're imported.
 - **Scan results: show media type** — ✓ Implemented: `mediaTypeHint` badge shown in Preview table (Type column) and Review list rows.
 - **Scan results: type mismatch correction** — If the movie scanner detects something that looks like TV (S01E01, etc.), automatically re-classify and match against the correct type.
 - **Confidence score info** — Show the scoring formula somewhere accessible (e.g. a small info popup on the scan page). Formula: NFO+ID=100, Title(Year) filename=85, NFO+title+year=85, dotted/spaced filename=70, title only=50.
-- **Related-files assumption** — When scanning for movies, a checkbox option: "Assume all files in a folder containing a matched movie are related to that movie (images, NFO, subtitles, etc.)." Similar per-media-type rules for TV shows (all files in a season folder belong to that season), Music Albums (all files in an album folder belong to that album), Audiobooks, etc. The rule is: opt-in permission to treat the containing folder as a media bundle rather than individual file matches.
+- **Related-files assumption** — A checkbox option on the scan/review page: "Treat all files in a matched item's folder as related to that item." When checked, any file that shares a folder with a confidently-matched media item is bundled with it rather than imported as a separate top-level item. Example: `D:\Video\TV\Dark Matter (2024)\theme.mp3` — the scanner matches `Dark Matter` from the folder name; `theme.mp3` in the same folder is the show's theme music and belongs to Dark Matter, not a standalone Music entry. Without this option the scanner surfaces `theme` as a 50%-confidence Music item, which is wrong. The bundled files are stored as related/attached files on the parent item (accessible from its detail page) and are excluded from the main scan results table so the user only sees and approves the primary matched items. Applies equally to: TV show folders (theme, artwork, extras), movie folders (subtitles, featurettes, NFO), music album folders (booklet scans, cue sheets), etc.
 
 ---
 
@@ -50,6 +51,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - Settings section for managing users: add new users, set/reset passwords, associate API keys to users.
 - Admin-only. First registered user is already admin.
 - May specify user type (readonly, admin, metadata editor, etc)
+- **Password reset** — Users must be able to regain access when they forget or lose their password. Preferred path: email-based reset (user requests a reset link, time-limited token sent to their registered address, link opens a set-new-password page). Fallback for installs with no SMTP configured: admin can trigger a one-time reset token from the User Management settings page that the user can enter on the login screen. Either way the token must be single-use and expire (e.g. 1 hour). SMTP settings (host, port, from address, credentials) should be configurable under Settings → Email.
 
 ---
 
@@ -67,6 +69,12 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **plugin files** plugins are to be built in their own repos.  Finished files and their hashes are to be registered in plugins.json.
 - **Security ** When downloading files from github, Chronicle will confirm that the hash at github matches the downloaded file's hash.  Downloaded files will be treated as hostile until they can be verified as safe - we must ensure that the user's computer is never compromised.  Security is paramount.  If this means scanning the file with an external security service, then this should be an option.  Either locally or online.
 - **included plugins** - Filescanner must be included as part of the Chronicle install.  Filescanner will remain a separate project and repo, but the dll needs to be included with the main Chronicle installation.
+
+---
+
+## Background Services
+
+- **Background Tasks page (Settings → Background Tasks)** — A dedicated settings page listing every registered background process in Chronicle (e.g. Metadata Refresh, future: library scan, database maintenance, plugin updates). Each row shows: process name, last run date/time, result of last run (success / failed / never run), next scheduled run date/time, and a "Run Now" button that triggers it immediately. Clicking a row expands detail (e.g. items processed, errors). The schedule interval for each configurable process should be editable inline. This is the single place a user goes to understand what Chronicle is doing in the background and to manually kick off anything without waiting for the next scheduled window.
 
 ---
 
