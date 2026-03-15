@@ -10,18 +10,33 @@ public class BackgroundTasksTests : IClassFixture<ChronicleApiFactory>
 {
     private readonly ChronicleApiFactory _factory;
 
+    // Fixed admin credentials — first registration in this factory instance gets Admin role.
+    private const string AdminUser = "bg_admin_fixture";
+    private const string AdminPass = "Password123!";
+
     public BackgroundTasksTests(ChronicleApiFactory factory)
     {
         factory.SeedDatabase();
         _factory = factory;
+
+        // Ensure the admin user exists (first call creates it as admin; subsequent calls are no-ops).
+        EnsureAdminRegistered(factory).GetAwaiter().GetResult();
+    }
+
+    private static async Task EnsureAdminRegistered(ChronicleApiFactory factory)
+    {
+        var client = factory.CreateClient();
+        // Attempt registration — succeeds the first time (first user = admin), ignored after.
+        await client.PostAsJsonAsync("/api/v1/auth/register",
+            new { username = AdminUser, password = AdminPass });
     }
 
     private async Task<HttpClient> AdminClientAsync()
     {
         var client = _factory.CreateClient();
-        var reg = await client.PostAsJsonAsync("/api/v1/auth/register",
-            new { username = $"bg_{Guid.NewGuid():N}", password = "Password123!" });
-        var token = JsonDocument.Parse(await reg.Content.ReadAsStringAsync())
+        var login = await client.PostAsJsonAsync("/api/v1/auth/login",
+            new { username = AdminUser, password = AdminPass });
+        var token = JsonDocument.Parse(await login.Content.ReadAsStringAsync())
             .RootElement.GetProperty("data").GetProperty("token").GetString()!;
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", token);
