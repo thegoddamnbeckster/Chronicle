@@ -249,7 +249,13 @@ export default function ScanPage() {
                 <th>Parsed title</th>
                 <th>Year</th>
                 <th>Type</th>
-                <th>Confidence</th>
+                <th>
+                  Confidence
+                  <span
+                    title={'Scoring formula:\n100 — NFO sidecar with external ID\n 85 — Title(Year) filename or NFO+title+year\n 70 — Dotted/spaced filename\n 50 — Title only (fallback)'}
+                    style={{ marginLeft: 4, cursor: 'help', opacity: 0.6, fontSize: '0.85em' }}
+                  >ⓘ</span>
+                </th>
                 <th>File</th>
               </tr>
             </thead>

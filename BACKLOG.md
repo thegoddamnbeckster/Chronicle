@@ -17,7 +17,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Scan results: accept items** — From the scan results page, user can approve/reject individual detected items before they're imported.
 - **Scan results: show media type** — ✓ Implemented: `mediaTypeHint` badge shown in Preview table (Type column) and Review list rows.
 - **Scan results: type mismatch correction** — If the movie scanner detects something that looks like TV (S01E01, etc.), automatically re-classify and match against the correct type.
-- **Confidence score info** — Show the scoring formula somewhere accessible (e.g. a small info popup on the scan page). Formula: NFO+ID=100, Title(Year) filename=85, NFO+title+year=85, dotted/spaced filename=70, title only=50.
+- **Confidence score info** — ✓ Implemented: ⓘ tooltip on the Confidence column header in the Preview table shows the full scoring formula on hover.
 - **Related-files assumption** — A checkbox option on the scan/review page: "Treat all files in a matched item's folder as related to that item." When checked, any file that shares a folder with a confidently-matched media item is bundled with it rather than imported as a separate top-level item. Example: `D:\Video\TV\Dark Matter (2024)\theme.mp3` — the scanner matches `Dark Matter` from the folder name; `theme.mp3` in the same folder is the show's theme music and belongs to Dark Matter, not a standalone Music entry. Without this option the scanner surfaces `theme` as a 50%-confidence Music item, which is wrong. The bundled files are stored as related/attached files on the parent item (accessible from its detail page) and are excluded from the main scan results table so the user only sees and approves the primary matched items. Applies equally to: TV show folders (theme, artwork, extras), movie folders (subtitles, featurettes, NFO), music album folders (booklet scans, cue sheets), etc.
 
 ---
@@ -135,3 +135,4 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - Lists: editable list name — already implemented (click title to rename inline)
 - General UI: broken image `onError` fallback — all img tags across all pages now covered (ListDetailPage, MediaDetailPage child grid)
 - Sidebar nav: sub-items under Media/Settings groups indented 12px (`NavGroup.module.css` padding-left)
+- Scan page: confidence score ⓘ tooltip on Preview table header shows full scoring formula on hover
