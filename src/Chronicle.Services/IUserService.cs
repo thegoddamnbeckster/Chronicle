@@ -8,5 +8,7 @@ namespace Chronicle.Services
         Task<User> RegisterAsync(string username, string password, string? email);
         Task<User?> GetByIdAsync(int id);
         Task<User?> GetByUsernameAsync(string username);
+        Task<UserPreferences> GetPreferencesAsync(int userId);
+        Task UpdatePreferencesAsync(int userId, UserPreferences patch);
     }
 }

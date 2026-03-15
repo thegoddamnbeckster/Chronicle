@@ -26,7 +26,8 @@ namespace Chronicle.API.Controllers
             {
                 var user = await _userService.RegisterAsync(request.Username, request.Password, request.Email);
                 var token = _jwtService.GenerateToken(user);
-                return Ok(ApiResponse<AuthResponse>.Ok(new AuthResponse(token, ToDto(user))));
+                var dto = await ToDtoAsync(user);
+                return Ok(ApiResponse<AuthResponse>.Ok(new AuthResponse(token, dto)));
             }
             catch (DuplicateUsernameException ex)
             {
@@ -41,7 +42,8 @@ namespace Chronicle.API.Controllers
             {
                 var user = await _userService.AuthenticateAsync(request.Username, request.Password);
                 var token = _jwtService.GenerateToken(user);
-                return Ok(ApiResponse<AuthResponse>.Ok(new AuthResponse(token, ToDto(user))));
+                var dto = await ToDtoAsync(user);
+                return Ok(ApiResponse<AuthResponse>.Ok(new AuthResponse(token, dto)));
             }
             catch (InvalidCredentialsException)
             {
@@ -49,7 +51,11 @@ namespace Chronicle.API.Controllers
             }
         }
 
-        private static UserDto ToDto(Chronicle.Core.Models.User u) =>
-            new(u.Id, u.Username, u.Email, u.DisplayName, u.IsAdmin);
+        private async Task<UserDto> ToDtoAsync(Chronicle.Core.Models.User u)
+        {
+            var prefs = await _userService.GetPreferencesAsync(u.Id);
+            return new(u.Id, u.Username, u.Email, u.DisplayName, u.IsAdmin,
+                prefs.ShowDiagnostics ?? u.IsAdmin);
+        }
     }
 }
