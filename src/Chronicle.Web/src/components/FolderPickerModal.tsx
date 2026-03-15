@@ -110,18 +110,19 @@ export default function FolderPickerModal({
 
           {!isLoading && !listError && listing && (
             <>
-              {/* Up row — shown whenever we are not at drive roots */}
-              {listing.parent !== null && (
+              {/* Up row — shown whenever we are viewing a real directory (including drive roots);
+                  navigates to parent, or back to the drive list if at a root (parent === null) */}
+              {listing.path !== null && (
                 <div
                   className={`${styles.dirRow} ${styles.upRow}`}
-                  onClick={() => navigate(listing.parent!).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
+                  onClick={() => navigate(listing.parent ?? '').catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))}
                   role="button"
                   tabIndex={0}
                   aria-label="Navigate up to parent directory"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
-                      navigate(listing.parent!).catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))
+                      navigate(listing.parent ?? '').catch((err) => setListError(err instanceof Error ? err.message : 'Failed to load directory'))
                     }
                   }}
                 >
