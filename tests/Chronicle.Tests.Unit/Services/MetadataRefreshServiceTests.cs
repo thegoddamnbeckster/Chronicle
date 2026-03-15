@@ -61,7 +61,7 @@ public class MetadataRefreshServiceTests
         return (mt, item);
     }
 
-    private static Mock<IMetadataProvider> MakeProvider(string mediaTypeName = "Movies")
+    private static Mock<IMetadataProvider> MakeProvider(string mediaTypeName = "movie")
     {
         var mock = new Mock<IMetadataProvider>();
         mock.Setup(p => p.PluginId).Returns("chronicle.plugin.tmdb");
@@ -90,7 +90,7 @@ public class MetadataRefreshServiceTests
         });
         await db.SaveChangesAsync();
 
-        var providerMock = MakeProvider("Movies");
+        var providerMock = MakeProvider("movie");
         providerMock
             .Setup(p => p.GetByIdAsync("movie:550", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MediaMetadata { Title = "Fight Club", ExternalId = "movie:550", Source = "tmdb" });
@@ -157,7 +157,7 @@ public class MetadataRefreshServiceTests
         var db = MakeDb();
         await SeedMoviesAsync(db);
 
-        var providerMock = MakeProvider("Movies");
+        var providerMock = MakeProvider("movie");
 
         // SearchAsync returns a result list
         providerMock
