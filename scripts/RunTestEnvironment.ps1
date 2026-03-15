@@ -25,7 +25,23 @@ param(
 
 $RepoRoot   = Split-Path $PSScriptRoot -Parent
 $ApiProject = Join-Path $RepoRoot "src\Chronicle.API\Chronicle.API.csproj"
+$ApiDir     = Split-Path $ApiProject -Parent
 $WebDir     = Join-Path $RepoRoot "src\Chronicle.Web"
+$DbPath     = Join-Path $ApiDir "chronicle-dev.db"
+$LogDir     = Join-Path $ApiDir "logs"
+$Branch     = (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null) ?? "unknown"
+$Commit     = (git -C $RepoRoot rev-parse --short HEAD 2>$null) ?? "unknown"
+
+# ── Diagnostics ───────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "Chronicle Dev Environment — Diagnostics" -ForegroundColor Magenta
+Write-Host "  Repo root   : $RepoRoot"
+Write-Host "  API project : $ApiProject"
+Write-Host "  API dir     : $ApiDir"
+Write-Host "  Database    : $DbPath  $(if (Test-Path $DbPath) { '[EXISTS]' } else { '[MISSING - will be created]' })"
+Write-Host "  Logs        : $LogDir"
+Write-Host "  Branch      : $Branch  ($Commit)"
+Write-Host ""
 
 # ── Kill existing dev processes ───────────────────────────────────────────────
 Write-Host "Stopping any running Chronicle dev processes..." -ForegroundColor Yellow
@@ -59,7 +75,7 @@ if (-not $WebOnly) {
     # --launch-profile is intentionally omitted — the 'Development' profile does not exist
     # in launchSettings.json, which caused the env var to never be set.
     Start-Process pwsh -ArgumentList "-NoExit", "-Command",
-        "`$env:ASPNETCORE_ENVIRONMENT='Development'; cd '$RepoRoot'; dotnet run --project '$ApiProject' 2>&1" `
+        "`$env:ASPNETCORE_ENVIRONMENT='Development'; cd '$ApiDir'; dotnet run 2>&1" `
         -WindowStyle Normal
 }
 
