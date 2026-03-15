@@ -26,6 +26,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 - **Indent sub-items in tree** — ✓ Implemented: sidebar nav children (under Media/Settings groups) are indented 12px relative to group headers and top-level links.
 - **Content** - as media is added ot the library, the library should display it dynamically.
+- **Live poster updates** — When the background metadata refresh process updates a library item (new poster, metadata), the main library view should reflect the change without a full page reload. Cards should show the updated poster as soon as it becomes available.
 - **Metadata** - Metadata can be downloaded by any metadata plugin, not just TMDB.  Each set of metadata per media item shall be shown in it's own box labelled for that metadata provider (TMDB, Trakt, SIMKL, TinyMediaManager, LastFM, etc).  Each box will be labelled for the metadata provider's name and have the metadata provider's icon.  
 
 ---
