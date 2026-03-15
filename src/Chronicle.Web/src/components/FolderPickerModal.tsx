@@ -42,7 +42,6 @@ export default function FolderPickerModal({
     navigate(initialPath ?? '').catch((err) =>
       setListError(err instanceof Error ? err.message : 'Failed to load directory')
     )
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Escape key closes the modal
