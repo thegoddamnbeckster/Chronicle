@@ -57,24 +57,12 @@ public class FilesystemController : ControllerBase
 
     private static FilesystemListingDto GetDriveRoots()
     {
-        var allDrives = DriveInfo.GetDrives();
-
-        // Probe sleeping drives (e.g. idle network shares) in parallel so they
-        // wake up before we filter.  DriveInfo.IsReady is a snapshot, so we
-        // re-query after probing.  2-second cap prevents hangs on dead shares.
-        var notReady = allDrives.Where(d => !d.IsReady).ToArray();
-        if (notReady.Length > 0)
-        {
-            var probes = notReady.Select(d => Task.Run(() =>
-            {
-                try { _ = Directory.Exists(d.RootDirectory.FullName); } catch { }
-            }));
-            Task.WhenAll(probes).Wait(TimeSpan.FromSeconds(2));
-        }
-
-        // Re-query so freshly-woken drives show up with IsReady = true.
+        // Include a drive if it's ready OR if it's a network drive (mapped
+        // network shares report IsReady=false when the NAS is sleeping but the
+        // mapping still exists; Windows wakes the share on first access).
+        // This intentionally excludes empty CD-ROM/removable slots.
         var drives = DriveInfo.GetDrives()
-            .Where(d => d.IsReady)
+            .Where(d => d.IsReady || d.DriveType == DriveType.Network)
             .Select(d => new FilesystemEntryDto(d.Name, d.RootDirectory.FullName))
             .ToList();
 
