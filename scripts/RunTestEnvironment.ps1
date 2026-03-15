@@ -30,15 +30,19 @@ $WebDir     = Join-Path $RepoRoot "src\Chronicle.Web"
 # ── Kill existing dev processes ───────────────────────────────────────────────
 Write-Host "Stopping any running Chronicle dev processes..." -ForegroundColor Yellow
 
-# Kill dotnet run processes for Chronicle.API
-Get-Process -Name "dotnet" -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowTitle -match "Chronicle" -or $_.CommandLine -match "Chronicle.API" } |
-    ForEach-Object { Write-Host "  Stopping dotnet PID $($_.Id)"; Stop-Process $_ -Force }
+# Kill Chronicle.API.exe (published build running as a standalone process)
+Get-Process -Name "Chronicle.API" -ErrorAction SilentlyContinue |
+    ForEach-Object { Write-Host "  Stopping Chronicle.API PID $($_.Id)"; Stop-Process $_ -Force }
+
+# Kill dotnet run processes for Chronicle.API (dev build)
+Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "Chronicle\.API" } |
+    ForEach-Object { Write-Host "  Stopping dotnet PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 # Kill node/vite dev server
-Get-Process -Name "node" -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowTitle -match "vite" -or $_.CommandLine -match "Chronicle.Web" } |
-    ForEach-Object { Write-Host "  Stopping node PID $($_.Id)"; Stop-Process $_ -Force }
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "Chronicle\.Web" } |
+    ForEach-Object { Write-Host "  Stopping node PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 Start-Sleep -Milliseconds 500
 
