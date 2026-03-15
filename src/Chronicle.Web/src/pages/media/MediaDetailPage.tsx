@@ -366,11 +366,11 @@ export default function MediaDetailPage() {
                     </span>
                   </div>
                 )}
-                {tmdbIds.length > 0 && (
+                {tmdbHasRealId && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>ID</span>
                     <div className={styles.externalIds}>
-                      {tmdbIds.map(eid => (
+                      {tmdbIds.filter(e => e.externalId !== '__suppress__').map(eid => (
                         <span key={eid.externalId} className={styles.externalIdChip}>
                           <span className={styles.externalIdValue}>{eid.externalId}</span>
                         </span>

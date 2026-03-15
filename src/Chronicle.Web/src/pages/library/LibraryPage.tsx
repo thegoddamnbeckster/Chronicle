@@ -10,10 +10,11 @@ import styles from './LibraryPage.module.css'
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_OPTIONS: LibraryStatus[] = [
-  'Watching', 'PlanToWatch', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
+  'Unwatched', 'Watching', 'PlanToWatch', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
 ]
 
 const STATUS_LABELS: Record<LibraryStatus, string> = {
+  Unwatched: 'Unwatched',
   Watching: 'Watching',
   PlanToWatch: 'Plan to Watch',
   Completed: 'Completed',
