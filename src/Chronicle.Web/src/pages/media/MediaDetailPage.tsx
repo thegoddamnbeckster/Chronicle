@@ -2,13 +2,13 @@ import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import tmdbLogoFallback from '@/assets/tmdb-logo.svg'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, reidentifyMedia, deleteMedia } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, reidentifyMedia, clearMediaExternalId, suppressMediaMatch, deleteMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import type { LibraryStatus } from '@/types'
 import styles from './MediaDetailPage.module.css'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
-  'Watching', 'PlanToWatch', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
+  'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
 ]
 
 export default function MediaDetailPage() {
@@ -76,6 +76,22 @@ export default function MediaDetailPage() {
     },
   })
 
+  const clearMatchMut = useMutation({
+    mutationFn: () => clearMediaExternalId(mediaId, 'tmdb'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+
+  const suppressMatchMut = useMutation({
+    mutationFn: () => suppressMediaMatch(mediaId, 'tmdb'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+
   const [deleteConfirm, setDeleteConfirm] = useState(false)
 
   const deleteMut = useMutation({
@@ -92,6 +108,8 @@ export default function MediaDetailPage() {
 
   const tmdbIds = item?.externalIds.filter(e => e.source === 'tmdb') ?? []
   const otherIds = item?.externalIds.filter(e => e.source !== 'tmdb') ?? []
+  const tmdbSuppressed = tmdbIds.some(e => e.externalId === '__suppress__')
+  const tmdbHasRealId = tmdbIds.some(e => e.externalId !== '__suppress__')
 
   if (isLoading) return <div className={styles.page}><p className={styles.loading}>Loading…</p></div>
   if (error || !item) {
@@ -236,6 +254,35 @@ export default function MediaDetailPage() {
                   >
                     ✎ Fix Match
                   </button>
+                  {tmdbHasRealId && (
+                    <button
+                      className={styles.clearMatchBtn}
+                      onClick={() => clearMatchMut.mutate()}
+                      disabled={clearMatchMut.isPending}
+                      title="Remove the TMDB match — refresh will attempt a new auto-search next cycle"
+                    >
+                      {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
+                    </button>
+                  )}
+                  {tmdbSuppressed ? (
+                    <button
+                      className={styles.resumeMatchBtn}
+                      onClick={() => clearMatchMut.mutate()}
+                      disabled={clearMatchMut.isPending}
+                      title="Re-enable auto-matching for this item"
+                    >
+                      {clearMatchMut.isPending ? 'Resuming…' : '↺ Resume Auto-Match'}
+                    </button>
+                  ) : !tmdbHasRealId && (
+                    <button
+                      className={styles.suppressMatchBtn}
+                      onClick={() => suppressMatchMut.mutate()}
+                      disabled={suppressMatchMut.isPending}
+                      title="Mark as unmatched — refresh will never auto-search for this item again"
+                    >
+                      {suppressMatchMut.isPending ? 'Suppressing…' : '⊘ No Match'}
+                    </button>
+                  )}
                   <button
                     className={styles.refreshBtn}
                     onClick={() => refreshMut.mutate()}
