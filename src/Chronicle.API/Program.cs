@@ -138,6 +138,12 @@ builder.Services.AddSingleton<IPluginRegistry, PluginRegistry>();
 builder.Services.AddScoped<IPluginService, PluginService>();
 builder.Services.AddHostedService<PluginHostService>();
 
+// ── Background duplicate cleanup ──────────────────────────────────────────────
+// Runs once at startup (after a 5-minute delay) and then every 24 hours.
+// Finds MediaItems sharing the same physical file path and removes duplicates,
+// reassigning all user data (library entries, scrobble events) to the survivor.
+builder.Services.AddHostedService<DuplicateCleanupService>();
+
 // ── Background metadata refresh ───────────────────────────────────────────────
 // MetadataRefreshService is both an IHostedService (background timer) and
 // IMetadataRefreshService (injectable for on-demand single-item refresh).
@@ -182,7 +188,8 @@ builder.Services.AddAuthorization(options =>
 });
 
 // ── Controllers + Swagger ─────────────────────────────────────────────────────
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new UtcDateTimeConverter()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
