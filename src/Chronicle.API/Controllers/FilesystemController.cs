@@ -23,10 +23,9 @@ public class FilesystemController : ControllerBase
 
         var dir = new DirectoryInfo(path);
 
-        if (!dir.Exists)
-            return BadRequest(ApiResponse<FilesystemListingDto>.Fail(
-                "PATH_NOT_FOUND", $"Directory not found: {path}"));
-
+        // Don't pre-check dir.Exists — network shares (e.g. NAS) may report
+        // non-existent while sleeping but become accessible on first access.
+        // Let EnumerateDirectories trigger the wakeup and surface real errors.
         string? parent = dir.Parent?.FullName;
 
         var subdirs = new List<FilesystemEntryDto>();
@@ -36,6 +35,11 @@ public class FilesystemController : ControllerBase
             {
                 subdirs.Add(new FilesystemEntryDto(sub.Name, sub.FullName));
             }
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return BadRequest(ApiResponse<FilesystemListingDto>.Fail(
+                "PATH_NOT_FOUND", $"Directory not found: {path}"));
         }
         catch (UnauthorizedAccessException)
         {
@@ -57,8 +61,10 @@ public class FilesystemController : ControllerBase
 
     private static FilesystemListingDto GetDriveRoots()
     {
+        // Include network drives even when IsReady=false — mapped NAS shares
+        // report not-ready while sleeping but the mapping still exists.
         var drives = DriveInfo.GetDrives()
-            .Where(d => d.IsReady)
+            .Where(d => d.IsReady || d.DriveType == DriveType.Network)
             .Select(d => new FilesystemEntryDto(d.Name, d.RootDirectory.FullName))
             .ToList();
 
