@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.Tests.Integration
 {
@@ -184,6 +185,56 @@ namespace Chronicle.Tests.Integration
             var client = await AuthClientAsync();
             var response = await client.DeleteAsync("/api/v1/media/999999");
             response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+
+        [Fact]
+        public async Task GetMedia_ImportDirectItem_ReturnsFileScannerMeta()
+        {
+            // Arrange: seed a media item that has only fileScanner metadata (tmdb=null)
+            // This simulates an item imported via /scan/import-direct before TMDB enrichment.
+            const string metaJson =
+                """{"tmdb": null, "fileScanner": {"filePath": "/some/path.mkv", "localPosterPath": null, "nfoPosterUrl": null}}""";
+
+            int seededId;
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
+                var item = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    Name = "ImportDirect Film",
+                    HierarchyLevel = 0,
+                    MetadataJson = metaJson,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(item);
+                await db.SaveChangesAsync();
+                seededId = item.Id;
+            }
+
+            var client = await AuthClientAsync();
+
+            // Act
+            var response = await client.GetAsync($"/api/v1/media/{seededId}");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            doc.GetProperty("success").GetBoolean().Should().BeTrue();
+
+            var data = doc.GetProperty("data");
+
+            // fileScannerMeta must be present and non-null
+            data.TryGetProperty("fileScannerMeta", out var fsMeta).Should().BeTrue();
+            fsMeta.ValueKind.Should().NotBe(JsonValueKind.Null);
+
+            fsMeta.GetProperty("filePath").GetString().Should().Be("/some/path.mkv");
+
+            // tmdbMeta must be null (item was imported directly without TMDB data)
+            data.TryGetProperty("tmdbMeta", out var tmdbMeta).Should().BeTrue();
+            tmdbMeta.ValueKind.Should().Be(JsonValueKind.Null);
         }
     }
 }

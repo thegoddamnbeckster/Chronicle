@@ -59,6 +59,28 @@ namespace Chronicle.Data.Migrations
                     b.ToTable("api_tokens", (string)null);
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.AppSetting", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("app_settings", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Key = "metadata_refresh_interval_hours",
+                            Value = "4"
+                        });
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.DeviceAuthCode", b =>
                 {
                     b.Property<int>("Id")
@@ -246,6 +268,36 @@ namespace Chronicle.Data.Migrations
                     b.HasIndex("ParentId");
 
                     b.ToTable("media_items", (string)null);
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.MediaItemRefreshLog", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MediaItemId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ProviderName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("RefreshedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Succeeded")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId", "ProviderName");
+
+                    b.ToTable("media_item_refresh_log", (string)null);
                 });
 
             modelBuilder.Entity("Chronicle.Core.Models.MediaList", b =>
@@ -653,6 +705,17 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("Parent");
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.MediaItemRefreshLog", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.MediaItem", "MediaItem")
+                        .WithMany("RefreshLogs")
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.MediaList", b =>
                 {
                     b.HasOne("Chronicle.Core.Models.User", "User")
@@ -707,6 +770,8 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("Children");
 
                     b.Navigation("ExternalIds");
+
+                    b.Navigation("RefreshLogs");
                 });
 
             modelBuilder.Entity("Chronicle.Core.Models.MediaList", b =>

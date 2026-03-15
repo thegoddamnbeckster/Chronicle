@@ -1,4 +1,147 @@
-.page { max-width: 1100px; }
+.page { max-width: 1100px; position: relative; }
+
+/* ── Backdrop hero ── */
+
+.backdropSection {
+  position: relative;
+  isolation: isolate;
+}
+
+.backdropActive {
+  margin: -24px -24px 0;
+}
+
+.backdropImg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 20%;
+  background-repeat: no-repeat;
+  /*
+   * Default (dark themes): very dark image so white text pops.
+   * Overridden per-theme below.
+   * z-index ladder within the isolated stacking context:
+   *   1 — .backdropImg (image)
+   *   2 — ::before (scrim)
+   *   3 — ::after  (gradient fade)
+   *   4 — .backdropContent (all page content)
+   */
+  filter: brightness(0.15);
+  z-index: 1;
+}
+
+/* Scrim sits between the image and the content — default: dark (for dark themes) */
+.backdropActive::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ── Light-theme backdrop: lighter image, dark text ──────────────────────── */
+
+/*
+ * In the light theme the backdrop should read as a soft art background
+ * that harmonises with the page rather than a cinematic black overlay.
+ * A moderate brightness + white scrim lifts even the darkest areas of
+ * the image enough for #111 text to meet WCAG AA contrast.
+ */
+:global([data-theme="light"]) .backdropImg {
+  filter: brightness(0.65);
+}
+
+:global([data-theme="light"]) .backdropActive::before {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+:global([data-theme="light"]) .backdropContentActive {
+  --text-primary:   #111111;
+  color:            var(--text-primary);
+  --text-secondary: rgba(0, 0, 0, 0.72);
+  --text-muted:     rgba(0, 0, 0, 0.52);
+  --bg-secondary:   rgba(255, 255, 255, 0.80);
+  --bg-card:        rgba(255, 255, 255, 0.70);
+  --border:         rgba(0, 0, 0, 0.18);
+  --bg-input:       rgba(255, 255, 255, 0.80);
+  --hover-bg:       rgba(0, 0, 0, 0.05);
+}
+
+/* Gradient fade at the bottom of the backdrop area */
+.backdropActive::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 55%;
+  background: linear-gradient(to bottom, transparent, var(--bg-primary));
+  z-index: 3;
+  pointer-events: none;
+}
+
+.backdropContent {
+  position: relative;
+  z-index: 4;
+}
+
+.backdropContentActive {
+  padding: 24px 24px 48px;
+  /*
+   * Two-part contrast strategy for the darkened backdrop hero:
+   *
+   * 1. Override CSS custom properties so every element that reads
+   *    var(--text-*) / var(--bg-*) / var(--border) gets a light value
+   *    regardless of which theme is active.
+   *
+   * 2. Set `color` explicitly so that elements with NO color declaration
+   *    (e.g. .title, which relies purely on CSS inheritance) also receive
+   *    the white value.  Without this, the body's pre-resolved computed
+   *    color (#212121 in light theme) is inherited instead of the overridden
+   *    custom-property value.
+   *
+   * The overrides apply only within this section; everything below the
+   * backdrop (children grid, etc.) continues to use the active theme.
+   */
+  --text-primary:   #ffffff;
+  color:            var(--text-primary);
+  --text-secondary: rgba(255, 255, 255, 0.78);
+  --text-muted:     rgba(255, 255, 255, 0.50);
+  --bg-secondary:   rgba(255, 255, 255, 0.10);
+  --bg-card:        rgba(255, 255, 255, 0.08);
+  --border:         rgba(255, 255, 255, 0.18);
+  --bg-input:       rgba(255, 255, 255, 0.10);
+  --hover-bg:       rgba(255, 255, 255, 0.06);
+}
+
+/* ── Backdrop content boxes ──────────────────────────────────────────────── */
+
+/*
+ * When a backdrop is active, place fully-opaque theme-coloured panels behind
+ * the text-heavy sections.  This guarantees readability regardless of how
+ * bright or dark the backdrop image is, and works identically in every theme:
+ *   dark themes  → dark panel + white text  (both from theme vars)
+ *   light themes → light panel + dark text  (both from theme vars)
+ *
+ * Both classes re-anchor `color` to var(--text-primary) so elements that
+ * rely on CSS inheritance pick up the correct value from within the box
+ * rather than inheriting the resolved white/dark colour set on
+ * .backdropContentActive's parent.
+ */
+.topNavBoxed {
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  color: var(--text-primary);
+}
+
+.metaBoxed {
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  color: var(--text-primary);
+}
 
 .loading, .error {
   color: var(--text-muted);
@@ -54,6 +197,20 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   cursor: default;
   pointer-events: none;
 }
+
+.upBtn {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.upBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .navPos {
   font-size: 12px;
@@ -149,7 +306,9 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .metadataBoxBrand {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .tmdbLogo {
@@ -157,11 +316,16 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   width: auto;
 }
 
-.tmdbFallback {
-  font-size: 12px;
-  font-weight: 700;
-  color: #01b4e4;
-  letter-spacing: 0.08em;
+.refreshTimestamp {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.metadataBoxActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .refreshBtn {
@@ -184,6 +348,208 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.fixMatchBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.fixMatchBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.clearMatchBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.clearMatchBtn:hover:not(:disabled) {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+
+.clearMatchBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.suppressMatchBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.suppressMatchBtn:hover:not(:disabled) {
+  color: #ffa94d;
+  border-color: #ffa94d;
+}
+
+.suppressMatchBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.resumeMatchBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #ffa94d;
+  background: transparent;
+  color: #ffa94d;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.resumeMatchBtn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.resumeMatchBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Fix Match panel ── */
+
+.fixMatchPanel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+}
+
+.fixMatchHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.fixMatchHint code {
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.fixMatchRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.fixMatchInput {
+  flex: 1;
+  background: var(--bg-input, #1a1a2e);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 5px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.fixMatchInput:focus {
+  border-color: var(--accent);
+}
+
+.fixMatchApplyBtn {
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.fixMatchApplyBtn:hover:not(:disabled) { opacity: 0.85; }
+
+.fixMatchApplyBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Delete (single item) ── */
+
+.deleteArea { margin-bottom: 12px; }
+
+.deleteBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.deleteBtn:hover {
+  color: var(--status-danger-fg, #e05555);
+  border-color: var(--status-danger-fg, #e05555);
+}
+
+.deleteConfirmStrip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: rgba(224, 85, 85, 0.08);
+  border: 1px solid rgba(224, 85, 85, 0.35);
+}
+
+.deleteConfirmText { font-size: 13px; flex: 1; }
+
+.deleteConfirmCancel {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.deleteConfirmCancel:hover { color: var(--text-primary); }
+
+.deleteConfirmOk {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  background: var(--status-danger-fg, #e05555);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.deleteConfirmOk:hover:not(:disabled) { opacity: 0.85; }
+.deleteConfirmOk:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .refreshError {
   font-size: 11px;
@@ -235,19 +601,43 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   color: #01b4e4;
 }
 
+.tmdbRowImages {
+  align-items: flex-start !important;
+}
+
 .tmdbImageLinks {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+  align-items: flex-start;
 }
 
 .tmdbImageLink {
-  font-size: 12px;
-  color: #01b4e4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   text-decoration: none;
+  color: var(--text-muted);
+  transition: opacity 0.15s;
 }
 
-.tmdbImageLink:hover { text-decoration: underline; }
+.tmdbImageLink:hover { opacity: 0.8; }
+
+.tmdbThumbnail {
+  height: 80px;
+  width: auto;
+  max-width: 120px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.tmdbThumbnailLabel {
+  font-size: 11px;
+  color: #01b4e4;
+}
 
 /* ── File Scanner box ── */
 
@@ -345,7 +735,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .primaryBtn {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border: none;
   border-radius: var(--radius);
   padding: 8px 18px;

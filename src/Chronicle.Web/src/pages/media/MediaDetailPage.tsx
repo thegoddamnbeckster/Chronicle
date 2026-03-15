@@ -1,13 +1,14 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
+import tmdbLogoFallback from '@/assets/tmdb-logo.svg'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, reidentifyMedia, clearMediaExternalId, suppressMediaMatch, deleteMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import type { LibraryStatus } from '@/types'
 import styles from './MediaDetailPage.module.css'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
-  'Watching', 'PlanToWatch', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
+  'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
 ]
 
 export default function MediaDetailPage() {
@@ -61,10 +62,54 @@ export default function MediaDetailPage() {
     },
   })
 
-  const [tmdbLogoFailed, setTmdbLogoFailed] = useState(false)
+  const [fixMatchOpen, setFixMatchOpen] = useState(false)
+  const [fixMatchInput, setFixMatchInput] = useState('')
+  const fixMatchInputRef = useRef<HTMLInputElement>(null)
+
+  const reidentifyMut = useMutation({
+    mutationFn: () => reidentifyMedia(mediaId, fixMatchInput),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+      setFixMatchOpen(false)
+      setFixMatchInput('')
+    },
+  })
+
+  const clearMatchMut = useMutation({
+    mutationFn: () => clearMediaExternalId(mediaId, 'tmdb'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+
+  const suppressMatchMut = useMutation({
+    mutationFn: () => suppressMediaMatch(mediaId, 'tmdb'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+
+  const deleteMut = useMutation({
+    mutationFn: () => deleteMedia(mediaId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['library'] })
+      navigate('/library')
+    },
+  })
+
+  useEffect(() => {
+    if (fixMatchOpen) fixMatchInputRef.current?.focus()
+  }, [fixMatchOpen])
 
   const tmdbIds = item?.externalIds.filter(e => e.source === 'tmdb') ?? []
   const otherIds = item?.externalIds.filter(e => e.source !== 'tmdb') ?? []
+  const tmdbSuppressed = tmdbIds.some(e => e.externalId === '__suppress__')
+  const tmdbHasRealId = tmdbIds.some(e => e.externalId !== '__suppress__')
 
   if (isLoading) return <div className={styles.page}><p className={styles.loading}>Loading…</p></div>
   if (error || !item) {
@@ -76,10 +121,27 @@ export default function MediaDetailPage() {
     )
   }
 
+  const hasBackdrop = Boolean(item.tmdbMeta?.backdropUrl)
+
   return (
     <div className={styles.page}>
-      <div className={styles.topNav}>
+      <div className={`${styles.backdropSection}${hasBackdrop ? ` ${styles.backdropActive}` : ''}`}>
+        {hasBackdrop && (
+          <div
+            className={styles.backdropImg}
+            style={{ backgroundImage: `url("${item.tmdbMeta!.backdropUrl}")` }}
+            aria-hidden
+          />
+        )}
+        <div className={`${styles.backdropContent}${hasBackdrop ? ` ${styles.backdropContentActive}` : ''}`}>
+      <div className={`${styles.topNav}${hasBackdrop ? ` ${styles.topNavBoxed}` : ''}`}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
+        <Link
+          to={item.parentId != null ? `/media/${item.parentId}` : `/library#media-${item.id}`}
+          className={styles.upBtn}
+        >
+          {item.parentId != null ? '↑ Up' : '↑ Library'}
+        </Link>
         {listIds.length > 0 && (
           <div className={styles.listNav}>
             {prevId != null ? (
@@ -126,8 +188,32 @@ export default function MediaDetailPage() {
           </div>
         </div>
 
-        <div className={styles.meta}>
+        <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
           <h1 className={styles.title}>{item.name}</h1>
+
+          <div className={styles.deleteArea}>
+            {!deleteConfirm ? (
+              <button className={styles.deleteBtn} onClick={() => setDeleteConfirm(true)}>
+                Delete
+              </button>
+            ) : (
+              <div className={styles.deleteConfirmStrip}>
+                <span className={styles.deleteConfirmText}>
+                  Delete <strong>{item.name}</strong>? This cannot be undone.
+                </span>
+                <button className={styles.deleteConfirmCancel} onClick={() => setDeleteConfirm(false)}>
+                  Cancel
+                </button>
+                <button
+                  className={styles.deleteConfirmOk}
+                  onClick={() => deleteMut.mutate()}
+                  disabled={deleteMut.isPending}
+                >
+                  {deleteMut.isPending ? 'Deleting…' : 'Delete'}
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className={styles.metaRow}>
             {item.year && <span className={styles.chip}>{item.year}</span>}
@@ -144,25 +230,104 @@ export default function MediaDetailPage() {
             <div className={styles.metadataBox}>
               <div className={styles.metadataBoxHeader}>
                 <div className={styles.metadataBoxBrand}>
-                  {!tmdbLogoFailed ? (
-                    <img
-                      src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb20f201ad3a6b4d0b6dcea5b0b95d9f3.svg"
-                      alt="TMDB"
-                      className={styles.tmdbLogo}
-                      onError={() => setTmdbLogoFailed(true)}
+                  <img
+                    src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb20f201ad3a6b4d0b6dcea5b0b95d9f3.svg"
+                    alt="TMDB"
+                    className={styles.tmdbLogo}
+                    onError={(e) => { e.currentTarget.src = tmdbLogoFallback; }}
+                  />
+                  {(() => {
+                    const tmdbLog = item.refreshLogs?.find(l => l.providerName === 'TMDB')
+                    if (!tmdbLog) return null
+                    const dt = new Date(tmdbLog.refreshedAt)
+                    const label = tmdbLog.succeeded
+                      ? `Last refreshed ${dt.toLocaleDateString()} ${dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                      : `Last refresh failed: ${tmdbLog.errorMessage ?? 'unknown error'}`
+                    return <p className={styles.refreshTimestamp}>{label}</p>
+                  })()}
+                </div>
+                <div className={styles.metadataBoxActions}>
+                  <button
+                    className={styles.fixMatchBtn}
+                    onClick={() => { setFixMatchOpen(v => !v); reidentifyMut.reset() }}
+                    title="Manually specify the correct TMDB match"
+                  >
+                    ✎ Fix Match
+                  </button>
+                  {tmdbHasRealId && (
+                    <button
+                      className={styles.clearMatchBtn}
+                      onClick={() => clearMatchMut.mutate()}
+                      disabled={clearMatchMut.isPending}
+                      title="Remove the TMDB match — refresh will attempt a new auto-search next cycle"
+                    >
+                      {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
+                    </button>
+                  )}
+                  {tmdbSuppressed ? (
+                    <button
+                      className={styles.resumeMatchBtn}
+                      onClick={() => clearMatchMut.mutate()}
+                      disabled={clearMatchMut.isPending}
+                      title="Re-enable auto-matching for this item"
+                    >
+                      {clearMatchMut.isPending ? 'Resuming…' : '↺ Resume Auto-Match'}
+                    </button>
+                  ) : !tmdbHasRealId && (
+                    <button
+                      className={styles.suppressMatchBtn}
+                      onClick={() => suppressMatchMut.mutate()}
+                      disabled={suppressMatchMut.isPending}
+                      title="Mark as unmatched — refresh will never auto-search for this item again"
+                    >
+                      {suppressMatchMut.isPending ? 'Suppressing…' : '⊘ No Match'}
+                    </button>
+                  )}
+                  <button
+                    className={styles.refreshBtn}
+                    onClick={() => refreshMut.mutate()}
+                    disabled={refreshMut.isPending}
+                  >
+                    {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
+                  </button>
+                </div>
+              </div>
+
+              {fixMatchOpen && (
+                <div className={styles.fixMatchPanel}>
+                  <p className={styles.fixMatchHint}>
+                    Enter a TMDB ID, typed ID, or URL:
+                    <code> 1159831</code> · <code>movie:1159831</code> · <code>tv:1396</code> ·
+                    <code> https://www.themoviedb.org/movie/1159831</code>
+                  </p>
+                  <div className={styles.fixMatchRow}>
+                    <input
+                      ref={fixMatchInputRef}
+                      className={styles.fixMatchInput}
+                      type="text"
+                      placeholder="TMDB ID or URL…"
+                      value={fixMatchInput}
+                      onChange={e => { setFixMatchInput(e.target.value); reidentifyMut.reset() }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && fixMatchInput.trim()) reidentifyMut.mutate()
+                        if (e.key === 'Escape') { setFixMatchOpen(false); setFixMatchInput('') }
+                      }}
                     />
-                  ) : (
-                    <span className={styles.tmdbFallback}>TMDB</span>
+                    <button
+                      className={styles.fixMatchApplyBtn}
+                      onClick={() => reidentifyMut.mutate()}
+                      disabled={reidentifyMut.isPending || !fixMatchInput.trim()}
+                    >
+                      {reidentifyMut.isPending ? 'Applying…' : 'Apply'}
+                    </button>
+                  </div>
+                  {reidentifyMut.isError && (
+                    <p className={styles.refreshError}>
+                      {(reidentifyMut.error as Error).message}
+                    </p>
                   )}
                 </div>
-                <button
-                  className={styles.refreshBtn}
-                  onClick={() => refreshMut.mutate()}
-                  disabled={refreshMut.isPending}
-                >
-                  {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
-                </button>
-              </div>
+              )}
 
               <div className={styles.tmdbGrid}>
                 {item.tmdbMeta?.rating != null && (
@@ -214,9 +379,9 @@ export default function MediaDetailPage() {
                   </div>
                 )}
 
-                {/* Image links — TMDB URLs only, no downloading */}
+                {/* Image thumbnails — click opens full size in new tab */}
                 {(item.tmdbMeta?.posterUrl || item.tmdbMeta?.backdropUrl) && (
-                  <div className={styles.tmdbRow}>
+                  <div className={`${styles.tmdbRow} ${styles.tmdbRowImages}`}>
                     <span className={styles.tmdbLabel}>Images</span>
                     <div className={styles.tmdbImageLinks}>
                       {item.tmdbMeta?.posterUrl && (
@@ -225,8 +390,15 @@ export default function MediaDetailPage() {
                           target="_blank"
                           rel="noreferrer"
                           className={styles.tmdbImageLink}
+                          title="Open full-size poster"
                         >
-                          Poster ↗
+                          <img
+                            src={item.tmdbMeta.posterUrl}
+                            alt="Poster"
+                            className={styles.tmdbThumbnail}
+                            onError={e => { e.currentTarget.style.display = 'none' }}
+                          />
+                          <span className={styles.tmdbThumbnailLabel}>Poster ↗</span>
                         </a>
                       )}
                       {item.tmdbMeta?.backdropUrl && (
@@ -235,8 +407,15 @@ export default function MediaDetailPage() {
                           target="_blank"
                           rel="noreferrer"
                           className={styles.tmdbImageLink}
+                          title="Open full-size backdrop"
                         >
-                          Backdrop ↗
+                          <img
+                            src={item.tmdbMeta.backdropUrl}
+                            alt="Backdrop"
+                            className={styles.tmdbThumbnail}
+                            onError={e => { e.currentTarget.style.display = 'none' }}
+                          />
+                          <span className={styles.tmdbThumbnailLabel}>Backdrop ↗</span>
                         </a>
                       )}
                     </div>
@@ -246,7 +425,7 @@ export default function MediaDetailPage() {
 
               {refreshMut.isError && (
                 <p className={styles.refreshError}>
-                  Refresh failed: {(refreshMut.error as Error).message}
+                  {`Refresh failed: ${(refreshMut.error as Error).message}`}
                 </p>
               )}
             </div>
@@ -359,6 +538,8 @@ export default function MediaDetailPage() {
           </div>
         </div>
       </div>
+        </div>{/* backdropContent */}
+      </div>{/* backdropSection */}
 
       {/* Children (seasons, episodes, etc.) */}
       {children.length > 0 && (
@@ -370,11 +551,24 @@ export default function MediaDetailPage() {
             {children.map(child => (
               <Link key={child.id} to={`/media/${child.id}`} className={styles.childCard}>
                 {child.posterUrl
-                  ? <img className={styles.childPoster} src={child.posterUrl} alt={child.name} />
-                  : <div className={styles.childPosterPlaceholder}>
-                      {child.number ?? child.name.charAt(0)}
-                    </div>
-                }
+                  ? <img
+                      className={styles.childPoster}
+                      src={child.posterUrl}
+                      alt={child.name}
+                      onError={e => {
+                        const img = e.currentTarget
+                        img.style.display = 'none'
+                        const ph = img.nextElementSibling as HTMLElement | null
+                        if (ph) ph.style.display = 'flex'
+                      }}
+                    />
+                  : null}
+                <div
+                  className={styles.childPosterPlaceholder}
+                  style={{ display: child.posterUrl ? 'none' : 'flex' }}
+                >
+                  {child.number ?? child.name.charAt(0)}
+                </div>
                 <div className={styles.childName}>{child.name}</div>
                 {child.year && <div className={styles.childYear}>{child.year}</div>}
               </Link>

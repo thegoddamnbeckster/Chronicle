@@ -50,5 +50,14 @@ namespace Chronicle.Services
         /// MediaItem, adds it to the user's library, and returns the saved item.
         /// </summary>
         Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(string externalId, int mediaTypeId, int userId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Re-identifies an existing MediaItem using a user-supplied TMDB reference.
+        /// <paramref name="input"/> may be a bare numeric ID (assumed movie), a typed ID
+        /// ("movie:1159831", "tv:1396"), or a full TMDB URL
+        /// ("https://www.themoviedb.org/movie/1159831-the-bride").
+        /// Replaces the item's name, year, overview, poster, and TMDB metadata in-place.
+        /// </summary>
+        Task<Chronicle.Core.Models.MediaItem> ReidentifyAsync(int mediaItemId, string input, CancellationToken ct = default);
     }
 }

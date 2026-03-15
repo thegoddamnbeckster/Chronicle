@@ -1,0 +1,29 @@
+.wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.input {
+  flex: 1;
+  min-width: 0; /* prevents flex child from overflowing */
+}
+
+.browseBtn {
+  background: var(--bg-card, #1e2a2a);
+  border: 1px solid var(--border, #2a3a3a);
+  color: var(--text-primary, #fff);
+  border-radius: 4px;
+  padding: 0 14px;
+  cursor: pointer;
+  font-size: 14px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.browseBtn:hover {
+  border-color: var(--accent, #00ff88);
+  color: var(--accent, #00ff88);
+}

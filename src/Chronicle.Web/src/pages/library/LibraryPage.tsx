@@ -1,8 +1,10 @@
-import { useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useMemo, useEffect } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library'
+import { deleteMedia } from '@/api/media'
 import type { LibraryEntry, LibraryStatus } from '@/types'
+import { loadSortSettings, stripLeadingArticle } from '@/utils/sortSettings'
 import styles from './LibraryPage.module.css'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -90,10 +92,20 @@ export function savePresets(presets: LibraryPreset[]) {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function sortEntries(entries: LibraryEntry[], sortBy: SortField, sortDir: SortDir): LibraryEntry[] {
+  const sortSettings = loadSortSettings()
   return [...entries].sort((a, b) => {
     let cmp = 0
     switch (sortBy) {
-      case 'name':      cmp = a.mediaItem.name.localeCompare(b.mediaItem.name); break
+      case 'name': {
+        const nameA = sortSettings.ignoreArticles
+          ? stripLeadingArticle(a.mediaItem.name, sortSettings.ignoredArticles)
+          : a.mediaItem.name
+        const nameB = sortSettings.ignoreArticles
+          ? stripLeadingArticle(b.mediaItem.name, sortSettings.ignoredArticles)
+          : b.mediaItem.name
+        cmp = nameA.localeCompare(nameB)
+        break
+      }
       case 'year':      cmp = (a.mediaItem.year ?? 0) - (b.mediaItem.year ?? 0); break
       case 'dateAdded': cmp = new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime(); break
       case 'rating':    cmp = (a.userRating ?? 0) - (b.userRating ?? 0); break
@@ -140,6 +152,18 @@ export default function LibraryPage() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [presetName, setPresetName] = useState('')
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem('chronicle.library.collapsed')
+      return stored ? JSON.parse(stored) : {}
+    } catch {
+      return {}
+    }
+  })
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const qc = useQueryClient()
 
@@ -161,6 +185,53 @@ export default function LibraryPage() {
     setExpanded({})
   }
 
+  function toggleSection(mediaTypeName: string) {
+    setCollapsedSections(prev => {
+      const next = { ...prev, [mediaTypeName]: !prev[mediaTypeName] }
+      localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
+      return next
+    })
+  }
+
+  function enterSelectMode() {
+    setSelectMode(true)
+    setSelectedIds(new Set())
+    setDeleteConfirm(false)
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+    setDeleteConfirm(false)
+  }
+
+  function toggleSelected(mediaId: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(mediaId)) next.delete(mediaId)
+      else next.add(mediaId)
+      return next
+    })
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(sorted.map(e => e.mediaItem.id)))
+  }
+
+  async function confirmDelete() {
+    setIsDeleting(true)
+    try {
+      for (const id of selectedIds) {
+        await deleteMedia(id)
+      }
+      qc.invalidateQueries({ queryKey: ['library'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
+    } finally {
+      setIsDeleting(false)
+      exitSelectMode()
+    }
+  }
+
   function handleSavePreset() {
     if (!presetName.trim()) return
     const preset: LibraryPreset = {
@@ -176,8 +247,8 @@ export default function LibraryPage() {
   }
 
   const { data: allEntries = [], isLoading } = useQuery({
-    queryKey: ['library', 'all'],
-    queryFn: () => getLibrary(undefined, 1, 500),
+    queryKey: ['library', 'all', { rootOnly: true }],
+    queryFn: () => getLibrary(undefined, 1, 0, true),
   })
 
   const updateMut = useMutation({
@@ -206,10 +277,50 @@ export default function LibraryPage() {
   const pageSize = PAGE_SIZES[prefs.pageSizePreset]
   const isDefault = prefsAreDefault(prefs)
 
-  const listNavState = useMemo(() => ({
-    listIds: sorted.map(e => e.mediaItem.id),
-    listLabel: prefs.statusFilter ? `Library – ${STATUS_LABELS[prefs.statusFilter]}` : 'Library',
-  }), [sorted, prefs.statusFilter])
+  const location = useLocation()
+
+  useEffect(() => {
+    if (isLoading) return
+    const hash = location.hash  // e.g. "#media-42"
+    if (!hash.startsWith('#media-')) return
+    const targetId = parseInt(hash.slice('#media-'.length), 10)
+    if (isNaN(targetId)) return
+
+    // Find which section this item belongs to
+    let targetTypeName: string | undefined
+    for (const [typeName, entries] of grouped) {
+      if (entries.some(e => e.mediaItem.id === targetId)) {
+        targetTypeName = typeName
+        break
+      }
+    }
+    if (!targetTypeName) return
+    const resolvedTypeName = targetTypeName   // narrow from string | undefined to string
+
+    // Un-collapse the section if it is collapsed
+    setCollapsedSections(prev => {
+      if (!prev[resolvedTypeName]) return prev
+      const next = { ...prev, [resolvedTypeName]: false }
+      localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
+      return next
+    })
+
+    // Expand the section if the item is beyond the current page size
+    const typeEntries = grouped.get(resolvedTypeName)!
+    const itemIndex = typeEntries.findIndex(e => e.mediaItem.id === targetId)
+    if (pageSize !== Infinity && itemIndex >= pageSize) {
+      setExpanded(prev => ({ ...prev, [resolvedTypeName]: true }))
+    }
+
+    // Scroll after a brief delay to allow render
+    const timer = setTimeout(() => {
+      document.getElementById(`media-${targetId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    }, 150)
+    return () => clearTimeout(timer)
+  }, [isLoading, location.hash, grouped, pageSize])
 
   return (
     <div className={styles.page}>
@@ -221,6 +332,22 @@ export default function LibraryPage() {
         <div className={styles.controlsTop}>
           <h2 className={styles.heading}>Library</h2>
           <div className={styles.controlsActions}>
+            {/* Select mode toggle */}
+            {!selectMode ? (
+              <button className={styles.actionBtn} onClick={enterSelectMode}>Select</button>
+            ) : (
+              <>
+                <button className={styles.actionBtn} onClick={selectAll}>Select All</button>
+                <button
+                  className={styles.deleteModeBtn}
+                  disabled={selectedIds.size === 0 || isDeleting}
+                  onClick={() => setDeleteConfirm(true)}
+                >
+                  Delete ({selectedIds.size})
+                </button>
+                <button className={styles.cancelBtn} onClick={exitSelectMode}>✕ Cancel</button>
+              </>
+            )}
             {presets.length > 0 && (
               <select
                 className={styles.presetSelect}
@@ -325,6 +452,34 @@ export default function LibraryPage() {
         </div>
       </div>
 
+      {/* ── Delete confirmation modal ── */}
+      {deleteConfirm && (
+        <div className={styles.deleteModal}>
+          <div className={styles.deleteModalBox}>
+            <p className={styles.deleteModalText}>
+              Delete <strong>{selectedIds.size}</strong> item{selectedIds.size !== 1 ? 's' : ''}?
+              This cannot be undone.
+            </p>
+            <div className={styles.deleteModalActions}>
+              <button
+                className={styles.cancelBtn}
+                onClick={() => setDeleteConfirm(false)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.deleteConfirmOk}
+                onClick={confirmDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Content ── */}
       {isLoading && <p className={styles.empty}>Loading…</p>}
 
@@ -339,76 +494,139 @@ export default function LibraryPage() {
       {mediaTypeNames.map(typeName => {
         const typeEntries = grouped.get(typeName)!
         const isExpanded = expanded[typeName] ?? false
+        const isCollapsed = collapsedSections[typeName] ?? false
         const visible = pageSize === Infinity
           ? typeEntries
           : isExpanded ? typeEntries : typeEntries.slice(0, pageSize)
         const hasMore = pageSize !== Infinity && typeEntries.length > pageSize
+        const sectionNavState = {
+          listIds: visible.map(e => e.mediaItem.id),
+          listLabel: typeName,
+        }
 
         return (
           <section key={typeName} className={styles.section}>
-            <div className={styles.sectionHeader}>
+            <div
+              className={styles.sectionHeader}
+              onClick={() => toggleSection(typeName)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  toggleSection(typeName)
+                }
+              }}
+            >
               <h3 className={styles.sectionTitle}>{typeName}</h3>
               <span className={styles.sectionCount}>{typeEntries.length}</span>
+              <span className={`${styles.chevron} ${isCollapsed ? styles.chevronCollapsed : ''}`}>
+                ▾
+              </span>
             </div>
 
-            <div className={styles.grid}>
+            {!isCollapsed && <div className={styles.grid}>
               {visible.map(entry => (
-                <div key={entry.id} className={styles.card}>
-                  <Link to={`/media/${entry.mediaItem.id}`} state={listNavState} className={styles.posterLink}>
-                    <div className={styles.poster}>
-                      {entry.mediaItem.posterUrl ? (
-                        <img
-                          src={entry.mediaItem.posterUrl}
-                          alt={entry.mediaItem.name}
-                          onError={e => {
-                            const img = e.currentTarget
-                            img.style.display = 'none'
-                            const ph = img.nextElementSibling as HTMLElement | null
-                            if (ph) ph.style.display = 'flex'
-                          }}
-                        />
-                      ) : null}
-                      <div
-                        className={styles.posterPlaceholder}
-                        style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
-                      >
-                        {entry.mediaItem.name.charAt(0)}
+                <div
+                  key={entry.id}
+                  id={`media-${entry.mediaItem.id}`}
+                  className={`${styles.card} ${selectMode && selectedIds.has(entry.mediaItem.id) ? styles.cardSelected : ''}`}
+                  onClick={selectMode ? () => toggleSelected(entry.mediaItem.id) : undefined}
+                  style={selectMode ? { cursor: 'pointer' } : undefined}
+                >
+                  {selectMode ? (
+                    <div className={styles.posterLink} style={{ position: 'relative' }}>
+                      <div className={styles.poster}>
+                        {entry.mediaItem.posterUrl ? (
+                          <img
+                            src={entry.mediaItem.posterUrl}
+                            alt={entry.mediaItem.name}
+                            onError={e => {
+                              const img = e.currentTarget
+                              img.style.display = 'none'
+                              const ph = img.nextElementSibling as HTMLElement | null
+                              if (ph) ph.style.display = 'flex'
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={styles.posterPlaceholder}
+                          style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
+                        >
+                          {entry.mediaItem.name.charAt(0)}
+                        </div>
                       </div>
+                      {selectedIds.has(entry.mediaItem.id) && (
+                        <div className={styles.selectOverlay}>✓</div>
+                      )}
                     </div>
-                  </Link>
-                  <div className={styles.info}>
-                    <Link to={`/media/${entry.mediaItem.id}`} state={listNavState} className={styles.nameLink}>
-                      <div className={styles.name}>{entry.mediaItem.name}</div>
+                  ) : (
+                    <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
+                      <div className={styles.poster}>
+                        {entry.mediaItem.posterUrl ? (
+                          <img
+                            src={entry.mediaItem.posterUrl}
+                            alt={entry.mediaItem.name}
+                            onError={e => {
+                              const img = e.currentTarget
+                              img.style.display = 'none'
+                              const ph = img.nextElementSibling as HTMLElement | null
+                              if (ph) ph.style.display = 'flex'
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={styles.posterPlaceholder}
+                          style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
+                        >
+                          {entry.mediaItem.name.charAt(0)}
+                        </div>
+                      </div>
                     </Link>
+                  )}
+                  <div className={styles.info}>
+                    {selectMode ? (
+                      <div className={styles.name}>{entry.mediaItem.name}</div>
+                    ) : (
+                      <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.nameLink}>
+                        <div className={styles.name}>{entry.mediaItem.name}</div>
+                      </Link>
+                    )}
                     <div className={styles.metaRow}>
                       {entry.mediaItem.year && <span className={styles.year}>{entry.mediaItem.year}</span>}
                       {entry.mediaItem.tmdbMeta?.rating != null && (
                         <span className={styles.rating}>★ {entry.mediaItem.tmdbMeta.rating.toFixed(1)}</span>
                       )}
                     </div>
-                    <select
-                      className={styles.statusSelect}
-                      value={entry.status}
-                      onChange={e =>
-                        updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })
-                      }
-                    >
-                      {STATUS_OPTIONS.map(s => (
-                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                      ))}
-                    </select>
-                    <button
-                      className={styles.removeBtn}
-                      onClick={() => {
-                        if (confirm('Remove from library?')) removeMut.mutate(entry.id)
-                      }}
-                    >Remove</button>
+                    {!selectMode && (
+                      <>
+                        <select
+                          className={styles.statusSelect}
+                          value={entry.status}
+                          onChange={e =>
+                            updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })
+                          }
+                        >
+                          {STATUS_OPTIONS.map(s => (
+                            <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                          ))}
+                        </select>
+                        <button
+                          className={styles.removeBtn}
+                          onClick={() => {
+                            if (confirm('Remove from library?')) removeMut.mutate(entry.id)
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
-            </div>
+            </div>}
 
-            {hasMore && (
+            {!isCollapsed && hasMore && (
               <button
                 className={styles.showMoreBtn}
                 onClick={() =>

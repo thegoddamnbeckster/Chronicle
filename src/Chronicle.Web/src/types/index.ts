@@ -33,6 +33,13 @@ export interface FileScannerMeta {
   nfoPosterUrl: string | null
 }
 
+export interface RefreshLog {
+  providerName: string
+  refreshedAt: string
+  succeeded: boolean
+  errorMessage?: string | null
+}
+
 export interface MediaItem {
   id: number
   mediaTypeId: number
@@ -50,10 +57,12 @@ export interface MediaItem {
   externalIds: ExternalId[]
   tmdbMeta?: TmdbMeta | null
   fileScannerMeta?: FileScannerMeta | null
+  refreshLogs?: RefreshLog[] | null
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────
 export type LibraryStatus =
+  | 'Unwatched'
   | 'PlanToWatch'
   | 'Watching'
   | 'Completed'
@@ -182,6 +191,7 @@ export interface ImportSummary {
   imported: number
   failed: number
   failures: string[]
+  duplicates: number
 }
 
 export interface MediaTypeOption {

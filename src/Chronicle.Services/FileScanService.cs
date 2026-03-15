@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Core.Exceptions;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -11,12 +12,15 @@ namespace Chronicle.Services
     {
         private readonly ChronicleDbContext _context;
         private readonly IPluginRegistry _registry;
+        private readonly ScanProgressService _progress;
         private readonly ILogger _log = Log.ForContext<FileScanService>();
 
-        public FileScanService(ChronicleDbContext context, IPluginRegistry registry)
+        public FileScanService(ChronicleDbContext context, IPluginRegistry registry,
+            ScanProgressService progress)
         {
             _context = context;
             _registry = registry;
+            _progress = progress;
         }
 
         public async Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync()
@@ -36,6 +40,13 @@ namespace Chronicle.Services
 
         public async Task<FileScanSummary> ScanAsync(FileScanRequest request, int userId, CancellationToken ct = default)
         {
+            if (!Directory.Exists(request.Path))
+            {
+                var hint = BuildMappedDriveHint(request.Path);
+                throw new DirectoryNotFoundException(
+                    $"Scan path does not exist or is not accessible: {request.Path}.{hint}");
+            }
+
             // Verify media type exists
             var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
@@ -92,9 +103,8 @@ namespace Chronicle.Services
                     {
                         UserId = userId,
                         MediaItemId = mediaItem!.Id,
-                        Status = LibraryStatus.Completed,
+                        Status = LibraryStatus.Unwatched,
                         AddedAt = DateTime.UtcNow,
-                        CompletedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow,
                     });
                     added++;
@@ -117,6 +127,18 @@ namespace Chronicle.Services
 
         public async Task<ScanPreview> PreviewAsync(ScanPreviewRequest request, CancellationToken ct = default)
         {
+            // Validate path accessibility before handing off to the scanner plugin.
+            // On Windows, mapped network drives (e.g. H:\) may not be visible to child
+            // processes that were started in a different session.  Providing a clear error
+            // here — along with the UNC equivalent — is much more helpful than the raw
+            // "Scan path does not exist" message that the plugin would otherwise surface.
+            if (!Directory.Exists(request.Path))
+            {
+                var hint = BuildMappedDriveHint(request.Path);
+                throw new DirectoryNotFoundException(
+                    $"Scan path does not exist or is not accessible: {request.Path}.{hint}");
+            }
+
             var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
 
@@ -128,8 +150,71 @@ namespace Chronicle.Services
             _log.Information("Preview scan of {Path} (recursive={Recursive}, mediaType={MediaType})",
                 request.Path, request.Recursive, mediaType.Name);
 
-            var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
+            // Build the ordered list of directories to scan.
+            // Scanning each directory non-recursively lets us report per-folder progress.
+            var dirsToScan = new List<string> { request.Path };
+            if (request.Recursive)
+            {
+                try
+                {
+                    dirsToScan.AddRange(
+                        Directory.GetDirectories(request.Path, "*", SearchOption.AllDirectories));
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "Failed to enumerate subdirectories of {Path} — " +
+                        "falling back to single recursive scan", request.Path);
+                    // Fall back: single call with recursive=true (no per-folder progress)
+                    _progress.Start(1);
+                    _progress.UpdateFolder(request.Path, 1, 0);
+                    List<Chronicle.Plugins.Models.ScannedFile> fallback;
+                    try
+                    {
+                        fallback = await scanner.ScanDirectoryAsync(request.Path, recursive: true, ct);
+                    }
+                    catch (DirectoryNotFoundException dnfe)
+                    {
+                        var hint = BuildMappedDriveHint(request.Path);
+                        throw new DirectoryNotFoundException(
+                            $"Scan path is not accessible: {request.Path}.{hint}", dnfe);
+                    }
+                    _progress.Complete();
+                    return BuildPreview(fallback);
+                }
+            }
 
+            _progress.Start(dirsToScan.Count);
+            var allFiles = new List<Chronicle.Plugins.Models.ScannedFile>(capacity: 256);
+
+            for (int i = 0; i < dirsToScan.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var dir = dirsToScan[i];
+                _progress.UpdateFolder(dir, i + 1, allFiles.Count);
+
+                try
+                {
+                    var files = await scanner.ScanDirectoryAsync(dir, recursive: false, ct);
+                    allFiles.AddRange(files);
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "Skipping directory {Dir} during preview", dir);
+                }
+            }
+
+            _progress.Complete();
+
+            _log.Information("Preview complete: {Count} files found across {Dirs} directories",
+                allFiles.Count, dirsToScan.Count);
+
+            return BuildPreview(allFiles);
+        }
+
+        private static ScanPreview BuildPreview(
+            IEnumerable<Chronicle.Plugins.Models.ScannedFile> scannedFiles)
+        {
             var results = scannedFiles
                 .Select(f => new ScannedFileResult(
                     f.FilePath,
@@ -139,9 +224,23 @@ namespace Chronicle.Services
                     f.SuggestedExternalId,
                     string.IsNullOrEmpty(f.MediaTypeHint) ? "movie" : f.MediaTypeHint))
                 .ToList();
-
-            _log.Information("Preview complete: {Count} files found", results.Count);
             return new ScanPreview(results);
+        }
+
+        /// <summary>
+        /// Returns an optional hint message when a path looks like a mapped drive letter.
+        /// Mapped drives are per-user-session; a spawned process may not inherit them.
+        /// The hint recommends switching to the equivalent UNC path.
+        /// </summary>
+        private static string BuildMappedDriveHint(string path)
+        {
+            if (path.Length >= 2 && path[1] == ':' && char.IsLetter(path[0]))
+            {
+                return $" If '{char.ToUpper(path[0])}:' is a mapped network drive, " +
+                       "try entering the UNC path instead (e.g. \\\\server\\share\\...). " +
+                       "Mapped drives may not be visible to background processes.";
+            }
+            return string.Empty;
         }
 
         // ── Identify ──────────────────────────────────────────────────────────────
@@ -176,10 +275,11 @@ namespace Chronicle.Services
                     }
                     else
                     {
-                        // Title (+ year) search
-                        var query = file.ParsedYear.HasValue
-                            ? $"{file.ParsedTitle} {file.ParsedYear}"
-                            : file.ParsedTitle;
+                        // Title-only search — do NOT append the year to the query string.
+                        // TMDB treats the query as plain text; the year is not in the
+                        // stored title so appending it returns zero results.  ScoreCandidate
+                        // already handles year matching on the returned candidates.
+                        var query = file.ParsedTitle;
 
                         var searchResult = await provider.SearchAsync(query, file.MediaTypeHint, ct);
 
@@ -282,9 +382,8 @@ namespace Chronicle.Services
                         {
                             UserId = request.UserId,
                             MediaItemId = mediaItem.Id,
-                            Status = LibraryStatus.Completed,
+                            Status = LibraryStatus.Unwatched,
                             AddedAt = DateTime.UtcNow,
-                            CompletedAt = DateTime.UtcNow,
                             UpdatedAt = DateTime.UtcNow,
                         });
                     }
@@ -315,79 +414,222 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
 
-            var imported = 0;
-            var failed   = 0;
+            int imported = 0, failed = 0, duplicates = 0;
             var failures = new List<string>();
 
-            foreach (var file in request.Files)
+            if (mediaType.HierarchyLevels >= 3)
+            {
+                // Three-tier import: root (show/artist) → mid (season/album) → leaf (episode/track)
+                (imported, failed, duplicates, failures) = await ImportHierarchicalAsync(
+                    request.Files, mediaType, request.UserId, ct);
+            }
+            else
+            {
+                // Flat import.
+                // Pass 1: check for duplicates and create only new items.
+                // Pass 2: upsert external IDs.
+                // Pass 3: bulk-upsert library entries.
+                var pairs = new List<(DirectImportFile file, MediaItem item)>(request.Files.Count);
+
+                foreach (var file in request.Files)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    // Skip files whose path is already registered in the database.
+                    var existingItem = await FindItemByFilePathAsync(file.FilePath, mediaType.Id, ct);
+                    if (existingItem is not null)
+                    {
+                        _log.Information("Duplicate file '{Path}' already imported as '{Title}' (id={Id}) — skipping",
+                            file.FilePath, existingItem.Name, existingItem.Id);
+                        duplicates++;
+                        pairs.Add((file, existingItem));
+                        continue;
+                    }
+
+                    var item = new MediaItem
+                    {
+                        Name           = file.ParsedTitle,
+                        MediaTypeId    = mediaType.Id,
+                        ParentId       = null,
+                        HierarchyLevel = 0,
+                        Year           = file.ParsedYear,
+                        Number         = file.EpisodeNumber ?? file.AudioTrackNumber,
+                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
+                        CreatedAt      = DateTime.UtcNow,
+                        UpdatedAt      = DateTime.UtcNow,
+                    };
+                    _context.MediaItems.Add(item);
+                    pairs.Add((file, item));
+                }
+
+                // Save new items (EF Core populates auto-generated IDs).
+                var newCount = pairs.Count - duplicates;
+                if (newCount > 0)
+                    await _context.SaveChangesAsync(ct);
+                imported = newCount;
+
+                // Upsert ExternalIds for any file that carries an NFO/external ID hint.
+                foreach (var (file, item) in pairs)
+                {
+                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
+                        await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
+                }
+
+                // Determine which items already have a library entry (batch SELECT).
+                var allItemIds = pairs.Select(p => p.item.Id).ToList();
+                var existingLibSet = new HashSet<int>(
+                    await _context.UserLibraries
+                        .Where(l => l.UserId == request.UserId && allItemIds.Contains(l.MediaItemId))
+                        .Select(l => l.MediaItemId)
+                        .ToListAsync(ct));
+
+                foreach (var (_, item) in pairs)
+                {
+                    if (!existingLibSet.Contains(item.Id))
+                    {
+                        _context.UserLibraries.Add(new UserLibrary
+                        {
+                            UserId      = request.UserId,
+                            MediaItemId = item.Id,
+                            Status      = LibraryStatus.Unwatched,
+                            AddedAt     = DateTime.UtcNow,
+                            UpdatedAt   = DateTime.UtcNow,
+                        });
+                    }
+                }
+
+                // Final save: ExternalIds + UserLibrary entries in one round-trip.
+                await _context.SaveChangesAsync(ct);
+            }
+
+            _log.Information("Direct import complete: {Imported} imported, {Duplicates} skipped (duplicate), {Failed} failed",
+                imported, duplicates, failed);
+            return new ImportApprovedSummary(imported, failed, failures, duplicates);
+        }
+
+        private async Task<(int imported, int failed, int duplicates, List<string> failures)> ImportHierarchicalAsync(
+            List<DirectImportFile> files,
+            MediaType mediaType,
+            int userId,
+            CancellationToken ct)
+        {
+            int imported = 0, failed = 0, duplicates = 0;
+            var failures = new List<string>();
+
+            var showGroups = GroupByShow(files.Select(f => new Chronicle.Plugins.Models.ScannedFile
+            {
+                FilePath      = f.FilePath,
+                ParsedTitle   = f.ParsedTitle,
+                ParsedYear    = f.ParsedYear,
+                ShowTitle     = f.ShowTitle,
+                SeasonNumber  = f.SeasonNumber,
+                EpisodeNumber = f.EpisodeNumber,
+                EpisodeTitle  = f.EpisodeTitle,
+            }));
+
+            // Pre-index files by path for O(1) episode lookup (case-insensitive for Windows paths)
+            var fileByPath = files.ToDictionary(f => f.FilePath, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var show in showGroups)
             {
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    MediaItem mediaItem;
+                    // Level 0 — root item (show / artist)
+                    var rootItem = await FindOrCreateParentAsync(
+                        show.ShowTitle, mediaType.Id, parentId: null, hierarchyLevel: 0, ct);
 
-                    // If the scanner extracted an external ID (e.g. from an NFO file),
-                    // check whether we already have this item so we can update rather than duplicate.
-                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
+                    // Upsert library entry for root only
+                    await UpsertLibraryEntryAsync(userId, rootItem.Id, ct);
+
+                    foreach (var (seasonNum, season) in show.Seasons)
                     {
-                        var (source, extId) = ParseSuggestedExternalId(file.SuggestedExternalId);
-                        var existingExt = await _context.MediaExternalIds
-                            .Include(e => e.MediaItem)
-                            .FirstOrDefaultAsync(
-                                e => e.Source == source && e.ExternalId == extId
-                                  && e.MediaItem!.MediaTypeId == request.MediaTypeId, ct);
+                        // Level 1 — mid item (season / album)
+                        var seasonName = seasonNum == 0 ? "Specials" : $"Season {seasonNum}";
+                        var midItem = await FindOrCreateParentAsync(
+                            seasonName, mediaType.Id, rootItem.Id, hierarchyLevel: 1, ct);
 
-                        if (existingExt?.MediaItem is not null)
+                        foreach (var ep in season.Episodes)
                         {
-                            // Update file-scanner metadata on the existing item and add to library.
-                            mediaItem = existingExt.MediaItem;
-                            mediaItem.MetadataJson = SerializeMetadata(
-                                scannerFilePath: file.FilePath, existingJson: mediaItem.MetadataJson);
-                            mediaItem.UpdatedAt = DateTime.UtcNow;
-                            await _context.SaveChangesAsync(ct);
-                            await UpsertLibraryEntryAsync(request.UserId, mediaItem.Id, ct);
-                            imported++;
-                            _log.Information("Updated (direct) existing '{Title}' from {FilePath}",
-                                mediaItem.Name, file.FilePath);
-                            continue;
+                            try
+                            {
+                                // Find the original DirectImportFile to get all its fields
+                                if (!fileByPath.TryGetValue(ep.FilePath, out var file))
+                                {
+                                    _log.Warning("Could not find original file for path {Path} — skipping", ep.FilePath);
+                                    failed++;
+                                    continue;
+                                }
+                                var epName = ep.EpisodeTitle ?? ep.ParsedTitle;
+
+                                var wasNew = await ImportSingleFileAsync(file with { ParsedTitle = epName },
+                                    mediaType.Id, midItem.Id, hierarchyLevel: 2,
+                                    userId, addLibraryEntry: false, ct);
+                                if (wasNew) imported++;
+                                else duplicates++;
+                            }
+                            catch (Exception ex)
+                            {
+                                _log.Warning(ex, "Skipping episode {Path}", ep.FilePath);
+                                failures.Add($"{ep.FilePath}: {ex.Message}");
+                                failed++;
+                            }
                         }
                     }
-
-                    // Create a new MediaItem from scanner data alone.
-                    // Name + Year are enough for MetadataRefreshService to find and attach TMDB data.
-                    mediaItem = new MediaItem
-                    {
-                        MediaTypeId    = request.MediaTypeId,
-                        Name           = file.ParsedTitle,
-                        Year           = file.ParsedYear,
-                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
-                        HierarchyLevel = 0,
-                        CreatedAt      = DateTime.UtcNow,
-                        UpdatedAt      = DateTime.UtcNow,
-                    };
-                    _context.MediaItems.Add(mediaItem);
-                    await _context.SaveChangesAsync(ct);
-
-                    // Store any NFO-derived external ID so the refresh service can use it.
-                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
-                        await UpsertExternalIdAsync(mediaItem.Id, file.SuggestedExternalId, ct);
-
-                    await UpsertLibraryEntryAsync(request.UserId, mediaItem.Id, ct);
-
-                    imported++;
-                    _log.Information("Imported (direct) '{Title}' ({Year}) from {FilePath}",
-                        file.ParsedTitle, file.ParsedYear, file.FilePath);
                 }
                 catch (Exception ex)
                 {
-                    failed++;
-                    failures.Add($"{file.FilePath}: {ex.Message}");
-                    _log.Warning(ex, "Failed to direct-import {FilePath}", file.FilePath);
+                    _log.Warning(ex, "Skipping show group {Show}", show.ShowTitle);
+                    failures.Add($"Show '{show.ShowTitle}': {ex.Message}");
+                    failed += show.Seasons.Values.Sum(s => s.Episodes.Count);
                 }
             }
 
-            _log.Information("Direct import complete: {Imported} imported, {Failed} failed", imported, failed);
-            return new ImportApprovedSummary(imported, failed, failures);
+            return (imported, failed, duplicates, failures);
+        }
+
+        private async Task<bool> ImportSingleFileAsync(
+            DirectImportFile file,
+            int mediaTypeId,
+            int? parentId,
+            int hierarchyLevel,
+            int userId,
+            bool addLibraryEntry,
+            CancellationToken ct)
+        {
+            // Skip if a media item with the same file path already exists.
+            var existing = await FindItemByFilePathAsync(file.FilePath, mediaTypeId, ct);
+            if (existing is not null)
+            {
+                _log.Information("Duplicate file '{Path}' already imported as '{Title}' (id={Id}) — skipping",
+                    file.FilePath, existing.Name, existing.Id);
+                if (addLibraryEntry)
+                    await UpsertLibraryEntryAsync(userId, existing.Id, ct);
+                return false;
+            }
+
+            var item = new MediaItem
+            {
+                Name           = file.ParsedTitle,
+                MediaTypeId    = mediaTypeId,
+                ParentId       = parentId,
+                HierarchyLevel = hierarchyLevel,
+                Year           = file.ParsedYear,
+                Number         = file.EpisodeNumber ?? file.AudioTrackNumber,
+                MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync(ct);
+
+            if (!string.IsNullOrEmpty(file.SuggestedExternalId))
+                await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
+
+            if (addLibraryEntry)
+                await UpsertLibraryEntryAsync(userId, item.Id, ct);
+
+            return true;
         }
 
         /// <summary>Adds a UserLibrary entry for <paramref name="mediaItemId"/> if one doesn't already exist.</summary>
@@ -401,9 +643,8 @@ namespace Chronicle.Services
                 {
                     UserId      = userId,
                     MediaItemId = mediaItemId,
-                    Status      = LibraryStatus.Completed,
+                    Status      = LibraryStatus.Unwatched,
                     AddedAt     = DateTime.UtcNow,
-                    CompletedAt = DateTime.UtcNow,
                     UpdatedAt   = DateTime.UtcNow,
                 });
                 await _context.SaveChangesAsync(ct);
@@ -411,6 +652,40 @@ namespace Chronicle.Services
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the first <see cref="MediaItem"/> whose <c>fileScanner.filePath</c>
+        /// in <c>MetadataJson</c> matches <paramref name="filePath"/> (case-insensitive).
+        /// Used to prevent duplicate imports of the same physical file.
+        /// </summary>
+        private async Task<MediaItem?> FindItemByFilePathAsync(
+            string filePath, int mediaTypeId, CancellationToken ct)
+        {
+            // LIKE '%fileScanner%' narrows the result set before in-memory comparison.
+            var candidates = await _context.MediaItems
+                .Where(m => m.MediaTypeId == mediaTypeId
+                         && m.MetadataJson != null
+                         && EF.Functions.Like(m.MetadataJson, "%fileScanner%"))
+                .ToListAsync(ct);
+
+            return candidates.FirstOrDefault(m =>
+                string.Equals(ExtractFilePath(m.MetadataJson), filePath, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>Extracts <c>fileScanner.filePath</c> from a <c>MetadataJson</c> blob.</summary>
+        private static string? ExtractFilePath(string? metadataJson)
+        {
+            if (metadataJson is null) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(metadataJson);
+                if (doc.RootElement.TryGetProperty("fileScanner", out var scanner)
+                    && scanner.TryGetProperty("filePath", out var fp))
+                    return fp.GetString();
+            }
+            catch { /* malformed JSON — treat as no path */ }
+            return null;
+        }
 
         private async Task<MediaItem?> FindExistingItemAsync(
             Chronicle.Plugins.Models.ScannedFile file, int mediaTypeId, CancellationToken ct)
@@ -549,13 +824,39 @@ namespace Chronicle.Services
 
         // ── Refresh metadata ──────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Scores a TMDB search result against a known item name + year.
+        /// Mirrors <see cref="ScoreCandidate"/> but works with plain strings instead of <see cref="ScannedFileResult"/>.
+        /// </summary>
+        private static int ScoreByNameYear(string? candidateTitle, int? candidateYear, string itemName, int? itemYear)
+        {
+            var exactTitle = string.Equals(candidateTitle, itemName, StringComparison.OrdinalIgnoreCase);
+            var partialTitle = candidateTitle?.Contains(itemName, StringComparison.OrdinalIgnoreCase) == true
+                            || itemName.Contains(candidateTitle ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            var score = exactTitle ? 60 : partialTitle ? 35 : 10;
+
+            if (itemYear.HasValue && candidateYear.HasValue)
+            {
+                if (candidateYear == itemYear) score += 40;
+                else if (Math.Abs(candidateYear.Value - itemYear.Value) <= 1) score += 20;
+            }
+            else if (!itemYear.HasValue)
+            {
+                score += 15; // No year to penalise against
+            }
+
+            return Math.Min(score, 100);
+        }
+
         public async Task<MediaItem?> RefreshMetadataAsync(int mediaItemId, CancellationToken ct = default)
         {
             var provider = _registry.GetMetadataProviders().FirstOrDefault();
             if (provider is null)
             {
-                _log.Warning("RefreshMetadata: no metadata provider loaded");
-                return null;
+                _log.Warning("RefreshMetadata: no metadata provider loaded for item {Id}", mediaItemId);
+                throw new NoProviderConfiguredException(
+                    "No metadata provider configured. Add an API key in Settings → Plugins.");
             }
 
             var item = await _context.MediaItems
@@ -573,19 +874,30 @@ namespace Chronicle.Services
 
             if (extId is null)
             {
-                // No external ID yet — try searching by name to find one
-                _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by name '{Name}'", mediaItemId, item.Name);
+                // No external ID yet — search by name only.
+                // The TMDB search API treats the entire query string as text; appending
+                // the year (e.g. "Alien - Romulus 2024") returns zero results because
+                // the year is not part of the stored title.  Search by title only, then
+                // let ScoreByNameYear pick the correct year from the returned candidates.
+                var query = item.Name;
+                _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by '{Query}'", mediaItemId, query);
                 var hint = ToMediaTypeHint(item.MediaType?.Name ?? string.Empty);
-                var searchResult = await provider.SearchAsync(item.Name, hint, ct);
-                var top = searchResult.Results.FirstOrDefault();
-                if (top is null)
+                var searchResult = await provider.SearchAsync(query, hint, ct);
+
+                // Score each candidate by title + year accuracy, prefer exact year match
+                var best = searchResult.Results
+                    .Select(r => new { Result = r, Score = ScoreByNameYear(r.Title, r.Year, item.Name, item.Year) })
+                    .OrderByDescending(x => x.Score)
+                    .FirstOrDefault();
+
+                if (best is null)
                 {
                     _log.Information("RefreshMetadata: no TMDB match found for '{Name}'", item.Name);
                     return item;
                 }
-                extId = top.ExternalId;
+                extId = best.Result.ExternalId;
                 await UpsertExternalIdAsync(item.Id, extId, ct);
-                _log.Information("RefreshMetadata: matched '{Name}' → {ExtId}", item.Name, extId);
+                _log.Information("RefreshMetadata: matched '{Name}' → {ExtId} (score={Score})", item.Name, extId, best.Score);
             }
 
             try
@@ -726,6 +1038,81 @@ namespace Chronicle.Services
             return "movie";
         }
 
+        // ── Hierarchy grouping ────────────────────────────────────────────────────
+
+        internal record ShowGroup(string ShowTitle, Dictionary<int, SeasonGroup> Seasons);
+        internal record SeasonGroup(int SeasonNumber, List<Chronicle.Plugins.Models.ScannedFile> Episodes);
+
+        /// <summary>Exposed for unit testing only.</summary>
+        internal static List<ShowGroup> GroupByShowForTest(
+            IEnumerable<Chronicle.Plugins.Models.ScannedFile> files) => GroupByShow(files);
+
+        private static List<ShowGroup> GroupByShow(
+            IEnumerable<Chronicle.Plugins.Models.ScannedFile> files)
+        {
+            var shows = new Dictionary<string, ShowGroup>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var file in files)
+            {
+                var showTitle = file.ShowTitle ?? file.ParsedTitle;
+                if (string.IsNullOrWhiteSpace(showTitle))
+                    continue; // skip files with no parseable title
+                var seasonNum = file.SeasonNumber ?? 0; // 0 = "Specials"
+
+                if (!shows.TryGetValue(showTitle, out var show))
+                {
+                    show = new ShowGroup(showTitle, new Dictionary<int, SeasonGroup>());
+                    shows[showTitle] = show;
+                }
+
+                if (!show.Seasons.TryGetValue(seasonNum, out var season))
+                {
+                    season = new SeasonGroup(seasonNum, new List<Chronicle.Plugins.Models.ScannedFile>());
+                    show.Seasons[seasonNum] = season;
+                }
+
+                season.Episodes.Add(file);
+            }
+
+            return shows.Values.ToList();
+        }
+
+        private async Task<MediaItem> FindOrCreateParentAsync(
+            string name,
+            int mediaTypeId,
+            int? parentId,
+            int hierarchyLevel,
+            CancellationToken ct)
+        {
+            var nameLower = name.ToLowerInvariant();
+
+            // NOTE: find-or-create has a TOCTOU race if scans run concurrently; acceptable until
+            // a unique index on (MediaTypeId, ParentId, HierarchyLevel, Name) is added.
+            var existing = await _context.MediaItems
+                .Where(m => m.MediaTypeId == mediaTypeId
+                         && m.ParentId == parentId
+                         && m.HierarchyLevel == hierarchyLevel
+                         && m.Name.ToLower() == nameLower)
+                .FirstOrDefaultAsync(ct);
+
+            if (existing is not null)
+                return existing;
+
+            var item = new MediaItem
+            {
+                Name           = name,
+                MediaTypeId    = mediaTypeId,
+                ParentId       = parentId,
+                HierarchyLevel = hierarchyLevel,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync(ct);
+            return item;
+        }
+
         // ── MetadataJson helpers ──────────────────────────────────────────────────
 
         private static readonly JsonSerializerOptions _metaJsonOpts =
@@ -786,6 +1173,105 @@ namespace Chronicle.Services
                 tmdbMeta.BackdropUrl);
 
             return JsonSerializer.Serialize(new MediaMetaJsonRoot(tmdbData, fsData), _metaJsonOpts);
+        }
+
+        // ── Re-identify ───────────────────────────────────────────────────────────
+
+        public async Task<MediaItem> ReidentifyAsync(int mediaItemId, string input, CancellationToken ct = default)
+        {
+            var provider = _registry.GetMetadataProviders().FirstOrDefault();
+            if (provider is null)
+                throw new NoProviderConfiguredException(
+                    "No metadata provider configured. Add an API key in Settings → Plugins.");
+
+            var item = await _context.MediaItems
+                .Include(m => m.MediaType)
+                .Include(m => m.ExternalIds)
+                .FirstOrDefaultAsync(m => m.Id == mediaItemId, ct)
+                ?? throw new KeyNotFoundException($"Media item {mediaItemId} not found.");
+
+            var externalId = ParseUserInput(input, item.MediaType?.Name ?? string.Empty);
+
+            _log.Information("Re-identifying item {Id} ({Name}) with input='{Input}' → externalId='{ExtId}'",
+                mediaItemId, item.Name, input, externalId);
+
+            var meta = await provider.GetByIdAsync(externalId, ct);
+
+            // Replace the TMDB external ID — remove old ones first, then upsert the new one
+            var oldTmdbIds = item.ExternalIds.Where(e => e.Source == "tmdb").ToList();
+            foreach (var old in oldTmdbIds)
+                _context.MediaExternalIds.Remove(old);
+
+            item.Name           = meta.Title;
+            item.Year           = meta.Year;
+            item.Overview       = meta.Overview;
+            item.PosterUrl      = meta.PosterUrl;
+            item.RuntimeMinutes = meta.RuntimeMinutes;
+            item.MetadataJson   = SerializeMetadata(tmdbMeta: meta, existingJson: item.MetadataJson);
+            item.UpdatedAt      = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync(ct);
+            await UpsertExternalIdAsync(item.Id, externalId, ct);
+            await _context.SaveChangesAsync(ct);
+
+            _log.Information("Re-identified item {Id} → '{Title}' ({Year}) [{ExtId}]",
+                mediaItemId, meta.Title, meta.Year, externalId);
+
+            return await _context.MediaItems
+                .Include(m => m.MediaType)
+                .Include(m => m.ExternalIds)
+                .FirstAsync(m => m.Id == mediaItemId, ct);
+        }
+
+        /// <summary>
+        /// Resolves a user-supplied TMDB reference to the canonical "movie:NNN" / "tv:NNN" format.
+        /// Handles:
+        ///   • TMDB URL  https://www.themoviedb.org/movie/1159831-the-bride
+        ///   • TMDB URL  https://www.themoviedb.org/tv/1396-breaking-bad
+        ///   • Typed ID  movie:1159831  |  tv:1396
+        ///   • Bare number  1159831  (media-type hint used to pick movie vs tv)
+        /// </summary>
+        private static string ParseUserInput(string input, string mediaTypeName)
+        {
+            input = input.Trim();
+
+            // Full TMDB URL
+            if (input.Contains("themoviedb.org/", StringComparison.OrdinalIgnoreCase))
+            {
+                // Extract the numeric segment immediately after the media-type slug
+                // e.g. ".../movie/1159831-the-bride" → "movie:1159831"
+                //      ".../tv/1396-breaking-bad"    → "tv:1396"
+                var uri = new Uri(input);
+                var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (segments.Length >= 2)
+                {
+                    var kind = segments[^2].ToLowerInvariant(); // "movie" or "tv"
+                    var rawId = segments[^1].Split('-')[0];     // "1159831-the-bride" → "1159831"
+                    if ((kind == "movie" || kind == "tv") && int.TryParse(rawId, out _))
+                        return $"{kind}:{rawId}";
+                }
+                throw new ArgumentException($"Could not parse TMDB ID from URL: {input}");
+            }
+
+            // Already typed format: "movie:1159831" or "tv:1396"
+            if (input.StartsWith("movie:", StringComparison.OrdinalIgnoreCase) ||
+                input.StartsWith("tv:", StringComparison.OrdinalIgnoreCase))
+            {
+                return input.ToLowerInvariant();
+            }
+
+            // Bare number — infer type from media type name
+            if (int.TryParse(input, out _))
+            {
+                var hint = ToMediaTypeHint(mediaTypeName);
+                var prefix = hint == "tv" ? "tv" : "movie";
+                return $"{prefix}:{input}";
+            }
+
+            throw new ArgumentException(
+                $"Could not parse '{input}' as a TMDB ID or URL. " +
+                "Use a bare number (e.g. 1159831), a typed ID (movie:1159831 or tv:1396), " +
+                "or a full TMDB URL (https://www.themoviedb.org/movie/1159831).");
         }
     }
 }
