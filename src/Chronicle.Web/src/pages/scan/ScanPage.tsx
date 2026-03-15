@@ -21,7 +21,7 @@ export default function ScanPage() {
   const [previewFiles, setPreviewFiles] = useState<ScannedFile[]>([])
   // Set of file paths the user has unchecked (skipped). All checked by default.
   const [skipped, setSkipped] = useState<Set<string>>(new Set())
-  const [importResult, setImportResult] = useState<{ imported: number; failed: number } | null>(null)
+  const [importResult, setImportResult] = useState<{ imported: number; failed: number; duplicates: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // ── Scan progress (polled while preview mutation is pending) ─────────────
@@ -73,7 +73,7 @@ export default function ScanPage() {
       return addJob(`Importing ${count} items…`)
     },
     onSuccess: (data, _vars, jobId) => {
-      setImportResult({ imported: data.imported, failed: data.failed })
+      setImportResult({ imported: data.imported, failed: data.failed, duplicates: data.duplicates })
       setError(null)
       setStep('done')
       completeJob(jobId as string, `${data.imported} imported`)
@@ -348,6 +348,12 @@ export default function ScanPage() {
               <span className={styles.statValue}>{importResult.imported}</span>
               <span className={styles.statLabel}>Imported</span>
             </div>
+            {importResult.duplicates > 0 && (
+              <div className={styles.stat}>
+                <span className={styles.statValue}>{importResult.duplicates}</span>
+                <span className={styles.statLabel}>Already in library</span>
+              </div>
+            )}
             <div className={styles.stat}>
               <span className={styles.statValue}>{importResult.failed}</span>
               <span className={styles.statLabel}>Failed</span>
