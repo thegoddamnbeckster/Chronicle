@@ -37,8 +37,10 @@ builder.Host.UseWindowsService(options => options.ServiceName = "Chronicle");
 // Reads ports.json from the project root (searched upward from working directory).
 // Must happen before any service or host configuration that depends on ports.
 var portConfig = PortManager.LoadConfig(Directory.GetCurrentDirectory());
-// Skip port conflict check when running under EF design-time tools (migrations, scaffolding).
-if (Environment.GetEnvironmentVariable("EF_DESIGN_TIME") != "1")
+// Skip port conflict check when running under EF design-time tools (migrations, scaffolding)
+// or when running integration tests (WebApplicationFactory sets environment to "Testing").
+if (Environment.GetEnvironmentVariable("EF_DESIGN_TIME") != "1" &&
+    !builder.Environment.IsEnvironment("Testing"))
     PortManager.CheckPort(portConfig.Api);
 builder.WebHost.UseUrls($"http://0.0.0.0:{portConfig.Api}");
 
