@@ -11,9 +11,42 @@ import type {
   MediaItem,
 } from '@/types'
 
+/**
+ * Translates low-level network/proxy errors into actionable plain-English
+ * messages. API errors (which already carry a server-supplied message via the
+ * client interceptor) are passed through unchanged.
+ */
+function translateScanError(err: unknown): Error {
+  if (err instanceof Error) {
+    // Axios reports a dropped connection (e.g. proxy timeout, server restart)
+    // as "Network Error" with no HTTP response attached.
+    if (err.message === 'Network Error') {
+      return new Error(
+        'The scan did not complete in time. Your folder may contain a very ' +
+          'large number of files — try scanning a smaller subfolder first. ' +
+          'If the problem persists, check the Chronicle server log.',
+      )
+    }
+  }
+  return err instanceof Error ? err : new Error('Scan failed.')
+}
+
 export async function getScanStatus(): Promise<FileScanStatus> {
   const { data } = await client.get<ApiResponse<FileScanStatus>>('/scan/status')
   return data.data ?? { available: false, supportedMediaTypeNames: [] }
+}
+
+export interface ScanProgress {
+  isScanning: boolean
+  currentFolder: string | null
+  foldersScanned: number
+  totalFolders: number
+  filesFound: number
+}
+
+export async function getScanProgress(): Promise<ScanProgress> {
+  const { data } = await client.get<ApiResponse<ScanProgress>>('/scan/progress')
+  return data.data ?? { isScanning: false, currentFolder: null, foldersScanned: 0, totalFolders: 0, filesFound: 0 }
 }
 
 export async function runScan(payload: {
@@ -32,9 +65,13 @@ export async function previewScan(payload: {
   recursive: boolean
   mediaTypeId: number
 }): Promise<ScanPreview> {
-  const { data } = await client.post<ApiResponse<ScanPreview>>('/scan/preview', payload)
-  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Preview failed')
-  return data.data
+  try {
+    const { data } = await client.post<ApiResponse<ScanPreview>>('/scan/preview', payload)
+    if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Preview failed')
+    return data.data
+  } catch (err) {
+    throw translateScanError(err)
+  }
 }
 
 export async function identifyFiles(payload: {

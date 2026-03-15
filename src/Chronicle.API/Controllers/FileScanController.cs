@@ -12,10 +12,12 @@ namespace Chronicle.API.Controllers;
 public class FileScanController : ControllerBase
 {
     private readonly IFileScanService _scanService;
+    private readonly ScanProgressService _progress;
 
-    public FileScanController(IFileScanService scanService)
+    public FileScanController(IFileScanService scanService, ScanProgressService progress)
     {
         _scanService = scanService;
+        _progress = progress;
     }
 
     /// <summary>
@@ -70,6 +72,14 @@ public class FileScanController : ControllerBase
         {
             return BadRequest(ApiResponse<FileScanSummaryDto>.Fail("SCAN_ERROR", ex.Message));
         }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(499, ApiResponse<FileScanSummaryDto>.Fail("SCAN_CANCELLED", "Scan was cancelled."));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<FileScanSummaryDto>.Fail("SCAN_ERROR", ex.Message));
+        }
     }
 
     /// <summary>
@@ -101,6 +111,14 @@ public class FileScanController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResponse<ScanPreviewDto>.Fail("SCAN_ERROR", ex.Message));
+        }
+        catch (OperationCanceledException)
+        {
+            return StatusCode(499, ApiResponse<ScanPreviewDto>.Fail("SCAN_CANCELLED", "Scan was cancelled."));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<ScanPreviewDto>.Fail("SCAN_ERROR", ex.Message));
         }
     }
 
@@ -254,7 +272,8 @@ public class FileScanController : ControllerBase
         {
             var files = dto.Files
                 .Select(f => new DirectImportFile(
-                    f.FilePath, f.ParsedTitle, f.ParsedYear, f.SuggestedExternalId, f.MediaTypeHint))
+                    f.FilePath, f.ParsedTitle, f.ParsedYear, f.SuggestedExternalId, f.MediaTypeHint,
+                    f.ShowTitle, f.SeasonNumber, f.EpisodeNumber, f.EpisodeTitle, f.AudioTrackNumber))
                 .ToList();
 
             var request = new DirectImportRequest(files, dto.MediaTypeId, userId);
@@ -269,6 +288,25 @@ public class FileScanController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Returns a snapshot of the currently-running preview scan (folder being scanned,
+    /// how many folders have been processed, how many files found so far).
+    /// Returns IsScanning=false when no scan is in progress.
+    /// Polled by the frontend every 500 ms while the "Scan Directory" request is pending.
+    /// </summary>
+    [HttpGet("progress")]
+    [AllowAnonymous]
+    public IActionResult GetProgress()
+    {
+        var snap = _progress.GetSnapshot();
+        return Ok(ApiResponse<ScanProgressDto>.Ok(new ScanProgressDto(
+            snap.IsScanning,
+            snap.CurrentFolder,
+            snap.FoldersScanned,
+            snap.TotalFolders,
+            snap.FilesFound)));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private sealed record MediaMetaJsonRoot(TmdbMetaDto? Tmdb, FileScannerMetaDto? FileScanner);
@@ -276,13 +314,17 @@ public class FileScanController : ControllerBase
     private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
         new(System.Text.Json.JsonSerializerDefaults.Web);
 
+    // TODO: Extract ParseMetaJson and MediaMetaJsonRoot to a shared Chronicle.API helper to remove this duplication
     private static (TmdbMetaDto? tmdb, FileScannerMetaDto? fs) ParseMetaJson(string? json)
     {
         if (json is null) return (null, null);
         try
         {
             var root = System.Text.Json.JsonSerializer.Deserialize<MediaMetaJsonRoot>(json, _jsonOpts);
-            if (root?.Tmdb is not null) return (root.Tmdb, root.FileScanner);
+            // Partitioned format: {"tmdb":{...},"fileScanner":{...}}
+            // import-direct items have tmdb=null but fileScanner populated, so check either key.
+            if (root is not null && (root.Tmdb is not null || root.FileScanner is not null))
+                return (root.Tmdb, root.FileScanner);
             var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
             return (flat, null);
         }

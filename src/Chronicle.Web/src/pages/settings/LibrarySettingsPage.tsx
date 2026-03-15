@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { loadPresets, savePresets, type LibraryPreset } from '@/pages/library/LibraryPage'
+import {
+  loadSortSettings,
+  saveSortSettings,
+  DEFAULT_SORT_SETTINGS,
+  type SortSettings,
+} from '@/utils/sortSettings'
 import styles from './LibrarySettingsPage.module.css'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -43,6 +49,32 @@ export default function LibrarySettingsPage() {
   const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
+
+  // ── Sort settings ────────────────────────────────────────────────────────
+  const [sortSettings, setSortSettings] = useState<SortSettings>(loadSortSettings)
+  const [newArticle, setNewArticle] = useState('')
+
+  function updateSortSettings(patch: Partial<SortSettings>) {
+    const next = { ...sortSettings, ...patch }
+    setSortSettings(next)
+    saveSortSettings(next)
+  }
+
+  function addArticle() {
+    const word = newArticle.trim().toLowerCase()
+    if (!word) return
+    if (sortSettings.ignoredArticles.includes(word)) { setNewArticle(''); return }
+    updateSortSettings({ ignoredArticles: [...sortSettings.ignoredArticles, word] })
+    setNewArticle('')
+  }
+
+  function removeArticle(word: string) {
+    updateSortSettings({ ignoredArticles: sortSettings.ignoredArticles.filter(a => a !== word) })
+  }
+
+  function resetArticles() {
+    updateSortSettings({ ignoredArticles: [...DEFAULT_SORT_SETTINGS.ignoredArticles] })
+  }
 
   function startEdit(preset: LibraryPreset) {
     setEditingId(preset.id)
@@ -92,6 +124,79 @@ export default function LibrarySettingsPage() {
 
       <h2 className={styles.heading}>Library Settings</h2>
 
+      {/* ── Sorting section ─────────────────────────────────────────────── */}
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Sorting</h3>
+          <p className={styles.sectionDesc}>
+            Configure how library items are sorted by name.
+          </p>
+        </div>
+
+        <div className={styles.sortCard}>
+          <label className={styles.toggleRow}>
+            <span className={styles.toggleLabel}>
+              <span className={styles.toggleTitle}>Ignore leading articles</span>
+              <span className={styles.toggleDesc}>
+                Strip words like "The", "A", "Le" from the start of titles when sorting by name.
+                e.g. "The Dark Knight" sorts under D.
+              </span>
+            </span>
+            <button
+              role="switch"
+              aria-checked={sortSettings.ignoreArticles}
+              className={`${styles.toggle} ${sortSettings.ignoreArticles ? styles.toggleOn : ''}`}
+              onClick={() => updateSortSettings({ ignoreArticles: !sortSettings.ignoreArticles })}
+            >
+              <span className={styles.toggleThumb} />
+            </button>
+          </label>
+
+          {sortSettings.ignoreArticles && (
+            <div className={styles.articleSection}>
+              <div className={styles.articleHeader}>
+                <span className={styles.articleTitle}>Ignored words</span>
+                <button className={styles.resetBtn} onClick={resetArticles}>
+                  Reset to defaults
+                </button>
+              </div>
+
+              <div className={styles.articleTags}>
+                {sortSettings.ignoredArticles.map(word => (
+                  <span key={word} className={styles.articleTag}>
+                    {word}
+                    <button
+                      className={styles.articleRemove}
+                      onClick={() => removeArticle(word)}
+                      title={`Remove "${word}"`}
+                      aria-label={`Remove "${word}"`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              <div className={styles.articleAddRow}>
+                <input
+                  className={styles.articleInput}
+                  type="text"
+                  placeholder="Add a word…"
+                  value={newArticle}
+                  onChange={e => setNewArticle(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') addArticle() }}
+                  maxLength={20}
+                />
+                <button className={styles.articleAddBtn} onClick={addArticle}>
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ── Presets section ──────────────────────────────────────────────── */}
       <section className={styles.section}>
         <div className={styles.sectionHeader}>
           <h3 className={styles.sectionTitle}>Saved Presets</h3>

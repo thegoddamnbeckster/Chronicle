@@ -67,7 +67,7 @@
   background: var(--accent, #5b9bd5);
   border: none;
   border-radius: 4px;
-  color: #fff;
+  color: var(--accent-fg);
   font-size: 0.875rem;
   cursor: pointer;
   white-space: nowrap;

@@ -85,7 +85,33 @@ namespace Chronicle.Services
     public record ImportApprovedSummary(
         int Imported,
         int Failed,
-        List<string> Failures
+        List<string> Failures,
+        int Duplicates = 0
+    );
+
+    // ── Direct import (scanner data only — no metadata provider required) ────────
+
+    /// <summary>
+    /// One file to import directly from scanner data, without a prior TMDB lookup.
+    /// The background MetadataRefreshService will enrich it with TMDB data automatically.
+    /// </summary>
+    public record DirectImportFile(
+        string FilePath,
+        string ParsedTitle,
+        int? ParsedYear,
+        string? SuggestedExternalId,
+        string MediaTypeHint,
+        // Hierarchy fields (populated by FileScanner v1.1.0+)
+        string? ShowTitle = null,
+        int? SeasonNumber = null,
+        int? EpisodeNumber = null,
+        string? EpisodeTitle = null,
+        int? AudioTrackNumber = null);
+
+    public record DirectImportRequest(
+        List<DirectImportFile> Files,
+        int MediaTypeId,
+        int UserId
     );
 
     // ── Direct import (scanner data only — no metadata provider required) ────────

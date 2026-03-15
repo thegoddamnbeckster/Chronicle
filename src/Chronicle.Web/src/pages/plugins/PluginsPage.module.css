@@ -43,7 +43,7 @@
   background: var(--accent, #5b9bd5);
   border: none;
   border-radius: 4px;
-  color: #fff;
+  color: var(--accent-fg);
   font-size: 0.875rem;
   cursor: pointer;
 }
@@ -102,7 +102,7 @@
   background: var(--accent, #5b9bd5);
   border: none;
   border-radius: 4px;
-  color: #fff;
+  color: var(--accent-fg);
   font-size: 0.875rem;
   cursor: pointer;
   white-space: nowrap;
@@ -317,7 +317,29 @@
 
 .healthOk   { background: var(--status-success-bg); color: var(--status-success-fg); border: 1px solid var(--status-success-border); }
 .healthFail { background: var(--status-danger-bg);  color: var(--status-danger-fg);  border: 1px solid var(--status-danger-border); }
+.healthWarn { background: rgba(245, 158, 11, 0.12); color: #d97706;                  border: 1px solid rgba(245, 158, 11, 0.35); }
 .healthUnk  { background: var(--status-neutral-bg); color: var(--status-neutral-fg); border: 1px solid var(--status-neutral-border); }
+
+/* Health failure reason row — shown below the card header */
+.healthReasonRow {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin-bottom: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+}
+
+.healthReasonWarn {
+  background: rgba(245, 158, 11, 0.08);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.healthReasonCritical {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+  border: 1px solid var(--status-danger-border);
+}
 
 .cardMeta {
   font-size: 0.8rem;
@@ -473,7 +495,7 @@
   background: var(--accent, #5b9bd5);
   border: none;
   border-radius: 4px;
-  color: #fff;
+  color: var(--accent-fg);
   font-size: 0.82rem;
   cursor: pointer;
   white-space: nowrap;
@@ -486,4 +508,153 @@
 .catalogInstallBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ── Configure button active state ──────────────────────────────────────── */
+
+.configBtnActive {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Inline settings panel ───────────────────────────────────────────────── */
+
+.settingsPanel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.settingsEmpty {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.settingsForm {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.fieldLabel {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.requiredMark {
+  color: var(--status-danger-fg);
+}
+
+.settingsInput {
+  padding: 0.45rem 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.settingsInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settingsInput::placeholder {
+  color: var(--text-muted);
+}
+
+/* Remove number input spin buttons for cleaner look */
+.settingsInput[type='number']::-webkit-outer-spin-button,
+.settingsInput[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.settingsInput[type='number'] {
+  -moz-appearance: textfield;
+}
+
+.secretRow {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.secretRow .settingsInput {
+  flex: 1;
+}
+
+.showHideBtn {
+  padding: 0.45rem 0.75rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.showHideBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkboxInput {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.checkboxLabel {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.fieldDesc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.fieldHint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.fieldHintLink {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.fieldHintLink:hover {
+  text-decoration: underline;
+}
+
+.settingsActions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
 }

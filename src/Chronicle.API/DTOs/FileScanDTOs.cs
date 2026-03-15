@@ -99,8 +99,12 @@ namespace Chronicle.API.DTOs
         [Required] string ParsedTitle,
         int? ParsedYear,
         string? SuggestedExternalId,
-        string MediaTypeHint = "movie"
-    );
+        string MediaTypeHint = "movie",
+        string? ShowTitle = null,
+        int? SeasonNumber = null,
+        int? EpisodeNumber = null,
+        string? EpisodeTitle = null,
+        int? AudioTrackNumber = null);
 
     public record DirectImportRequestDto(
         [Required] List<DirectImportFileDto> Files,
@@ -112,5 +116,19 @@ namespace Chronicle.API.DTOs
     public record AddFromSearchDto(
         [Required] string ExternalId,
         [Required] int MediaTypeId
+    );
+
+    // ── Scan progress ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Real-time snapshot of an in-progress directory scan.
+    /// Polled by the frontend every 500 ms while a preview scan is running.
+    /// </summary>
+    public record ScanProgressDto(
+        bool IsScanning,
+        string? CurrentFolder,
+        int FoldersScanned,
+        int TotalFolders,
+        int FilesFound
     );
 }

@@ -1,4 +1,4 @@
-import client from './client'
+import client, { ApiError } from './client'
 import type { ApiResponse, MediaItem, MediaTypeOption } from '@/types'
 
 export async function getMediaTypes(): Promise<MediaTypeOption[]> {
@@ -51,7 +51,35 @@ export async function deleteMedia(id: number): Promise<void> {
 }
 
 export async function refreshMedia(id: number): Promise<MediaItem> {
-  const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/refresh`)
-  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Refresh failed')
-  return data.data
+  try {
+    const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/refresh`)
+    if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Refresh failed')
+    return data.data
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.statusCode === 409 && err.errorCode === 'NO_PROVIDER_CONFIGURED') {
+      throw new Error('No metadata provider configured. Add an API key in Settings → Plugins.')
+    }
+    throw err
+  }
+}
+
+export async function clearMediaExternalId(id: number, source: string): Promise<void> {
+  await client.delete(`/media/${id}/external-ids/${encodeURIComponent(source)}`)
+}
+
+export async function suppressMediaMatch(id: number, source: string): Promise<void> {
+  await client.post(`/media/${id}/suppress/${encodeURIComponent(source)}`)
+}
+
+export async function reidentifyMedia(id: number, input: string): Promise<MediaItem> {
+  try {
+    const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/reidentify`, { input })
+    if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Re-identification failed')
+    return data.data
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.statusCode === 409 && err.errorCode === 'NO_PROVIDER_CONFIGURED') {
+      throw new Error('No metadata provider configured. Add an API key in Settings → Plugins.')
+    }
+    throw err
+  }
 }

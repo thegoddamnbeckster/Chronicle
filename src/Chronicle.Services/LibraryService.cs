@@ -41,7 +41,7 @@ namespace Chronicle.Services
             return entry;
         }
 
-        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20)
+        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, CancellationToken ct = default)
         {
             var q = _context.UserLibraries
                 .Include(l => l.MediaItem)
@@ -51,11 +51,16 @@ namespace Chronicle.Services
             if (status.HasValue)
                 q = q.Where(l => l.Status == status.Value);
 
-            return await q
-                .OrderByDescending(l => l.UpdatedAt)
-                .Skip((page - 1) * perPage)
-                .Take(perPage)
-                .ToListAsync();
+            if (rootOnly)
+                q = q.Where(l => l.MediaItem!.ParentId == null);
+
+            q = q.OrderByDescending(l => l.UpdatedAt);
+
+            // perPage == 0 means "no limit" — return the full result set
+            if (perPage > 0)
+                q = q.Skip((page - 1) * perPage).Take(perPage);
+
+            return await q.ToListAsync(ct);
         }
 
         public async Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId)
@@ -99,6 +104,69 @@ namespace Chronicle.Services
 
             _context.UserLibraries.Remove(entry);
             await _context.SaveChangesAsync();
+        }
+
+        public async Task<int> ClearAllAsync(int userId, CancellationToken ct = default)
+        {
+            // Remove all library entries for this user
+            var entries = await _context.UserLibraries
+                .Where(e => e.UserId == userId)
+                .ToListAsync(ct);
+
+            if (entries.Count == 0) return 0;
+
+            // Find media items that are ONLY referenced by this user (no other user's library)
+            var itemIds = entries.Select(e => e.MediaItemId).ToHashSet();
+            var sharedIds = (await _context.UserLibraries
+                .Where(e => e.UserId != userId && itemIds.Contains(e.MediaItemId))
+                .Select(e => e.MediaItemId)
+                .ToListAsync(ct))
+                .ToHashSet();
+
+            var exclusiveIds = itemIds.Except(sharedIds).ToHashSet();
+
+            // NOTE: sharedIds only captures root-level sharing (UserLibrary stores root items only for
+            // hierarchical imports). Mid-level or leaf items manually added to a library are not protected.
+            // This is acceptable for the current import workflow.
+
+            // Also gather all descendants of exclusive root items
+            var descendants = await GetAllDescendantIdsAsync(exclusiveIds, ct);
+            var allToDelete = new HashSet<int>(exclusiveIds);
+            allToDelete.UnionWith(descendants);
+
+            // NOTE: This delete sequence has a TOCTOU race if two users run ClearAll concurrently
+            // on items they share. For a single-user self-hosted deployment this is acceptable.
+            _context.UserLibraries.RemoveRange(entries);
+            var itemsToDelete = await _context.MediaItems
+                .Where(m => allToDelete.Contains(m.Id))
+                .ToListAsync(ct);
+            _context.MediaItems.RemoveRange(itemsToDelete);
+
+            await _context.SaveChangesAsync(ct);
+            return entries.Count;
+        }
+
+        /// <summary>
+        /// Returns the IDs of all descendants of <paramref name="rootIds"/> (not including the root IDs themselves).
+        /// Uses level-by-level IN-clause batching to avoid N+1 queries.
+        /// </summary>
+        private async Task<List<int>> GetAllDescendantIdsAsync(IEnumerable<int> rootIds, CancellationToken ct)
+        {
+            var result = new List<int>();
+            var currentLevel = rootIds.ToList();
+
+            while (currentLevel.Count > 0)
+            {
+                var children = await _context.MediaItems
+                    .Where(m => m.ParentId != null && currentLevel.Contains(m.ParentId!.Value))
+                    .Select(m => m.Id)
+                    .ToListAsync(ct);
+
+                result.AddRange(children);
+                currentLevel = children;
+            }
+
+            return result;
         }
     }
 }

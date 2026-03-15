@@ -102,7 +102,7 @@
 
 .authBtn {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border: none;
   border-radius: var(--radius);
   padding: 8px 18px;

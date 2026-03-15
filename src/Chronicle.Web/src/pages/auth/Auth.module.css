@@ -56,7 +56,7 @@
 
 .btn {
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
   border: none;
   border-radius: var(--radius);
   padding: 10px;

@@ -21,6 +21,8 @@ namespace Chronicle.Data
         public DbSet<MediaList> MediaLists => Set<MediaList>();
         public DbSet<MediaListItem> MediaListItems => Set<MediaListItem>();
         public DbSet<DeviceAuthCode> DeviceAuthCodes => Set<DeviceAuthCode>();
+        public DbSet<AppSetting> AppSettings => Set<AppSetting>();
+        public DbSet<MediaItemRefreshLog> MediaItemRefreshLogs => Set<MediaItemRefreshLog>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -236,6 +238,27 @@ namespace Chronicle.Data
                     .WithMany()
                     .HasForeignKey(e => e.MediaItemId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<AppSetting>(e =>
+            {
+                e.ToTable("app_settings");
+                e.HasKey(s => s.Key);
+                e.Property(s => s.Key).HasMaxLength(200);
+                e.Property(s => s.Value).IsRequired();
+                e.HasData(new AppSetting { Key = "metadata_refresh_interval_hours", Value = "4" });
+            });
+
+            modelBuilder.Entity<MediaItemRefreshLog>(e =>
+            {
+                e.ToTable("media_item_refresh_log");
+                e.HasKey(l => l.Id);
+                e.Property(l => l.ProviderName).HasMaxLength(200).IsRequired();
+                e.HasIndex(l => new { l.MediaItemId, l.ProviderName });
+                e.HasOne(l => l.MediaItem)
+                 .WithMany(m => m.RefreshLogs)
+                 .HasForeignKey(l => l.MediaItemId)
+                 .OnDelete(DeleteBehavior.Cascade);
             });
 
             modelBuilder.Entity<DeviceAuthCode>(entity =>
