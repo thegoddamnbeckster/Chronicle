@@ -1,13 +1,23 @@
+import { useEffect, useState } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
 import { getScanStatus } from '@/api/scan'
+import { getDiagnostics } from '@/api/diagnostics'
 import NavGroup from './NavGroup'
 import ActivityPanel from './ActivityPanel'
+import AppFooter from './AppFooter'
 import styles from './Layout.module.css'
 
 export default function Layout() {
   const { user, logout } = useAuth()
+  const [version, setVersion] = useState<string | undefined>()
+
+  useEffect(() => {
+    getDiagnostics()
+      .then(d => setVersion(`${d.version} · ${d.commitHash} · ${d.branch}`))
+      .catch(() => {})
+  }, [])
 
   const { data: scanStatus } = useQuery({
     queryKey: ['scan-status'],
@@ -91,6 +101,13 @@ export default function Layout() {
       <main className={styles.content}>
         <Outlet />
       </main>
+
+      <div className={styles.footer}>
+        <AppFooter
+          showDiagnostics={user?.showDiagnostics ?? false}
+          version={version}
+        />
+      </div>
     </div>
   )
 }

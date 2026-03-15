@@ -1,11 +1,16 @@
 .shell {
   display: grid;
-  grid-template-rows: var(--header-height) 1fr;
+  grid-template-rows: var(--header-height) 1fr auto;
   grid-template-columns: var(--sidebar-width) 1fr;
   grid-template-areas:
     "header header"
-    "sidebar content";
+    "sidebar content"
+    "footer footer";
   height: 100vh;
+}
+
+.footer {
+  grid-area: footer;
 }
 
 .header {
