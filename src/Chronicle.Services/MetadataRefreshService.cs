@@ -170,6 +170,15 @@ public sealed class MetadataRefreshService : BackgroundService, IMetadataRefresh
                         string.Equals(e.Source, "tmdb", StringComparison.OrdinalIgnoreCase))
                     ?.ExternalId;
 
+                // "__suppress__" means the user explicitly opted out of auto-matching for
+                // this provider. Skip silently — no log entry, no search.
+                if (string.Equals(extId, "__suppress__", StringComparison.Ordinal))
+                {
+                    _log.Debug("Skipping suppressed item {Id} '{Name}' for provider {Provider}",
+                        item.Id, item.Name, provider.Name);
+                    continue;
+                }
+
                 if (extId is null)
                 {
                     var hint         = ToMediaTypeHint(mediaTypeName);
@@ -183,9 +192,7 @@ public sealed class MetadataRefreshService : BackgroundService, IMetadataRefresh
                     {
                         _log.Information("No match from {Provider} for '{Name}'", provider.Name, item.Name);
                         log.ErrorMessage = "No search results matched";
-                        db.MediaItemRefreshLogs.Add(log);
-                        await db.SaveChangesAsync(ct);
-                        continue;
+                        continue; // finally block adds log; outer SaveChangesAsync persists it
                     }
 
                     extId = best.r.ExternalId;
@@ -209,6 +216,22 @@ public sealed class MetadataRefreshService : BackgroundService, IMetadataRefresh
 
                 _log.Information("Refreshed '{Name}' via {Provider}", item.Name, provider.Name);
             }
+            catch (HttpRequestException ex)
+                when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // Stored external ID no longer exists on the provider — remove it so the
+                // next cycle falls back to a fresh search rather than retrying a dead URL.
+                var badIds = item.ExternalIds
+                    .Where(e => string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase)
+                             || string.Equals(e.Source, "tmdb", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                db.MediaExternalIds.RemoveRange(badIds);
+
+                var badExtId = badIds.FirstOrDefault()?.ExternalId ?? "unknown";
+                log.ErrorMessage = $"Stored ID '{badExtId}' returned 404 from {provider.Name} — this entry no longer exists on the provider. Match cleared; will re-search on next cycle.";
+                _log.Warning("{Provider}: stored ID '{ExtId}' for '{Name}' (item {Id}) returned 404 — this entry no longer exists on {Provider}. Match cleared; will re-search on next cycle.",
+                    provider.Name, badExtId, item.Name, item.Id, provider.Name);
+            }
             catch (Exception ex)
             {
                 log.ErrorMessage = ex.Message;
@@ -218,6 +241,18 @@ public sealed class MetadataRefreshService : BackgroundService, IMetadataRefresh
             {
                 db.MediaItemRefreshLogs.Add(log);
             }
+        }
+
+        // Guard: item may have been deleted by DuplicateCleanupService while this
+        // refresh was running. Attempting to insert child rows (external IDs, refresh
+        // logs) for a missing parent causes a FK constraint violation. If the item
+        // is gone, discard the staged changes and skip silently.
+        var itemStillExists = await db.MediaItems.AnyAsync(m => m.Id == item.Id, ct);
+        if (!itemStillExists)
+        {
+            db.ChangeTracker.Clear();
+            _log.Information("MetadataRefreshService: item {Id} was removed before save — skipping", item.Id);
+            return;
         }
 
         await db.SaveChangesAsync(ct);
