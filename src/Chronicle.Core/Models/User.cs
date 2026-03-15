@@ -12,5 +12,6 @@ namespace Chronicle.Core.Models
         public DateTime? LastLoginAt { get; set; }
         public bool IsActive { get; set; } = true;
         public bool IsAdmin { get; set; } = false;
+        public string PreferencesJson { get; set; } = "{}";
     }
 }

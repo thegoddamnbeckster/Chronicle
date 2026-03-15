@@ -39,6 +39,9 @@ namespace Chronicle.Data
                 entity.Property(e => e.PasswordHash).IsRequired();
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
                 entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(u => u.PreferencesJson)
+                    .HasColumnName("preferences_json")
+                    .HasDefaultValue("{}");
             });
 
             modelBuilder.Entity<MediaType>(entity =>
