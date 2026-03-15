@@ -23,6 +23,7 @@ namespace Chronicle.Data
         public DbSet<DeviceAuthCode> DeviceAuthCodes => Set<DeviceAuthCode>();
         public DbSet<AppSetting> AppSettings => Set<AppSetting>();
         public DbSet<MediaItemRefreshLog> MediaItemRefreshLogs => Set<MediaItemRefreshLog>();
+        public DbSet<BackgroundTask> BackgroundTasks => Set<BackgroundTask>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -259,6 +260,16 @@ namespace Chronicle.Data
                  .WithMany(m => m.RefreshLogs)
                  .HasForeignKey(l => l.MediaItemId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<BackgroundTask>(e =>
+            {
+                e.ToTable("background_tasks");
+                e.HasKey(t => t.TaskId);
+                e.Property(t => t.TaskId).HasMaxLength(100);
+                e.Property(t => t.DisplayName).IsRequired();
+                e.Property(t => t.Description).IsRequired();
+                e.Property(t => t.CronExpression).IsRequired();
             });
 
             modelBuilder.Entity<DeviceAuthCode>(entity =>
