@@ -247,7 +247,6 @@ namespace Chronicle.Data
                 e.HasKey(s => s.Key);
                 e.Property(s => s.Key).HasMaxLength(200);
                 e.Property(s => s.Value).IsRequired();
-                e.HasData(new AppSetting { Key = "metadata_refresh_interval_hours", Value = "4" });
             });
 
             modelBuilder.Entity<MediaItemRefreshLog>(e =>
