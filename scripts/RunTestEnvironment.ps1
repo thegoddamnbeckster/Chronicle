@@ -29,8 +29,8 @@ $ApiDir     = Split-Path $ApiProject -Parent
 $WebDir     = Join-Path $RepoRoot "src\Chronicle.Web"
 $DbPath     = Join-Path $ApiDir "chronicle-dev.db"
 $LogDir     = Join-Path $ApiDir "logs"
-$Branch     = (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null) ?? "unknown"
-$Commit     = (git -C $RepoRoot rev-parse --short HEAD 2>$null) ?? "unknown"
+$Branch     = (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null); if (-not $Branch) { $Branch = "unknown" }
+$Commit     = (git -C $RepoRoot rev-parse --short HEAD 2>$null); if (-not $Commit) { $Commit = "unknown" }
 
 # ── Diagnostics ───────────────────────────────────────────────────────────────
 Write-Host ""
