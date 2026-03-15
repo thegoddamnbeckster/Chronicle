@@ -187,6 +187,7 @@ namespace Chronicle.API.Controllers
                 catch { /* malformed JSON — leave as-is */ }
             }
 
+            ClearProviderMetadata(item);
             item.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(ct);
 
@@ -235,6 +236,7 @@ namespace Chronicle.API.Controllers
                 ExternalId  = "__suppress__"
             });
 
+            ClearProviderMetadata(item);
             item.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(ct);
 
@@ -282,6 +284,22 @@ namespace Chronicle.API.Controllers
                 FileScannerMeta: fs,
                 RefreshLogs: logDtos
             );
+        }
+
+        /// <summary>
+        /// Clears all provider-supplied metadata from <paramref name="item"/>, restoring any
+        /// file-scanner poster if available.  Called when the user explicitly removes a match.
+        /// </summary>
+        private static void ClearProviderMetadata(Chronicle.Core.Models.MediaItem item)
+        {
+            var (_, fs) = ParseMetaJson(item.MetadataJson);
+
+            // Restore poster from file scanner if it has one, otherwise wipe it.
+            item.PosterUrl      = fs?.NfoPosterUrl ?? fs?.LocalPosterPath;
+            item.Overview       = null;
+            item.RuntimeMinutes = null;
+            // Name and Year are intentionally left as-is — they were either set from the
+            // file scanner originally or manually edited; reverting them would be unexpected.
         }
 
         // Root wrapper for namespaced MetadataJson {"tmdb":{...},"fileScanner":{...}}
