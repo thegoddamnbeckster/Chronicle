@@ -5,6 +5,7 @@ export interface User {
   email: string | null
   displayName: string | null
   isAdmin: boolean
+  showDiagnostics: boolean
 }
 
 export interface AuthResponse {
