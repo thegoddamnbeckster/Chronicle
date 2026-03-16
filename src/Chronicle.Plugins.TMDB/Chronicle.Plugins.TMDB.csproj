@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Plugin DLLs are loaded in an isolated PluginLoadContext.
+         Chronicle.Plugins.dll must remain in the host context — do NOT copy it
+         to this project's output directory. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Chronicle.Plugins stays in the host load context; do NOT set Private=true here. -->
+    <ProjectReference Include="..\Chronicle.Plugins\Chronicle.Plugins.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog" Version="4.3.1" />
+  </ItemGroup>
+
+</Project>

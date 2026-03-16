@@ -28,9 +28,11 @@ export function groupToPayload(g: ScanGroupDto): ImportGroupPayload {
   return {
     name: g.name,
     year: g.year,
+    number: g.number,
     posterPath: g.posterPath,
     children: g.children.map(groupToPayload),
     files: g.files,
+    folderPath: g.folderPath,
   }
 }
 

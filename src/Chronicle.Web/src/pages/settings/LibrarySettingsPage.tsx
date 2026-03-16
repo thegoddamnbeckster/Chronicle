@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { loadPresets, savePresets, type LibraryPreset } from '@/pages/library/LibraryPage'
 import {
   loadSortSettings,
@@ -9,6 +9,7 @@ import {
   type SortSettings,
 } from '@/utils/sortSettings'
 import { clearScannerData, nuclearReset } from '@/api/library'
+import { getAppSettings, putAppSetting } from '@/api/settings'
 import styles from './LibrarySettingsPage.module.css'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -48,6 +49,7 @@ function describePreset(p: LibraryPreset): string {
 }
 
 export default function LibrarySettingsPage() {
+  const qc = useQueryClient()
   const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
@@ -55,14 +57,29 @@ export default function LibrarySettingsPage() {
   // ── Sort settings ────────────────────────────────────────────────────────
   const [sortSettings, setSortSettings] = useState<SortSettings>(loadSortSettings)
 
+  // ── Import settings ──────────────────────────────────────────────────────
+  const { data: appSettings } = useQuery({
+    queryKey: ['appSettings'],
+    queryFn: getAppSettings,
+  })
+  const [batchSizeInput, setBatchSizeInput] = useState<string>('')
+  const currentBatchSize = appSettings?.['import_batch_size'] ?? '50'
+  const batchSizeMut = useMutation({
+    mutationFn: (val: string) => putAppSetting('import_batch_size', val),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['appSettings'] }),
+  })
+
   // ── Danger Zone ──────────────────────────────────────────────────────────
   const [clearConfirm, setClearConfirm] = useState(false)
   const clearMut = useMutation({
     mutationFn: clearScannerData,
     onSuccess: (data) => {
       setClearConfirm(false)
+      qc.invalidateQueries({ queryKey: ['library'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
       alert(`Done. ${data.deleted} scanner-imported items removed.`)
     },
+    onError: (err: Error) => alert(`Failed to clear scanner data: ${err.message}`),
   })
 
   const [resetConfirm, setResetConfirm] = useState(false)
@@ -72,6 +89,8 @@ export default function LibrarySettingsPage() {
     onSuccess: () => {
       setResetConfirm(false)
       setResetToken('')
+      qc.invalidateQueries({ queryKey: ['library'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
       alert('Library has been reset.')
     },
     onError: (err: Error) => alert(err.message),
@@ -304,6 +323,56 @@ export default function LibrarySettingsPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* ── Import settings ──────────────────────────────────────────────── */}
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Import</h3>
+          <p className={styles.sectionDesc}>
+            Controls how the File Scanner imports media into your library.
+          </p>
+        </div>
+        <div className={styles.articleSection}>
+          <div className={styles.settingRow}>
+            <div className={styles.settingLabel}>
+              <span className={styles.settingName}>Batch Size</span>
+              <span className={styles.settingHint}>
+                Number of root groups committed to the database in each batch.
+                Larger values use more memory but reduce total DB round-trips.
+                Default: 50.
+              </span>
+            </div>
+            <div className={styles.settingControl}>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                className={styles.numberInput}
+                placeholder={currentBatchSize}
+                value={batchSizeInput}
+                onChange={e => setBatchSizeInput(e.target.value)}
+              />
+              <button
+                className={styles.saveBtn}
+                disabled={batchSizeMut.isPending || !batchSizeInput}
+                onClick={() => {
+                  const n = parseInt(batchSizeInput, 10)
+                  if (!isNaN(n) && n >= 1 && n <= 500) {
+                    batchSizeMut.mutate(String(n), {
+                      onSuccess: () => setBatchSizeInput(''),
+                    })
+                  }
+                }}
+              >
+                {batchSizeMut.isPending ? 'Saving…' : 'Save'}
+              </button>
+              {batchSizeMut.isSuccess && !batchSizeInput && (
+                <span className={styles.savedBadge}>✓ Saved</span>
+              )}
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* ── Danger Zone ──────────────────────────────────────────────────── */}
