@@ -102,6 +102,33 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<object>.Ok(new { removedItems = removed }));
         }
 
+        [HttpPost("reset")]
+        public async Task<IActionResult> NuclearReset(
+            [FromBody] NuclearResetRequestDto request,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(request.ConfirmationToken))
+                return BadRequest(ApiResponse<object>.Fail(
+                    "MISSING_TOKEN", "Confirmation token is required."));
+
+            try
+            {
+                var count = await _libraryService.NuclearResetAsync(request.ConfirmationToken, ct);
+                return Ok(ApiResponse<object>.Ok(new { deleted = count }));
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail("INVALID_TOKEN", ex.Message));
+            }
+        }
+
+        [HttpPost("clear-scanner-data")]
+        public async Task<IActionResult> ClearScannerData(CancellationToken ct)
+        {
+            var count = await _libraryService.ClearScannerDataAsync(ct);
+            return Ok(ApiResponse<object>.Ok(new { deleted = count }));
+        }
+
         private int GetUserId() =>
             int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
