@@ -65,7 +65,22 @@ namespace Chronicle.API.Controllers
                 return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
             var refreshLogs = await _refreshService.GetRefreshLogsAsync(id, ct);
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, refreshLogs)));
+
+            // Build ancestor chain for breadcrumb navigation (root items have no ancestors)
+            var ancestors = new List<AncestorDto>();
+            var parentId = item.ParentId;
+            while (parentId != null)
+            {
+                var ancestor = await _context.MediaItems
+                    .Where(m => m.Id == parentId)
+                    .Select(m => new { m.Id, m.Name, m.ParentId })
+                    .FirstOrDefaultAsync(ct);
+                if (ancestor == null) break;
+                ancestors.Insert(0, new AncestorDto(ancestor.Id, ancestor.Name));
+                parentId = ancestor.ParentId;
+            }
+
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, refreshLogs, ancestors.Count > 0 ? ancestors : null)));
         }
 
         [HttpGet("search")]
@@ -259,7 +274,8 @@ namespace Chronicle.API.Controllers
 
         private static MediaItemDto ToDto(
             Chronicle.Core.Models.MediaItem m,
-            IReadOnlyList<Chronicle.Core.Models.MediaItemRefreshLog>? refreshLogs = null)
+            IReadOnlyList<Chronicle.Core.Models.MediaItemRefreshLog>? refreshLogs = null,
+            List<AncestorDto>? ancestors = null)
         {
             var (tmdb, fs) = ParseMetaJson(m.MetadataJson);
             var logDtos = refreshLogs?
@@ -282,7 +298,8 @@ namespace Chronicle.API.Controllers
                 m.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList(),
                 TmdbMeta: tmdb,
                 FileScannerMeta: fs,
-                RefreshLogs: logDtos
+                RefreshLogs: logDtos,
+                Ancestors: ancestors
             );
         }
 
