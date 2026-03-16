@@ -40,6 +40,21 @@ namespace Chronicle.Services
         Task<ImportApprovedSummary> ImportDirectAsync(DirectImportRequest request, CancellationToken ct = default);
 
         /// <summary>
+        /// Scans a directory and returns files grouped into a candidate hierarchy
+        /// (Artist→Album→Track, Show→Season→Episode) with confidence scores.
+        /// No database changes are made.
+        /// </summary>
+        Task<Chronicle.Core.Models.Scan.ScanGroupResult> PreviewGroupedAsync(
+            ScanPreviewRequest request, CancellationToken ct = default);
+
+        /// <summary>
+        /// Persists accepted ScanGroups as a MediaItem hierarchy.
+        /// Root groups get UserLibrary entries; children do not.
+        /// </summary>
+        Task<ImportApprovedSummary> ImportGroupsAsync(
+            ImportGroupsRequest request, int userId, CancellationToken ct = default);
+
+        /// <summary>
         /// Queries the first available metadata provider for <paramref name="query"/> and
         /// returns raw search results. Use this to power the "Add Media" search UI.
         /// </summary>
