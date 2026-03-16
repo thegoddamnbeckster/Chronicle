@@ -3,6 +3,7 @@ using System;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Chronicle.Data.Migrations
 {
     [DbContext(typeof(ChronicleDbContext))]
-    partial class ChronicleDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260315224411_AddBackgroundTasksTable")]
+    partial class AddBackgroundTasksTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.14");
@@ -72,6 +75,13 @@ namespace Chronicle.Data.Migrations
                     b.HasKey("Key");
 
                     b.ToTable("app_settings", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Key = "metadata_refresh_interval_hours",
+                            Value = "4"
+                        });
                 });
 
             modelBuilder.Entity("Chronicle.Core.Models.BackgroundTask", b =>
@@ -588,13 +598,6 @@ namespace Chronicle.Data.Migrations
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<string>("PreferencesJson")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
-                        .HasColumnName("preferences_json");
 
                     b.Property<DateTime>("UpdatedAt")
                         .ValueGeneratedOnAdd()

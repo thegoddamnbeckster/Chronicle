@@ -23,6 +23,7 @@ namespace Chronicle.Data
         public DbSet<DeviceAuthCode> DeviceAuthCodes => Set<DeviceAuthCode>();
         public DbSet<AppSetting> AppSettings => Set<AppSetting>();
         public DbSet<MediaItemRefreshLog> MediaItemRefreshLogs => Set<MediaItemRefreshLog>();
+        public DbSet<BackgroundTask> BackgroundTasks => Set<BackgroundTask>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -38,6 +39,9 @@ namespace Chronicle.Data
                 entity.Property(e => e.PasswordHash).IsRequired();
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
                 entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(u => u.PreferencesJson)
+                    .HasColumnName("preferences_json")
+                    .HasDefaultValue("{}");
             });
 
             modelBuilder.Entity<MediaType>(entity =>
@@ -246,7 +250,6 @@ namespace Chronicle.Data
                 e.HasKey(s => s.Key);
                 e.Property(s => s.Key).HasMaxLength(200);
                 e.Property(s => s.Value).IsRequired();
-                e.HasData(new AppSetting { Key = "metadata_refresh_interval_hours", Value = "4" });
             });
 
             modelBuilder.Entity<MediaItemRefreshLog>(e =>
@@ -259,6 +262,16 @@ namespace Chronicle.Data
                  .WithMany(m => m.RefreshLogs)
                  .HasForeignKey(l => l.MediaItemId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<BackgroundTask>(e =>
+            {
+                e.ToTable("background_tasks");
+                e.HasKey(t => t.TaskId);
+                e.Property(t => t.TaskId).HasMaxLength(100);
+                e.Property(t => t.DisplayName).IsRequired();
+                e.Property(t => t.Description).IsRequired();
+                e.Property(t => t.CronExpression).IsRequired();
             });
 
             modelBuilder.Entity<DeviceAuthCode>(entity =>

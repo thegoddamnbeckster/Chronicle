@@ -95,3 +95,58 @@
   color: var(--accent);
   font-weight: 700;
 }
+
+/* ── Toggle row ──────────────────────────────────────────────────────────── */
+
+.settingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settingRow:last-child {
+  border-bottom: none;
+}
+
+.settingLabel {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.settingDesc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.toggle {
+  flex-shrink: 0;
+  padding: 5px 14px;
+  font-size: 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.toggle:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.toggleOn {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.toggleOn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
