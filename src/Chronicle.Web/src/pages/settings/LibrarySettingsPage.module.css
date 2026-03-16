@@ -347,3 +347,130 @@
   background: var(--accent);
   color: var(--accent-fg);
 }
+
+/* ── Danger Zone ─────────────────────────────────────────────────────────── */
+
+.dangerTitle { color: var(--danger, #ef4444); }
+
+.dangerCard {
+  border: 1px solid rgba(239,68,68,0.3);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.dangerRow {
+  padding: 16px 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.dangerInfo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dangerLabel {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dangerDesc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.dangerDivider {
+  border: none;
+  border-top: 1px solid rgba(239,68,68,0.15);
+  margin: 0;
+}
+
+.dangerBtnRed {
+  padding: 7px 16px;
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.dangerBtnRed:hover:not(:disabled) { background: #dc2626; }
+.dangerBtnRed:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.dangerBtnAmber {
+  padding: 7px 16px;
+  background: #f59e0b;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.dangerBtnAmber:hover:not(:disabled) { background: #d97706; }
+.dangerBtnAmber:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.dangerConfirmRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dangerConfirmText {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.dangerConfirmBox {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(239,68,68,0.06);
+  border: 1px solid rgba(239,68,68,0.25);
+  border-radius: 6px;
+}
+
+.dangerWarning {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.dangerInput {
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  width: 220px;
+}
+
+.dangerConfirmActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.cancelBtn {
+  padding: 7px 14px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.cancelBtn:hover { color: var(--text-primary); }
