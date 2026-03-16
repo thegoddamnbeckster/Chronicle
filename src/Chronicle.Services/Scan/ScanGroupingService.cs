@@ -112,6 +112,7 @@ namespace Chronicle.Services.Scan
                             HierarchyLevel  = 1,
                             ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
                             SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 1),
+                            Files           = [path],
                         });
                     }
                     continue;
@@ -148,6 +149,7 @@ namespace Chronicle.Services.Scan
                         ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
                         SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 2),
                         Year            = tagSignal?.Year.HasValue == true ? (int?)tagSignal.Year.Value : null,
+                        Files           = [path],
                     });
                 }
             }
