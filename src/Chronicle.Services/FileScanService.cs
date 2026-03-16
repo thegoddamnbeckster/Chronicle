@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
+using Chronicle.Core.Models.Scan;
 using Chronicle.Data;
 using Chronicle.Core.Exceptions;
 using Chronicle.Services.Plugins;
+using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -13,14 +15,16 @@ namespace Chronicle.Services
         private readonly ChronicleDbContext _context;
         private readonly IPluginRegistry _registry;
         private readonly ScanProgressService _progress;
+        private readonly IScanGroupingService _groupingService;
         private readonly ILogger _log = Log.ForContext<FileScanService>();
 
         public FileScanService(ChronicleDbContext context, IPluginRegistry registry,
-            ScanProgressService progress)
+            ScanProgressService progress, IScanGroupingService groupingService)
         {
             _context = context;
             _registry = registry;
             _progress = progress;
+            _groupingService = groupingService;
         }
 
         public async Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync()
@@ -1272,6 +1276,170 @@ namespace Chronicle.Services
                 $"Could not parse '{input}' as a TMDB ID or URL. " +
                 "Use a bare number (e.g. 1159831), a typed ID (movie:1159831 or tv:1396), " +
                 "or a full TMDB URL (https://www.themoviedb.org/movie/1159831).");
+        }
+
+        // ── Grouped preview ──────────────────────────────────────────────────────
+
+        public async Task<ScanGroupResult> PreviewGroupedAsync(
+            ScanPreviewRequest request, CancellationToken ct = default)
+        {
+            if (!Directory.Exists(request.Path))
+            {
+                var hint = BuildMappedDriveHint(request.Path);
+                throw new DirectoryNotFoundException(
+                    $"Scan path does not exist or is not accessible: {request.Path}.{hint}");
+            }
+
+            var mediaType = await _context.MediaTypes
+                .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
+                ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
+
+            _log.Information("Grouped preview scan of {Path} (recursive={Recursive}, mediaType={MediaType}, hierarchyLevels={Levels})",
+                request.Path, request.Recursive, mediaType.Name, mediaType.HierarchyLevels);
+
+            // Collect all file paths
+            var allPaths = new List<string>();
+            var dirsToScan = new List<string> { request.Path };
+            if (request.Recursive)
+            {
+                try { dirsToScan.AddRange(Directory.GetDirectories(request.Path, "*", SearchOption.AllDirectories)); }
+                catch { /* fall through with root only */ }
+            }
+
+            _progress.Start(dirsToScan.Count);
+            for (int i = 0; i < dirsToScan.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                _progress.UpdateFolder(dirsToScan[i], i + 1, allPaths.Count);
+                try
+                {
+                    allPaths.AddRange(Directory.EnumerateFiles(dirsToScan[i])
+                        .Where(f => !Path.GetFileName(f).StartsWith('.')));
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "Skipping inaccessible directory {Dir}", dirsToScan[i]);
+                }
+            }
+            _progress.Complete();
+
+            _log.Information("Grouped preview: {Count} files found, grouping with {Levels} hierarchy levels",
+                allPaths.Count, mediaType.HierarchyLevels);
+
+            return _groupingService.Group(allPaths, request.Path, mediaType.HierarchyLevels);
+        }
+
+        // ── Import groups ────────────────────────────────────────────────────────
+
+        public async Task<ImportApprovedSummary> ImportGroupsAsync(
+            ImportGroupsRequest request, int userId, CancellationToken ct = default)
+        {
+            var mediaType = await _context.MediaTypes
+                .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
+                ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
+
+            int imported = 0, failed = 0, duplicates = 0;
+            var failures = new List<string>();
+
+            foreach (var rootGroup in request.Groups)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var rootItem = await UpsertGroupItemAsync(
+                        rootGroup, request.MediaTypeId, parentId: null,
+                        hierarchyLevel: 0, ct);
+
+                    // Library entry only at root level
+                    var libEntry = await _context.UserLibraries
+                        .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == rootItem.Id, ct);
+
+                    if (libEntry is null)
+                    {
+                        _context.UserLibraries.Add(new UserLibrary
+                        {
+                            UserId      = userId,
+                            MediaItemId = rootItem.Id,
+                            Status      = LibraryStatus.Unwatched,
+                            AddedAt     = DateTime.UtcNow,
+                            UpdatedAt   = DateTime.UtcNow,
+                        });
+                        imported++;
+                    }
+                    else
+                    {
+                        duplicates++;
+                    }
+
+                    // Persist children recursively — no library entries
+                    await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
+                        rootItem.Id, hierarchyLevel: 1, ct);
+
+                    await _context.SaveChangesAsync(ct);
+
+                    _log.Information("Imported group '{Name}' with {ChildCount} child groups",
+                        rootGroup.Name, rootGroup.Children.Count);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    failures.Add($"{rootGroup.Name}: {ex.Message}");
+                    _log.Warning(ex, "Failed to import group '{Name}'", rootGroup.Name);
+                }
+            }
+
+            return new ImportApprovedSummary(imported, failed, failures, duplicates);
+        }
+
+        private async Task PersistChildGroupsAsync(
+            List<ScanGroupImport> children, int mediaTypeId,
+            int parentId, int hierarchyLevel, CancellationToken ct)
+        {
+            foreach (var child in children)
+            {
+                var item = await UpsertGroupItemAsync(child, mediaTypeId, parentId, hierarchyLevel, ct);
+                if (child.Children.Count > 0)
+                    await PersistChildGroupsAsync(child.Children, mediaTypeId,
+                        item.Id, hierarchyLevel + 1, ct);
+            }
+        }
+
+        private async Task<MediaItem> UpsertGroupItemAsync(
+            ScanGroupImport group, int mediaTypeId,
+            int? parentId, int hierarchyLevel, CancellationToken ct)
+        {
+            // Try to find by name + parent + type (idempotent re-import)
+            var existing = await _context.MediaItems.FirstOrDefaultAsync(m =>
+                m.MediaTypeId == mediaTypeId
+                && m.ParentId == parentId
+                && m.HierarchyLevel == hierarchyLevel
+                && m.Name == group.Name, ct);
+
+            if (existing is not null)
+            {
+                existing.UpdatedAt = DateTime.UtcNow;
+                if (group.Year.HasValue) existing.Year = group.Year;
+                return existing;
+            }
+
+            var item = new MediaItem
+            {
+                MediaTypeId    = mediaTypeId,
+                ParentId       = parentId,
+                HierarchyLevel = hierarchyLevel,
+                Name           = group.Name,
+                Year           = group.Year,
+                PosterUrl      = group.PosterPath,
+                MetadataJson   = JsonSerializer.Serialize(new
+                {
+                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files }
+                }),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync(ct); // need the ID for children
+            return item;
         }
     }
 }

@@ -289,6 +289,69 @@ public class FileScanController : ControllerBase
     }
 
     /// <summary>
+    /// Scans a directory and returns files grouped into a candidate hierarchy
+    /// (Artist→Album→Track, Show→Season→Episode) with confidence scores. Read-only.
+    /// </summary>
+    [HttpPost("preview-grouped")]
+    public async Task<IActionResult> PreviewGrouped(
+        [FromBody] ScanPreviewRequestDto request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Path))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_PATH", "Path is required."));
+
+        try
+        {
+            var result = await _scanService.PreviewGroupedAsync(
+                new ScanPreviewRequest(request.Path, request.Recursive, request.MediaTypeId), ct);
+
+            return Ok(ApiResponse<ScanGroupResultDto>.Ok(ToGroupResultDto(result)));
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("PATH_NOT_FOUND", ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// Persists accepted ScanGroups as a MediaItem hierarchy in the user's library.
+    /// </summary>
+    [HttpPost("import-groups")]
+    public async Task<IActionResult> ImportGroups(
+        [FromBody] ImportGroupsRequestDto request,
+        CancellationToken ct)
+    {
+        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                       ?? User.FindFirstValue("sub");
+        if (!int.TryParse(userIdClaim, out var userId))
+            return Unauthorized(ApiResponse<ImportSummaryDto>.Fail("UNAUTHORIZED", "User identity could not be determined."));
+
+        var groups = request.Groups.Select(ToGroupImport).ToList();
+        var result = await _scanService.ImportGroupsAsync(
+            new ImportGroupsRequest(groups, request.MediaTypeId), userId, ct);
+
+        return Ok(ApiResponse<ImportSummaryDto>.Ok(
+            new ImportSummaryDto(result.Imported, result.Failed, result.Failures, result.Duplicates)));
+    }
+
+    private static ScanGroupResultDto ToGroupResultDto(Chronicle.Core.Models.Scan.ScanGroupResult r) => new(
+        r.Groups.Select(ToGroupDto).ToList(),
+        r.Ungrouped,
+        r.TotalFiles);
+
+    private static ScanGroupDto ToGroupDto(Chronicle.Core.Models.Scan.ScanGroup g) => new(
+        g.GroupKey, g.Name, g.HierarchyLevel, g.Year,
+        g.PosterPath, (int)Math.Round(g.ConfidenceScore * 100),
+        g.SignalSources, g.HasConflicts,
+        g.Children.Select(ToGroupDto).ToList(),
+        g.Files);
+
+    private static Chronicle.Services.ScanGroupImport ToGroupImport(ImportGroupDto g) =>
+        new(g.Name, g.Year, g.PosterPath,
+            g.Children.Select(ToGroupImport).ToList(),
+            g.Files);
+
+    /// <summary>
     /// Returns a snapshot of the currently-running preview scan (folder being scanned,
     /// how many folders have been processed, how many files found so far).
     /// Returns IsScanning=false when no scan is in progress.
