@@ -195,6 +195,34 @@ export interface ImportSummary {
   duplicates: number
 }
 
+export interface ScanGroupDto {
+  groupKey: string
+  name: string
+  hierarchyLevel: number
+  year: number | null
+  posterPath: string | null
+  confidenceScore: number      // 0–100
+  signalSources: string[]
+  hasConflicts: boolean
+  children: ScanGroupDto[]
+  files: string[]
+}
+
+export interface ScanGroupResult {
+  groups: ScanGroupDto[]
+  ungrouped: string[]
+  totalFiles: number
+  totalGroups: number
+}
+
+export interface ImportGroupPayload {
+  name: string
+  year: number | null
+  posterPath: string | null
+  children: ImportGroupPayload[]
+  files: string[]
+}
+
 export interface MediaTypeOption {
   id: number
   name: string
