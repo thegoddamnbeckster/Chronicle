@@ -596,3 +596,42 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ── Grouped preview ────────────────────────────────────────────────────── */
+
+.subtitle {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.groupList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.ungroupedSection {
+  margin-top: 12px;
+}
+
+.ungroupedSummary {
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.ungroupedList {
+  list-style: none;
+  padding: 4px 0 0 16px;
+  margin: 0;
+}
+
+.ungroupedFile {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: 'Consolas', monospace;
+  padding: 1px 0;
+}

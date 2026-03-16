@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { getScanStatus, getScanProgress, previewScan, importDirect } from '@/api/scan'
+import { getScanStatus, getScanProgress, previewGrouped, importGroups } from '@/api/scan'
 import type { ScanProgress } from '@/api/scan'
 import { getMediaTypes } from '@/api/media'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
-import type { ScannedFile, MediaTypeOption } from '@/types'
+import type { ScanGroupResult, MediaTypeOption } from '@/types'
 import PathInput from '@/components/PathInput'
+import ScanGroupCard, { groupToPayload } from './ScanGroupCard'
 import styles from './ScanPage.module.css'
 
 type Step = 'configure' | 'preview' | 'review' | 'done'
@@ -18,9 +19,8 @@ export default function ScanPage() {
 
   // ── Pipeline state ───────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>('configure')
-  const [previewFiles, setPreviewFiles] = useState<ScannedFile[]>([])
-  // Set of file paths the user has unchecked (skipped). All checked by default.
-  const [skipped, setSkipped] = useState<Set<string>>(new Set())
+  const [groupResult, setGroupResult] = useState<ScanGroupResult | null>(null)
+  const [rejectedKeys, setRejectedKeys] = useState<Set<string>>(new Set())
   const [importResult, setImportResult] = useState<{ imported: number; failed: number; duplicates: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -42,11 +42,11 @@ export default function ScanPage() {
   const previewMut = useMutation({
     mutationFn: () => {
       if (!mediaTypeId) throw new Error('Select a media type.')
-      return previewScan({ path: path.trim(), recursive, mediaTypeId: Number(mediaTypeId) })
+      return previewGrouped({ path: path.trim(), recursive, mediaTypeId: Number(mediaTypeId) })
     },
     onSuccess: (data) => {
-      setPreviewFiles(data.files)
-      setSkipped(new Set())
+      setGroupResult(data)
+      setRejectedKeys(new Set())
       setError(null)
       setStep('preview')
     },
@@ -55,26 +55,19 @@ export default function ScanPage() {
 
   const importMut = useMutation({
     mutationFn: () => {
-      const toImport = previewFiles.filter((f) => !skipped.has(f.filePath))
-      if (toImport.length === 0) throw new Error('No files selected for import.')
-      return importDirect({
-        files: toImport.map((f) => ({
-          filePath: f.filePath,
-          parsedTitle: f.parsedTitle,
-          parsedYear: f.parsedYear ?? null,
-          suggestedExternalId: f.suggestedExternalId ?? null,
-          mediaTypeHint: f.mediaTypeHint,
-        })),
-        mediaTypeId: Number(mediaTypeId),
-      })
+      if (!groupResult) throw new Error('No scan result.')
+      const toImport = groupResult.groups
+        .filter(g => !rejectedKeys.has(g.groupKey))
+        .map(groupToPayload)
+      if (toImport.length === 0) throw new Error('No groups selected for import.')
+      return importGroups({ groups: toImport, mediaTypeId: Number(mediaTypeId) })
     },
     onMutate: () => {
-      const count = previewFiles.filter((f) => !skipped.has(f.filePath)).length
-      return addJob(`Importing ${count} items…`)
+      const count = groupResult?.groups.filter(g => !rejectedKeys.has(g.groupKey)).length ?? 0
+      return addJob(`Importing ${count} groups…`)
     },
     onSuccess: (data, _vars, jobId) => {
       setImportResult({ imported: data.imported, failed: data.failed, duplicates: data.duplicates })
-      setError(null)
       setStep('done')
       completeJob(jobId as string, `${data.imported} imported`)
     },
@@ -85,8 +78,6 @@ export default function ScanPage() {
   })
 
   // ── Scan progress polling ────────────────────────────────────────────────
-  // While a preview scan is in-flight, poll /scan/progress every 500 ms and
-  // display the folder being scanned below the button.
   useEffect(() => {
     if (previewMut.isPending) {
       setScanProgress(null)
@@ -95,7 +86,7 @@ export default function ScanPage() {
           const p = await getScanProgress()
           setScanProgress(p)
         } catch {
-          // ignore polling errors — the main mutation error handler covers failures
+          // ignore polling errors
         }
       }, 500)
     } else {
@@ -103,7 +94,6 @@ export default function ScanPage() {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
-      // Keep the last progress visible briefly, then clear
       if (!previewMut.isPending) setScanProgress(null)
     }
     return () => {
@@ -115,21 +105,20 @@ export default function ScanPage() {
   }, [previewMut.isPending])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const toggleSkip = (filePath: string) => {
-    setSkipped((prev) => {
+  const toggleRejected = (key: string) => {
+    setRejectedKeys(prev => {
       const next = new Set(prev)
-      next.has(filePath) ? next.delete(filePath) : next.add(filePath)
+      next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
   }
 
-  const approvedCount = previewFiles.filter((f) => !skipped.has(f.filePath)).length
   const canScan = path.trim() !== '' && mediaTypeId !== '' && !previewMut.isPending
 
   function reset() {
     setStep('configure')
-    setPreviewFiles([])
-    setSkipped(new Set())
+    setGroupResult(null)
+    setRejectedKeys(new Set())
     setImportResult(null)
     setError(null)
   }
@@ -230,114 +219,81 @@ export default function ScanPage() {
       )}
 
       {/* ── Step 2: Preview ──────────────────────────────────────────────── */}
-      {step === 'preview' && (
+      {step === 'preview' && groupResult && (
         <div className={styles.resultCard}>
           <div className={styles.resultHeader}>
-            <h2 className={styles.resultTitle}>Found {previewFiles.length} files</h2>
+            <h2 className={styles.resultTitle}>
+              Found {groupResult.totalGroups} group{groupResult.totalGroups !== 1 ? 's' : ''}
+              <span className={styles.subtitle}> ({groupResult.totalFiles} files)</span>
+            </h2>
             <button
               className={styles.scanBtn}
-              disabled={previewFiles.length === 0}
+              disabled={groupResult.groups.length === 0}
               onClick={() => setStep('review')}
             >
-              Review {previewFiles.length} files →
+              Review {groupResult.groups.length} groups →
             </button>
           </div>
 
-          <table className={styles.skippedTable}>
-            <thead>
-              <tr>
-                <th>Parsed title</th>
-                <th>Year</th>
-                <th>Type</th>
-                <th>
-                  Confidence
-                  <span
-                    title={'Scoring formula:\n100 — NFO sidecar with external ID\n 85 — Title(Year) filename or NFO+title+year\n 70 — Dotted/spaced filename\n 50 — Title only (fallback)'}
-                    style={{ marginLeft: 4, cursor: 'help', opacity: 0.6, fontSize: '0.85em' }}
-                  >ⓘ</span>
-                </th>
-                <th>File</th>
-              </tr>
-            </thead>
-            <tbody>
-              {previewFiles.map((f, i) => (
-                <tr key={i}>
-                  <td>{f.parsedTitle}</td>
-                  <td>{f.parsedYear ?? '—'}</td>
-                  <td><span className={styles.mediaTypeBadge}>{f.mediaTypeHint}</span></td>
-                  <td className={styles.confidence}>{f.confidenceScore}%</td>
-                  <td className={styles.filePath}>{f.filePath}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className={styles.groupList}>
+            {groupResult.groups.map(g => (
+              <ScanGroupCard
+                key={g.groupKey}
+                group={g}
+                checked={!rejectedKeys.has(g.groupKey)}
+                onToggle={toggleRejected}
+              />
+            ))}
+          </div>
+
+          {groupResult.ungrouped.length > 0 && (
+            <details className={styles.ungroupedSection}>
+              <summary className={styles.ungroupedSummary}>
+                {groupResult.ungrouped.length} ungrouped file{groupResult.ungrouped.length !== 1 ? 's' : ''} (will not be imported)
+              </summary>
+              <ul className={styles.ungroupedList}>
+                {groupResult.ungrouped.map(f => <li key={f} className={styles.ungroupedFile}>{f}</li>)}
+              </ul>
+            </details>
+          )}
         </div>
       )}
 
       {/* ── Step 3: Review ───────────────────────────────────────────────── */}
-      {step === 'review' && (
+      {step === 'review' && groupResult && (
         <div className={styles.resultCard}>
           <div className={styles.resultHeader}>
             <h2 className={styles.resultTitle}>
-              {approvedCount} of {previewFiles.length} selected for import
+              {groupResult.groups.length - rejectedKeys.size} of {groupResult.groups.length} groups selected
             </h2>
             <div className={styles.headerActions}>
-              <button
-                className={styles.secondaryBtn}
-                onClick={() => setSkipped(new Set(previewFiles.map((f) => f.filePath)))}
-              >
-                Deselect all
-              </button>
-              <button
-                className={styles.secondaryBtn}
-                onClick={() => setSkipped(new Set())}
-              >
-                Select all
+              <button className={styles.secondaryBtn} onClick={() => setStep('preview')}>
+                ← Back to preview
               </button>
               <button
                 className={styles.scanBtn}
-                disabled={approvedCount === 0 || importMut.isPending}
+                disabled={(groupResult.groups.length - rejectedKeys.size) === 0 || importMut.isPending}
                 onClick={() => importMut.mutate()}
               >
-                {importMut.isPending ? 'Importing…' : `Import ${approvedCount} items →`}
+                {importMut.isPending
+                  ? 'Importing…'
+                  : `Import ${groupResult.groups.length - rejectedKeys.size} groups →`}
               </button>
             </div>
           </div>
-
           <p className={styles.reviewHint}>
-            All files are selected by default. Uncheck any you want to skip.
-            TMDB metadata will be downloaded automatically in the background after import.
+            Accepting a group imports it and all its children into Chronicle.
+            TMDB metadata enrichment runs automatically in the background.
           </p>
-
-          <div className={styles.reviewList}>
-            {previewFiles.map((f) => {
-              const checked = !skipped.has(f.filePath)
-              return (
-                <label
-                  key={f.filePath}
-                  className={`${styles.reviewRow} ${!checked ? styles.reviewRowSkipped : ''}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleSkip(f.filePath)}
-                    className={styles.reviewCheck}
-                  />
-                  <div className={styles.reviewContent}>
-                    <div className={styles.reviewInfo}>
-                      <span className={styles.identifyTitle}>{f.parsedTitle}</span>
-                      {f.parsedYear && <span className={styles.identifyYear}>({f.parsedYear})</span>}
-                      <span className={styles.mediaTypeBadge}>{f.mediaTypeHint}</span>
-                      <span className={styles.confidence}>{f.confidenceScore}%</span>
-                      {f.suggestedExternalId && (
-                        <span className={styles.nfoTag} title="External ID from NFO sidecar">NFO</span>
-                      )}
-                    </div>
-                    <div className={styles.reviewPath}>{f.filePath}</div>
-                  </div>
-                </label>
-              )
-            })}
+          <div className={styles.groupList}>
+            {groupResult.groups.map(g => (
+              <ScanGroupCard
+                key={g.groupKey}
+                group={g}
+                checked={!rejectedKeys.has(g.groupKey)}
+                onToggle={toggleRejected}
+              />
+            ))}
           </div>
         </div>
       )}

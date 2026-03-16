@@ -1,0 +1,110 @@
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  transition: opacity 0.15s;
+}
+
+.cardUnchecked {
+  opacity: 0.45;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.check {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.name {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.year {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.itemCount {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.conflictBadge {
+  font-size: 0.75rem;
+  color: var(--warning, #f59e0b);
+  background: rgba(245, 158, 11, 0.12);
+  padding: 1px 6px;
+  border-radius: 10px;
+  cursor: help;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.confidence {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.green  { background: rgba(34,197,94,0.15); color: #22c55e; }
+.amber  { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.red    { background: rgba(239,68,68,0.15);  color: #ef4444; }
+
+.expandBtn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.expandBtn:hover { color: var(--text-primary); }
+
+.children {
+  margin-top: 8px;
+  padding-left: 26px;
+  border-left: 2px solid var(--border);
+}
+
+.childRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.childName  { flex: 1; }
+.childYear  { color: var(--text-muted); font-size: 0.8rem; }
+.childCount { color: var(--text-muted); font-size: 0.78rem; }
+.childConfidence { font-size: 0.78rem; font-weight: 600; padding: 1px 5px; border-radius: 8px; }
