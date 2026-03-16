@@ -166,23 +166,40 @@ namespace Chronicle.Services
 
         public async Task<int> ClearScannerDataAsync(CancellationToken ct = default)
         {
-            // Find all MediaItems whose metadata_json has the fileScanner key
+            // Scanner items are identified by either:
+            //   (a) MetadataJson IS NULL — old flat imports created before SerializeMetadata was applied
+            //   (b) MetadataJson contains "fileScanner" — new hierarchical imports
+            // TMDB-enriched items (MetadataJson has "tmdb" key but no "fileScanner") are intentionally
+            // excluded — they have useful metadata the user may want to keep.
+            // Only ROOT items are targeted; children are removed automatically via ON DELETE CASCADE.
             var scannerItemIds = await _context.MediaItems
-                .Where(m => m.MetadataJson != null && m.MetadataJson.Contains("\"fileScanner\""))
+                .Where(m => m.ParentId == null
+                         && (m.MetadataJson == null || m.MetadataJson.Contains("\"fileScanner\"")))
                 .Select(m => m.Id)
                 .ToListAsync(ct);
 
             if (scannerItemIds.Count == 0) return 0;
 
-            var count = await _context.UserLibraries
-                .Where(l => scannerItemIds.Contains(l.MediaItemId))
+            // Delete dependent rows first (EF bulk delete does not trigger SQLite cascades
+            // via the ORM layer, so we must remove FK-referencing rows manually).
+            // user_libraries and media_external_ids reference media_items; interaction_events
+            // reference user_libraries. We collect child IDs too so child library entries
+            // are also removed before we delete the root items (which would cascade-delete
+            // the child media_items rows, potentially leaving orphan library entries
+            // in databases where FK enforcement is off).
+            var allDescendantIds = await GetAllDescendantIdsAsync(scannerItemIds, ct);
+            var allIds = scannerItemIds.Concat(allDescendantIds).Distinct().ToList();
+
+            await _context.UserLibraries
+                .Where(l => allIds.Contains(l.MediaItemId))
                 .ExecuteDeleteAsync(ct);
 
             await _context.MediaExternalIds
-                .Where(e => scannerItemIds.Contains(e.MediaItemId))
+                .Where(e => allIds.Contains(e.MediaItemId))
                 .ExecuteDeleteAsync(ct);
 
-            await _context.MediaItems
+            // Deleting root items cascades to child media_items automatically.
+            var count = await _context.MediaItems
                 .Where(m => scannerItemIds.Contains(m.Id))
                 .ExecuteDeleteAsync(ct);
 
