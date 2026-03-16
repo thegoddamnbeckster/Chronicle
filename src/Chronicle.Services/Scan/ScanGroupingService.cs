@@ -158,6 +158,13 @@ namespace Chronicle.Services.Scan
             foreach (var g in result.Groups)
                 RollUpConfidence(g);
 
+            // Prune empty nodes: remove children with no media files at any level
+            foreach (var g in result.Groups)
+                PruneEmptyChildren(g);
+
+            // Remove root groups that ended up with no files at all (sidecar-only folders)
+            result.Groups.RemoveAll(g => g.TotalFileCount == 0);
+
             return result;
         }
 
@@ -225,6 +232,19 @@ namespace Chronicle.Services.Scan
             if (group.Children.Count == 0) return;
             foreach (var child in group.Children) RollUpConfidence(child);
             group.ConfidenceScore = group.Children.Average(c => c.ConfidenceScore);
+        }
+
+        /// <summary>
+        /// Recursively removes children (at any depth) that contain no media files.
+        /// This eliminates sidecar-only directories like .actors, theme-music, etc.
+        /// from the import preview.
+        /// </summary>
+        private static void PruneEmptyChildren(ScanGroup group)
+        {
+            foreach (var child in group.Children)
+                PruneEmptyChildren(child);
+
+            group.Children.RemoveAll(c => c.TotalFileCount == 0);
         }
     }
 }
