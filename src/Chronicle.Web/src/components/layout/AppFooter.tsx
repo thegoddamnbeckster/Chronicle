@@ -63,11 +63,21 @@ export default function AppFooter({ showDiagnostics, version }: AppFooterProps) 
         <span className={styles.symbol}>◆</span>
         <span className={styles.copyright}>© {year} Chronicle</span>
         {version && <span className={styles.version}>· {version}</span>}
-        {showDiagnostics && (
-          <button className={styles.diagTab} onClick={toggle}>
-            {open ? '▼' : '▲'} Diagnostics
-          </button>
-        )}
+        <div className={styles.barRight}>
+          {showDiagnostics && (
+            <button className={styles.diagTab} onClick={toggle}>
+              {open ? '▼' : '▲'} Diagnostics
+            </button>
+          )}
+          <a
+            href="https://github.com/thegoddamnbeckster/Chronicle/wiki"
+            target="_blank"
+            rel="noreferrer"
+            className={styles.wikiLink}
+          >
+            Wiki
+          </a>
+        </div>
       </div>
     </footer>
   )

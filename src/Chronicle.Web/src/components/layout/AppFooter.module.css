@@ -33,11 +33,17 @@
   font-family: monospace;
 }
 
-.diagTab {
+.barRight {
   position: absolute;
   right: 16px;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagTab {
   font-size: 0.7rem;
   color: var(--text-muted);
   background: none;
@@ -49,6 +55,14 @@
   white-space: nowrap;
 }
 .diagTab:hover { opacity: 1; }
+
+.wikiLink {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  opacity: 0.6;
+}
+.wikiLink:hover { opacity: 1; color: var(--accent); }
 
 /* ── Diagnostics panel ─────────────────────────────────────────── */
 .panel {
