@@ -9,6 +9,8 @@ import type {
   ImportSummary,
   MetadataSearchResult,
   MediaItem,
+  ScanGroupResult,
+  ImportGroupPayload,
 } from '@/types'
 
 /**
@@ -103,6 +105,31 @@ export async function importDirect(payload: {
   mediaTypeId: number
 }): Promise<ImportSummary> {
   const { data } = await client.post<ApiResponse<ImportSummary>>('/scan/import-direct', payload)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Import failed')
+  return data.data
+}
+
+export async function previewGrouped(payload: {
+  path: string
+  recursive: boolean
+  mediaTypeId: number
+}): Promise<ScanGroupResult> {
+  try {
+    const { data } = await client.post<ApiResponse<ScanGroupResult>>(
+      '/scan/preview-grouped', payload)
+    if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Preview failed')
+    return data.data
+  } catch (err) {
+    throw translateScanError(err)
+  }
+}
+
+export async function importGroups(payload: {
+  groups: ImportGroupPayload[]
+  mediaTypeId: number
+}): Promise<ImportSummary> {
+  const { data } = await client.post<ApiResponse<ImportSummary>>(
+    '/scan/import-groups', payload)
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Import failed')
   return data.data
 }

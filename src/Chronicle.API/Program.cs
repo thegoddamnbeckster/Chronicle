@@ -103,6 +103,11 @@ builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
 // ScanProgressService is a singleton so the scoped FileScanService (writer) and the
 // FileScanController progress endpoint (reader) share the same in-memory state.
 builder.Services.AddSingleton<ScanProgressService>();
+builder.Services.AddScoped<Chronicle.Services.Scan.FolderSignalExtractor>();
+builder.Services.AddScoped<Chronicle.Services.Scan.TagSignalExtractor>();
+builder.Services.AddScoped<Chronicle.Services.Scan.NfoSignalExtractor>();
+builder.Services.AddScoped<Chronicle.Services.Scan.IScanGroupingService,
+                            Chronicle.Services.Scan.ScanGroupingService>();
 builder.Services.AddScoped<IFileScanService, FileScanService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
