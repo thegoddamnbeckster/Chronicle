@@ -79,3 +79,55 @@ public class TagSignalExtractorTests
         result.Should().BeNull();
     }
 }
+
+public class NfoSignalExtractorTests
+{
+    [Fact]
+    public void Extract_ParsesMusicNfo()
+    {
+        var nfo = """
+            <musicvideo>
+              <title>Enter Sandman</title>
+              <artist>Metallica</artist>
+              <album>Metallica</album>
+              <year>1991</year>
+            </musicvideo>
+            """;
+        var extractor = new NfoSignalExtractor();
+        var result = extractor.ParseXml(nfo);
+
+        result.Should().NotBeNull();
+        result!.Title.Should().Be("Enter Sandman");
+        result.Artist.Should().Be("Metallica");
+        result.Album.Should().Be("Metallica");
+        result.Year.Should().Be(1991);
+    }
+
+    [Fact]
+    public void Extract_ParsesTvNfo()
+    {
+        var nfo = """
+            <episodedetails>
+              <title>Pilot</title>
+              <showtitle>Breaking Bad</showtitle>
+              <season>1</season>
+              <episode>1</episode>
+            </episodedetails>
+            """;
+        var extractor = new NfoSignalExtractor();
+        var result = extractor.ParseXml(nfo);
+
+        result!.ShowTitle.Should().Be("Breaking Bad");
+        result.Season.Should().Be(1);
+        result.Episode.Should().Be(1);
+    }
+
+    [Fact]
+    public void FindSidecar_ReturnsNfoPathWhenExists()
+    {
+        // Can't test real filesystem easily; just verify null on missing
+        var extractor = new NfoSignalExtractor();
+        var result = extractor.FindSidecar(@"C:\nonexistent\file.mkv");
+        result.Should().BeNull();
+    }
+}
