@@ -52,6 +52,7 @@ export interface MediaItem {
   posterUrl: string | null
   runtimeMinutes: number | null
   hierarchyLevel: number
+  ancestors?: { id: number; name: string }[]
   number: number | null
   createdAt: string
   updatedAt: string

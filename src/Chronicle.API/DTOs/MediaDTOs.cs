@@ -49,6 +49,8 @@ namespace Chronicle.API.DTOs
         string? ErrorMessage
     );
 
+    public record AncestorDto(int Id, string Name);
+
     public record MediaItemDto(
         int Id,
         int MediaTypeId,
@@ -66,7 +68,8 @@ namespace Chronicle.API.DTOs
         List<ExternalIdDto> ExternalIds,
         TmdbMetaDto? TmdbMeta = null,
         FileScannerMetaDto? FileScannerMeta = null,
-        List<RefreshLogDto>? RefreshLogs = null
+        List<RefreshLogDto>? RefreshLogs = null,
+        List<AncestorDto>? Ancestors = null
     );
 
     public record AddToLibraryRequestDto(
