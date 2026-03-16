@@ -393,31 +393,31 @@
 .dangerBtnRed {
   padding: 7px 16px;
   background: #ef4444;
-  color: white;
+  color: #1c1917;
   border: none;
   border-radius: 5px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
 }
-.dangerBtnRed:hover:not(:disabled) { background: #dc2626; }
+.dangerBtnRed:hover:not(:disabled) { background: #dc2626; color: #1c1917; }
 .dangerBtnRed:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .dangerBtnAmber {
   padding: 7px 16px;
   background: #f59e0b;
-  color: white;
+  color: #1c1917;
   border: none;
   border-radius: 5px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
 }
-.dangerBtnAmber:hover:not(:disabled) { background: #d97706; }
+.dangerBtnAmber:hover:not(:disabled) { background: #d97706; color: #1c1917; }
 .dangerBtnAmber:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .dangerConfirmRow {
@@ -474,3 +474,71 @@
   cursor: pointer;
 }
 .cancelBtn:hover { color: var(--text-primary); }
+
+/* ── Import settings ───────────────────────────────────────────────────── */
+.settingRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settingRow:last-child { border-bottom: none; }
+
+.settingLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settingName {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.settingHint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  max-width: 420px;
+}
+
+.settingControl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.numberInput {
+  width: 80px;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  text-align: right;
+}
+.numberInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.saveBtn {
+  padding: 6px 14px;
+  background: var(--accent);
+  border: none;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+.saveBtn:disabled { opacity: 0.45; cursor: default; }
+.saveBtn:not(:disabled):hover { opacity: 0.85; }
+
+.savedBadge {
+  font-size: 0.8rem;
+  color: var(--accent);
+  font-weight: 600;
+}

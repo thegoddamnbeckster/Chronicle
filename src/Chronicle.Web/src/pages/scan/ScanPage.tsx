@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { getScanStatus, getScanProgress, previewGrouped, importGroups } from '@/api/scan'
-import type { ScanProgress } from '@/api/scan'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { getScanStatus, getScanProgress, previewGrouped, importGroups, getImportProgress } from '@/api/scan'
+import type { ScanProgress, ImportProgressState } from '@/api/scan'
 import { getMediaTypes } from '@/api/media'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
 import type { ScanGroupResult, MediaTypeOption } from '@/types'
@@ -9,7 +9,7 @@ import PathInput from '@/components/PathInput'
 import ScanGroupCard, { groupToPayload } from './ScanGroupCard'
 import styles from './ScanPage.module.css'
 
-type Step = 'configure' | 'review' | 'done'
+type Step = 'configure' | 'preview' | 'review' | 'done'
 
 export default function ScanPage() {
   // ── Configuration state ──────────────────────────────────────────────────
@@ -28,6 +28,11 @@ export default function ScanPage() {
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // ── Import progress (polled after import-groups returns 202) ─────────────
+  const [importProgress, setImportProgress] = useState<ImportProgressState | null>(null)
+  const importPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const queryClient = useQueryClient()
   const { addJob, completeJob, failJob } = useBackgroundActivity()
 
   // ── Queries ──────────────────────────────────────────────────────────────
@@ -48,7 +53,7 @@ export default function ScanPage() {
       setGroupResult(data)
       setRejectedKeys(new Set())
       setError(null)
-      setStep('review')
+      setStep('preview')
     },
     onError: (err: Error) => setError(err.message),
   })
@@ -64,12 +69,38 @@ export default function ScanPage() {
     },
     onMutate: () => {
       const count = groupResult?.groups.filter(g => !rejectedKeys.has(g.groupKey)).length ?? 0
+      setImportProgress(null)
       return addJob(`Importing ${count} groups…`)
     },
-    onSuccess: (data, _vars, jobId) => {
-      setImportResult({ imported: data.imported, failed: data.failed, duplicates: data.duplicates })
-      setStep('done')
-      completeJob(jobId as string, `${data.imported} imported`)
+    onSuccess: (_data, _vars, jobId) => {
+      // API returned 202 — start polling import-progress
+      importPollRef.current = setInterval(async () => {
+        try {
+          const p = await getImportProgress()
+          setImportProgress(p)
+          if (p.isComplete) {
+            clearInterval(importPollRef.current!)
+            importPollRef.current = null
+            if (p.error) {
+              setError(p.error)
+              failJob(jobId as string, p.error)
+            } else if (p.result) {
+              setImportResult({
+                imported: p.result.imported,
+                failed: p.result.failed,
+                duplicates: p.result.duplicates,
+              })
+              setStep('done')
+              completeJob(jobId as string, `${p.result.imported} imported`)
+              // Invalidate library/media caches so the library page refreshes
+              void queryClient.invalidateQueries({ queryKey: ['library'] })
+              void queryClient.invalidateQueries({ queryKey: ['media'] })
+            }
+          }
+        } catch {
+          // ignore transient polling errors
+        }
+      }, 500)
     },
     onError: (err: Error, _vars, jobId) => {
       setError(err.message)
@@ -104,6 +135,16 @@ export default function ScanPage() {
     }
   }, [previewMut.isPending])
 
+  // ── Cleanup import poll on unmount ──────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (importPollRef.current) {
+        clearInterval(importPollRef.current)
+        importPollRef.current = null
+      }
+    }
+  }, [])
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   const toggleRejected = (key: string) => {
     setRejectedKeys(prev => {
@@ -113,14 +154,18 @@ export default function ScanPage() {
     })
   }
 
-  const selectedCount = (groupResult?.groups.length ?? 0) - rejectedKeys.size
   const canScan = path.trim() !== '' && mediaTypeId !== '' && !previewMut.isPending
 
   function reset() {
+    if (importPollRef.current) {
+      clearInterval(importPollRef.current)
+      importPollRef.current = null
+    }
     setStep('configure')
     setGroupResult(null)
     setRejectedKeys(new Set())
     setImportResult(null)
+    setImportProgress(null)
     setError(null)
   }
 
@@ -129,14 +174,14 @@ export default function ScanPage() {
     <div className={styles.page}>
       <div className={styles.header}>
         <h1 className={styles.title}>File Scan</h1>
-        {step === 'review' && (
+        {step !== 'configure' && step !== 'done' && (
           <button className={styles.resetBtn} onClick={reset}>Start over</button>
         )}
       </div>
 
       {/* Step indicator */}
       <div className={styles.stepBar}>
-        {(['configure', 'review', 'done'] as const).map((s, i) => (
+        {(['configure', 'preview', 'review', 'done'] as const).map((s, i) => (
           <div key={s} className={`${styles.stepItem} ${step === s ? styles.stepActive : ''} ${isStepDone(step, s) ? styles.stepDone : ''}`}>
             <span className={styles.stepNum}>{i + 1}</span>
             <span className={styles.stepLabel}>{stepLabel(s)}</span>
@@ -219,29 +264,22 @@ export default function ScanPage() {
         </div>
       )}
 
-      {/* ── Step 2: Review ───────────────────────────────────────────────── */}
-      {step === 'review' && groupResult && (
+      {/* ── Step 2: Preview ──────────────────────────────────────────────── */}
+      {step === 'preview' && groupResult && (
         <div className={styles.resultCard}>
           <div className={styles.resultHeader}>
             <h2 className={styles.resultTitle}>
-              {selectedCount} of {groupResult.groups.length} group{groupResult.groups.length !== 1 ? 's' : ''} selected
+              Found {groupResult.totalGroups} group{groupResult.totalGroups !== 1 ? 's' : ''}
               <span className={styles.subtitle}> ({groupResult.totalFiles} files)</span>
             </h2>
             <button
               className={styles.scanBtn}
-              disabled={selectedCount === 0 || importMut.isPending}
-              onClick={() => importMut.mutate()}
+              disabled={groupResult.groups.length === 0}
+              onClick={() => setStep('review')}
             >
-              {importMut.isPending
-                ? 'Importing…'
-                : `Import ${selectedCount} group${selectedCount !== 1 ? 's' : ''} →`}
+              Review {groupResult.groups.length} groups →
             </button>
           </div>
-
-          <p className={styles.reviewHint}>
-            Uncheck any groups you want to skip. Accepted groups and all their children are imported into Chronicle.
-            TMDB metadata enrichment runs automatically in the background.
-          </p>
 
           <div className={styles.groupList}>
             {groupResult.groups.map(g => (
@@ -267,7 +305,82 @@ export default function ScanPage() {
         </div>
       )}
 
-      {/* ── Step 3: Done ─────────────────────────────────────────────────── */}
+      {/* ── Step 3: Review ───────────────────────────────────────────────── */}
+      {step === 'review' && groupResult && (
+        <div className={styles.resultCard}>
+          <div className={styles.resultHeader}>
+            <h2 className={styles.resultTitle}>
+              {groupResult.groups.length - rejectedKeys.size} of {groupResult.groups.length} groups selected
+            </h2>
+            <div className={styles.headerActions}>
+              <button
+                className={styles.secondaryBtn}
+                disabled={importMut.isPending || (importProgress?.isRunning ?? false)}
+                onClick={() => setStep('preview')}
+              >
+                ← Back to preview
+              </button>
+              <button
+                className={styles.scanBtn}
+                disabled={
+                  (groupResult.groups.length - rejectedKeys.size) === 0 ||
+                  importMut.isPending ||
+                  (importProgress?.isRunning ?? false)
+                }
+                onClick={() => importMut.mutate()}
+              >
+                {importMut.isPending || importProgress?.isRunning
+                  ? 'Starting…'
+                  : `Import ${groupResult.groups.length - rejectedKeys.size} groups →`}
+              </button>
+            </div>
+          </div>
+          <p className={styles.reviewHint}>
+            Accepting a group imports it and all its children into Chronicle.
+            TMDB metadata enrichment runs automatically in the background.
+          </p>
+
+          {/* ── Import progress bar ─────────────────────────────────────── */}
+          {importProgress?.isRunning && (
+            <div className={styles.importProgressPanel}>
+              <div className={styles.importProgressHeader}>
+                <span className={styles.progressSpinner} />
+                <span className={styles.importProgressLabel}>
+                  Importing {importProgress.processed} of {importProgress.total} group{importProgress.total !== 1 ? 's' : ''}…
+                </span>
+              </div>
+              <div className={styles.importProgressTrack}>
+                <div
+                  className={styles.importProgressFill}
+                  style={{
+                    width: importProgress.total > 0
+                      ? `${Math.round((importProgress.processed / importProgress.total) * 100)}%`
+                      : '0%',
+                  }}
+                />
+              </div>
+              {importProgress.currentItemName && (
+                <div className={styles.importProgressItem} title={importProgress.currentItemName}>
+                  {importProgress.currentItemName}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className={styles.groupList}>
+            {groupResult.groups.map(g => (
+              <ScanGroupCard
+                key={g.groupKey}
+                group={g}
+                checked={!rejectedKeys.has(g.groupKey)}
+                onToggle={toggleRejected}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 4: Done ─────────────────────────────────────────────────── */}
       {step === 'done' && importResult && (
         <div className={styles.resultCard}>
           <h2 className={styles.resultTitle}>Import complete</h2>
@@ -302,10 +415,10 @@ export default function ScanPage() {
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 function stepLabel(s: Step): string {
-  return { configure: 'Configure', review: 'Review', done: 'Done' }[s]
+  return { configure: 'Configure', preview: 'Preview', review: 'Review', done: 'Done' }[s]
 }
 
 function isStepDone(current: Step, check: Step): boolean {
-  const order: Step[] = ['configure', 'review', 'done']
+  const order: Step[] = ['configure', 'preview', 'review', 'done']
   return order.indexOf(current) > order.indexOf(check)
 }

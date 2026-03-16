@@ -13,6 +13,15 @@ export async function getServiceStatus(): Promise<ServiceStatus> {
   return res.data
 }
 
+export async function getAppSettings(): Promise<Record<string, string>> {
+  const res = await client.get<Record<string, string>>('/settings/app')
+  return res.data
+}
+
+export async function putAppSetting(key: string, value: string): Promise<void> {
+  await client.put(`/settings/app/${key}`, { value })
+}
+
 export async function getChangeAccountCommand(
   accountType: string,
   username?: string,

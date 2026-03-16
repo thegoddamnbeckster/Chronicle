@@ -13,6 +13,9 @@ namespace Chronicle.Core.Models.Scan
 
         public int? Year { get; set; }
 
+        /// <summary>Episode/track/season number extracted from filename or tags.</summary>
+        public int? Number { get; set; }
+
         /// <summary>Local path to a folder image (.jpg/.png) if one was found.</summary>
         public string? PosterPath { get; set; }
 
@@ -29,6 +32,9 @@ namespace Chronicle.Core.Models.Scan
 
         /// <summary>Leaf files that belong directly to this group (flat-grouped types).</summary>
         public List<string> Files { get; set; } = [];
+
+        /// <summary>Absolute path to the folder on disk that this group represents (root groups only).</summary>
+        public string? FolderPath { get; set; }
 
         /// <summary>Total number of leaf files under this group (recursive).</summary>
         public int TotalFileCount =>

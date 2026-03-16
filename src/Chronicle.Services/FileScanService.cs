@@ -16,15 +16,18 @@ namespace Chronicle.Services
         private readonly ChronicleDbContext _context;
         private readonly IPluginRegistry _registry;
         private readonly ScanProgressService _progress;
+        private readonly ImportProgressService _importProgress;
         private readonly IScanGroupingService _groupingService;
         private readonly ILogger _log = Log.ForContext<FileScanService>();
 
         public FileScanService(ChronicleDbContext context, IPluginRegistry registry,
-            ScanProgressService progress, IScanGroupingService groupingService)
+            ScanProgressService progress, ImportProgressService importProgress,
+            IScanGroupingService groupingService)
         {
             _context = context;
             _registry = registry;
             _progress = progress;
+            _importProgress = importProgress;
             _groupingService = groupingService;
         }
 
@@ -886,11 +889,14 @@ namespace Chronicle.Services
             if (extId is null)
             {
                 // No external ID yet — search by name only.
-                // The TMDB search API treats the entire query string as text; appending
-                // the year (e.g. "Alien - Romulus 2024") returns zero results because
-                // the year is not part of the stored title.  Search by title only, then
-                // let ScoreByNameYear pick the correct year from the returned candidates.
-                var query = item.Name;
+                // Strip a trailing "(YYYY)" suffix that some folder names include
+                // (e.g. "Rick and Morty (2013)") because TMDB's search doesn't match
+                // those parenthesised years and returns zero results.
+                // Also strip the plain year appended after a space (e.g. "Alien Romulus 2024")
+                // as TMDB stores the canonical title only.
+                var query = System.Text.RegularExpressions.Regex
+                    .Replace(item.Name, @"\s*\(\d{4}\)\s*$", string.Empty)
+                    .Trim();
                 _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by '{Query}'", mediaItemId, query);
                 var hint = ToMediaTypeHint(item.MediaType?.Name ?? string.Empty);
                 var searchResult = await provider.SearchAsync(query, hint, ct);
@@ -943,6 +949,19 @@ namespace Chronicle.Services
         private async Task<MediaItem?> RefreshChildFromRootAsync(
             MediaItem item, IMetadataProvider provider, CancellationToken ct)
         {
+            // Clear any stale TMDB external IDs that old code may have written onto this child.
+            // Child items should never carry their own TMDB ID — metadata comes from the root.
+            var childTmdbIds = item.ExternalIds
+                .Where(e => e.Source == "tmdb" && e.ExternalId != "__suppress__")
+                .ToList();
+            if (childTmdbIds.Count > 0)
+            {
+                _context.MediaExternalIds.RemoveRange(childTmdbIds);
+                foreach (var stale in childTmdbIds)
+                    item.ExternalIds.Remove(stale);
+                _log.Information("RefreshChild: cleared {Count} stale TMDB ID(s) from child {Id}", childTmdbIds.Count, item.Id);
+            }
+
             // Walk parent chain to find the root item
             var currentId = item.ParentId;
             MediaItem? root = null;
@@ -1412,10 +1431,23 @@ namespace Chronicle.Services
 
             int imported = 0, failed = 0, duplicates = 0;
             var failures = new List<string>();
+            int processed = 0;
+            int total = request.Groups.Count;
+
+            // Read batch size from app settings (default 50 if not configured or invalid)
+            var batchSetting = await _context.AppSettings.FindAsync(["import_batch_size"], ct);
+            int batchSize = 50;
+            if (batchSetting is not null && int.TryParse(batchSetting.Value, out var bs) && bs >= 1)
+                batchSize = bs;
+
+            int pendingInBatch = 0;
+
+            _importProgress.Start(total);
 
             foreach (var rootGroup in request.Groups)
             {
                 ct.ThrowIfCancellationRequested();
+                _importProgress.Update(processed, total, rootGroup.Name);
                 try
                 {
                     var rootItem = await UpsertGroupItemAsync(
@@ -1447,7 +1479,16 @@ namespace Chronicle.Services
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
                         rootItem.Id, hierarchyLevel: 1, ct);
 
-                    await _context.SaveChangesAsync(ct);
+                    pendingInBatch++;
+
+                    // Flush to DB every batchSize groups to reduce transaction overhead
+                    if (pendingInBatch >= batchSize)
+                    {
+                        await _context.SaveChangesAsync(ct);
+                        _log.Information("ImportGroups: committed batch of {BatchSize} groups ({Processed}/{Total} total)",
+                            pendingInBatch, processed + 1, total);
+                        pendingInBatch = 0;
+                    }
 
                     _log.Information("Imported group '{Name}' with {ChildCount} child groups",
                         rootGroup.Name, rootGroup.Children.Count);
@@ -1458,9 +1499,28 @@ namespace Chronicle.Services
                     failures.Add($"{rootGroup.Name}: {ex.Message}");
                     _log.Warning(ex, "Failed to import group '{Name}'", rootGroup.Name);
                 }
+                finally
+                {
+                    processed++;
+                }
             }
 
-            return new ImportApprovedSummary(imported, failed, failures, duplicates);
+            // Flush any remaining groups that didn't fill a complete batch
+            if (pendingInBatch > 0)
+            {
+                await _context.SaveChangesAsync(ct);
+                _log.Information("ImportGroups: committed final batch of {BatchSize} groups", pendingInBatch);
+            }
+
+            var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
+            _importProgress.Complete(new ImportProgressResult
+            {
+                Imported   = summary.Imported,
+                Failed     = summary.Failed,
+                Failures   = summary.Failures,
+                Duplicates = summary.Duplicates,
+            });
+            return summary;
         }
 
         private async Task PersistChildGroupsAsync(
@@ -1480,17 +1540,62 @@ namespace Chronicle.Services
             ScanGroupImport group, int mediaTypeId,
             int? parentId, int hierarchyLevel, CancellationToken ct)
         {
-            // Try to find by name + parent + type (idempotent re-import)
-            var existing = await _context.MediaItems.FirstOrDefaultAsync(m =>
-                m.MediaTypeId == mediaTypeId
-                && m.ParentId == parentId
-                && m.HierarchyLevel == hierarchyLevel
-                && m.Name == group.Name, ct);
+            MediaItem? existing = null;
+
+            // Primary: match by folder path stored in MetadataJson — survives name changes
+            // (e.g. first import stored "Enterprise", re-import resolves "Star Trek: Enterprise")
+            if (!string.IsNullOrEmpty(group.FolderPath))
+            {
+                var candidates = await _context.MediaItems
+                    .Where(m => m.MediaTypeId == mediaTypeId
+                             && m.ParentId   == parentId
+                             && m.HierarchyLevel == hierarchyLevel
+                             && m.MetadataJson != null
+                             && EF.Functions.Like(m.MetadataJson, "%folderPath%"))
+                    .ToListAsync(ct);
+
+                existing = candidates.FirstOrDefault(m =>
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(m.MetadataJson!);
+                        if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
+                            fs.TryGetProperty("folderPath", out var fp))
+                            return string.Equals(fp.GetString(), group.FolderPath,
+                                                 StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch { /* malformed JSON */ }
+                    return false;
+                });
+            }
+
+            // Fallback: match by name (covers items imported before folderPath was added).
+            // Strip trailing "(YYYY)" from both sides so "Show (2016)" and "Show" deduplicate
+            // correctly when year extraction now produces a clean name without the suffix.
+            var groupNameClean = System.Text.RegularExpressions.Regex
+                .Replace(group.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
+            var candidates2 = await _context.MediaItems
+                .Where(m => m.MediaTypeId   == mediaTypeId
+                         && m.ParentId      == parentId
+                         && m.HierarchyLevel == hierarchyLevel)
+                .ToListAsync(ct);
+            existing ??= candidates2.FirstOrDefault(m =>
+            {
+                var dbNameClean = System.Text.RegularExpressions.Regex
+                    .Replace(m.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
+                return string.Equals(dbNameClean, groupNameClean, StringComparison.OrdinalIgnoreCase);
+            });
 
             if (existing is not null)
             {
-                existing.UpdatedAt = DateTime.UtcNow;
-                if (group.Year.HasValue) existing.Year = group.Year;
+                existing.UpdatedAt   = DateTime.UtcNow;
+                if (group.Year.HasValue)   existing.Year   = group.Year;
+                if (group.Number.HasValue) existing.Number = group.Number;
+                // Refresh MetadataJson so folderPath is written even on pre-existing items
+                existing.MetadataJson = JsonSerializer.Serialize(new
+                {
+                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }
+                });
                 return existing;
             }
 
@@ -1501,10 +1606,11 @@ namespace Chronicle.Services
                 HierarchyLevel = hierarchyLevel,
                 Name           = group.Name,
                 Year           = group.Year,
+                Number         = group.Number,
                 PosterUrl      = group.PosterPath,
                 MetadataJson   = JsonSerializer.Serialize(new
                 {
-                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files }
+                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }
                 }),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,

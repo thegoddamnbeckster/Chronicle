@@ -635,3 +635,52 @@
   font-family: 'Consolas', monospace;
   padding: 1px 0;
 }
+
+/* ── Import progress bar ──────────────────────────────────────────────────── */
+
+.importProgressPanel {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--bg-tertiary, #2a2a2a);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.importProgressHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.importProgressLabel {
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.importProgressTrack {
+  height: 6px;
+  background: var(--bg-secondary, #1a1a1a);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.importProgressFill {
+  height: 100%;
+  background: var(--accent, #5b9bd5);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.importProgressItem {
+  font-family: 'Consolas', monospace;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.2s ease;
+}

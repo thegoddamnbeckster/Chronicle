@@ -133,6 +133,22 @@ namespace Chronicle.API.DTOs
         int FilesFound
     );
 
+    // ── Import progress ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Real-time snapshot of an in-progress (or recently completed) import-groups operation.
+    /// Polled by the frontend every 500 ms while IsRunning is true.
+    /// </summary>
+    public record ImportProgressDto(
+        bool IsRunning,
+        bool IsComplete,
+        int Total,
+        int Processed,
+        string? CurrentItemName,
+        string? Error,
+        ImportSummaryDto? Result
+    );
+
     // ── Grouped preview / import ───────────────────────────────────────────────
 
     public record ScanGroupDto(
@@ -145,7 +161,8 @@ namespace Chronicle.API.DTOs
         List<string> SignalSources,
         bool HasConflicts,
         List<ScanGroupDto> Children,
-        List<string> Files);
+        List<string> Files,
+        string? FolderPath = null);
 
     public record ScanGroupResultDto(
         List<ScanGroupDto> Groups,
@@ -161,5 +178,6 @@ namespace Chronicle.API.DTOs
         int? Year,
         string? PosterPath,
         List<ImportGroupDto> Children,
-        List<string> Files);
+        List<string> Files,
+        string? FolderPath = null);
 }

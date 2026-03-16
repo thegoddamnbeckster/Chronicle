@@ -11,6 +11,46 @@ const STATUS_OPTIONS: LibraryStatus[] = [
   'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
 ]
 
+/** Returns a display label for a LibraryStatus value that is appropriate for the given media type. */
+function getStatusLabel(status: LibraryStatus, mediaTypeName: string): string {
+  const t = mediaTypeName.toLowerCase()
+  const isMusic = t === 'music' || t === 'podcast' || t === 'podcasts' || t === 'audiobook' || t === 'audiobooks'
+  const isBook = t === 'book' || t === 'books'
+  const isGame = t === 'game' || t === 'games'
+
+  switch (status) {
+    case 'PlanToWatch':
+      if (isMusic) return 'Plan to Listen'
+      if (isBook) return 'Plan to Read'
+      if (isGame) return 'Plan to Play'
+      return 'Plan to Watch'
+    case 'Watching':
+      if (isMusic) return 'Listening'
+      if (isBook) return 'Reading'
+      if (isGame) return 'Playing'
+      return 'Watching'
+    case 'Rewatching':
+      if (isMusic) return 'Re-listening'
+      if (isBook) return 'Re-reading'
+      if (isGame) return 'Replaying'
+      return 'Rewatching'
+    case 'Unwatched':
+      if (isMusic) return 'Unlistened'
+      if (isBook) return 'Unread'
+      if (isGame) return 'Unplayed'
+      return 'Unwatched'
+    case 'Completed': return 'Completed'
+    case 'Dropped': return 'Dropped'
+    case 'OnHold': return 'On Hold'
+    default: return status
+  }
+}
+
+/** Returns the label for the "Plan to Watch / Listen / Read / Play" quick-add button. */
+function getPlanToLabel(mediaTypeName: string): string {
+  return getStatusLabel('PlanToWatch', mediaTypeName)
+}
+
 export default function MediaDetailPage() {
   const { id } = useParams<{ id: string }>()
   const mediaId = Number(id)
@@ -111,6 +151,14 @@ export default function MediaDetailPage() {
   const tmdbSuppressed = tmdbIds.some(e => e.externalId === '__suppress__')
   const tmdbHasRealId = tmdbIds.some(e => e.externalId !== '__suppress__')
 
+  // TMDB only supports movies and TV. Show the TMDB box when the item already
+  // has a TMDB match (so the user can clear a wrong match), OR when the media
+  // type is one that TMDB actually handles.
+  const TMDB_SUPPORTED_TYPES = ['movie', 'movies', 'tv', 'tv shows']
+  const isTmdbSupported =
+    Boolean(item?.tmdbMeta) ||
+    TMDB_SUPPORTED_TYPES.includes((item?.mediaTypeName ?? '').toLowerCase())
+
   if (isLoading) return <div className={styles.page}><p className={styles.loading}>Loading…</p></div>
   if (error || !item) {
     return (
@@ -136,18 +184,27 @@ export default function MediaDetailPage() {
         <div className={`${styles.backdropContent}${hasBackdrop ? ` ${styles.backdropContentActive}` : ''}`}>
       <div className={`${styles.topNav}${hasBackdrop ? ` ${styles.topNavBoxed}` : ''}`}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
-        {(item.ancestors && item.ancestors.length > 0) && (
-          <nav className={styles.breadcrumb}>
-            <Link to="/library" className={styles.breadcrumbLink}>Library</Link>
-            {item.ancestors.map(a => (
-              <span key={a.id} className={styles.breadcrumbItem}>
-                <span className={styles.breadcrumbSep}>›</span>
-                <Link to={`/media/${a.id}`} className={styles.breadcrumbLink}>{a.name}</Link>
-              </span>
-            ))}
-          </nav>
-        )}
-        {(!item.ancestors || item.ancestors.length === 0) && (
+        {(item.ancestors && item.ancestors.length > 0) ? (
+          <>
+            <nav className={styles.breadcrumb}>
+              <Link to="/library" className={styles.breadcrumbLink}>Library</Link>
+              {item.ancestors.map(a => (
+                <span key={a.id} className={styles.breadcrumbItem}>
+                  <span className={styles.breadcrumbSep}>›</span>
+                  <Link to={`/media/${a.id}`} className={styles.breadcrumbLink}>{a.name}</Link>
+                </span>
+              ))}
+            </nav>
+            {(() => {
+              const parent = item.ancestors![item.ancestors!.length - 1]
+              return (
+                <Link to={`/media/${parent.id}`} className={styles.upBtn}>
+                  ↑ {parent.name}
+                </Link>
+              )
+            })()}
+          </>
+        ) : (
           <Link to="/library" className={styles.upBtn}>↑ Library</Link>
         )}
         {listIds.length > 0 && (
@@ -233,8 +290,9 @@ export default function MediaDetailPage() {
 
           {item.overview && <p className={styles.overview}>{item.overview}</p>}
 
-          {/* TMDB metadata box — always shown so Refresh is available even without metadata */}
-          {item && (
+          {/* TMDB metadata box — only shown for TMDB-supported types (movies/TV),
+              or when the item already has a TMDB match (to allow clearing a wrong match) */}
+          {isTmdbSupported && (
             <div className={styles.metadataBox}>
               <div className={styles.metadataBoxHeader}>
                 <div className={styles.metadataBoxBrand}>
@@ -295,8 +353,22 @@ export default function MediaDetailPage() {
                       )}
                     </>
                   )}
-                  {item.hierarchyLevel > 0 && item.tmdbMeta && (
-                    <span className={styles.inheritedLabel}>Metadata from parent show</span>
+                  {item.hierarchyLevel > 0 && (
+                    <>
+                      {item.tmdbMeta && (
+                        <span className={styles.inheritedLabel}>Metadata from parent show</span>
+                      )}
+                      {tmdbHasRealId && (
+                        <button
+                          className={styles.clearMatchBtn}
+                          onClick={() => clearMatchMut.mutate()}
+                          disabled={clearMatchMut.isPending}
+                          title="Remove the stale TMDB match from this item"
+                        >
+                          {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
+                        </button>
+                      )}
+                    </>
                   )}
                   <button
                     className={styles.refreshBtn}
@@ -346,14 +418,32 @@ export default function MediaDetailPage() {
               )}
 
               <div className={styles.tmdbGrid}>
-                {item.tmdbMeta?.rating != null && (
+                {/* Rating — show-level OR season/episode vote average */}
+                {(item.tmdbMeta?.rating != null || item.tmdbMeta?.voteAverage != null) && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Rating</span>
                     <span className={styles.tmdbValue}>
-                      {item.tmdbMeta.rating.toFixed(1)}&thinsp;/&thinsp;10
+                      {((item.tmdbMeta?.rating ?? item.tmdbMeta?.voteAverage) as number).toFixed(1)}&thinsp;/&thinsp;10
                     </span>
                   </div>
                 )}
+
+                {/* Air date (seasons and episodes) */}
+                {item.tmdbMeta?.airDate && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Air Date</span>
+                    <span className={styles.tmdbValue}>{item.tmdbMeta.airDate}</span>
+                  </div>
+                )}
+
+                {/* Episode count (seasons) */}
+                {item.tmdbMeta?.episodeCount != null && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Episodes</span>
+                    <span className={styles.tmdbValue}>{item.tmdbMeta.episodeCount}</span>
+                  </div>
+                )}
+
                 {item.tmdbMeta?.directors && item.tmdbMeta.directors.length > 0 && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>
@@ -364,6 +454,15 @@ export default function MediaDetailPage() {
                     </span>
                   </div>
                 )}
+
+                {/* Episode crew (directors/writers) */}
+                {item.tmdbMeta?.crew && item.tmdbMeta.crew.length > 0 && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Crew</span>
+                    <span className={styles.tmdbValue}>{item.tmdbMeta.crew.join(', ')}</span>
+                  </div>
+                )}
+
                 {item.tmdbMeta?.genres && item.tmdbMeta.genres.length > 0 && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Genres</span>
@@ -382,6 +481,17 @@ export default function MediaDetailPage() {
                     </span>
                   </div>
                 )}
+
+                {/* Episode guest stars */}
+                {item.tmdbMeta?.guestStars && item.tmdbMeta.guestStars.length > 0 && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Guest Stars</span>
+                    <span className={styles.tmdbValue}>
+                      {item.tmdbMeta.guestStars.slice(0, 6).join(', ')}
+                    </span>
+                  </div>
+                )}
+
                 {tmdbHasRealId && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>ID</span>
@@ -396,47 +506,59 @@ export default function MediaDetailPage() {
                 )}
 
                 {/* Image thumbnails — click opens full size in new tab */}
-                {(item.tmdbMeta?.posterUrl || item.tmdbMeta?.backdropUrl) && (
+                {(() => {
+                  const tmdb = item.tmdbMeta
+                  // Resolve image URLs: prefer full URLs, fall back to path-based construction
+                  const posterUrl = tmdb?.posterUrl
+                  const backdropUrl = tmdb?.backdropUrl
+                  const seasonPosterUrl = tmdb?.posterPath
+                    ? `https://image.tmdb.org/t/p/w500${tmdb.posterPath}`
+                    : null
+                  const stillUrl = tmdb?.stillPath
+                    ? `https://image.tmdb.org/t/p/w500${tmdb.stillPath}`
+                    : null
+                  const hasImages = posterUrl || backdropUrl || seasonPosterUrl || stillUrl
+                  if (!hasImages) return null
+                  return (
                   <div className={`${styles.tmdbRow} ${styles.tmdbRowImages}`}>
                     <span className={styles.tmdbLabel}>Images</span>
                     <div className={styles.tmdbImageLinks}>
-                      {item.tmdbMeta?.posterUrl && (
-                        <a
-                          href={item.tmdbMeta.posterUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={styles.tmdbImageLink}
-                          title="Open full-size poster"
-                        >
-                          <img
-                            src={item.tmdbMeta.posterUrl}
-                            alt="Poster"
-                            className={styles.tmdbThumbnail}
-                            onError={e => { e.currentTarget.style.display = 'none' }}
-                          />
+                      {posterUrl && (
+                        <a href={posterUrl} target="_blank" rel="noreferrer"
+                          className={styles.tmdbImageLink} title="Open full-size poster">
+                          <img src={posterUrl} alt="Poster" className={styles.tmdbThumbnail}
+                            onError={e => { e.currentTarget.style.display = 'none' }} />
                           <span className={styles.tmdbThumbnailLabel}>Poster ↗</span>
                         </a>
                       )}
-                      {item.tmdbMeta?.backdropUrl && (
-                        <a
-                          href={item.tmdbMeta.backdropUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={styles.tmdbImageLink}
-                          title="Open full-size backdrop"
-                        >
-                          <img
-                            src={item.tmdbMeta.backdropUrl}
-                            alt="Backdrop"
-                            className={styles.tmdbThumbnail}
-                            onError={e => { e.currentTarget.style.display = 'none' }}
-                          />
+                      {seasonPosterUrl && !posterUrl && (
+                        <a href={seasonPosterUrl} target="_blank" rel="noreferrer"
+                          className={styles.tmdbImageLink} title="Open full-size season poster">
+                          <img src={seasonPosterUrl} alt="Season Poster" className={styles.tmdbThumbnail}
+                            onError={e => { e.currentTarget.style.display = 'none' }} />
+                          <span className={styles.tmdbThumbnailLabel}>Season Poster ↗</span>
+                        </a>
+                      )}
+                      {stillUrl && (
+                        <a href={stillUrl} target="_blank" rel="noreferrer"
+                          className={styles.tmdbImageLink} title="Open full-size episode still">
+                          <img src={stillUrl} alt="Episode Still" className={styles.tmdbThumbnail}
+                            onError={e => { e.currentTarget.style.display = 'none' }} />
+                          <span className={styles.tmdbThumbnailLabel}>Still ↗</span>
+                        </a>
+                      )}
+                      {backdropUrl && (
+                        <a href={backdropUrl} target="_blank" rel="noreferrer"
+                          className={styles.tmdbImageLink} title="Open full-size backdrop">
+                          <img src={backdropUrl} alt="Backdrop" className={styles.tmdbThumbnail}
+                            onError={e => { e.currentTarget.style.display = 'none' }} />
                           <span className={styles.tmdbThumbnailLabel}>Backdrop ↗</span>
                         </a>
                       )}
                     </div>
                   </div>
-                )}
+                  )
+                })()}
               </div>
 
               {refreshMut.isError && (
@@ -459,11 +581,12 @@ export default function MediaDetailPage() {
             </div>
           )}
 
-          {/* File Scanner box */}
+          {/* File Scanner box — show whenever the item came from the scanner */}
           {item.fileScannerMeta &&
             (item.fileScannerMeta.filePath ||
               item.fileScannerMeta.localPosterPath ||
-              item.fileScannerMeta.nfoPosterUrl) && (
+              item.fileScannerMeta.nfoPosterUrl ||
+              item.fileScannerMeta.importedAt) && (
             <div className={styles.scannerBox}>
               <div className={styles.scannerHeader}>File Scanner</div>
               <div className={styles.tmdbGrid}>
@@ -471,6 +594,14 @@ export default function MediaDetailPage() {
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>File</span>
                     <span className={styles.scannerPath}>{item.fileScannerMeta.filePath}</span>
+                  </div>
+                )}
+                {!item.fileScannerMeta.filePath && item.fileScannerMeta.importedAt && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Imported</span>
+                    <span className={styles.scannerPath}>
+                      {new Date(item.fileScannerMeta.importedAt).toLocaleString()}
+                    </span>
                   </div>
                 )}
                 {item.fileScannerMeta.localPosterPath && (
@@ -513,7 +644,7 @@ export default function MediaDetailPage() {
                   }
                 >
                   {STATUS_OPTIONS.map(s => (
-                    <option key={s} value={s}>{s}</option>
+                    <option key={s} value={s}>{getStatusLabel(s, item.mediaTypeName)}</option>
                   ))}
                 </select>
 
@@ -547,7 +678,7 @@ export default function MediaDetailPage() {
                   onClick={() => addMut.mutate('PlanToWatch')}
                   disabled={addMut.isPending}
                 >
-                  Plan to Watch
+                  {getPlanToLabel(item.mediaTypeName)}
                 </button>
               </div>
             )}
@@ -557,14 +688,24 @@ export default function MediaDetailPage() {
         </div>{/* backdropContent */}
       </div>{/* backdropSection */}
 
-      {/* Children (seasons, episodes, etc.) */}
-      {children.length > 0 && (
+      {/* Children (seasons, episodes, tracks, etc.) — sorted by number, then filename */}
+      {children.length > 0 && (() => {
+        const sortedChildren = [...children].sort((a, b) => {
+          // Both have a number → numeric ascending
+          if (a.number != null && b.number != null) return a.number - b.number
+          // Only one has a number → numbered item comes first
+          if (a.number != null) return -1
+          if (b.number != null) return 1
+          // Neither has a number → natural sort on name (handles "E01" < "E02" < "E10")
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+        })
+        return (
         <section className={styles.children}>
           <h2 className={styles.childrenTitle}>
-            {item.mediaTypeName === 'tv' ? 'Seasons' : 'Items'} ({children.length})
+            {item.mediaTypeName === 'tv' ? 'Seasons' : 'Items'} ({sortedChildren.length})
           </h2>
           <div className={styles.childGrid}>
-            {children.map(child => (
+            {sortedChildren.map(child => (
               <Link key={child.id} to={`/media/${child.id}`} className={styles.childCard}>
                 {child.posterUrl
                   ? <img
@@ -591,7 +732,8 @@ export default function MediaDetailPage() {
             ))}
           </div>
         </section>
-      )}
+        )
+      })()}
     </div>
   )
 }
