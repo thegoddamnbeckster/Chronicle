@@ -89,7 +89,8 @@ namespace Chronicle.API.DTOs
     public record ImportSummaryDto(
         int Imported,
         int Failed,
-        List<string> Failures
+        List<string> Failures,
+        int Duplicates = 0
     );
 
     // ── Direct import (scanner data only) ────────────────────────────────────
@@ -131,4 +132,34 @@ namespace Chronicle.API.DTOs
         int TotalFolders,
         int FilesFound
     );
+
+    // ── Grouped preview / import ───────────────────────────────────────────────
+
+    public record ScanGroupDto(
+        string GroupKey,
+        string Name,
+        int HierarchyLevel,
+        int? Year,
+        string? PosterPath,
+        int ConfidenceScore,       // 0–100
+        List<string> SignalSources,
+        bool HasConflicts,
+        List<ScanGroupDto> Children,
+        List<string> Files);
+
+    public record ScanGroupResultDto(
+        List<ScanGroupDto> Groups,
+        List<string> Ungrouped,
+        int TotalFiles);
+
+    public record ImportGroupsRequestDto(
+        List<ImportGroupDto> Groups,
+        int MediaTypeId);
+
+    public record ImportGroupDto(
+        string Name,
+        int? Year,
+        string? PosterPath,
+        List<ImportGroupDto> Children,
+        List<string> Files);
 }
