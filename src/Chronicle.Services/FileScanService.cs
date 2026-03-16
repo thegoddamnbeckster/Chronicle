@@ -3,6 +3,7 @@ using Chronicle.Core.Models;
 using Chronicle.Core.Models.Scan;
 using Chronicle.Data;
 using Chronicle.Core.Exceptions;
+using Chronicle.Plugins;
 using Chronicle.Services.Plugins;
 using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
@@ -871,6 +872,12 @@ namespace Chronicle.Services
             if (item is null)
                 return null;
 
+            // ── Child items (Season, Episode, Track, etc.) ──────────────────────
+            // Do NOT search TMDB by child name — "Season 01" would match random shows.
+            // Walk up to the root item and inherit its TMDB context instead.
+            if (item.HierarchyLevel > 0)
+                return await RefreshChildFromRootAsync(item, provider, ct);
+
             // Prefer TMDB external ID (stored as "movie:NNN" or "tv:NNN")
             var extId = item.ExternalIds
                 .FirstOrDefault(e => e.Source == "tmdb")
@@ -920,6 +927,71 @@ namespace Chronicle.Services
             catch (Exception ex)
             {
                 _log.Warning(ex, "RefreshMetadata failed for item {Id} / extId={ExtId}", mediaItemId, extId);
+                throw;
+            }
+
+            return item;
+        }
+
+        /// <summary>
+        /// Refreshes a child MediaItem (Season, Episode, Track, etc.) by walking up
+        /// the parent chain to find the root item's TMDB external ID, then using the
+        /// root show's metadata to populate the child's poster and genre context.
+        /// Prevents child items from independently matching TMDB by their generic names
+        /// (e.g. "Season 01" matching "Goosebumps" instead of the correct parent show).
+        /// </summary>
+        private async Task<MediaItem?> RefreshChildFromRootAsync(
+            MediaItem item, IMetadataProvider provider, CancellationToken ct)
+        {
+            // Walk parent chain to find the root item
+            var currentId = item.ParentId;
+            MediaItem? root = null;
+            while (currentId != null)
+            {
+                var candidate = await _context.MediaItems
+                    .Include(m => m.ExternalIds)
+                    .FirstOrDefaultAsync(m => m.Id == currentId, ct);
+                if (candidate is null) break;
+                if (candidate.ParentId is null) { root = candidate; break; }
+                currentId = candidate.ParentId;
+            }
+
+            if (root is null) return item;
+
+            var rootExtId = root.ExternalIds
+                .FirstOrDefault(e => e.Source == "tmdb" && e.ExternalId != "__suppress__")
+                ?.ExternalId;
+
+            if (rootExtId is null)
+            {
+                _log.Information(
+                    "RefreshChild: root item {RootId} has no TMDB ID — skipping child {Id}",
+                    root.Id, item.Id);
+                return item;
+            }
+
+            try
+            {
+                var meta = await provider.GetByIdAsync(rootExtId, ct);
+
+                // Inherit the parent show's poster if this child has none
+                if (string.IsNullOrEmpty(item.PosterUrl) && !string.IsNullOrEmpty(meta.PosterUrl))
+                    item.PosterUrl = meta.PosterUrl;
+
+                // Store the parent show's TMDB data as context (genres, cast, rating etc.)
+                // without overwriting the child's Name or Year.
+                item.MetadataJson = SerializeMetadata(tmdbMeta: meta, existingJson: item.MetadataJson);
+                item.UpdatedAt    = DateTime.UtcNow;
+                await _context.SaveChangesAsync(ct);
+
+                _log.Information(
+                    "RefreshChild: updated child {Id} ({Name}) using root {RootId} ({ExtId})",
+                    item.Id, item.Name, root.Id, rootExtId);
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex,
+                    "RefreshChild: failed for item {Id} using root extId={ExtId}", item.Id, rootExtId);
                 throw;
             }
 

@@ -136,12 +136,20 @@ export default function MediaDetailPage() {
         <div className={`${styles.backdropContent}${hasBackdrop ? ` ${styles.backdropContentActive}` : ''}`}>
       <div className={`${styles.topNav}${hasBackdrop ? ` ${styles.topNavBoxed}` : ''}`}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
-        <Link
-          to={item.parentId != null ? `/media/${item.parentId}` : `/library#media-${item.id}`}
-          className={styles.upBtn}
-        >
-          {item.parentId != null ? '↑ Up' : '↑ Library'}
-        </Link>
+        {(item.ancestors && item.ancestors.length > 0) && (
+          <nav className={styles.breadcrumb}>
+            <Link to="/library" className={styles.breadcrumbLink}>Library</Link>
+            {item.ancestors.map(a => (
+              <span key={a.id} className={styles.breadcrumbItem}>
+                <span className={styles.breadcrumbSep}>›</span>
+                <Link to={`/media/${a.id}`} className={styles.breadcrumbLink}>{a.name}</Link>
+              </span>
+            ))}
+          </nav>
+        )}
+        {(!item.ancestors || item.ancestors.length === 0) && (
+          <Link to="/library" className={styles.upBtn}>↑ Library</Link>
+        )}
         {listIds.length > 0 && (
           <div className={styles.listNav}>
             {prevId != null ? (
@@ -247,46 +255,54 @@ export default function MediaDetailPage() {
                   })()}
                 </div>
                 <div className={styles.metadataBoxActions}>
-                  <button
-                    className={styles.fixMatchBtn}
-                    onClick={() => { setFixMatchOpen(v => !v); reidentifyMut.reset() }}
-                    title="Manually specify the correct TMDB match"
-                  >
-                    ✎ Fix Match
-                  </button>
-                  {tmdbHasRealId && (
-                    <button
-                      className={styles.clearMatchBtn}
-                      onClick={() => clearMatchMut.mutate()}
-                      disabled={clearMatchMut.isPending}
-                      title="Remove the TMDB match — refresh will attempt a new auto-search next cycle"
-                    >
-                      {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
-                    </button>
+                  {item.hierarchyLevel === 0 && (
+                    <>
+                      <button
+                        className={styles.fixMatchBtn}
+                        onClick={() => { setFixMatchOpen(v => !v); reidentifyMut.reset() }}
+                        title="Manually specify the correct TMDB match"
+                      >
+                        ✎ Fix Match
+                      </button>
+                      {tmdbHasRealId && (
+                        <button
+                          className={styles.clearMatchBtn}
+                          onClick={() => clearMatchMut.mutate()}
+                          disabled={clearMatchMut.isPending}
+                          title="Remove the TMDB match — refresh will attempt a new auto-search next cycle"
+                        >
+                          {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
+                        </button>
+                      )}
+                      {tmdbSuppressed ? (
+                        <button
+                          className={styles.resumeMatchBtn}
+                          onClick={() => clearMatchMut.mutate()}
+                          disabled={clearMatchMut.isPending}
+                          title="Re-enable auto-matching for this item"
+                        >
+                          {clearMatchMut.isPending ? 'Resuming…' : '↺ Resume Auto-Match'}
+                        </button>
+                      ) : !tmdbHasRealId && (
+                        <button
+                          className={styles.suppressMatchBtn}
+                          onClick={() => suppressMatchMut.mutate()}
+                          disabled={suppressMatchMut.isPending}
+                          title="Mark as unmatched — refresh will never auto-search for this item again"
+                        >
+                          {suppressMatchMut.isPending ? 'Suppressing…' : '⊘ No Match'}
+                        </button>
+                      )}
+                    </>
                   )}
-                  {tmdbSuppressed ? (
-                    <button
-                      className={styles.resumeMatchBtn}
-                      onClick={() => clearMatchMut.mutate()}
-                      disabled={clearMatchMut.isPending}
-                      title="Re-enable auto-matching for this item"
-                    >
-                      {clearMatchMut.isPending ? 'Resuming…' : '↺ Resume Auto-Match'}
-                    </button>
-                  ) : !tmdbHasRealId && (
-                    <button
-                      className={styles.suppressMatchBtn}
-                      onClick={() => suppressMatchMut.mutate()}
-                      disabled={suppressMatchMut.isPending}
-                      title="Mark as unmatched — refresh will never auto-search for this item again"
-                    >
-                      {suppressMatchMut.isPending ? 'Suppressing…' : '⊘ No Match'}
-                    </button>
+                  {item.hierarchyLevel > 0 && item.tmdbMeta && (
+                    <span className={styles.inheritedLabel}>Metadata from parent show</span>
                   )}
                   <button
                     className={styles.refreshBtn}
                     onClick={() => refreshMut.mutate()}
                     disabled={refreshMut.isPending}
+                    title={item.hierarchyLevel > 0 ? 'Refresh poster and metadata from parent show' : undefined}
                   >
                     {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
                   </button>
