@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -63,6 +64,27 @@ namespace Chronicle.Services
         public async Task<User?> GetByUsernameAsync(string username)
         {
             return await _context.Users.FirstOrDefaultAsync(u => u.Username == username);
+        }
+
+        public async Task<UserPreferences> GetPreferencesAsync(int userId)
+        {
+            var user = await _context.Users.FindAsync(userId)
+                ?? throw new UserNotFoundException(userId.ToString());
+            try { return JsonSerializer.Deserialize<UserPreferences>(user.PreferencesJson) ?? new(); }
+            catch { return new(); }
+        }
+
+        public async Task UpdatePreferencesAsync(int userId, UserPreferences patch)
+        {
+            var user = await _context.Users.FindAsync(userId)
+                ?? throw new UserNotFoundException(userId.ToString());
+            UserPreferences current;
+            try { current = JsonSerializer.Deserialize<UserPreferences>(user.PreferencesJson) ?? new(); }
+            catch { current = new(); }
+            if (patch.ShowDiagnostics.HasValue) current.ShowDiagnostics = patch.ShowDiagnostics;
+            user.PreferencesJson = JsonSerializer.Serialize(current);
+            user.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
         }
     }
 }

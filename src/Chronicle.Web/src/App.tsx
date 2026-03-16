@@ -14,6 +14,7 @@ import ReportsPage from '@/pages/reports/ReportsPage'
 import ServiceSettingsPage from '@/pages/settings/ServiceSettingsPage'
 import ApiKeysPage from '@/pages/settings/ApiKeysPage'
 import LibrarySettingsPage from '@/pages/settings/LibrarySettingsPage'
+import BackgroundTasksPage from '@/pages/settings/BackgroundTasksPage'
 import PluginsPage from '@/pages/plugins/PluginsPage'
 import ListsPage from '@/pages/lists/ListsPage'
 import ListDetailPage from '@/pages/lists/ListDetailPage'
@@ -58,6 +59,7 @@ export default function App() {
         <Route path="settings/service" element={<ServiceSettingsPage />} />
         <Route path="settings/api-keys" element={<ApiKeysPage />} />
         <Route path="settings/library" element={<LibrarySettingsPage />} />
+        <Route path="settings/background-tasks" element={<BackgroundTasksPage />} />
         <Route path="plugins" element={<PluginsPage />} />
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListDetailPage />} />

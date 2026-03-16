@@ -3,13 +3,12 @@ using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace Chronicle.Services;
 
 /// <summary>
-/// Background service that periodically scans for duplicate <see cref="MediaItem"/> records
+/// Scheduled task that periodically scans for duplicate <see cref="MediaItem"/> records
 /// (items that share the same physical file path in their <c>MetadataJson</c>) and removes all
 /// but the best-quality copy.
 ///
@@ -17,11 +16,8 @@ namespace Chronicle.Services;
 /// Before a duplicate is removed its <see cref="UserLibrary"/> and <see cref="InteractionEvent"/>
 /// rows are reassigned to the surviving item so no user data is lost.
 /// </summary>
-public sealed class DuplicateCleanupService : BackgroundService
+public sealed class DuplicateCleanupService : IScheduledTask
 {
-    private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan Interval     = TimeSpan.FromHours(24);
-
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger _log = Log.ForContext<DuplicateCleanupService>();
 
@@ -30,27 +26,17 @@ public sealed class DuplicateCleanupService : BackgroundService
         _scopeFactory = scopeFactory;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    // ── IScheduledTask ────────────────────────────────────────────────────────────
+    public string TaskId      => "duplicate_cleanup";
+    public string DisplayName => "Duplicate Cleanup";
+    public string Description => "Scans for duplicate media items sharing the same file path and removes all but the best-quality copy.";
+    public string DefaultCron => "0 3 * * *";
+
+    async Task IScheduledTask.ExecuteAsync(CancellationToken ct)
     {
-        // Let startup noise settle before the first run.
-        await Task.Delay(StartupDelay, stoppingToken);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                var removed = await RunAsync(stoppingToken);
-                if (removed > 0)
-                    _log.Information("DuplicateCleanup: removed {Count} duplicate media items", removed);
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
-            {
-                _log.Error(ex, "DuplicateCleanup: unhandled error during deduplication run");
-            }
-
-            await Task.Delay(Interval, stoppingToken);
-        }
+        var removed = await RunAsync(ct);
+        if (removed > 0)
+            _log.Information("DuplicateCleanup: removed {Count} duplicate media items", removed);
     }
 
     /// <summary>

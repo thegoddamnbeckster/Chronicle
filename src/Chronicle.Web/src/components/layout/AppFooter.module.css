@@ -1,0 +1,104 @@
+/* ── Outer wrapper ─────────────────────────────────────────────── */
+.footer {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Always-visible bar ────────────────────────────────────────── */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 24px;
+  position: relative;
+}
+
+.symbol {
+  font-size: 0.9rem;
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+.copyright {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.version {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  font-family: monospace;
+}
+
+.barRight {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagTab {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+.diagTab:hover { opacity: 1; }
+
+.wikiLink {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  opacity: 0.6;
+}
+.wikiLink:hover { opacity: 1; color: var(--accent); }
+
+/* ── Diagnostics panel ─────────────────────────────────────────── */
+.panel {
+  border-top: 1px solid var(--border);
+  padding: 14px 24px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+}
+
+.panelTitle {
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+}
+
+.diagRow {
+  display: flex;
+  gap: 0;
+  line-height: 1.8;
+}
+
+.diagKey {
+  color: var(--text-muted);
+  min-width: 14ch;
+}
+
+.diagVal {
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.exists { color: #6fcf97; margin-left: 6px; font-size: 0.72rem; }
+.missing { color: #eb5757; margin-left: 6px; font-size: 0.72rem; }
+
+.loading { color: var(--text-muted); font-style: italic; }
+.error   { color: #eb5757; }
