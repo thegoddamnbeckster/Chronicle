@@ -60,3 +60,22 @@ public class FolderSignalExtractorTests
         result.DetectedEpisode.Should().Be(episode);
     }
 }
+
+public class TagSignalExtractorTests
+{
+    [Fact]
+    public void Extract_ReturnsEmpty_ForNonAudioFile()
+    {
+        var extractor = new TagSignalExtractor();
+        var result = extractor.Extract(@"C:\Music\Metallica\cover.jpg");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void Extract_ReturnsNull_WhenFileDoesNotExist()
+    {
+        var extractor = new TagSignalExtractor();
+        var result = extractor.Extract(@"C:\nonexistent\file.mp3");
+        result.Should().BeNull();
+    }
+}
