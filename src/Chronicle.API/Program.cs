@@ -39,6 +39,7 @@ builder.Host.UseWindowsService(options => options.ServiceName = "Chronicle");
 var portConfig = PortManager.LoadConfig(Directory.GetCurrentDirectory());
 // Skip port conflict check when running under EF design-time tools (migrations, scaffolding)
 // or when running integration tests (WebApplicationFactory sets environment to "Testing").
+
 if (Environment.GetEnvironmentVariable("EF_DESIGN_TIME") != "1" &&
     !builder.Environment.IsEnvironment("Testing"))
     PortManager.CheckPort(portConfig.Api);
@@ -262,7 +263,13 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
     if (db.Database.IsRelational())
-        db.Database.Migrate();
+    {
+        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=DELETE;");
+        // EF9 acquires an exclusive SQLite lock even when there are no pending
+        // migrations, which can hang on Windows. Only call Migrate() when needed.
+        if (db.Database.GetPendingMigrations().Any())
+            db.Database.Migrate();
+    }
     else
         db.Database.EnsureCreated();
 }
