@@ -131,3 +131,107 @@ public class NfoSignalExtractorTests
         result.Should().BeNull();
     }
 }
+
+public class ScanGroupingServiceTests
+{
+    private readonly ScanGroupingService _svc = new(
+        new FolderSignalExtractor(),
+        new TagSignalExtractor(),
+        new NfoSignalExtractor());
+
+    [Fact]
+    public void Group_FlatMusicFiles_BuildsArtistAlbumTree()
+    {
+        // Three files: same artist, same album, different tracks — folder layout
+        var files = new[]
+        {
+            @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
+            @"C:\Music\Metallica\Black Album\02 Sad But True.mp3",
+            @"C:\Music\Metallica\Black Album\03 Holier Than Thou.mp3",
+        };
+
+        var result = _svc.Group(files, scanRoot: @"C:\Music", hierarchyLevels: 3);
+
+        result.Groups.Should().HaveCount(1);
+        var artist = result.Groups[0];
+        artist.Name.Should().Be("Metallica");
+        artist.HierarchyLevel.Should().Be(0);
+        artist.Children.Should().HaveCount(1);
+
+        var album = artist.Children[0];
+        album.Name.Should().Be("Black Album");
+        album.HierarchyLevel.Should().Be(1);
+        album.Children.Should().HaveCount(3);
+
+        result.Ungrouped.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Group_FlatGroupedType_PutsAllFilesInOneGroup()
+    {
+        // Audiobook: many chapter files in one folder, HierarchyLevels=1
+        var files = new[]
+        {
+            @"C:\Audiobooks\The Hobbit\Part1.mp3",
+            @"C:\Audiobooks\The Hobbit\Part2.mp3",
+            @"C:\Audiobooks\The Hobbit\Part3.mp3",
+        };
+
+        var result = _svc.Group(files, scanRoot: @"C:\Audiobooks", hierarchyLevels: 1);
+
+        result.Groups.Should().HaveCount(1);
+        var book = result.Groups[0];
+        book.Name.Should().Be("The Hobbit");
+        book.HierarchyLevel.Should().Be(0);
+        book.Children.Should().BeEmpty();
+        book.Files.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void Group_MultipleArtists_CreatesOneGroupPerArtist()
+    {
+        var files = new[]
+        {
+            @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
+            @"C:\Music\Nirvana\Nevermind\01 Smells Like Teen Spirit.mp3",
+        };
+
+        var result = _svc.Group(files, scanRoot: @"C:\Music", hierarchyLevels: 3);
+
+        result.Groups.Should().HaveCount(2);
+        result.Groups.Select(g => g.Name).Should().Contain(["Metallica", "Nirvana"]);
+    }
+
+    [Fact]
+    public void Group_ImageFiles_AreNotIncludedAsLeafFiles()
+    {
+        var files = new[]
+        {
+            @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
+            @"C:\Music\Metallica\Black Album\cover.jpg",
+            @"C:\Music\Metallica\Black Album\fanart.png",
+        };
+
+        var result = _svc.Group(files, scanRoot: @"C:\Music", hierarchyLevels: 3);
+
+        var album = result.Groups[0].Children[0];
+        // Image files don't become leaf items — only the audio track does
+        album.Children.Should().HaveCount(1);
+        album.Children[0].Name.Should().Contain("Enter Sandman");
+    }
+
+    [Fact]
+    public void Group_NfoAndImageFiles_DoNotAppearInUngrouped()
+    {
+        var files = new[]
+        {
+            @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
+            @"C:\Music\Metallica\Black Album\album.nfo",
+            @"C:\Music\Metallica\Black Album\cover.jpg",
+        };
+
+        var result = _svc.Group(files, scanRoot: @"C:\Music", hierarchyLevels: 3);
+
+        result.Ungrouped.Should().BeEmpty();
+    }
+}
