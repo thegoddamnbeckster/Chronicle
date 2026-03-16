@@ -100,9 +100,10 @@ builder.Services.AddScoped<IImportService, ImportService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IMediaListService, MediaListService>();
 builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
-// ScanProgressService is a singleton so the scoped FileScanService (writer) and the
-// FileScanController progress endpoint (reader) share the same in-memory state.
+// ScanProgressService and ImportProgressService are singletons so the scoped
+// FileScanService (writer) and the controller progress endpoints (reader) share the same state.
 builder.Services.AddSingleton<ScanProgressService>();
+builder.Services.AddSingleton<ImportProgressService>();
 builder.Services.AddScoped<Chronicle.Services.Scan.FolderSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.TagSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.NfoSignalExtractor>();

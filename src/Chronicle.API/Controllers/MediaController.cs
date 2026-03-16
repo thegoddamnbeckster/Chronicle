@@ -335,13 +335,83 @@ namespace Chronicle.API.Controllers
                 // Partitioned format: {"tmdb":{...},"fileScanner":{...}}
                 // import-direct items have tmdb=null but fileScanner populated, so check either key.
                 if (root is not null && (root.Tmdb is not null || root.FileScanner is not null))
-                    return (root.Tmdb, root.FileScanner);
+                {
+                    var fs = root.FileScanner;
+
+                    // The hierarchical importer writes {"fileScanner":{"importedAt":...,"filePaths":[...]}}
+                    // which deserialises into a FileScannerMetaDto with all-null fields because the
+                    // property names don't match.  Extract filePaths[0] (or folderPath for parent
+                    // items) from the raw JSON so the File Scanner card appears on the media detail page.
+                    if (fs is not null && fs.FilePath is null && fs.LocalPosterPath is null && fs.NfoPosterUrl is null)
+                    {
+                        fs = TryExtractFilePathFromNewFormat(json) ?? fs;
+                    }
+
+                    // Suppress a completely empty FileScannerMetaDto — but keep it when ImportedAt
+                    // is set (season/episode items that were scanner-imported but whose path hasn't
+                    // been re-recorded yet still deserve a File Scanner card).
+                    var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
+                                 fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null)
+                        ? fs : null;
+
+                    return (root.Tmdb, fsOut);
+                }
 
                 // Old flat format fallback (rating/genres/cast/directors at root level)
                 var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
                 return (flat, null);
             }
             catch { return (null, null); }
+        }
+
+        /// <summary>
+        /// Reads the raw MetadataJson and extracts a display path from the hierarchical
+        /// group importer format.  For leaf items (seasons/episodes) this is the first
+        /// entry in <c>filePaths</c>; for root show items (filePaths is empty) it falls
+        /// back to the <c>folderPath</c> stored during import.
+        /// </summary>
+        private static FileScannerMetaDto? TryExtractFilePathFromNewFormat(string json)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("fileScanner", out var sect))
+                {
+                    // Pull importedAt timestamp (present on all hierarchical-importer items)
+                    DateTime? importedAt = null;
+                    if (sect.TryGetProperty("importedAt", out var iat) &&
+                        iat.TryGetDateTime(out var dt))
+                        importedAt = dt;
+
+                    // Leaf items (episodes/tracks): first entry in filePaths array
+                    if (sect.TryGetProperty("filePaths", out var arr) &&
+                        arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        foreach (var el in arr.EnumerateArray())
+                        {
+                            var path = el.GetString();
+                            if (!string.IsNullOrEmpty(path))
+                                return new FileScannerMetaDto(path, null, null, importedAt);
+                        }
+                    }
+
+                    // Parent items (shows/artists/seasons): filePaths is empty; fall back to
+                    // folderPath which is stored for level-0 and level-1 groups.
+                    if (sect.TryGetProperty("folderPath", out var fp))
+                    {
+                        var folderPath = fp.GetString();
+                        if (!string.IsNullOrEmpty(folderPath))
+                            return new FileScannerMetaDto(folderPath, null, null, importedAt);
+                    }
+
+                    // fileScanner section exists but no path recorded yet (older import).
+                    // Still return a non-null DTO so the File Scanner card is shown.
+                    if (importedAt.HasValue)
+                        return new FileScannerMetaDto(null, null, null, importedAt);
+                }
+            }
+            catch { /* ignore malformed JSON */ }
+            return null;
         }
     }
 }

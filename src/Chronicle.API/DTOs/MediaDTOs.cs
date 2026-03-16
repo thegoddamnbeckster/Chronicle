@@ -28,18 +28,41 @@ namespace Chronicle.API.DTOs
     /// <summary>Rich metadata fetched from TMDB, stored in MetadataJson and surfaced here.</summary>
     public record TmdbMetaDto(
         double? Rating,
-        List<string> Genres,
-        List<string> Cast,
-        List<string> Directors,
+        List<string>? Genres,
+        List<string>? Cast,
+        List<string>? Directors,
         string? PosterUrl,
-        string? BackdropUrl
+        string? BackdropUrl,
+        /// <summary>
+        /// Season poster image path from TMDB (e.g. "/abc.jpg").
+        /// Full URL: https://image.tmdb.org/t/p/w500{PosterPath}
+        /// Populated for season-level items refreshed via ITvDetailProvider.
+        /// </summary>
+        string? PosterPath = null,
+        /// <summary>
+        /// Episode still / thumbnail image path from TMDB (e.g. "/xyz.jpg").
+        /// Full URL: https://image.tmdb.org/t/p/w500{StillPath}
+        /// Populated for episode-level items refreshed via ITvDetailProvider.
+        /// </summary>
+        string? StillPath = null,
+        /// <summary>Vote average from TMDB (season or episode level).</summary>
+        double? VoteAverage = null,
+        /// <summary>Air date string (ISO 8601) for seasons and episodes.</summary>
+        string? AirDate = null,
+        /// <summary>Number of episodes in a season, as reported by TMDB.</summary>
+        int? EpisodeCount = null,
+        /// <summary>Guest star names for this episode.</summary>
+        List<string>? GuestStars = null,
+        /// <summary>Crew names (directors/writers) for this episode.</summary>
+        List<string>? Crew = null
     );
 
     /// <summary>Local file data discovered by the File Scanner plugin.</summary>
     public record FileScannerMetaDto(
         string? FilePath,
         string? LocalPosterPath,
-        string? NfoPosterUrl
+        string? NfoPosterUrl,
+        DateTime? ImportedAt = null
     );
 
     public record RefreshLogDto(

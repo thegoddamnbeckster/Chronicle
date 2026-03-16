@@ -21,17 +21,32 @@ export interface ExternalId {
 
 export interface TmdbMeta {
   rating: number | null
-  genres: string[]
-  cast: string[]
-  directors: string[]
+  genres: string[] | null
+  cast: string[] | null
+  directors: string[] | null
   posterUrl: string | null
   backdropUrl: string | null
+  /** Season poster path from TMDB (e.g. "/abc.jpg"). Full URL: https://image.tmdb.org/t/p/w500{posterPath} */
+  posterPath: string | null
+  /** Episode still/thumbnail path from TMDB (e.g. "/xyz.jpg"). Full URL: https://image.tmdb.org/t/p/w500{stillPath} */
+  stillPath: string | null
+  /** Vote average for season or episode. */
+  voteAverage: number | null
+  /** Air date (ISO 8601 string) for seasons and episodes. */
+  airDate: string | null
+  /** Number of episodes in this season. */
+  episodeCount: number | null
+  /** Guest stars for this episode. */
+  guestStars: string[] | null
+  /** Crew (directors/writers) for this episode. */
+  crew: string[] | null
 }
 
 export interface FileScannerMeta {
   filePath: string | null
   localPosterPath: string | null
   nfoPosterUrl: string | null
+  importedAt: string | null
 }
 
 export interface RefreshLog {
@@ -201,12 +216,14 @@ export interface ScanGroupDto {
   name: string
   hierarchyLevel: number
   year: number | null
+  number: number | null
   posterPath: string | null
   confidenceScore: number      // 0–100
   signalSources: string[]
   hasConflicts: boolean
   children: ScanGroupDto[]
   files: string[]
+  folderPath: string | null
 }
 
 export interface ScanGroupResult {
@@ -219,9 +236,11 @@ export interface ScanGroupResult {
 export interface ImportGroupPayload {
   name: string
   year: number | null
+  number: number | null
   posterPath: string | null
   children: ImportGroupPayload[]
   files: string[]
+  folderPath: string | null
 }
 
 export interface MediaTypeOption {
