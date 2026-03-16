@@ -9,7 +9,7 @@ import PathInput from '@/components/PathInput'
 import ScanGroupCard, { groupToPayload } from './ScanGroupCard'
 import styles from './ScanPage.module.css'
 
-type Step = 'configure' | 'preview' | 'review' | 'done'
+type Step = 'configure' | 'review' | 'done'
 
 export default function ScanPage() {
   // ── Configuration state ──────────────────────────────────────────────────
@@ -48,7 +48,7 @@ export default function ScanPage() {
       setGroupResult(data)
       setRejectedKeys(new Set())
       setError(null)
-      setStep('preview')
+      setStep('review')
     },
     onError: (err: Error) => setError(err.message),
   })
@@ -113,6 +113,7 @@ export default function ScanPage() {
     })
   }
 
+  const selectedCount = (groupResult?.groups.length ?? 0) - rejectedKeys.size
   const canScan = path.trim() !== '' && mediaTypeId !== '' && !previewMut.isPending
 
   function reset() {
@@ -128,14 +129,14 @@ export default function ScanPage() {
     <div className={styles.page}>
       <div className={styles.header}>
         <h1 className={styles.title}>File Scan</h1>
-        {step !== 'configure' && step !== 'done' && (
+        {step === 'review' && (
           <button className={styles.resetBtn} onClick={reset}>Start over</button>
         )}
       </div>
 
       {/* Step indicator */}
       <div className={styles.stepBar}>
-        {(['configure', 'preview', 'review', 'done'] as const).map((s, i) => (
+        {(['configure', 'review', 'done'] as const).map((s, i) => (
           <div key={s} className={`${styles.stepItem} ${step === s ? styles.stepActive : ''} ${isStepDone(step, s) ? styles.stepDone : ''}`}>
             <span className={styles.stepNum}>{i + 1}</span>
             <span className={styles.stepLabel}>{stepLabel(s)}</span>
@@ -218,22 +219,29 @@ export default function ScanPage() {
         </div>
       )}
 
-      {/* ── Step 2: Preview ──────────────────────────────────────────────── */}
-      {step === 'preview' && groupResult && (
+      {/* ── Step 2: Review ───────────────────────────────────────────────── */}
+      {step === 'review' && groupResult && (
         <div className={styles.resultCard}>
           <div className={styles.resultHeader}>
             <h2 className={styles.resultTitle}>
-              Found {groupResult.totalGroups} group{groupResult.totalGroups !== 1 ? 's' : ''}
+              {selectedCount} of {groupResult.groups.length} group{groupResult.groups.length !== 1 ? 's' : ''} selected
               <span className={styles.subtitle}> ({groupResult.totalFiles} files)</span>
             </h2>
             <button
               className={styles.scanBtn}
-              disabled={groupResult.groups.length === 0}
-              onClick={() => setStep('review')}
+              disabled={selectedCount === 0 || importMut.isPending}
+              onClick={() => importMut.mutate()}
             >
-              Review {groupResult.groups.length} groups →
+              {importMut.isPending
+                ? 'Importing…'
+                : `Import ${selectedCount} group${selectedCount !== 1 ? 's' : ''} →`}
             </button>
           </div>
+
+          <p className={styles.reviewHint}>
+            Uncheck any groups you want to skip. Accepted groups and all their children are imported into Chronicle.
+            TMDB metadata enrichment runs automatically in the background.
+          </p>
 
           <div className={styles.groupList}>
             {groupResult.groups.map(g => (
@@ -259,46 +267,7 @@ export default function ScanPage() {
         </div>
       )}
 
-      {/* ── Step 3: Review ───────────────────────────────────────────────── */}
-      {step === 'review' && groupResult && (
-        <div className={styles.resultCard}>
-          <div className={styles.resultHeader}>
-            <h2 className={styles.resultTitle}>
-              {groupResult.groups.length - rejectedKeys.size} of {groupResult.groups.length} groups selected
-            </h2>
-            <div className={styles.headerActions}>
-              <button className={styles.secondaryBtn} onClick={() => setStep('preview')}>
-                ← Back to preview
-              </button>
-              <button
-                className={styles.scanBtn}
-                disabled={(groupResult.groups.length - rejectedKeys.size) === 0 || importMut.isPending}
-                onClick={() => importMut.mutate()}
-              >
-                {importMut.isPending
-                  ? 'Importing…'
-                  : `Import ${groupResult.groups.length - rejectedKeys.size} groups →`}
-              </button>
-            </div>
-          </div>
-          <p className={styles.reviewHint}>
-            Accepting a group imports it and all its children into Chronicle.
-            TMDB metadata enrichment runs automatically in the background.
-          </p>
-          <div className={styles.groupList}>
-            {groupResult.groups.map(g => (
-              <ScanGroupCard
-                key={g.groupKey}
-                group={g}
-                checked={!rejectedKeys.has(g.groupKey)}
-                onToggle={toggleRejected}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Step 4: Done ─────────────────────────────────────────────────── */}
+      {/* ── Step 3: Done ─────────────────────────────────────────────────── */}
       {step === 'done' && importResult && (
         <div className={styles.resultCard}>
           <h2 className={styles.resultTitle}>Import complete</h2>
@@ -333,10 +302,10 @@ export default function ScanPage() {
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 function stepLabel(s: Step): string {
-  return { configure: 'Configure', preview: 'Preview', review: 'Review', done: 'Done' }[s]
+  return { configure: 'Configure', review: 'Review', done: 'Done' }[s]
 }
 
 function isStepDone(current: Step, check: Step): boolean {
-  const order: Step[] = ['configure', 'preview', 'review', 'done']
+  const order: Step[] = ['configure', 'review', 'done']
   return order.indexOf(current) > order.indexOf(check)
 }
