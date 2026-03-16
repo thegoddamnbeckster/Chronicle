@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Chronicle.Data.Migrations
 {
     [DbContext(typeof(ChronicleDbContext))]
-    [Migration("20260315233959_AddUserPreferences")]
-    partial class AddUserPreferences
+    [Migration("20260315235100_AddUserPreferencesJson")]
+    partial class AddUserPreferencesJson
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -591,6 +591,13 @@ namespace Chronicle.Data.Migrations
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferencesJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("preferences_json");
 
                     b.Property<DateTime>("UpdatedAt")
                         .ValueGeneratedOnAdd()
