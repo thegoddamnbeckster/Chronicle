@@ -99,4 +99,6 @@ namespace Chronicle.API.DTOs
         DateTime? StartedAt,
         DateTime? CompletedAt
     );
+
+    public record NuclearResetRequestDto(string ConfirmationToken);
 }
