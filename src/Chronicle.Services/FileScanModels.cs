@@ -114,4 +114,17 @@ namespace Chronicle.Services
         int UserId
     );
 
+    // ── Grouped import (hierarchical scanner) ────────────────────────────────
+
+    public record ImportGroupsRequest(
+        List<ScanGroupImport> Groups,
+        int MediaTypeId);
+
+    public record ScanGroupImport(
+        string Name,
+        int? Year,
+        string? PosterPath,
+        List<ScanGroupImport> Children,
+        List<string> Files);
+
 }
