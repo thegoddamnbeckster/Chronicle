@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useMutation } from '@tanstack/react-query'
 import { loadPresets, savePresets, type LibraryPreset } from '@/pages/library/LibraryPage'
 import {
   loadSortSettings,
@@ -7,6 +8,7 @@ import {
   DEFAULT_SORT_SETTINGS,
   type SortSettings,
 } from '@/utils/sortSettings'
+import { clearScannerData, nuclearReset } from '@/api/library'
 import styles from './LibrarySettingsPage.module.css'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -52,6 +54,28 @@ export default function LibrarySettingsPage() {
 
   // ── Sort settings ────────────────────────────────────────────────────────
   const [sortSettings, setSortSettings] = useState<SortSettings>(loadSortSettings)
+
+  // ── Danger Zone ──────────────────────────────────────────────────────────
+  const [clearConfirm, setClearConfirm] = useState(false)
+  const clearMut = useMutation({
+    mutationFn: clearScannerData,
+    onSuccess: (data) => {
+      setClearConfirm(false)
+      alert(`Done. ${data.deleted} scanner-imported items removed.`)
+    },
+  })
+
+  const [resetConfirm, setResetConfirm] = useState(false)
+  const [resetToken, setResetToken] = useState('')
+  const resetMut = useMutation({
+    mutationFn: () => nuclearReset(resetToken),
+    onSuccess: () => {
+      setResetConfirm(false)
+      setResetToken('')
+      alert('Library has been reset.')
+    },
+    onError: (err: Error) => alert(err.message),
+  })
   const [newArticle, setNewArticle] = useState('')
 
   function updateSortSettings(patch: Partial<SortSettings>) {
@@ -280,6 +304,103 @@ export default function LibrarySettingsPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* ── Danger Zone ──────────────────────────────────────────────────── */}
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h3 className={`${styles.sectionTitle} ${styles.dangerTitle}`}>Danger Zone</h3>
+          <p className={styles.sectionDesc}>
+            These actions are irreversible. Think carefully before proceeding.
+          </p>
+        </div>
+
+        <div className={styles.dangerCard}>
+
+          {/* Clear scanner data */}
+          <div className={styles.dangerRow}>
+            <div className={styles.dangerInfo}>
+              <span className={styles.dangerLabel}>Clear File Scanner Data</span>
+              <span className={styles.dangerDesc}>
+                Removes all media items that were imported via the File Scanner.
+                Use this before re-scanning with the improved hierarchical scanner.
+                Manually-added and metadata-matched items are unaffected.
+              </span>
+            </div>
+            {!clearConfirm ? (
+              <button className={styles.dangerBtnAmber} onClick={() => setClearConfirm(true)}>
+                Clear Scanner Data
+              </button>
+            ) : (
+              <div className={styles.dangerConfirmRow}>
+                <span className={styles.dangerConfirmText}>
+                  This will delete all file-scanner items. Are you sure?
+                </span>
+                <button
+                  className={styles.dangerBtnAmber}
+                  onClick={() => clearMut.mutate()}
+                  disabled={clearMut.isPending}
+                >
+                  {clearMut.isPending ? 'Clearing…' : 'Yes, clear it'}
+                </button>
+                <button className={styles.cancelBtn} onClick={() => setClearConfirm(false)}>
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+
+          <hr className={styles.dangerDivider} />
+
+          {/* Nuclear reset */}
+          <div className={styles.dangerRow}>
+            <div className={styles.dangerInfo}>
+              <span className={styles.dangerLabel}>Reset Entire Library</span>
+              <span className={styles.dangerDesc}>
+                Permanently deletes <strong>everything</strong>: all media items, library entries,
+                scrobble history, ratings, and notes. This cannot be undone.
+                Chronicle will be as if it was freshly installed.
+              </span>
+            </div>
+            {!resetConfirm ? (
+              <button className={styles.dangerBtnRed} onClick={() => setResetConfirm(true)}>
+                Reset Entire Library
+              </button>
+            ) : (
+              <div className={styles.dangerConfirmBox}>
+                <p className={styles.dangerWarning}>
+                  This will permanently delete ALL media items, library entries,
+                  scrobble history, ratings, and notes. There is no undo.
+                </p>
+                <p className={styles.dangerWarning}>
+                  To confirm, type <strong>RESET</strong> in the box below:
+                </p>
+                <input
+                  className={styles.dangerInput}
+                  value={resetToken}
+                  onChange={e => setResetToken(e.target.value)}
+                  placeholder="Type RESET to confirm"
+                  autoFocus
+                />
+                <div className={styles.dangerConfirmActions}>
+                  <button
+                    className={styles.dangerBtnRed}
+                    onClick={() => resetMut.mutate()}
+                    disabled={resetToken !== 'RESET' || resetMut.isPending}
+                  >
+                    {resetMut.isPending ? 'Resetting…' : 'Yes, delete everything'}
+                  </button>
+                  <button
+                    className={styles.cancelBtn}
+                    onClick={() => { setResetConfirm(false); setResetToken('') }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </section>
     </div>
   )
