@@ -26,6 +26,12 @@ public interface IFileScannerPlugin
     /// <summary>Returns the settings schema used to generate the configuration UI.</summary>
     PluginSettingsSchema GetSettingsSchema();
 
+    /// <summary>
+    /// Minimum confidence score (0–100) a grouped result must have to be auto-imported
+    /// by the scheduled scan task. Configured via the plugin settings schema.
+    /// </summary>
+    int ConfidenceThreshold { get; }
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     /// <summary>
