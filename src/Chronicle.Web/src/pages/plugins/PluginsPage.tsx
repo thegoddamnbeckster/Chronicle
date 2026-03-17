@@ -11,6 +11,7 @@ import {
   installFromCatalog,
   getPluginSettingsSchema,
   updatePluginSettings,
+  SettingType,
   type PluginDto,
   type PluginCatalogEntry,
   type PluginSettingsSchema,
@@ -606,7 +607,7 @@ export default function PluginsPage() {
                                   )}
                                 </label>
 
-                                {def.type === 'bool' ? (
+                                {def.type === SettingType.Boolean ? (
                                   <div className={styles.checkboxRow}>
                                     <input
                                       type="checkbox"
@@ -624,7 +625,7 @@ export default function PluginsPage() {
                                       {def.description ?? def.label}
                                     </label>
                                   </div>
-                                ) : def.type === 'secret' ? (
+                                ) : def.type === SettingType.Password ? (
                                   <div className={styles.secretRow}>
                                     <input
                                       type={secretVisible[def.key] ? 'text' : 'password'}
@@ -644,7 +645,7 @@ export default function PluginsPage() {
                                   </div>
                                 ) : (
                                   <input
-                                    type={def.type === 'int' ? 'number' : 'text'}
+                                    type={def.type === SettingType.Number ? 'number' : 'text'}
                                     className={styles.settingsInput}
                                     value={formValues[def.key] ?? ''}
                                     onChange={e => handleFieldChange(def.key, e.target.value)}
@@ -652,7 +653,7 @@ export default function PluginsPage() {
                                   />
                                 )}
 
-                                {def.type !== 'bool' && def.description && (
+                                {def.type !== SettingType.Boolean && def.description && (
                                   <p className={styles.fieldDesc}>{def.description}</p>
                                 )}
 
