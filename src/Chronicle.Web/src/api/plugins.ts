@@ -56,10 +56,26 @@ export async function updatePluginSettings(
   await client.put(`/plugins/${id}/settings`, { settings })
 }
 
+// SettingType enum values as serialised by the .NET API (integer, not string):
+// Text=0, Password=1, Number=2, Boolean=3, Dropdown=4, MultiSelect=5, Url=6, FilePath=7, TextArea=8
+export const SettingType = {
+  Text: 0,
+  Password: 1,
+  Number: 2,
+  Boolean: 3,
+  Dropdown: 4,
+  MultiSelect: 5,
+  Url: 6,
+  FilePath: 7,
+  TextArea: 8,
+} as const
+
+export type SettingTypeValue = (typeof SettingType)[keyof typeof SettingType]
+
 export interface SettingDefinition {
   key: string
   label: string
-  type: 'string' | 'secret' | 'bool' | 'int'
+  type: SettingTypeValue
   required: boolean
   description?: string
   defaultValue?: string
