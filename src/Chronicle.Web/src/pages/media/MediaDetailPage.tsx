@@ -473,6 +473,7 @@ export default function MediaDetailPage() {
                     </div>
                   </div>
                 )}
+
                 {item.tmdbMeta?.cast && item.tmdbMeta.cast.length > 0 && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Cast</span>
