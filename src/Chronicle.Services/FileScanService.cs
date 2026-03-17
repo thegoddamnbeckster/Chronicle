@@ -1619,5 +1619,32 @@ namespace Chronicle.Services
             await _context.SaveChangesAsync(ct); // need the ID for children
             return item;
         }
+
+        // ── Confidence threshold ─────────────────────────────────────────────────
+
+        /// <summary>
+        /// Reads the confidence threshold from the file scanner plugin's stored settings.
+        /// Falls back to the interface default (80) if the setting is absent or malformed.
+        /// </summary>
+        private async Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default)
+        {
+            var plugin = await _context.Plugins
+                .FirstOrDefaultAsync(p => p.PluginId == "chronicle.plugin.filescanner" && p.IsEnabled, ct);
+            if (plugin?.SettingsJson is { } json)
+            {
+                try
+                {
+                    var settings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                    if (settings?.TryGetValue("confidence_threshold", out var raw) == true
+                        && int.TryParse(raw, out var parsed)
+                        && parsed >= 0 && parsed <= 100)
+                        return parsed;
+                }
+                catch { /* ignore malformed JSON */ }
+            }
+            // Fall back to the loaded plugin's default (80 via default interface impl)
+            var scanner = _registry.GetFileScannerPlugins().FirstOrDefault();
+            return scanner?.ConfidenceThreshold ?? 80;
+        }
     }
 }
