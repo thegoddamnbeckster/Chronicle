@@ -10,5 +10,5 @@ public class ScanFolder
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastScannedAt { get; set; }
 
-    public MediaType MediaType { get; set; } = null!;
+    public MediaType? MediaType { get; set; }
 }
