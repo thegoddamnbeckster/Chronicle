@@ -124,14 +124,39 @@ export async function previewGrouped(payload: {
   }
 }
 
+export interface ImportProgressState {
+  isRunning: boolean
+  isComplete: boolean
+  total: number
+  processed: number
+  currentItemName: string | null
+  error: string | null
+  result: ImportSummary | null
+}
+
 export async function importGroups(payload: {
   groups: ImportGroupPayload[]
   mediaTypeId: number
-}): Promise<ImportSummary> {
-  const { data } = await client.post<ApiResponse<ImportSummary>>(
+}): Promise<{ started: boolean }> {
+  const { data } = await client.post<ApiResponse<{ started: boolean }>>(
     '/scan/import-groups', payload)
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Import failed')
   return data.data
+}
+
+export async function getImportProgress(): Promise<ImportProgressState> {
+  const { data } = await client.get<ApiResponse<ImportProgressState>>('/scan/import-progress')
+  return (
+    data.data ?? {
+      isRunning: false,
+      isComplete: false,
+      total: 0,
+      processed: 0,
+      currentItemName: null,
+      error: null,
+      result: null,
+    }
+  )
 }
 
 export async function searchMetadata(

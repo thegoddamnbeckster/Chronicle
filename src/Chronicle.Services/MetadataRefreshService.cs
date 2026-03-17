@@ -1,7 +1,9 @@
 using System.Reflection;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Plugins;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -113,6 +115,16 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
         MediaItem item,
         CancellationToken ct)
     {
+        // ── Child items (Season, Episode, Track, etc.) ─────────────────────────
+        // Never independently match child items to TMDB by their generic names
+        // (e.g. "Season 01" would match random shows). Walk up to the root item
+        // and inherit its TMDB context instead.
+        if (item.HierarchyLevel > 0)
+        {
+            await RefreshChildFromRootCoreAsync(db, registry, item, ct);
+            return;
+        }
+
         var providers          = registry.GetMetadataProviders();
         var mediaTypeName      = item.MediaType?.Name ?? string.Empty;
         var normalizedTypeName = ToMediaTypeHint(mediaTypeName);
@@ -236,6 +248,270 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
         await db.SaveChangesAsync(ct);
     }
 
+    // ── Child refresh ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Refreshes a child item (Season, Episode, Track, etc.) by walking up to the root
+    /// and using the root show's TMDB series ID to call per-season / per-episode APIs.
+    /// Falls back to inheriting show-level metadata if season/episode numbers cannot be parsed.
+    /// </summary>
+    private async Task RefreshChildFromRootCoreAsync(
+        ChronicleDbContext db,
+        IPluginRegistry registry,
+        MediaItem item,
+        CancellationToken ct)
+    {
+        var provider = registry.GetMetadataProviders().FirstOrDefault();
+        var log = new MediaItemRefreshLog
+        {
+            MediaItemId  = item.Id,
+            ProviderName = provider?.Name ?? "tmdb",
+            RefreshedAt  = DateTime.UtcNow,
+            Succeeded    = false
+        };
+
+        try
+        {
+            // Clear any stale TMDB IDs that old code may have written directly onto a child item
+            // (but only format-agnostic ones — structured IDs like "tv:1:s1" or "tv:1:s1:e2"
+            // are intentionally stored here and should not be wiped).
+            var staleIds = item.ExternalIds
+                .Where(e => e.Source == "tmdb"
+                         && e.ExternalId != "__suppress__"
+                         && !e.ExternalId.Contains(":s"))   // keep structured season/episode IDs
+                .ToList();
+            if (staleIds.Count > 0)
+            {
+                db.MediaExternalIds.RemoveRange(staleIds);
+                foreach (var s in staleIds) item.ExternalIds.Remove(s);
+                _log.Information("RefreshChild: cleared {Count} stale TMDB ID(s) from child {Id}", staleIds.Count, item.Id);
+            }
+
+            // Walk parent chain to find root item and direct parent
+            var currentId = item.ParentId;
+            MediaItem? root = null;
+            MediaItem? directParent = null;
+            while (currentId != null)
+            {
+                var candidate = await db.MediaItems
+                    .Include(m => m.ExternalIds)
+                    .FirstOrDefaultAsync(m => m.Id == currentId, ct);
+                if (candidate is null) break;
+                if (directParent is null) directParent = candidate;
+                if (candidate.ParentId is null) { root = candidate; break; }
+                currentId = candidate.ParentId;
+            }
+
+            if (root is null)
+            {
+                log.ErrorMessage = "No root item found in parent chain";
+                _log.Warning("RefreshChild: no root found for child {Id}", item.Id);
+                // fall through to save the failed log entry
+            }
+            else
+            {
+                var rootExtId = root.ExternalIds
+                    .FirstOrDefault(e => e.Source == "tmdb" && e.ExternalId != "__suppress__")
+                    ?.ExternalId;
+
+                if (rootExtId is null)
+                {
+                    log.ErrorMessage = "Parent show has no TMDB match — refresh the parent first";
+                    _log.Information("RefreshChild: root {RootId} has no TMDB ID, skipping child {Id}", root.Id, item.Id);
+                    // fall through to save the failed log entry
+                }
+                else if (provider is null)
+                {
+                    log.ErrorMessage = "No metadata provider available";
+                    // fall through to save the failed log entry
+                }
+                else
+                {
+                    await RefreshChildWithProviderAsync(db, provider, item, root, directParent, rootExtId, log, ct);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            log.ErrorMessage = ex.Message;
+            _log.Warning(ex, "RefreshChild failed for item {Id}", item.Id);
+        }
+        finally
+        {
+            db.MediaItemRefreshLogs.Add(log);
+        }
+
+        var stillExists = await db.MediaItems.AnyAsync(m => m.Id == item.Id, ct);
+        if (!stillExists) { db.ChangeTracker.Clear(); return; }
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Inner worker: given a confirmed provider and root external ID, fetches season/episode
+    /// data or falls back to inheriting the show's metadata.  Does not call SaveChangesAsync.
+    /// </summary>
+    private async Task RefreshChildWithProviderAsync(
+        ChronicleDbContext db,
+        Chronicle.Plugins.IMetadataProvider provider,
+        MediaItem item,
+        MediaItem root,
+        MediaItem? directParent,
+        string rootExtId,
+        MediaItemRefreshLog log,
+        CancellationToken ct)
+    {
+        // Parse TMDB series ID from root external ID (e.g. "tv:1267" → 1267)
+        if (!TryParseSeriesId(rootExtId, out var seriesId))
+        {
+            _log.Warning("RefreshChild: cannot parse series ID from '{ExtId}' for child {Id} — falling back to show-level data", rootExtId, item.Id);
+            await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+            return;
+        }
+
+        var tvProvider = provider as ITvDetailProvider;
+
+        // ── Season (HierarchyLevel == 1) ──────────────────────────────────────
+        if (item.HierarchyLevel == 1)
+        {
+            if (tvProvider is null)
+            {
+                _log.Information("RefreshChild: provider {P} does not implement ITvDetailProvider; inheriting show data for season {Id}", provider.Name, item.Id);
+                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                return;
+            }
+
+            if (!TryParseSeasonNumber(item.Name, item.Number, out var seasonNumber))
+            {
+                _log.Warning("RefreshChild: cannot parse season number from '{Name}' (item {Id}) — falling back to show data", item.Name, item.Id);
+                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                return;
+            }
+
+            // Brief delay to respect TMDB's 40 req/10s rate limit
+            await Task.Delay(250, ct);
+
+            var season = await tvProvider.GetTvSeasonAsync(seriesId, seasonNumber, ct);
+            if (season is null)
+            {
+                _log.Information("RefreshChild: TMDB returned no data for series {SId} season {SN}; inheriting show data for item {Id}", seriesId, seasonNumber, item.Id);
+                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                return;
+            }
+
+            // Apply season-specific fields
+            if (!string.IsNullOrWhiteSpace(season.Overview)) item.Overview = season.Overview;
+            if (season.AirDate?.Length >= 4 && int.TryParse(season.AirDate[..4], out var sy)) item.Year = sy;
+
+            // Poster: use season-specific poster path to build full URL
+            if (!string.IsNullOrEmpty(season.PosterPath))
+                item.PosterUrl = $"https://image.tmdb.org/t/p/w500{season.PosterPath}";
+
+            item.MetadataJson = MergeSeasonMetadataJson(item.MetadataJson, season);
+            item.UpdatedAt    = DateTime.UtcNow;
+
+            // Store structured external ID (will be saved by caller's SaveChangesAsync)
+            await UpsertExternalIdAsync(db, item.Id, "tmdb", $"tv:{seriesId}:s{seasonNumber}", ct);
+
+            log.Succeeded = true;
+            _log.Information("RefreshChild: updated season {Id} ({Name}) — series {SId} s{SN}", item.Id, item.Name, seriesId, seasonNumber);
+            return;
+        }
+
+        // ── Episode (HierarchyLevel == 2) ─────────────────────────────────────
+        if (item.HierarchyLevel == 2)
+        {
+            if (tvProvider is null)
+            {
+                _log.Information("RefreshChild: provider {P} does not implement ITvDetailProvider; inheriting show data for episode {Id}", provider.Name, item.Id);
+                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                return;
+            }
+
+            // The direct parent of an episode is a season
+            if (!TryParseSeasonNumber(directParent?.Name, directParent?.Number, out var seasonNumber))
+            {
+                _log.Warning("RefreshChild: cannot parse season number from parent '{Name}' for episode {Id} — falling back", directParent?.Name, item.Id);
+                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                return;
+            }
+
+            int? episodeNumber = await ResolveEpisodeNumberAsync(db, item, ct);
+            if (episodeNumber is null)
+            {
+                _log.Warning("RefreshChild: cannot determine episode number for item {Id} '{Name}' — falling back", item.Id, item.Name);
+                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                return;
+            }
+
+            // Brief delay to respect TMDB rate limit
+            await Task.Delay(250, ct);
+
+            var episode = await tvProvider.GetTvEpisodeAsync(seriesId, seasonNumber, episodeNumber.Value, ct);
+            if (episode is null)
+            {
+                _log.Information("RefreshChild: TMDB returned no data for series {SId} s{SN}e{EN}; inheriting show data for item {Id}", seriesId, seasonNumber, episodeNumber, item.Id);
+                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                return;
+            }
+
+            // Update name only if the current name is a generic placeholder (e.g. "Episode 01", "E01")
+            if (!string.IsNullOrWhiteSpace(episode.Name) && IsGenericEpisodeName(item.Name))
+                item.Name = episode.Name;
+
+            if (!string.IsNullOrWhiteSpace(episode.Overview)) item.Overview = episode.Overview;
+            if (episode.AirDate?.Length >= 4 && int.TryParse(episode.AirDate[..4], out var ey)) item.Year = ey;
+            if (episode.RuntimeMinutes.HasValue) item.RuntimeMinutes = episode.RuntimeMinutes;
+
+            item.MetadataJson = MergeEpisodeMetadataJson(item.MetadataJson, episode);
+            item.UpdatedAt    = DateTime.UtcNow;
+
+            // Store structured external ID (will be saved by caller's SaveChangesAsync)
+            await UpsertExternalIdAsync(db, item.Id, "tmdb", $"tv:{seriesId}:s{seasonNumber}:e{episodeNumber}", ct);
+
+            log.Succeeded = true;
+            _log.Information("RefreshChild: updated episode {Id} ({Name}) — series {SId} s{SN}e{EN}", item.Id, item.Name, seriesId, seasonNumber, episodeNumber);
+            return;
+        }
+
+        // ── Deeper levels or non-TV children: inherit show data ───────────────
+        await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+    }
+
+    /// <summary>
+    /// Applies show-level metadata to a child item as a fallback.
+    /// Inherits poster and MetadataJson from the root show.
+    /// Does NOT call SaveChangesAsync — callers are responsible for saving.
+    /// </summary>
+    private async Task ApplyShowInheritanceAsync(
+        ChronicleDbContext db,
+        Chronicle.Plugins.IMetadataProvider provider,
+        MediaItem item,
+        MediaItem root,
+        string rootExtId,
+        MediaItemRefreshLog log,
+        CancellationToken ct)
+    {
+        var meta = await provider.GetByIdAsync(rootExtId, ct);
+
+        // Inherit poster from parent show if child has none
+        if (string.IsNullOrEmpty(item.PosterUrl) && !string.IsNullOrEmpty(meta.PosterUrl))
+            item.PosterUrl = meta.PosterUrl;
+
+        // Merge parent show's rich metadata (genres, cast, rating) into child's MetadataJson
+        // without touching item.Name, item.Year, or item.Overview — those belong to the child.
+        item.MetadataJson = MergeMetadataJson(item.MetadataJson, provider.PluginId, meta);
+        item.UpdatedAt    = DateTime.UtcNow;
+        log.Succeeded     = true;
+
+        _log.Information("RefreshChild: inherited show data for {Id} ({Name}) from root {RootId} ({ExtId})",
+            item.Id, item.Name, root.Id, rootExtId);
+
+        // Persist immediately so that the item.UpdatedAt and MetadataJson changes are durable
+        // even if the outer SaveChangesAsync in RefreshChildFromRootCoreAsync hasn't run yet.
+        // (The log entry is added by the caller's finally block; we save it there.)
+        await db.SaveChangesAsync(ct);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static async Task UpsertExternalIdAsync(
@@ -262,19 +538,7 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
     private static string MergeMetadataJson(
         string? existingJson, string pluginId, Chronicle.Plugins.Models.MediaMetadata meta)
     {
-        var root = new Dictionary<string, object?>();
-
-        if (!string.IsNullOrEmpty(existingJson))
-        {
-            try
-            {
-                var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(existingJson);
-                if (parsed is not null)
-                    foreach (var kv in parsed)
-                        root[kv.Key] = kv.Value;
-            }
-            catch { /* discard unparseable JSON */ }
-        }
+        var root = ParseExistingMetaJson(existingJson);
 
         // Derive short namespace key from plugin ID suffix (e.g. "chronicle.plugin.tmdb" → "tmdb")
         var ns = pluginId.Contains('.') ? pluginId.Split('.').Last() : pluginId;
@@ -291,6 +555,141 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
         };
 
         return JsonSerializer.Serialize(root);
+    }
+
+    // ── Season/episode number parsing ─────────────────────────────────────────
+
+    // Matches "Season 01", "Season 1", "Season 0", "season 02" etc.
+    private static readonly Regex _seasonRegex =
+        new(@"\bSeason\s*0*(\d+)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Matches leading episode numbers: "E01", "E1", "01", "1", "01 - Title", etc.
+    private static readonly Regex _episodeLeadingRegex =
+        new(@"^[Ee]?0*(\d+)\b", RegexOptions.Compiled);
+
+    private static bool TryParseSeriesId(string rootExtId, out int seriesId)
+    {
+        // Format: "tv:1267"
+        seriesId = 0;
+        var parts = rootExtId.Split(':');
+        return parts.Length >= 2 && int.TryParse(parts[1], out seriesId);
+    }
+
+    private static bool TryParseSeasonNumber(string? name, int? numberField, out int seasonNumber)
+    {
+        seasonNumber = 0;
+
+        // 1. Try the Number field on the item (most reliable when set by scanner)
+        if (numberField.HasValue)
+        {
+            seasonNumber = numberField.Value;
+            return true;
+        }
+
+        // 2. Parse from name using regex
+        if (name is not null)
+        {
+            var m = _seasonRegex.Match(name);
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var parsed))
+            {
+                seasonNumber = parsed;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<int?> ResolveEpisodeNumberAsync(
+        ChronicleDbContext db, MediaItem item, CancellationToken ct)
+    {
+        // 1. Use the Number field if set
+        if (item.Number.HasValue) return item.Number.Value;
+
+        // 2. Try to parse from name
+        var m = _episodeLeadingRegex.Match(item.Name.Trim());
+        if (m.Success && int.TryParse(m.Groups[1].Value, out var parsed))
+            return parsed;
+
+        // 3. Fall back to position among siblings (sort by Name, 1-based index)
+        if (item.ParentId is null) return null;
+
+        var siblings = await db.MediaItems
+            .Where(i => i.ParentId == item.ParentId)
+            .OrderBy(i => i.Name)
+            .Select(i => i.Id)
+            .ToListAsync(ct);
+
+        var idx = siblings.IndexOf(item.Id);
+        if (idx >= 0) return idx + 1;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if the episode name looks like a generic placeholder
+    /// (e.g. "Episode 01", "E01", "01", "1") that should be replaced with the
+    /// actual TMDB title.
+    /// </summary>
+    private static readonly Regex _genericEpisodeNameRegex =
+        new(@"^(Episode\s*\d+|[Ee]\d+|\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static bool IsGenericEpisodeName(string name) =>
+        _genericEpisodeNameRegex.IsMatch(name.Trim());
+
+    // ── Season/episode MetadataJson merge ─────────────────────────────────────
+
+    private static string MergeSeasonMetadataJson(string? existingJson, TvSeasonDetail season)
+    {
+        var root = ParseExistingMetaJson(existingJson);
+
+        root["tmdb"] = new
+        {
+            seasonId     = season.SeasonId,
+            posterPath   = season.PosterPath,
+            airDate      = season.AirDate,
+            episodeCount = season.EpisodeCount,
+            overview     = season.Overview,
+            voteAverage  = season.VoteAverage
+        };
+
+        return JsonSerializer.Serialize(root);
+    }
+
+    private static string MergeEpisodeMetadataJson(string? existingJson, TvEpisodeDetail episode)
+    {
+        var root = ParseExistingMetaJson(existingJson);
+
+        root["tmdb"] = new
+        {
+            seasonNumber  = episode.SeasonNumber,
+            episodeNumber = episode.EpisodeNumber,
+            stillPath     = episode.StillPath,
+            airDate       = episode.AirDate,
+            overview      = episode.Overview,
+            voteAverage   = episode.VoteAverage,
+            guestStars    = episode.GuestStars,
+            crew          = episode.Crew
+        };
+
+        return JsonSerializer.Serialize(root);
+    }
+
+    private static Dictionary<string, object?> ParseExistingMetaJson(string? json)
+    {
+        var root = new Dictionary<string, object?>();
+        if (!string.IsNullOrEmpty(json))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+                if (parsed is not null)
+                    foreach (var kv in parsed)
+                        root[kv.Key] = kv.Value;
+            }
+            catch { /* discard unparseable JSON */ }
+        }
+        return root;
     }
 
     private static string ToMediaTypeHint(string mediaTypeName) =>
