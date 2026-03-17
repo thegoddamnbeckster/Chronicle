@@ -14,13 +14,15 @@ public class FileScanController : ControllerBase
     private readonly IFileScanService _scanService;
     private readonly ScanProgressService _progress;
     private readonly ImportProgressService _importProgress;
+    private readonly IScanFolderService _scanFolderService;
 
     public FileScanController(IFileScanService scanService, ScanProgressService progress,
-        ImportProgressService importProgress)
+        ImportProgressService importProgress, IScanFolderService scanFolderService)
     {
         _scanService = scanService;
         _progress = progress;
         _importProgress = importProgress;
+        _scanFolderService = scanFolderService;
     }
 
     /// <summary>
@@ -33,6 +35,18 @@ public class FileScanController : ControllerBase
     {
         var (available, names) = await _scanService.GetStatusAsync();
         return Ok(ApiResponse<FileScanStatusDto>.Ok(new FileScanStatusDto(available, names)));
+    }
+
+    /// <summary>
+    /// Validates that the given path exists and is accessible by Chronicle.
+    /// Returns {valid: true} if the path is usable, or {valid: false, error: "..."} otherwise.
+    /// </summary>
+    [HttpPost("validate-path")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ValidatePath([FromBody] ValidatePathDto dto, CancellationToken ct)
+    {
+        var result = await _scanFolderService.ValidatePathAsync(dto.Path, ct);
+        return Ok(ApiResponse<PathValidationResultDto>.Ok(new(result.Valid, result.Error)));
     }
 
     /// <summary>

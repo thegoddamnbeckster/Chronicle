@@ -67,8 +67,12 @@ namespace Chronicle.Services
             if (scanner is null)
                 throw new InvalidOperationException($"No file scanner plugin supports media type '{mediaType.Name}'.");
 
+            var threshold = request.ConfidenceThreshold == 80
+                ? await GetConfidenceThresholdAsync(ct)
+                : request.ConfidenceThreshold;
+
             _log.Information("Starting file scan of {Path} (recursive={Recursive}, threshold={Threshold}, mediaType={MediaType})",
-                request.Path, request.Recursive, request.ConfidenceThreshold, mediaType.Name);
+                request.Path, request.Recursive, threshold, mediaType.Name);
 
             var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
 
@@ -81,7 +85,7 @@ namespace Chronicle.Services
                 ct.ThrowIfCancellationRequested();
 
                 // Below threshold — report but don't add
-                if (file.ConfidenceScore < request.ConfidenceThreshold)
+                if (file.ConfidenceScore < threshold)
                 {
                     skippedFiles.Add(new SkippedFile(file.FilePath, file.ParsedTitle, file.ConfidenceScore));
                     continue;
@@ -1626,7 +1630,7 @@ namespace Chronicle.Services
         /// Reads the confidence threshold from the file scanner plugin's stored settings.
         /// Falls back to the interface default (80) if the setting is absent or malformed.
         /// </summary>
-        private async Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default)
+        public async Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default)
         {
             var plugin = await _context.Plugins
                 .FirstOrDefaultAsync(p => p.PluginId == "chronicle.plugin.filescanner" && p.IsEnabled, ct);
