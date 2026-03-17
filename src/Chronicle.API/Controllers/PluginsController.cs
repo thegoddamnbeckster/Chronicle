@@ -334,23 +334,6 @@ public class PluginsController : ControllerBase
         if (loaded.FileScannerPlugins.Count > 0)
         {
             var schema = loaded.FileScannerPlugins[0].GetSettingsSchema();
-
-            // Inject confidence_threshold into the file scanner plugin schema when the
-            // compiled DLL doesn't declare it (the DLL can't be recompiled to add it).
-            if (plugin.PluginId == "chronicle.plugin.filescanner"
-                && !schema.Settings.Any(s => s.Key == "confidence_threshold"))
-            {
-                schema.Settings.Add(new SettingDefinition
-                {
-                    Key          = "confidence_threshold",
-                    Label        = "Confidence threshold",
-                    Description  = "Minimum confidence score (0–100) a scan group must reach to be auto-imported by the scheduled scan. Groups below this score are visible in the manual scan UI but skipped by the background task.",
-                    Type         = SettingType.Number,
-                    Required     = false,
-                    DefaultValue = "80",
-                });
-            }
-
             return Ok(ApiResponse<object>.Ok(schema));
         }
 
