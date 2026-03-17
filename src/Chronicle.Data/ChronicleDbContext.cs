@@ -24,6 +24,7 @@ namespace Chronicle.Data
         public DbSet<AppSetting> AppSettings => Set<AppSetting>();
         public DbSet<MediaItemRefreshLog> MediaItemRefreshLogs => Set<MediaItemRefreshLog>();
         public DbSet<BackgroundTask> BackgroundTasks => Set<BackgroundTask>();
+        public DbSet<ScanFolder> ScanFolders => Set<ScanFolder>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -272,6 +273,17 @@ namespace Chronicle.Data
                 e.Property(t => t.DisplayName).IsRequired();
                 e.Property(t => t.Description).IsRequired();
                 e.Property(t => t.CronExpression).IsRequired();
+            });
+
+            modelBuilder.Entity<ScanFolder>(e =>
+            {
+                e.ToTable("scan_folders");
+                e.HasKey(f => f.Id);
+                e.Property(f => f.Path).IsRequired().HasMaxLength(1000);
+                e.HasOne(f => f.MediaType)
+                 .WithMany()
+                 .HasForeignKey(f => f.MediaTypeId)
+                 .OnDelete(DeleteBehavior.Restrict);
             });
 
             modelBuilder.Entity<DeviceAuthCode>(entity =>
