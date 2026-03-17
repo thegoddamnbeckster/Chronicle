@@ -67,6 +67,12 @@ namespace Chronicle.Services
         Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(string externalId, int mediaTypeId, int userId, CancellationToken ct = default);
 
         /// <summary>
+        /// Returns the confidence threshold from the DB (scan.confidence_threshold app setting),
+        /// falling back to 80 if the setting is not present or cannot be parsed.
+        /// </summary>
+        Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default);
+
+        /// <summary>
         /// Re-identifies an existing MediaItem using a user-supplied TMDB reference.
         /// <paramref name="input"/> may be a bare numeric ID (assumed movie), a typed ID
         /// ("movie:1159831", "tv:1396"), or a full TMDB URL
