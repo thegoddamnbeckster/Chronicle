@@ -280,6 +280,7 @@ namespace Chronicle.Data
                 e.ToTable("scan_folders");
                 e.HasKey(f => f.Id);
                 e.Property(f => f.Path).IsRequired().HasMaxLength(1000);
+                e.Property(f => f.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
                 e.HasOne(f => f.MediaType)
                  .WithMany()
                  .HasForeignKey(f => f.MediaTypeId)
