@@ -15,15 +15,18 @@ namespace Chronicle.Services
         private readonly ChronicleDbContext _context;
         private readonly IPluginRegistry _registry;
         private readonly ScanProgressService _progress;
+        private readonly ImportProgressService _importProgress;
         private readonly IScanGroupingService _groupingService;
         private readonly ILogger _log = Log.ForContext<FileScanService>();
 
         public FileScanService(ChronicleDbContext context, IPluginRegistry registry,
-            ScanProgressService progress, IScanGroupingService groupingService)
+            ScanProgressService progress, ImportProgressService importProgress,
+            IScanGroupingService groupingService)
         {
             _context = context;
             _registry = registry;
             _progress = progress;
+            _importProgress = importProgress;
             _groupingService = groupingService;
         }
 
@@ -63,8 +66,12 @@ namespace Chronicle.Services
             if (scanner is null)
                 throw new InvalidOperationException($"No file scanner plugin supports media type '{mediaType.Name}'.");
 
+            var threshold = request.ConfidenceThreshold == 80
+                ? await GetConfidenceThresholdAsync(ct)
+                : request.ConfidenceThreshold;
+
             _log.Information("Starting file scan of {Path} (recursive={Recursive}, threshold={Threshold}, mediaType={MediaType})",
-                request.Path, request.Recursive, request.ConfidenceThreshold, mediaType.Name);
+                request.Path, request.Recursive, threshold, mediaType.Name);
 
             var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
 
@@ -77,7 +84,7 @@ namespace Chronicle.Services
                 ct.ThrowIfCancellationRequested();
 
                 // Below threshold — report but don't add
-                if (file.ConfidenceScore < request.ConfidenceThreshold)
+                if (file.ConfidenceScore < threshold)
                 {
                     skippedFiles.Add(new SkippedFile(file.FilePath, file.ParsedTitle, file.ConfidenceScore));
                     continue;
@@ -1340,10 +1347,15 @@ namespace Chronicle.Services
 
             int imported = 0, failed = 0, duplicates = 0;
             var failures = new List<string>();
+            int processed = 0;
+            int total = request.Groups.Count;
+
+            _importProgress.Start(total);
 
             foreach (var rootGroup in request.Groups)
             {
                 ct.ThrowIfCancellationRequested();
+                _importProgress.Update(processed, total, rootGroup.Name);
                 try
                 {
                     var rootItem = await UpsertGroupItemAsync(
@@ -1386,9 +1398,21 @@ namespace Chronicle.Services
                     failures.Add($"{rootGroup.Name}: {ex.Message}");
                     _log.Warning(ex, "Failed to import group '{Name}'", rootGroup.Name);
                 }
+                finally
+                {
+                    processed++;
+                }
             }
 
-            return new ImportApprovedSummary(imported, failed, failures, duplicates);
+            var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
+            _importProgress.Complete(new ImportProgressResult
+            {
+                Imported   = summary.Imported,
+                Failed     = summary.Failed,
+                Failures   = summary.Failures,
+                Duplicates = summary.Duplicates,
+            });
+            return summary;
         }
 
         private async Task PersistChildGroupsAsync(
@@ -1402,6 +1426,14 @@ namespace Chronicle.Services
                     await PersistChildGroupsAsync(child.Children, mediaTypeId,
                         item.Id, hierarchyLevel + 1, ct);
             }
+        }
+
+        public async Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default)
+        {
+            var setting = await _context.AppSettings.FindAsync(["scan.confidence_threshold"], ct);
+            if (setting is not null && int.TryParse(setting.Value, out var stored))
+                return stored;
+            return 80;
         }
 
         private async Task<MediaItem> UpsertGroupItemAsync(

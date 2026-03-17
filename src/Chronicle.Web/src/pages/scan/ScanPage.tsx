@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { getScanStatus, getScanProgress, previewGrouped, importGroups } from '@/api/scan'
-import type { ScanProgress } from '@/api/scan'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { getScanStatus, getScanProgress, previewGrouped, importGroups, getImportProgress } from '@/api/scan'
+import type { ScanProgress, ImportProgressState } from '@/api/scan'
 import { getMediaTypes } from '@/api/media'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
 import type { ScanGroupResult, MediaTypeOption } from '@/types'
@@ -28,6 +28,11 @@ export default function ScanPage() {
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // ── Import progress (polled after import-groups returns 202) ─────────────
+  const [importProgress, setImportProgress] = useState<ImportProgressState | null>(null)
+  const importPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const queryClient = useQueryClient()
   const { addJob, completeJob, failJob } = useBackgroundActivity()
 
   // ── Queries ──────────────────────────────────────────────────────────────
@@ -64,12 +69,38 @@ export default function ScanPage() {
     },
     onMutate: () => {
       const count = groupResult?.groups.filter(g => !rejectedKeys.has(g.groupKey)).length ?? 0
+      setImportProgress(null)
       return addJob(`Importing ${count} groups…`)
     },
-    onSuccess: (data, _vars, jobId) => {
-      setImportResult({ imported: data.imported, failed: data.failed, duplicates: data.duplicates })
-      setStep('done')
-      completeJob(jobId as string, `${data.imported} imported`)
+    onSuccess: (_data, _vars, jobId) => {
+      // API returned 202 — start polling import-progress
+      importPollRef.current = setInterval(async () => {
+        try {
+          const p = await getImportProgress()
+          setImportProgress(p)
+          if (p.isComplete) {
+            clearInterval(importPollRef.current!)
+            importPollRef.current = null
+            if (p.error) {
+              setError(p.error)
+              failJob(jobId as string, p.error)
+            } else if (p.result) {
+              setImportResult({
+                imported: p.result.imported,
+                failed: p.result.failed,
+                duplicates: p.result.duplicates,
+              })
+              setStep('done')
+              completeJob(jobId as string, `${p.result.imported} imported`)
+              // Invalidate library/media caches so the library page refreshes
+              void queryClient.invalidateQueries({ queryKey: ['library'] })
+              void queryClient.invalidateQueries({ queryKey: ['media'] })
+            }
+          }
+        } catch {
+          // ignore transient polling errors
+        }
+      }, 500)
     },
     onError: (err: Error, _vars, jobId) => {
       setError(err.message)
@@ -104,6 +135,16 @@ export default function ScanPage() {
     }
   }, [previewMut.isPending])
 
+  // ── Cleanup import poll on unmount ──────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (importPollRef.current) {
+        clearInterval(importPollRef.current)
+        importPollRef.current = null
+      }
+    }
+  }, [])
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   const toggleRejected = (key: string) => {
     setRejectedKeys(prev => {
@@ -116,10 +157,15 @@ export default function ScanPage() {
   const canScan = path.trim() !== '' && mediaTypeId !== '' && !previewMut.isPending
 
   function reset() {
+    if (importPollRef.current) {
+      clearInterval(importPollRef.current)
+      importPollRef.current = null
+    }
     setStep('configure')
     setGroupResult(null)
     setRejectedKeys(new Set())
     setImportResult(null)
+    setImportProgress(null)
     setError(null)
   }
 
@@ -267,16 +313,24 @@ export default function ScanPage() {
               {groupResult.groups.length - rejectedKeys.size} of {groupResult.groups.length} groups selected
             </h2>
             <div className={styles.headerActions}>
-              <button className={styles.secondaryBtn} onClick={() => setStep('preview')}>
+              <button
+                className={styles.secondaryBtn}
+                disabled={importMut.isPending || (importProgress?.isRunning ?? false)}
+                onClick={() => setStep('preview')}
+              >
                 ← Back to preview
               </button>
               <button
                 className={styles.scanBtn}
-                disabled={(groupResult.groups.length - rejectedKeys.size) === 0 || importMut.isPending}
+                disabled={
+                  (groupResult.groups.length - rejectedKeys.size) === 0 ||
+                  importMut.isPending ||
+                  (importProgress?.isRunning ?? false)
+                }
                 onClick={() => importMut.mutate()}
               >
-                {importMut.isPending
-                  ? 'Importing…'
+                {importMut.isPending || importProgress?.isRunning
+                  ? 'Starting…'
                   : `Import ${groupResult.groups.length - rejectedKeys.size} groups →`}
               </button>
             </div>
@@ -285,6 +339,34 @@ export default function ScanPage() {
             Accepting a group imports it and all its children into Chronicle.
             TMDB metadata enrichment runs automatically in the background.
           </p>
+
+          {/* ── Import progress bar ─────────────────────────────────────── */}
+          {importProgress?.isRunning && (
+            <div className={styles.importProgressPanel}>
+              <div className={styles.importProgressHeader}>
+                <span className={styles.progressSpinner} />
+                <span className={styles.importProgressLabel}>
+                  Importing {importProgress.processed} of {importProgress.total} group{importProgress.total !== 1 ? 's' : ''}…
+                </span>
+              </div>
+              <div className={styles.importProgressTrack}>
+                <div
+                  className={styles.importProgressFill}
+                  style={{
+                    width: importProgress.total > 0
+                      ? `${Math.round((importProgress.processed / importProgress.total) * 100)}%`
+                      : '0%',
+                  }}
+                />
+              </div>
+              {importProgress.currentItemName && (
+                <div className={styles.importProgressItem} title={importProgress.currentItemName}>
+                  {importProgress.currentItemName}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className={styles.groupList}>
             {groupResult.groups.map(g => (
               <ScanGroupCard

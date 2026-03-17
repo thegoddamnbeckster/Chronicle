@@ -330,14 +330,32 @@ export default function MediaDetailPage() {
               )}
 
               <div className={styles.tmdbGrid}>
-                {item.tmdbMeta?.rating != null && (
+                {/* Rating — show-level OR season/episode vote average */}
+                {(item.tmdbMeta?.rating != null || item.tmdbMeta?.voteAverage != null) && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Rating</span>
                     <span className={styles.tmdbValue}>
-                      {item.tmdbMeta.rating.toFixed(1)}&thinsp;/&thinsp;10
+                      {((item.tmdbMeta?.rating ?? item.tmdbMeta?.voteAverage) as number).toFixed(1)}&thinsp;/&thinsp;10
                     </span>
                   </div>
                 )}
+
+                {/* Air date (seasons and episodes) */}
+                {item.tmdbMeta?.airDate && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Air Date</span>
+                    <span className={styles.tmdbValue}>{item.tmdbMeta.airDate}</span>
+                  </div>
+                )}
+
+                {/* Episode count (seasons) */}
+                {item.tmdbMeta?.episodeCount != null && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Episodes</span>
+                    <span className={styles.tmdbValue}>{item.tmdbMeta.episodeCount}</span>
+                  </div>
+                )}
+
                 {item.tmdbMeta?.directors && item.tmdbMeta.directors.length > 0 && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>
@@ -348,6 +366,15 @@ export default function MediaDetailPage() {
                     </span>
                   </div>
                 )}
+
+                {/* Episode crew (directors/writers) */}
+                {item.tmdbMeta?.crew && item.tmdbMeta.crew.length > 0 && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Crew</span>
+                    <span className={styles.tmdbValue}>{item.tmdbMeta.crew.join(', ')}</span>
+                  </div>
+                )}
+
                 {item.tmdbMeta?.genres && item.tmdbMeta.genres.length > 0 && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Genres</span>
@@ -358,6 +385,7 @@ export default function MediaDetailPage() {
                     </div>
                   </div>
                 )}
+
                 {item.tmdbMeta?.cast && item.tmdbMeta.cast.length > 0 && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Cast</span>
@@ -366,6 +394,17 @@ export default function MediaDetailPage() {
                     </span>
                   </div>
                 )}
+
+                {/* Episode guest stars */}
+                {item.tmdbMeta?.guestStars && item.tmdbMeta.guestStars.length > 0 && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Guest Stars</span>
+                    <span className={styles.tmdbValue}>
+                      {item.tmdbMeta.guestStars.slice(0, 6).join(', ')}
+                    </span>
+                  </div>
+                )}
+
                 {tmdbHasRealId && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>ID</span>
@@ -380,47 +419,59 @@ export default function MediaDetailPage() {
                 )}
 
                 {/* Image thumbnails — click opens full size in new tab */}
-                {(item.tmdbMeta?.posterUrl || item.tmdbMeta?.backdropUrl) && (
-                  <div className={`${styles.tmdbRow} ${styles.tmdbRowImages}`}>
-                    <span className={styles.tmdbLabel}>Images</span>
-                    <div className={styles.tmdbImageLinks}>
-                      {item.tmdbMeta?.posterUrl && (
-                        <a
-                          href={item.tmdbMeta.posterUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={styles.tmdbImageLink}
-                          title="Open full-size poster"
-                        >
-                          <img
-                            src={item.tmdbMeta.posterUrl}
-                            alt="Poster"
-                            className={styles.tmdbThumbnail}
-                            onError={e => { e.currentTarget.style.display = 'none' }}
-                          />
-                          <span className={styles.tmdbThumbnailLabel}>Poster ↗</span>
-                        </a>
-                      )}
-                      {item.tmdbMeta?.backdropUrl && (
-                        <a
-                          href={item.tmdbMeta.backdropUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={styles.tmdbImageLink}
-                          title="Open full-size backdrop"
-                        >
-                          <img
-                            src={item.tmdbMeta.backdropUrl}
-                            alt="Backdrop"
-                            className={styles.tmdbThumbnail}
-                            onError={e => { e.currentTarget.style.display = 'none' }}
-                          />
-                          <span className={styles.tmdbThumbnailLabel}>Backdrop ↗</span>
-                        </a>
-                      )}
+                {(() => {
+                  const tmdb = item.tmdbMeta
+                  // Resolve image URLs: prefer full URLs, fall back to path-based construction
+                  const posterUrl = tmdb?.posterUrl
+                  const backdropUrl = tmdb?.backdropUrl
+                  const seasonPosterUrl = tmdb?.posterPath
+                    ? `https://image.tmdb.org/t/p/w500${tmdb.posterPath}`
+                    : null
+                  const stillUrl = tmdb?.stillPath
+                    ? `https://image.tmdb.org/t/p/w500${tmdb.stillPath}`
+                    : null
+                  const hasImages = posterUrl || backdropUrl || seasonPosterUrl || stillUrl
+                  if (!hasImages) return null
+                  return (
+                    <div className={`${styles.tmdbRow} ${styles.tmdbRowImages}`}>
+                      <span className={styles.tmdbLabel}>Images</span>
+                      <div className={styles.tmdbImageLinks}>
+                        {posterUrl && (
+                          <a href={posterUrl} target="_blank" rel="noreferrer"
+                            className={styles.tmdbImageLink} title="Open full-size poster">
+                            <img src={posterUrl} alt="Poster" className={styles.tmdbThumbnail}
+                              onError={e => { e.currentTarget.style.display = 'none' }} />
+                            <span className={styles.tmdbThumbnailLabel}>Poster ↗</span>
+                          </a>
+                        )}
+                        {seasonPosterUrl && !posterUrl && (
+                          <a href={seasonPosterUrl} target="_blank" rel="noreferrer"
+                            className={styles.tmdbImageLink} title="Open full-size season poster">
+                            <img src={seasonPosterUrl} alt="Season Poster" className={styles.tmdbThumbnail}
+                              onError={e => { e.currentTarget.style.display = 'none' }} />
+                            <span className={styles.tmdbThumbnailLabel}>Season Poster ↗</span>
+                          </a>
+                        )}
+                        {stillUrl && (
+                          <a href={stillUrl} target="_blank" rel="noreferrer"
+                            className={styles.tmdbImageLink} title="Open full-size episode still">
+                            <img src={stillUrl} alt="Episode Still" className={styles.tmdbThumbnail}
+                              onError={e => { e.currentTarget.style.display = 'none' }} />
+                            <span className={styles.tmdbThumbnailLabel}>Still ↗</span>
+                          </a>
+                        )}
+                        {backdropUrl && (
+                          <a href={backdropUrl} target="_blank" rel="noreferrer"
+                            className={styles.tmdbImageLink} title="Open full-size backdrop">
+                            <img src={backdropUrl} alt="Backdrop" className={styles.tmdbThumbnail}
+                              onError={e => { e.currentTarget.style.display = 'none' }} />
+                            <span className={styles.tmdbThumbnailLabel}>Backdrop ↗</span>
+                          </a>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )
+                })()}
               </div>
 
               {refreshMut.isError && (

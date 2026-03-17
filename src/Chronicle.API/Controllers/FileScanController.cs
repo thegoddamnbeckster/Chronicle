@@ -13,11 +13,16 @@ public class FileScanController : ControllerBase
 {
     private readonly IFileScanService _scanService;
     private readonly ScanProgressService _progress;
+    private readonly ImportProgressService _importProgress;
+    private readonly IScanFolderService _scanFolderService;
 
-    public FileScanController(IFileScanService scanService, ScanProgressService progress)
+    public FileScanController(IFileScanService scanService, ScanProgressService progress,
+        ImportProgressService importProgress, IScanFolderService scanFolderService)
     {
         _scanService = scanService;
         _progress = progress;
+        _importProgress = importProgress;
+        _scanFolderService = scanFolderService;
     }
 
     /// <summary>
@@ -30,6 +35,18 @@ public class FileScanController : ControllerBase
     {
         var (available, names) = await _scanService.GetStatusAsync();
         return Ok(ApiResponse<FileScanStatusDto>.Ok(new FileScanStatusDto(available, names)));
+    }
+
+    /// <summary>
+    /// Validates that the given path exists and is accessible by Chronicle.
+    /// Returns {valid: true} if the path is usable, or {valid: false, error: "..."} otherwise.
+    /// </summary>
+    [HttpPost("validate-path")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ValidatePath([FromBody] ValidatePathDto dto, CancellationToken ct)
+    {
+        var result = await _scanFolderService.ValidatePathAsync(dto.Path, ct);
+        return Ok(ApiResponse<PathValidationResultDto>.Ok(new(result.Valid, result.Error)));
     }
 
     /// <summary>
@@ -314,24 +331,77 @@ public class FileScanController : ControllerBase
     }
 
     /// <summary>
-    /// Persists accepted ScanGroups as a MediaItem hierarchy in the user's library.
+    /// Starts persisting accepted ScanGroups as a MediaItem hierarchy in a background task.
+    /// Returns 202 Accepted immediately. Poll GET /scan/import-progress for status.
+    /// Returns 409 Conflict if an import is already running.
     /// </summary>
     [HttpPost("import-groups")]
-    public async Task<IActionResult> ImportGroups(
-        [FromBody] ImportGroupsRequestDto request,
-        CancellationToken ct)
+    public IActionResult ImportGroups(
+        [FromBody] ImportGroupsRequestDto request)
     {
         var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier)
                        ?? User.FindFirstValue("sub");
         if (!int.TryParse(userIdClaim, out var userId))
-            return Unauthorized(ApiResponse<ImportSummaryDto>.Fail("UNAUTHORIZED", "User identity could not be determined."));
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "User identity could not be determined."));
+
+        var current = _importProgress.GetState();
+        if (current.IsRunning)
+            return Conflict(ApiResponse<object>.Fail("IMPORT_RUNNING", "An import is already in progress."));
+
+        _importProgress.Reset();
 
         var groups = request.Groups.Select(ToGroupImport).ToList();
-        var result = await _scanService.ImportGroupsAsync(
-            new ImportGroupsRequest(groups, request.MediaTypeId), userId, ct);
+        var importRequest = new ImportGroupsRequest(groups, request.MediaTypeId);
 
-        return Ok(ApiResponse<ImportSummaryDto>.Ok(
-            new ImportSummaryDto(result.Imported, result.Failed, result.Failures, result.Duplicates)));
+        // Capture the service provider so the background task can create its own scope
+        // (FileScanService is scoped — it cannot be used across requests without a scope).
+        var sp = HttpContext.RequestServices;
+
+        _ = Task.Run(async () =>
+        {
+            // Create a DI scope so EF Core DbContext is not shared across threads.
+            await using var scope = sp.CreateAsyncScope();
+            var svc = scope.ServiceProvider.GetRequiredService<IFileScanService>();
+            try
+            {
+                await svc.ImportGroupsAsync(importRequest, userId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _importProgress.Fail(ex.Message);
+            }
+        });
+
+        return Accepted(ApiResponse<object>.Ok(new { started = true }));
+    }
+
+    /// <summary>
+    /// Returns the current state of the import-groups background task.
+    /// Poll every 500 ms while IsRunning is true; stop when IsComplete is true.
+    /// </summary>
+    [HttpGet("import-progress")]
+    [AllowAnonymous]
+    public IActionResult GetImportProgress()
+    {
+        var state = _importProgress.GetState();
+        ImportSummaryDto? result = null;
+        if (state.Result is not null)
+        {
+            result = new ImportSummaryDto(
+                state.Result.Imported,
+                state.Result.Failed,
+                state.Result.Failures,
+                state.Result.Duplicates);
+        }
+
+        return Ok(ApiResponse<ImportProgressDto>.Ok(new ImportProgressDto(
+            state.IsRunning,
+            state.IsComplete,
+            state.Total,
+            state.Processed,
+            state.CurrentItemName,
+            state.Error,
+            result)));
     }
 
     private static ScanGroupResultDto ToGroupResultDto(Chronicle.Core.Models.Scan.ScanGroupResult r) => new(
