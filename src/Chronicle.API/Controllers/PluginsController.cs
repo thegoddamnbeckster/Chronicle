@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text.Json;
 using Chronicle.API.DTOs;
+using Chronicle.Plugins.Models;
 using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -326,9 +327,32 @@ public class PluginsController : ControllerBase
         if (loaded is null)
             return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_LOADED", "Plugin is not currently loaded."));
 
-        // Try metadata provider first, then other types
+        // Try metadata provider first, then file scanner plugins, then return empty schema
         if (loaded.MetadataProviders.Count > 0)
             return Ok(ApiResponse<object>.Ok(loaded.MetadataProviders[0].GetSettingsSchema()));
+
+        if (loaded.FileScannerPlugins.Count > 0)
+        {
+            var schema = loaded.FileScannerPlugins[0].GetSettingsSchema();
+
+            // Inject confidence_threshold into the file scanner plugin schema when the
+            // compiled DLL doesn't declare it (the DLL can't be recompiled to add it).
+            if (plugin.PluginId == "chronicle.plugin.filescanner"
+                && !schema.Settings.Any(s => s.Key == "confidence_threshold"))
+            {
+                schema.Settings.Add(new SettingDefinition
+                {
+                    Key          = "confidence_threshold",
+                    Label        = "Confidence threshold",
+                    Description  = "Minimum confidence score (0–100) a scan group must reach to be auto-imported by the scheduled scan. Groups below this score are visible in the manual scan UI but skipped by the background task.",
+                    Type         = SettingType.Number,
+                    Required     = false,
+                    DefaultValue = "80",
+                });
+            }
+
+            return Ok(ApiResponse<object>.Ok(schema));
+        }
 
         return Ok(ApiResponse<object>.Ok(new { settings = Array.Empty<object>() }));
     }
