@@ -1,0 +1,31 @@
+namespace Chronicle.Services;
+
+public enum ResetScope { Single, AllExhausted, AllForPlugin }
+
+public interface IMetadataEnrichmentService
+{
+    /// <summary>Run enrichment for all pending/retryable items for a specific plugin.</summary>
+    Task EnrichPendingAsync(string pluginId, CancellationToken ct = default);
+
+    /// <summary>Run enrichment for all registered plugins.</summary>
+    Task EnrichAllAsync(CancellationToken ct = default);
+
+    /// <summary>Reset enrichment status rows.</summary>
+    Task ResetAsync(string pluginId, ResetScope scope, int? mediaItemId = null, CancellationToken ct = default);
+
+    /// <summary>Mark a specific item as skipped for a plugin.</summary>
+    Task SkipAsync(int mediaItemId, string pluginId, CancellationToken ct = default);
+
+    /// <summary>Get enrichment statistics per plugin.</summary>
+    Task<IReadOnlyList<EnrichmentStats>> GetStatsAsync(CancellationToken ct = default);
+}
+
+public record EnrichmentStats(
+    string PluginId,
+    int Pending,
+    int Completed,
+    int Failed,
+    int Exhausted,
+    int NotFound,
+    int Skipped
+);
