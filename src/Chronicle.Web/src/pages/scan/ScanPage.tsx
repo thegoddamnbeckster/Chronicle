@@ -296,7 +296,11 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
                     </button>
                     <button
                       className={styles.deleteBtn}
-                      onClick={() => deleteMut.mutate(folder.id)}
+                      onClick={() => {
+                        if (window.confirm(`Remove "${folder.path}" from saved folders?`)) {
+                          deleteMut.mutate(folder.id);
+                        }
+                      }}
                       disabled={deleteMut.isPending}
                       type="button"
                       title="Delete folder"
