@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     Kills any running Chronicle dev processes, then launches:
-      - Chronicle.API   on http://localhost:8080
-      - Chronicle.Web   on http://localhost:3000
+      - Chronicle.API   on http://localhost:7979
+      - Chronicle.Web   on http://localhost:8888
 
     Both processes run in separate console windows so you can see their logs.
     Close either window or press Ctrl+C in it to stop that process.
@@ -73,7 +73,7 @@ if (-not $WebOnly) {
         exit 1
     }
     Write-Host ""
-    Write-Host "Starting Chronicle API (port 8080)..." -ForegroundColor Cyan
+    Write-Host "Starting Chronicle API (port 7979)..." -ForegroundColor Cyan
     # Set ASPNETCORE_ENVIRONMENT=Development explicitly so appsettings.Development.json
     # is loaded (and appsettings.Production.json with its Docker PostgreSQL string is NOT).
     # --launch-profile is intentionally omitted — the 'Development' profile does not exist
@@ -89,7 +89,7 @@ if (-not $ApiOnly) {
         Write-Error "Web directory not found at: $WebDir"
         exit 1
     }
-    Write-Host "Starting Chronicle Web (port 3000)..." -ForegroundColor Cyan
+    Write-Host "Starting Chronicle Web (port 8888)..." -ForegroundColor Cyan
     Start-Process pwsh -ArgumentList "-NoExit", "-Command",
         "cd '$WebDir'; npm run dev 2>&1" `
         -WindowStyle Normal
@@ -98,8 +98,8 @@ if (-not $ApiOnly) {
 # ── Done ──────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "Chronicle dev environment starting up." -ForegroundColor Green
-Write-Host "  API  : http://localhost:8080"
-Write-Host "  Web  : http://localhost:3000"
+Write-Host "  API  : http://localhost:7979"
+Write-Host "  Web  : http://localhost:8888"
 Write-Host "  Logs : src\Chronicle.API\logs\"
 Write-Host ""
 Write-Host "Tip: For a stable background service, run .\scripts\install-service.ps1"
