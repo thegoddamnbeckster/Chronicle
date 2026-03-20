@@ -65,7 +65,7 @@
 }
 
 .stepActive {
-  background: var(--bg-tertiary, #2a2a2a);
+  background: var(--bg-card);
   color: var(--text-primary);
 }
 
