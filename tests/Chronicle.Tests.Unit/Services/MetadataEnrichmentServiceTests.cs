@@ -131,6 +131,53 @@ public class MetadataEnrichmentServiceTests : IDisposable
         stats[0].Completed.Should().Be(1);
     }
 
+    [Fact]
+    public async Task EnrichPendingAsync_SetsNotFoundWhenResultHasNoExternalId()
+    {
+        var (item, status) = await SeedItemWithStatus("artist:abc-123", EnrichmentStatus.Pending);
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        mockProvider.Setup(p => p.GetByIdAsync("artist:abc-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Unknown", ExternalId = null });
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
+            .Returns(mockProvider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var updated = await _db.EnrichmentStatuses.FindAsync(status.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.NotFound);
+    }
+
+    [Fact]
+    public async Task ResetAsync_AllExhausted_ResetsOnlyExhaustedRows()
+    {
+        var (_, exhaustedStatus) = await SeedItemWithStatus(null, EnrichmentStatus.Exhausted, retryCount: 3);
+        var (_, skippedStatus)   = await SeedItemWithStatus(null, EnrichmentStatus.Skipped);
+
+        await _svc.ResetAsync("chronicle.plugin.musicbrainz", ResetScope.AllExhausted);
+
+        var exhausted = await _db.EnrichmentStatuses.FindAsync(exhaustedStatus.Id);
+        var skipped   = await _db.EnrichmentStatuses.FindAsync(skippedStatus.Id);
+        exhausted!.Status.Should().Be(EnrichmentStatus.Pending);
+        exhausted.RetryCount.Should().Be(0);
+        skipped!.Status.Should().Be(EnrichmentStatus.Skipped); // unchanged
+    }
+
+    [Fact]
+    public async Task ResetAsync_AllForPlugin_LeavesSkippedRowsAlone()
+    {
+        var (_, failedStatus)  = await SeedItemWithStatus(null, EnrichmentStatus.Failed);
+        var (_, skippedStatus) = await SeedItemWithStatus(null, EnrichmentStatus.Skipped);
+
+        await _svc.ResetAsync("chronicle.plugin.musicbrainz", ResetScope.AllForPlugin);
+
+        var failed  = await _db.EnrichmentStatuses.FindAsync(failedStatus.Id);
+        var skipped = await _db.EnrichmentStatuses.FindAsync(skippedStatus.Id);
+        failed!.Status.Should().Be(EnrichmentStatus.Pending);
+        skipped!.Status.Should().Be(EnrichmentStatus.Skipped); // unchanged
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private async Task<(MediaItem, MediaItemEnrichmentStatus)> SeedItemWithStatus(
