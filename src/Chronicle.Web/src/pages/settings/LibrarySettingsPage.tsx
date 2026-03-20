@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { loadPresets, savePresets, type LibraryPreset } from '@/pages/library/LibraryPage'
 import {
   loadSortSettings,
@@ -7,6 +8,8 @@ import {
   DEFAULT_SORT_SETTINGS,
   type SortSettings,
 } from '@/utils/sortSettings'
+import { clearScannerData, nuclearReset } from '@/api/library'
+import { getAppSettings, putAppSetting } from '@/api/settings'
 import styles from './LibrarySettingsPage.module.css'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -46,12 +49,52 @@ function describePreset(p: LibraryPreset): string {
 }
 
 export default function LibrarySettingsPage() {
+  const qc = useQueryClient()
   const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
 
   // ── Sort settings ────────────────────────────────────────────────────────
   const [sortSettings, setSortSettings] = useState<SortSettings>(loadSortSettings)
+
+  // ── Import settings ──────────────────────────────────────────────────────
+  const { data: appSettings } = useQuery({
+    queryKey: ['appSettings'],
+    queryFn: getAppSettings,
+  })
+  const [batchSizeInput, setBatchSizeInput] = useState<string>('')
+  const currentBatchSize = appSettings?.['import_batch_size'] ?? '50'
+  const batchSizeMut = useMutation({
+    mutationFn: (val: string) => putAppSetting('import_batch_size', val),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['appSettings'] }),
+  })
+
+  // ── Danger Zone ──────────────────────────────────────────────────────────
+  const [clearConfirm, setClearConfirm] = useState(false)
+  const clearMut = useMutation({
+    mutationFn: clearScannerData,
+    onSuccess: (data) => {
+      setClearConfirm(false)
+      qc.invalidateQueries({ queryKey: ['library'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
+      alert(`Done. ${data.deleted} scanner-imported items removed.`)
+    },
+    onError: (err: Error) => alert(`Failed to clear scanner data: ${err.message}`),
+  })
+
+  const [resetConfirm, setResetConfirm] = useState(false)
+  const [resetToken, setResetToken] = useState('')
+  const resetMut = useMutation({
+    mutationFn: () => nuclearReset(resetToken),
+    onSuccess: () => {
+      setResetConfirm(false)
+      setResetToken('')
+      qc.invalidateQueries({ queryKey: ['library'] })
+      qc.invalidateQueries({ queryKey: ['media'] })
+      alert('Library has been reset.')
+    },
+    onError: (err: Error) => alert(err.message),
+  })
   const [newArticle, setNewArticle] = useState('')
 
   function updateSortSettings(patch: Partial<SortSettings>) {
@@ -280,6 +323,153 @@ export default function LibrarySettingsPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* ── Import settings ──────────────────────────────────────────────── */}
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Import</h3>
+          <p className={styles.sectionDesc}>
+            Controls how the File Scanner imports media into your library.
+          </p>
+        </div>
+        <div className={styles.articleSection}>
+          <div className={styles.settingRow}>
+            <div className={styles.settingLabel}>
+              <span className={styles.settingName}>Batch Size</span>
+              <span className={styles.settingHint}>
+                Number of root groups committed to the database in each batch.
+                Larger values use more memory but reduce total DB round-trips.
+                Default: 50.
+              </span>
+            </div>
+            <div className={styles.settingControl}>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                className={styles.numberInput}
+                placeholder={currentBatchSize}
+                value={batchSizeInput}
+                onChange={e => setBatchSizeInput(e.target.value)}
+              />
+              <button
+                className={styles.saveBtn}
+                disabled={batchSizeMut.isPending || !batchSizeInput}
+                onClick={() => {
+                  const n = parseInt(batchSizeInput, 10)
+                  if (!isNaN(n) && n >= 1 && n <= 500) {
+                    batchSizeMut.mutate(String(n), {
+                      onSuccess: () => setBatchSizeInput(''),
+                    })
+                  }
+                }}
+              >
+                {batchSizeMut.isPending ? 'Saving…' : 'Save'}
+              </button>
+              {batchSizeMut.isSuccess && !batchSizeInput && (
+                <span className={styles.savedBadge}>✓ Saved</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Danger Zone ──────────────────────────────────────────────────── */}
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h3 className={`${styles.sectionTitle} ${styles.dangerTitle}`}>Danger Zone</h3>
+          <p className={styles.sectionDesc}>
+            These actions are irreversible. Think carefully before proceeding.
+          </p>
+        </div>
+
+        <div className={styles.dangerCard}>
+
+          {/* Clear scanner data */}
+          <div className={styles.dangerRow}>
+            <div className={styles.dangerInfo}>
+              <span className={styles.dangerLabel}>Clear File Scanner Data</span>
+              <span className={styles.dangerDesc}>
+                Removes all media items that were imported via the File Scanner.
+                Use this before re-scanning with the improved hierarchical scanner.
+                Manually-added and metadata-matched items are unaffected.
+              </span>
+            </div>
+            {!clearConfirm ? (
+              <button className={styles.dangerBtnAmber} onClick={() => setClearConfirm(true)}>
+                Clear Scanner Data
+              </button>
+            ) : (
+              <div className={styles.dangerConfirmRow}>
+                <span className={styles.dangerConfirmText}>
+                  This will delete all file-scanner items. Are you sure?
+                </span>
+                <button
+                  className={styles.dangerBtnAmber}
+                  onClick={() => clearMut.mutate()}
+                  disabled={clearMut.isPending}
+                >
+                  {clearMut.isPending ? 'Clearing…' : 'Yes, clear it'}
+                </button>
+                <button className={styles.cancelBtn} onClick={() => setClearConfirm(false)}>
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+
+          <hr className={styles.dangerDivider} />
+
+          {/* Nuclear reset */}
+          <div className={styles.dangerRow}>
+            <div className={styles.dangerInfo}>
+              <span className={styles.dangerLabel}>Reset Entire Library</span>
+              <span className={styles.dangerDesc}>
+                Permanently deletes <strong>everything</strong>: all media items, library entries,
+                scrobble history, ratings, and notes. This cannot be undone.
+                Chronicle will be as if it was freshly installed.
+              </span>
+            </div>
+            {!resetConfirm ? (
+              <button className={styles.dangerBtnRed} onClick={() => setResetConfirm(true)}>
+                Reset Entire Library
+              </button>
+            ) : (
+              <div className={styles.dangerConfirmBox}>
+                <p className={styles.dangerWarning}>
+                  This will permanently delete ALL media items, library entries,
+                  scrobble history, ratings, and notes. There is no undo.
+                </p>
+                <p className={styles.dangerWarning}>
+                  To confirm, type <strong>RESET</strong> in the box below:
+                </p>
+                <input
+                  className={styles.dangerInput}
+                  value={resetToken}
+                  onChange={e => setResetToken(e.target.value)}
+                  placeholder="Type RESET to confirm"
+                  autoFocus
+                />
+                <div className={styles.dangerConfirmActions}>
+                  <button
+                    className={styles.dangerBtnRed}
+                    onClick={() => resetMut.mutate()}
+                    disabled={resetToken !== 'RESET' || resetMut.isPending}
+                  >
+                    {resetMut.isPending ? 'Resetting…' : 'Yes, delete everything'}
+                  </button>
+                  <button
+                    className={styles.cancelBtn}
+                    onClick={() => { setResetConfirm(false); setResetToken('') }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </section>
     </div>
   )

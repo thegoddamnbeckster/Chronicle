@@ -61,7 +61,8 @@ namespace Chronicle.API.DTOs
     public record FileScannerMetaDto(
         string? FilePath,
         string? LocalPosterPath,
-        string? NfoPosterUrl
+        string? NfoPosterUrl,
+        DateTime? ImportedAt = null
     );
 
     public record RefreshLogDto(
@@ -70,6 +71,8 @@ namespace Chronicle.API.DTOs
         bool Succeeded,
         string? ErrorMessage
     );
+
+    public record AncestorDto(int Id, string Name);
 
     public record MediaItemDto(
         int Id,
@@ -88,7 +91,8 @@ namespace Chronicle.API.DTOs
         List<ExternalIdDto> ExternalIds,
         TmdbMetaDto? TmdbMeta = null,
         FileScannerMetaDto? FileScannerMeta = null,
-        List<RefreshLogDto>? RefreshLogs = null
+        List<RefreshLogDto>? RefreshLogs = null,
+        List<AncestorDto>? Ancestors = null
     );
 
     public record AddToLibraryRequestDto(
@@ -121,4 +125,6 @@ namespace Chronicle.API.DTOs
         DateTime? StartedAt,
         DateTime? CompletedAt
     );
+
+    public record NuclearResetRequestDto(string ConfirmationToken);
 }

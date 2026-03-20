@@ -2,11 +2,13 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { login } from '@/api/auth'
 import { useAuth } from '@/hooks/useAuth'
+import { useServerReady } from '@/hooks/useServerReady'
 import styles from './Auth.module.css'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const { setUser } = useAuth()
+  const serverReady = useServerReady()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -35,13 +37,19 @@ export default function LoginPage() {
         <p className={styles.subtitle}>Sign in to your account</p>
         <form onSubmit={handleSubmit} className={styles.form}>
           <label className={styles.label}>Username</label>
-          <input value={username} onChange={e => setUsername(e.target.value)} required autoFocus />
+          <input value={username} onChange={e => setUsername(e.target.value)} required autoFocus disabled={!serverReady} />
           <label className={styles.label}>Password</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} required disabled={!serverReady} />
           {error && <p className={styles.error}>{error}</p>}
-          <button type="submit" className={styles.btn} disabled={loading}>
+          <button type="submit" className={styles.btn} disabled={loading || !serverReady}>
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
+          {!serverReady && (
+            <div className={styles.connectingBar}>
+              <span className={styles.connectingDot} />
+              Connecting to Chronicle…
+            </div>
+          )}
         </form>
         <p className={styles.footer}>
           No account? <Link to="/register">Register</Link>

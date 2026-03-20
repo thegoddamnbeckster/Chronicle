@@ -19,5 +19,18 @@ namespace Chronicle.Services
         /// in other users' libraries; mid-level items shared by other users are not protected.
         /// </summary>
         Task<int> ClearAllAsync(int userId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Deletes ALL media items, library entries, and interaction events.
+        /// Requires <paramref name="confirmationToken"/> == "RESET".
+        /// Returns the count of deleted library entries.
+        /// </summary>
+        Task<int> NuclearResetAsync(string confirmationToken, CancellationToken ct = default);
+
+        /// <summary>
+        /// Deletes all MediaItems created by the file scanner (identified by
+        /// "fileScanner" key in metadata_json) and their associated library entries.
+        /// </summary>
+        Task<int> ClearScannerDataAsync(CancellationToken ct = default);
     }
 }

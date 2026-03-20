@@ -164,5 +164,27 @@ namespace Chronicle.Tests.Integration
             var response = await client.DeleteAsync("/api/v1/library/999999");
             response.StatusCode.Should().Be(HttpStatusCode.NotFound);
         }
+
+        [Fact]
+        public async Task NuclearReset_Returns400_WhenConfirmationMissing()
+        {
+            var (client, _) = await SetupAsync();
+
+            var response = await client.PostAsJsonAsync("/api/v1/library/reset",
+                new { confirmationToken = "" });
+
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        }
+
+        [Fact]
+        public async Task NuclearReset_Returns400_WhenTokenWrong()
+        {
+            var (client, _) = await SetupAsync();
+
+            var response = await client.PostAsJsonAsync("/api/v1/library/reset",
+                new { confirmationToken = "WRONG" });
+
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        }
     }
 }

@@ -3,6 +3,7 @@ using Chronicle.Core.Models;
 using Chronicle.Core.Models.Scan;
 using Chronicle.Data;
 using Chronicle.Core.Exceptions;
+using Chronicle.Plugins;
 using Chronicle.Services.Plugins;
 using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
@@ -878,6 +879,12 @@ namespace Chronicle.Services
             if (item is null)
                 return null;
 
+            // ── Child items (Season, Episode, Track, etc.) ──────────────────────
+            // Do NOT search TMDB by child name — "Season 01" would match random shows.
+            // Walk up to the root item and inherit its TMDB context instead.
+            if (item.HierarchyLevel > 0)
+                return await RefreshChildFromRootAsync(item, provider, ct);
+
             // Prefer TMDB external ID (stored as "movie:NNN" or "tv:NNN")
             var extId = item.ExternalIds
                 .FirstOrDefault(e => e.Source == "tmdb")
@@ -886,11 +893,14 @@ namespace Chronicle.Services
             if (extId is null)
             {
                 // No external ID yet — search by name only.
-                // The TMDB search API treats the entire query string as text; appending
-                // the year (e.g. "Alien - Romulus 2024") returns zero results because
-                // the year is not part of the stored title.  Search by title only, then
-                // let ScoreByNameYear pick the correct year from the returned candidates.
-                var query = item.Name;
+                // Strip a trailing "(YYYY)" suffix that some folder names include
+                // (e.g. "Rick and Morty (2013)") because TMDB's search doesn't match
+                // those parenthesised years and returns zero results.
+                // Also strip the plain year appended after a space (e.g. "Alien Romulus 2024")
+                // as TMDB stores the canonical title only.
+                var query = System.Text.RegularExpressions.Regex
+                    .Replace(item.Name, @"\s*\(\d{4}\)\s*$", string.Empty)
+                    .Trim();
                 _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by '{Query}'", mediaItemId, query);
                 var hint = ToMediaTypeHint(item.MediaType?.Name ?? string.Empty);
                 var searchResult = await provider.SearchAsync(query, hint, ct);
@@ -927,6 +937,84 @@ namespace Chronicle.Services
             catch (Exception ex)
             {
                 _log.Warning(ex, "RefreshMetadata failed for item {Id} / extId={ExtId}", mediaItemId, extId);
+                throw;
+            }
+
+            return item;
+        }
+
+        /// <summary>
+        /// Refreshes a child MediaItem (Season, Episode, Track, etc.) by walking up
+        /// the parent chain to find the root item's TMDB external ID, then using the
+        /// root show's metadata to populate the child's poster and genre context.
+        /// Prevents child items from independently matching TMDB by their generic names
+        /// (e.g. "Season 01" matching "Goosebumps" instead of the correct parent show).
+        /// </summary>
+        private async Task<MediaItem?> RefreshChildFromRootAsync(
+            MediaItem item, IMetadataProvider provider, CancellationToken ct)
+        {
+            // Clear any stale TMDB external IDs that old code may have written onto this child.
+            // Child items should never carry their own TMDB ID — metadata comes from the root.
+            var childTmdbIds = item.ExternalIds
+                .Where(e => e.Source == "tmdb" && e.ExternalId != "__suppress__")
+                .ToList();
+            if (childTmdbIds.Count > 0)
+            {
+                _context.MediaExternalIds.RemoveRange(childTmdbIds);
+                foreach (var stale in childTmdbIds)
+                    item.ExternalIds.Remove(stale);
+                _log.Information("RefreshChild: cleared {Count} stale TMDB ID(s) from child {Id}", childTmdbIds.Count, item.Id);
+            }
+
+            // Walk parent chain to find the root item
+            var currentId = item.ParentId;
+            MediaItem? root = null;
+            while (currentId != null)
+            {
+                var candidate = await _context.MediaItems
+                    .Include(m => m.ExternalIds)
+                    .FirstOrDefaultAsync(m => m.Id == currentId, ct);
+                if (candidate is null) break;
+                if (candidate.ParentId is null) { root = candidate; break; }
+                currentId = candidate.ParentId;
+            }
+
+            if (root is null) return item;
+
+            var rootExtId = root.ExternalIds
+                .FirstOrDefault(e => e.Source == "tmdb" && e.ExternalId != "__suppress__")
+                ?.ExternalId;
+
+            if (rootExtId is null)
+            {
+                _log.Information(
+                    "RefreshChild: root item {RootId} has no TMDB ID — skipping child {Id}",
+                    root.Id, item.Id);
+                return item;
+            }
+
+            try
+            {
+                var meta = await provider.GetByIdAsync(rootExtId, ct);
+
+                // Inherit the parent show's poster if this child has none
+                if (string.IsNullOrEmpty(item.PosterUrl) && !string.IsNullOrEmpty(meta.PosterUrl))
+                    item.PosterUrl = meta.PosterUrl;
+
+                // Store the parent show's TMDB data as context (genres, cast, rating etc.)
+                // without overwriting the child's Name or Year.
+                item.MetadataJson = SerializeMetadata(tmdbMeta: meta, existingJson: item.MetadataJson);
+                item.UpdatedAt    = DateTime.UtcNow;
+                await _context.SaveChangesAsync(ct);
+
+                _log.Information(
+                    "RefreshChild: updated child {Id} ({Name}) using root {RootId} ({ExtId})",
+                    item.Id, item.Name, root.Id, rootExtId);
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex,
+                    "RefreshChild: failed for item {Id} using root extId={ExtId}", item.Id, rootExtId);
                 throw;
             }
 
@@ -1350,6 +1438,14 @@ namespace Chronicle.Services
             int processed = 0;
             int total = request.Groups.Count;
 
+            // Read batch size from app settings (default 50 if not configured or invalid)
+            var batchSetting = await _context.AppSettings.FindAsync(["import_batch_size"], ct);
+            int batchSize = 50;
+            if (batchSetting is not null && int.TryParse(batchSetting.Value, out var bs) && bs >= 1)
+                batchSize = bs;
+
+            int pendingInBatch = 0;
+
             _importProgress.Start(total);
 
             foreach (var rootGroup in request.Groups)
@@ -1387,7 +1483,16 @@ namespace Chronicle.Services
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
                         rootItem.Id, hierarchyLevel: 1, ct);
 
-                    await _context.SaveChangesAsync(ct);
+                    pendingInBatch++;
+
+                    // Flush to DB every batchSize groups to reduce transaction overhead
+                    if (pendingInBatch >= batchSize)
+                    {
+                        await _context.SaveChangesAsync(ct);
+                        _log.Information("ImportGroups: committed batch of {BatchSize} groups ({Processed}/{Total} total)",
+                            pendingInBatch, processed + 1, total);
+                        pendingInBatch = 0;
+                    }
 
                     _log.Information("Imported group '{Name}' with {ChildCount} child groups",
                         rootGroup.Name, rootGroup.Children.Count);
@@ -1402,6 +1507,13 @@ namespace Chronicle.Services
                 {
                     processed++;
                 }
+            }
+
+            // Flush any remaining groups that didn't fill a complete batch
+            if (pendingInBatch > 0)
+            {
+                await _context.SaveChangesAsync(ct);
+                _log.Information("ImportGroups: committed final batch of {BatchSize} groups", pendingInBatch);
             }
 
             var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
@@ -1428,29 +1540,66 @@ namespace Chronicle.Services
             }
         }
 
-        public async Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default)
-        {
-            var setting = await _context.AppSettings.FindAsync(["scan.confidence_threshold"], ct);
-            if (setting is not null && int.TryParse(setting.Value, out var stored))
-                return stored;
-            return 80;
-        }
-
         private async Task<MediaItem> UpsertGroupItemAsync(
             ScanGroupImport group, int mediaTypeId,
             int? parentId, int hierarchyLevel, CancellationToken ct)
         {
-            // Try to find by name + parent + type (idempotent re-import)
-            var existing = await _context.MediaItems.FirstOrDefaultAsync(m =>
-                m.MediaTypeId == mediaTypeId
-                && m.ParentId == parentId
-                && m.HierarchyLevel == hierarchyLevel
-                && m.Name == group.Name, ct);
+            MediaItem? existing = null;
+
+            // Primary: match by folder path stored in MetadataJson — survives name changes
+            // (e.g. first import stored "Enterprise", re-import resolves "Star Trek: Enterprise")
+            if (!string.IsNullOrEmpty(group.FolderPath))
+            {
+                var candidates = await _context.MediaItems
+                    .Where(m => m.MediaTypeId == mediaTypeId
+                             && m.ParentId   == parentId
+                             && m.HierarchyLevel == hierarchyLevel
+                             && m.MetadataJson != null
+                             && EF.Functions.Like(m.MetadataJson, "%folderPath%"))
+                    .ToListAsync(ct);
+
+                existing = candidates.FirstOrDefault(m =>
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(m.MetadataJson!);
+                        if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
+                            fs.TryGetProperty("folderPath", out var fp))
+                            return string.Equals(fp.GetString(), group.FolderPath,
+                                                 StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch { /* malformed JSON */ }
+                    return false;
+                });
+            }
+
+            // Fallback: match by name (covers items imported before folderPath was added).
+            // Strip trailing "(YYYY)" from both sides so "Show (2016)" and "Show" deduplicate
+            // correctly when year extraction now produces a clean name without the suffix.
+            var groupNameClean = System.Text.RegularExpressions.Regex
+                .Replace(group.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
+            var candidates2 = await _context.MediaItems
+                .Where(m => m.MediaTypeId   == mediaTypeId
+                         && m.ParentId      == parentId
+                         && m.HierarchyLevel == hierarchyLevel)
+                .ToListAsync(ct);
+            existing ??= candidates2.FirstOrDefault(m =>
+            {
+                var dbNameClean = System.Text.RegularExpressions.Regex
+                    .Replace(m.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
+                return string.Equals(dbNameClean, groupNameClean, StringComparison.OrdinalIgnoreCase);
+            });
 
             if (existing is not null)
             {
-                existing.UpdatedAt = DateTime.UtcNow;
-                if (group.Year.HasValue) existing.Year = group.Year;
+                existing.UpdatedAt   = DateTime.UtcNow;
+                if (group.Year.HasValue)   existing.Year   = group.Year;
+                if (group.Number.HasValue) existing.Number = group.Number;
+                // Refresh MetadataJson so folderPath is written even on pre-existing items
+                existing.MetadataJson = JsonSerializer.Serialize(new
+                {
+                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }
+                });
                 return existing;
             }
 
@@ -1461,10 +1610,11 @@ namespace Chronicle.Services
                 HierarchyLevel = hierarchyLevel,
                 Name           = group.Name,
                 Year           = group.Year,
+                Number         = group.Number,
                 PosterUrl      = group.PosterPath,
                 MetadataJson   = JsonSerializer.Serialize(new
                 {
-                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files }
+                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }
                 }),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -1472,6 +1622,33 @@ namespace Chronicle.Services
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct); // need the ID for children
             return item;
+        }
+
+        // ── Confidence threshold ─────────────────────────────────────────────────
+
+        /// <summary>
+        /// Reads the confidence threshold from the file scanner plugin's stored settings.
+        /// Falls back to the interface default (80) if the setting is absent or malformed.
+        /// </summary>
+        public async Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default)
+        {
+            var plugin = await _context.Plugins
+                .FirstOrDefaultAsync(p => p.PluginId == "chronicle.plugin.filescanner" && p.IsEnabled, ct);
+            if (plugin?.SettingsJson is { } json)
+            {
+                try
+                {
+                    var settings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                    if (settings?.TryGetValue("confidence_threshold", out var raw) == true
+                        && int.TryParse(raw, out var parsed)
+                        && parsed >= 0 && parsed <= 100)
+                        return parsed;
+                }
+                catch { /* ignore malformed JSON */ }
+            }
+            // Fall back to the loaded plugin's default (80 via default interface impl)
+            var scanner = _registry.GetFileScannerPlugins().FirstOrDefault();
+            return scanner?.ConfidenceThreshold ?? 80;
         }
     }
 }

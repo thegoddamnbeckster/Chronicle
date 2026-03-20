@@ -26,3 +26,16 @@ export async function updateLibraryEntry(
 export async function removeFromLibrary(id: number): Promise<void> {
   await client.delete(`/library/${id}`)
 }
+
+export async function clearScannerData(): Promise<{ deleted: number }> {
+  const { data } = await client.post<ApiResponse<{ deleted: number }>>('/library/clear-scanner-data')
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed')
+  return data.data
+}
+
+export async function nuclearReset(confirmationToken: string): Promise<{ deleted: number }> {
+  const { data } = await client.post<ApiResponse<{ deleted: number }>>(
+    '/library/reset', { confirmationToken })
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed')
+  return data.data
+}
