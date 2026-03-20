@@ -161,7 +161,8 @@ namespace Chronicle.API.DTOs
         List<string> SignalSources,
         bool HasConflicts,
         List<ScanGroupDto> Children,
-        List<string> Files);
+        List<string> Files,
+        string? FolderPath = null);
 
     public record ScanGroupResultDto(
         List<ScanGroupDto> Groups,
@@ -177,5 +178,6 @@ namespace Chronicle.API.DTOs
         int? Year,
         string? PosterPath,
         List<ImportGroupDto> Children,
-        List<string> Files);
+        List<string> Files,
+        string? FolderPath = null);
 }

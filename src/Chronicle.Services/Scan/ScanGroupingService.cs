@@ -11,6 +11,24 @@ namespace Chronicle.Services.Scan
             ".tbn", ".txt", ".xml", ".srt", ".sub", ".idx",
         };
 
+        // Folder names whose entire contents are treated as sidecar/supplemental material.
+        // Any file inside one of these folders is excluded from grouping (same as a sidecar file),
+        // regardless of its extension (e.g. theme-music .mp3, .actors images, extras .mkv, etc.).
+        private static readonly HashSet<string> _sidecarFolderNames = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "theme-music", "theme music", ".theme",
+            ".actors",
+            "extrafanart", "extrathumbs",
+            "behind the scenes", "behindthescenes",
+            "deleted scenes", "deletedscenes",
+            "featurettes",
+            "interviews",
+            "scenes",
+            "shorts",
+            "trailers",
+            "extras",
+        };
+
         private readonly FolderSignalExtractor _folder;
         private readonly TagSignalExtractor _tags;
         private readonly NfoSignalExtractor _nfo;
@@ -39,7 +57,11 @@ namespace Chronicle.Services.Scan
                 var ext = Path.GetExtension(path);
                 bool isSidecar = _sidecarExtensions.Contains(ext);
 
+                // Treat any file inside a known supplemental folder as a sidecar,
+                // regardless of its extension (e.g. theme-music/*.mp3, .actors/*.jpg).
                 var folderSignal = _folder.Extract(path, scanRoot);
+                if (!isSidecar && folderSignal.FolderNames.Any(f => _sidecarFolderNames.Contains(f)))
+                    isSidecar = true;
                 var tagSignal    = _tags.Extract(path); // null for sidecars / non-audio
                 var nfoPath      = _nfo.FindSidecar(path);
                 var nfoSignal    = nfoPath != null ? _nfo.Extract(nfoPath) : null;
@@ -83,20 +105,51 @@ namespace Chronicle.Services.Scan
 
                 // Level 0 name: first folder name (unless overridden by tag/nfo signal)
                 var level0Name = ResolveLevel0Name(folderSignal, tagSignal, nfoSignal, hierarchyLevels);
-                var level0Key  = Normalize(level0Name);
+
+                // Extract a trailing "(YYYY)" year from the resolved name, then strip it so
+                // "Home Town (2016)" and "Home Town" share the same group key.
+                var yearMatch   = System.Text.RegularExpressions.Regex
+                    .Match(level0Name, @"\s*\((\d{4})\)\s*$");
+                var level0Clean = yearMatch.Success ? level0Name[..yearMatch.Index].TrimEnd() : level0Name;
+                var level0Key   = Normalize(level0Clean);
+
+                // Prefer the year embedded in the resolved name; if tags/nfo produced the name
+                // without a year suffix (e.g. tags say "Enterprise" but folder says
+                // "Star Trek, Enterprise (2001)"), fall back to extracting it from the raw
+                // folder name on disk.
+                int? level0Year;
+                if (yearMatch.Success)
+                {
+                    level0Year = int.Parse(yearMatch.Groups[1].Value);
+                }
+                else
+                {
+                    var folderYearMatch = System.Text.RegularExpressions.Regex
+                        .Match(folderSignal.FolderNames[0], @"\s*\((\d{4})\)\s*$");
+                    level0Year = folderYearMatch.Success
+                        ? int.Parse(folderYearMatch.Groups[1].Value)
+                        : (int?)null;
+                }
 
                 if (!rootGroups.TryGetValue(level0Key, out var rootGroup))
                 {
                     rootGroup = new ScanGroup
                     {
                         GroupKey        = level0Key,
-                        Name            = level0Name,
+                        Name            = level0Clean,
+                        Year            = level0Year,
                         HierarchyLevel  = 0,
                         ConfidenceScore = ComputeRootConfidence(folderSignal, tagSignal, nfoSignal),
                         SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 0),
+                        FolderPath      = Path.Combine(scanRoot, folderSignal.FolderNames[0]),
                     };
                     rootGroups[level0Key] = rootGroup;
                     result.Groups.Add(rootGroup);
+                }
+                else if (level0Year.HasValue && !rootGroup.Year.HasValue)
+                {
+                    // Propagate year to existing group if we just found it
+                    rootGroup.Year = level0Year;
                 }
 
                 // If only 1 folder deep (no album/season level), attach file directly to root
@@ -104,14 +157,17 @@ namespace Chronicle.Services.Scan
                 {
                     if (!isSidecar)
                     {
-                        var leafName = ResolveLeafName(folderSignal, tagSignal, nfoSignal);
+                        var leafName   = ResolveLeafName(folderSignal, tagSignal, nfoSignal);
+                        var leafNumber = ResolveLeafNumber(folderSignal, tagSignal);
                         rootGroup.Children.Add(new ScanGroup
                         {
                             GroupKey        = Normalize(leafName),
                             Name            = leafName,
+                            Number          = leafNumber,
                             HierarchyLevel  = 1,
                             ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
                             SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 1),
+                            Files           = [path],
                         });
                     }
                     continue;
@@ -130,24 +186,29 @@ namespace Chronicle.Services.Scan
                     {
                         GroupKey        = level1Key,
                         Name            = level1Name,
+                        Number          = ResolveLevel1Number(level1Name, folderSignal),
                         HierarchyLevel  = 1,
                         ConfidenceScore = 0.75,
                         SignalSources   = ["folder"],
+                        FolderPath      = Path.Combine(scanRoot, folderSignal.FolderNames[0], folderSignal.FolderNames[1]),
                     };
                     rootGroup.Children.Add(level1Group);
                 }
 
                 if (!isSidecar)
                 {
-                    var leafName = ResolveLeafName(folderSignal, tagSignal, nfoSignal);
+                    var leafName   = ResolveLeafName(folderSignal, tagSignal, nfoSignal);
+                    var leafNumber = ResolveLeafNumber(folderSignal, tagSignal);
                     level1Group.Children.Add(new ScanGroup
                     {
                         GroupKey        = Normalize(level1Key + "/" + leafName),
                         Name            = leafName,
+                        Number          = leafNumber,
                         HierarchyLevel  = 2,
                         ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
                         SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 2),
                         Year            = tagSignal?.Year.HasValue == true ? (int?)tagSignal.Year.Value : null,
+                        Files           = [path],
                     });
                 }
             }
@@ -155,6 +216,13 @@ namespace Chronicle.Services.Scan
             // Roll up confidence scores from children to parents
             foreach (var g in result.Groups)
                 RollUpConfidence(g);
+
+            // Prune empty nodes: remove children with no media files at any level
+            foreach (var g in result.Groups)
+                PruneEmptyChildren(g);
+
+            // Remove root groups that ended up with no files at all (sidecar-only folders)
+            result.Groups.RemoveAll(g => g.TotalFileCount == 0);
 
             return result;
         }
@@ -180,6 +248,39 @@ namespace Chronicle.Services.Scan
             if (tag?.Title is not null) return tag.Title;
             if (nfo?.Title is not null) return nfo.Title;
             return folder.FileName;
+        }
+
+        /// <summary>
+        /// Returns the episode/track number for a leaf item.
+        /// Priority: tag TrackNumber → folder-detected episode → folder-detected track number.
+        /// </summary>
+        private static int? ResolveLeafNumber(FolderSignal folder, TagSignal? tag)
+        {
+            if (tag?.TrackNumber.HasValue == true)
+                return (int)tag.TrackNumber.Value;
+            if (folder.DetectedEpisode.HasValue)
+                return folder.DetectedEpisode;
+            if (folder.DetectedTrackNumber.HasValue)
+                return folder.DetectedTrackNumber;
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the season/disc number for a level-1 group (folder-based).
+        /// Tries the folder name first, then the folder signal's DetectedSeason.
+        /// </summary>
+        private static int? ResolveLevel1Number(string level1Name, FolderSignal folder)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(
+                level1Name, @"(?:Season|S)\s*0*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (m.Success)
+                return int.Parse(m.Groups[1].Value);
+
+            if (folder.DetectedSeason.HasValue)
+                return folder.DetectedSeason;
+            if (folder.DetectedDiscNumber.HasValue)
+                return folder.DetectedDiscNumber;
+            return null;
         }
 
         private static double ComputeRootConfidence(
@@ -223,6 +324,19 @@ namespace Chronicle.Services.Scan
             if (group.Children.Count == 0) return;
             foreach (var child in group.Children) RollUpConfidence(child);
             group.ConfidenceScore = group.Children.Average(c => c.ConfidenceScore);
+        }
+
+        /// <summary>
+        /// Recursively removes children (at any depth) that contain no media files.
+        /// This eliminates sidecar-only directories like .actors, theme-music, etc.
+        /// from the import preview.
+        /// </summary>
+        private static void PruneEmptyChildren(ScanGroup group)
+        {
+            foreach (var child in group.Children)
+                PruneEmptyChildren(child);
+
+            group.Children.RemoveAll(c => c.TotalFileCount == 0);
         }
     }
 }
