@@ -260,6 +260,18 @@ export interface MetadataSearchResult {
   matchScore: number
 }
 
+// ── Scan Folders ──────────────────────────────────────────────────────────────
+export interface ScanFolder {
+  id: number;
+  path: string;
+  mediaTypeId: number;
+  mediaTypeName: string;
+  recursive: boolean;
+  isEnabled: boolean;
+  createdAt: string;
+  lastScannedAt: string | null;
+}
+
 // ── API ───────────────────────────────────────────────────────────────────────
 export interface ApiResponse<T> {
   success: boolean
