@@ -29,7 +29,7 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
     public string TaskId      => "metadata_refresh";
     public string DisplayName => "Metadata Refresh";
     public string Description => "Refreshes titles, posters, and metadata for all library items using active metadata plugins.";
-    public string DefaultCron => "0 */4 * * *";
+    public string DefaultCron => "0 1 * * *";
 
     async Task IScheduledTask.ExecuteAsync(CancellationToken ct) => await RefreshAllAsync(ct);
 
@@ -59,13 +59,56 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
             if (ct.IsCancellationRequested) break;
             try
             {
+                // Refresh root item (show/artist/movie) first
                 await RefreshItemCoreAsync(db, registry, item, ct);
                 await Task.Delay(500, ct);
+
+                // Then cascade to all descendants (seasons → episodes, albums → tracks, etc.)
+                await RefreshDescendantsAsync(db, registry, item.Id, ct);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
                 _log.Warning(ex, "MetadataRefreshService: error refreshing item {Id} '{Name}'", item.Id, item.Name);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Recursively refreshes all descendants of a root item in breadth-first order
+    /// (seasons before episodes, albums before tracks).  Each child is refreshed via
+    /// <see cref="RefreshChildFromRootCoreAsync"/> which uses the root's TMDB ID to call
+    /// per-season / per-episode APIs where the provider supports it.
+    /// </summary>
+    private async Task RefreshDescendantsAsync(
+        ChronicleDbContext db,
+        IPluginRegistry registry,
+        int parentId,
+        CancellationToken ct)
+    {
+        var children = await db.MediaItems
+            .Include(m => m.MediaType)
+            .Include(m => m.ExternalIds)
+            .Where(m => m.ParentId == parentId)
+            .OrderBy(m => m.Number)
+            .ThenBy(m => m.Name)
+            .ToListAsync(ct);
+
+        foreach (var child in children)
+        {
+            if (ct.IsCancellationRequested) return;
+            try
+            {
+                await RefreshChildFromRootCoreAsync(db, registry, child, ct);
+                // Brief pause to respect TMDB rate limit (40 req/10s)
+                await Task.Delay(300, ct);
+                // Recurse for grandchildren (e.g. episodes within a season)
+                await RefreshDescendantsAsync(db, registry, child.Id, ct);
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "MetadataRefreshService: error refreshing child {Id} '{Name}'", child.Id, child.Name);
             }
         }
     }

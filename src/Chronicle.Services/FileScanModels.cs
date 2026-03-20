@@ -125,6 +125,8 @@ namespace Chronicle.Services
         int? Year,
         string? PosterPath,
         List<ScanGroupImport> Children,
-        List<string> Files);
+        List<string> Files,
+        string? FolderPath = null,
+        int? Number = null);
 
 }

@@ -285,15 +285,43 @@
 
 .removeBtn:hover { border-color: var(--danger); color: var(--danger); }
 
-.showMoreBtn {
-  display: block;
-  margin: 12px auto 0;
-  padding: 6px 20px;
+.pageRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pageBtn {
+  padding: 5px 14px;
   border-radius: 99px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pageBtn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.pageBtn:disabled { opacity: 0.35; cursor: default; }
+
+.pageInfo {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 40px;
+  text-align: center;
+}
+
+.showMoreBtn {
+  padding: 5px 16px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
   transition: all 0.15s;
 }
 

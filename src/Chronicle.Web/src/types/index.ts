@@ -46,6 +46,7 @@ export interface FileScannerMeta {
   filePath: string | null
   localPosterPath: string | null
   nfoPosterUrl: string | null
+  importedAt: string | null
 }
 
 export interface RefreshLog {
@@ -66,6 +67,7 @@ export interface MediaItem {
   posterUrl: string | null
   runtimeMinutes: number | null
   hierarchyLevel: number
+  ancestors?: { id: number; name: string }[]
   number: number | null
   createdAt: string
   updatedAt: string
@@ -214,12 +216,14 @@ export interface ScanGroupDto {
   name: string
   hierarchyLevel: number
   year: number | null
+  number: number | null
   posterPath: string | null
   confidenceScore: number      // 0–100
   signalSources: string[]
   hasConflicts: boolean
   children: ScanGroupDto[]
   files: string[]
+  folderPath: string | null
 }
 
 export interface ScanGroupResult {
@@ -232,9 +236,11 @@ export interface ScanGroupResult {
 export interface ImportGroupPayload {
   name: string
   year: number | null
+  number: number | null
   posterPath: string | null
   children: ImportGroupPayload[]
   files: string[]
+  folderPath: string | null
 }
 
 export interface MediaTypeOption {
@@ -252,6 +258,18 @@ export interface MetadataSearchResult {
   overview: string | null
   rating: number | null
   matchScore: number
+}
+
+// ── Scan Folders ──────────────────────────────────────────────────────────────
+export interface ScanFolder {
+  id: number;
+  path: string;
+  mediaTypeId: number;
+  mediaTypeName: string;
+  recursive: boolean;
+  isEnabled: boolean;
+  createdAt: string;
+  lastScannedAt: string | null;
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────

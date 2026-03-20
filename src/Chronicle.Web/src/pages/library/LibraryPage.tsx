@@ -151,6 +151,7 @@ export default function LibraryPage() {
   const [prefs, setPrefsState] = useState<LibraryPrefs>(loadPrefs)
   const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [sectionPage, setSectionPage] = useState<Record<string, number>>({})
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [presetName, setPresetName] = useState('')
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(() => {
@@ -178,12 +179,14 @@ export default function LibraryPage() {
     setPrefsState({ ...DEFAULT_PREFS })
     savePrefs({ ...DEFAULT_PREFS })
     setExpanded({})
+    setSectionPage({})
   }
 
   function applyPreset(preset: LibraryPreset) {
     setPrefsState({ ...preset.prefs })
     savePrefs({ ...preset.prefs })
     setExpanded({})
+    setSectionPage({})
   }
 
   function toggleSection(mediaTypeName: string) {
@@ -444,7 +447,7 @@ export default function LibraryPage() {
               <button
                 key={preset}
                 className={prefs.pageSizePreset === preset ? styles.filterActive : styles.filter}
-                onClick={() => { setPrefs({ pageSizePreset: preset }); setExpanded({}) }}
+                onClick={() => { setPrefs({ pageSizePreset: preset }); setExpanded({}); setSectionPage({}) }}
               >
                 {preset === 'minimal' ? 'Few (6)' : preset === 'medium' ? 'Medium (24)' : preset === 'maximal' ? 'Many (100)' : 'All'}
               </button>
@@ -496,9 +499,13 @@ export default function LibraryPage() {
         const typeEntries = grouped.get(typeName)!
         const isExpanded = expanded[typeName] ?? false
         const isCollapsed = collapsedSections[typeName] ?? false
+        const currentPage = sectionPage[typeName] ?? 0
+        const totalPages = pageSize === Infinity ? 1 : Math.ceil(typeEntries.length / pageSize)
         const visible = pageSize === Infinity
           ? typeEntries
-          : isExpanded ? typeEntries : typeEntries.slice(0, pageSize)
+          : isExpanded
+            ? typeEntries
+            : typeEntries.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
         const hasMore = pageSize !== Infinity && typeEntries.length > pageSize
         const sectionNavState = {
           listIds: visible.map(e => e.mediaItem.id),
@@ -628,16 +635,34 @@ export default function LibraryPage() {
             </div>}
 
             {!isCollapsed && hasMore && (
-              <button
-                className={styles.showMoreBtn}
-                onClick={() =>
-                  setExpanded(prev => ({ ...prev, [typeName]: !prev[typeName] }))
-                }
-              >
-                {isExpanded
-                  ? `Show fewer`
-                  : `Show all ${typeEntries.length} items`}
-              </button>
+              <div className={styles.pageRow}>
+                {!isExpanded && (
+                  <>
+                    <button
+                      className={styles.pageBtn}
+                      disabled={currentPage === 0}
+                      onClick={() => setSectionPage(prev => ({ ...prev, [typeName]: currentPage - 1 }))}
+                    >‹ Prev</button>
+                    <span className={styles.pageInfo}>
+                      {currentPage + 1} / {totalPages}
+                    </span>
+                    <button
+                      className={styles.pageBtn}
+                      disabled={currentPage >= totalPages - 1}
+                      onClick={() => setSectionPage(prev => ({ ...prev, [typeName]: currentPage + 1 }))}
+                    >Next ›</button>
+                  </>
+                )}
+                <button
+                  className={styles.showMoreBtn}
+                  onClick={() => {
+                    setExpanded(prev => ({ ...prev, [typeName]: !prev[typeName] }))
+                    if (!isExpanded) setSectionPage(prev => ({ ...prev, [typeName]: 0 }))
+                  }}
+                >
+                  {isExpanded ? `Show fewer` : `Show all ${typeEntries.length} items`}
+                </button>
+              </div>
             )}
           </section>
         )
