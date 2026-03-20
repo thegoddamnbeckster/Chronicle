@@ -5,13 +5,13 @@
       "name": "Chronicle API",
       "runtimeExecutable": "dotnet",
       "runtimeArgs": ["run", "--no-build", "--project", "src/Chronicle.API/Chronicle.API.csproj"],
-      "port": 8080
+      "port": 7979
     },
     {
       "name": "Chronicle Web",
       "runtimeExecutable": "cmd.exe",
       "runtimeArgs": ["/c", "src\\Chronicle.Web\\dev.bat"],
-      "port": 3000,
+      "port": 8888,
       "autoPort": true
     }
   ]
