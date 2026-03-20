@@ -170,6 +170,10 @@ builder.Services.AddSingleton<ScheduledScanService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<ScheduledScanService>());
 
+builder.Services.AddSingleton<MetadataEnrichmentScheduledTask>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<MetadataEnrichmentScheduledTask>());
+
 builder.Services.AddSingleton<TaskSchedulerService>();
 builder.Services.AddSingleton<ITaskSchedulerService>(
     sp => sp.GetRequiredService<TaskSchedulerService>());
