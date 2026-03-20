@@ -685,51 +685,200 @@
   padding: 1px 0;
 }
 
-/* ── Import progress bar ──────────────────────────────────────────────────── */
+/* ── Saved Folders panel ──────────────────────────────────────────────────── */
 
-.importProgressPanel {
-  margin-bottom: 1rem;
-  padding: 0.85rem 1rem;
-  background: var(--bg-tertiary, #2a2a2a);
+.foldersCard {
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  border-radius: 6px;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
 }
 
-.importProgressHeader {
+.foldersPanelToggle {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
 }
 
-.importProgressLabel {
+.foldersPanelToggle:hover {
+  background: var(--bg-tertiary, #2a2a2a);
+}
+
+.foldersChevron {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 0.75rem;
+}
+
+.foldersPanelTitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.foldersPanelCount {
+  margin-left: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.foldersPanelBody {
+  padding: 0.25rem 0 0.75rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.foldersEmpty {
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  padding: 0.75rem 1.25rem;
+  font-style: italic;
+}
+
+.folderRow {
+  border-bottom: 1px solid var(--border);
+}
+
+.folderRow:last-child {
+  border-bottom: none;
+}
+
+.folderViewRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.25rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.folderInfo {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.folderPath {
+  font-family: 'Consolas', monospace;
   font-size: 0.82rem;
   color: var(--text-primary);
-  font-weight: 500;
-}
-
-.importProgressTrack {
-  height: 6px;
-  background: var(--bg-secondary, #1a1a1a);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.importProgressFill {
-  height: 100%;
-  background: var(--accent, #5b9bd5);
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-
-.importProgressItem {
-  font-family: 'Consolas', monospace;
-  font-size: 0.76rem;
-  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: opacity 0.2s ease;
+  max-width: 35ch;
+}
+
+.folderMeta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.folderActions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.enabledToggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.deleteBtn {
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--status-danger-fg, #ef5350);
+  font-size: 0.72rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.deleteBtn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger-fg, #ef5350) 12%, transparent);
+  border-color: var(--status-danger-fg, #ef5350);
+}
+
+.deleteBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.folderEditBlock,
+.folderAddBlock {
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  background: var(--bg-tertiary, #2a2a2a);
+}
+
+.folderEditFields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.folderEditFields .textInput {
+  flex: 1;
+  min-width: 200px;
+}
+
+.folderEditFields .select {
+  min-width: 130px;
+}
+
+.folderEditActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.inputError {
+  border-color: var(--status-danger-fg, #ef5350) !important;
+}
+
+.fieldError {
+  font-size: 0.78rem;
+  color: var(--status-danger-fg, #ef5350);
+  width: 100%;
+}
+
+.addFolderBtn {
+  align-self: flex-start;
+  margin: 0.5rem 1.25rem;
+  padding: 0.35rem 0.85rem;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.addFolderBtn:hover {
+  border-color: var(--accent, #5b9bd5);
+  color: var(--accent, #5b9bd5);
 }
