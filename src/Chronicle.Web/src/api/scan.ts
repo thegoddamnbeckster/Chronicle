@@ -11,6 +11,7 @@ import type {
   MediaItem,
   ScanGroupResult,
   ImportGroupPayload,
+  ScanFolder,
 } from '@/types'
 
 /**
@@ -175,5 +176,52 @@ export async function addFromSearch(
 ): Promise<MediaItem> {
   const { data } = await client.post<ApiResponse<MediaItem>>('/scan/add', { externalId, mediaTypeId })
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to add media')
+  return data.data
+}
+
+// ── Scan Folders ──────────────────────────────────────────────────────────────
+
+export interface CreateScanFolderPayload {
+  path: string;
+  mediaTypeId: number;
+  recursive: boolean;
+}
+
+export interface UpdateScanFolderPayload {
+  path: string;
+  mediaTypeId: number;
+  recursive: boolean;
+  isEnabled: boolean;
+}
+
+export interface PathValidationResult {
+  valid: boolean;
+  error: string | null;
+}
+
+export async function getScanFolders(): Promise<ScanFolder[]> {
+  const { data } = await client.get<ApiResponse<ScanFolder[]>>('/scan-folders')
+  return data.data ?? []
+}
+
+export async function createScanFolder(payload: CreateScanFolderPayload): Promise<ScanFolder> {
+  const { data } = await client.post<ApiResponse<ScanFolder>>('/scan-folders', payload)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to create scan folder')
+  return data.data
+}
+
+export async function updateScanFolder(id: number, payload: UpdateScanFolderPayload): Promise<ScanFolder> {
+  const { data } = await client.put<ApiResponse<ScanFolder>>(`/scan-folders/${id}`, payload)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to update scan folder')
+  return data.data
+}
+
+export async function deleteScanFolder(id: number): Promise<void> {
+  await client.delete(`/scan-folders/${id}`)
+}
+
+export async function validatePath(path: string): Promise<PathValidationResult> {
+  const { data } = await client.post<ApiResponse<PathValidationResult>>('/scan/validate-path', { path })
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Validation failed')
   return data.data
 }
