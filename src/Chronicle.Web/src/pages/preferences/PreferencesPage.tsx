@@ -1,39 +1,8 @@
 import { useState } from 'react'
-import { useTheme, type Theme } from '@/contexts/ThemeContext'
+import { useTheme, THEME_REGISTRY } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
 import { updateMyPreferences } from '@/api/users'
 import styles from './PreferencesPage.module.css'
-
-// ── Theme definitions ─────────────────────────────────────────────────────────
-
-interface ThemeDef {
-  key: Theme
-  label: string
-  swatches: [string, string, string]   // [bg, card, accent]
-}
-
-const THEMES: ThemeDef[] = [
-  {
-    key: 'light',
-    label: 'Light',
-    swatches: ['#f5f5f5', '#e8e8e8', '#6200ea'],
-  },
-  {
-    key: 'dark',
-    label: 'Dark',
-    swatches: ['#121212', '#2a2a2a', '#bb86fc'],
-  },
-  {
-    key: 'navy-pink',
-    label: 'Navy & Pink',
-    swatches: ['#1a1a2e', '#0f3460', '#e94560'],
-  },
-  {
-    key: 'dark-teal',
-    label: 'Dark Teal',
-    swatches: ['#0a2424', '#183c3c', '#00ff88'],
-  },
-]
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -65,7 +34,7 @@ export default function PreferencesPage() {
         <p className={styles.sectionDesc}>Choose the visual style for Chronicle.</p>
 
         <div className={styles.cards}>
-          {THEMES.map(({ key, label, swatches }) => (
+          {THEME_REGISTRY.map(({ key, label, swatches }) => (
             <button
               key={key}
               className={`${styles.card} ${theme === key ? styles.active : ''}`}
