@@ -57,14 +57,28 @@ export default function FolderPickerModal({
     navigate(typed).catch((err) => setInputError(err instanceof Error ? err.message : 'Path not found'))
   }
 
-  const handleSelect = () => {
-    if (currentPath) {
+  const handleSelect = async () => {
+    const typed = inputPath.trim()
+    if (typed && typed !== currentPath) {
+      // User typed (or pasted) a path without pressing Enter — navigate to validate it first
+      try {
+        const result = await listDirectory(typed)
+        const resolved = result.path ?? typed
+        setListing(result)
+        setCurrentPath(resolved)
+        setInputPath(resolved)
+        onSelect(resolved)
+        onClose()
+      } catch (err) {
+        setInputError(err instanceof Error ? err.message : 'Path not found')
+      }
+    } else if (currentPath) {
       onSelect(currentPath)
       onClose()
     }
   }
 
-  const selectedDisplay = currentPath || '(no folder selected)'
+  const selectedDisplay = currentPath || (inputPath.trim() ? inputPath.trim() : '(no folder selected)')
 
   return (
     <div
@@ -172,7 +186,7 @@ export default function FolderPickerModal({
           <button
             className={styles.selectBtn}
             onClick={handleSelect}
-            disabled={!currentPath}
+            disabled={!currentPath && !inputPath.trim()}
           >
             Select
           </button>

@@ -198,10 +198,11 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
                 /* ── Edit mode ─────────────────────────────────────────── */
                 <div className={styles.folderEditBlock}>
                   <div className={styles.folderEditFields}>
-                    <input
+                    <PathInput
+                      wrapperClassName={styles.folderPathInput}
                       className={`${styles.textInput} ${editRow.pathError ? styles.inputError : ''}`}
                       value={editRow.path}
-                      onChange={e => setEditRow(prev => prev ? { ...prev, path: e.target.value, pathError: null } : prev)}
+                      onChange={v => setEditRow(prev => prev ? { ...prev, path: v, pathError: null } : prev)}
                       onBlur={handleEditBlur}
                       placeholder="Path…"
                       disabled={updateMut.isPending}
@@ -317,10 +318,11 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
           {addingFolder ? (
             <div className={styles.folderAddBlock}>
               <div className={styles.folderEditFields}>
-                <input
+                <PathInput
+                  wrapperClassName={styles.folderPathInput}
                   className={`${styles.textInput} ${addRow.pathError ? styles.inputError : ''}`}
                   value={addRow.path}
-                  onChange={e => setAddRow(prev => ({ ...prev, path: e.target.value, pathError: null }))}
+                  onChange={v => setAddRow(prev => ({ ...prev, path: v, pathError: null }))}
                   onBlur={handleAddBlur}
                   placeholder="C:\Movies or /mnt/media/movies"
                   disabled={createMut.isPending}
