@@ -90,8 +90,12 @@ public sealed class ScheduledScanService : IScheduledTask
                     _log.Information(
                         "ScheduledScanService: No groups above threshold for {Path}",
                         folder.Path);
-                    folder.LastScannedAt = DateTime.UtcNow;
-                    await db.SaveChangesAsync(ct);
+                    var dbFolder0 = await db.ScanFolders.FindAsync([folder.Id], ct);
+                    if (dbFolder0 is not null)
+                    {
+                        dbFolder0.LastScannedAt = DateTime.UtcNow;
+                        await db.SaveChangesAsync(ct);
+                    }
                     continue;
                 }
 
@@ -109,17 +113,20 @@ public sealed class ScheduledScanService : IScheduledTask
                     "ScheduledScanService: Import complete for {Path} — imported: {Imported}, failed: {Failed}, duplicates: {Duplicates}",
                     folder.Path, summary.Imported, summary.Failed, summary.Duplicates);
 
-                folder.LastScannedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync(ct);
+                var dbFolder = await db.ScanFolders.FindAsync([folder.Id], ct);
+                if (dbFolder is not null)
+                {
+                    dbFolder.LastScannedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                }
             }
             catch (OperationCanceledException)
             {
-                break;
+                throw;
             }
             catch (Exception ex)
             {
-                _log.Warning(ex,
-                    "ScheduledScanService: Error processing folder {Path}", folder.Path);
+                _log.Error(ex, "Error scanning folder {Path}", folder.Path);
             }
         }
 
