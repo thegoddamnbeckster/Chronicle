@@ -165,6 +165,10 @@ builder.Services.AddSingleton<DuplicateCleanupService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<DuplicateCleanupService>());
 
+builder.Services.AddSingleton<ScheduledScanService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<ScheduledScanService>());
+
 builder.Services.AddSingleton<TaskSchedulerService>();
 builder.Services.AddSingleton<ITaskSchedulerService>(
     sp => sp.GetRequiredService<TaskSchedulerService>());
