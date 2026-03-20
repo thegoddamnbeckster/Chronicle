@@ -112,6 +112,7 @@ builder.Services.AddScoped<Chronicle.Services.Scan.IScanGroupingService,
                             Chronicle.Services.Scan.ScanGroupingService>();
 builder.Services.AddScoped<IFileScanService, FileScanService>();
 builder.Services.AddScoped<IScanFolderService, ScanFolderService>();
+builder.Services.AddScoped<IMetadataEnrichmentService, MetadataEnrichmentService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();
