@@ -18,38 +18,8 @@ import {
   type PluginHealthResult,
 } from '@/api/plugins'
 import { useAuth } from '@/hooks/useAuth'
-import { useTheme, type Theme } from '@/contexts/ThemeContext'
+import { useTheme, THEME_REGISTRY } from '@/contexts/ThemeContext'
 import styles from './PluginsPage.module.css'
-
-// ── Theme definitions ──────────────────────────────────────────────────────────
-
-interface ThemeDef {
-  key: Theme
-  label: string
-  description: string
-  swatches: [string, string, string]   // [bg, card, accent]
-}
-
-const THEMES: ThemeDef[] = [
-  {
-    key: 'light',
-    label: 'Light',
-    description: 'Clean light interface',
-    swatches: ['#f5f5f5', '#e8e8e8', '#6200ea'],
-  },
-  {
-    key: 'dark',
-    label: 'Dark',
-    description: 'Dark mode',
-    swatches: ['#121212', '#2a2a2a', '#bb86fc'],
-  },
-  {
-    key: 'navy-pink',
-    label: 'Navy & Pink',
-    description: 'Navy base with pink accent',
-    swatches: ['#1a1a2e', '#0f3460', '#e94560'],
-  },
-]
 
 // ── Plugin page types ──────────────────────────────────────────────────────────
 
@@ -404,7 +374,7 @@ export default function PluginsPage() {
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>Themes</h2>
         <div className={styles.themeGrid}>
-          {THEMES.map(({ key, label, description, swatches }) => {
+          {THEME_REGISTRY.map(({ key, label, description, swatches }) => {
             const isActive = activeTheme === key
             return (
               <div
@@ -450,17 +420,24 @@ export default function PluginsPage() {
         <h2 className={styles.sectionTitle}>Installed Plugins</h2>
         {loading ? (
           <p className={styles.loading}>Loading plugins…</p>
-        ) : plugins.length === 0 ? (
-          <div className={styles.empty}>
-            <p className={styles.emptyTitle}>No plugins installed</p>
-            <p className={styles.emptyHint}>
-              {isAdmin
-                ? 'Click "Install Plugin" above to add a metadata provider or widget plugin.'
-                : 'No plugins have been installed yet. Ask an administrator to install plugins.'}
-            </p>
-          </div>
         ) : (
           <div className={styles.pluginList}>
+            {/* ── Built-in: Default Themes ─────────────────────────── */}
+            <div className={styles.pluginCard}>
+              <div className={styles.cardHeader}>
+                <div className={styles.cardLeft}>
+                  <span className={styles.pluginName}>Default Themes</span>
+                  <span className={styles.versionBadge}>v1.0.0</span>
+                  <span className={`${styles.badge} ${styles.builtIn}`}>Built-in</span>
+                </div>
+              </div>
+              <div className={styles.cardMeta}>by Chronicle · built-in</div>
+              <div className={styles.pluginId}>chronicle.themes.default</div>
+              <p className={styles.description}>
+                Provides the built-in themes: {THEME_REGISTRY.map(t => t.label).join(', ')}.
+              </p>
+            </div>
+
             {plugins.map(plugin => {
               const busy = busyIds.has(plugin.id)
               const health = healthStates[plugin.id] ?? 'unknown'

@@ -314,6 +314,7 @@
 
 .enabled  { background: var(--status-success-bg); color: var(--status-success-fg); border: 1px solid var(--status-success-border); }
 .disabled { background: var(--status-danger-bg);  color: var(--status-danger-fg);  border: 1px solid var(--status-danger-border); }
+.builtIn  { background: var(--accent-subtle); color: var(--accent); border: 1px solid var(--accent); }
 
 .healthOk   { background: var(--status-success-bg); color: var(--status-success-fg); border: 1px solid var(--status-success-border); }
 .healthFail { background: var(--status-danger-bg);  color: var(--status-danger-fg);  border: 1px solid var(--status-danger-border); }
