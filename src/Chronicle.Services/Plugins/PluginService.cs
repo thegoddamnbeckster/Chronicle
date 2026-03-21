@@ -5,6 +5,7 @@ using Chronicle.Plugins;
 using Chronicle.Plugins.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using BackgroundTask = Chronicle.Core.Models.BackgroundTask;
 
 namespace Chronicle.Services.Plugins;
 
@@ -44,19 +45,25 @@ public class PluginService : IPluginService
 
         var plugin = new Plugin
         {
-            PluginId = manifest.PluginId,
-            Name = manifest.Name,
-            Version = manifest.Version,
-            Author = manifest.Author,
-            Description = manifest.Description,
-            DllPath = dllPath,
-            IsEnabled = true,
-            InstalledAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
+            PluginId        = manifest.PluginId,
+            Name            = manifest.Name,
+            Version         = manifest.Version,
+            Author          = manifest.Author,
+            Description     = manifest.Description,
+            DllPath         = dllPath,
+            IsEnabled       = true,
+            InstalledAt     = DateTime.UtcNow,
+            UpdatedAt       = DateTime.UtcNow,
+            BrandColorLight = manifest.BrandColorLight,
+            BrandColorDark  = manifest.BrandColorDark,
         };
 
         _db.Plugins.Add(plugin);
         await _db.SaveChangesAsync(ct);
+
+        // Seed background tasks declared in the manifest
+        if (manifest.BackgroundTasks is { Count: > 0 })
+            await SeedPluginTasksAsync(_db, manifest.PluginId, manifest.BackgroundTasks, ct);
 
         // Reload with the real db id
         _registry.UnloadPlugin(0);
@@ -313,5 +320,40 @@ public class PluginService : IPluginService
                m.Contains("authentication") ||
                m.Contains(" 401")           ||
                m.Contains(" 403");
+    }
+
+    /// <summary>
+    /// Inserts one <see cref="BackgroundTask"/> row per task declared in the plugin manifest.
+    /// Uses INSERT-IF-MISSING semantics: existing rows (possibly customised by the user) are
+    /// never overwritten. The namespaced task ID stored in the DB is
+    /// <c>{pluginId}:{taskId}</c> (e.g. <c>chronicle.plugin.tmdb:fetch-missing-metadata</c>).
+    /// </summary>
+    internal static async Task SeedPluginTasksAsync(
+        ChronicleDbContext db,
+        string pluginId,
+        IReadOnlyList<PluginTaskManifest> tasks,
+        CancellationToken ct = default)
+    {
+        foreach (var task in tasks)
+        {
+            var namespacedId = $"{pluginId}:{task.TaskId}";
+            var exists = await db.BackgroundTasks
+                .AnyAsync(t => t.TaskId == namespacedId, ct);
+
+            if (!exists)
+            {
+                db.BackgroundTasks.Add(new BackgroundTask
+                {
+                    TaskId         = namespacedId,
+                    PluginId       = pluginId,
+                    DisplayName    = task.DisplayName,
+                    Description    = task.Description ?? string.Empty,
+                    CronExpression = task.DefaultCron,
+                    IsEnabled      = task.DefaultEnabled,
+                });
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 }
