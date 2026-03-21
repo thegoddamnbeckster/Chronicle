@@ -428,13 +428,29 @@ export default function BackgroundTasksPage() {
       {tasks.map(task => {
         const { cls, label } = statusBadge(task)
         const isRunning = task.isRunning || runningIds.has(task.taskId)
+        const brandColor = task.brandColorDark ?? undefined
 
         return (
-          <div key={task.taskId} className={styles.card}>
+          <div
+            key={task.taskId}
+            className={`${styles.card} ${task.pluginId ? styles.cardPlugin : ''}`}
+            style={brandColor ? { '--plugin-brand-color': brandColor } as React.CSSProperties : undefined}
+          >
             <div className={styles.cardHeader}>
               <div className={styles.cardTitleGroup}>
-                <h2 className={styles.taskName}>{task.displayName}</h2>
-                <p className={styles.taskDesc}>{task.description}</p>
+                {task.pluginIconUrl && (
+                  <img
+                    src={task.pluginIconUrl}
+                    alt={task.pluginName ?? ''}
+                    className={styles.pluginIcon}
+                  />
+                )}
+                <div className={styles.cardTitleText}>
+                  <h2 className={styles.taskName}>
+                    {task.pluginName ? `${task.pluginName} · ${task.displayName}` : task.displayName}
+                  </h2>
+                  <p className={styles.taskDesc}>{task.description}</p>
+                </div>
               </div>
               <div className={styles.cardActions}>
                 <span className={`${styles.badge} ${cls}`}>{label}</span>
