@@ -19,6 +19,16 @@
   margin-bottom: 16px;
 }
 
+/* Plugin-owned task: coloured border + faint tinted background */
+.cardPlugin {
+  border-color: var(--plugin-brand-color, var(--color-accent));
+  background-color: color-mix(
+    in srgb,
+    var(--plugin-brand-color, transparent) 8%,
+    var(--bg-card)
+  );
+}
+
 .cardHeader {
   display: flex;
   align-items: flex-start;
@@ -27,7 +37,24 @@
   margin-bottom: 12px;
 }
 
+/* Row layout: icon on the left, title+desc stacked on the right */
 .cardTitleGroup {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pluginIcon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-top: 2px; /* optical alignment with text */
+}
+
+.cardTitleText {
   display: flex;
   flex-direction: column;
   gap: 4px;
