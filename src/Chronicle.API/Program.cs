@@ -154,14 +154,12 @@ builder.Services.AddScoped<IPluginService, PluginService>();
 builder.Services.AddHostedService<PluginHostService>();
 
 // ── Scheduled background tasks ────────────────────────────────────────────────
-// Each IScheduledTask is registered as a singleton so both its IScheduledTask role
-// (consumed by TaskSchedulerService via IEnumerable<IScheduledTask>) and any
-// additional service interfaces share the same instance.
-builder.Services.AddSingleton<MetadataRefreshService>();
-builder.Services.AddSingleton<IMetadataRefreshService>(
-    sp => sp.GetRequiredService<MetadataRefreshService>());
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<MetadataRefreshService>());
+// System IScheduledTask implementations are registered as singletons so the same
+// instance is shared between IScheduledTask (consumed by TaskSchedulerService) and
+// any additional service interfaces.
+// MetadataRefreshService no longer implements IScheduledTask — it is scoped and
+// invoked via IPluginTaskRunner (per-plugin task architecture).
+builder.Services.AddScoped<IMetadataRefreshService, MetadataRefreshService>();
 
 builder.Services.AddSingleton<DuplicateCleanupService>();
 builder.Services.AddSingleton<IScheduledTask>(
@@ -170,10 +168,6 @@ builder.Services.AddSingleton<IScheduledTask>(
 builder.Services.AddSingleton<ScheduledScanService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<ScheduledScanService>());
-
-builder.Services.AddSingleton<MetadataEnrichmentScheduledTask>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<MetadataEnrichmentScheduledTask>());
 
 builder.Services.AddSingleton<TaskSchedulerService>();
 builder.Services.AddSingleton<ITaskSchedulerService>(
