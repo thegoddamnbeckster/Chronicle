@@ -287,3 +287,54 @@
 
 .loading { color: var(--text-muted); padding: 24px 0; }
 .errorMsg { color: #eb5757; padding: 24px 0; }
+
+/* ── Enrichment status section ─────────────────────────────── */
+
+.enrichmentSection {
+  margin-top: 36px;
+}
+
+.sectionTitle {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+
+.enrichmentEmpty {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+.enrichTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.enrichTh {
+  text-align: left;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.enrichRow:not(:last-child) .enrichTd {
+  border-bottom: 1px solid var(--border);
+}
+
+.enrichTd {
+  padding: 10px 12px 10px 0;
+  vertical-align: middle;
+}
+
+.enrichActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
