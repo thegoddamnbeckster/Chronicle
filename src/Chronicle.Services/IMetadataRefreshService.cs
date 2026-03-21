@@ -16,6 +16,12 @@ public interface IMetadataRefreshService
     /// </summary>
     Task RefreshAllAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Re-downloads metadata for all library items using only the specified plugin.
+    /// Called by the per-plugin "resync-all-metadata" scheduled task.
+    /// </summary>
+    Task RefreshForPluginAsync(string pluginId, CancellationToken ct = default);
+
     /// <summary>Returns the most-recent refresh log entry per provider for the given item.</summary>
     Task<IReadOnlyList<MediaItemRefreshLog>> GetRefreshLogsAsync(int mediaItemId, CancellationToken ct = default);
 }
