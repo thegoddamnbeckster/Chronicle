@@ -8,7 +8,9 @@ namespace Chronicle.API.Controllers;
 [ApiController]
 [Route("api/v1/enrichment")]
 [Authorize]
-public class EnrichmentController(IMetadataEnrichmentService enrichmentSvc) : ControllerBase
+public class EnrichmentController(
+    IMetadataEnrichmentService enrichmentSvc,
+    IServiceScopeFactory scopeFactory) : ControllerBase
 {
     [HttpGet("stats")]
     public async Task<IActionResult> GetStats(CancellationToken ct)
@@ -20,13 +22,20 @@ public class EnrichmentController(IMetadataEnrichmentService enrichmentSvc) : Co
     }
 
     [HttpPost("{pluginId}/run")]
+    [Authorize(Roles = "Admin")]
     public IActionResult RunEnrichment(string pluginId)
     {
-        _ = Task.Run(() => enrichmentSvc.EnrichPendingAsync(pluginId, CancellationToken.None));
+        _ = Task.Run(async () =>
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var svc = scope.ServiceProvider.GetRequiredService<IMetadataEnrichmentService>();
+            await svc.EnrichPendingAsync(pluginId, CancellationToken.None);
+        });
         return Accepted(new { success = true, message = $"Enrichment started for {pluginId}" });
     }
 
     [HttpPost("{pluginId}/reset")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Reset(string pluginId, [FromBody] ResetEnrichmentDto dto, CancellationToken ct)
     {
         ResetScope scope;
@@ -43,6 +52,7 @@ public class EnrichmentController(IMetadataEnrichmentService enrichmentSvc) : Co
     }
 
     [HttpPost("{pluginId}/items/{mediaItemId:int}/skip")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Skip(string pluginId, int mediaItemId, CancellationToken ct)
     {
         await enrichmentSvc.SkipAsync(mediaItemId, pluginId, ct);
