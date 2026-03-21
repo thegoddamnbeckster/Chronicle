@@ -54,6 +54,7 @@ public class PluginService : IPluginService
             IsEnabled       = true,
             InstalledAt     = DateTime.UtcNow,
             UpdatedAt       = DateTime.UtcNow,
+            IconUrl         = manifest.IconUrl,
             BrandColorLight = manifest.BrandColorLight,
             BrandColorDark  = manifest.BrandColorDark,
         };

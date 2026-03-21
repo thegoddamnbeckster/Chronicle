@@ -274,7 +274,7 @@ namespace Chronicle.Data
                 e.Property(t => t.DisplayName).IsRequired();
                 e.Property(t => t.Description).IsRequired();
                 e.Property(t => t.CronExpression).IsRequired();
-                e.HasOne<Plugin>()
+                e.HasOne(t => t.Plugin)
                  .WithMany()
                  .HasForeignKey(t => t.PluginId)
                  .HasPrincipalKey(p => p.PluginId)
