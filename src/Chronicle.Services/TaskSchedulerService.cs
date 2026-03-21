@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Chronicle.Core.Models;
 using Chronicle.Data;
 using Cronos;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +10,8 @@ using Serilog;
 namespace Chronicle.Services;
 
 /// <summary>
-/// Central scheduler that drives all registered IScheduledTask implementations.
+/// Central scheduler that drives all registered IScheduledTask implementations
+/// and all plugin-owned background tasks stored in the DB.
 /// Ticks every 30 seconds, fires tasks whose next_run_at has elapsed,
 /// and prevents concurrent execution of the same task by any trigger path.
 /// </summary>
@@ -34,7 +36,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _log.Information("TaskSchedulerService starting with {Count} task(s)", _tasks.Count);
+        _log.Information("TaskSchedulerService starting with {Count} system task(s)", _tasks.Count);
         await SeedTasksAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -61,14 +63,33 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
     public async Task<TriggerResult> TriggerNowAsync(
         string taskId, CancellationToken ct = default)
     {
-        var task = _tasks.FirstOrDefault(t => t.TaskId == taskId);
-        if (task is null)
-            return TriggerResult.NotFound;
-
+        // Guard against concurrent execution
         if (!_running.TryAdd(taskId, true))
             return TriggerResult.AlreadyRunning;
 
-        _ = Task.Run(() => RunTaskAsync(task, CancellationToken.None), CancellationToken.None);
+        // Look up the row — required for both run-result tracking and plugin routing
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var taskRow = await db.BackgroundTasks.FindAsync(taskId);
+
+        if (taskRow is null)
+        {
+            _running.TryRemove(taskId, out _);
+            return TriggerResult.NotFound;
+        }
+
+        // For system tasks verify there is an IScheduledTask implementation
+        if (taskRow.PluginId is null)
+        {
+            var systemTask = _tasks.FirstOrDefault(t => t.TaskId == taskId);
+            if (systemTask is null)
+            {
+                _running.TryRemove(taskId, out _);
+                return TriggerResult.NotFound;
+            }
+        }
+
+        _ = Task.Run(() => RunTaskAsync(taskRow, CancellationToken.None), CancellationToken.None);
         return TriggerResult.Started;
     }
 
@@ -86,7 +107,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
             if (existing is not null) continue;
 
             var nextRun = GetNextOccurrence(task.DefaultCron);
-            db.BackgroundTasks.Add(new Chronicle.Core.Models.BackgroundTask
+            db.BackgroundTasks.Add(new BackgroundTask
             {
                 TaskId         = task.TaskId,
                 DisplayName    = task.DisplayName,
@@ -115,13 +136,6 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
 
         foreach (var row in dueRows)
         {
-            var task = _tasks.FirstOrDefault(t => t.TaskId == row.TaskId);
-            if (task is null)
-            {
-                _log.Warning("TaskScheduler: no IScheduledTask found for DB row '{TaskId}'", row.TaskId);
-                continue;
-            }
-
             if (!_running.TryAdd(row.TaskId, true))
             {
                 _log.Warning("TaskScheduler: '{TaskId}' is already running — skipping scheduled fire", row.TaskId);
@@ -129,33 +143,66 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
                 continue;
             }
 
+            // For system tasks, verify an IScheduledTask registration exists
+            if (row.PluginId is null)
+            {
+                var task = _tasks.FirstOrDefault(t => t.TaskId == row.TaskId);
+                if (task is null)
+                {
+                    _log.Warning("TaskScheduler: no IScheduledTask found for DB row '{TaskId}'", row.TaskId);
+                    _running.TryRemove(row.TaskId, out _);
+                    continue;
+                }
+            }
+
             row.NextRunAt = GetNextOccurrence(row.CronExpression);
-            _ = Task.Run(() => RunTaskAsync(task, CancellationToken.None), CancellationToken.None);
+            _ = Task.Run(() => RunTaskAsync(row, CancellationToken.None), CancellationToken.None);
         }
 
         await db.SaveChangesAsync(ct);
     }
 
-    private async Task RunTaskAsync(IScheduledTask task, CancellationToken ct)
+    private async Task RunTaskAsync(BackgroundTask row, CancellationToken ct)
     {
-        _log.Information("TaskScheduler: starting '{TaskId}'", task.TaskId);
+        _log.Information("TaskScheduler: starting '{TaskId}'", row.TaskId);
         var startedAt = DateTime.UtcNow;
 
         try
         {
-            await task.ExecuteAsync(ct);
-            await PersistRunResultAsync(task.TaskId, startedAt, succeeded: true, error: null);
+            if (row.PluginId is not null)
+            {
+                // Plugin-owned task: route through IPluginTaskRunner resolved from scope
+                using var scope = _scopeFactory.CreateScope();
+                var runner = scope.ServiceProvider.GetRequiredService<IPluginTaskRunner>();
+                var bareTaskId = row.TaskId.Contains(':')
+                    ? row.TaskId[(row.TaskId.IndexOf(':') + 1)..]
+                    : row.TaskId;
+                await runner.RunAsync(row.PluginId, bareTaskId, ct);
+            }
+            else
+            {
+                // System task: look up IScheduledTask registration
+                var task = _tasks.FirstOrDefault(t => t.TaskId == row.TaskId);
+                if (task is null)
+                {
+                    _log.Warning("TaskSchedulerService: no IScheduledTask registered for '{TaskId}'", row.TaskId);
+                    return;
+                }
+                await task.ExecuteAsync(ct);
+            }
+
+            await PersistRunResultAsync(row.TaskId, startedAt, succeeded: true, error: null);
             _log.Information("TaskScheduler: '{TaskId}' completed successfully in {Elapsed:F1}s",
-                task.TaskId, (DateTime.UtcNow - startedAt).TotalSeconds);
+                row.TaskId, (DateTime.UtcNow - startedAt).TotalSeconds);
         }
         catch (Exception ex)
         {
-            _log.Error(ex, "TaskScheduler: '{TaskId}' failed", task.TaskId);
-            await PersistRunResultAsync(task.TaskId, startedAt, succeeded: false, error: ex.Message);
+            _log.Error(ex, "TaskScheduler: '{TaskId}' failed", row.TaskId);
+            await PersistRunResultAsync(row.TaskId, startedAt, succeeded: false, error: ex.Message);
         }
         finally
         {
-            _running.TryRemove(task.TaskId, out _);
+            _running.TryRemove(row.TaskId, out _);
         }
     }
 
