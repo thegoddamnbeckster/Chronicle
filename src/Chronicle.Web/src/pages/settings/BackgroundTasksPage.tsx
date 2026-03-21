@@ -7,6 +7,12 @@ import {
   type BackgroundTask,
 } from '@/api/backgroundTasks'
 import {
+  getEnrichmentStats,
+  runEnrichment,
+  resetEnrichment,
+  type EnrichmentStats,
+} from '@/api/enrichment'
+import {
   cronToParams,
   paramsToCron,
   describeSchedule,
@@ -51,6 +57,113 @@ function statusBadge(task: BackgroundTask) {
 }
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/** Convert pluginId last segment to a display name: "chronicle.plugin.musicbrainz" → "MusicBrainz" */
+function pluginDisplayName(pluginId: string): string {
+  const last = pluginId.split('.').pop() ?? pluginId
+  return last.charAt(0).toUpperCase() + last.slice(1)
+}
+
+// ── Enrichment status section ─────────────────────────────────────────────
+
+function EnrichmentSection() {
+  const [stats, setStats] = useState<EnrichmentStats[]>([])
+  const [loading, setLoading] = useState(true)
+  const [runStarted, setRunStarted] = useState<Record<string, boolean>>({})
+
+  const load = useCallback(async () => {
+    try {
+      const data = await getEnrichmentStats()
+      setStats(data)
+    } catch {
+      // silently ignore — section will show empty
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  async function handleRun(pluginId: string) {
+    try {
+      await runEnrichment(pluginId)
+      setRunStarted(prev => ({ ...prev, [pluginId]: true }))
+      setTimeout(() => setRunStarted(prev => ({ ...prev, [pluginId]: false })), 3000)
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleReset(pluginId: string, scope: 'exhausted' | 'all') {
+    try {
+      await resetEnrichment(pluginId, scope)
+      await load()
+    } catch {
+      // ignore
+    }
+  }
+
+  return (
+    <div className={styles.enrichmentSection}>
+      <h2 className={styles.sectionTitle}>Enrichment Status</h2>
+      {loading ? (
+        <p className={styles.loading}>Loading enrichment stats…</p>
+      ) : stats.length === 0 ? (
+        <p className={styles.enrichmentEmpty}>No metadata plugins installed.</p>
+      ) : (
+        <div className={styles.card}>
+          <table className={styles.enrichTable}>
+            <thead>
+              <tr>
+                <th className={styles.enrichTh}>Plugin</th>
+                <th className={styles.enrichTh}>Pending</th>
+                <th className={styles.enrichTh}>Completed</th>
+                <th className={styles.enrichTh}>Failed</th>
+                <th className={styles.enrichTh}>Exhausted</th>
+                <th className={styles.enrichTh}>Skipped</th>
+                <th className={styles.enrichTh}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.map(s => (
+                <tr key={s.pluginId} className={styles.enrichRow}>
+                  <td className={styles.enrichTd}>{pluginDisplayName(s.pluginId)}</td>
+                  <td className={styles.enrichTd}>{s.pending}</td>
+                  <td className={styles.enrichTd}>{s.completed}</td>
+                  <td className={styles.enrichTd}>{s.failed}</td>
+                  <td className={styles.enrichTd}>{s.exhausted}</td>
+                  <td className={styles.enrichTd}>{s.skipped}</td>
+                  <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
+                    <button
+                      className={styles.runBtn}
+                      onClick={() => handleRun(s.pluginId)}
+                    >
+                      {runStarted[s.pluginId] ? 'Started' : 'Run Now'}
+                    </button>
+                    <button
+                      className={styles.editBtn}
+                      onClick={() => handleReset(s.pluginId, 'exhausted')}
+                      title="Reset items marked as exhausted so they will be retried"
+                    >
+                      Reset Exhausted
+                    </button>
+                    <button
+                      className={styles.editBtn}
+                      onClick={() => handleReset(s.pluginId, 'all')}
+                      title="Reset all enrichment state for this plugin"
+                    >
+                      Reset All
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Schedule editor ──────────────────────────────────────────────────────────
 
@@ -393,6 +506,8 @@ export default function BackgroundTasksPage() {
           </div>
         )
       })}
+
+      <EnrichmentSection />
     </div>
   )
 }
