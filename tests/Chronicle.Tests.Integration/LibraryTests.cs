@@ -10,13 +10,37 @@ namespace Chronicle.Tests.Integration
     {
         private readonly ChronicleApiFactory _factory;
 
+        // Fixed admin credentials — first registration in this factory instance gets Admin role.
+        private const string AdminUser = "lib_admin_fixture";
+        private const string AdminPass = "Password123!";
+
         public LibraryTests(ChronicleApiFactory factory)
         {
             factory.SeedDatabase();
             _factory = factory;
+            EnsureAdminRegistered(factory).GetAwaiter().GetResult();
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
+
+        private static async Task EnsureAdminRegistered(ChronicleApiFactory factory)
+        {
+            var client = factory.CreateClient();
+            await client.PostAsJsonAsync("/api/v1/auth/register",
+                new { username = AdminUser, password = AdminPass });
+        }
+
+        private async Task<HttpClient> AdminClientAsync()
+        {
+            var client = _factory.CreateClient();
+            var login = await client.PostAsJsonAsync("/api/v1/auth/login",
+                new { username = AdminUser, password = AdminPass });
+            var token = JsonDocument.Parse(await login.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("data").GetProperty("token").GetString()!;
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", token);
+            return client;
+        }
 
         private async Task<(HttpClient client, int mediaId)> SetupAsync()
         {
@@ -168,7 +192,7 @@ namespace Chronicle.Tests.Integration
         [Fact]
         public async Task NuclearReset_Returns400_WhenConfirmationMissing()
         {
-            var (client, _) = await SetupAsync();
+            var client = await AdminClientAsync();
 
             var response = await client.PostAsJsonAsync("/api/v1/library/reset",
                 new { confirmationToken = "" });
@@ -179,7 +203,7 @@ namespace Chronicle.Tests.Integration
         [Fact]
         public async Task NuclearReset_Returns400_WhenTokenWrong()
         {
-            var (client, _) = await SetupAsync();
+            var client = await AdminClientAsync();
 
             var response = await client.PostAsJsonAsync("/api/v1/library/reset",
                 new { confirmationToken = "WRONG" });
