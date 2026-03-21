@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useAuth } from '@/hooks/useAuth'
 import { loadPresets, savePresets, type LibraryPreset } from '@/pages/library/LibraryPage'
 import {
   loadSortSettings,
@@ -49,6 +50,8 @@ function describePreset(p: LibraryPreset): string {
 }
 
 export default function LibrarySettingsPage() {
+  const { user } = useAuth()
+  const isAdmin = user?.isAdmin ?? false
   const qc = useQueryClient()
   const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -376,7 +379,7 @@ export default function LibrarySettingsPage() {
       </section>
 
       {/* ── Danger Zone ──────────────────────────────────────────────────── */}
-      <section className={styles.section}>
+      {isAdmin && <section className={styles.section}>
         <div className={styles.sectionHeader}>
           <h3 className={`${styles.sectionTitle} ${styles.dangerTitle}`}>Danger Zone</h3>
           <p className={styles.sectionDesc}>
@@ -470,7 +473,7 @@ export default function LibrarySettingsPage() {
             )}
           </div>
         </div>
-      </section>
+      </section>}
     </div>
   )
 }
