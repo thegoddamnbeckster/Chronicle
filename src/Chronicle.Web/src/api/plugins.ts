@@ -85,6 +85,11 @@ export interface PluginSettingsSchema {
   settings: SettingDefinition[]
 }
 
+export async function getPluginSettings(id: number): Promise<Record<string, string>> {
+  const res = await client.get<{ data: Record<string, string> }>(`/plugins/${id}/settings`)
+  return res.data.data
+}
+
 export async function getPluginSettingsSchema(id: number): Promise<PluginSettingsSchema> {
   const res = await client.get<{ data: PluginSettingsSchema }>(`/plugins/${id}/settings-schema`)
   return res.data.data
