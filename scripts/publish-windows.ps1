@@ -110,7 +110,31 @@ The SQLite database (chronicle.db) is created in the same folder as the exe.
 Back it up regularly.
 "@ | Set-Content "$OutputDir\README.txt"
 
-# ── 8. Summary ────────────────────────────────────────────────────────────────
+# ── 8. Build external plugins ─────────────────────────────────────────────────
+$PluginsOutDir = Join-Path $OutputDir "plugins"
+New-Item -ItemType Directory -Force -Path $PluginsOutDir | Out-Null
+
+foreach ($pluginDir in @(
+    "W:\Scripts\Chronicle.Plugin.TMDB",
+    "W:\Scripts\Chronicle.Plugin.MusicBrainz"
+)) {
+    if (Test-Path $pluginDir) {
+        Write-Host "Building plugin: $pluginDir" -ForegroundColor Cyan
+        $pluginPublish = Join-Path $pluginDir "publish"
+        & dotnet publish $pluginDir -c Release -o $pluginPublish --no-self-contained
+        if ($LASTEXITCODE -ne 0) { Write-Error "Plugin build failed: $pluginDir"; exit 1 }
+        $manifestPath = Join-Path $pluginDir "manifest.json"
+        $pluginId = (Get-Content $manifestPath | ConvertFrom-Json).plugin_id
+        $dest = Join-Path $PluginsOutDir $pluginId
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Copy-Item -Path (Join-Path $pluginPublish "*") -Destination $dest -Recurse -Force
+        Write-Host "  Deployed $pluginId to $dest" -ForegroundColor Green
+    } else {
+        Write-Host "  Plugin directory not found, skipping: $pluginDir" -ForegroundColor Yellow
+    }
+}
+
+# ── 9. Summary ────────────────────────────────────────────────────────────────
 $size = (Get-ChildItem $OutputDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
 Write-Host ""
 Write-Host "Publish complete!" -ForegroundColor Green
