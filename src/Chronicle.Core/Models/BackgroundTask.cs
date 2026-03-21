@@ -17,4 +17,7 @@ public class BackgroundTask
     /// Populated from the plugin's manifest.json background_tasks declaration.
     /// </summary>
     public string? PluginId { get; set; }
+
+    /// <summary>Navigation property — loaded via Include in queries that need branding.</summary>
+    public Plugin? Plugin { get; set; }
 }
