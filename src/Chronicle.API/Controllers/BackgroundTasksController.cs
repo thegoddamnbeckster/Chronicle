@@ -23,11 +23,14 @@ public class BackgroundTasksController : ControllerBase
         _scheduler = scheduler;
     }
 
-    /// <summary>Returns all registered background tasks with live status.</summary>
+    /// <summary>Returns all registered background tasks with live status and plugin branding.</summary>
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
-        var rows = await _db.BackgroundTasks.OrderBy(t => t.DisplayName).ToListAsync();
+        var rows = await _db.BackgroundTasks
+            .Include(t => t.Plugin)
+            .OrderBy(t => t.DisplayName)
+            .ToListAsync();
 
         var dtos = rows.Select(r => new BackgroundTaskDto(
             TaskId:           r.TaskId,
@@ -39,7 +42,12 @@ public class BackgroundTasksController : ControllerBase
             LastRunAt:        r.LastRunAt,
             LastRunSucceeded: r.LastRunSucceeded,
             LastErrorMessage: r.LastErrorMessage,
-            NextRunAt:        r.NextRunAt
+            NextRunAt:        r.NextRunAt,
+            PluginId:         r.PluginId,
+            PluginName:       r.Plugin?.Name,
+            PluginIconUrl:    r.Plugin?.IconUrl,
+            BrandColorLight:  r.Plugin?.BrandColorLight,
+            BrandColorDark:   r.Plugin?.BrandColorDark
         ));
 
         return Ok(new { success = true, data = dtos });
@@ -130,16 +138,22 @@ public class BackgroundTasksController : ControllerBase
 }
 
 public record BackgroundTaskDto(
-    string TaskId,
-    string DisplayName,
-    string Description,
-    string CronExpression,
-    bool IsEnabled,
-    bool IsRunning,
+    string    TaskId,
+    string    DisplayName,
+    string    Description,
+    string    CronExpression,
+    bool      IsEnabled,
+    bool      IsRunning,
     DateTime? LastRunAt,
-    bool? LastRunSucceeded,
-    string? LastErrorMessage,
-    DateTime? NextRunAt
+    bool?     LastRunSucceeded,
+    string?   LastErrorMessage,
+    DateTime? NextRunAt,
+    // Plugin branding — null for system tasks
+    string?   PluginId,
+    string?   PluginName,
+    string?   PluginIconUrl,
+    string?   BrandColorLight,
+    string?   BrandColorDark
 );
 
 public record UpdateBackgroundTaskRequest(
