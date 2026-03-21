@@ -120,6 +120,7 @@ function EnrichmentSection() {
                 <th className={styles.enrichTh}>Completed</th>
                 <th className={styles.enrichTh}>Failed</th>
                 <th className={styles.enrichTh}>Exhausted</th>
+                <th className={styles.enrichTh}>Not Found</th>
                 <th className={styles.enrichTh}>Skipped</th>
                 <th className={styles.enrichTh}>Actions</th>
               </tr>
@@ -132,6 +133,7 @@ function EnrichmentSection() {
                   <td className={styles.enrichTd}>{s.completed}</td>
                   <td className={styles.enrichTd}>{s.failed}</td>
                   <td className={styles.enrichTd}>{s.exhausted}</td>
+                  <td className={styles.enrichTd}>{s.notFound}</td>
                   <td className={styles.enrichTd}>{s.skipped}</td>
                   <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
                     <button
