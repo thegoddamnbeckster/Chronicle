@@ -443,6 +443,18 @@ public class PluginsController : ControllerBase
             Sha256:      "600936c8c5e8bef83d2de4e51c29c975977feac57f80ed6d0d8fd0723b478480"
         ),
         new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.musicbrainz",
+            Name:        "MusicBrainz",
+            Description: "Fetches comprehensive music metadata from MusicBrainz (artist, album, track) and cover art from the Cover Art Archive. No API key required.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "https://musicbrainz.org/favicon.ico",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MusicBrainz",
+            AssetName:   "Chronicle.Plugin.MusicBrainz.zip",
+            DllName:     "Chronicle.Plugin.MusicBrainz.dll",
+            Tags:        ["music", "audio", "metadata"],
+            Sha256:      "dc34647a59f0974154f1d3a50bc4872143475b5be6f9af609a1b575fb755ea3b"
+        ),
+        new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.filescanner",
             Name:        "File Scanner",
             Description: "Scans local directories for media files. Parses NFO sidecars and filenames to extract title, year, and media type. Supports TV hierarchy (SxxExx), audio files (MP3/FLAC/OGG/etc.), and embedded tag reading via TagLib#.",
