@@ -224,6 +224,24 @@ public class PluginsController : ControllerBase
         }
     }
 
+    // ── GET /api/v1/plugins/{id}/settings ─────────────────────────────────────
+
+    /// <summary>Returns the current saved settings for a plugin (Admin only).</summary>
+    [HttpGet("{id:int}/settings")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetSettings(int id)
+    {
+        var plugin = await _pluginService.GetPluginAsync(id);
+        if (plugin is null)
+            return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_FOUND", "Plugin not found."));
+
+        var settings = string.IsNullOrWhiteSpace(plugin.SettingsJson)
+            ? new Dictionary<string, string>()
+            : JsonSerializer.Deserialize<Dictionary<string, string>>(plugin.SettingsJson) ?? new();
+
+        return Ok(ApiResponse<object>.Ok(settings));
+    }
+
     // ── PUT /api/v1/plugins/{id}/settings ─────────────────────────────────────
 
     /// <summary>Updates the settings for a plugin.</summary>
