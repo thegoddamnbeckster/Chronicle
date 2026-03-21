@@ -224,6 +224,24 @@ public class PluginsController : ControllerBase
         }
     }
 
+    // ── GET /api/v1/plugins/{id}/settings ─────────────────────────────────────
+
+    /// <summary>Returns the current saved settings for a plugin (Admin only).</summary>
+    [HttpGet("{id:int}/settings")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetSettings(int id)
+    {
+        var plugin = await _pluginService.GetPluginAsync(id);
+        if (plugin is null)
+            return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_FOUND", "Plugin not found."));
+
+        var settings = string.IsNullOrWhiteSpace(plugin.SettingsJson)
+            ? new Dictionary<string, string>()
+            : JsonSerializer.Deserialize<Dictionary<string, string>>(plugin.SettingsJson) ?? new();
+
+        return Ok(ApiResponse<object>.Ok(settings));
+    }
+
     // ── PUT /api/v1/plugins/{id}/settings ─────────────────────────────────────
 
     /// <summary>Updates the settings for a plugin.</summary>
@@ -423,6 +441,18 @@ public class PluginsController : ControllerBase
             DllName:     "Chronicle.Plugin.TMDB.dll",
             Tags:        ["movies", "tv", "metadata"],
             Sha256:      "600936c8c5e8bef83d2de4e51c29c975977feac57f80ed6d0d8fd0723b478480"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.musicbrainz",
+            Name:        "MusicBrainz",
+            Description: "Fetches comprehensive music metadata from MusicBrainz (artist, album, track) and cover art from the Cover Art Archive. No API key required.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "https://musicbrainz.org/favicon.ico",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MusicBrainz",
+            AssetName:   "Chronicle.Plugin.MusicBrainz.zip",
+            DllName:     "Chronicle.Plugin.MusicBrainz.dll",
+            Tags:        ["music", "audio", "metadata"],
+            Sha256:      "dc34647a59f0974154f1d3a50bc4872143475b5be6f9af609a1b575fb755ea3b"
         ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.filescanner",
