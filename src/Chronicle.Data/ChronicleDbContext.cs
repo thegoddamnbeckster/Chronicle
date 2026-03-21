@@ -274,6 +274,12 @@ namespace Chronicle.Data
                 e.Property(t => t.DisplayName).IsRequired();
                 e.Property(t => t.Description).IsRequired();
                 e.Property(t => t.CronExpression).IsRequired();
+                e.HasOne<Plugin>()
+                 .WithMany()
+                 .HasForeignKey(t => t.PluginId)
+                 .HasPrincipalKey(p => p.PluginId)
+                 .OnDelete(DeleteBehavior.Cascade)
+                 .IsRequired(false);
             });
 
             modelBuilder.Entity<ScanFolder>(e =>
