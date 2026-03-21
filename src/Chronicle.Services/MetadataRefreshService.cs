@@ -133,6 +133,53 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
         await RefreshItemCoreAsync(db, registry, item, ct);
     }
 
+    public async Task RefreshForPluginAsync(string pluginId, CancellationToken ct = default)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
+
+        var provider = registry.GetMetadataProvider(pluginId);
+        if (provider is null)
+        {
+            _log.Warning("RefreshForPluginAsync: provider {PluginId} not found in registry", pluginId);
+            return;
+        }
+
+        var itemIds = await db.UserLibraries
+            .Select(ul => ul.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        // Only process root items already matched to this plugin (have its external ID)
+        var rootItems = await db.MediaItems
+            .Include(m => m.MediaType)
+            .Include(m => m.ExternalIds)
+            .Where(m => itemIds.Contains(m.Id)
+                     && m.HierarchyLevel == 0
+                     && m.ExternalIds.Any(e => e.Source == pluginId))
+            .ToListAsync(ct);
+
+        _log.Information("RefreshForPluginAsync: {Count} root items matched to plugin {PluginId}",
+            rootItems.Count, pluginId);
+
+        foreach (var item in rootItems)
+        {
+            if (ct.IsCancellationRequested) break;
+            try
+            {
+                await RefreshItemCoreAsync(db, registry, item, ct);
+                await Task.Delay(500, ct);
+                await RefreshDescendantsAsync(db, registry, item.Id, ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "RefreshForPluginAsync: error refreshing item {Id}", item.Id);
+            }
+        }
+    }
+
     public async Task<IReadOnlyList<MediaItemRefreshLog>> GetRefreshLogsAsync(
         int mediaItemId, CancellationToken ct = default)
     {
