@@ -12,10 +12,10 @@ using Serilog;
 namespace Chronicle.Services;
 
 /// <summary>
-/// Scheduled task that periodically refreshes metadata for all
-/// library items using every active, applicable IMetadataProvider plugin.
+/// Service that refreshes metadata for library items using active metadata plugins.
+/// Invoked on-demand via the per-plugin background task system (Task 8/9).
 /// </summary>
-public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshService
+public sealed class MetadataRefreshService : IMetadataRefreshService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger _log = Log.ForContext<MetadataRefreshService>();
@@ -24,14 +24,6 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
     {
         _scopeFactory = scopeFactory;
     }
-
-    // ── IScheduledTask ────────────────────────────────────────────────────────────
-    public string TaskId      => "metadata_refresh";
-    public string DisplayName => "Metadata Refresh";
-    public string Description => "Refreshes titles, posters, and metadata for all library items using active metadata plugins.";
-    public string DefaultCron => "0 1 * * *";
-
-    async Task IScheduledTask.ExecuteAsync(CancellationToken ct) => await RefreshAllAsync(ct);
 
     // ── IMetadataRefreshService ───────────────────────────────────────────────
 
