@@ -30,4 +30,10 @@ public class Plugin
 
     public DateTime InstalledAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>Hex accent colour for light-mode UI (from manifest brandColorLight).</summary>
+    public string? BrandColorLight { get; set; }
+
+    /// <summary>Hex accent colour for dark-mode UI (from manifest brandColorDark).</summary>
+    public string? BrandColorDark { get; set; }
 }
