@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Plugins;
 using Chronicle.Plugins.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -61,6 +62,11 @@ public class PluginService : IPluginService
         _registry.UnloadPlugin(0);
         await _registry.LoadPluginAsync(plugin.Id, dllPath, tempSettings, ct);
 
+        // If this is a metadata provider, seed pending enrichment rows for all existing items
+        var installedProvider = _registry.GetMetadataProvider(plugin.PluginId);
+        if (installedProvider is not null)
+            await SeedEnrichmentRowsForProviderAsync(installedProvider, ct);
+
         _log.Information("Installed plugin {PluginId} (db id {Id})", plugin.PluginId, plugin.Id);
         return plugin;
     }
@@ -104,6 +110,11 @@ public class PluginService : IPluginService
 
         var settings = DeserializeSettings(plugin.SettingsJson);
         await _registry.LoadPluginAsync(plugin.Id, plugin.DllPath, settings);
+
+        // If this is a metadata provider, seed pending enrichment rows for all existing items
+        var enabledProvider = _registry.GetMetadataProvider(plugin.PluginId);
+        if (enabledProvider is not null)
+            await SeedEnrichmentRowsForProviderAsync(enabledProvider);
 
         _log.Information("Enabled plugin {PluginId}", plugin.PluginId);
     }
@@ -186,6 +197,61 @@ public class PluginService : IPluginService
                 FailureReason: ex.Message,
                 IsCritical: isCritical);
         }
+    }
+
+    /// <summary>
+    /// Inserts pending <see cref="MediaItemEnrichmentStatus"/> rows for every existing
+    /// <see cref="MediaItem"/> whose media type is supported by <paramref name="provider"/>.
+    /// Rows that already exist are skipped.
+    /// </summary>
+    private async Task SeedEnrichmentRowsForProviderAsync(
+        IMetadataProvider provider, CancellationToken ct = default)
+    {
+        var supportedTypeNames = provider.GetSupportedMediaTypes()
+            .Select(t => t.MediaTypeName)
+            .ToList();
+
+        var supportedTypeIds = await _db.MediaTypes
+            .Where(mt => supportedTypeNames.Contains(mt.Name))
+            .Select(mt => mt.Id)
+            .ToListAsync(ct);
+
+        if (supportedTypeIds.Count == 0)
+            return;
+
+        var itemIds = await _db.MediaItems
+            .Where(i => supportedTypeIds.Contains(i.MediaTypeId))
+            .Select(i => i.Id)
+            .ToListAsync(ct);
+
+        if (itemIds.Count == 0)
+            return;
+
+        var existingSet = (await _db.EnrichmentStatuses
+            .Where(x => x.PluginId == provider.PluginId && itemIds.Contains(x.MediaItemId))
+            .Select(x => x.MediaItemId)
+            .ToListAsync(ct))
+            .ToHashSet();
+
+        foreach (var itemId in itemIds)
+        {
+            if (existingSet.Contains(itemId))
+                continue;
+
+            _db.EnrichmentStatuses.Add(new MediaItemEnrichmentStatus
+            {
+                MediaItemId = itemId,
+                PluginId    = provider.PluginId,
+                Status      = EnrichmentStatus.Pending,
+                MaxRetries  = 3,
+            });
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        _log.Information(
+            "Seeded {Count} pending enrichment rows for provider {PluginId}",
+            itemIds.Count - existingSet.Count, provider.PluginId);
     }
 
     private static IReadOnlyDictionary<string, string> DeserializeSettings(string? json)
