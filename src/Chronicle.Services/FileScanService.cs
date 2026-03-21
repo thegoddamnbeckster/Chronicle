@@ -1437,6 +1437,7 @@ namespace Chronicle.Services
             var failures = new List<string>();
             int processed = 0;
             int total = request.Groups.Count;
+            var createdItemIds = new List<int>();
 
             // Read batch size from app settings (default 50 if not configured or invalid)
             var batchSetting = await _context.AppSettings.FindAsync(["import_batch_size"], ct);
@@ -1454,9 +1455,12 @@ namespace Chronicle.Services
                 _importProgress.Update(processed, total, rootGroup.Name);
                 try
                 {
-                    var rootItem = await UpsertGroupItemAsync(
+                    var (rootItem, rootIsNew) = await UpsertGroupItemAsync(
                         rootGroup, request.MediaTypeId, parentId: null,
                         hierarchyLevel: 0, ct);
+
+                    if (rootIsNew)
+                        createdItemIds.Add(rootItem.Id);
 
                     // Library entry only at root level
                     var libEntry = await _context.UserLibraries
@@ -1481,7 +1485,7 @@ namespace Chronicle.Services
 
                     // Persist children recursively — no library entries
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
-                        rootItem.Id, hierarchyLevel: 1, ct);
+                        rootItem.Id, hierarchyLevel: 1, createdItemIds, ct);
 
                     pendingInBatch++;
 
@@ -1516,6 +1520,10 @@ namespace Chronicle.Services
                 _log.Information("ImportGroups: committed final batch of {BatchSize} groups", pendingInBatch);
             }
 
+            // Seed pending enrichment rows for all newly created items
+            if (createdItemIds.Count > 0)
+                await SeedEnrichmentRowsForNewItemsAsync(createdItemIds, mediaType.Name, ct);
+
             var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
             _importProgress.Complete(new ImportProgressResult
             {
@@ -1529,18 +1537,20 @@ namespace Chronicle.Services
 
         private async Task PersistChildGroupsAsync(
             List<ScanGroupImport> children, int mediaTypeId,
-            int parentId, int hierarchyLevel, CancellationToken ct)
+            int parentId, int hierarchyLevel, List<int> createdItemIds, CancellationToken ct)
         {
             foreach (var child in children)
             {
-                var item = await UpsertGroupItemAsync(child, mediaTypeId, parentId, hierarchyLevel, ct);
+                var (item, isNew) = await UpsertGroupItemAsync(child, mediaTypeId, parentId, hierarchyLevel, ct);
+                if (isNew)
+                    createdItemIds.Add(item.Id);
                 if (child.Children.Count > 0)
                     await PersistChildGroupsAsync(child.Children, mediaTypeId,
-                        item.Id, hierarchyLevel + 1, ct);
+                        item.Id, hierarchyLevel + 1, createdItemIds, ct);
             }
         }
 
-        private async Task<MediaItem> UpsertGroupItemAsync(
+        private async Task<(MediaItem Item, bool IsNew)> UpsertGroupItemAsync(
             ScanGroupImport group, int mediaTypeId,
             int? parentId, int hierarchyLevel, CancellationToken ct)
         {
@@ -1600,7 +1610,7 @@ namespace Chronicle.Services
                 {
                     fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }
                 });
-                return existing;
+                return (existing, false);
             }
 
             var item = new MediaItem
@@ -1621,7 +1631,62 @@ namespace Chronicle.Services
             };
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct); // need the ID for children
-            return item;
+            return (item, true);
+        }
+
+        // ── Enrichment seeding ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// Inserts pending <see cref="MediaItemEnrichmentStatus"/> rows for each of
+        /// <paramref name="itemIds"/> against every installed <see cref="IMetadataProvider"/>
+        /// that supports <paramref name="mediaTypeName"/>. Existing rows are skipped.
+        /// </summary>
+        private async Task SeedEnrichmentRowsForNewItemsAsync(
+            List<int> itemIds, string mediaTypeName, CancellationToken ct = default)
+        {
+            var providers = _registry.GetMetadataProviders();
+            if (providers.Count == 0)
+                return;
+
+            int seeded = 0;
+            foreach (var provider in providers)
+            {
+                var supportedNames = provider.GetSupportedMediaTypes()
+                    .Select(t => t.MediaTypeName)
+                    .ToList();
+
+                if (!supportedNames.Contains(mediaTypeName, StringComparer.OrdinalIgnoreCase))
+                    continue;
+
+                var existingSet = (await _context.EnrichmentStatuses
+                    .Where(x => x.PluginId == provider.PluginId && itemIds.Contains(x.MediaItemId))
+                    .Select(x => x.MediaItemId)
+                    .ToListAsync(ct))
+                    .ToHashSet();
+
+                foreach (var itemId in itemIds)
+                {
+                    if (existingSet.Contains(itemId))
+                        continue;
+
+                    _context.EnrichmentStatuses.Add(new Chronicle.Core.Models.MediaItemEnrichmentStatus
+                    {
+                        MediaItemId = itemId,
+                        PluginId    = provider.PluginId,
+                        Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
+                        MaxRetries  = 3,
+                    });
+                    seeded++;
+                }
+            }
+
+            if (seeded > 0)
+            {
+                await _context.SaveChangesAsync(ct);
+                _log.Information(
+                    "Seeded {Count} pending enrichment rows for {ItemCount} newly imported items",
+                    seeded, itemIds.Count);
+            }
         }
 
         // ── Confidence threshold ─────────────────────────────────────────────────
