@@ -119,6 +119,22 @@ public sealed class ScheduledScanService : IScheduledTask
                     dbFolder.LastScannedAt = DateTime.UtcNow;
                     await db.SaveChangesAsync(ct);
                 }
+
+                // Fire-and-forget enrichment for newly imported items (non-blocking).
+                // Use CancellationToken.None so enrichment isn't cancelled if the scan's token is cancelled.
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var enrichScope = _scopeFactory.CreateScope();
+                        var enrichSvc = enrichScope.ServiceProvider.GetRequiredService<IMetadataEnrichmentService>();
+                        await enrichSvc.EnrichAllAsync(CancellationToken.None);
+                    }
+                    catch (Exception enrichEx)
+                    {
+                        _log.Error(enrichEx, "ScheduledScanService: Background enrichment failed after scan of {Path}", folder.Path);
+                    }
+                });
             }
             catch (OperationCanceledException)
             {
