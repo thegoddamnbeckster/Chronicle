@@ -60,6 +60,14 @@ public class PluginManifest
     public string? BrandColorDark { get; set; }
 
     /// <summary>
+    /// Short hint shown in the Fix Match panel explaining what the user should enter.
+    /// Example: "Enter a TMDB ID (e.g. 550), typed ID (movie:550 · tv:1396), or URL"
+    /// Optional — falls back to "Enter an ID or URL to search {Name}" if absent.
+    /// </summary>
+    [JsonPropertyName("fixMatchHint")]
+    public string? FixMatchHint { get; set; }
+
+    /// <summary>
     /// Background tasks this plugin wants Chronicle to schedule.
     /// Omit entirely if the plugin has no scheduled work.
     /// </summary>

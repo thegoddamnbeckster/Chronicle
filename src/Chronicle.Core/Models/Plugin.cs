@@ -39,4 +39,7 @@ public class Plugin
 
     /// <summary>Hex accent colour for dark-mode UI (from manifest brandColorDark).</summary>
     public string? BrandColorDark { get; set; }
+
+    /// <summary>Short hint shown in the Fix Match panel. From manifest fixMatchHint.</summary>
+    public string? FixMatchHint { get; set; }
 }
