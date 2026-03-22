@@ -85,7 +85,7 @@ public class MetadataRefreshServiceTests
         db.MediaExternalIds.Add(new MediaExternalId
         {
             MediaItemId = 1,
-            Source = "tmdb",
+            Source = "chronicle.plugin.tmdb",
             ExternalId = "movie:550"
         });
         await db.SaveChangesAsync();
@@ -93,7 +93,7 @@ public class MetadataRefreshServiceTests
         var providerMock = MakeProvider("movie");
         providerMock
             .Setup(p => p.GetByIdAsync("movie:550", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MediaMetadata { Title = "Fight Club", ExternalId = "movie:550", Source = "tmdb" });
+            .ReturnsAsync(new MediaMetadata { Title = "Fight Club", ExternalId = "movie:550", Source = "chronicle.plugin.tmdb" });
 
         var registryMock = new Mock<IPluginRegistry>();
         registryMock.Setup(r => r.GetMetadataProviders())
@@ -125,7 +125,7 @@ public class MetadataRefreshServiceTests
         db.MediaExternalIds.Add(new MediaExternalId
         {
             MediaItemId = 1,
-            Source = "tmdb",
+            Source = "chronicle.plugin.tmdb",
             ExternalId = "movie:550"
         });
         await db.SaveChangesAsync();
