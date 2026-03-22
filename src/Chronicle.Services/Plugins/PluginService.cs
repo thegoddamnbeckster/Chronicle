@@ -13,12 +13,14 @@ public class PluginService : IPluginService
 {
     private readonly ChronicleDbContext _db;
     private readonly IPluginRegistry _registry;
+    private readonly IPluginSettingsProtector _protector;
     private readonly ILogger _log = Log.ForContext<PluginService>();
 
-    public PluginService(ChronicleDbContext db, IPluginRegistry registry)
+    public PluginService(ChronicleDbContext db, IPluginRegistry registry, IPluginSettingsProtector protector)
     {
         _db = db;
         _registry = registry;
+        _protector = protector;
     }
 
     public async Task<List<Plugin>> GetAllPluginsAsync() =>
@@ -85,7 +87,7 @@ public class PluginService : IPluginService
         var plugin = await _db.Plugins.FindAsync(id)
             ?? throw new InvalidOperationException($"Plugin with id {id} not found.");
 
-        plugin.SettingsJson = JsonSerializer.Serialize(settings);
+        plugin.SettingsJson = _protector.Protect(JsonSerializer.Serialize(settings));
         plugin.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
@@ -263,11 +265,12 @@ public class PluginService : IPluginService
             itemIds.Count - existingSet.Count, manifestPluginId);
     }
 
-    private static IReadOnlyDictionary<string, string> DeserializeSettings(string? json)
+    private IReadOnlyDictionary<string, string> DeserializeSettings(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
             return new Dictionary<string, string>();
-        return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
+        var plainJson = _protector.Unprotect(json);
+        return JsonSerializer.Deserialize<Dictionary<string, string>>(plainJson)
             ?? new Dictionary<string, string>();
     }
 
@@ -276,7 +279,7 @@ public class PluginService : IPluginService
     /// Only inspects the first metadata provider's schema (covers the primary use-case of
     /// e.g. TMDB needing an API key).
     /// </summary>
-    private static List<string> GetMissingRequiredSettings(LoadedPlugin loaded, string? settingsJson)
+    private List<string> GetMissingRequiredSettings(LoadedPlugin loaded, string? settingsJson)
     {
         if (loaded.MetadataProviders.Count == 0) return [];
 
@@ -289,9 +292,8 @@ public class PluginService : IPluginService
         Dictionary<string, string> current;
         try
         {
-            current = string.IsNullOrWhiteSpace(settingsJson)
-                ? []
-                : JsonSerializer.Deserialize<Dictionary<string, string>>(settingsJson) ?? [];
+            var plainJson = _protector.Unprotect(settingsJson);
+            current = JsonSerializer.Deserialize<Dictionary<string, string>>(plainJson) ?? [];
         }
         catch { current = []; }
 

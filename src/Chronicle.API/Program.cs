@@ -1,5 +1,6 @@
 using System.Text;
 using Chronicle.API;
+using Microsoft.AspNetCore.DataProtection;
 using Chronicle.API.Authentication;
 using Chronicle.Data;
 using Chronicle.Services;
@@ -151,6 +152,17 @@ builder.Services.AddHttpClient("github", c =>
         c.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", githubToken);
 });
+
+// ── Data Protection (plugin settings encryption) ──────────────────────────────
+// Keys are persisted to a 'keys/' directory next to the executable so they survive
+// application restarts and database refreshes independently of the database file.
+// SetApplicationName locks the key ring to this app so keys are not accidentally
+// shared with other ASP.NET Core apps on the same machine.
+var keysDir = new DirectoryInfo(Path.Combine(AppContext.BaseDirectory, "keys"));
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(keysDir)
+    .SetApplicationName("Chronicle");
+builder.Services.AddSingleton<IPluginSettingsProtector, PluginSettingsProtector>();
 
 // ── Plugin system ─────────────────────────────────────────────────────────────
 // PluginRegistry is a singleton — it holds the in-process AssemblyLoadContexts.
