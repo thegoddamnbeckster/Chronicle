@@ -1,0 +1,29 @@
+{
+  "plugin_id": "chronicle.plugin.musicbrainz",
+  "name": "MusicBrainz",
+  "version": "1.0.2",
+  "author": "Chronicle Contributors",
+  "description": "Fetches comprehensive music metadata from MusicBrainz (artist, album, track) and cover art from the Cover Art Archive. No API key required.",
+  "min_chronicle_version": "0.1.0",
+  "entry_type": "Chronicle.Plugin.MusicBrainz.MusicBrainzMetadataProvider",
+  "iconUrl": "https://musicbrainz.org/favicon.ico",
+  "brandColorLight": "#BA478F",
+  "brandColorDark": "#CF6BAA",
+  "fixMatchHint": "Enter a MusicBrainz MBID or release URL (e.g. https://musicbrainz.org/release/...)",
+  "background_tasks": [
+    {
+      "task_id": "fetch-missing-metadata",
+      "display_name": "Fetch Missing Metadata",
+      "description": "Looks up metadata from MusicBrainz for newly imported artists, albums, and tracks that don't have it yet.",
+      "default_cron": "0 4 * * *",
+      "default_enabled": true
+    },
+    {
+      "task_id": "resync-all-metadata",
+      "display_name": "Re-sync All Metadata",
+      "description": "Re-downloads all MusicBrainz metadata to pick up corrections and updates.",
+      "default_cron": "0 3 * * 0",
+      "default_enabled": false
+    }
+  ]
+}
