@@ -14,11 +14,12 @@ namespace Chronicle.API.Controllers;
 [Authorize]
 public class PluginsController : ControllerBase
 {
-    private readonly IPluginService      _pluginService;
-    private readonly IPluginRegistry     _registry;
-    private readonly IHttpClientFactory  _httpClientFactory;
-    private readonly IMemoryCache        _cache;
-    private readonly IWebHostEnvironment _environment;
+    private readonly IPluginService           _pluginService;
+    private readonly IPluginRegistry          _registry;
+    private readonly IPluginSettingsProtector _protector;
+    private readonly IHttpClientFactory       _httpClientFactory;
+    private readonly IMemoryCache             _cache;
+    private readonly IWebHostEnvironment      _environment;
 
     // ── Icon proxy constants ───────────────────────────────────────────────────
 
@@ -58,12 +59,14 @@ public class PluginsController : ControllerBase
     public PluginsController(
         IPluginService pluginService,
         IPluginRegistry registry,
+        IPluginSettingsProtector protector,
         IHttpClientFactory httpClientFactory,
         IMemoryCache cache,
         IWebHostEnvironment environment)
     {
         _pluginService     = pluginService;
         _registry          = registry;
+        _protector         = protector;
         _httpClientFactory = httpClientFactory;
         _cache             = cache;
         _environment       = environment;
@@ -235,9 +238,8 @@ public class PluginsController : ControllerBase
         if (plugin is null)
             return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_FOUND", "Plugin not found."));
 
-        var settings = string.IsNullOrWhiteSpace(plugin.SettingsJson)
-            ? new Dictionary<string, string>()
-            : JsonSerializer.Deserialize<Dictionary<string, string>>(plugin.SettingsJson) ?? new();
+        var plainJson = _protector.Unprotect(plugin.SettingsJson);
+        var settings = JsonSerializer.Deserialize<Dictionary<string, string>>(plainJson) ?? new();
 
         return Ok(ApiResponse<object>.Ok(settings));
     }

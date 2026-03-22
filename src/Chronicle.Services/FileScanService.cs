@@ -15,17 +15,20 @@ namespace Chronicle.Services
     {
         private readonly ChronicleDbContext _context;
         private readonly IPluginRegistry _registry;
+        private readonly IPluginSettingsProtector _protector;
         private readonly ScanProgressService _progress;
         private readonly ImportProgressService _importProgress;
         private readonly IScanGroupingService _groupingService;
         private readonly ILogger _log = Log.ForContext<FileScanService>();
 
         public FileScanService(ChronicleDbContext context, IPluginRegistry registry,
+            IPluginSettingsProtector protector,
             ScanProgressService progress, ImportProgressService importProgress,
             IScanGroupingService groupingService)
         {
             _context = context;
             _registry = registry;
+            _protector = protector;
             _progress = progress;
             _importProgress = importProgress;
             _groupingService = groupingService;
@@ -1619,7 +1622,8 @@ namespace Chronicle.Services
             {
                 try
                 {
-                    var settings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                    var plainJson = _protector.Unprotect(json);
+                    var settings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(plainJson);
                     if (settings?.TryGetValue("confidence_threshold", out var raw) == true
                         && int.TryParse(raw, out var parsed)
                         && parsed >= 0 && parsed <= 100)
