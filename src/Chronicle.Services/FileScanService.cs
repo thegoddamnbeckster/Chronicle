@@ -1588,7 +1588,7 @@ namespace Chronicle.Services
                     .Select(t => t.MediaTypeName)
                     .ToList();
 
-                if (!supportedNames.Contains(mediaTypeName, StringComparer.OrdinalIgnoreCase))
+                if (!supportedNames.Any(n => NormalizeMediaTypeName(n) == NormalizeMediaTypeName(mediaTypeName)))
                     continue;
 
                 var existingSet = (await _context.EnrichmentStatuses
@@ -1621,6 +1621,16 @@ namespace Chronicle.Services
                     seeded, itemIds.Count);
             }
         }
+
+        // ── Helpers ──────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Maps DB media-type names to the canonical form used by plugin
+        /// <c>GetSupportedMediaTypes()</c> declarations so "movies" (DB) matches
+        /// "movie" (TMDB plugin) and vice versa.
+        /// </summary>
+        private static string NormalizeMediaTypeName(string name) =>
+            name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
         // ── Confidence threshold ─────────────────────────────────────────────────
 

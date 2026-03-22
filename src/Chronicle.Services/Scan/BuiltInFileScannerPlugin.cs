@@ -78,19 +78,6 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
     /// </summary>
     public PluginSettingsSchema GetSettingsSchema()
     {
-        const string description =
-            "Minimum confidence score (0–100) for this media type to be auto-imported by the " +
-            "scheduled scan. Groups below this score are visible in the manual Scan page but " +
-            "skipped by background tasks.\n\n" +
-            "How scores are assigned:\n" +
-            "• 100 — NFO sidecar contains an external ID (e.g. TMDB / TVDB ID)\n" +
-            "• 90  — NFO sidecar has title + year\n" +
-            "• 78  — NFO sidecar has title only\n" +
-            "• 75  — Folder name includes a year, e.g. \"Interstellar (2014)\"\n" +
-            "• 55  — Folder name only, no year or sidecar\n\n" +
-            "Recommended: 75 for year-named folders; 90+ to require NFO sidecars; " +
-            "55 to import everything the scanner finds.";
-
         return new PluginSettingsSchema
         {
             Settings = GetSupportedMediaTypes()
@@ -98,12 +85,71 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
                 {
                     Key          = $"confidence_threshold_{mt.MediaTypeName}",
                     Label        = $"Confidence threshold — {FriendlyName(mt.MediaTypeName)} (0–100)",
-                    Description  = description,
+                    Description  = ConfidenceDescription(mt.MediaTypeName),
                     Type         = SettingType.Number,
                     Required     = false,
                     DefaultValue = "75",
                 })
                 .ToList(),
+        };
+    }
+
+    /// <summary>
+    /// Returns a per-media-type description of how confidence scores are computed,
+    /// so users understand exactly what to expect when adjusting the threshold.
+    /// </summary>
+    private static string ConfidenceDescription(string mediaTypeName)
+    {
+        const string header =
+            "Minimum confidence score (0–100) for a group to be auto-imported by the " +
+            "scheduled scan. Groups below this score appear on the manual Scan page but " +
+            "are skipped by background tasks.\n\n";
+
+        return mediaTypeName switch
+        {
+            "movies" =>
+                header +
+                "How scores are assigned for Movies:\n" +
+                "• 100 — NFO sidecar has an external ID (e.g. tmdbid tag)\n" +
+                "• 90  — NFO sidecar has title + year\n" +
+                "• 78  — NFO sidecar has title only\n" +
+                "• 75  — Folder name includes a year, e.g. \"Interstellar (2014)\"\n" +
+                "• 55  — Folder name only — no year, no sidecar\n\n" +
+                "Recommended: 75 for year-named folders; lower to 55 to import everything; " +
+                "raise to 90+ to require NFO sidecars.",
+
+            "tv" =>
+                header +
+                "How scores are assigned for TV Shows (score is for the show root folder):\n" +
+                "• Base 55  — Folder name alone, e.g. \"Breaking Bad\"\n" +
+                "• +20      — Folder name includes a year, e.g. \"Breaking Bad (2008)\"\n" +
+                "• +20      — NFO sidecar in show folder has a show title\n" +
+                "• −15      — Audio tag artist name conflicts with folder name\n\n" +
+                "Typical results: folder+year = 75, folder+NFO = 75, folder+year+NFO = 95, " +
+                "folder only = 55.\n\n" +
+                "Recommended: 75 for year-named show folders; 55 to import everything.",
+
+            "music" =>
+                header +
+                "How scores are assigned for Music (score is for the artist root folder):\n" +
+                "• Base 55  — Folder name alone, e.g. \"Metallica\"\n" +
+                "• +20      — Embedded audio tags have an artist name\n" +
+                "• +20      — NFO sidecar has an artist name\n" +
+                "• +20      — Folder name includes a year, e.g. \"Metallica (1981)\"\n" +
+                "• −15      — Tag artist name conflicts with folder name\n\n" +
+                "Typical results: folder+tags = 75, folder+NFO = 75, folder+tags+year = 95, " +
+                "folder only = 55.\n\n" +
+                "Recommended: 75 requires at least one corroborating signal; 55 imports everything.",
+
+            _ =>
+                header +
+                "How scores are assigned:\n" +
+                "• 100 — NFO sidecar has an external ID\n" +
+                "• 90  — NFO sidecar has title + year\n" +
+                "• 78  — NFO sidecar has title only\n" +
+                "• 75  — Folder name includes a year\n" +
+                "• 55  — Folder name only\n\n" +
+                "Recommended: 75 for year-named folders; 55 to import everything.",
         };
     }
 

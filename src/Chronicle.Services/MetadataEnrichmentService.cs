@@ -225,7 +225,8 @@ public class MetadataEnrichmentService(
                     .Select(t => t.Name)
                     .FirstOrDefaultAsync(ct);
 
-                if (mediaTypeName is not null && supportedTypes.Contains(mediaTypeName))
+                if (mediaTypeName is not null &&
+                    supportedTypes.Any(t => NormalizeMediaTypeName(t) == NormalizeMediaTypeName(mediaTypeName)))
                 {
                     // For music items all hierarchy levels share the same media type name.
                     // We determine what MusicBrainz entity to search for from ParentId depth
@@ -330,6 +331,15 @@ public class MetadataEnrichmentService(
 
         await db.SaveChangesAsync(ct);
     }
+
+    /// <summary>
+    /// Normalises a DB media-type name to the canonical form used by plugin
+    /// <c>GetSupportedMediaTypes()</c> declarations.  The DB stores "movies" (plural)
+    /// while many standalone plugins (e.g. TMDB) declare "movie" (singular).
+    /// Both map to the same concept; treat them as equivalent for matching purposes.
+    /// </summary>
+    private static string NormalizeMediaTypeName(string name) =>
+        name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
     /// <summary>
     /// Wraps a MusicBrainz Lucene search term in double quotes for exact phrase matching,
