@@ -433,14 +433,15 @@ namespace Chronicle.Services
             {
                 // Three-tier import: root (show/artist) → mid (season/album) → leaf (episode/track)
                 (imported, failed, duplicates, failures) = await ImportHierarchicalAsync(
-                    request.Files, mediaType, request.UserId, ct);
+                    request.Files, mediaType, [request.UserId], ct);
             }
             else
             {
                 // Flat import.
                 // Pass 1: check for duplicates and create only new items.
                 // Pass 2: upsert external IDs.
-                // Pass 3: bulk-upsert library entries.
+                // Pass 3: upsert a library entry for the requesting user (other users get
+                //         entries auto-created by GetForUserAsync on their next library view).
                 var pairs = new List<(DirectImportFile file, MediaItem item)>(request.Files.Count);
 
                 foreach (var file in request.Files)
@@ -487,7 +488,8 @@ namespace Chronicle.Services
                         await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
                 }
 
-                // Determine which items already have a library entry (batch SELECT).
+                // Upsert a library entry for the requesting user.
+                // Other users get entries auto-created by GetForUserAsync on their first library view.
                 var allItemIds = pairs.Select(p => p.item.Id).ToList();
                 var existingLibSet = new HashSet<int>(
                     await _context.UserLibraries
@@ -522,7 +524,7 @@ namespace Chronicle.Services
         private async Task<(int imported, int failed, int duplicates, List<string> failures)> ImportHierarchicalAsync(
             List<DirectImportFile> files,
             MediaType mediaType,
-            int userId,
+            IReadOnlyList<int> userIds,
             CancellationToken ct)
         {
             int imported = 0, failed = 0, duplicates = 0;
@@ -551,8 +553,8 @@ namespace Chronicle.Services
                     var rootItem = await FindOrCreateParentAsync(
                         show.ShowTitle, mediaType.Id, parentId: null, hierarchyLevel: 0, ct);
 
-                    // Upsert library entry for root only
-                    await UpsertLibraryEntryAsync(userId, rootItem.Id, ct);
+                    // Upsert library entry for root only — for all users
+                    await UpsertLibraryEntryAsync(userIds, rootItem.Id, ct);
 
                     foreach (var (seasonNum, season) in show.Seasons)
                     {
@@ -576,7 +578,7 @@ namespace Chronicle.Services
 
                                 var wasNew = await ImportSingleFileAsync(file with { ParsedTitle = epName },
                                     mediaType.Id, midItem.Id, hierarchyLevel: 2,
-                                    userId, addLibraryEntry: false, ct);
+                                    userIds, addLibraryEntry: false, ct);
                                 if (wasNew) imported++;
                                 else duplicates++;
                             }
@@ -605,7 +607,7 @@ namespace Chronicle.Services
             int mediaTypeId,
             int? parentId,
             int hierarchyLevel,
-            int userId,
+            IReadOnlyList<int> userIds,
             bool addLibraryEntry,
             CancellationToken ct)
         {
@@ -616,7 +618,7 @@ namespace Chronicle.Services
                 _log.Information("Duplicate file '{Path}' already imported as '{Title}' (id={Id}) — skipping",
                     file.FilePath, existing.Name, existing.Id);
                 if (addLibraryEntry)
-                    await UpsertLibraryEntryAsync(userId, existing.Id, ct);
+                    await UpsertLibraryEntryAsync(userIds, existing.Id, ct);
                 return false;
             }
 
@@ -639,28 +641,35 @@ namespace Chronicle.Services
                 await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
 
             if (addLibraryEntry)
-                await UpsertLibraryEntryAsync(userId, item.Id, ct);
+                await UpsertLibraryEntryAsync(userIds, item.Id, ct);
 
             return true;
         }
 
-        /// <summary>Adds a UserLibrary entry for <paramref name="mediaItemId"/> if one doesn't already exist.</summary>
-        private async Task UpsertLibraryEntryAsync(int userId, int mediaItemId, CancellationToken ct)
+        /// <summary>
+        /// Adds a UserLibrary entry for <paramref name="mediaItemId"/> for each user in
+        /// <paramref name="userIds"/> if one doesn't already exist. File-scanned content is
+        /// visible to all users regardless of who triggered the import.
+        /// </summary>
+        private async Task UpsertLibraryEntryAsync(IReadOnlyList<int> userIds, int mediaItemId, CancellationToken ct)
         {
-            var exists = await _context.UserLibraries
-                .AnyAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
-            if (!exists)
+            foreach (var userId in userIds)
             {
-                _context.UserLibraries.Add(new UserLibrary
+                var exists = await _context.UserLibraries
+                    .AnyAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+                if (!exists)
                 {
-                    UserId      = userId,
-                    MediaItemId = mediaItemId,
-                    Status      = LibraryStatus.Unwatched,
-                    AddedAt     = DateTime.UtcNow,
-                    UpdatedAt   = DateTime.UtcNow,
-                });
-                await _context.SaveChangesAsync(ct);
+                    _context.UserLibraries.Add(new UserLibrary
+                    {
+                        UserId      = userId,
+                        MediaItemId = mediaItemId,
+                        Status      = LibraryStatus.Unwatched,
+                        AddedAt     = DateTime.UtcNow,
+                        UpdatedAt   = DateTime.UtcNow,
+                    });
+                }
             }
+            await _context.SaveChangesAsync(ct);
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1427,7 +1436,7 @@ namespace Chronicle.Services
         // ── Import groups ────────────────────────────────────────────────────────
 
         public async Task<ImportApprovedSummary> ImportGroupsAsync(
-            ImportGroupsRequest request, int userId, CancellationToken ct = default)
+            ImportGroupsRequest request, IReadOnlyList<int> userIds, CancellationToken ct = default)
         {
             var mediaType = await _context.MediaTypes
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
@@ -1462,26 +1471,28 @@ namespace Chronicle.Services
                     if (rootIsNew)
                         createdItemIds.Add(rootItem.Id);
 
-                    // Library entry only at root level
-                    var libEntry = await _context.UserLibraries
-                        .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == rootItem.Id, ct);
+                    // Library entry only at root level — create for every user so all
+                    // accounts can see file-scanned content regardless of who triggered the import.
+                    bool anyNew = false;
+                    foreach (var uid in userIds)
+                    {
+                        var libEntry = await _context.UserLibraries
+                            .FirstOrDefaultAsync(l => l.UserId == uid && l.MediaItemId == rootItem.Id, ct);
 
-                    if (libEntry is null)
-                    {
-                        _context.UserLibraries.Add(new UserLibrary
+                        if (libEntry is null)
                         {
-                            UserId      = userId,
-                            MediaItemId = rootItem.Id,
-                            Status      = LibraryStatus.Unwatched,
-                            AddedAt     = DateTime.UtcNow,
-                            UpdatedAt   = DateTime.UtcNow,
-                        });
-                        imported++;
+                            _context.UserLibraries.Add(new UserLibrary
+                            {
+                                UserId      = uid,
+                                MediaItemId = rootItem.Id,
+                                Status      = LibraryStatus.Unwatched,
+                                AddedAt     = DateTime.UtcNow,
+                                UpdatedAt   = DateTime.UtcNow,
+                            });
+                            anyNew = true;
+                        }
                     }
-                    else
-                    {
-                        duplicates++;
-                    }
+                    if (anyNew) imported++; else duplicates++;
 
                     // Persist children recursively — no library entries
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,

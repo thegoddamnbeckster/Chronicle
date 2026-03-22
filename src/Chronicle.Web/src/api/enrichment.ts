@@ -2,6 +2,7 @@ import client from './client'
 
 export interface EnrichmentStats {
   pluginId: string
+  pluginName: string
   pending: number
   completed: number
   failed: number

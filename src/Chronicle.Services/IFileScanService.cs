@@ -52,7 +52,7 @@ namespace Chronicle.Services
         /// Root groups get UserLibrary entries; children do not.
         /// </summary>
         Task<ImportApprovedSummary> ImportGroupsAsync(
-            ImportGroupsRequest request, int userId, CancellationToken ct = default);
+            ImportGroupsRequest request, IReadOnlyList<int> userIds, CancellationToken ct = default);
 
         /// <summary>
         /// Queries the first available metadata provider for <paramref name="query"/> and

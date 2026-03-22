@@ -321,10 +321,38 @@
   margin-top: 36px;
 }
 
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .sectionTitle {
   font-size: 1.15rem;
   font-weight: 600;
-  margin: 0 0 16px;
+  margin: 0;
+}
+
+.refreshBtn {
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(255,255,255,0.12));
+  background: transparent;
+  color: var(--text-muted, #9ca3af);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.refreshBtn:hover:not(:disabled) {
+  color: var(--text-primary, #f3f4f6);
+  border-color: var(--text-muted, #9ca3af);
+}
+
+.refreshBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .enrichmentEmpty {
