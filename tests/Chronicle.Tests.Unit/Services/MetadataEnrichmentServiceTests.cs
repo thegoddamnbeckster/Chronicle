@@ -120,6 +120,20 @@ public class MetadataEnrichmentServiceTests : IDisposable
     [Fact]
     public async Task GetStatsAsync_ReturnsCountsPerPlugin()
     {
+        // Seed a Plugin record — GetStatsAsync now returns one row per installed plugin
+        _db.Plugins.Add(new Chronicle.Core.Models.Plugin
+        {
+            PluginId = "chronicle.plugin.musicbrainz",
+            Name = "MusicBrainz",
+            Author = "Test",
+            Version = "1.0.0",
+            DllPath = "/fake/path.dll",
+            IsEnabled = true,
+            InstalledAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
         await SeedItemWithStatus(null, EnrichmentStatus.Pending);
         await SeedItemWithStatus(null, EnrichmentStatus.Completed);
 
