@@ -19,29 +19,6 @@ export interface ExternalId {
   externalId: string
 }
 
-export interface TmdbMeta {
-  rating: number | null
-  genres: string[] | null
-  cast: string[] | null
-  directors: string[] | null
-  posterUrl: string | null
-  backdropUrl: string | null
-  /** Season poster path from TMDB (e.g. "/abc.jpg"). Full URL: https://image.tmdb.org/t/p/w500{posterPath} */
-  posterPath: string | null
-  /** Episode still/thumbnail path from TMDB (e.g. "/xyz.jpg"). Full URL: https://image.tmdb.org/t/p/w500{stillPath} */
-  stillPath: string | null
-  /** Vote average for season or episode. */
-  voteAverage: number | null
-  /** Air date (ISO 8601 string) for seasons and episodes. */
-  airDate: string | null
-  /** Number of episodes in this season. */
-  episodeCount: number | null
-  /** Guest stars for this episode. */
-  guestStars: string[] | null
-  /** Crew (directors/writers) for this episode. */
-  crew: string[] | null
-}
-
 export interface FileScannerMeta {
   filePath: string | null
   localPosterPath: string | null
@@ -72,8 +49,10 @@ export interface MediaItem {
   createdAt: string
   updatedAt: string
   externalIds: ExternalId[]
-  tmdbMeta?: TmdbMeta | null
   fileScannerMeta?: FileScannerMeta | null
+  /** All plugin metadata keyed by full plugin ID (e.g. "chronicle.plugin.tmdb").
+   *  Values are raw JSON objects from each plugin — no typed shapes enforced here. */
+  pluginMetadata?: Record<string, Record<string, unknown>> | null
   refreshLogs?: RefreshLog[] | null
 }
 

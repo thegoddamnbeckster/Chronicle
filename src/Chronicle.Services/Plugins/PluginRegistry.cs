@@ -184,12 +184,27 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     /// <inheritdoc/>
     public void UnloadPlugin(int dbId)
     {
+        WeakReference? contextRef = null;
+
         lock (_lock)
         {
             if (!_plugins.Remove(dbId, out var plugin))
                 return;
+
+            // Capture a weak reference to the load context BEFORE disposing.
+            // Dispose() calls LoadContext.Unload(), but on Windows the file lock
+            // is not released until the GC actually collects the context object.
+            contextRef = new WeakReference(plugin.LoadContext);
             plugin.Dispose();
             _log.Information("Plugin unloaded (db id {DbId})", dbId);
+        }
+
+        // Drive the GC until the context is collected and the file lock released.
+        // Up to 10 cycles; each cycle is fast (< 1 ms) for a small plugin assembly.
+        for (int i = 0; i < 10 && (contextRef?.IsAlive ?? false); i++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
         }
     }
 

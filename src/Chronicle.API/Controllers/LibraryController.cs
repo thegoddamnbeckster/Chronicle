@@ -103,6 +103,7 @@ namespace Chronicle.API.Controllers
         }
 
         [HttpPost("reset")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> NuclearReset(
             [FromBody] NuclearResetRequestDto request,
             CancellationToken ct)
@@ -123,6 +124,7 @@ namespace Chronicle.API.Controllers
         }
 
         [HttpPost("clear-scanner-data")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> ClearScannerData(CancellationToken ct)
         {
             var count = await _libraryService.ClearScannerDataAsync(ct);

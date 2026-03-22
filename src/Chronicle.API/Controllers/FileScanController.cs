@@ -220,7 +220,7 @@ public class FileScanController : ControllerBase
         {
             var item = await _scanService.AddFromSearchAsync(dto.ExternalId, dto.MediaTypeId, userId, ct);
 
-            var (tmdb, fs) = ParseMetaJson(item.MetadataJson);
+            var fs = ParseFileScannerMeta(item.MetadataJson);
             var itemDto = new MediaItemDto(
                 item.Id, item.MediaTypeId,
                 item.MediaType?.DisplayName ?? string.Empty,
@@ -228,7 +228,7 @@ public class FileScanController : ControllerBase
                 item.RuntimeMinutes, item.HierarchyLevel, item.Number,
                 item.CreatedAt, item.UpdatedAt,
                 item.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList(),
-                TmdbMeta: tmdb, FileScannerMeta: fs);
+                FileScannerMeta: fs);
 
             return Ok(ApiResponse<MediaItemDto>.Ok(itemDto));
         }
@@ -364,7 +364,9 @@ public class FileScanController : ControllerBase
             var svc = scope.ServiceProvider.GetRequiredService<IFileScanService>();
             try
             {
-                await svc.ImportGroupsAsync(importRequest, userId, CancellationToken.None);
+                // Pass the requesting user so they get an eager library row.
+                // Other users get rows auto-created by GetForUserAsync on their next library view.
+                await svc.ImportGroupsAsync(importRequest, [userId], CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -410,7 +412,7 @@ public class FileScanController : ControllerBase
         r.TotalFiles);
 
     private static ScanGroupDto ToGroupDto(Chronicle.Core.Models.Scan.ScanGroup g) => new(
-        g.GroupKey, g.Name, g.HierarchyLevel, g.Year,
+        g.GroupKey, g.Name, g.HierarchyLevel, g.Year, g.Number,
         g.PosterPath, (int)Math.Round(g.ConfidenceScore * 100),
         g.SignalSources, g.HasConflicts,
         g.Children.Select(ToGroupDto).ToList(),
@@ -419,7 +421,7 @@ public class FileScanController : ControllerBase
     private static Chronicle.Services.ScanGroupImport ToGroupImport(ImportGroupDto g) =>
         new(g.Name, g.Year, g.PosterPath,
             g.Children.Select(ToGroupImport).ToList(),
-            g.Files, g.FolderPath);
+            g.Files, g.FolderPath, g.Number);
 
     /// <summary>
     /// Returns a snapshot of the currently-running preview scan (folder being scanned,
@@ -442,25 +444,20 @@ public class FileScanController : ControllerBase
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private sealed record MediaMetaJsonRoot(TmdbMetaDto? Tmdb, FileScannerMetaDto? FileScanner);
-
     private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
         new(System.Text.Json.JsonSerializerDefaults.Web);
 
-    // TODO: Extract ParseMetaJson and MediaMetaJsonRoot to a shared Chronicle.API helper to remove this duplication
-    private static (TmdbMetaDto? tmdb, FileScannerMetaDto? fs) ParseMetaJson(string? json)
+    private static FileScannerMetaDto? ParseFileScannerMeta(string? json)
     {
-        if (json is null) return (null, null);
+        if (json is null) return null;
         try
         {
-            var root = System.Text.Json.JsonSerializer.Deserialize<MediaMetaJsonRoot>(json, _jsonOpts);
-            // Partitioned format: {"tmdb":{...},"fileScanner":{...}}
-            // import-direct items have tmdb=null but fileScanner populated, so check either key.
-            if (root is not null && (root.Tmdb is not null || root.FileScanner is not null))
-                return (root.Tmdb, root.FileScanner);
-            var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
-            return (flat, null);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            if (!root.TryGetProperty("fileScanner", out var fsEl)) return null;
+            return System.Text.Json.JsonSerializer.Deserialize<FileScannerMetaDto>(fsEl.GetRawText(), _jsonOpts);
         }
-        catch { return (null, null); }
+        catch { return null; }
     }
 }

@@ -50,17 +50,9 @@ public sealed class ScheduledScanService : IScheduledTask
             "ScheduledScanService: Found {Count} enabled scan folder(s), confidence threshold: {Threshold}",
             folders.Count, threshold);
 
-        // Resolve the admin user to own the imported library entries.
-        var adminUser = await db.Users
-            .Where(u => u.IsAdmin)
-            .OrderBy(u => u.Id)
-            .FirstOrDefaultAsync(ct);
-
-        if (adminUser is null)
-        {
-            _log.Warning("ScheduledScanService: No admin user found — cannot import groups");
-            return;
-        }
+        // No user context in scheduled scans — UserLibrary rows are auto-created
+        // for each user by LibraryService.GetForUserAsync on their first library view.
+        IReadOnlyList<int> noUserIds = [];
 
         foreach (var folder in folders)
         {
@@ -107,7 +99,7 @@ public sealed class ScheduledScanService : IScheduledTask
                     passingGroups.Select(g => ToImport(g)).ToList(),
                     folder.MediaTypeId);
 
-                var summary = await fileScanSvc.ImportGroupsAsync(importRequest, adminUser.Id, ct);
+                var summary = await fileScanSvc.ImportGroupsAsync(importRequest, noUserIds, ct);
 
                 _log.Information(
                     "ScheduledScanService: Import complete for {Path} — imported: {Imported}, failed: {Failed}, duplicates: {Duplicates}",
@@ -119,6 +111,22 @@ public sealed class ScheduledScanService : IScheduledTask
                     dbFolder.LastScannedAt = DateTime.UtcNow;
                     await db.SaveChangesAsync(ct);
                 }
+
+                // Fire-and-forget enrichment for newly imported items (non-blocking).
+                // Use CancellationToken.None so enrichment isn't cancelled if the scan's token is cancelled.
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var enrichScope = _scopeFactory.CreateScope();
+                        var enrichSvc = enrichScope.ServiceProvider.GetRequiredService<IMetadataEnrichmentService>();
+                        await enrichSvc.EnrichAllAsync(CancellationToken.None);
+                    }
+                    catch (Exception enrichEx)
+                    {
+                        _log.Error(enrichEx, "ScheduledScanService: Background enrichment failed after scan of {Path}", folder.Path);
+                    }
+                });
             }
             catch (OperationCanceledException)
             {
@@ -140,5 +148,7 @@ public sealed class ScheduledScanService : IScheduledTask
         group.Year,
         group.PosterPath,
         group.Children.Select(c => ToImport(c)).ToList(),
-        group.Files);
+        group.Files,
+        group.FolderPath,
+        group.Number);
 }

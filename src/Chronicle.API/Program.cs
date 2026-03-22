@@ -82,9 +82,16 @@ var dbProvider = builder.Configuration.GetValue<string>("Database:Provider")
 builder.Services.AddDbContext<ChronicleDbContext>(options =>
 {
     if (dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
+    {
         options.UseNpgsql(connectionString);
+    }
     else
+    {
         options.UseSqlite(connectionString);
+        // Apply busy_timeout on every new connection so concurrent background tasks
+        // wait up to 5 s for the write lock rather than failing immediately.
+        options.AddInterceptors(new SqliteBusyTimeoutInterceptor());
+    }
 });
 
 // ── Services ──────────────────────────────────────────────────────────────────
@@ -112,6 +119,8 @@ builder.Services.AddScoped<Chronicle.Services.Scan.IScanGroupingService,
                             Chronicle.Services.Scan.ScanGroupingService>();
 builder.Services.AddScoped<IFileScanService, FileScanService>();
 builder.Services.AddScoped<IScanFolderService, ScanFolderService>();
+builder.Services.AddScoped<IMetadataEnrichmentService, MetadataEnrichmentService>();
+builder.Services.AddScoped<IPluginTaskRunner, PluginTaskRunner>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();
@@ -152,14 +161,12 @@ builder.Services.AddScoped<IPluginService, PluginService>();
 builder.Services.AddHostedService<PluginHostService>();
 
 // ── Scheduled background tasks ────────────────────────────────────────────────
-// Each IScheduledTask is registered as a singleton so both its IScheduledTask role
-// (consumed by TaskSchedulerService via IEnumerable<IScheduledTask>) and any
-// additional service interfaces share the same instance.
-builder.Services.AddSingleton<MetadataRefreshService>();
-builder.Services.AddSingleton<IMetadataRefreshService>(
-    sp => sp.GetRequiredService<MetadataRefreshService>());
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<MetadataRefreshService>());
+// System IScheduledTask implementations are registered as singletons so the same
+// instance is shared between IScheduledTask (consumed by TaskSchedulerService) and
+// any additional service interfaces.
+// MetadataRefreshService no longer implements IScheduledTask — it is scoped and
+// invoked via IPluginTaskRunner (per-plugin task architecture).
+builder.Services.AddScoped<IMetadataRefreshService, MetadataRefreshService>();
 
 builder.Services.AddSingleton<DuplicateCleanupService>();
 builder.Services.AddSingleton<IScheduledTask>(
@@ -276,7 +283,12 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
     if (db.Database.IsRelational())
     {
-        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=DELETE;");
+        // WAL mode allows concurrent reads and greatly reduces write contention —
+        // multiple background tasks (enrichment, scan, library) can coexist without
+        // hitting "database is locked". busy_timeout tells SQLite to retry writes
+        // for up to 5 seconds before giving up rather than failing immediately.
+        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+        db.Database.ExecuteSqlRaw("PRAGMA busy_timeout=5000;");
         // EF9 acquires an exclusive SQLite lock even when there are no pending
         // migrations, which can hang on Windows. Only call Migrate() when needed.
         if (db.Database.GetPendingMigrations().Any())
