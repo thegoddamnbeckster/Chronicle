@@ -148,5 +148,7 @@ public sealed class ScheduledScanService : IScheduledTask
         group.Year,
         group.PosterPath,
         group.Children.Select(c => ToImport(c)).ToList(),
-        group.Files);
+        group.Files,
+        group.FolderPath,
+        group.Number);
 }
