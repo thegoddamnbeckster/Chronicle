@@ -58,17 +58,13 @@ function statusBadge(task: BackgroundTask) {
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-/** Convert pluginId last segment to a display name: "chronicle.plugin.musicbrainz" → "MusicBrainz" */
-function pluginDisplayName(pluginId: string): string {
-  const last = pluginId.split('.').pop() ?? pluginId
-  return last.charAt(0).toUpperCase() + last.slice(1)
-}
 
 // ── Enrichment status section ─────────────────────────────────────────────
 
 function EnrichmentSection() {
   const [stats, setStats] = useState<EnrichmentStats[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [runStarted, setRunStarted] = useState<Record<string, boolean>>({})
 
   const load = useCallback(async () => {
@@ -83,6 +79,12 @@ function EnrichmentSection() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    await load()
+    setRefreshing(false)
+  }
 
   async function handleRun(pluginId: string) {
     try {
@@ -105,7 +107,17 @@ function EnrichmentSection() {
 
   return (
     <div className={styles.enrichmentSection}>
-      <h2 className={styles.sectionTitle}>Enrichment Status</h2>
+      <div className={styles.sectionHeader}>
+        <h2 className={styles.sectionTitle}>Enrichment Status</h2>
+        <button
+          className={styles.refreshBtn}
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Refresh enrichment stats"
+        >
+          {refreshing ? '↻ Refreshing…' : '↻ Refresh'}
+        </button>
+      </div>
       {loading ? (
         <p className={styles.loading}>Loading enrichment stats…</p>
       ) : stats.length === 0 ? (
@@ -128,7 +140,7 @@ function EnrichmentSection() {
             <tbody>
               {stats.map(s => (
                 <tr key={s.pluginId} className={styles.enrichRow}>
-                  <td className={styles.enrichTd}>{pluginDisplayName(s.pluginId)}</td>
+                  <td className={styles.enrichTd}>{s.pluginName}</td>
                   <td className={styles.enrichTd}>{s.pending}</td>
                   <td className={styles.enrichTd}>{s.completed}</td>
                   <td className={styles.enrichTd}>{s.failed}</td>
@@ -481,7 +493,7 @@ export default function BackgroundTasksPage() {
               </div>
             </div>
 
-            {task.lastRunSucceeded === false && task.lastErrorMessage && (
+            {task.lastRunSucceeded === false && task.lastErrorMessage && !isRunning && (
               <p className={styles.errorText}>{task.lastErrorMessage}</p>
             )}
 
