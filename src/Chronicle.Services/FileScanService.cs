@@ -1625,10 +1625,13 @@ namespace Chronicle.Services
         // ── Confidence threshold ─────────────────────────────────────────────────
 
         /// <summary>
-        /// Reads the confidence threshold from the file scanner plugin's stored settings.
-        /// Falls back to the interface default (80) if the setting is absent or malformed.
+        /// Returns the threshold for <paramref name="mediaTypeName"/> by reading (in order):
+        ///   1. <c>confidence_threshold_{mediaTypeName}</c> from the scanner plugin's saved settings
+        ///   2. Legacy global <c>confidence_threshold</c> key (backward compatibility)
+        ///   3. The loaded plugin's per-type default via <see cref="IFileScannerPlugin.GetConfidenceThreshold"/>
+        ///   4. Hard-coded fallback of 75
         /// </summary>
-        public async Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default)
+        public async Task<int> GetConfidenceThresholdAsync(string mediaTypeName, CancellationToken ct = default)
         {
             var plugin = await _context.Plugins
                 .FirstOrDefaultAsync(p => p.PluginId == "chronicle.plugin.filescanner" && p.IsEnabled, ct);
@@ -1638,16 +1641,31 @@ namespace Chronicle.Services
                 {
                     var plainJson = _protector.Unprotect(json);
                     var settings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(plainJson);
-                    if (settings?.TryGetValue("confidence_threshold", out var raw) == true
-                        && int.TryParse(raw, out var parsed)
-                        && parsed >= 0 && parsed <= 100)
-                        return parsed;
+                    if (settings is not null)
+                    {
+                        // 1. Per-type key
+                        var perTypeKey = $"confidence_threshold_{mediaTypeName}";
+                        if (settings.TryGetValue(perTypeKey, out var perTypeRaw)
+                            && int.TryParse(perTypeRaw, out var perTypeParsed)
+                            && perTypeParsed >= 0 && perTypeParsed <= 100)
+                            return perTypeParsed;
+
+                        // 2. Legacy global key
+                        if (settings.TryGetValue("confidence_threshold", out var legacyRaw)
+                            && int.TryParse(legacyRaw, out var legacyParsed)
+                            && legacyParsed >= 0 && legacyParsed <= 100)
+                            return legacyParsed;
+                    }
                 }
                 catch { /* ignore malformed JSON */ }
             }
-            // Fall back to the loaded plugin's default (80 via default interface impl)
+            // 3. Plugin instance's per-type method / fallback default
             var scanner = _registry.GetFileScannerPlugins().FirstOrDefault();
-            return scanner?.ConfidenceThreshold ?? 80;
+            return scanner?.GetConfidenceThreshold(mediaTypeName) ?? 75;
         }
+
+        /// <inheritdoc cref="IFileScanService.GetConfidenceThresholdAsync(CancellationToken)"/>
+        public Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default) =>
+            GetConfidenceThresholdAsync(string.Empty, ct);
     }
 }

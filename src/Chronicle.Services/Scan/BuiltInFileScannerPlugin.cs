@@ -22,7 +22,11 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
 
     // ── Internal state ────────────────────────────────────────────────────────
 
-    private int _confidenceThreshold = 80;
+    /// <summary>Per-media-type thresholds populated by <see cref="Configure"/>.</summary>
+    private readonly Dictionary<string, int> _thresholds = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Legacy single-threshold fallback (populated if old key is still present).</summary>
+    private int? _legacyThreshold;
 
     private static readonly FolderSignalExtractor _folderExtractor = new();
     private static readonly TagSignalExtractor    _tagExtractor    = new();
@@ -60,40 +64,91 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
 
     public MediaTypeSupport[] GetSupportedMediaTypes() =>
     [
-        new() { MediaTypeName = "movie",  DefaultPriority = 10 },
+        new() { MediaTypeName = "movies", DefaultPriority = 10 },
         new() { MediaTypeName = "tv",     DefaultPriority = 10 },
         new() { MediaTypeName = "music",  DefaultPriority = 10 },
-        new() { MediaTypeName = "movies", DefaultPriority = 10 },
     ];
 
-    public PluginSettingsSchema GetSettingsSchema() => new()
+    /// <summary>
+    /// Generates one threshold setting per supported media type so each can be tuned
+    /// independently. The schema is driven by <see cref="GetSupportedMediaTypes"/> so any
+    /// future media types added there automatically appear in the settings UI.
+    /// Note: enrichment after import only runs for media types that also have a compatible
+    /// metadata plugin installed (e.g. TMDB for movies/TV, MusicBrainz for music).
+    /// </summary>
+    public PluginSettingsSchema GetSettingsSchema()
     {
-        Settings =
-        [
-            new SettingDefinition
-            {
-                Key          = "confidence_threshold",
-                Label        = "Confidence threshold (0–100)",
-                Description  = "Minimum confidence score a scan group must reach to be auto-imported by the scheduled scan. Groups below this score are still visible in the manual Scan page but are skipped by background tasks.\n\nHow scores are assigned:\n• 100 — NFO sidecar contains an external ID (e.g. TMDB/TVDB ID)\n• 90  — NFO sidecar has title + year\n• 78  — NFO sidecar has title only\n• 75  — Folder name includes a year, e.g. \"Interstellar (2014)\"\n• 55  — Folder name only, no year or sidecar\n• 75+ — Music: audio tags supply artist or album artist\n\nRecommended values: 75 to include year-named movie/TV folders; 90+ to require NFO sidecars; 55 to import everything the scanner finds.",
-                Type         = SettingType.Number,
-                Required     = false,
-                DefaultValue = "75",
-            },
-        ]
+        const string description =
+            "Minimum confidence score (0–100) for this media type to be auto-imported by the " +
+            "scheduled scan. Groups below this score are visible in the manual Scan page but " +
+            "skipped by background tasks.\n\n" +
+            "How scores are assigned:\n" +
+            "• 100 — NFO sidecar contains an external ID (e.g. TMDB / TVDB ID)\n" +
+            "• 90  — NFO sidecar has title + year\n" +
+            "• 78  — NFO sidecar has title only\n" +
+            "• 75  — Folder name includes a year, e.g. \"Interstellar (2014)\"\n" +
+            "• 55  — Folder name only, no year or sidecar\n\n" +
+            "Recommended: 75 for year-named folders; 90+ to require NFO sidecars; " +
+            "55 to import everything the scanner finds.";
+
+        return new PluginSettingsSchema
+        {
+            Settings = GetSupportedMediaTypes()
+                .Select(mt => new SettingDefinition
+                {
+                    Key          = $"confidence_threshold_{mt.MediaTypeName}",
+                    Label        = $"Confidence threshold — {FriendlyName(mt.MediaTypeName)} (0–100)",
+                    Description  = description,
+                    Type         = SettingType.Number,
+                    Required     = false,
+                    DefaultValue = "75",
+                })
+                .ToList(),
+        };
+    }
+
+    private static string FriendlyName(string mediaTypeName) => mediaTypeName switch
+    {
+        "movies" => "Movies",
+        "tv"     => "TV Shows",
+        "music"  => "Music",
+        _        => System.Globalization.CultureInfo.CurrentCulture.TextInfo
+                        .ToTitleCase(mediaTypeName),
     };
 
-    public int ConfidenceThreshold => _confidenceThreshold;
+    // ConfidenceThreshold returns the fallback default; per-type values are in _thresholds.
+    public int ConfidenceThreshold => 75;
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     public void Configure(IReadOnlyDictionary<string, string> settings)
     {
-        if (settings.TryGetValue("confidence_threshold", out var raw)
-            && int.TryParse(raw, out var parsed)
-            && parsed >= 0 && parsed <= 100)
+        // Per-media-type thresholds (new schema)
+        foreach (var mt in GetSupportedMediaTypes())
         {
-            _confidenceThreshold = parsed;
+            var key = $"confidence_threshold_{mt.MediaTypeName}";
+            if (settings.TryGetValue(key, out var raw)
+                && int.TryParse(raw, out var parsed)
+                && parsed >= 0 && parsed <= 100)
+            {
+                _thresholds[mt.MediaTypeName] = parsed;
+            }
         }
+
+        // Legacy fallback: single "confidence_threshold" key
+        if (settings.TryGetValue("confidence_threshold", out var legacyRaw)
+            && int.TryParse(legacyRaw, out var legacyParsed)
+            && legacyParsed >= 0 && legacyParsed <= 100)
+        {
+            _legacyThreshold = legacyParsed;
+        }
+    }
+
+    public int GetConfidenceThreshold(string mediaTypeName)
+    {
+        if (_thresholds.TryGetValue(mediaTypeName, out var threshold))
+            return threshold;
+        return _legacyThreshold ?? ConfidenceThreshold;
     }
 
     // ── Core operation ────────────────────────────────────────────────────────
