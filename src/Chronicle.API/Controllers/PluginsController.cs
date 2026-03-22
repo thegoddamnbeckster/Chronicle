@@ -431,7 +431,7 @@ public class PluginsController : ControllerBase
     private static readonly PluginCatalogEntry[] PluginCatalog =
     [
         new PluginCatalogEntry(
-            PluginId:    "tmdb",
+            PluginId:    "chronicle.plugin.tmdb",
             Name:        "TMDB",
             Description: "Fetches movie and TV metadata from The Movie Database (TMDB). Requires a free TMDB API key.",
             Author:      "Chronicle Contributors",
