@@ -105,12 +105,18 @@ public class MetadataEnrichmentService(
     public async Task<IReadOnlyList<EnrichmentStats>> GetStatsAsync(CancellationToken ct = default)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var db       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
 
-        // All installed metadata plugins — we want a row for every plugin,
-        // even if it has no enrichment records yet (shows all-zeros).
+        // Only show plugins that are actually registered as metadata providers.
+        // Plugins like the file scanner are enabled but have no metadata provider,
+        // so they must not appear in the enrichment stats table.
+        var metadataPluginIds = registry.GetMetadataProviderEntries()
+            .Select(e => e.PluginId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var metadataPlugins = await db.Plugins
-            .Where(p => p.IsEnabled)
+            .Where(p => p.IsEnabled && metadataPluginIds.Contains(p.PluginId))
             .ToListAsync(ct);
 
         // Enrichment counts grouped by plugin ID
