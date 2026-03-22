@@ -45,10 +45,9 @@ public sealed class ScheduledScanService : IScheduledTask
             return;
         }
 
-        var threshold = await fileScanSvc.GetConfidenceThresholdAsync(ct);
         _log.Information(
-            "ScheduledScanService: Found {Count} enabled scan folder(s), confidence threshold: {Threshold}",
-            folders.Count, threshold);
+            "ScheduledScanService: Found {Count} enabled scan folder(s)",
+            folders.Count);
 
         // No user context in scheduled scans — UserLibrary rows are auto-created
         // for each user by LibraryService.GetForUserAsync on their first library view.
@@ -59,10 +58,14 @@ public sealed class ScheduledScanService : IScheduledTask
             if (ct.IsCancellationRequested) break;
             try
             {
+                var mediaTypeName = folder.MediaType?.Name ?? string.Empty;
+                var threshold = await fileScanSvc.GetConfidenceThresholdAsync(mediaTypeName, ct);
+
                 _log.Information(
-                    "ScheduledScanService: Scanning {Path} ({MediaType})",
+                    "ScheduledScanService: Scanning {Path} ({MediaType}, threshold={Threshold})",
                     folder.Path,
-                    folder.MediaType?.DisplayName ?? "unknown type");
+                    folder.MediaType?.DisplayName ?? "unknown type",
+                    threshold);
 
                 var request = new ScanPreviewRequest(
                     folder.Path,

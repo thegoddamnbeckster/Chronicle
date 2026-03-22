@@ -27,10 +27,18 @@ public interface IFileScannerPlugin
     PluginSettingsSchema GetSettingsSchema();
 
     /// <summary>
-    /// Minimum confidence score (0–100) a grouped result must have to be auto-imported
-    /// by the scheduled scan task. Configured via the plugin settings schema.
+    /// Returns the minimum confidence score (0–100) required for a grouped result to be
+    /// auto-imported by the scheduled scan task for the given <paramref name="mediaTypeName"/>.
+    /// Implementations that support per-type thresholds should override this.
+    /// The default falls back to <see cref="ConfidenceThreshold"/>.
     /// </summary>
-    int ConfidenceThreshold => 80;
+    int GetConfidenceThreshold(string mediaTypeName) => ConfidenceThreshold;
+
+    /// <summary>
+    /// Default/fallback confidence threshold (0–100) when no per-type value is configured.
+    /// Configured via the plugin settings schema.
+    /// </summary>
+    int ConfidenceThreshold => 75;
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
