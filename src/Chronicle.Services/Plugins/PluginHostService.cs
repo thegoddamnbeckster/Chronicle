@@ -20,6 +20,7 @@ public sealed class PluginHostService : IHostedService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IPluginRegistry _registry;
+    private readonly IPluginSettingsProtector _protector;
     private readonly string _contentRootPath;
     private readonly ILogger _log = Log.ForContext<PluginHostService>();
 
@@ -33,10 +34,12 @@ public sealed class PluginHostService : IHostedService
     public PluginHostService(
         IServiceScopeFactory scopeFactory,
         IPluginRegistry registry,
+        IPluginSettingsProtector protector,
         IHostEnvironment environment)
     {
         _scopeFactory = scopeFactory;
         _registry = registry;
+        _protector = protector;
         _contentRootPath = environment.ContentRootPath;
     }
 
@@ -186,12 +189,13 @@ public sealed class PluginHostService : IHostedService
             .FirstOrDefault();
     }
 
-    private static IReadOnlyDictionary<string, string> DeserializeSettings(string? settingsJson)
+    private IReadOnlyDictionary<string, string> DeserializeSettings(string? settingsJson)
     {
         if (string.IsNullOrWhiteSpace(settingsJson))
             return new Dictionary<string, string>();
 
-        return JsonSerializer.Deserialize<Dictionary<string, string>>(settingsJson)
+        var plainJson = _protector.Unprotect(settingsJson);
+        return JsonSerializer.Deserialize<Dictionary<string, string>>(plainJson)
                ?? new Dictionary<string, string>();
     }
 
