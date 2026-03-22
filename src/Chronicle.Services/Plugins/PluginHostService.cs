@@ -148,6 +148,7 @@ public sealed class PluginHostService : IHostedService
                     IconUrl         = manifest.IconUrl,
                     BrandColorLight = manifest.BrandColorLight,
                     BrandColorDark  = manifest.BrandColorDark,
+                    FixMatchHint    = manifest.FixMatchHint,
                 });
 
                 // Seed background tasks declared in the manifest
