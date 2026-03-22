@@ -156,6 +156,7 @@ namespace Chronicle.API.DTOs
         string Name,
         int HierarchyLevel,
         int? Year,
+        int? Number,
         string? PosterPath,
         int ConfidenceScore,       // 0–100
         List<string> SignalSources,
@@ -176,6 +177,7 @@ namespace Chronicle.API.DTOs
     public record ImportGroupDto(
         string Name,
         int? Year,
+        int? Number,
         string? PosterPath,
         List<ImportGroupDto> Children,
         List<string> Files,
