@@ -134,6 +134,13 @@ public class MetadataEnrichmentServiceTests : IDisposable
         });
         await _db.SaveChangesAsync();
 
+        var mockProvider = new Mock<IMetadataProvider>();
+        _registry.Setup(r => r.GetMetadataProviderEntries())
+            .Returns(new List<(string, IMetadataProvider)>
+            {
+                ("chronicle.plugin.musicbrainz", mockProvider.Object)
+            });
+
         await SeedItemWithStatus(null, EnrichmentStatus.Pending);
         await SeedItemWithStatus(null, EnrichmentStatus.Completed);
 

@@ -1359,6 +1359,9 @@ namespace Chronicle.Services
                 batchSize = bs;
 
             int pendingInBatch = 0;
+            // Tracks how many items have already been seeded so we only seed the new slice
+            // after each batch commit rather than re-scanning the whole list every time.
+            int lastSeededIndex = 0;
 
             _importProgress.Start(total);
 
@@ -1404,12 +1407,22 @@ namespace Chronicle.Services
 
                     pendingInBatch++;
 
-                    // Flush to DB every batchSize groups to reduce transaction overhead
+                    // Flush to DB every batchSize groups to reduce transaction overhead,
+                    // then immediately seed enrichment rows for the newly committed items
+                    // so the enrichment stats update in real-time during a long import.
                     if (pendingInBatch >= batchSize)
                     {
                         await _context.SaveChangesAsync(ct);
                         _log.Information("ImportGroups: committed batch of {BatchSize} groups ({Processed}/{Total} total)",
                             pendingInBatch, processed + 1, total);
+
+                        if (createdItemIds.Count > lastSeededIndex)
+                        {
+                            await SeedEnrichmentRowsForNewItemsAsync(
+                                createdItemIds[lastSeededIndex..], mediaType.Name, ct);
+                            lastSeededIndex = createdItemIds.Count;
+                        }
+
                         pendingInBatch = 0;
                     }
 
@@ -1428,16 +1441,17 @@ namespace Chronicle.Services
                 }
             }
 
-            // Flush any remaining groups that didn't fill a complete batch
+            // Flush any remaining groups that didn't fill a complete batch,
+            // then seed enrichment rows for those final items too.
             if (pendingInBatch > 0)
             {
                 await _context.SaveChangesAsync(ct);
                 _log.Information("ImportGroups: committed final batch of {BatchSize} groups", pendingInBatch);
             }
 
-            // Seed pending enrichment rows for all newly created items
-            if (createdItemIds.Count > 0)
-                await SeedEnrichmentRowsForNewItemsAsync(createdItemIds, mediaType.Name, ct);
+            if (createdItemIds.Count > lastSeededIndex)
+                await SeedEnrichmentRowsForNewItemsAsync(
+                    createdItemIds[lastSeededIndex..], mediaType.Name, ct);
 
             var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
             _importProgress.Complete(new ImportProgressResult
