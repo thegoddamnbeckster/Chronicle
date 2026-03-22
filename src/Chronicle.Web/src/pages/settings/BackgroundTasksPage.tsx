@@ -123,7 +123,12 @@ function ScanProgressBanner({ scanIsRunning }: ScanProgressBannerProps) {
 
 // ── Enrichment status section ─────────────────────────────────────────────
 
-function EnrichmentSection() {
+interface EnrichmentSectionProps {
+  /** True when any enrichment background task is actively running. */
+  enrichmentRunning: boolean
+}
+
+function EnrichmentSection({ enrichmentRunning }: EnrichmentSectionProps) {
   const [stats, setStats] = useState<EnrichmentStats[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -142,11 +147,13 @@ function EnrichmentSection() {
 
   useEffect(() => { load() }, [load])
 
-  // Poll every 10s so counts update automatically after a scan imports new items
+  // Poll at 2s while enrichment is actively running so numbers update in near
+  // real-time; fall back to 10s when idle to keep API traffic low.
   useEffect(() => {
-    const id = setInterval(load, 10_000)
+    const interval = enrichmentRunning ? 2_000 : 10_000
+    const id = setInterval(load, interval)
     return () => clearInterval(id)
-  }, [load])
+  }, [load, enrichmentRunning])
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -609,7 +616,12 @@ export default function BackgroundTasksPage() {
         scanIsRunning={tasks.some(t => t.taskId === 'scheduled_scan' && (t.isRunning || runningIds.has(t.taskId)))}
       />
 
-      <EnrichmentSection />
+      <EnrichmentSection
+        enrichmentRunning={tasks.some(t =>
+          t.taskId.endsWith('fetch-missing-metadata') &&
+          (t.isRunning || runningIds.has(t.taskId))
+        )}
+      />
     </div>
   )
 }
