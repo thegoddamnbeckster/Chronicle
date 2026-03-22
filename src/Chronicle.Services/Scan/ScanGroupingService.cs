@@ -66,7 +66,7 @@ namespace Chronicle.Services.Scan
                 var nfoPath      = _nfo.FindSidecar(path);
                 var nfoSignal    = nfoPath != null ? _nfo.Extract(nfoPath) : null;
 
-                // For flat-grouped types (audiobooks etc.), all files in the same
+                // For flat-grouped types (movies etc.), all files in the same
                 // immediate folder = one item.  Sidecars are still silently absorbed.
                 if (hierarchyLevels == 1)
                 {
@@ -78,11 +78,11 @@ namespace Chronicle.Services.Scan
                     {
                         group = new ScanGroup
                         {
-                            GroupKey       = key,
-                            Name           = groupName,
-                            HierarchyLevel = 0,
-                            ConfidenceScore = 0.7,
-                            SignalSources  = ["folder"],
+                            GroupKey        = key,
+                            Name            = groupName,
+                            HierarchyLevel  = 0,
+                            ConfidenceScore = ComputeFlatConfidence(groupName, nfoSignal),
+                            SignalSources   = BuildSources(folderSignal, null, nfoSignal, 0),
                         };
                         rootGroups[key] = group;
                         result.Groups.Add(group);
@@ -343,7 +343,31 @@ namespace Chronicle.Services.Scan
             {
                 score -= 0.15;
             }
+            // Year in folder name is a meaningful signal for TV shows and other
+            // hierarchical types — boost confidence so they pass the 80% threshold.
+            if (System.Text.RegularExpressions.Regex.IsMatch(folderName, @"\(\d{4}\)"))
+                score = Math.Max(score, 0.80);
             return Math.Clamp(score, 0.0, 1.0);
+        }
+
+        /// <summary>
+        /// Computes confidence for flat (hierarchyLevels == 1) groups such as movies.
+        /// A year in the folder name is the primary quality signal; NFO sidecars add more.
+        /// </summary>
+        private static double ComputeFlatConfidence(string groupName, NfoSignal? nfo)
+        {
+            // NFO with external ID is the strongest possible signal
+            if (nfo?.ExternalId is not null) return 1.0;
+            if (nfo?.Title is not null && nfo.Year.HasValue) return 0.90;
+            if (nfo?.Title is not null) return 0.82;
+
+            // "(YYYY)" in the folder name means the user (or their media server) already
+            // confirmed the year — treat this as sufficient for auto-import.
+            if (System.Text.RegularExpressions.Regex.IsMatch(groupName, @"\(\d{4}\)"))
+                return 0.82;
+
+            // Folder name only — title is plausible but year is unknown
+            return 0.65;
         }
 
         private static double ComputeLeafConfidence(
