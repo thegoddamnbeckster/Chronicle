@@ -107,10 +107,13 @@ public class MetadataEnrichmentService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        // Build a lookup of pluginId → display name from the plugins table
-        var pluginNames = await db.Plugins
-            .ToDictionaryAsync(p => p.PluginId, p => p.Name, StringComparer.OrdinalIgnoreCase, ct);
+        // All installed metadata plugins — we want a row for every plugin,
+        // even if it has no enrichment records yet (shows all-zeros).
+        var metadataPlugins = await db.Plugins
+            .Where(p => p.IsEnabled)
+            .ToListAsync(ct);
 
+        // Enrichment counts grouped by plugin ID
         var rows = await db.EnrichmentStatuses
             .GroupBy(x => x.PluginId)
             .Select(g => new
@@ -125,11 +128,23 @@ public class MetadataEnrichmentService(
             })
             .ToListAsync(ct);
 
-        return rows
-            .Select(r => new EnrichmentStats(
-                r.PluginId,
-                pluginNames.TryGetValue(r.PluginId, out var name) ? name : r.PluginId,
-                r.Pending, r.Completed, r.Failed, r.Exhausted, r.NotFound, r.Skipped))
+        var rowLookup = rows.ToDictionary(r => r.PluginId, StringComparer.OrdinalIgnoreCase);
+
+        // Return one entry per installed metadata plugin, defaulting to zeros
+        return metadataPlugins
+            .Select(p =>
+            {
+                rowLookup.TryGetValue(p.PluginId, out var r);
+                return new EnrichmentStats(
+                    p.PluginId,
+                    p.Name,
+                    r?.Pending   ?? 0,
+                    r?.Completed ?? 0,
+                    r?.Failed    ?? 0,
+                    r?.Exhausted ?? 0,
+                    r?.NotFound  ?? 0,
+                    r?.Skipped   ?? 0);
+            })
             .ToList();
     }
 

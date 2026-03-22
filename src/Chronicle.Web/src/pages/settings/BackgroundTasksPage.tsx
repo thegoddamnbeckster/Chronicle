@@ -121,7 +121,7 @@ function EnrichmentSection() {
       {loading ? (
         <p className={styles.loading}>Loading enrichment stats…</p>
       ) : stats.length === 0 ? (
-        <p className={styles.enrichmentEmpty}>No metadata plugins installed.</p>
+        <p className={styles.enrichmentEmpty}>No metadata plugins installed. Install a plugin in Settings → Plugins to enable enrichment.</p>
       ) : (
         <div className={styles.card}>
           <table className={styles.enrichTable}>
