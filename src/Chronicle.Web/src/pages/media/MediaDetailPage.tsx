@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
-import tmdbLogoFallback from '@/assets/tmdb-logo.svg'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, reidentifyMedia, clearMediaExternalId, suppressMediaMatch, deleteMedia } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, deleteMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
-import type { LibraryStatus, MusicBrainzMeta } from '@/types'
+import { listPlugins } from '@/api/plugins'
+import type { LibraryStatus } from '@/types'
+import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import styles from './MediaDetailPage.module.css'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
@@ -102,42 +103,11 @@ export default function MediaDetailPage() {
     },
   })
 
-  const [fixMatchOpen, setFixMatchOpen] = useState(false)
-  const [fixMatchInput, setFixMatchInput] = useState('')
-  const fixMatchInputRef = useRef<HTMLInputElement>(null)
-
-  const reidentifyMut = useMutation({
-    mutationFn: () => reidentifyMedia(mediaId, fixMatchInput),
-    onSuccess: (updated) => {
-      qc.setQueryData(['media', mediaId], updated)
-      qc.invalidateQueries({ queryKey: ['library'] })
-      setFixMatchOpen(false)
-      setFixMatchInput('')
-    },
-  })
-
-  const clearMatchMut = useMutation({
-    mutationFn: () => clearMediaExternalId(mediaId, 'tmdb'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['media', mediaId] })
-      qc.invalidateQueries({ queryKey: ['library'] })
-    },
-  })
-
-  const clearMbMatchMut = useMutation({
-    mutationFn: () => clearMediaExternalId(mediaId, 'musicbrainz'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['media', mediaId] })
-      qc.invalidateQueries({ queryKey: ['library'] })
-    },
-  })
-
-  const suppressMatchMut = useMutation({
-    mutationFn: () => suppressMediaMatch(mediaId, 'tmdb'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['media', mediaId] })
-      qc.invalidateQueries({ queryKey: ['library'] })
-    },
+  // Fetch installed plugins to get iconUrl + fixMatchHint for each plugin box
+  const { data: plugins = [] } = useQuery({
+    queryKey: ['plugins'],
+    queryFn: listPlugins,
+    staleTime: 5 * 60 * 1000,
   })
 
   const [deleteConfirm, setDeleteConfirm] = useState(false)
@@ -150,23 +120,6 @@ export default function MediaDetailPage() {
     },
   })
 
-  useEffect(() => {
-    if (fixMatchOpen) fixMatchInputRef.current?.focus()
-  }, [fixMatchOpen])
-
-  const tmdbIds = item?.externalIds.filter(e => e.source === 'tmdb') ?? []
-  const otherIds = item?.externalIds.filter(e => e.source !== 'tmdb') ?? []
-  const tmdbSuppressed = tmdbIds.some(e => e.externalId === '__suppress__')
-  const tmdbHasRealId = tmdbIds.some(e => e.externalId !== '__suppress__')
-
-  // TMDB only supports movies and TV. Show the TMDB box when the item already
-  // has a TMDB match (so the user can clear a wrong match), OR when the media
-  // type is one that TMDB actually handles.
-  const TMDB_SUPPORTED_TYPES = ['movie', 'movies', 'tv', 'tv shows']
-  const isTmdbSupported =
-    Boolean(item?.tmdbMeta) ||
-    TMDB_SUPPORTED_TYPES.includes((item?.mediaTypeName ?? '').toLowerCase())
-
   if (isLoading) return <div className={styles.page}><p className={styles.loading}>Loading…</p></div>
   if (error || !item) {
     return (
@@ -177,7 +130,13 @@ export default function MediaDetailPage() {
     )
   }
 
-  const hasBackdrop = Boolean(item.tmdbMeta?.backdropUrl)
+  // Grab backdrop URL from any plugin that provides one
+  const backdropUrl = item.pluginMetadata
+    ? Object.values(item.pluginMetadata)
+        .map(m => (m as Record<string, unknown>)?.backdropUrl)
+        .find(u => typeof u === 'string' && u) as string | undefined
+    : undefined
+  const hasBackdrop = Boolean(backdropUrl)
 
   return (
     <div className={styles.page}>
@@ -185,7 +144,7 @@ export default function MediaDetailPage() {
         {hasBackdrop && (
           <div
             className={styles.backdropImg}
-            style={{ backgroundImage: `url("${item.tmdbMeta!.backdropUrl}")` }}
+            style={{ backgroundImage: `url("${backdropUrl}")` }}
             aria-hidden
           />
         )}
@@ -298,281 +257,14 @@ export default function MediaDetailPage() {
 
           {item.overview && <p className={styles.overview}>{item.overview}</p>}
 
-          {/* TMDB metadata box — only shown for TMDB-supported types (movies/TV),
-              or when the item already has a TMDB match (to allow clearing a wrong match) */}
-          {isTmdbSupported && (
-            <div className={styles.metadataBox}>
-              <div className={styles.metadataBoxHeader}>
-                <div className={styles.metadataBoxBrand}>
-                  <img
-                    src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb20f201ad3a6b4d0b6dcea5b0b95d9f3.svg"
-                    alt="TMDB"
-                    className={styles.tmdbLogo}
-                    onError={(e) => { e.currentTarget.src = tmdbLogoFallback; }}
-                  />
-                  {(() => {
-                    const tmdbLog = item.refreshLogs?.find(l => l.providerName === 'TMDB')
-                    if (!tmdbLog) return null
-                    const dt = new Date(tmdbLog.refreshedAt)
-                    const label = tmdbLog.succeeded
-                      ? `Last refreshed ${dt.toLocaleDateString()} ${dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                      : `Last refresh failed: ${tmdbLog.errorMessage ?? 'unknown error'}`
-                    return <p className={styles.refreshTimestamp}>{label}</p>
-                  })()}
-                </div>
-                <div className={styles.metadataBoxActions}>
-                  {item.hierarchyLevel === 0 && (
-                    <>
-                      <button
-                        className={styles.fixMatchBtn}
-                        onClick={() => { setFixMatchOpen(v => !v); reidentifyMut.reset() }}
-                        title="Manually specify the correct TMDB match"
-                      >
-                        ✎ Fix Match
-                      </button>
-                      {tmdbHasRealId && (
-                        <button
-                          className={styles.clearMatchBtn}
-                          onClick={() => clearMatchMut.mutate()}
-                          disabled={clearMatchMut.isPending}
-                          title="Remove the TMDB match — refresh will attempt a new auto-search next cycle"
-                        >
-                          {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
-                        </button>
-                      )}
-                      {tmdbSuppressed ? (
-                        <button
-                          className={styles.resumeMatchBtn}
-                          onClick={() => clearMatchMut.mutate()}
-                          disabled={clearMatchMut.isPending}
-                          title="Re-enable auto-matching for this item"
-                        >
-                          {clearMatchMut.isPending ? 'Resuming…' : '↺ Resume Auto-Match'}
-                        </button>
-                      ) : !tmdbHasRealId && (
-                        <button
-                          className={styles.suppressMatchBtn}
-                          onClick={() => suppressMatchMut.mutate()}
-                          disabled={suppressMatchMut.isPending}
-                          title="Mark as unmatched — refresh will never auto-search for this item again"
-                        >
-                          {suppressMatchMut.isPending ? 'Suppressing…' : '⊘ No Match'}
-                        </button>
-                      )}
-                    </>
-                  )}
-                  {item.hierarchyLevel > 0 && (
-                    <>
-                      {item.tmdbMeta && (
-                        <span className={styles.inheritedLabel}>Metadata from parent show</span>
-                      )}
-                      {tmdbHasRealId && (
-                        <button
-                          className={styles.clearMatchBtn}
-                          onClick={() => clearMatchMut.mutate()}
-                          disabled={clearMatchMut.isPending}
-                          title="Remove the stale TMDB match from this item"
-                        >
-                          {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {fixMatchOpen && (
-                <div className={styles.fixMatchPanel}>
-                  <p className={styles.fixMatchHint}>
-                    Enter a TMDB ID, typed ID, or URL:
-                    <code> 1159831</code> · <code>movie:1159831</code> · <code>tv:1396</code> ·
-                    <code> https://www.themoviedb.org/movie/1159831</code>
-                  </p>
-                  <div className={styles.fixMatchRow}>
-                    <input
-                      ref={fixMatchInputRef}
-                      className={styles.fixMatchInput}
-                      type="text"
-                      placeholder="TMDB ID or URL…"
-                      value={fixMatchInput}
-                      onChange={e => { setFixMatchInput(e.target.value); reidentifyMut.reset() }}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && fixMatchInput.trim()) reidentifyMut.mutate()
-                        if (e.key === 'Escape') { setFixMatchOpen(false); setFixMatchInput('') }
-                      }}
-                    />
-                    <button
-                      className={styles.fixMatchApplyBtn}
-                      onClick={() => reidentifyMut.mutate()}
-                      disabled={reidentifyMut.isPending || !fixMatchInput.trim()}
-                    >
-                      {reidentifyMut.isPending ? 'Applying…' : 'Apply'}
-                    </button>
-                  </div>
-                  {reidentifyMut.isError && (
-                    <p className={styles.refreshError}>
-                      {(reidentifyMut.error as Error).message}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              <div className={styles.tmdbGrid}>
-                {/* Rating — show-level OR season/episode vote average */}
-                {(item.tmdbMeta?.rating != null || item.tmdbMeta?.voteAverage != null) && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Rating</span>
-                    <span className={styles.tmdbValue}>
-                      {((item.tmdbMeta?.rating ?? item.tmdbMeta?.voteAverage) as number).toFixed(1)}&thinsp;/&thinsp;10
-                    </span>
-                  </div>
-                )}
-
-                {/* Air date (seasons and episodes) */}
-                {item.tmdbMeta?.airDate && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Air Date</span>
-                    <span className={styles.tmdbValue}>{item.tmdbMeta.airDate}</span>
-                  </div>
-                )}
-
-                {/* Episode count (seasons) */}
-                {item.tmdbMeta?.episodeCount != null && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Episodes</span>
-                    <span className={styles.tmdbValue}>{item.tmdbMeta.episodeCount}</span>
-                  </div>
-                )}
-
-                {item.tmdbMeta?.directors && item.tmdbMeta.directors.length > 0 && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>
-                      {item.tmdbMeta.directors.length === 1 ? 'Director' : 'Directors'}
-                    </span>
-                    <span className={styles.tmdbValue}>
-                      {item.tmdbMeta.directors.join(', ')}
-                    </span>
-                  </div>
-                )}
-
-                {/* Episode crew (directors/writers) */}
-                {item.tmdbMeta?.crew && item.tmdbMeta.crew.length > 0 && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Crew</span>
-                    <span className={styles.tmdbValue}>{item.tmdbMeta.crew.join(', ')}</span>
-                  </div>
-                )}
-
-                {item.tmdbMeta?.genres && item.tmdbMeta.genres.length > 0 && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Genres</span>
-                    <div className={styles.tmdbTags}>
-                      {item.tmdbMeta.genres.map(g => (
-                        <span key={g} className={styles.tmdbTag}>{g}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {item.tmdbMeta?.cast && item.tmdbMeta.cast.length > 0 && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Cast</span>
-                    <span className={styles.tmdbValue}>
-                      {item.tmdbMeta.cast.slice(0, 6).join(', ')}
-                    </span>
-                  </div>
-                )}
-
-                {/* Episode guest stars */}
-                {item.tmdbMeta?.guestStars && item.tmdbMeta.guestStars.length > 0 && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Guest Stars</span>
-                    <span className={styles.tmdbValue}>
-                      {item.tmdbMeta.guestStars.slice(0, 6).join(', ')}
-                    </span>
-                  </div>
-                )}
-
-                {tmdbHasRealId && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>ID</span>
-                    <div className={styles.externalIds}>
-                      {tmdbIds.filter(e => e.externalId !== '__suppress__').map(eid => (
-                        <span key={eid.externalId} className={styles.externalIdChip}>
-                          <span className={styles.externalIdValue}>{eid.externalId}</span>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Image thumbnails — click opens full size in new tab */}
-                {(() => {
-                  const tmdb = item.tmdbMeta
-                  // Resolve image URLs: prefer full URLs, fall back to path-based construction
-                  const posterUrl = tmdb?.posterUrl
-                  const backdropUrl = tmdb?.backdropUrl
-                  const seasonPosterUrl = tmdb?.posterPath
-                    ? `https://image.tmdb.org/t/p/w500${tmdb.posterPath}`
-                    : null
-                  const stillUrl = tmdb?.stillPath
-                    ? `https://image.tmdb.org/t/p/w500${tmdb.stillPath}`
-                    : null
-                  const hasImages = posterUrl || backdropUrl || seasonPosterUrl || stillUrl
-                  if (!hasImages) return null
-                  return (
-                  <div className={`${styles.tmdbRow} ${styles.tmdbRowImages}`}>
-                    <span className={styles.tmdbLabel}>Images</span>
-                    <div className={styles.tmdbImageLinks}>
-                      {posterUrl && (
-                        <a href={posterUrl} target="_blank" rel="noreferrer"
-                          className={styles.tmdbImageLink} title="Open full-size poster">
-                          <img src={posterUrl} alt="Poster" className={styles.tmdbThumbnail}
-                            onError={e => { e.currentTarget.style.display = 'none' }} />
-                          <span className={styles.tmdbThumbnailLabel}>Poster ↗</span>
-                        </a>
-                      )}
-                      {seasonPosterUrl && !posterUrl && (
-                        <a href={seasonPosterUrl} target="_blank" rel="noreferrer"
-                          className={styles.tmdbImageLink} title="Open full-size season poster">
-                          <img src={seasonPosterUrl} alt="Season Poster" className={styles.tmdbThumbnail}
-                            onError={e => { e.currentTarget.style.display = 'none' }} />
-                          <span className={styles.tmdbThumbnailLabel}>Season Poster ↗</span>
-                        </a>
-                      )}
-                      {stillUrl && (
-                        <a href={stillUrl} target="_blank" rel="noreferrer"
-                          className={styles.tmdbImageLink} title="Open full-size episode still">
-                          <img src={stillUrl} alt="Episode Still" className={styles.tmdbThumbnail}
-                            onError={e => { e.currentTarget.style.display = 'none' }} />
-                          <span className={styles.tmdbThumbnailLabel}>Still ↗</span>
-                        </a>
-                      )}
-                      {backdropUrl && (
-                        <a href={backdropUrl} target="_blank" rel="noreferrer"
-                          className={styles.tmdbImageLink} title="Open full-size backdrop">
-                          <img src={backdropUrl} alt="Backdrop" className={styles.tmdbThumbnail}
-                            onError={e => { e.currentTarget.style.display = 'none' }} />
-                          <span className={styles.tmdbThumbnailLabel}>Backdrop ↗</span>
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                  )
-                })()}
-              </div>
-
-            </div>
-          )}
-
-          {/* Refresh button — always shown so all media types can trigger enrichment */}
+          {/* Global refresh strip — always shown so all media types can trigger enrichment */}
           <div className={styles.refreshStrip}>
             <button
               className={styles.refreshBtn}
               onClick={() => refreshMut.mutate()}
               disabled={refreshMut.isPending}
             >
-              {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
+              {refreshMut.isPending ? 'Refreshing all…' : '↻ Refresh All'}
             </button>
             {refreshMut.isError && (
               <span className={styles.refreshError}>
@@ -581,17 +273,24 @@ export default function MediaDetailPage() {
             )}
           </div>
 
-          {/* Other external IDs */}
-          {otherIds.length > 0 && (
-            <div className={styles.externalIds}>
-              {otherIds.map(eid => (
-                <span key={`${eid.source}-${eid.externalId}`} className={styles.externalIdChip}>
-                  <span className={styles.externalIdSource}>{eid.source}</span>
-                  <span className={styles.externalIdValue}>{eid.externalId}</span>
-                </span>
-              ))}
-            </div>
-          )}
+          {/* Per-plugin metadata boxes — one box per plugin that has data for this item */}
+          {item.pluginMetadata && Object.entries(item.pluginMetadata).map(([pluginId, metadata]) => {
+            const plugin = plugins.find(p => p.pluginId === pluginId)
+            return (
+              <PluginMetadataBox
+                key={pluginId}
+                mediaId={mediaId}
+                pluginId={pluginId}
+                pluginName={plugin?.name ?? pluginId}
+                iconUrl={plugin?.iconUrl}
+                fixMatchHint={plugin?.fixMatchHint}
+                metadata={metadata}
+                externalIds={item.externalIds}
+                refreshLogs={item.refreshLogs}
+                hierarchyLevel={item.hierarchyLevel}
+              />
+            )
+          })}
 
           {/* File Scanner box — show whenever the item came from the scanner */}
           {item.fileScannerMeta &&
@@ -642,141 +341,6 @@ export default function MediaDetailPage() {
               </div>
             </div>
           )}
-
-          {/* MusicBrainz metadata box — read from the generic pluginMetadata map */}
-          {(() => {
-            const mb = item.pluginMetadata?.['chronicle.plugin.musicbrainz'] as MusicBrainzMeta | undefined
-            if (!mb) return null
-            const allImages = mb.additionalImages ?? []
-            return (
-              <div className={styles.mbMetadataBox}>
-                <div className={styles.metadataBoxHeader}>
-                  <div className={styles.mbMetadataBoxHeader}>
-                    <img
-                      src="https://musicbrainz.org/favicon.ico"
-                      alt=""
-                      className={styles.mbIcon}
-                      aria-hidden
-                    />
-                    <span className={styles.mbProviderName}>MusicBrainz</span>
-                  </div>
-                  <div className={styles.metadataBoxActions}>
-                    {mb.externalId && (
-                      <button
-                        className={styles.clearMatchBtn}
-                        onClick={() => clearMbMatchMut.mutate()}
-                        disabled={clearMbMatchMut.isPending}
-                        title="Remove the MusicBrainz match — refresh will attempt a new auto-search next cycle"
-                      >
-                        {clearMbMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
-                      </button>
-                    )}
-                    <button
-                      className={styles.refreshBtn}
-                      onClick={() => refreshMut.mutate()}
-                      disabled={refreshMut.isPending}
-                      title="Re-fetch metadata from MusicBrainz"
-                    >
-                      {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
-                    </button>
-                  </div>
-                </div>
-                <div className={styles.tmdbGrid}>
-                  {mb.overview && (
-                    <div className={styles.tmdbRow}>
-                      <span className={styles.tmdbLabel}>About</span>
-                      <span className={styles.tmdbValue}>{mb.overview}</span>
-                    </div>
-                  )}
-                  {mb.cast && mb.cast.length > 0 && (
-                    <div className={styles.tmdbRow}>
-                      <span className={styles.tmdbLabel}>Artists</span>
-                      <span className={styles.tmdbValue}>{mb.cast.join(', ')}</span>
-                    </div>
-                  )}
-                  {mb.directors && mb.directors.length > 0 && (
-                    <div className={styles.tmdbRow}>
-                      <span className={styles.tmdbLabel}>Composers</span>
-                      <span className={styles.tmdbValue}>{mb.directors.join(', ')}</span>
-                    </div>
-                  )}
-                  {mb.runtimeMinutes != null && (
-                    <div className={styles.tmdbRow}>
-                      <span className={styles.tmdbLabel}>Duration</span>
-                      <span className={styles.tmdbValue}>{mb.runtimeMinutes} min</span>
-                    </div>
-                  )}
-                  {mb.rating != null && (
-                    <div className={styles.tmdbRow}>
-                      <span className={styles.tmdbLabel}>Rating</span>
-                      <span className={styles.tmdbValue}>{mb.rating.toFixed(1)}&thinsp;/&thinsp;10</span>
-                    </div>
-                  )}
-                  {mb.genres && mb.genres.length > 0 && (
-                    <div className={styles.tmdbRow}>
-                      <span className={styles.tmdbLabel}>Genres</span>
-                      <div className={styles.tmdbTags}>
-                        {mb.genres.map(g => <span key={g} className={styles.tmdbTag}>{g}</span>)}
-                      </div>
-                    </div>
-                  )}
-                  {mb.tags && mb.tags.length > 0 && (
-                    <div className={styles.tmdbRow}>
-                      <span className={styles.tmdbLabel}>Tags</span>
-                      <div className={styles.tmdbTags}>
-                        {mb.tags.slice(0, 15).map(t => <span key={t} className={styles.tmdbTag}>{t}</span>)}
-                      </div>
-                    </div>
-                  )}
-                  {mb.externalId && (
-                    <div className={styles.tmdbRow}>
-                      <span className={styles.tmdbLabel}>MB ID</span>
-                      <span className={styles.tmdbValue}>{mb.externalId}</span>
-                    </div>
-                  )}
-                  {/* Cover art images: poster + all additional images (back, booklet, etc.) */}
-                  {(mb.posterUrl || allImages.length > 0) && (
-                    <div className={`${styles.tmdbRow} ${styles.tmdbRowImages}`}>
-                      <span className={styles.tmdbLabel}>Images</span>
-                      <div className={styles.tmdbImageLinks}>
-                        {mb.posterUrl && (
-                          <a href={mb.posterUrl} target="_blank" rel="noreferrer"
-                            className={styles.tmdbImageLink} title="Front cover">
-                            <img src={mb.posterUrl} alt="Front" className={styles.tmdbThumbnail}
-                              onError={e => { e.currentTarget.style.display = 'none' }} />
-                            <span className={styles.tmdbThumbnailLabel}>Front ↗</span>
-                          </a>
-                        )}
-                        {mb.backdropUrl && mb.backdropUrl !== mb.posterUrl && (
-                          <a href={mb.backdropUrl} target="_blank" rel="noreferrer"
-                            className={styles.tmdbImageLink} title="Back cover">
-                            <img src={mb.backdropUrl} alt="Back" className={styles.tmdbThumbnail}
-                              onError={e => { e.currentTarget.style.display = 'none' }} />
-                            <span className={styles.tmdbThumbnailLabel}>Back ↗</span>
-                          </a>
-                        )}
-                        {allImages
-                          .filter(i => i.url !== mb.posterUrl && i.url !== mb.backdropUrl)
-                          .slice(0, 6)
-                          .map((img, idx) => (
-                            <a key={idx} href={img.url} target="_blank" rel="noreferrer"
-                              className={styles.tmdbImageLink} title={img.type ?? 'Image'}>
-                              <img
-                                src={img.thumbnailUrl ?? img.url}
-                                alt={img.type ?? 'Image'}
-                                className={styles.tmdbThumbnail}
-                                onError={e => { e.currentTarget.style.display = 'none' }}
-                              />
-                              <span className={styles.tmdbThumbnailLabel}>{img.type ?? 'Image'} ↗</span>
-                            </a>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })()}
 
           {/* Library actions */}
           <div className={styles.librarySection}>

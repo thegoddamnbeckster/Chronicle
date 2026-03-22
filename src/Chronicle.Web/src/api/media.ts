@@ -71,10 +71,23 @@ export async function suppressMediaMatch(id: number, source: string): Promise<vo
   await client.post(`/media/${id}/suppress/${encodeURIComponent(source)}`)
 }
 
-export async function reidentifyMedia(id: number, input: string): Promise<MediaItem> {
+/**
+ * Refreshes metadata for a single item from a specific plugin.
+ * If `input` is provided, performs a Fix Match (overrides external ID lookup).
+ * If `input` is omitted/null, re-fetches using the item's existing stored external ID.
+ */
+export async function refreshMediaForPlugin(
+  id: number,
+  pluginId: string,
+  input?: string,
+): Promise<MediaItem> {
   try {
-    const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/reidentify`, { input })
-    if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Re-identification failed')
+    const body = input !== undefined ? { input } : undefined
+    const { data } = await client.post<ApiResponse<MediaItem>>(
+      `/media/${id}/refresh/${encodeURIComponent(pluginId)}`,
+      body,
+    )
+    if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Refresh failed')
     return data.data
   } catch (err: unknown) {
     if (err instanceof ApiError && err.statusCode === 409 && err.errorCode === 'NO_PROVIDER_CONFIGURED') {

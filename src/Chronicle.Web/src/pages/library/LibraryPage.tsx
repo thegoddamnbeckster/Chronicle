@@ -602,9 +602,16 @@ export default function LibraryPage() {
                     )}
                     <div className={styles.metaRow}>
                       {entry.mediaItem.year && <span className={styles.year}>{entry.mediaItem.year}</span>}
-                      {entry.mediaItem.tmdbMeta?.rating != null && (
-                        <span className={styles.rating}>★ {entry.mediaItem.tmdbMeta.rating.toFixed(1)}</span>
-                      )}
+                      {(() => {
+                        const pluginMeta = entry.mediaItem.pluginMetadata
+                        if (!pluginMeta) return null
+                        const rating = Object.values(pluginMeta)
+                          .map(m => (m as Record<string, unknown>)?.rating)
+                          .find(r => typeof r === 'number') as number | undefined
+                        return rating != null
+                          ? <span className={styles.rating}>★ {rating.toFixed(1)}</span>
+                          : null
+                      })()}
                     </div>
                     {!selectMode && (
                       <>

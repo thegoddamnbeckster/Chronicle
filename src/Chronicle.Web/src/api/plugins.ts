@@ -12,6 +12,8 @@ export interface PluginDto {
   updatedAt: string
   /** Favicon URL from the plugin's manifest.json. Null when plugin is not loaded. */
   iconUrl: string | null
+  /** User-facing hint shown in the Fix Match input. Comes from the plugin manifest. */
+  fixMatchHint: string | null
 }
 
 export async function listPlugins(): Promise<PluginDto[]> {
