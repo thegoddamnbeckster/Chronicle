@@ -67,8 +67,16 @@ namespace Chronicle.Services
         Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(string externalId, int mediaTypeId, int userId, CancellationToken ct = default);
 
         /// <summary>
-        /// Returns the confidence threshold from the DB (scan.confidence_threshold app setting),
-        /// falling back to 80 if the setting is not present or cannot be parsed.
+        /// Returns the confidence threshold for the given media type. Reads the per-type key
+        /// <c>confidence_threshold_{mediaTypeName}</c> from the file scanner plugin's stored
+        /// settings, then falls back to the legacy global <c>confidence_threshold</c> key,
+        /// then to the plugin's built-in default (75).
+        /// </summary>
+        Task<int> GetConfidenceThresholdAsync(string mediaTypeName, CancellationToken ct = default);
+
+        /// <summary>
+        /// Returns the global fallback confidence threshold (no media type specified).
+        /// Prefer the overload that accepts a media type name wherever one is available.
         /// </summary>
         Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default);
 
