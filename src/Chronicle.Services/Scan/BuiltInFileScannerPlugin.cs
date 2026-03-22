@@ -73,11 +73,11 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
             new SettingDefinition
             {
                 Key          = "confidence_threshold",
-                Label        = "Confidence threshold",
-                Description  = "Minimum confidence score (0–100) a scan group must reach to be auto-imported by the scheduled scan. Groups below this score are visible in the manual scan UI but skipped by the background task.",
+                Label        = "Confidence threshold (0–100)",
+                Description  = "Minimum confidence score a scan group must reach to be auto-imported by the scheduled scan. Groups below this score are still visible in the manual Scan page but are skipped by background tasks.\n\nHow scores are assigned:\n• 100 — NFO sidecar contains an external ID (e.g. TMDB/TVDB ID)\n• 90  — NFO sidecar has title + year\n• 78  — NFO sidecar has title only\n• 75  — Folder name includes a year, e.g. \"Interstellar (2014)\"\n• 55  — Folder name only, no year or sidecar\n• 75+ — Music: audio tags supply artist or album artist\n\nRecommended values: 75 to include year-named movie/TV folders; 90+ to require NFO sidecars; 55 to import everything the scanner finds.",
                 Type         = SettingType.Number,
                 Required     = false,
-                DefaultValue = "80",
+                DefaultValue = "75",
             },
         ]
     };
