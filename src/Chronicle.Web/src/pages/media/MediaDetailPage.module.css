@@ -307,11 +307,11 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   background: rgba(186, 71, 143, 0.05);
 }
 
+/* Brand row inside the outer metadataBoxHeader — no extra margin needed */
 .mbMetadataBoxHeader {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
 }
 
 .mbIcon {

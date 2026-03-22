@@ -124,6 +124,14 @@ export default function MediaDetailPage() {
     },
   })
 
+  const clearMbMatchMut = useMutation({
+    mutationFn: () => clearMediaExternalId(mediaId, 'musicbrainz'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+
   const suppressMatchMut = useMutation({
     mutationFn: () => suppressMediaMatch(mediaId, 'tmdb'),
     onSuccess: () => {
@@ -642,14 +650,36 @@ export default function MediaDetailPage() {
             const allImages = mb.additionalImages ?? []
             return (
               <div className={styles.mbMetadataBox}>
-                <div className={styles.mbMetadataBoxHeader}>
-                  <img
-                    src="https://musicbrainz.org/favicon.ico"
-                    alt=""
-                    className={styles.mbIcon}
-                    aria-hidden
-                  />
-                  <span className={styles.mbProviderName}>MusicBrainz</span>
+                <div className={styles.metadataBoxHeader}>
+                  <div className={styles.mbMetadataBoxHeader}>
+                    <img
+                      src="https://musicbrainz.org/favicon.ico"
+                      alt=""
+                      className={styles.mbIcon}
+                      aria-hidden
+                    />
+                    <span className={styles.mbProviderName}>MusicBrainz</span>
+                  </div>
+                  <div className={styles.metadataBoxActions}>
+                    {mb.externalId && (
+                      <button
+                        className={styles.clearMatchBtn}
+                        onClick={() => clearMbMatchMut.mutate()}
+                        disabled={clearMbMatchMut.isPending}
+                        title="Remove the MusicBrainz match — refresh will attempt a new auto-search next cycle"
+                      >
+                        {clearMbMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
+                      </button>
+                    )}
+                    <button
+                      className={styles.refreshBtn}
+                      onClick={() => refreshMut.mutate()}
+                      disabled={refreshMut.isPending}
+                      title="Re-fetch metadata from MusicBrainz"
+                    >
+                      {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
+                    </button>
+                  </div>
                 </div>
                 <div className={styles.tmdbGrid}>
                   {mb.overview && (
