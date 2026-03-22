@@ -16,10 +16,14 @@ namespace Chronicle.Services.Scan
 
     public class TagSignalExtractor
     {
-        // File extensions TagLib can reliably read tags from
+        // File extensions TagLib can reliably read tags from.
+        // Video containers (.mkv, .mp4, .avi, etc.) are intentionally excluded:
+        // they rarely carry useful embedded tags, and opening them with TagLib on
+        // a slow/network drive causes a costly synchronous read for every file.
+        // Folder structure and NFO sidecars are the authoritative signal for video.
         private static readonly HashSet<string> _supported = new(StringComparer.OrdinalIgnoreCase)
         {
-            ".mp3", ".flac", ".m4a", ".mp4", ".mkv", ".ogg", ".opus",
+            ".mp3", ".flac", ".m4a", ".ogg", ".opus",
             ".wma", ".aac", ".wav", ".aiff", ".ape", ".mpc",
         };
 
