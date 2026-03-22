@@ -1,0 +1,409 @@
+import { useState, useRef, useEffect } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { refreshMediaForPlugin, clearMediaExternalId, suppressMediaMatch } from '@/api/media'
+import type { ExternalId, RefreshLog } from '@/types'
+import styles from './PluginMetadataBox.module.css'
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Keys whose values are rendered in the Images row rather than as plain text. */
+const IMAGE_KEYS = new Set([
+  'posterurl', 'backdropurl', 'posterpath', 'stillpath',
+  'thumbnailurl', 'imageurl',
+])
+
+/** Keys that are skip-rendered — already shown elsewhere on the page. */
+const SKIP_KEYS = new Set([
+  'title', 'externalid', 'source',
+])
+
+/** Keys that hold arrays of image objects (e.g. additionalImages). */
+const IMAGE_ARRAY_KEYS = new Set(['additionalimages', 'images'])
+
+/** Label overrides for well-known field names. */
+const LABELS: Record<string, string> = {
+  rating: 'Rating',
+  voteaverage: 'Rating',
+  genres: 'Genres',
+  cast: 'Cast',
+  directors: 'Director(s)',
+  crew: 'Crew',
+  guestStars: 'Guest Stars',
+  gueststars: 'Guest Stars',
+  airdate: 'Air Date',
+  episodecount: 'Episodes',
+  runtimeminutes: 'Duration',
+  tags: 'Tags',
+  overview: 'About',
+  backdropurl: 'Backdrop',
+  posterurl: 'Poster',
+  posterpath: 'Season Poster',
+  stillpath: 'Still',
+}
+
+function toLabel(key: string): string {
+  const lower = key.toLowerCase()
+  if (LABELS[lower]) return LABELS[lower]
+  // Convert camelCase / snake_case to Title Case
+  return key
+    .replace(/_/g, ' ')
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^\s/, '')
+    .replace(/\b\w/g, c => c.toUpperCase())
+    .trim()
+}
+
+function isImageUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const v = value.toLowerCase()
+  return v.startsWith('http') && (
+    v.includes('.jpg') || v.includes('.jpeg') || v.includes('.png') ||
+    v.includes('.webp') || v.includes('.gif') || v.includes('image.tmdb') ||
+    v.includes('coverartarchive') || v.includes('musicbrainz.org/img') ||
+    v.endsWith('/') // some APIs return directory-style URLs
+  )
+}
+
+function buildImageUrl(key: string, value: string): string {
+  const lower = key.toLowerCase()
+  // TMDB path fields need a base URL prepended
+  if ((lower === 'posterpath' || lower === 'stillpath') && value.startsWith('/')) {
+    return `https://image.tmdb.org/t/p/w500${value}`
+  }
+  return value
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+export interface PluginMetadataBoxProps {
+  mediaId: number
+  pluginId: string
+  pluginName: string
+  iconUrl?: string | null
+  fixMatchHint?: string | null
+  metadata: Record<string, unknown>
+  externalIds: ExternalId[]
+  refreshLogs?: RefreshLog[] | null
+  hierarchyLevel: number
+}
+
+export function PluginMetadataBox({
+  mediaId,
+  pluginId,
+  pluginName,
+  iconUrl,
+  fixMatchHint,
+  metadata,
+  externalIds,
+  refreshLogs,
+  hierarchyLevel,
+}: PluginMetadataBoxProps) {
+  const qc = useQueryClient()
+  const [fixMatchOpen, setFixMatchOpen] = useState(false)
+  const [fixMatchInput, setFixMatchInput] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (fixMatchOpen) inputRef.current?.focus()
+  }, [fixMatchOpen])
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['media', mediaId] })
+    qc.invalidateQueries({ queryKey: ['library'] })
+  }
+
+  const refreshMut = useMutation({
+    mutationFn: () => refreshMediaForPlugin(mediaId, pluginId),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+
+  const fixMatchMut = useMutation({
+    mutationFn: () => refreshMediaForPlugin(mediaId, pluginId, fixMatchInput.trim()),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+      setFixMatchOpen(false)
+      setFixMatchInput('')
+    },
+  })
+
+  const clearMatchMut = useMutation({
+    mutationFn: () => clearMediaExternalId(mediaId, pluginId),
+    onSuccess: invalidate,
+  })
+
+  const suppressMut = useMutation({
+    mutationFn: () => suppressMediaMatch(mediaId, pluginId),
+    onSuccess: invalidate,
+  })
+
+  // Determine state of this plugin's external ID
+  const pluginExtIds = externalIds.filter(
+    e => e.source.toLowerCase() === pluginId.toLowerCase(),
+  )
+  const isSuppressed = pluginExtIds.some(e => e.externalId === '__suppress__')
+  const hasRealId = pluginExtIds.some(e => e.externalId !== '__suppress__')
+
+  // Last refresh log for this plugin
+  const log = refreshLogs?.find(l =>
+    l.providerName.toLowerCase() === pluginName.toLowerCase()
+  )
+
+  // ── Partition metadata fields ──────────────────────────────────────────────
+
+  type ImageEntry = { key: string; url: string; label: string }
+  const imageEntries: ImageEntry[] = []
+  const dataRows: { key: string; value: unknown }[] = []
+
+  for (const [key, value] of Object.entries(metadata)) {
+    const lower = key.toLowerCase()
+    if (SKIP_KEYS.has(lower)) continue
+    if (value === null || value === undefined) continue
+
+    if (IMAGE_ARRAY_KEYS.has(lower) && Array.isArray(value)) {
+      // additionalImages / images array
+      for (const img of value as Record<string, unknown>[]) {
+        const url = (img.url ?? img.thumbnailUrl ?? '') as string
+        if (url) imageEntries.push({ key, url, label: (img.type as string) ?? key })
+      }
+      continue
+    }
+
+    if (IMAGE_KEYS.has(lower) && typeof value === 'string') {
+      const url = buildImageUrl(key, value)
+      imageEntries.push({ key, url, label: toLabel(key) })
+      continue
+    }
+
+    if (typeof value === 'string' && isImageUrl(value)) {
+      imageEntries.push({ key, url: value, label: toLabel(key) })
+      continue
+    }
+
+    dataRows.push({ key, value })
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  const renderValue = (key: string, value: unknown): React.ReactNode => {
+    const lower = key.toLowerCase()
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) return null
+      const isTagLike = lower.includes('genre') || lower.includes('tag') || lower.includes('style')
+      if (isTagLike) {
+        return (
+          <div className={styles.tagList}>
+            {(value as string[]).slice(0, 20).map(t => (
+              <span key={String(t)} className={styles.tag}>{String(t)}</span>
+            ))}
+          </div>
+        )
+      }
+      return <span className={styles.value}>{(value as unknown[]).slice(0, 8).map(String).join(', ')}</span>
+    }
+
+    if (typeof value === 'number') {
+      if (lower.includes('rating') || lower.includes('voteaverage')) {
+        return <span className={styles.value}>{value.toFixed(1)}&thinsp;/&thinsp;10</span>
+      }
+      if (lower.includes('runtime') || lower.includes('duration')) {
+        return <span className={styles.value}>{value} min</span>
+      }
+      return <span className={styles.value}>{value}</span>
+    }
+
+    if (typeof value === 'boolean') {
+      return <span className={styles.value}>{value ? 'Yes' : 'No'}</span>
+    }
+
+    return <span className={styles.value}>{String(value)}</span>
+  }
+
+  return (
+    <div className={styles.box}>
+      {/* Header */}
+      <div className={styles.header}>
+        <div className={styles.brand}>
+          {iconUrl && (
+            <img
+              src={iconUrl}
+              alt=""
+              className={styles.icon}
+              aria-hidden
+              onError={e => { e.currentTarget.style.display = 'none' }}
+            />
+          )}
+          <span className={styles.name}>{pluginName}</span>
+          {log && (
+            <p className={styles.timestamp}>
+              {log.succeeded
+                ? `Last refreshed ${new Date(log.refreshedAt).toLocaleDateString()} ${new Date(log.refreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : `Last refresh failed: ${log.errorMessage ?? 'unknown error'}`}
+            </p>
+          )}
+        </div>
+        <div className={styles.actions}>
+          <button
+            className={styles.refreshBtn}
+            onClick={() => refreshMut.mutate()}
+            disabled={refreshMut.isPending}
+            title={`Re-fetch metadata from ${pluginName}`}
+          >
+            {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
+          </button>
+          {hierarchyLevel === 0 && (
+            <>
+              <button
+                className={styles.fixMatchBtn}
+                onClick={() => { setFixMatchOpen(v => !v); fixMatchMut.reset() }}
+                title={`Manually specify the correct ${pluginName} match`}
+              >
+                ✎ Fix Match
+              </button>
+              {hasRealId && (
+                <button
+                  className={styles.clearMatchBtn}
+                  onClick={() => clearMatchMut.mutate()}
+                  disabled={clearMatchMut.isPending}
+                  title="Remove this match — refresh will attempt a new auto-search next cycle"
+                >
+                  {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
+                </button>
+              )}
+              {isSuppressed ? (
+                <button
+                  className={styles.resumeMatchBtn}
+                  onClick={() => clearMatchMut.mutate()}
+                  disabled={clearMatchMut.isPending}
+                  title="Re-enable auto-matching for this item"
+                >
+                  {clearMatchMut.isPending ? 'Resuming…' : '↺ Resume Auto-Match'}
+                </button>
+              ) : !hasRealId && (
+                <button
+                  className={styles.suppressMatchBtn}
+                  onClick={() => suppressMut.mutate()}
+                  disabled={suppressMut.isPending}
+                  title="Mark as unmatched — refresh will never auto-search for this item again"
+                >
+                  {suppressMut.isPending ? 'Suppressing…' : '⊘ No Match'}
+                </button>
+              )}
+            </>
+          )}
+          {hierarchyLevel > 0 && hasRealId && (
+            <button
+              className={styles.clearMatchBtn}
+              onClick={() => clearMatchMut.mutate()}
+              disabled={clearMatchMut.isPending}
+              title="Remove the stale match from this item"
+            >
+              {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Fix Match panel */}
+      {fixMatchOpen && (
+        <div className={styles.fixMatchPanel}>
+          {fixMatchHint ? (
+            <p className={styles.fixMatchHint}>{fixMatchHint}</p>
+          ) : (
+            <p className={styles.fixMatchHint}>Enter an ID or URL for {pluginName}</p>
+          )}
+          <div className={styles.fixMatchRow}>
+            <input
+              ref={inputRef}
+              className={styles.fixMatchInput}
+              type="text"
+              placeholder={`${pluginName} ID or URL…`}
+              value={fixMatchInput}
+              onChange={e => { setFixMatchInput(e.target.value); fixMatchMut.reset() }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && fixMatchInput.trim()) fixMatchMut.mutate()
+                if (e.key === 'Escape') { setFixMatchOpen(false); setFixMatchInput('') }
+              }}
+            />
+            <button
+              className={styles.fixMatchApplyBtn}
+              onClick={() => fixMatchMut.mutate()}
+              disabled={fixMatchMut.isPending || !fixMatchInput.trim()}
+            >
+              {fixMatchMut.isPending ? 'Applying…' : 'Apply'}
+            </button>
+          </div>
+          {fixMatchMut.isError && (
+            <p className={styles.error}>{(fixMatchMut.error as Error).message}</p>
+          )}
+        </div>
+      )}
+
+      {/* Metadata grid */}
+      <div className={styles.grid}>
+        {dataRows.map(({ key, value }) => {
+          const rendered = renderValue(key, value)
+          if (rendered === null) return null
+          return (
+            <div key={key} className={styles.row}>
+              <span className={styles.label}>{toLabel(key)}</span>
+              {rendered}
+            </div>
+          )
+        })}
+
+        {/* External ID row */}
+        {hasRealId && (
+          <div className={styles.row}>
+            <span className={styles.label}>ID</span>
+            <div className={styles.idChips}>
+              {pluginExtIds
+                .filter(e => e.externalId !== '__suppress__')
+                .map(eid => (
+                  <span key={eid.externalId} className={styles.idChip}>{eid.externalId}</span>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Images row */}
+        {imageEntries.length > 0 && (
+          <div className={`${styles.row} ${styles.rowImages}`}>
+            <span className={styles.label}>Images</span>
+            <div className={styles.imageLinks}>
+              {imageEntries.slice(0, 8).map((img, i) => (
+                <a
+                  key={i}
+                  href={img.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={styles.imageLink}
+                  title={`Open full-size: ${img.label}`}
+                >
+                  <img
+                    src={img.url}
+                    alt={img.label}
+                    className={styles.thumbnail}
+                    onError={e => { e.currentTarget.style.display = 'none' }}
+                  />
+                  <span className={styles.thumbnailLabel}>{img.label} ↗</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {refreshMut.isError && (
+        <p className={styles.error}>{`Refresh failed: ${(refreshMut.error as Error).message}`}</p>
+      )}
+      {clearMatchMut.isError && (
+        <p className={styles.error}>{`Clear failed: ${(clearMatchMut.error as Error).message}`}</p>
+      )}
+    </div>
+  )
+}
