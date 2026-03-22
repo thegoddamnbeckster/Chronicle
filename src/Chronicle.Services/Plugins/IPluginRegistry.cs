@@ -12,7 +12,16 @@ public interface IPluginRegistry
     IReadOnlyList<IMetadataProvider> GetMetadataProviders();
 
     /// <summary>
-    /// Returns the <see cref="IMetadataProvider"/> whose <c>PluginId</c> matches, or <c>null</c>.
+    /// Returns all loaded metadata providers paired with their <b>manifest</b> plugin ID.
+    /// The manifest plugin ID is the authoritative identifier and may differ from
+    /// <see cref="IMetadataProvider.PluginId"/> when a pre-built DLL uses a different internal name.
+    /// Always prefer this over <see cref="GetMetadataProviders"/> when you need the plugin ID as a
+    /// database key (enrichment rows, metadata_json keys, etc.).
+    /// </summary>
+    IReadOnlyList<(string PluginId, IMetadataProvider Provider)> GetMetadataProviderEntries();
+
+    /// <summary>
+    /// Returns the <see cref="IMetadataProvider"/> whose <b>manifest</b> plugin ID matches, or <c>null</c>.
     /// </summary>
     IMetadataProvider? GetMetadataProvider(string pluginId);
 

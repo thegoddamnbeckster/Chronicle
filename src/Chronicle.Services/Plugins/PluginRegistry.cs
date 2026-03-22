@@ -26,12 +26,28 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<(string PluginId, IMetadataProvider Provider)> GetMetadataProviderEntries()
+    {
+        lock (_lock)
+            return _plugins.Values
+                .SelectMany(p => p.MetadataProviders.Select(m => (p.Manifest.PluginId, m)))
+                .ToList();
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Matches against the <b>manifest</b> plugin ID stored in <see cref="LoadedPlugin.Manifest"/>,
+    /// not the DLL's <see cref="IMetadataProvider.PluginId"/> property. This means a pre-built plugin
+    /// whose DLL returns a legacy ID (e.g. "tmdb") is still found when called with the canonical
+    /// manifest ID (e.g. "chronicle.plugin.tmdb").
+    /// </remarks>
     public IMetadataProvider? GetMetadataProvider(string pluginId)
     {
         lock (_lock)
             return _plugins.Values
+                .Where(p => string.Equals(p.Manifest.PluginId, pluginId, StringComparison.OrdinalIgnoreCase))
                 .SelectMany(p => p.MetadataProviders)
-                .FirstOrDefault(m => m.PluginId == pluginId);
+                .FirstOrDefault();
     }
 
     /// <inheritdoc/>
