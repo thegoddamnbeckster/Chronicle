@@ -412,7 +412,7 @@ public class FileScanController : ControllerBase
         r.TotalFiles);
 
     private static ScanGroupDto ToGroupDto(Chronicle.Core.Models.Scan.ScanGroup g) => new(
-        g.GroupKey, g.Name, g.HierarchyLevel, g.Year,
+        g.GroupKey, g.Name, g.HierarchyLevel, g.Year, g.Number,
         g.PosterPath, (int)Math.Round(g.ConfidenceScore * 100),
         g.SignalSources, g.HasConflicts,
         g.Children.Select(ToGroupDto).ToList(),
@@ -421,7 +421,7 @@ public class FileScanController : ControllerBase
     private static Chronicle.Services.ScanGroupImport ToGroupImport(ImportGroupDto g) =>
         new(g.Name, g.Year, g.PosterPath,
             g.Children.Select(ToGroupImport).ToList(),
-            g.Files, g.FolderPath);
+            g.Files, g.FolderPath, g.Number);
 
     /// <summary>
     /// Returns a snapshot of the currently-running preview scan (folder being scanned,
