@@ -80,6 +80,12 @@ function EnrichmentSection() {
 
   useEffect(() => { load() }, [load])
 
+  // Poll every 10s so counts update automatically after a scan imports new items
+  useEffect(() => {
+    const id = setInterval(load, 10_000)
+    return () => clearInterval(id)
+  }, [load])
+
   async function handleRefresh() {
     setRefreshing(true)
     await load()

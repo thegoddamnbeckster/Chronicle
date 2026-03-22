@@ -74,7 +74,7 @@ public class PluginService : IPluginService
         // If this is a metadata provider, seed pending enrichment rows for all existing items
         var installedProvider = _registry.GetMetadataProvider(plugin.PluginId);
         if (installedProvider is not null)
-            await SeedEnrichmentRowsForProviderAsync(installedProvider, ct);
+            await SeedEnrichmentRowsForProviderAsync(plugin.PluginId, installedProvider, ct);
 
         _log.Information("Installed plugin {PluginId} (db id {Id})", plugin.PluginId, plugin.Id);
         return plugin;
@@ -123,7 +123,7 @@ public class PluginService : IPluginService
         // If this is a metadata provider, seed pending enrichment rows for all existing items
         var enabledProvider = _registry.GetMetadataProvider(plugin.PluginId);
         if (enabledProvider is not null)
-            await SeedEnrichmentRowsForProviderAsync(enabledProvider);
+            await SeedEnrichmentRowsForProviderAsync(plugin.PluginId, enabledProvider);
 
         _log.Information("Enabled plugin {PluginId}", plugin.PluginId);
     }
@@ -214,7 +214,7 @@ public class PluginService : IPluginService
     /// Rows that already exist are skipped.
     /// </summary>
     private async Task SeedEnrichmentRowsForProviderAsync(
-        IMetadataProvider provider, CancellationToken ct = default)
+        string manifestPluginId, IMetadataProvider provider, CancellationToken ct = default)
     {
         var supportedTypeNames = provider.GetSupportedMediaTypes()
             .Select(t => t.MediaTypeName)
@@ -237,7 +237,7 @@ public class PluginService : IPluginService
             return;
 
         var existingSet = (await _db.EnrichmentStatuses
-            .Where(x => x.PluginId == provider.PluginId && itemIds.Contains(x.MediaItemId))
+            .Where(x => x.PluginId == manifestPluginId && itemIds.Contains(x.MediaItemId))
             .Select(x => x.MediaItemId)
             .ToListAsync(ct))
             .ToHashSet();
@@ -250,7 +250,7 @@ public class PluginService : IPluginService
             _db.EnrichmentStatuses.Add(new MediaItemEnrichmentStatus
             {
                 MediaItemId = itemId,
-                PluginId    = provider.PluginId,
+                PluginId    = manifestPluginId,
                 Status      = EnrichmentStatus.Pending,
                 MaxRetries  = 3,
             });
@@ -260,7 +260,7 @@ public class PluginService : IPluginService
 
         _log.Information(
             "Seeded {Count} pending enrichment rows for provider {PluginId}",
-            itemIds.Count - existingSet.Count, provider.PluginId);
+            itemIds.Count - existingSet.Count, manifestPluginId);
     }
 
     private static IReadOnlyDictionary<string, string> DeserializeSettings(string? json)
