@@ -629,8 +629,10 @@ public class PluginsController : ControllerBase
             ? $"/api/v1/plugins/{p.Id}/icon"
             : null;
 
+        var fixMatchHint = loaded?.Manifest.FixMatchHint ?? p.FixMatchHint;
+
         return new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
-            p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl);
+            p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint);
     }
 
     /// <summary>

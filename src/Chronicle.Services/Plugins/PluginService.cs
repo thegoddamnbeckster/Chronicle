@@ -57,6 +57,7 @@ public class PluginService : IPluginService
             IconUrl         = manifest.IconUrl,
             BrandColorLight = manifest.BrandColorLight,
             BrandColorDark  = manifest.BrandColorDark,
+            FixMatchHint    = manifest.FixMatchHint,
         };
 
         _db.Plugins.Add(plugin);
