@@ -125,6 +125,73 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         await RefreshItemCoreAsync(db, registry, item, ct);
     }
 
+    public async Task<MediaItem> RefreshItemForPluginAsync(
+        int mediaItemId,
+        string pluginId,
+        string? input = null,
+        CancellationToken ct = default)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
+
+        var item = await db.MediaItems
+            .Include(m => m.MediaType)
+            .Include(m => m.ExternalIds)
+            .FirstOrDefaultAsync(m => m.Id == mediaItemId, ct)
+            ?? throw new KeyNotFoundException($"Media item {mediaItemId} not found");
+
+        var provider = registry.GetMetadataProvider(pluginId)
+            ?? throw new KeyNotFoundException($"Plugin '{pluginId}' not found or not loaded");
+
+        string extId;
+
+        if (input is not null)
+        {
+            // Fix Match mode: store the user-supplied ID and use it for the fetch
+            extId = input.Trim();
+            await UpsertExternalIdAsync(db, item.Id, pluginId, extId, ct);
+            item.ExternalIds = await db.MediaExternalIds
+                .Where(e => e.MediaItemId == item.Id).ToListAsync(ct);
+        }
+        else
+        {
+            // Refresh mode: use the existing stored external ID
+            var existing = item.ExternalIds
+                .FirstOrDefault(e => string.Equals(e.Source, pluginId, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
+                throw new InvalidOperationException(
+                    $"No existing match for plugin '{pluginId}' on item {mediaItemId}. Use Fix Match to set one.");
+            extId = existing.ExternalId;
+        }
+
+        var meta = await provider.GetByIdAsync(extId, ct);
+
+        if (!string.IsNullOrWhiteSpace(meta.Title))     item.Name           = meta.Title;
+        if (meta.Year.HasValue)                          item.Year           = meta.Year;
+        if (!string.IsNullOrWhiteSpace(meta.Overview))  item.Overview       = meta.Overview;
+        if (!string.IsNullOrWhiteSpace(meta.PosterUrl)) item.PosterUrl      = meta.PosterUrl;
+        if (meta.RuntimeMinutes.HasValue)               item.RuntimeMinutes = meta.RuntimeMinutes;
+
+        item.MetadataJson = MergeMetadataJson(item.MetadataJson, pluginId, meta);
+        item.UpdatedAt    = DateTime.UtcNow;
+
+        var log = new MediaItemRefreshLog
+        {
+            MediaItemId  = item.Id,
+            ProviderName = provider.Name,
+            RefreshedAt  = DateTime.UtcNow,
+            Succeeded    = true
+        };
+        db.MediaItemRefreshLogs.Add(log);
+        await db.SaveChangesAsync(ct);
+
+        _log.Information("RefreshItemForPlugin: refreshed '{Name}' (item {Id}) via {Plugin}{Input}",
+            item.Name, item.Id, pluginId, input is null ? "" : $" (Fix Match: '{input}')");
+
+        return item;
+    }
+
     public async Task RefreshForPluginAsync(string pluginId, CancellationToken ct = default)
     {
         using var scope = _scopeFactory.CreateScope();

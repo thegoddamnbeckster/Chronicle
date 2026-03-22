@@ -135,7 +135,37 @@ namespace Chronicle.API.Controllers
             }
         }
 
-        // NOTE: reidentify endpoint removed — use POST /media/{id}/refresh/{pluginId} with { "input": "..." } instead
+        /// <summary>
+        /// Refreshes metadata for a single item from a specific plugin.
+        /// If a body with <c>input</c> is supplied, performs a Fix Match (overrides external ID lookup).
+        /// If no body / null input, re-fetches using the item's existing stored external ID.
+        /// </summary>
+        [HttpPost("{id:int}/refresh/{pluginId}")]
+        public async Task<IActionResult> RefreshForPlugin(
+            int id,
+            string pluginId,
+            [FromBody] PluginRefreshRequestDto? dto,
+            CancellationToken ct)
+        {
+            try
+            {
+                var item = await _refreshService.RefreshItemForPluginAsync(id, pluginId, dto?.Input, ct);
+                var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs)));
+            }
+            catch (MediaNotFoundException ex)
+            {
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("PLUGIN_NOT_FOUND", ex.Message));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(502, ApiResponse<MediaItemDto>.Fail("REFRESH_FAILED", ex.Message));
+            }
+        }
 
         /// <summary>
         /// Removes a specific external ID (e.g. TMDB match) from a media item without
