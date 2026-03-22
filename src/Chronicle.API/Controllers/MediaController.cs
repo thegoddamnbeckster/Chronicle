@@ -135,36 +135,7 @@ namespace Chronicle.API.Controllers
             }
         }
 
-        /// <summary>
-        /// Re-identifies a media item using a user-supplied TMDB reference.
-        /// Accepts a bare numeric ID, a typed ID (movie:NNN / tv:NNN), or a full TMDB URL.
-        /// Replaces name, year, overview, poster, and TMDB metadata in-place.
-        /// </summary>
-        [HttpPost("{id:int}/reidentify")]
-        public async Task<IActionResult> Reidentify(int id, [FromBody] ReidentifyRequestDto dto, CancellationToken ct)
-        {
-            try
-            {
-                var item = await _fileScanService.ReidentifyAsync(id, dto.Input, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
-            }
-            catch (KeyNotFoundException)
-            {
-                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
-            }
-            catch (NoProviderConfiguredException ex)
-            {
-                return Conflict(ApiResponse<MediaItemDto>.Fail("NO_PROVIDER_CONFIGURED", ex.Message));
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(ApiResponse<MediaItemDto>.Fail("INVALID_INPUT", ex.Message));
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(502, ApiResponse<MediaItemDto>.Fail("REIDENTIFY_FAILED", ex.Message));
-            }
-        }
+        // NOTE: reidentify endpoint removed — use POST /media/{id}/refresh/{pluginId} with { "input": "..." } instead
 
         /// <summary>
         /// Removes a specific external ID (e.g. TMDB match) from a media item without
@@ -277,7 +248,7 @@ namespace Chronicle.API.Controllers
             IReadOnlyList<Chronicle.Core.Models.MediaItemRefreshLog>? refreshLogs = null,
             List<AncestorDto>? ancestors = null)
         {
-            var (tmdb, fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
+            var (fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
             var logDtos = refreshLogs?
                 .Select(l => new RefreshLogDto(l.ProviderName, l.RefreshedAt, l.Succeeded, l.ErrorMessage))
                 .ToList();
@@ -296,7 +267,6 @@ namespace Chronicle.API.Controllers
                 m.CreatedAt,
                 m.UpdatedAt,
                 m.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList(),
-                TmdbMeta: tmdb,
                 FileScannerMeta: fs,
                 PluginMetadata: pluginMeta?.Count > 0 ? pluginMeta : null,
                 RefreshLogs: logDtos,
@@ -310,7 +280,7 @@ namespace Chronicle.API.Controllers
         /// </summary>
         private static void ClearProviderMetadata(Chronicle.Core.Models.MediaItem item)
         {
-            var (_, fs, _) = ParseMetaJson(item.MetadataJson);
+            var (fs, _) = ParseMetaJson(item.MetadataJson);
 
             // Restore poster from file scanner if it has one, otherwise wipe it.
             item.PosterUrl      = fs?.NfoPosterUrl ?? fs?.LocalPosterPath;
@@ -320,43 +290,26 @@ namespace Chronicle.API.Controllers
             // file scanner originally or manually edited; reverting them would be unexpected.
         }
 
-        // Root wrapper for namespaced MetadataJson: only the two well-known first-class keys
-        // ("tmdb" and "fileScanner") are deserialized to typed DTOs; every other key is
-        // collected into PluginMetadata so the API stays open to any number of plugins
-        // without code changes.
-        private sealed record MediaMetaJsonRoot(TmdbMetaDto? Tmdb, FileScannerMetaDto? FileScanner);
-
-        // Known first-class keys that are NOT forwarded through PluginMetadata
-        // (they get their own typed DTO fields on MediaItemDto instead).
+        // "fileScanner" is the only first-class key — it gets its own typed DTO field.
+        // All plugin metadata (TMDB, MusicBrainz, etc.) flows through PluginMetadata
+        // keyed by full plugin ID, so Chronicle never needs to know any plugin's data shape.
         private static readonly HashSet<string> _firstClassKeys =
-            new(StringComparer.OrdinalIgnoreCase) { "tmdb", "fileScanner" };
+            new(StringComparer.OrdinalIgnoreCase) { "fileScanner" };
 
         private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
             new(System.Text.Json.JsonSerializerDefaults.Web);
 
-        // TODO: Extract ParseMetaJson and MediaMetaJsonRoot to a shared Chronicle.API helper to remove this duplication
-        private static (TmdbMetaDto? tmdb, FileScannerMetaDto? fs,
+        private static (FileScannerMetaDto? fs,
                         Dictionary<string, System.Text.Json.JsonElement>? pluginMeta)
             ParseMetaJson(string? json)
         {
-            if (json is null) return (null, null, null);
+            if (json is null) return (null, null);
             try
             {
-                // Parse once with JsonDocument so we can iterate all keys generically
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
-                if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
-                {
-                    // Old flat format (rating/genres/cast/directors at root level)
-                    var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
-                    return (flat, null, null);
-                }
-
-                // Deserialize the two typed first-class sections
-                TmdbMetaDto? tmdb = null;
-                if (root.TryGetProperty("tmdb", out var tmdbEl))
-                    tmdb = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(tmdbEl.GetRawText(), _jsonOpts);
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return (null, null);
 
                 FileScannerMetaDto? fs = null;
                 if (root.TryGetProperty("fileScanner", out var fsEl))
@@ -375,27 +328,20 @@ namespace Chronicle.API.Controllers
                              fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null)
                     ? fs : null;
 
-                // Collect all remaining keys into PluginMetadata — pass raw JsonElements so
-                // the API remains agnostic about each plugin's internal schema.
+                // All non-fileScanner keys are plugin metadata — pass raw JsonElements so
+                // the API remains agnostic about each plugin's internal data shape.
                 Dictionary<string, System.Text.Json.JsonElement>? pluginMeta = null;
                 foreach (var prop in root.EnumerateObject())
                 {
                     if (_firstClassKeys.Contains(prop.Name)) continue;
                     pluginMeta ??= new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.OrdinalIgnoreCase);
-                    // Normalize keys to camelCase so TypeScript interfaces can read them
+                    // Normalize object keys to camelCase so TypeScript can read them directly
                     pluginMeta[prop.Name] = NormalizeToCamelCase(prop.Value);
                 }
 
-                // If nothing was found at all, try old flat TMDB format
-                if (tmdb is null && fsOut is null && pluginMeta is null)
-                {
-                    var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
-                    return (flat, null, null);
-                }
-
-                return (tmdb, fsOut, pluginMeta);
+                return (fsOut, pluginMeta);
             }
-            catch { return (null, null, null); }
+            catch { return (null, null); }
         }
 
         /// <summary>

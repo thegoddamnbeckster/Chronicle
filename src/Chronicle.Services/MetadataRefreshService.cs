@@ -235,11 +235,10 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
 
             try
             {
-                // Resolve external ID for this provider (fall back to "tmdb" source for backwards compat)
+                // Resolve external ID for this provider
                 var extId = item.ExternalIds
                     .FirstOrDefault(e =>
-                        string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(e.Source, "tmdb", StringComparison.OrdinalIgnoreCase))
+                        string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase))
                     ?.ExternalId;
 
                 // "__suppress__" means the user explicitly opted out of auto-matching for
@@ -294,8 +293,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
                 // Stored external ID no longer exists on the provider — remove it so the
                 // next cycle falls back to a fresh search rather than retrying a dead URL.
                 var badIds = item.ExternalIds
-                    .Where(e => string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase)
-                             || string.Equals(e.Source, "tmdb", StringComparison.OrdinalIgnoreCase))
+                    .Where(e => string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 db.MediaExternalIds.RemoveRange(badIds);
 
@@ -347,18 +345,19 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         var log = new MediaItemRefreshLog
         {
             MediaItemId  = item.Id,
-            ProviderName = provider?.Name ?? "tmdb",
+            ProviderName = provider?.Name ?? string.Empty,
             RefreshedAt  = DateTime.UtcNow,
             Succeeded    = false
         };
 
         try
         {
-            // Clear any stale TMDB IDs that old code may have written directly onto a child item
+            // Clear any stale provider IDs that old code may have written directly onto a child item
             // (but only format-agnostic ones — structured IDs like "tv:1:s1" or "tv:1:s1:e2"
             // are intentionally stored here and should not be wiped).
+            var providerPluginId = provider?.PluginId ?? string.Empty;
             var staleIds = item.ExternalIds
-                .Where(e => e.Source == "tmdb"
+                .Where(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
                          && e.ExternalId != "__suppress__"
                          && !e.ExternalId.Contains(":s"))   // keep structured season/episode IDs
                 .ToList();
@@ -366,7 +365,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             {
                 db.MediaExternalIds.RemoveRange(staleIds);
                 foreach (var s in staleIds) item.ExternalIds.Remove(s);
-                _log.Information("RefreshChild: cleared {Count} stale TMDB ID(s) from child {Id}", staleIds.Count, item.Id);
+                _log.Information("RefreshChild: cleared {Count} stale provider ID(s) from child {Id}", staleIds.Count, item.Id);
             }
 
             // Walk parent chain to find root item and direct parent
@@ -393,7 +392,8 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             else
             {
                 var rootExtId = root.ExternalIds
-                    .FirstOrDefault(e => e.Source == "tmdb" && e.ExternalId != "__suppress__")
+                    .FirstOrDefault(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
+                                     && e.ExternalId != "__suppress__")
                     ?.ExternalId;
 
                 if (rootExtId is null)
@@ -488,11 +488,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (!string.IsNullOrEmpty(season.PosterPath))
                 item.PosterUrl = $"https://image.tmdb.org/t/p/w500{season.PosterPath}";
 
-            item.MetadataJson = MergeSeasonMetadataJson(item.MetadataJson, season);
+            item.MetadataJson = MergeSeasonMetadataJson(item.MetadataJson, provider.PluginId, season);
             item.UpdatedAt    = DateTime.UtcNow;
 
             // Store structured external ID (will be saved by caller's SaveChangesAsync)
-            await UpsertExternalIdAsync(db, item.Id, "tmdb", $"tv:{seriesId}:s{seasonNumber}", ct);
+            await UpsertExternalIdAsync(db, item.Id, provider.PluginId, $"tv:{seriesId}:s{seasonNumber}", ct);
 
             log.Succeeded = true;
             _log.Information("RefreshChild: updated season {Id} ({Name}) — series {SId} s{SN}", item.Id, item.Name, seriesId, seasonNumber);
@@ -544,11 +544,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (episode.AirDate?.Length >= 4 && int.TryParse(episode.AirDate[..4], out var ey)) item.Year = ey;
             if (episode.RuntimeMinutes.HasValue) item.RuntimeMinutes = episode.RuntimeMinutes;
 
-            item.MetadataJson = MergeEpisodeMetadataJson(item.MetadataJson, episode);
+            item.MetadataJson = MergeEpisodeMetadataJson(item.MetadataJson, provider.PluginId, episode);
             item.UpdatedAt    = DateTime.UtcNow;
 
             // Store structured external ID (will be saved by caller's SaveChangesAsync)
-            await UpsertExternalIdAsync(db, item.Id, "tmdb", $"tv:{seriesId}:s{seasonNumber}:e{episodeNumber}", ct);
+            await UpsertExternalIdAsync(db, item.Id, provider.PluginId, $"tv:{seriesId}:s{seasonNumber}:e{episodeNumber}", ct);
 
             log.Succeeded = true;
             _log.Information("RefreshChild: updated episode {Id} ({Name}) — series {SId} s{SN}e{EN}", item.Id, item.Name, seriesId, seasonNumber, episodeNumber);
@@ -622,10 +622,8 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
     {
         var root = ParseExistingMetaJson(existingJson);
 
-        // Derive short namespace key from plugin ID suffix (e.g. "chronicle.plugin.tmdb" → "tmdb")
-        var ns = pluginId.Contains('.') ? pluginId.Split('.').Last() : pluginId;
-
-        root[ns] = new
+        // Use the full plugin ID as the key (e.g. "chronicle.plugin.tmdb")
+        root[pluginId] = new
         {
             rating      = meta.Rating,
             genres      = meta.Genres,
@@ -721,11 +719,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
 
     // ── Season/episode MetadataJson merge ─────────────────────────────────────
 
-    private static string MergeSeasonMetadataJson(string? existingJson, TvSeasonDetail season)
+    private static string MergeSeasonMetadataJson(string? existingJson, string pluginId, TvSeasonDetail season)
     {
         var root = ParseExistingMetaJson(existingJson);
 
-        root["tmdb"] = new
+        root[pluginId] = new
         {
             seasonId     = season.SeasonId,
             posterPath   = season.PosterPath,
@@ -738,11 +736,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         return JsonSerializer.Serialize(root);
     }
 
-    private static string MergeEpisodeMetadataJson(string? existingJson, TvEpisodeDetail episode)
+    private static string MergeEpisodeMetadataJson(string? existingJson, string pluginId, TvEpisodeDetail episode)
     {
         var root = ParseExistingMetaJson(existingJson);
 
-        root["tmdb"] = new
+        root[pluginId] = new
         {
             seasonNumber  = episode.SeasonNumber,
             episodeNumber = episode.EpisodeNumber,
