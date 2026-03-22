@@ -136,33 +136,34 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
-        /// Re-identifies a media item using a user-supplied TMDB reference.
-        /// Accepts a bare numeric ID, a typed ID (movie:NNN / tv:NNN), or a full TMDB URL.
-        /// Replaces name, year, overview, poster, and TMDB metadata in-place.
+        /// Refreshes metadata for a single item from a specific plugin.
+        /// If a body with <c>input</c> is supplied, performs a Fix Match (overrides external ID lookup).
+        /// If no body / null input, re-fetches using the item's existing stored external ID.
         /// </summary>
-        [HttpPost("{id:int}/reidentify")]
-        public async Task<IActionResult> Reidentify(int id, [FromBody] ReidentifyRequestDto dto, CancellationToken ct)
+        [HttpPost("{id:int}/refresh/{pluginId}")]
+        public async Task<IActionResult> RefreshForPlugin(
+            int id,
+            string pluginId,
+            [FromBody] PluginRefreshRequestDto? dto,
+            CancellationToken ct)
         {
             try
             {
-                var item = await _fileScanService.ReidentifyAsync(id, dto.Input, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
+                var item = await _refreshService.RefreshItemForPluginAsync(id, pluginId, dto?.Input, ct);
+                var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs)));
             }
-            catch (KeyNotFoundException)
+            catch (MediaNotFoundException ex)
             {
-                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
             }
-            catch (NoProviderConfiguredException ex)
+            catch (InvalidOperationException ex)
             {
-                return Conflict(ApiResponse<MediaItemDto>.Fail("NO_PROVIDER_CONFIGURED", ex.Message));
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(ApiResponse<MediaItemDto>.Fail("INVALID_INPUT", ex.Message));
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("PLUGIN_NOT_FOUND", ex.Message));
             }
             catch (Exception ex)
             {
-                return StatusCode(502, ApiResponse<MediaItemDto>.Fail("REIDENTIFY_FAILED", ex.Message));
+                return StatusCode(502, ApiResponse<MediaItemDto>.Fail("REFRESH_FAILED", ex.Message));
             }
         }
 
@@ -277,7 +278,7 @@ namespace Chronicle.API.Controllers
             IReadOnlyList<Chronicle.Core.Models.MediaItemRefreshLog>? refreshLogs = null,
             List<AncestorDto>? ancestors = null)
         {
-            var (tmdb, fs) = ParseMetaJson(m.MetadataJson);
+            var (fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
             var logDtos = refreshLogs?
                 .Select(l => new RefreshLogDto(l.ProviderName, l.RefreshedAt, l.Succeeded, l.ErrorMessage))
                 .ToList();
@@ -296,8 +297,8 @@ namespace Chronicle.API.Controllers
                 m.CreatedAt,
                 m.UpdatedAt,
                 m.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList(),
-                TmdbMeta: tmdb,
                 FileScannerMeta: fs,
+                PluginMetadata: pluginMeta?.Count > 0 ? pluginMeta : null,
                 RefreshLogs: logDtos,
                 Ancestors: ancestors
             );
@@ -309,7 +310,7 @@ namespace Chronicle.API.Controllers
         /// </summary>
         private static void ClearProviderMetadata(Chronicle.Core.Models.MediaItem item)
         {
-            var (_, fs) = ParseMetaJson(item.MetadataJson);
+            var (fs, _) = ParseMetaJson(item.MetadataJson);
 
             // Restore poster from file scanner if it has one, otherwise wipe it.
             item.PosterUrl      = fs?.NfoPosterUrl ?? fs?.LocalPosterPath;
@@ -319,49 +320,120 @@ namespace Chronicle.API.Controllers
             // file scanner originally or manually edited; reverting them would be unexpected.
         }
 
-        // Root wrapper for namespaced MetadataJson {"tmdb":{...},"fileScanner":{...}}
-        private sealed record MediaMetaJsonRoot(TmdbMetaDto? Tmdb, FileScannerMetaDto? FileScanner);
+        // "fileScanner" is the only first-class key — it gets its own typed DTO field.
+        // All plugin metadata (TMDB, MusicBrainz, etc.) flows through PluginMetadata
+        // keyed by full plugin ID, so Chronicle never needs to know any plugin's data shape.
+        private static readonly HashSet<string> _firstClassKeys =
+            new(StringComparer.OrdinalIgnoreCase) { "fileScanner" };
 
         private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
             new(System.Text.Json.JsonSerializerDefaults.Web);
 
-        // TODO: Extract ParseMetaJson and MediaMetaJsonRoot to a shared Chronicle.API helper to remove this duplication
-        private static (TmdbMetaDto? tmdb, FileScannerMetaDto? fs) ParseMetaJson(string? json)
+        private static (FileScannerMetaDto? fs,
+                        Dictionary<string, System.Text.Json.JsonElement>? pluginMeta)
+            ParseMetaJson(string? json)
         {
             if (json is null) return (null, null);
             try
             {
-                var root = System.Text.Json.JsonSerializer.Deserialize<MediaMetaJsonRoot>(json, _jsonOpts);
-                // Partitioned format: {"tmdb":{...},"fileScanner":{...}}
-                // import-direct items have tmdb=null but fileScanner populated, so check either key.
-                if (root is not null && (root.Tmdb is not null || root.FileScanner is not null))
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return (null, null);
+
+                FileScannerMetaDto? fs = null;
+                if (root.TryGetProperty("fileScanner", out var fsEl))
+                    fs = System.Text.Json.JsonSerializer.Deserialize<FileScannerMetaDto>(fsEl.GetRawText(), _jsonOpts);
+
+                // The hierarchical importer writes {"fileScanner":{"importedAt":...,"filePaths":[...]}}
+                // which deserialises into a FileScannerMetaDto with all-null fields because the
+                // property names don't match.  Extract filePaths[0] (or folderPath for parent
+                // items) from the raw JSON so the File Scanner card appears on the media detail page.
+                if (fs is not null && fs.FilePath is null && fs.LocalPosterPath is null && fs.NfoPosterUrl is null)
+                    fs = TryExtractFilePathFromNewFormat(json) ?? fs;
+
+                // Suppress a completely empty FileScannerMetaDto — but keep it when ImportedAt
+                // is set (scanner-imported items that haven't re-recorded the path yet).
+                var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
+                             fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null)
+                    ? fs : null;
+
+                // All non-fileScanner keys are plugin metadata — pass raw JsonElements so
+                // the API remains agnostic about each plugin's internal data shape.
+                Dictionary<string, System.Text.Json.JsonElement>? pluginMeta = null;
+                foreach (var prop in root.EnumerateObject())
                 {
-                    var fs = root.FileScanner;
-
-                    // The hierarchical importer writes {"fileScanner":{"importedAt":...,"filePaths":[...]}}
-                    // which deserialises into a FileScannerMetaDto with all-null fields because the
-                    // property names don't match.  Extract filePaths[0] (or folderPath for parent
-                    // items) from the raw JSON so the File Scanner card appears on the media detail page.
-                    if (fs is not null && fs.FilePath is null && fs.LocalPosterPath is null && fs.NfoPosterUrl is null)
-                    {
-                        fs = TryExtractFilePathFromNewFormat(json) ?? fs;
-                    }
-
-                    // Suppress a completely empty FileScannerMetaDto — but keep it when ImportedAt
-                    // is set (season/episode items that were scanner-imported but whose path hasn't
-                    // been re-recorded yet still deserve a File Scanner card).
-                    var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
-                                 fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null)
-                        ? fs : null;
-
-                    return (root.Tmdb, fsOut);
+                    if (_firstClassKeys.Contains(prop.Name)) continue;
+                    pluginMeta ??= new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.OrdinalIgnoreCase);
+                    // Normalize object keys to camelCase so TypeScript can read them directly
+                    pluginMeta[prop.Name] = NormalizeToCamelCase(prop.Value);
                 }
 
-                // Old flat format fallback (rating/genres/cast/directors at root level)
-                var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
-                return (flat, null);
+                return (fsOut, pluginMeta);
             }
             catch { return (null, null); }
+        }
+
+        /// <summary>
+        /// Recursively rewrites all JSON object keys to camelCase (lowercases the first
+        /// character) so that plugin metadata serialised with PascalCase conventions
+        /// (the .NET default) can be read directly by TypeScript interfaces.
+        /// Arrays and primitives are returned unchanged (cloned from the source document).
+        /// </summary>
+        private static System.Text.Json.JsonElement NormalizeToCamelCase(System.Text.Json.JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case System.Text.Json.JsonValueKind.Object:
+                {
+                    var ms = new System.IO.MemoryStream();
+                    using var w = new System.Text.Json.Utf8JsonWriter(ms);
+                    w.WriteStartObject();
+                    foreach (var prop in element.EnumerateObject())
+                    {
+                        var key = prop.Name.Length > 0
+                            ? char.ToLowerInvariant(prop.Name[0]) + prop.Name[1..]
+                            : prop.Name;
+                        w.WritePropertyName(key);
+                        WriteNormalized(w, prop.Value);
+                    }
+                    w.WriteEndObject();
+                    w.Flush();
+                    ms.Position = 0;
+                    using var doc = System.Text.Json.JsonDocument.Parse(ms);
+                    return doc.RootElement.Clone();
+                }
+                default:
+                    return element.Clone();
+            }
+        }
+
+        private static void WriteNormalized(System.Text.Json.Utf8JsonWriter w, System.Text.Json.JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case System.Text.Json.JsonValueKind.Object:
+                    w.WriteStartObject();
+                    foreach (var prop in element.EnumerateObject())
+                    {
+                        var key = prop.Name.Length > 0
+                            ? char.ToLowerInvariant(prop.Name[0]) + prop.Name[1..]
+                            : prop.Name;
+                        w.WritePropertyName(key);
+                        WriteNormalized(w, prop.Value);
+                    }
+                    w.WriteEndObject();
+                    break;
+                case System.Text.Json.JsonValueKind.Array:
+                    w.WriteStartArray();
+                    foreach (var item in element.EnumerateArray())
+                        WriteNormalized(w, item);
+                    w.WriteEndArray();
+                    break;
+                default:
+                    element.WriteTo(w);
+                    break;
+            }
         }
 
         /// <summary>

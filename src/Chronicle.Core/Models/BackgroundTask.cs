@@ -11,4 +11,13 @@ public class BackgroundTask
     public bool?  LastRunSucceeded { get; set; }
     public string? LastErrorMessage{ get; set; }
     public DateTime? NextRunAt     { get; set; }
+
+    /// <summary>
+    /// The plugin that owns this task, or null for system tasks.
+    /// Populated from the plugin's manifest.json background_tasks declaration.
+    /// </summary>
+    public string? PluginId { get; set; }
+
+    /// <summary>Navigation property — loaded via Include in queries that need branding.</summary>
+    public Plugin? Plugin { get; set; }
 }

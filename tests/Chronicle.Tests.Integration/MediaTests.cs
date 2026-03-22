@@ -190,10 +190,10 @@ namespace Chronicle.Tests.Integration
         [Fact]
         public async Task GetMedia_ImportDirectItem_ReturnsFileScannerMeta()
         {
-            // Arrange: seed a media item that has only fileScanner metadata (tmdb=null)
-            // This simulates an item imported via /scan/import-direct before TMDB enrichment.
+            // Arrange: seed a media item that has only fileScanner metadata (no plugin data yet).
+            // This simulates an item imported via /scan/import-direct before metadata enrichment.
             const string metaJson =
-                """{"tmdb": null, "fileScanner": {"filePath": "/some/path.mkv", "localPosterPath": null, "nfoPosterUrl": null}}""";
+                """{"fileScanner": {"filePath": "/some/path.mkv", "localPosterPath": null, "nfoPosterUrl": null}}""";
 
             int seededId;
             using (var scope = _factory.Services.CreateScope())
@@ -232,9 +232,9 @@ namespace Chronicle.Tests.Integration
 
             fsMeta.GetProperty("filePath").GetString().Should().Be("/some/path.mkv");
 
-            // tmdbMeta must be null (item was imported directly without TMDB data)
-            data.TryGetProperty("tmdbMeta", out var tmdbMeta).Should().BeTrue();
-            tmdbMeta.ValueKind.Should().Be(JsonValueKind.Null);
+            // pluginMetadata must be null/absent (item was imported directly without any plugin metadata)
+            if (data.TryGetProperty("pluginMetadata", out var pluginMetadata))
+                pluginMetadata.ValueKind.Should().Be(JsonValueKind.Null);
         }
     }
 }

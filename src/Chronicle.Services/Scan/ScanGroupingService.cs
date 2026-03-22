@@ -152,23 +152,68 @@ namespace Chronicle.Services.Scan
                     rootGroup.Year = level0Year;
                 }
 
-                // If only 1 folder deep (no album/season level), attach file directly to root
+                // If only 1 folder deep (no album/season level), attach file to root —
+                // but for 3-level types with S##E## in the filename, synthesise a Season
+                // group so the episode lands at the correct depth (level 2, not level 1).
                 if (hierarchyLevels == 2 || folderSignal.FolderNames.Count < 2)
                 {
                     if (!isSidecar)
                     {
                         var leafName   = ResolveLeafName(folderSignal, tagSignal, nfoSignal);
                         var leafNumber = ResolveLeafNumber(folderSignal, tagSignal);
-                        rootGroup.Children.Add(new ScanGroup
+
+                        if (hierarchyLevels >= 3 && folderSignal.DetectedEpisode.HasValue)
                         {
-                            GroupKey        = Normalize(leafName),
-                            Name            = leafName,
-                            Number          = leafNumber,
-                            HierarchyLevel  = 1,
-                            ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
-                            SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 1),
-                            Files           = [path],
-                        });
+                            // Synthesise a Season group from the detected season number so the
+                            // episode is at depth 2 during import (Episode), not depth 1 (Season).
+                            var seasonNum  = folderSignal.DetectedSeason ?? 1;
+                            var seasonName = seasonNum == 0 ? "Specials" : $"Season {seasonNum}";
+                            var seasonKey  = Normalize(level0Key + "/" + seasonName);
+
+                            var seasonGroup = rootGroup.Children
+                                .FirstOrDefault(c => c.GroupKey == seasonKey);
+                            if (seasonGroup is null)
+                            {
+                                seasonGroup = new ScanGroup
+                                {
+                                    GroupKey        = seasonKey,
+                                    Name            = seasonName,
+                                    Number          = seasonNum,
+                                    HierarchyLevel  = 1,
+                                    ConfidenceScore = 0.85,
+                                    SignalSources   = ["filename"],
+                                };
+                                rootGroup.Children.Add(seasonGroup);
+                            }
+
+                            seasonGroup.Children.Add(new ScanGroup
+                            {
+                                GroupKey        = Normalize(seasonKey + "/" + leafName),
+                                Name            = leafName,
+                                Number          = leafNumber,
+                                HierarchyLevel  = 2,
+                                ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
+                                SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 2),
+                                Files           = [path],
+                            });
+                        }
+                        else if (hierarchyLevels < 3)
+                        {
+                            // 2-level type (e.g. audiobook chapter, movie file): attach directly to root.
+                            rootGroup.Children.Add(new ScanGroup
+                            {
+                                GroupKey        = Normalize(leafName),
+                                Name            = leafName,
+                                Number          = leafNumber,
+                                HierarchyLevel  = 1,
+                                ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
+                                SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 1),
+                                Files           = [path],
+                            });
+                        }
+                        // else: 3-level type (TV/music), file is directly in the root folder with no
+                        // episode/track pattern detected — treat as supplemental and skip.
+                        // This prevents theme.mp3, stray images, etc. from becoming spurious Season nodes.
                     }
                     continue;
                 }

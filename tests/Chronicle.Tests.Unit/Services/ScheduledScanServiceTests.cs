@@ -94,9 +94,10 @@ public class ScheduledScanServiceTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithEnabledFolderButNoAdminUser_SkipsImport()
+    public async Task ExecuteAsync_WithEnabledFolderAndNoUsers_StillRunsScan()
     {
-        // Arrange — DB has no users at all
+        // The scheduled scan no longer requires an admin user — it always proceeds.
+        // UserLibrary rows are created lazily by GetForUserAsync; the scan just creates MediaItems.
         var db = MakeDb();
 
         var mockFileScanSvc = new Mock<IFileScanService>();
@@ -113,16 +114,20 @@ public class ScheduledScanServiceTests
             .Setup(s => s.GetConfidenceThresholdAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(80);
 
+        mockFileScanSvc
+            .Setup(s => s.PreviewGroupedAsync(It.IsAny<ScanPreviewRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScanGroupResult { Groups = [], Ungrouped = [], TotalFiles = 0 });
+
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
         var service = new ScheduledScanService(scopeFactory);
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
 
-        // Assert — no admin user means no import attempt
+        // Assert — scan proceeds even with no users
         mockFileScanSvc.Verify(
             s => s.PreviewGroupedAsync(It.IsAny<ScanPreviewRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            Times.Once);
     }
 
     [Fact]
@@ -178,7 +183,7 @@ public class ScheduledScanServiceTests
 
         // Import must NOT be called when there are no qualifying groups
         mockFileScanSvc.Verify(
-            s => s.ImportGroupsAsync(It.IsAny<ImportGroupsRequest>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            s => s.ImportGroupsAsync(It.IsAny<ImportGroupsRequest>(), It.IsAny<IReadOnlyList<int>>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 }

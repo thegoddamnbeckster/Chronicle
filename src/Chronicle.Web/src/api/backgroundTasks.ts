@@ -11,6 +11,12 @@ export interface BackgroundTask {
   lastRunSucceeded: boolean | null
   lastErrorMessage: string | null
   nextRunAt: string | null        // UTC ISO-8601
+  // Plugin branding — null for system tasks
+  pluginId: string | null
+  pluginName: string | null
+  pluginIconUrl: string | null
+  brandColorLight: string | null
+  brandColorDark: string | null
 }
 
 export async function getBackgroundTasks(): Promise<BackgroundTask[]> {
