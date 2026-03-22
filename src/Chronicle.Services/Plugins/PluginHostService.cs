@@ -1,7 +1,7 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Plugins.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -117,7 +117,7 @@ public sealed class PluginHostService : IHostedService
             try
             {
                 await using var stream = File.OpenRead(manifestPath);
-                var manifest = await JsonSerializer.DeserializeAsync<BundledManifest>(
+                var manifest = await JsonSerializer.DeserializeAsync<PluginManifest>(
                     stream, cancellationToken: ct);
 
                 if (string.IsNullOrWhiteSpace(manifest?.PluginId))
@@ -136,16 +136,24 @@ public sealed class PluginHostService : IHostedService
 
                 db.Plugins.Add(new Plugin
                 {
-                    PluginId    = manifest.PluginId,
-                    Name        = manifest.Name        ?? manifest.PluginId,
-                    Version     = manifest.Version     ?? "0.0.0",
-                    Author      = manifest.Author      ?? string.Empty,
-                    Description = manifest.Description,
-                    DllPath     = dllPath,
-                    IsEnabled   = true,
-                    InstalledAt = DateTime.UtcNow,
-                    UpdatedAt   = DateTime.UtcNow,
+                    PluginId        = manifest.PluginId,
+                    Name            = manifest.Name            ?? manifest.PluginId,
+                    Version         = manifest.Version         ?? "0.0.0",
+                    Author          = manifest.Author          ?? string.Empty,
+                    Description     = manifest.Description,
+                    DllPath         = dllPath,
+                    IsEnabled       = true,
+                    InstalledAt     = DateTime.UtcNow,
+                    UpdatedAt       = DateTime.UtcNow,
+                    IconUrl         = manifest.IconUrl,
+                    BrandColorLight = manifest.BrandColorLight,
+                    BrandColorDark  = manifest.BrandColorDark,
+                    FixMatchHint    = manifest.FixMatchHint,
                 });
+
+                // Seed background tasks declared in the manifest
+                if (manifest.BackgroundTasks is { Count: > 0 })
+                    await PluginService.SeedPluginTasksAsync(db, manifest.PluginId, manifest.BackgroundTasks, ct);
 
                 _log.Information("Auto-registered bundled plugin {PluginId} from {Dir}", manifest.PluginId, dir);
                 registered = true;
@@ -186,14 +194,5 @@ public sealed class PluginHostService : IHostedService
         return JsonSerializer.Deserialize<Dictionary<string, string>>(settingsJson)
                ?? new Dictionary<string, string>();
     }
-
-    // ── Manifest deserialization ──────────────────────────────────────────────
-
-    private sealed record BundledManifest(
-        [property: JsonPropertyName("plugin_id")]   string? PluginId,
-        [property: JsonPropertyName("name")]         string? Name,
-        [property: JsonPropertyName("version")]      string? Version,
-        [property: JsonPropertyName("author")]       string? Author,
-        [property: JsonPropertyName("description")]  string? Description);
 
 }

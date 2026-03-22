@@ -52,7 +52,7 @@ namespace Chronicle.Services
         /// Root groups get UserLibrary entries; children do not.
         /// </summary>
         Task<ImportApprovedSummary> ImportGroupsAsync(
-            ImportGroupsRequest request, int userId, CancellationToken ct = default);
+            ImportGroupsRequest request, IReadOnlyList<int> userIds, CancellationToken ct = default);
 
         /// <summary>
         /// Queries the first available metadata provider for <paramref name="query"/> and
@@ -72,13 +72,5 @@ namespace Chronicle.Services
         /// </summary>
         Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default);
 
-        /// <summary>
-        /// Re-identifies an existing MediaItem using a user-supplied TMDB reference.
-        /// <paramref name="input"/> may be a bare numeric ID (assumed movie), a typed ID
-        /// ("movie:1159831", "tv:1396"), or a full TMDB URL
-        /// ("https://www.themoviedb.org/movie/1159831-the-bride").
-        /// Replaces the item's name, year, overview, poster, and TMDB metadata in-place.
-        /// </summary>
-        Task<Chronicle.Core.Models.MediaItem> ReidentifyAsync(int mediaItemId, string input, CancellationToken ct = default);
     }
 }

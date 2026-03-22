@@ -25,6 +25,7 @@ namespace Chronicle.Data
         public DbSet<MediaItemRefreshLog> MediaItemRefreshLogs => Set<MediaItemRefreshLog>();
         public DbSet<BackgroundTask> BackgroundTasks => Set<BackgroundTask>();
         public DbSet<ScanFolder> ScanFolders => Set<ScanFolder>();
+        public DbSet<MediaItemEnrichmentStatus> EnrichmentStatuses { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -273,6 +274,12 @@ namespace Chronicle.Data
                 e.Property(t => t.DisplayName).IsRequired();
                 e.Property(t => t.Description).IsRequired();
                 e.Property(t => t.CronExpression).IsRequired();
+                e.HasOne(t => t.Plugin)
+                 .WithMany()
+                 .HasForeignKey(t => t.PluginId)
+                 .HasPrincipalKey(p => p.PluginId)
+                 .OnDelete(DeleteBehavior.Cascade)
+                 .IsRequired(false);
             });
 
             modelBuilder.Entity<ScanFolder>(e =>
@@ -308,6 +315,18 @@ namespace Chronicle.Data
                     .WithMany()
                     .HasForeignKey(e => e.ApiTokenId)
                     .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            modelBuilder.Entity<MediaItemEnrichmentStatus>(e =>
+            {
+                e.ToTable("media_item_enrichment_status");
+                e.HasKey(x => x.Id);
+                e.HasIndex(x => new { x.MediaItemId, x.PluginId }).IsUnique();
+                e.Property(x => x.Status).HasConversion<string>();
+                e.HasOne(x => x.MediaItem)
+                 .WithMany()
+                 .HasForeignKey(x => x.MediaItemId)
+                 .OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

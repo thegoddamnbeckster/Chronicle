@@ -7,6 +7,12 @@ import {
   type BackgroundTask,
 } from '@/api/backgroundTasks'
 import {
+  getEnrichmentStats,
+  runEnrichment,
+  resetEnrichment,
+  type EnrichmentStats,
+} from '@/api/enrichment'
+import {
   cronToParams,
   paramsToCron,
   describeSchedule,
@@ -51,6 +57,127 @@ function statusBadge(task: BackgroundTask) {
 }
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+
+// ── Enrichment status section ─────────────────────────────────────────────
+
+function EnrichmentSection() {
+  const [stats, setStats] = useState<EnrichmentStats[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [runStarted, setRunStarted] = useState<Record<string, boolean>>({})
+
+  const load = useCallback(async () => {
+    try {
+      const data = await getEnrichmentStats()
+      setStats(data)
+    } catch {
+      // silently ignore — section will show empty
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    await load()
+    setRefreshing(false)
+  }
+
+  async function handleRun(pluginId: string) {
+    try {
+      await runEnrichment(pluginId)
+      setRunStarted(prev => ({ ...prev, [pluginId]: true }))
+      setTimeout(() => setRunStarted(prev => ({ ...prev, [pluginId]: false })), 3000)
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleReset(pluginId: string, scope: 'exhausted' | 'all') {
+    try {
+      await resetEnrichment(pluginId, scope)
+      await load()
+    } catch {
+      // ignore
+    }
+  }
+
+  return (
+    <div className={styles.enrichmentSection}>
+      <div className={styles.sectionHeader}>
+        <h2 className={styles.sectionTitle}>Enrichment Status</h2>
+        <button
+          className={styles.refreshBtn}
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Refresh enrichment stats"
+        >
+          {refreshing ? '↻ Refreshing…' : '↻ Refresh'}
+        </button>
+      </div>
+      {loading ? (
+        <p className={styles.loading}>Loading enrichment stats…</p>
+      ) : stats.length === 0 ? (
+        <p className={styles.enrichmentEmpty}>No metadata plugins installed. Install a plugin in Settings → Plugins to enable enrichment.</p>
+      ) : (
+        <div className={styles.card}>
+          <table className={styles.enrichTable}>
+            <thead>
+              <tr>
+                <th className={styles.enrichTh}>Plugin</th>
+                <th className={styles.enrichTh}>Pending</th>
+                <th className={styles.enrichTh}>Completed</th>
+                <th className={styles.enrichTh}>Failed</th>
+                <th className={styles.enrichTh}>Exhausted</th>
+                <th className={styles.enrichTh}>Not Found</th>
+                <th className={styles.enrichTh}>Skipped</th>
+                <th className={styles.enrichTh}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.map(s => (
+                <tr key={s.pluginId} className={styles.enrichRow}>
+                  <td className={styles.enrichTd}>{s.pluginName}</td>
+                  <td className={styles.enrichTd}>{s.pending}</td>
+                  <td className={styles.enrichTd}>{s.completed}</td>
+                  <td className={styles.enrichTd}>{s.failed}</td>
+                  <td className={styles.enrichTd}>{s.exhausted}</td>
+                  <td className={styles.enrichTd}>{s.notFound}</td>
+                  <td className={styles.enrichTd}>{s.skipped}</td>
+                  <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
+                    <button
+                      className={styles.runBtn}
+                      onClick={() => handleRun(s.pluginId)}
+                    >
+                      {runStarted[s.pluginId] ? 'Started' : 'Run Now'}
+                    </button>
+                    <button
+                      className={styles.editBtn}
+                      onClick={() => handleReset(s.pluginId, 'exhausted')}
+                      title="Reset items marked as exhausted so they will be retried"
+                    >
+                      Reset Exhausted
+                    </button>
+                    <button
+                      className={styles.editBtn}
+                      onClick={() => handleReset(s.pluginId, 'all')}
+                      title="Reset all enrichment state for this plugin"
+                    >
+                      Reset All
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Schedule editor ──────────────────────────────────────────────────────────
 
@@ -313,13 +440,29 @@ export default function BackgroundTasksPage() {
       {tasks.map(task => {
         const { cls, label } = statusBadge(task)
         const isRunning = task.isRunning || runningIds.has(task.taskId)
+        const brandColor = task.brandColorDark ?? undefined
 
         return (
-          <div key={task.taskId} className={styles.card}>
+          <div
+            key={task.taskId}
+            className={`${styles.card} ${task.pluginId ? styles.cardPlugin : ''}`}
+            style={brandColor ? { '--plugin-brand-color': brandColor } as React.CSSProperties : undefined}
+          >
             <div className={styles.cardHeader}>
               <div className={styles.cardTitleGroup}>
-                <h2 className={styles.taskName}>{task.displayName}</h2>
-                <p className={styles.taskDesc}>{task.description}</p>
+                {task.pluginIconUrl && (
+                  <img
+                    src={task.pluginIconUrl}
+                    alt={task.pluginName ?? ''}
+                    className={styles.pluginIcon}
+                  />
+                )}
+                <div className={styles.cardTitleText}>
+                  <h2 className={styles.taskName}>
+                    {task.pluginName ? `${task.pluginName} · ${task.displayName}` : task.displayName}
+                  </h2>
+                  <p className={styles.taskDesc}>{task.description}</p>
+                </div>
               </div>
               <div className={styles.cardActions}>
                 <span className={`${styles.badge} ${cls}`}>{label}</span>
@@ -350,7 +493,7 @@ export default function BackgroundTasksPage() {
               </div>
             </div>
 
-            {task.lastRunSucceeded === false && task.lastErrorMessage && (
+            {task.lastRunSucceeded === false && task.lastErrorMessage && !isRunning && (
               <p className={styles.errorText}>{task.lastErrorMessage}</p>
             )}
 
@@ -393,6 +536,8 @@ export default function BackgroundTasksPage() {
           </div>
         )
       })}
+
+      <EnrichmentSection />
     </div>
   )
 }

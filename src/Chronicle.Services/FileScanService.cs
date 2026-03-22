@@ -433,14 +433,15 @@ namespace Chronicle.Services
             {
                 // Three-tier import: root (show/artist) → mid (season/album) → leaf (episode/track)
                 (imported, failed, duplicates, failures) = await ImportHierarchicalAsync(
-                    request.Files, mediaType, request.UserId, ct);
+                    request.Files, mediaType, [request.UserId], ct);
             }
             else
             {
                 // Flat import.
                 // Pass 1: check for duplicates and create only new items.
                 // Pass 2: upsert external IDs.
-                // Pass 3: bulk-upsert library entries.
+                // Pass 3: upsert a library entry for the requesting user (other users get
+                //         entries auto-created by GetForUserAsync on their next library view).
                 var pairs = new List<(DirectImportFile file, MediaItem item)>(request.Files.Count);
 
                 foreach (var file in request.Files)
@@ -487,7 +488,8 @@ namespace Chronicle.Services
                         await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
                 }
 
-                // Determine which items already have a library entry (batch SELECT).
+                // Upsert a library entry for the requesting user.
+                // Other users get entries auto-created by GetForUserAsync on their first library view.
                 var allItemIds = pairs.Select(p => p.item.Id).ToList();
                 var existingLibSet = new HashSet<int>(
                     await _context.UserLibraries
@@ -522,7 +524,7 @@ namespace Chronicle.Services
         private async Task<(int imported, int failed, int duplicates, List<string> failures)> ImportHierarchicalAsync(
             List<DirectImportFile> files,
             MediaType mediaType,
-            int userId,
+            IReadOnlyList<int> userIds,
             CancellationToken ct)
         {
             int imported = 0, failed = 0, duplicates = 0;
@@ -551,8 +553,8 @@ namespace Chronicle.Services
                     var rootItem = await FindOrCreateParentAsync(
                         show.ShowTitle, mediaType.Id, parentId: null, hierarchyLevel: 0, ct);
 
-                    // Upsert library entry for root only
-                    await UpsertLibraryEntryAsync(userId, rootItem.Id, ct);
+                    // Upsert library entry for root only — for all users
+                    await UpsertLibraryEntryAsync(userIds, rootItem.Id, ct);
 
                     foreach (var (seasonNum, season) in show.Seasons)
                     {
@@ -576,7 +578,7 @@ namespace Chronicle.Services
 
                                 var wasNew = await ImportSingleFileAsync(file with { ParsedTitle = epName },
                                     mediaType.Id, midItem.Id, hierarchyLevel: 2,
-                                    userId, addLibraryEntry: false, ct);
+                                    userIds, addLibraryEntry: false, ct);
                                 if (wasNew) imported++;
                                 else duplicates++;
                             }
@@ -605,7 +607,7 @@ namespace Chronicle.Services
             int mediaTypeId,
             int? parentId,
             int hierarchyLevel,
-            int userId,
+            IReadOnlyList<int> userIds,
             bool addLibraryEntry,
             CancellationToken ct)
         {
@@ -616,7 +618,7 @@ namespace Chronicle.Services
                 _log.Information("Duplicate file '{Path}' already imported as '{Title}' (id={Id}) — skipping",
                     file.FilePath, existing.Name, existing.Id);
                 if (addLibraryEntry)
-                    await UpsertLibraryEntryAsync(userId, existing.Id, ct);
+                    await UpsertLibraryEntryAsync(userIds, existing.Id, ct);
                 return false;
             }
 
@@ -639,28 +641,35 @@ namespace Chronicle.Services
                 await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
 
             if (addLibraryEntry)
-                await UpsertLibraryEntryAsync(userId, item.Id, ct);
+                await UpsertLibraryEntryAsync(userIds, item.Id, ct);
 
             return true;
         }
 
-        /// <summary>Adds a UserLibrary entry for <paramref name="mediaItemId"/> if one doesn't already exist.</summary>
-        private async Task UpsertLibraryEntryAsync(int userId, int mediaItemId, CancellationToken ct)
+        /// <summary>
+        /// Adds a UserLibrary entry for <paramref name="mediaItemId"/> for each user in
+        /// <paramref name="userIds"/> if one doesn't already exist. File-scanned content is
+        /// visible to all users regardless of who triggered the import.
+        /// </summary>
+        private async Task UpsertLibraryEntryAsync(IReadOnlyList<int> userIds, int mediaItemId, CancellationToken ct)
         {
-            var exists = await _context.UserLibraries
-                .AnyAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
-            if (!exists)
+            foreach (var userId in userIds)
             {
-                _context.UserLibraries.Add(new UserLibrary
+                var exists = await _context.UserLibraries
+                    .AnyAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+                if (!exists)
                 {
-                    UserId      = userId,
-                    MediaItemId = mediaItemId,
-                    Status      = LibraryStatus.Unwatched,
-                    AddedAt     = DateTime.UtcNow,
-                    UpdatedAt   = DateTime.UtcNow,
-                });
-                await _context.SaveChangesAsync(ct);
+                    _context.UserLibraries.Add(new UserLibrary
+                    {
+                        UserId      = userId,
+                        MediaItemId = mediaItemId,
+                        Status      = LibraryStatus.Unwatched,
+                        AddedAt     = DateTime.UtcNow,
+                        UpdatedAt   = DateTime.UtcNow,
+                    });
+                }
             }
+            await _context.SaveChangesAsync(ct);
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1274,105 +1283,6 @@ namespace Chronicle.Services
             return JsonSerializer.Serialize(new MediaMetaJsonRoot(tmdbData, fsData), _metaJsonOpts);
         }
 
-        // ── Re-identify ───────────────────────────────────────────────────────────
-
-        public async Task<MediaItem> ReidentifyAsync(int mediaItemId, string input, CancellationToken ct = default)
-        {
-            var provider = _registry.GetMetadataProviders().FirstOrDefault();
-            if (provider is null)
-                throw new NoProviderConfiguredException(
-                    "No metadata provider configured. Add an API key in Settings → Plugins.");
-
-            var item = await _context.MediaItems
-                .Include(m => m.MediaType)
-                .Include(m => m.ExternalIds)
-                .FirstOrDefaultAsync(m => m.Id == mediaItemId, ct)
-                ?? throw new KeyNotFoundException($"Media item {mediaItemId} not found.");
-
-            var externalId = ParseUserInput(input, item.MediaType?.Name ?? string.Empty);
-
-            _log.Information("Re-identifying item {Id} ({Name}) with input='{Input}' → externalId='{ExtId}'",
-                mediaItemId, item.Name, input, externalId);
-
-            var meta = await provider.GetByIdAsync(externalId, ct);
-
-            // Replace the TMDB external ID — remove old ones first, then upsert the new one
-            var oldTmdbIds = item.ExternalIds.Where(e => e.Source == "tmdb").ToList();
-            foreach (var old in oldTmdbIds)
-                _context.MediaExternalIds.Remove(old);
-
-            item.Name           = meta.Title;
-            item.Year           = meta.Year;
-            item.Overview       = meta.Overview;
-            item.PosterUrl      = meta.PosterUrl;
-            item.RuntimeMinutes = meta.RuntimeMinutes;
-            item.MetadataJson   = SerializeMetadata(tmdbMeta: meta, existingJson: item.MetadataJson);
-            item.UpdatedAt      = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync(ct);
-            await UpsertExternalIdAsync(item.Id, externalId, ct);
-            await _context.SaveChangesAsync(ct);
-
-            _log.Information("Re-identified item {Id} → '{Title}' ({Year}) [{ExtId}]",
-                mediaItemId, meta.Title, meta.Year, externalId);
-
-            return await _context.MediaItems
-                .Include(m => m.MediaType)
-                .Include(m => m.ExternalIds)
-                .FirstAsync(m => m.Id == mediaItemId, ct);
-        }
-
-        /// <summary>
-        /// Resolves a user-supplied TMDB reference to the canonical "movie:NNN" / "tv:NNN" format.
-        /// Handles:
-        ///   • TMDB URL  https://www.themoviedb.org/movie/1159831-the-bride
-        ///   • TMDB URL  https://www.themoviedb.org/tv/1396-breaking-bad
-        ///   • Typed ID  movie:1159831  |  tv:1396
-        ///   • Bare number  1159831  (media-type hint used to pick movie vs tv)
-        /// </summary>
-        private static string ParseUserInput(string input, string mediaTypeName)
-        {
-            input = input.Trim();
-
-            // Full TMDB URL
-            if (input.Contains("themoviedb.org/", StringComparison.OrdinalIgnoreCase))
-            {
-                // Extract the numeric segment immediately after the media-type slug
-                // e.g. ".../movie/1159831-the-bride" → "movie:1159831"
-                //      ".../tv/1396-breaking-bad"    → "tv:1396"
-                var uri = new Uri(input);
-                var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                if (segments.Length >= 2)
-                {
-                    var kind = segments[^2].ToLowerInvariant(); // "movie" or "tv"
-                    var rawId = segments[^1].Split('-')[0];     // "1159831-the-bride" → "1159831"
-                    if ((kind == "movie" || kind == "tv") && int.TryParse(rawId, out _))
-                        return $"{kind}:{rawId}";
-                }
-                throw new ArgumentException($"Could not parse TMDB ID from URL: {input}");
-            }
-
-            // Already typed format: "movie:1159831" or "tv:1396"
-            if (input.StartsWith("movie:", StringComparison.OrdinalIgnoreCase) ||
-                input.StartsWith("tv:", StringComparison.OrdinalIgnoreCase))
-            {
-                return input.ToLowerInvariant();
-            }
-
-            // Bare number — infer type from media type name
-            if (int.TryParse(input, out _))
-            {
-                var hint = ToMediaTypeHint(mediaTypeName);
-                var prefix = hint == "tv" ? "tv" : "movie";
-                return $"{prefix}:{input}";
-            }
-
-            throw new ArgumentException(
-                $"Could not parse '{input}' as a TMDB ID or URL. " +
-                "Use a bare number (e.g. 1159831), a typed ID (movie:1159831 or tv:1396), " +
-                "or a full TMDB URL (https://www.themoviedb.org/movie/1159831).");
-        }
-
         // ── Grouped preview ──────────────────────────────────────────────────────
 
         public async Task<ScanGroupResult> PreviewGroupedAsync(
@@ -1427,7 +1337,7 @@ namespace Chronicle.Services
         // ── Import groups ────────────────────────────────────────────────────────
 
         public async Task<ImportApprovedSummary> ImportGroupsAsync(
-            ImportGroupsRequest request, int userId, CancellationToken ct = default)
+            ImportGroupsRequest request, IReadOnlyList<int> userIds, CancellationToken ct = default)
         {
             var mediaType = await _context.MediaTypes
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
@@ -1437,6 +1347,7 @@ namespace Chronicle.Services
             var failures = new List<string>();
             int processed = 0;
             int total = request.Groups.Count;
+            var createdItemIds = new List<int>();
 
             // Read batch size from app settings (default 50 if not configured or invalid)
             var batchSetting = await _context.AppSettings.FindAsync(["import_batch_size"], ct);
@@ -1454,34 +1365,39 @@ namespace Chronicle.Services
                 _importProgress.Update(processed, total, rootGroup.Name);
                 try
                 {
-                    var rootItem = await UpsertGroupItemAsync(
+                    var (rootItem, rootIsNew) = await UpsertGroupItemAsync(
                         rootGroup, request.MediaTypeId, parentId: null,
                         hierarchyLevel: 0, ct);
 
-                    // Library entry only at root level
-                    var libEntry = await _context.UserLibraries
-                        .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == rootItem.Id, ct);
+                    if (rootIsNew)
+                        createdItemIds.Add(rootItem.Id);
 
-                    if (libEntry is null)
+                    // Library entry only at root level — create for every user so all
+                    // accounts can see file-scanned content regardless of who triggered the import.
+                    bool anyNew = false;
+                    foreach (var uid in userIds)
                     {
-                        _context.UserLibraries.Add(new UserLibrary
+                        var libEntry = await _context.UserLibraries
+                            .FirstOrDefaultAsync(l => l.UserId == uid && l.MediaItemId == rootItem.Id, ct);
+
+                        if (libEntry is null)
                         {
-                            UserId      = userId,
-                            MediaItemId = rootItem.Id,
-                            Status      = LibraryStatus.Unwatched,
-                            AddedAt     = DateTime.UtcNow,
-                            UpdatedAt   = DateTime.UtcNow,
-                        });
-                        imported++;
+                            _context.UserLibraries.Add(new UserLibrary
+                            {
+                                UserId      = uid,
+                                MediaItemId = rootItem.Id,
+                                Status      = LibraryStatus.Unwatched,
+                                AddedAt     = DateTime.UtcNow,
+                                UpdatedAt   = DateTime.UtcNow,
+                            });
+                            anyNew = true;
+                        }
                     }
-                    else
-                    {
-                        duplicates++;
-                    }
+                    if (anyNew) imported++; else duplicates++;
 
                     // Persist children recursively — no library entries
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
-                        rootItem.Id, hierarchyLevel: 1, ct);
+                        rootItem.Id, hierarchyLevel: 1, createdItemIds, ct);
 
                     pendingInBatch++;
 
@@ -1516,6 +1432,10 @@ namespace Chronicle.Services
                 _log.Information("ImportGroups: committed final batch of {BatchSize} groups", pendingInBatch);
             }
 
+            // Seed pending enrichment rows for all newly created items
+            if (createdItemIds.Count > 0)
+                await SeedEnrichmentRowsForNewItemsAsync(createdItemIds, mediaType.Name, ct);
+
             var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
             _importProgress.Complete(new ImportProgressResult
             {
@@ -1529,18 +1449,20 @@ namespace Chronicle.Services
 
         private async Task PersistChildGroupsAsync(
             List<ScanGroupImport> children, int mediaTypeId,
-            int parentId, int hierarchyLevel, CancellationToken ct)
+            int parentId, int hierarchyLevel, List<int> createdItemIds, CancellationToken ct)
         {
             foreach (var child in children)
             {
-                var item = await UpsertGroupItemAsync(child, mediaTypeId, parentId, hierarchyLevel, ct);
+                var (item, isNew) = await UpsertGroupItemAsync(child, mediaTypeId, parentId, hierarchyLevel, ct);
+                if (isNew)
+                    createdItemIds.Add(item.Id);
                 if (child.Children.Count > 0)
                     await PersistChildGroupsAsync(child.Children, mediaTypeId,
-                        item.Id, hierarchyLevel + 1, ct);
+                        item.Id, hierarchyLevel + 1, createdItemIds, ct);
             }
         }
 
-        private async Task<MediaItem> UpsertGroupItemAsync(
+        private async Task<(MediaItem Item, bool IsNew)> UpsertGroupItemAsync(
             ScanGroupImport group, int mediaTypeId,
             int? parentId, int hierarchyLevel, CancellationToken ct)
         {
@@ -1600,7 +1522,7 @@ namespace Chronicle.Services
                 {
                     fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }
                 });
-                return existing;
+                return (existing, false);
             }
 
             var item = new MediaItem
@@ -1621,7 +1543,62 @@ namespace Chronicle.Services
             };
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct); // need the ID for children
-            return item;
+            return (item, true);
+        }
+
+        // ── Enrichment seeding ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// Inserts pending <see cref="MediaItemEnrichmentStatus"/> rows for each of
+        /// <paramref name="itemIds"/> against every installed <see cref="IMetadataProvider"/>
+        /// that supports <paramref name="mediaTypeName"/>. Existing rows are skipped.
+        /// </summary>
+        private async Task SeedEnrichmentRowsForNewItemsAsync(
+            List<int> itemIds, string mediaTypeName, CancellationToken ct = default)
+        {
+            var providers = _registry.GetMetadataProviders();
+            if (providers.Count == 0)
+                return;
+
+            int seeded = 0;
+            foreach (var provider in providers)
+            {
+                var supportedNames = provider.GetSupportedMediaTypes()
+                    .Select(t => t.MediaTypeName)
+                    .ToList();
+
+                if (!supportedNames.Contains(mediaTypeName, StringComparer.OrdinalIgnoreCase))
+                    continue;
+
+                var existingSet = (await _context.EnrichmentStatuses
+                    .Where(x => x.PluginId == provider.PluginId && itemIds.Contains(x.MediaItemId))
+                    .Select(x => x.MediaItemId)
+                    .ToListAsync(ct))
+                    .ToHashSet();
+
+                foreach (var itemId in itemIds)
+                {
+                    if (existingSet.Contains(itemId))
+                        continue;
+
+                    _context.EnrichmentStatuses.Add(new Chronicle.Core.Models.MediaItemEnrichmentStatus
+                    {
+                        MediaItemId = itemId,
+                        PluginId    = provider.PluginId,
+                        Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
+                        MaxRetries  = 3,
+                    });
+                    seeded++;
+                }
+            }
+
+            if (seeded > 0)
+            {
+                await _context.SaveChangesAsync(ct);
+                _log.Information(
+                    "Seeded {Count} pending enrichment rows for {ItemCount} newly imported items",
+                    seeded, itemIds.Count);
+            }
         }
 
         // ── Confidence threshold ─────────────────────────────────────────────────

@@ -19,6 +19,16 @@
   margin-bottom: 16px;
 }
 
+/* Plugin-owned task: coloured border + faint tinted background */
+.cardPlugin {
+  border-color: var(--plugin-brand-color, var(--color-accent));
+  background-color: color-mix(
+    in srgb,
+    var(--plugin-brand-color, transparent) 8%,
+    var(--bg-card)
+  );
+}
+
 .cardHeader {
   display: flex;
   align-items: flex-start;
@@ -27,7 +37,24 @@
   margin-bottom: 12px;
 }
 
+/* Row layout: icon on the left, title+desc stacked on the right */
 .cardTitleGroup {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pluginIcon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-top: 2px; /* optical alignment with text */
+}
+
+.cardTitleText {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -287,3 +314,82 @@
 
 .loading { color: var(--text-muted); padding: 24px 0; }
 .errorMsg { color: #eb5757; padding: 24px 0; }
+
+/* ── Enrichment status section ─────────────────────────────── */
+
+.enrichmentSection {
+  margin-top: 36px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sectionTitle {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.refreshBtn {
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(255,255,255,0.12));
+  background: transparent;
+  color: var(--text-muted, #9ca3af);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.refreshBtn:hover:not(:disabled) {
+  color: var(--text-primary, #f3f4f6);
+  border-color: var(--text-muted, #9ca3af);
+}
+
+.refreshBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.enrichmentEmpty {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+.enrichTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.enrichTh {
+  text-align: left;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.enrichRow:not(:last-child) .enrichTd {
+  border-bottom: 1px solid var(--border);
+}
+
+.enrichTd {
+  padding: 10px 12px 10px 0;
+  vertical-align: middle;
+}
+
+.enrichActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}

@@ -107,7 +107,12 @@ namespace Chronicle.Data.Migrations
                     b.Property<DateTime?>("NextRunAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PluginId")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("TaskId");
+
+                    b.HasIndex("PluginId");
 
                     b.ToTable("background_tasks", (string)null);
                 });
@@ -299,6 +304,49 @@ namespace Chronicle.Data.Migrations
                     b.HasIndex("ParentId");
 
                     b.ToTable("media_items", (string)null);
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.MediaItemEnrichmentStatus", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastAttemptedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastCompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MaxRetries")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaItemId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PluginId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId", "PluginId")
+                        .IsUnique();
+
+                    b.ToTable("media_item_enrichment_status", (string)null);
                 });
 
             modelBuilder.Entity("Chronicle.Core.Models.MediaItemRefreshLog", b =>
@@ -513,11 +561,23 @@ namespace Chronicle.Data.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("BrandColorDark")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BrandColorLight")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("DllPath")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FixMatchHint")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IconUrl")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("InstalledAt")
@@ -713,6 +773,17 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.BackgroundTask", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.Plugin", "Plugin")
+                        .WithMany()
+                        .HasForeignKey("PluginId")
+                        .HasPrincipalKey("PluginId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Plugin");
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.DeviceAuthCode", b =>
                 {
                     b.HasOne("Chronicle.Core.Models.ApiToken", "ApiToken")
@@ -776,6 +847,17 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("MediaType");
 
                     b.Navigation("Parent");
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.MediaItemEnrichmentStatus", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
                 });
 
             modelBuilder.Entity("Chronicle.Core.Models.MediaItemRefreshLog", b =>

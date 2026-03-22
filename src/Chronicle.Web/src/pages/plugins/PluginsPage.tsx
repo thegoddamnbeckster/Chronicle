@@ -9,6 +9,7 @@ import {
   healthCheckPlugin,
   listCatalog,
   installFromCatalog,
+  getPluginSettings,
   getPluginSettingsSchema,
   updatePluginSettings,
   SettingType,
@@ -204,14 +205,18 @@ export default function PluginsPage() {
     setSchemaError(null)
     setSchemaLoading(true)
     try {
-      const s = await getPluginSettingsSchema(id)
+      const [s, saved] = await Promise.all([
+        getPluginSettingsSchema(id),
+        getPluginSettings(id),
+      ])
       setSchema(s)
-      // Pre-populate defaults for any fields that have them
-      const defaults: Record<string, string> = {}
+      // Start with schema defaults, then overlay any saved values
+      const values: Record<string, string> = {}
       for (const def of s.settings) {
-        if (def.defaultValue !== undefined) defaults[def.key] = def.defaultValue
+        if (def.defaultValue !== undefined) values[def.key] = def.defaultValue
       }
-      setFormValues(defaults)
+      Object.assign(values, saved)
+      setFormValues(values)
     } catch {
       setSchemaError('Failed to load plugin settings. Please try again.')
     } finally {
@@ -229,8 +234,8 @@ export default function PluginsPage() {
       setFormValues({})
       // Refresh health state so badge updates after settings change
       setHealthStates(prev => ({ ...prev, [pluginId]: 'unknown' }))
-    } catch {
-      setSaveError('Failed to save settings. Check the values and try again.')
+    } catch (err: unknown) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save settings. Check the values and try again.')
     } finally {
       setSaving(false)
     }

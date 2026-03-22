@@ -431,16 +431,28 @@ public class PluginsController : ControllerBase
     private static readonly PluginCatalogEntry[] PluginCatalog =
     [
         new PluginCatalogEntry(
-            PluginId:    "tmdb",
+            PluginId:    "chronicle.plugin.tmdb",
             Name:        "TMDB",
-            Description: "Metadata from The Movie Database (TMDB) for movies and TV shows.",
+            Description: "Fetches movie and TV metadata from The Movie Database (TMDB). Requires a free TMDB API key.",
             Author:      "Chronicle Contributors",
             IconUrl:     "https://www.themoviedb.org/favicon.ico",
             GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.TMDB",
             AssetName:   "Chronicle.Plugin.TMDB.zip",
             DllName:     "Chronicle.Plugin.TMDB.dll",
             Tags:        ["movies", "tv", "metadata"],
-            Sha256:      "600936c8c5e8bef83d2de4e51c29c975977feac57f80ed6d0d8fd0723b478480"
+            Sha256:      "e4df581f9a65ed3c8184d062c7eab479a1d97327477f12720cb861c2d9cf2f31"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.musicbrainz",
+            Name:        "MusicBrainz",
+            Description: "Fetches comprehensive music metadata from MusicBrainz (artist, album, track) and cover art from the Cover Art Archive. No API key required.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "https://musicbrainz.org/favicon.ico",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MusicBrainz",
+            AssetName:   "Chronicle.Plugin.MusicBrainz.zip",
+            DllName:     "Chronicle.Plugin.MusicBrainz.dll",
+            Tags:        ["music", "audio", "metadata"],
+            Sha256:      "c0a79c1d1b531db79d82c8449ae5cf6dae496390b8b8b35c42f61d50e39936f1"
         ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.musicbrainz",
@@ -629,8 +641,10 @@ public class PluginsController : ControllerBase
             ? $"/api/v1/plugins/{p.Id}/icon"
             : null;
 
+        var fixMatchHint = loaded?.Manifest.FixMatchHint ?? p.FixMatchHint;
+
         return new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
-            p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl);
+            p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint);
     }
 
     /// <summary>

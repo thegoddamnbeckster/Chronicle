@@ -234,4 +234,89 @@ public class ScanGroupingServiceTests
 
         result.Ungrouped.Should().BeEmpty();
     }
+
+    /// <summary>
+    /// Regression test: a single episode MKV with S##E## in the filename but no Season subfolder
+    /// must produce Show → Season → Episode, not Show → Episode (which would import Season at depth 1).
+    /// </summary>
+    [Fact]
+    public void Group_SingleEpisodeNoSeasonFolder_ProducesShowSeasonEpisodeTree()
+    {
+        // File is directly inside the show folder — no "Season 1" subdirectory
+        var files = new[]
+        {
+            @"C:\TV\Breaking Bad\Breaking.Bad.S01E01.Pilot.mkv",
+        };
+
+        var result = _svc.Group(files, scanRoot: @"C:\TV", hierarchyLevels: 3);
+
+        result.Groups.Should().HaveCount(1);
+
+        var show = result.Groups[0];
+        show.Name.Should().Be("Breaking Bad");
+        show.HierarchyLevel.Should().Be(0);
+
+        // Must have exactly one Season child, NOT the episode directly
+        show.Children.Should().HaveCount(1);
+        var season = show.Children[0];
+        season.HierarchyLevel.Should().Be(1);
+        season.Name.Should().Be("Season 1");
+        season.Number.Should().Be(1);
+
+        // Episode lives under the season
+        season.Children.Should().HaveCount(1);
+        var episode = season.Children[0];
+        episode.HierarchyLevel.Should().Be(2);
+        episode.Files.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Group_MultipleEpisodesNoSeasonFolder_GroupsUnderCorrectSeasons()
+    {
+        var files = new[]
+        {
+            @"C:\TV\Breaking Bad\Breaking.Bad.S01E01.mkv",
+            @"C:\TV\Breaking Bad\Breaking.Bad.S01E02.mkv",
+            @"C:\TV\Breaking Bad\Breaking.Bad.S02E01.mkv",
+        };
+
+        var result = _svc.Group(files, scanRoot: @"C:\TV", hierarchyLevels: 3);
+
+        result.Groups.Should().HaveCount(1);
+        var show = result.Groups[0];
+
+        // Two season groups: Season 1 (2 eps) and Season 2 (1 ep)
+        show.Children.Should().HaveCount(2);
+        var s1 = show.Children.First(c => c.Number == 1);
+        var s2 = show.Children.First(c => c.Number == 2);
+        s1.Children.Should().HaveCount(2);
+        s2.Children.Should().HaveCount(1);
+    }
+
+    /// <summary>
+    /// Regression test: extra files in the show root (theme music, stray images not caught
+    /// by extension filter) must NOT create spurious Season nodes.
+    /// </summary>
+    [Fact]
+    public void Group_ExtraFilesInShowRoot_DoNotCreateSeasonNodes()
+    {
+        var files = new[]
+        {
+            @"C:\TV\Breaking Bad\Breaking.Bad.S01E01.mkv",   // real episode
+            @"C:\TV\Breaking Bad\theme.mp3",                  // theme music — supplemental
+            @"C:\TV\Breaking Bad\trailer.mp4",                // trailer — supplemental
+        };
+
+        var result = _svc.Group(files, scanRoot: @"C:\TV", hierarchyLevels: 3);
+
+        result.Groups.Should().HaveCount(1);
+        var show = result.Groups[0];
+
+        // Only one Season group (Season 1 from the real episode).
+        // theme.mp3 and trailer.mp4 must NOT produce extra children.
+        show.Children.Should().HaveCount(1);
+        var season = show.Children[0];
+        season.Name.Should().Be("Season 1");
+        season.Children.Should().HaveCount(1);
+    }
 }

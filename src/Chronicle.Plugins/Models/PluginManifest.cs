@@ -42,4 +42,35 @@ public class PluginManifest
     /// </summary>
     [JsonPropertyName("iconUrl")]
     public string? IconUrl { get; set; }
+
+    /// <summary>
+    /// Hex accent colour for Chronicle's light-mode UI (e.g. "#BA478F").
+    /// Used as the task card border and tinted background on the Background Tasks page.
+    /// Falls back to Chronicle's default accent if absent.
+    /// </summary>
+    [JsonPropertyName("brandColorLight")]
+    public string? BrandColorLight { get; set; }
+
+    /// <summary>
+    /// Hex accent colour for Chronicle's dark-mode UI (e.g. "#CF6BAA").
+    /// Provide a colour that is visible on a dark background.
+    /// Falls back to Chronicle's default accent if absent.
+    /// </summary>
+    [JsonPropertyName("brandColorDark")]
+    public string? BrandColorDark { get; set; }
+
+    /// <summary>
+    /// Short hint shown in the Fix Match panel explaining what the user should enter.
+    /// Example: "Enter a TMDB ID (e.g. 550), typed ID (movie:550 · tv:1396), or URL"
+    /// Optional — falls back to "Enter an ID or URL to search {Name}" if absent.
+    /// </summary>
+    [JsonPropertyName("fixMatchHint")]
+    public string? FixMatchHint { get; set; }
+
+    /// <summary>
+    /// Background tasks this plugin wants Chronicle to schedule.
+    /// Omit entirely if the plugin has no scheduled work.
+    /// </summary>
+    [JsonPropertyName("background_tasks")]
+    public List<PluginTaskManifest>? BackgroundTasks { get; set; }
 }

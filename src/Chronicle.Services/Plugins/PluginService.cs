@@ -1,9 +1,11 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Plugins;
 using Chronicle.Plugins.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using BackgroundTask = Chronicle.Core.Models.BackgroundTask;
 
 namespace Chronicle.Services.Plugins;
 
@@ -43,23 +45,36 @@ public class PluginService : IPluginService
 
         var plugin = new Plugin
         {
-            PluginId = manifest.PluginId,
-            Name = manifest.Name,
-            Version = manifest.Version,
-            Author = manifest.Author,
-            Description = manifest.Description,
-            DllPath = dllPath,
-            IsEnabled = true,
-            InstalledAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
+            PluginId        = manifest.PluginId,
+            Name            = manifest.Name,
+            Version         = manifest.Version,
+            Author          = manifest.Author,
+            Description     = manifest.Description,
+            DllPath         = dllPath,
+            IsEnabled       = true,
+            InstalledAt     = DateTime.UtcNow,
+            UpdatedAt       = DateTime.UtcNow,
+            IconUrl         = manifest.IconUrl,
+            BrandColorLight = manifest.BrandColorLight,
+            BrandColorDark  = manifest.BrandColorDark,
+            FixMatchHint    = manifest.FixMatchHint,
         };
 
         _db.Plugins.Add(plugin);
         await _db.SaveChangesAsync(ct);
 
+        // Seed background tasks declared in the manifest
+        if (manifest.BackgroundTasks is { Count: > 0 })
+            await SeedPluginTasksAsync(_db, manifest.PluginId, manifest.BackgroundTasks, ct);
+
         // Reload with the real db id
         _registry.UnloadPlugin(0);
         await _registry.LoadPluginAsync(plugin.Id, dllPath, tempSettings, ct);
+
+        // If this is a metadata provider, seed pending enrichment rows for all existing items
+        var installedProvider = _registry.GetMetadataProvider(plugin.PluginId);
+        if (installedProvider is not null)
+            await SeedEnrichmentRowsForProviderAsync(installedProvider, ct);
 
         _log.Information("Installed plugin {PluginId} (db id {Id})", plugin.PluginId, plugin.Id);
         return plugin;
@@ -104,6 +119,11 @@ public class PluginService : IPluginService
 
         var settings = DeserializeSettings(plugin.SettingsJson);
         await _registry.LoadPluginAsync(plugin.Id, plugin.DllPath, settings);
+
+        // If this is a metadata provider, seed pending enrichment rows for all existing items
+        var enabledProvider = _registry.GetMetadataProvider(plugin.PluginId);
+        if (enabledProvider is not null)
+            await SeedEnrichmentRowsForProviderAsync(enabledProvider);
 
         _log.Information("Enabled plugin {PluginId}", plugin.PluginId);
     }
@@ -188,6 +208,61 @@ public class PluginService : IPluginService
         }
     }
 
+    /// <summary>
+    /// Inserts pending <see cref="MediaItemEnrichmentStatus"/> rows for every existing
+    /// <see cref="MediaItem"/> whose media type is supported by <paramref name="provider"/>.
+    /// Rows that already exist are skipped.
+    /// </summary>
+    private async Task SeedEnrichmentRowsForProviderAsync(
+        IMetadataProvider provider, CancellationToken ct = default)
+    {
+        var supportedTypeNames = provider.GetSupportedMediaTypes()
+            .Select(t => t.MediaTypeName)
+            .ToList();
+
+        var supportedTypeIds = await _db.MediaTypes
+            .Where(mt => supportedTypeNames.Contains(mt.Name))
+            .Select(mt => mt.Id)
+            .ToListAsync(ct);
+
+        if (supportedTypeIds.Count == 0)
+            return;
+
+        var itemIds = await _db.MediaItems
+            .Where(i => supportedTypeIds.Contains(i.MediaTypeId))
+            .Select(i => i.Id)
+            .ToListAsync(ct);
+
+        if (itemIds.Count == 0)
+            return;
+
+        var existingSet = (await _db.EnrichmentStatuses
+            .Where(x => x.PluginId == provider.PluginId && itemIds.Contains(x.MediaItemId))
+            .Select(x => x.MediaItemId)
+            .ToListAsync(ct))
+            .ToHashSet();
+
+        foreach (var itemId in itemIds)
+        {
+            if (existingSet.Contains(itemId))
+                continue;
+
+            _db.EnrichmentStatuses.Add(new MediaItemEnrichmentStatus
+            {
+                MediaItemId = itemId,
+                PluginId    = provider.PluginId,
+                Status      = EnrichmentStatus.Pending,
+                MaxRetries  = 3,
+            });
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        _log.Information(
+            "Seeded {Count} pending enrichment rows for provider {PluginId}",
+            itemIds.Count - existingSet.Count, provider.PluginId);
+    }
+
     private static IReadOnlyDictionary<string, string> DeserializeSettings(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -247,5 +322,40 @@ public class PluginService : IPluginService
                m.Contains("authentication") ||
                m.Contains(" 401")           ||
                m.Contains(" 403");
+    }
+
+    /// <summary>
+    /// Inserts one <see cref="BackgroundTask"/> row per task declared in the plugin manifest.
+    /// Uses INSERT-IF-MISSING semantics: existing rows (possibly customised by the user) are
+    /// never overwritten. The namespaced task ID stored in the DB is
+    /// <c>{pluginId}:{taskId}</c> (e.g. <c>chronicle.plugin.tmdb:fetch-missing-metadata</c>).
+    /// </summary>
+    internal static async Task SeedPluginTasksAsync(
+        ChronicleDbContext db,
+        string pluginId,
+        IReadOnlyList<PluginTaskManifest> tasks,
+        CancellationToken ct = default)
+    {
+        foreach (var task in tasks)
+        {
+            var namespacedId = $"{pluginId}:{task.TaskId}";
+            var exists = await db.BackgroundTasks
+                .AnyAsync(t => t.TaskId == namespacedId, ct);
+
+            if (!exists)
+            {
+                db.BackgroundTasks.Add(new BackgroundTask
+                {
+                    TaskId         = namespacedId,
+                    PluginId       = pluginId,
+                    DisplayName    = task.DisplayName,
+                    Description    = task.Description ?? string.Empty,
+                    CronExpression = task.DefaultCron,
+                    IsEnabled      = task.DefaultEnabled,
+                });
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 }

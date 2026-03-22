@@ -235,6 +235,81 @@ public class TaskSchedulerServiceTests
         tcs.SetResult();
     }
 
+    // ── Plugin task routing ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task TickAsync_PluginTask_CallsRunner()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId         = "chronicle.plugin.musicbrainz:fetch-missing-metadata",
+            PluginId       = "chronicle.plugin.musicbrainz",
+            DisplayName    = "Fetch Missing Metadata",
+            Description    = "Looks up metadata for new items.",
+            CronExpression = "0 4 * * *",
+            IsEnabled      = true,
+            NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
+        });
+        await db.SaveChangesAsync();
+
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(db);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
+
+        await svc.TickAsync(CancellationToken.None);
+        await Task.Delay(200);
+
+        runner.Verify(r => r.RunAsync(
+            "chronicle.plugin.musicbrainz",
+            "fetch-missing-metadata",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TriggerNow_PluginTask_CallsRunner()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId         = "chronicle.plugin.tmdb:resync-all-metadata",
+            PluginId       = "chronicle.plugin.tmdb",
+            DisplayName    = "Re-sync All Metadata",
+            Description    = "Re-downloads metadata.",
+            CronExpression = "0 3 * * *",
+            IsEnabled      = true,
+        });
+        await db.SaveChangesAsync();
+
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(db);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
+
+        var result = await svc.TriggerNowAsync("chronicle.plugin.tmdb:resync-all-metadata");
+        result.Should().Be(TriggerResult.Started);
+
+        await Task.Delay(200);
+
+        runner.Verify(r => r.RunAsync(
+            "chronicle.plugin.tmdb",
+            "resync-all-metadata",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── Error isolation ────────────────────────────────────────────────────────
 
     [Fact]

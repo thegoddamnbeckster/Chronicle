@@ -12,10 +12,10 @@ using Serilog;
 namespace Chronicle.Services;
 
 /// <summary>
-/// Scheduled task that periodically refreshes metadata for all
-/// library items using every active, applicable IMetadataProvider plugin.
+/// Service that refreshes metadata for library items using active metadata plugins.
+/// Invoked on-demand via the per-plugin background task system (Task 8/9).
 /// </summary>
-public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshService
+public sealed class MetadataRefreshService : IMetadataRefreshService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger _log = Log.ForContext<MetadataRefreshService>();
@@ -24,14 +24,6 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
     {
         _scopeFactory = scopeFactory;
     }
-
-    // ── IScheduledTask ────────────────────────────────────────────────────────────
-    public string TaskId      => "metadata_refresh";
-    public string DisplayName => "Metadata Refresh";
-    public string Description => "Refreshes titles, posters, and metadata for all library items using active metadata plugins.";
-    public string DefaultCron => "0 1 * * *";
-
-    async Task IScheduledTask.ExecuteAsync(CancellationToken ct) => await RefreshAllAsync(ct);
 
     // ── IMetadataRefreshService ───────────────────────────────────────────────
 
@@ -133,6 +125,120 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
         await RefreshItemCoreAsync(db, registry, item, ct);
     }
 
+    public async Task<MediaItem> RefreshItemForPluginAsync(
+        int mediaItemId,
+        string pluginId,
+        string? input = null,
+        CancellationToken ct = default)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
+
+        var item = await db.MediaItems
+            .Include(m => m.MediaType)
+            .Include(m => m.ExternalIds)
+            .FirstOrDefaultAsync(m => m.Id == mediaItemId, ct)
+            ?? throw new KeyNotFoundException($"Media item {mediaItemId} not found");
+
+        var provider = registry.GetMetadataProvider(pluginId)
+            ?? throw new KeyNotFoundException($"Plugin '{pluginId}' not found or not loaded");
+
+        string extId;
+
+        if (input is not null)
+        {
+            // Fix Match mode: store the user-supplied ID and use it for the fetch
+            extId = input.Trim();
+            await UpsertExternalIdAsync(db, item.Id, pluginId, extId, ct);
+            item.ExternalIds = await db.MediaExternalIds
+                .Where(e => e.MediaItemId == item.Id).ToListAsync(ct);
+        }
+        else
+        {
+            // Refresh mode: use the existing stored external ID
+            var existing = item.ExternalIds
+                .FirstOrDefault(e => string.Equals(e.Source, pluginId, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
+                throw new InvalidOperationException(
+                    $"No existing match for plugin '{pluginId}' on item {mediaItemId}. Use Fix Match to set one.");
+            extId = existing.ExternalId;
+        }
+
+        var meta = await provider.GetByIdAsync(extId, ct);
+
+        if (!string.IsNullOrWhiteSpace(meta.Title))     item.Name           = meta.Title;
+        if (meta.Year.HasValue)                          item.Year           = meta.Year;
+        if (!string.IsNullOrWhiteSpace(meta.Overview))  item.Overview       = meta.Overview;
+        if (!string.IsNullOrWhiteSpace(meta.PosterUrl)) item.PosterUrl      = meta.PosterUrl;
+        if (meta.RuntimeMinutes.HasValue)               item.RuntimeMinutes = meta.RuntimeMinutes;
+
+        item.MetadataJson = MergeMetadataJson(item.MetadataJson, pluginId, meta);
+        item.UpdatedAt    = DateTime.UtcNow;
+
+        var log = new MediaItemRefreshLog
+        {
+            MediaItemId  = item.Id,
+            ProviderName = provider.Name,
+            RefreshedAt  = DateTime.UtcNow,
+            Succeeded    = true
+        };
+        db.MediaItemRefreshLogs.Add(log);
+        await db.SaveChangesAsync(ct);
+
+        _log.Information("RefreshItemForPlugin: refreshed '{Name}' (item {Id}) via {Plugin}{Input}",
+            item.Name, item.Id, pluginId, input is null ? "" : $" (Fix Match: '{input}')");
+
+        return item;
+    }
+
+    public async Task RefreshForPluginAsync(string pluginId, CancellationToken ct = default)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
+
+        var provider = registry.GetMetadataProvider(pluginId);
+        if (provider is null)
+        {
+            _log.Warning("RefreshForPluginAsync: provider {PluginId} not found in registry", pluginId);
+            return;
+        }
+
+        var itemIds = await db.UserLibraries
+            .Select(ul => ul.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        // Only process root items already matched to this plugin (have its external ID)
+        var rootItems = await db.MediaItems
+            .Include(m => m.MediaType)
+            .Include(m => m.ExternalIds)
+            .Where(m => itemIds.Contains(m.Id)
+                     && m.HierarchyLevel == 0
+                     && m.ExternalIds.Any(e => e.Source == pluginId))
+            .ToListAsync(ct);
+
+        _log.Information("RefreshForPluginAsync: {Count} root items matched to plugin {PluginId}",
+            rootItems.Count, pluginId);
+
+        foreach (var item in rootItems)
+        {
+            if (ct.IsCancellationRequested) break;
+            try
+            {
+                await RefreshItemCoreAsync(db, registry, item, ct);
+                await Task.Delay(500, ct);
+                await RefreshDescendantsAsync(db, registry, item.Id, ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "RefreshForPluginAsync: error refreshing item {Id}", item.Id);
+            }
+        }
+    }
+
     public async Task<IReadOnlyList<MediaItemRefreshLog>> GetRefreshLogsAsync(
         int mediaItemId, CancellationToken ct = default)
     {
@@ -196,11 +302,10 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
 
             try
             {
-                // Resolve external ID for this provider (fall back to "tmdb" source for backwards compat)
+                // Resolve external ID for this provider
                 var extId = item.ExternalIds
                     .FirstOrDefault(e =>
-                        string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(e.Source, "tmdb", StringComparison.OrdinalIgnoreCase))
+                        string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase))
                     ?.ExternalId;
 
                 // "__suppress__" means the user explicitly opted out of auto-matching for
@@ -255,8 +360,7 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
                 // Stored external ID no longer exists on the provider — remove it so the
                 // next cycle falls back to a fresh search rather than retrying a dead URL.
                 var badIds = item.ExternalIds
-                    .Where(e => string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase)
-                             || string.Equals(e.Source, "tmdb", StringComparison.OrdinalIgnoreCase))
+                    .Where(e => string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 db.MediaExternalIds.RemoveRange(badIds);
 
@@ -308,18 +412,19 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
         var log = new MediaItemRefreshLog
         {
             MediaItemId  = item.Id,
-            ProviderName = provider?.Name ?? "tmdb",
+            ProviderName = provider?.Name ?? string.Empty,
             RefreshedAt  = DateTime.UtcNow,
             Succeeded    = false
         };
 
         try
         {
-            // Clear any stale TMDB IDs that old code may have written directly onto a child item
+            // Clear any stale provider IDs that old code may have written directly onto a child item
             // (but only format-agnostic ones — structured IDs like "tv:1:s1" or "tv:1:s1:e2"
             // are intentionally stored here and should not be wiped).
+            var providerPluginId = provider?.PluginId ?? string.Empty;
             var staleIds = item.ExternalIds
-                .Where(e => e.Source == "tmdb"
+                .Where(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
                          && e.ExternalId != "__suppress__"
                          && !e.ExternalId.Contains(":s"))   // keep structured season/episode IDs
                 .ToList();
@@ -327,7 +432,7 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
             {
                 db.MediaExternalIds.RemoveRange(staleIds);
                 foreach (var s in staleIds) item.ExternalIds.Remove(s);
-                _log.Information("RefreshChild: cleared {Count} stale TMDB ID(s) from child {Id}", staleIds.Count, item.Id);
+                _log.Information("RefreshChild: cleared {Count} stale provider ID(s) from child {Id}", staleIds.Count, item.Id);
             }
 
             // Walk parent chain to find root item and direct parent
@@ -354,7 +459,8 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
             else
             {
                 var rootExtId = root.ExternalIds
-                    .FirstOrDefault(e => e.Source == "tmdb" && e.ExternalId != "__suppress__")
+                    .FirstOrDefault(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
+                                     && e.ExternalId != "__suppress__")
                     ?.ExternalId;
 
                 if (rootExtId is null)
@@ -449,11 +555,11 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
             if (!string.IsNullOrEmpty(season.PosterPath))
                 item.PosterUrl = $"https://image.tmdb.org/t/p/w500{season.PosterPath}";
 
-            item.MetadataJson = MergeSeasonMetadataJson(item.MetadataJson, season);
+            item.MetadataJson = MergeSeasonMetadataJson(item.MetadataJson, provider.PluginId, season);
             item.UpdatedAt    = DateTime.UtcNow;
 
             // Store structured external ID (will be saved by caller's SaveChangesAsync)
-            await UpsertExternalIdAsync(db, item.Id, "tmdb", $"tv:{seriesId}:s{seasonNumber}", ct);
+            await UpsertExternalIdAsync(db, item.Id, provider.PluginId, $"tv:{seriesId}:s{seasonNumber}", ct);
 
             log.Succeeded = true;
             _log.Information("RefreshChild: updated season {Id} ({Name}) — series {SId} s{SN}", item.Id, item.Name, seriesId, seasonNumber);
@@ -505,11 +611,11 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
             if (episode.AirDate?.Length >= 4 && int.TryParse(episode.AirDate[..4], out var ey)) item.Year = ey;
             if (episode.RuntimeMinutes.HasValue) item.RuntimeMinutes = episode.RuntimeMinutes;
 
-            item.MetadataJson = MergeEpisodeMetadataJson(item.MetadataJson, episode);
+            item.MetadataJson = MergeEpisodeMetadataJson(item.MetadataJson, provider.PluginId, episode);
             item.UpdatedAt    = DateTime.UtcNow;
 
             // Store structured external ID (will be saved by caller's SaveChangesAsync)
-            await UpsertExternalIdAsync(db, item.Id, "tmdb", $"tv:{seriesId}:s{seasonNumber}:e{episodeNumber}", ct);
+            await UpsertExternalIdAsync(db, item.Id, provider.PluginId, $"tv:{seriesId}:s{seasonNumber}:e{episodeNumber}", ct);
 
             log.Succeeded = true;
             _log.Information("RefreshChild: updated episode {Id} ({Name}) — series {SId} s{SN}e{EN}", item.Id, item.Name, seriesId, seasonNumber, episodeNumber);
@@ -583,10 +689,8 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
     {
         var root = ParseExistingMetaJson(existingJson);
 
-        // Derive short namespace key from plugin ID suffix (e.g. "chronicle.plugin.tmdb" → "tmdb")
-        var ns = pluginId.Contains('.') ? pluginId.Split('.').Last() : pluginId;
-
-        root[ns] = new
+        // Use the full plugin ID as the key (e.g. "chronicle.plugin.tmdb")
+        root[pluginId] = new
         {
             rating      = meta.Rating,
             genres      = meta.Genres,
@@ -682,11 +786,11 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
 
     // ── Season/episode MetadataJson merge ─────────────────────────────────────
 
-    private static string MergeSeasonMetadataJson(string? existingJson, TvSeasonDetail season)
+    private static string MergeSeasonMetadataJson(string? existingJson, string pluginId, TvSeasonDetail season)
     {
         var root = ParseExistingMetaJson(existingJson);
 
-        root["tmdb"] = new
+        root[pluginId] = new
         {
             seasonId     = season.SeasonId,
             posterPath   = season.PosterPath,
@@ -699,11 +803,11 @@ public sealed class MetadataRefreshService : IScheduledTask, IMetadataRefreshSer
         return JsonSerializer.Serialize(root);
     }
 
-    private static string MergeEpisodeMetadataJson(string? existingJson, TvEpisodeDetail episode)
+    private static string MergeEpisodeMetadataJson(string? existingJson, string pluginId, TvEpisodeDetail episode)
     {
         var root = ParseExistingMetaJson(existingJson);
 
-        root["tmdb"] = new
+        root[pluginId] = new
         {
             seasonNumber  = episode.SeasonNumber,
             episodeNumber = episode.EpisodeNumber,
