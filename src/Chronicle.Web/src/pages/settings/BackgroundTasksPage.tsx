@@ -12,6 +12,7 @@ import {
   resetEnrichment,
   type EnrichmentStats,
 } from '@/api/enrichment'
+import { getImportProgress, type ImportProgressState } from '@/api/scan'
 import {
   cronToParams,
   paramsToCron,
@@ -58,6 +59,67 @@ function statusBadge(task: BackgroundTask) {
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+
+// ── Scan import progress banner ───────────────────────────────────────────
+// Shown while the scheduled scan is actively importing groups. Polls
+// GET /scan/import-progress every second so the user can see live updates
+// without needing to navigate to the Scan page.
+
+interface ScanProgressBannerProps {
+  /** Whether the scheduled_scan task is currently marked as running. */
+  scanIsRunning: boolean
+}
+
+function ScanProgressBanner({ scanIsRunning }: ScanProgressBannerProps) {
+  const [progress, setProgress] = useState<ImportProgressState | null>(null)
+
+  useEffect(() => {
+    if (!scanIsRunning) {
+      setProgress(null)
+      return
+    }
+
+    // Fetch immediately, then every second while running
+    let cancelled = false
+    async function poll() {
+      try {
+        const p = await getImportProgress()
+        if (!cancelled) setProgress(p)
+      } catch {
+        // silently ignore transient errors
+      }
+    }
+
+    poll()
+    const id = setInterval(poll, 1000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [scanIsRunning])
+
+  if (!scanIsRunning || !progress?.isRunning) return null
+
+  const pct = progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0
+
+  return (
+    <div className={styles.scanProgressBanner}>
+      <div className={styles.scanProgressHeader}>
+        <span className={styles.progressSpinnerInline} />
+        <span className={styles.scanProgressTitle}>
+          Importing: {progress.processed} of {progress.total} groups
+          {progress.currentItemName && (
+            <span className={styles.scanProgressCurrent}> — {progress.currentItemName}</span>
+          )}
+        </span>
+        <span className={styles.scanProgressPct}>{pct}%</span>
+      </div>
+      <div className={styles.scanProgressTrack}>
+        <div className={styles.scanProgressFill} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
 
 // ── Enrichment status section ─────────────────────────────────────────────
 
@@ -542,6 +604,10 @@ export default function BackgroundTasksPage() {
           </div>
         )
       })}
+
+      <ScanProgressBanner
+        scanIsRunning={tasks.some(t => t.taskId === 'scheduled_scan' && (t.isRunning || runningIds.has(t.taskId)))}
+      />
 
       <EnrichmentSection />
     </div>
