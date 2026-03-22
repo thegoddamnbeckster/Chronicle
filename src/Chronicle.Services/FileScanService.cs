@@ -1556,12 +1556,16 @@ namespace Chronicle.Services
         private async Task SeedEnrichmentRowsForNewItemsAsync(
             List<int> itemIds, string mediaTypeName, CancellationToken ct = default)
         {
-            var providers = _registry.GetMetadataProviders();
-            if (providers.Count == 0)
+            // Use GetMetadataProviderEntries() so the enrichment row PluginId comes from the
+            // manifest (the authoritative canonical ID), not the DLL's PluginId property which
+            // may differ for pre-built plugins (e.g. legacy TMDB DLL returning "tmdb" while
+            // the manifest declares "chronicle.plugin.tmdb").
+            var entries = _registry.GetMetadataProviderEntries();
+            if (entries.Count == 0)
                 return;
 
             int seeded = 0;
-            foreach (var provider in providers)
+            foreach (var (manifestPluginId, provider) in entries)
             {
                 var supportedNames = provider.GetSupportedMediaTypes()
                     .Select(t => t.MediaTypeName)
@@ -1571,7 +1575,7 @@ namespace Chronicle.Services
                     continue;
 
                 var existingSet = (await _context.EnrichmentStatuses
-                    .Where(x => x.PluginId == provider.PluginId && itemIds.Contains(x.MediaItemId))
+                    .Where(x => x.PluginId == manifestPluginId && itemIds.Contains(x.MediaItemId))
                     .Select(x => x.MediaItemId)
                     .ToListAsync(ct))
                     .ToHashSet();
@@ -1584,7 +1588,7 @@ namespace Chronicle.Services
                     _context.EnrichmentStatuses.Add(new Chronicle.Core.Models.MediaItemEnrichmentStatus
                     {
                         MediaItemId = itemId,
-                        PluginId    = provider.PluginId,
+                        PluginId    = manifestPluginId,
                         Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
                         MaxRetries  = 3,
                     });

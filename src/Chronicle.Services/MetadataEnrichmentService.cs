@@ -51,7 +51,7 @@ public class MetadataEnrichmentService(
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
-        var pluginIds = registry.GetMetadataProviders().Select(p => p.PluginId).ToList();
+        var pluginIds = registry.GetMetadataProviderEntries().Select(e => e.PluginId).ToList();
         foreach (var id in pluginIds)
         {
             ct.ThrowIfCancellationRequested();
@@ -307,7 +307,7 @@ public class MetadataEnrichmentService(
                 row.Status          = EnrichmentStatus.Completed;
                 row.LastCompletedAt = DateTime.UtcNow;
                 row.ErrorMessage    = null;
-                await MergeMetadataAsync(db, row.MediaItem!, provider.PluginId, result, ct);
+                await MergeMetadataAsync(db, row.MediaItem!, row.PluginId, result, ct);
             }
         }
         catch (OperationCanceledException) { throw; }
