@@ -16,7 +16,12 @@ public record PluginDto(
     /// Favicon/icon URL from the plugin's manifest.json.
     /// Null when the plugin is not currently loaded or has no iconUrl set.
     /// </summary>
-    string? IconUrl = null
+    string? IconUrl = null,
+    /// <summary>
+    /// Short hint shown in the Fix Match panel. From manifest fixMatchHint.
+    /// Null when the plugin has no fixMatchHint in its manifest.
+    /// </summary>
+    string? FixMatchHint = null
 );
 
 public record InstallPluginRequest(
