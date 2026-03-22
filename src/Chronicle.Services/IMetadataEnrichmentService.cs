@@ -22,6 +22,7 @@ public interface IMetadataEnrichmentService
 
 public record EnrichmentStats(
     string PluginId,
+    string PluginName,
     int Pending,
     int Completed,
     int Failed,

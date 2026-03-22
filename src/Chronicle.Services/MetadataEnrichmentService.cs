@@ -107,18 +107,30 @@ public class MetadataEnrichmentService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        return await db.EnrichmentStatuses
+        // Build a lookup of pluginId → display name from the plugins table
+        var pluginNames = await db.Plugins
+            .ToDictionaryAsync(p => p.PluginId, p => p.Name, StringComparer.OrdinalIgnoreCase, ct);
+
+        var rows = await db.EnrichmentStatuses
             .GroupBy(x => x.PluginId)
-            .Select(g => new EnrichmentStats(
-                g.Key,
-                g.Count(x => x.Status == EnrichmentStatus.Pending),
-                g.Count(x => x.Status == EnrichmentStatus.Completed),
-                g.Count(x => x.Status == EnrichmentStatus.Failed),
-                g.Count(x => x.Status == EnrichmentStatus.Exhausted),
-                g.Count(x => x.Status == EnrichmentStatus.NotFound),
-                g.Count(x => x.Status == EnrichmentStatus.Skipped)
-            ))
+            .Select(g => new
+            {
+                PluginId  = g.Key,
+                Pending   = g.Count(x => x.Status == EnrichmentStatus.Pending),
+                Completed = g.Count(x => x.Status == EnrichmentStatus.Completed),
+                Failed    = g.Count(x => x.Status == EnrichmentStatus.Failed),
+                Exhausted = g.Count(x => x.Status == EnrichmentStatus.Exhausted),
+                NotFound  = g.Count(x => x.Status == EnrichmentStatus.NotFound),
+                Skipped   = g.Count(x => x.Status == EnrichmentStatus.Skipped),
+            })
             .ToListAsync(ct);
+
+        return rows
+            .Select(r => new EnrichmentStats(
+                r.PluginId,
+                pluginNames.TryGetValue(r.PluginId, out var name) ? name : r.PluginId,
+                r.Pending, r.Completed, r.Failed, r.Exhausted, r.NotFound, r.Skipped))
+            .ToList();
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -130,12 +142,58 @@ public class MetadataEnrichmentService(
         try
         {
             MediaMetadata? result = null;
+            string searchQuery = string.Empty;
 
             if (!string.IsNullOrEmpty(row.ExternalId))
             {
-                result = await provider.GetByIdAsync(row.ExternalId, ct);
+                // Validate the stored ExternalId's entity type is appropriate for
+                // this item's position in the hierarchy.  For MusicBrainz IDs the
+                // format is "{type}:{mbid}"; a recording: ID on an artist-level item
+                // (ParentId == null) means a prior enrichment made a wrong match —
+                // discard it and re-search so the correct entity type is used.
+                bool idIsValid = true;
+                if (row.MediaItem is not null)
+                {
+                    var sep = row.ExternalId.IndexOf(':');
+                    if (sep > 0)
+                    {
+                        var entityType = row.ExternalId[..sep];
+                        if (row.MediaItem.ParentId == null)
+                        {
+                            // Root item — must be an artist (or movie/show-level TMDB id)
+                            idIsValid = entityType is "artist" or "movie" or "tv";
+                        }
+                        else
+                        {
+                            // Check parent depth: load parent once
+                            var parent = await db.MediaItems
+                                .AsNoTracking()
+                                .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId, ct);
+                            if (parent?.ParentId == null)
+                                // Direct child of root = album/season level
+                                idIsValid = entityType is "release-group" or "season" or "tv";
+                            else
+                                // Grandchild = track/episode level
+                                idIsValid = entityType is "recording" or "episode";
+                        }
+                    }
+                }
+
+                if (idIsValid)
+                {
+                    result = await provider.GetByIdAsync(row.ExternalId, ct);
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "Discarding stale ExternalId {ExternalId} for item {ItemId} — " +
+                        "entity type does not match hierarchy level; will re-search.",
+                        row.ExternalId, row.MediaItemId);
+                    row.ExternalId = null;
+                }
             }
-            else if (row.MediaItem is not null)
+
+            if (result is null && row.ExternalId is null && row.MediaItem is not null)
             {
                 var supportedTypes = provider.GetSupportedMediaTypes()
                     .Select(t => t.MediaTypeName)
@@ -147,11 +205,85 @@ public class MetadataEnrichmentService(
                     .FirstOrDefaultAsync(ct);
 
                 if (mediaTypeName is not null && supportedTypes.Contains(mediaTypeName))
-                    result = await provider.SearchAsync(row.MediaItem.Name, mediaTypeName, ct);
+                {
+                    // For music items all hierarchy levels share the same media type name.
+                    // We determine what MusicBrainz entity to search for from ParentId depth
+                    // and build a Lucene-style query with parent/grandparent context so that
+                    // album and track searches are precise rather than bare-name lookups.
+                    //   no parent  → artist search: artist:"Metallica"
+                    //   parent is root → album search: album:"Load" AND artist:"Metallica"
+                    //   has grandparent → track search: track:"Until It Sleeps" AND artist:"Metallica" AND release:"Load"
+                    searchQuery = row.MediaItem.Name;
+                    if (mediaTypeName is "music" or "album" or "artist")
+                    {
+                        if (row.MediaItem.ParentId == null)
+                        {
+                            searchQuery = $"artist:{MbQuote(row.MediaItem.Name)}";
+                        }
+                        else
+                        {
+                            var parent = await db.MediaItems
+                                .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId, ct);
+
+                            if (parent?.ParentId == null)
+                            {
+                                // Album level — add artist context for precision.
+                                // Strip leading "(YYYY) " from the album name before searching
+                                // because file scanners prepend the year for sort order but
+                                // MusicBrainz stores the canonical title without it.
+                                var artistClause = !string.IsNullOrWhiteSpace(parent?.Name)
+                                    ? $" AND artist:{MbQuote(parent.Name)}"
+                                    : string.Empty;
+                                searchQuery = $"album:{MbQuote(StripYearPrefix(row.MediaItem.Name))}{artistClause}";
+                            }
+                            else
+                            {
+                                // Track level — add artist and album context for precision.
+                                // Strip "(YYYY) " prefix from the album (release) name.
+                                var grandparent = await db.MediaItems
+                                    .FirstOrDefaultAsync(m => m.Id == parent.ParentId, ct);
+                                var artistClause = !string.IsNullOrWhiteSpace(grandparent?.Name)
+                                    ? $" AND artist:{MbQuote(grandparent.Name)}"
+                                    : string.Empty;
+                                var releaseClause = !string.IsNullOrWhiteSpace(parent.Name)
+                                    ? $" AND release:{MbQuote(StripYearPrefix(parent.Name))}"
+                                    : string.Empty;
+                                searchQuery = $"track:{MbQuote(row.MediaItem.Name)}{artistClause}{releaseClause}";
+                            }
+                        }
+                    }
+
+                    result = await provider.SearchAsync(searchQuery, mediaTypeName, ct);
+
+                    // SearchAsync returns only search-index fields (no cover art).
+                    // If we got a match, fetch the full entity so that PosterUrl
+                    // and all other extended fields (genres, overview, etc.) are populated.
+                    if (result is not null && !string.IsNullOrEmpty(result.ExternalId))
+                    {
+                        try
+                        {
+                            var fullResult = await provider.GetByIdAsync(result.ExternalId, ct);
+                            if (fullResult is not null && !string.IsNullOrEmpty(fullResult.ExternalId))
+                                result = fullResult;
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex,
+                                "Follow-up GetByIdAsync failed for ExternalId={ExternalId}; keeping search result",
+                                result.ExternalId);
+                            // Keep the search result — enrichment still succeeds; cover art just won't be set.
+                        }
+                    }
+                }
             }
 
             if (result is null || string.IsNullOrEmpty(result.ExternalId))
             {
+                logger.LogInformation(
+                    "Enrichment not found: plugin={Plugin} item={ItemId} name={Name} query={Query} totalResults={Total}",
+                    provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
+                    searchQuery, result?.TotalResults ?? 0);
                 row.Status = EnrichmentStatus.NotFound;
             }
             else
@@ -178,13 +310,47 @@ public class MetadataEnrichmentService(
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>
+    /// Wraps a MusicBrainz Lucene search term in double quotes for exact phrase matching,
+    /// escaping any embedded double quotes. Example: Load → "Load", AC/DC → "AC/DC".
+    /// </summary>
+    private static string MbQuote(string term) =>
+        $"\"{term.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
+
+    /// <summary>
+    /// Strips a leading "(YYYY) " year prefix from a name before building MusicBrainz queries.
+    /// File scanners often prepend the year (e.g. "(2008) 3 Doors Down") for sort order, but
+    /// MusicBrainz stores the canonical title without it.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex YearPrefixRe =
+        new(@"^\(\d{4}\)\s*", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string StripYearPrefix(string name) =>
+        YearPrefixRe.Replace(name, string.Empty);
+
     private static async Task MergeMetadataAsync(ChronicleDbContext db, MediaItem item,
         string pluginId, MediaMetadata result, CancellationToken ct)
     {
         var existing = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
             item.MetadataJson ?? "{}") ?? [];
-        existing[pluginId] = JsonSerializer.SerializeToElement(result);
-        item.MetadataJson  = JsonSerializer.Serialize(existing);
+
+        // Clear the Results/TotalResults fields before serializing — they are search-result
+        // list data used by the UI and must not be persisted (they also create a circular
+        // reference when the best result points back into its own Results list).
+        var savedResults = result.Results;
+        var savedTotal   = result.TotalResults;
+        result.Results      = null;
+        result.TotalResults = 0;
+        try
+        {
+            existing[pluginId] = JsonSerializer.SerializeToElement(result);
+            item.MetadataJson  = JsonSerializer.Serialize(existing);
+        }
+        finally
+        {
+            result.Results      = savedResults;
+            result.TotalResults = savedTotal;
+        }
 
         if (!string.IsNullOrEmpty(result.PosterUrl) && string.IsNullOrEmpty(item.PosterUrl))
             item.PosterUrl = result.PosterUrl;

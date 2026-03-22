@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 using Chronicle.Core.Models;
 
 namespace Chronicle.API.DTOs
@@ -91,6 +92,13 @@ namespace Chronicle.API.DTOs
         List<ExternalIdDto> ExternalIds,
         TmdbMetaDto? TmdbMeta = null,
         FileScannerMetaDto? FileScannerMeta = null,
+        /// <summary>
+        /// All non-TMDB, non-fileScanner plugin metadata keyed by plugin ID
+        /// (e.g. "chronicle.plugin.musicbrainz", "chronicle.plugin.omdb").
+        /// Values are raw JSON so any plugin's data passes through without the API
+        /// needing to know the shape of each plugin's metadata.
+        /// </summary>
+        Dictionary<string, JsonElement>? PluginMetadata = null,
         List<RefreshLogDto>? RefreshLogs = null,
         List<AncestorDto>? Ancestors = null
     );

@@ -364,7 +364,9 @@ public class FileScanController : ControllerBase
             var svc = scope.ServiceProvider.GetRequiredService<IFileScanService>();
             try
             {
-                await svc.ImportGroupsAsync(importRequest, userId, CancellationToken.None);
+                // Pass the requesting user so they get an eager library row.
+                // Other users get rows auto-created by GetForUserAsync on their next library view.
+                await svc.ImportGroupsAsync(importRequest, [userId], CancellationToken.None);
             }
             catch (Exception ex)
             {

@@ -4,7 +4,7 @@ import tmdbLogoFallback from '@/assets/tmdb-logo.svg'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, refreshMedia, reidentifyMedia, clearMediaExternalId, suppressMediaMatch, deleteMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
-import type { LibraryStatus } from '@/types'
+import type { LibraryStatus, MusicBrainzMeta } from '@/types'
 import styles from './MediaDetailPage.module.css'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
@@ -370,14 +370,6 @@ export default function MediaDetailPage() {
                       )}
                     </>
                   )}
-                  <button
-                    className={styles.refreshBtn}
-                    onClick={() => refreshMut.mutate()}
-                    disabled={refreshMut.isPending}
-                    title={item.hierarchyLevel > 0 ? 'Refresh poster and metadata from parent show' : undefined}
-                  >
-                    {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
-                  </button>
                 </div>
               </div>
 
@@ -562,13 +554,24 @@ export default function MediaDetailPage() {
                 })()}
               </div>
 
-              {refreshMut.isError && (
-                <p className={styles.refreshError}>
-                  {`Refresh failed: ${(refreshMut.error as Error).message}`}
-                </p>
-              )}
             </div>
           )}
+
+          {/* Refresh button — always shown so all media types can trigger enrichment */}
+          <div className={styles.refreshStrip}>
+            <button
+              className={styles.refreshBtn}
+              onClick={() => refreshMut.mutate()}
+              disabled={refreshMut.isPending}
+            >
+              {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
+            </button>
+            {refreshMut.isError && (
+              <span className={styles.refreshError}>
+                {`Refresh failed: ${(refreshMut.error as Error).message}`}
+              </span>
+            )}
+          </div>
 
           {/* Other external IDs */}
           {otherIds.length > 0 && (
@@ -631,6 +634,119 @@ export default function MediaDetailPage() {
               </div>
             </div>
           )}
+
+          {/* MusicBrainz metadata box — read from the generic pluginMetadata map */}
+          {(() => {
+            const mb = item.pluginMetadata?.['chronicle.plugin.musicbrainz'] as MusicBrainzMeta | undefined
+            if (!mb) return null
+            const allImages = mb.additionalImages ?? []
+            return (
+              <div className={styles.mbMetadataBox}>
+                <div className={styles.mbMetadataBoxHeader}>
+                  <img
+                    src="https://musicbrainz.org/favicon.ico"
+                    alt=""
+                    className={styles.mbIcon}
+                    aria-hidden
+                  />
+                  <span className={styles.mbProviderName}>MusicBrainz</span>
+                </div>
+                <div className={styles.tmdbGrid}>
+                  {mb.overview && (
+                    <div className={styles.tmdbRow}>
+                      <span className={styles.tmdbLabel}>About</span>
+                      <span className={styles.tmdbValue}>{mb.overview}</span>
+                    </div>
+                  )}
+                  {mb.cast && mb.cast.length > 0 && (
+                    <div className={styles.tmdbRow}>
+                      <span className={styles.tmdbLabel}>Artists</span>
+                      <span className={styles.tmdbValue}>{mb.cast.join(', ')}</span>
+                    </div>
+                  )}
+                  {mb.directors && mb.directors.length > 0 && (
+                    <div className={styles.tmdbRow}>
+                      <span className={styles.tmdbLabel}>Composers</span>
+                      <span className={styles.tmdbValue}>{mb.directors.join(', ')}</span>
+                    </div>
+                  )}
+                  {mb.runtimeMinutes != null && (
+                    <div className={styles.tmdbRow}>
+                      <span className={styles.tmdbLabel}>Duration</span>
+                      <span className={styles.tmdbValue}>{mb.runtimeMinutes} min</span>
+                    </div>
+                  )}
+                  {mb.rating != null && (
+                    <div className={styles.tmdbRow}>
+                      <span className={styles.tmdbLabel}>Rating</span>
+                      <span className={styles.tmdbValue}>{mb.rating.toFixed(1)}&thinsp;/&thinsp;10</span>
+                    </div>
+                  )}
+                  {mb.genres && mb.genres.length > 0 && (
+                    <div className={styles.tmdbRow}>
+                      <span className={styles.tmdbLabel}>Genres</span>
+                      <div className={styles.tmdbTags}>
+                        {mb.genres.map(g => <span key={g} className={styles.tmdbTag}>{g}</span>)}
+                      </div>
+                    </div>
+                  )}
+                  {mb.tags && mb.tags.length > 0 && (
+                    <div className={styles.tmdbRow}>
+                      <span className={styles.tmdbLabel}>Tags</span>
+                      <div className={styles.tmdbTags}>
+                        {mb.tags.slice(0, 15).map(t => <span key={t} className={styles.tmdbTag}>{t}</span>)}
+                      </div>
+                    </div>
+                  )}
+                  {mb.externalId && (
+                    <div className={styles.tmdbRow}>
+                      <span className={styles.tmdbLabel}>MB ID</span>
+                      <span className={styles.tmdbValue}>{mb.externalId}</span>
+                    </div>
+                  )}
+                  {/* Cover art images: poster + all additional images (back, booklet, etc.) */}
+                  {(mb.posterUrl || allImages.length > 0) && (
+                    <div className={`${styles.tmdbRow} ${styles.tmdbRowImages}`}>
+                      <span className={styles.tmdbLabel}>Images</span>
+                      <div className={styles.tmdbImageLinks}>
+                        {mb.posterUrl && (
+                          <a href={mb.posterUrl} target="_blank" rel="noreferrer"
+                            className={styles.tmdbImageLink} title="Front cover">
+                            <img src={mb.posterUrl} alt="Front" className={styles.tmdbThumbnail}
+                              onError={e => { e.currentTarget.style.display = 'none' }} />
+                            <span className={styles.tmdbThumbnailLabel}>Front ↗</span>
+                          </a>
+                        )}
+                        {mb.backdropUrl && mb.backdropUrl !== mb.posterUrl && (
+                          <a href={mb.backdropUrl} target="_blank" rel="noreferrer"
+                            className={styles.tmdbImageLink} title="Back cover">
+                            <img src={mb.backdropUrl} alt="Back" className={styles.tmdbThumbnail}
+                              onError={e => { e.currentTarget.style.display = 'none' }} />
+                            <span className={styles.tmdbThumbnailLabel}>Back ↗</span>
+                          </a>
+                        )}
+                        {allImages
+                          .filter(i => i.url !== mb.posterUrl && i.url !== mb.backdropUrl)
+                          .slice(0, 6)
+                          .map((img, idx) => (
+                            <a key={idx} href={img.url} target="_blank" rel="noreferrer"
+                              className={styles.tmdbImageLink} title={img.type ?? 'Image'}>
+                              <img
+                                src={img.thumbnailUrl ?? img.url}
+                                alt={img.type ?? 'Image'}
+                                className={styles.tmdbThumbnail}
+                                onError={e => { e.currentTarget.style.display = 'none' }}
+                              />
+                              <span className={styles.tmdbThumbnailLabel}>{img.type ?? 'Image'} ↗</span>
+                            </a>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Library actions */}
           <div className={styles.librarySection}>

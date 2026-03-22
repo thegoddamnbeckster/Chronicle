@@ -277,7 +277,7 @@ namespace Chronicle.API.Controllers
             IReadOnlyList<Chronicle.Core.Models.MediaItemRefreshLog>? refreshLogs = null,
             List<AncestorDto>? ancestors = null)
         {
-            var (tmdb, fs) = ParseMetaJson(m.MetadataJson);
+            var (tmdb, fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
             var logDtos = refreshLogs?
                 .Select(l => new RefreshLogDto(l.ProviderName, l.RefreshedAt, l.Succeeded, l.ErrorMessage))
                 .ToList();
@@ -298,6 +298,7 @@ namespace Chronicle.API.Controllers
                 m.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList(),
                 TmdbMeta: tmdb,
                 FileScannerMeta: fs,
+                PluginMetadata: pluginMeta?.Count > 0 ? pluginMeta : null,
                 RefreshLogs: logDtos,
                 Ancestors: ancestors
             );
@@ -309,7 +310,7 @@ namespace Chronicle.API.Controllers
         /// </summary>
         private static void ClearProviderMetadata(Chronicle.Core.Models.MediaItem item)
         {
-            var (_, fs) = ParseMetaJson(item.MetadataJson);
+            var (_, fs, _) = ParseMetaJson(item.MetadataJson);
 
             // Restore poster from file scanner if it has one, otherwise wipe it.
             item.PosterUrl      = fs?.NfoPosterUrl ?? fs?.LocalPosterPath;
@@ -319,49 +320,144 @@ namespace Chronicle.API.Controllers
             // file scanner originally or manually edited; reverting them would be unexpected.
         }
 
-        // Root wrapper for namespaced MetadataJson {"tmdb":{...},"fileScanner":{...}}
+        // Root wrapper for namespaced MetadataJson: only the two well-known first-class keys
+        // ("tmdb" and "fileScanner") are deserialized to typed DTOs; every other key is
+        // collected into PluginMetadata so the API stays open to any number of plugins
+        // without code changes.
         private sealed record MediaMetaJsonRoot(TmdbMetaDto? Tmdb, FileScannerMetaDto? FileScanner);
+
+        // Known first-class keys that are NOT forwarded through PluginMetadata
+        // (they get their own typed DTO fields on MediaItemDto instead).
+        private static readonly HashSet<string> _firstClassKeys =
+            new(StringComparer.OrdinalIgnoreCase) { "tmdb", "fileScanner" };
 
         private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
             new(System.Text.Json.JsonSerializerDefaults.Web);
 
         // TODO: Extract ParseMetaJson and MediaMetaJsonRoot to a shared Chronicle.API helper to remove this duplication
-        private static (TmdbMetaDto? tmdb, FileScannerMetaDto? fs) ParseMetaJson(string? json)
+        private static (TmdbMetaDto? tmdb, FileScannerMetaDto? fs,
+                        Dictionary<string, System.Text.Json.JsonElement>? pluginMeta)
+            ParseMetaJson(string? json)
         {
-            if (json is null) return (null, null);
+            if (json is null) return (null, null, null);
             try
             {
-                var root = System.Text.Json.JsonSerializer.Deserialize<MediaMetaJsonRoot>(json, _jsonOpts);
-                // Partitioned format: {"tmdb":{...},"fileScanner":{...}}
-                // import-direct items have tmdb=null but fileScanner populated, so check either key.
-                if (root is not null && (root.Tmdb is not null || root.FileScanner is not null))
+                // Parse once with JsonDocument so we can iterate all keys generically
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
                 {
-                    var fs = root.FileScanner;
-
-                    // The hierarchical importer writes {"fileScanner":{"importedAt":...,"filePaths":[...]}}
-                    // which deserialises into a FileScannerMetaDto with all-null fields because the
-                    // property names don't match.  Extract filePaths[0] (or folderPath for parent
-                    // items) from the raw JSON so the File Scanner card appears on the media detail page.
-                    if (fs is not null && fs.FilePath is null && fs.LocalPosterPath is null && fs.NfoPosterUrl is null)
-                    {
-                        fs = TryExtractFilePathFromNewFormat(json) ?? fs;
-                    }
-
-                    // Suppress a completely empty FileScannerMetaDto — but keep it when ImportedAt
-                    // is set (season/episode items that were scanner-imported but whose path hasn't
-                    // been re-recorded yet still deserve a File Scanner card).
-                    var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
-                                 fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null)
-                        ? fs : null;
-
-                    return (root.Tmdb, fsOut);
+                    // Old flat format (rating/genres/cast/directors at root level)
+                    var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
+                    return (flat, null, null);
                 }
 
-                // Old flat format fallback (rating/genres/cast/directors at root level)
-                var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
-                return (flat, null);
+                // Deserialize the two typed first-class sections
+                TmdbMetaDto? tmdb = null;
+                if (root.TryGetProperty("tmdb", out var tmdbEl))
+                    tmdb = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(tmdbEl.GetRawText(), _jsonOpts);
+
+                FileScannerMetaDto? fs = null;
+                if (root.TryGetProperty("fileScanner", out var fsEl))
+                    fs = System.Text.Json.JsonSerializer.Deserialize<FileScannerMetaDto>(fsEl.GetRawText(), _jsonOpts);
+
+                // The hierarchical importer writes {"fileScanner":{"importedAt":...,"filePaths":[...]}}
+                // which deserialises into a FileScannerMetaDto with all-null fields because the
+                // property names don't match.  Extract filePaths[0] (or folderPath for parent
+                // items) from the raw JSON so the File Scanner card appears on the media detail page.
+                if (fs is not null && fs.FilePath is null && fs.LocalPosterPath is null && fs.NfoPosterUrl is null)
+                    fs = TryExtractFilePathFromNewFormat(json) ?? fs;
+
+                // Suppress a completely empty FileScannerMetaDto — but keep it when ImportedAt
+                // is set (scanner-imported items that haven't re-recorded the path yet).
+                var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
+                             fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null)
+                    ? fs : null;
+
+                // Collect all remaining keys into PluginMetadata — pass raw JsonElements so
+                // the API remains agnostic about each plugin's internal schema.
+                Dictionary<string, System.Text.Json.JsonElement>? pluginMeta = null;
+                foreach (var prop in root.EnumerateObject())
+                {
+                    if (_firstClassKeys.Contains(prop.Name)) continue;
+                    pluginMeta ??= new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.OrdinalIgnoreCase);
+                    // Normalize keys to camelCase so TypeScript interfaces can read them
+                    pluginMeta[prop.Name] = NormalizeToCamelCase(prop.Value);
+                }
+
+                // If nothing was found at all, try old flat TMDB format
+                if (tmdb is null && fsOut is null && pluginMeta is null)
+                {
+                    var flat = System.Text.Json.JsonSerializer.Deserialize<TmdbMetaDto>(json, _jsonOpts);
+                    return (flat, null, null);
+                }
+
+                return (tmdb, fsOut, pluginMeta);
             }
-            catch { return (null, null); }
+            catch { return (null, null, null); }
+        }
+
+        /// <summary>
+        /// Recursively rewrites all JSON object keys to camelCase (lowercases the first
+        /// character) so that plugin metadata serialised with PascalCase conventions
+        /// (the .NET default) can be read directly by TypeScript interfaces.
+        /// Arrays and primitives are returned unchanged (cloned from the source document).
+        /// </summary>
+        private static System.Text.Json.JsonElement NormalizeToCamelCase(System.Text.Json.JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case System.Text.Json.JsonValueKind.Object:
+                {
+                    var ms = new System.IO.MemoryStream();
+                    using var w = new System.Text.Json.Utf8JsonWriter(ms);
+                    w.WriteStartObject();
+                    foreach (var prop in element.EnumerateObject())
+                    {
+                        var key = prop.Name.Length > 0
+                            ? char.ToLowerInvariant(prop.Name[0]) + prop.Name[1..]
+                            : prop.Name;
+                        w.WritePropertyName(key);
+                        WriteNormalized(w, prop.Value);
+                    }
+                    w.WriteEndObject();
+                    w.Flush();
+                    ms.Position = 0;
+                    using var doc = System.Text.Json.JsonDocument.Parse(ms);
+                    return doc.RootElement.Clone();
+                }
+                default:
+                    return element.Clone();
+            }
+        }
+
+        private static void WriteNormalized(System.Text.Json.Utf8JsonWriter w, System.Text.Json.JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case System.Text.Json.JsonValueKind.Object:
+                    w.WriteStartObject();
+                    foreach (var prop in element.EnumerateObject())
+                    {
+                        var key = prop.Name.Length > 0
+                            ? char.ToLowerInvariant(prop.Name[0]) + prop.Name[1..]
+                            : prop.Name;
+                        w.WritePropertyName(key);
+                        WriteNormalized(w, prop.Value);
+                    }
+                    w.WriteEndObject();
+                    break;
+                case System.Text.Json.JsonValueKind.Array:
+                    w.WriteStartArray();
+                    foreach (var item in element.EnumerateArray())
+                        WriteNormalized(w, item);
+                    w.WriteEndArray();
+                    break;
+                default:
+                    element.WriteTo(w);
+                    break;
+            }
         }
 
         /// <summary>

@@ -44,24 +44,67 @@ namespace Chronicle.Services
 
         public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, CancellationToken ct = default)
         {
-            var q = _context.UserLibraries
-                .Include(l => l.MediaItem)
-                    .ThenInclude(m => m!.MediaType)
-                .Where(l => l.UserId == userId);
+            // The library is a shared catalog — every user sees ALL media items.
+            // user_libraries rows carry per-user tracking data (status, rating, notes).
+            // We auto-create a row (Unwatched) for any item the user hasn't tracked yet
+            // so that PATCH/DELETE by UserLibrary.Id continue to work normally.
 
-            if (status.HasValue)
-                q = q.Where(l => l.Status == status.Value);
+            // 1. Load all media items (applying rootOnly if requested)
+            var itemsQuery = _context.MediaItems
+                .Include(m => m.MediaType)
+                .Include(m => m.ExternalIds)
+                .AsQueryable();
 
             if (rootOnly)
-                q = q.Where(l => l.MediaItem!.ParentId == null);
+                itemsQuery = itemsQuery.Where(m => m.ParentId == null);
 
-            q = q.OrderByDescending(l => l.UpdatedAt);
+            var allItems = await itemsQuery.ToListAsync(ct);
 
-            // perPage == 0 means "no limit" — return the full result set
+            if (allItems.Count == 0)
+                return [];
+
+            // 2. Load existing user tracking rows for these items in one round-trip
+            var allItemIds = allItems.Select(m => m.Id).ToList();
+            var existingEntries = await _context.UserLibraries
+                .Where(l => l.UserId == userId && allItemIds.Contains(l.MediaItemId))
+                .ToDictionaryAsync(l => l.MediaItemId, ct);
+
+            // 3. Auto-create tracking rows for items this user has never interacted with
+            var toCreate = allItems.Where(m => !existingEntries.ContainsKey(m.Id)).ToList();
+            if (toCreate.Count > 0)
+            {
+                foreach (var item in toCreate)
+                {
+                    var entry = new UserLibrary
+                    {
+                        UserId      = userId,
+                        MediaItemId = item.Id,
+                        Status      = LibraryStatus.Unwatched,
+                        AddedAt     = DateTime.UtcNow,
+                        UpdatedAt   = DateTime.UtcNow,
+                    };
+                    _context.UserLibraries.Add(entry);
+                    existingEntries[item.Id] = entry;
+                }
+                await _context.SaveChangesAsync(ct);
+            }
+
+            // 4. Attach MediaItem navigation to each tracking row, apply status filter
+            foreach (var item in allItems)
+                existingEntries[item.Id].MediaItem = item;
+
+            IEnumerable<UserLibrary> result = existingEntries.Values;
+
+            if (status.HasValue)
+                result = result.Where(e => e.Status == status.Value);
+
+            result = result.OrderByDescending(e => e.UpdatedAt);
+
+            // perPage == 0 means "no limit"
             if (perPage > 0)
-                q = q.Skip((page - 1) * perPage).Take(perPage);
+                result = result.Skip((page - 1) * perPage).Take(perPage);
 
-            return await q.ToListAsync(ct);
+            return result.ToList();
         }
 
         public async Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId)
