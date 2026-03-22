@@ -331,43 +331,40 @@ namespace Chronicle.Services.Scan
         private static double ComputeRootConfidence(
             FolderSignal folder, TagSignal? tag, NfoSignal? nfo)
         {
-            double score = 0.5; // folder alone
-            if (tag?.AlbumArtist is not null || tag?.Artist is not null) score += 0.25;
-            if (nfo?.Artist is not null || nfo?.ShowTitle is not null)   score += 0.25;
-            // Conflict: tag artist name disagrees with folder name
+            double score = 0.55; // folder name alone
+            if (tag?.AlbumArtist is not null || tag?.Artist is not null) score += 0.20;
+            if (nfo?.Artist is not null || nfo?.ShowTitle is not null)   score += 0.20;
+            // Year in folder name is a meaningful signal even without tags/NFO
             var folderName = folder.FolderNames.FirstOrDefault() ?? "";
-            var tagName    = tag?.AlbumArtist ?? tag?.Artist ?? "";
+            if (System.Text.RegularExpressions.Regex.IsMatch(folderName, @"\(\d{4}\)"))
+                score += 0.20;
+            // Conflict: tag artist name disagrees with folder name
+            var tagName = tag?.AlbumArtist ?? tag?.Artist ?? "";
             if (!string.IsNullOrEmpty(tagName)
                 && !folderName.Contains(tagName, StringComparison.OrdinalIgnoreCase)
                 && !tagName.Contains(folderName, StringComparison.OrdinalIgnoreCase))
             {
                 score -= 0.15;
             }
-            // Year in folder name is a meaningful signal for TV shows and other
-            // hierarchical types — boost confidence so they pass the 80% threshold.
-            if (System.Text.RegularExpressions.Regex.IsMatch(folderName, @"\(\d{4}\)"))
-                score = Math.Max(score, 0.80);
             return Math.Clamp(score, 0.0, 1.0);
         }
 
         /// <summary>
         /// Computes confidence for flat (hierarchyLevels == 1) groups such as movies.
-        /// A year in the folder name is the primary quality signal; NFO sidecars add more.
+        /// Scores reflect signal quality honestly — the user-configurable threshold
+        /// determines what gets auto-imported; these values should not be chosen to
+        /// artificially pass any particular threshold.
         /// </summary>
         private static double ComputeFlatConfidence(string groupName, NfoSignal? nfo)
         {
-            // NFO with external ID is the strongest possible signal
-            if (nfo?.ExternalId is not null) return 1.0;
-            if (nfo?.Title is not null && nfo.Year.HasValue) return 0.90;
-            if (nfo?.Title is not null) return 0.82;
-
-            // "(YYYY)" in the folder name means the user (or their media server) already
-            // confirmed the year — treat this as sufficient for auto-import.
+            if (nfo?.ExternalId is not null)              return 1.00; // NFO has exact external ID
+            if (nfo?.Title is not null && nfo.Year.HasValue) return 0.90; // NFO title + year
+            if (nfo?.Title is not null)                   return 0.78; // NFO title only
+            // "(YYYY)" in folder name: reliable naming convention used by most media managers
             if (System.Text.RegularExpressions.Regex.IsMatch(groupName, @"\(\d{4}\)"))
-                return 0.82;
-
+                return 0.75;
             // Folder name only — title is plausible but year is unknown
-            return 0.65;
+            return 0.55;
         }
 
         private static double ComputeLeafConfidence(
