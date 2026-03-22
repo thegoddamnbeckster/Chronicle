@@ -63,6 +63,7 @@ Every plugin must ship a `manifest.json` alongside its DLL. Chronicle reads this
   "iconUrl":               "https://example.com/favicon.ico",
   "brandColorLight":       "#3A86FF",
   "brandColorDark":        "#5E9BFF",
+  "fixMatchHint":          "Enter a URL or ID from example.com to override the automatic match.",
   "background_tasks": [
     {
       "task_id":         "fetch-missing-metadata",
@@ -90,6 +91,7 @@ Every plugin must ship a `manifest.json` alongside its DLL. Chronicle reads this
 | `brandColorLight` | No | Hex colour (`#RRGGBB`) used for task card accents in light mode. |
 | `brandColorDark` | No | Hex colour used in dark mode. Should be visible against a dark background. |
 | `background_tasks` | No | Array of background tasks to register on install. Omit if your plugin has no scheduled work. |
+| `fixMatchHint` | No | Short hint shown to users in the Fix Match panel (e.g. `"Enter a MusicBrainz artist, release, or recording URL, or paste an MBID"`). If omitted, the panel shows a generic prompt. |
 
 ### background_tasks fields
 
@@ -141,6 +143,27 @@ public class MyMetadataProvider : IMetadataProvider
 ```
 
 `HealthCheckAsync()` is called by Chronicle to show the **HEALTHY / UNHEALTHY** badge on the Plugins page. Fetch a known small resource from your service and return `true` if successful.
+
+### How metadata is stored and displayed
+
+When `EnrichmentService` completes enrichment for an item, the `MediaMetadata` you return is serialised and stored under your plugin's full ID in the item's `metadata_json` column:
+
+```json
+{
+  "chronicle.plugin.tmdb":        { "title": "...", "posterUrl": "...", ... },
+  "chronicle.plugin.musicbrainz": { "title": "...", "externalId": "...", ... }
+}
+```
+
+The Chronicle frontend automatically renders a **PluginMetadataBox** for every key present — no frontend code changes are needed when a new plugin is installed. Your plugin's `iconUrl` and `name` from the manifest are used as the box header. All fields from `MediaMetadata` are rendered: images are shown as thumbnails, arrays as chips, and scalar values as a key-value grid.
+
+The `ExternalId` you return is stored in the enrichment status row and used on subsequent enrichment runs to call `GetByIdAsync` directly rather than re-searching. Use a stable, globally unique ID string (e.g. `"movie:550"` or `"artist:65f4f0c5-ef9e-490c-aee3-909e7ae6b2ab"`).
+
+The `PosterUrl` from your result is promoted to `media_items.poster_url` if the item has no poster yet.
+
+### Fix Match flow
+
+Users can override the automatic match via the **Fix Match** button on the media detail page. Chronicle calls `POST /api/v1/media/{id}/refresh/{pluginId}` with an `input` body. Your plugin receives the user's input as the `query` argument to `SearchAsync` — handle it the same way you handle any other query string. The `fixMatchHint` you declare in `manifest.json` is shown to the user in the Fix Match panel so they know what format to enter.
 
 ---
 
