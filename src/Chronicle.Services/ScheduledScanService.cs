@@ -80,6 +80,28 @@ public sealed class ScheduledScanService : IScheduledTask
                     .Where(g => g.ConfidenceScore >= thresholdFraction)
                     .ToList();
 
+                var belowThreshold = scanResult.Groups
+                    .Where(g => g.ConfidenceScore < thresholdFraction)
+                    .ToList();
+
+                if (belowThreshold.Count > 0)
+                {
+                    _log.Warning(
+                        "ScheduledScanService: {Count} group(s) below threshold ({Threshold}%) in {Path} — " +
+                        "these will NOT be auto-imported. Use the File Scan page to review and accept them manually.",
+                        belowThreshold.Count, threshold, folder.Path);
+
+                    foreach (var g in belowThreshold.Take(20))
+                    {
+                        _log.Debug(
+                            "  Skipped (confidence={Score:P0}): {Name}",
+                            g.ConfidenceScore, g.Name);
+                    }
+
+                    if (belowThreshold.Count > 20)
+                        _log.Debug("  … and {More} more skipped groups", belowThreshold.Count - 20);
+                }
+
                 if (passingGroups.Count == 0)
                 {
                     _log.Information(
@@ -95,8 +117,8 @@ public sealed class ScheduledScanService : IScheduledTask
                 }
 
                 _log.Information(
-                    "ScheduledScanService: Auto-importing {Count} group(s) from {Path}",
-                    passingGroups.Count, folder.Path);
+                    "ScheduledScanService: Auto-importing {Count} group(s) from {Path} ({Below} below threshold, skipped)",
+                    passingGroups.Count, folder.Path, belowThreshold.Count);
 
                 var importRequest = new ImportGroupsRequest(
                     passingGroups.Select(g => ToImport(g)).ToList(),
@@ -105,8 +127,9 @@ public sealed class ScheduledScanService : IScheduledTask
                 var summary = await fileScanSvc.ImportGroupsAsync(importRequest, noUserIds, ct);
 
                 _log.Information(
-                    "ScheduledScanService: Import complete for {Path} — imported: {Imported}, failed: {Failed}, duplicates: {Duplicates}",
-                    folder.Path, summary.Imported, summary.Failed, summary.Duplicates);
+                    "ScheduledScanService: Import complete for {Path} — " +
+                    "imported: {Imported} new, {Duplicates} already in library, {Failed} failed, {Below} skipped (below threshold)",
+                    folder.Path, summary.Imported, summary.Duplicates, summary.Failed, belowThreshold.Count);
 
                 var dbFolder = await db.ScanFolders.FindAsync([folder.Id], ct);
                 if (dbFolder is not null)

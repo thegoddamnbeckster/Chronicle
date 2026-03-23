@@ -458,3 +458,51 @@
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* ── Collapsible tasks fold ─────────────────────────────────────────────── */
+
+.tasksFold {
+  margin-top: 24px;
+}
+
+.tasksFoldHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-color);
+  padding: 8px 0;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.tasksFoldHeader:hover {
+  color: var(--text-primary);
+}
+
+.tasksFoldTitle {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tasksFoldChevron {
+  font-size: 1.1rem;
+  transform: rotate(90deg);
+  transition: transform 0.18s ease;
+  display: inline-block;
+}
+
+.tasksFoldChevronOpen {
+  transform: rotate(270deg);
+}
+
+.tasksFoldBody {
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
