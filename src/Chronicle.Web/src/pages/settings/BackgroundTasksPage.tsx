@@ -13,6 +13,7 @@ import {
   type EnrichmentStats,
 } from '@/api/enrichment'
 import { getImportProgress, type ImportProgressState } from '@/api/scan'
+import { getAppSettings, putAppSetting } from '@/api/settings'
 import {
   cronToParams,
   paramsToCron,
@@ -250,6 +251,75 @@ function EnrichmentSection({ enrichmentRunning }: EnrichmentSectionProps) {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Scan settings section ─────────────────────────────────────────────────────
+// Lets the user tune scan concurrency (how many folders scan at the same time).
+
+function ScanSettingsSection() {
+  const [concurrency, setConcurrency] = useState<string>('')
+  const [loaded, setLoaded] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    getAppSettings().then(s => {
+      setConcurrency(s['scan.max_concurrency'] ?? '')
+      setLoaded(true)
+    }).catch(() => setLoaded(true))
+  }, [])
+
+  async function handleSave() {
+    const val = concurrency.trim()
+    if (!val || isNaN(Number(val)) || Number(val) < 1) return
+    setSaving(true)
+    try {
+      await putAppSetting('scan.max_concurrency', String(Math.round(Number(val))))
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!loaded) return null
+
+  return (
+    <div className={styles.scanSettingsSection}>
+      <div className={styles.sectionHeader}>
+        <h2 className={styles.sectionTitle}>Scan Settings</h2>
+      </div>
+      <div className={styles.card}>
+        <div className={styles.scanSettingRow}>
+          <div className={styles.scanSettingLabel}>
+            <span className={styles.scanSettingName}>Scan Concurrency</span>
+            <span className={styles.scanSettingHint}>
+              How many scan folders run in parallel. Default: max(1, CPU&nbsp;cores&nbsp;÷&nbsp;4).
+              Raise this to speed up multi-folder scans on fast storage.
+            </span>
+          </div>
+          <div className={styles.scanSettingControl}>
+            <input
+              type="number"
+              className={styles.numberInput}
+              min={1}
+              value={concurrency}
+              placeholder="default"
+              onChange={e => setConcurrency(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
+            />
+            <button
+              className={styles.saveBtn}
+              onClick={handleSave}
+              disabled={saving || !concurrency.trim() || isNaN(Number(concurrency))}
+            >
+              {saved ? 'Saved ✓' : saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -524,6 +594,9 @@ export default function BackgroundTasksPage() {
 
       {/* ── Scan progress banner — shown while a scan is running ─────── */}
       <ScanProgressBanner scanIsRunning={scanIsRunning} />
+
+      {/* ── Scan settings ────────────────────────────────────────────── */}
+      <ScanSettingsSection />
 
       {/* ── Task list — collapsible ──────────────────────────────────── */}
       <div className={styles.tasksFold}>
