@@ -154,16 +154,80 @@ public class MetadataEnrichmentService(
             .ToList();
     }
 
+    public async Task<PagedEnrichmentItems> GetItemsAsync(
+        string pluginId, string? status, int page, int pageSize, string? search,
+        CancellationToken ct)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+        IQueryable<MediaItemEnrichmentStatus> query = db.EnrichmentStatuses
+            .Include(x => x.MediaItem)
+                .ThenInclude(m => m!.MediaType)
+            .Where(x => x.PluginId == pluginId);
+
+        if (!string.IsNullOrEmpty(status) &&
+            Enum.TryParse<EnrichmentStatus>(status, ignoreCase: true, out var parsedStatus))
+            query = query.Where(x => x.Status == parsedStatus);
+
+        if (!string.IsNullOrEmpty(search))
+            query = query.Where(x => x.MediaItem != null &&
+                                     x.MediaItem.Name.Contains(search));
+
+        var total = await query.CountAsync(ct);
+
+        var rows = await query
+            .OrderBy(x => x.MediaItem != null ? x.MediaItem.Name : string.Empty)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        var items = rows.Select(row =>
+        {
+            string? scannerJson = null;
+            if (row.MediaItem?.MetadataJson is { } mj)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(mj);
+                    if (doc.RootElement.TryGetProperty("fileScanner", out var fs))
+                        scannerJson = fs.GetRawText();
+                }
+                catch { /* ignore */ }
+            }
+
+            return new EnrichmentItemResult(
+                row.Id,
+                row.MediaItemId,
+                row.MediaItem?.Name ?? "(unknown)",
+                row.MediaItem?.Year,
+                row.MediaItem?.MediaType?.DisplayName ?? row.MediaItem?.MediaType?.Name ?? "Unknown",
+                row.MediaItem?.HierarchyLevel ?? 0,
+                row.MediaItem?.PosterUrl,
+                row.ExternalId,
+                row.Status,
+                row.ErrorMessage,
+                row.RetryCount,
+                row.MaxRetries,
+                row.LastAttemptedAt,
+                row.DiagnosticsJson,
+                scannerJson);
+        }).ToList();
+
+        return new PagedEnrichmentItems(items, total, page, pageSize);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private async Task EnrichOneAsync(ChronicleDbContext db, IMetadataProvider provider,
         MediaItemEnrichmentStatus row, CancellationToken ct)
     {
         row.LastAttemptedAt = DateTime.UtcNow;
+        string searchQuery = string.Empty;
+        List<MediaMetadata> rawCandidates = [];
         try
         {
             MediaMetadata? result = null;
-            string searchQuery = string.Empty;
 
             // ── TV season/episode: derive ExternalId from parent's enrichment ──────
             // Searching TMDB with a bare name like "Season 01" is unreliable — it
@@ -355,7 +419,15 @@ public class MetadataEnrichmentService(
                         }
                     }
 
-                    result = await provider.SearchAsync(searchQuery, mediaTypeName, ct);
+                    var searchResult = await provider.SearchAsync(searchQuery, mediaTypeName, ct);
+
+                    // Capture candidates for diagnostics BEFORE GetByIdAsync might overwrite result
+                    rawCandidates = searchResult?.Results?.Take(5).ToList()
+                        ?? (searchResult is not null
+                            ? new List<MediaMetadata> { searchResult }
+                            : new List<MediaMetadata>());
+
+                    result = searchResult;
 
                     // SearchAsync returns only search-index fields (no cover art).
                     // If we got a match, fetch the full entity so that PosterUrl
@@ -374,7 +446,6 @@ public class MetadataEnrichmentService(
                             logger.LogWarning(ex,
                                 "Follow-up GetByIdAsync failed for ExternalId={ExternalId}; keeping search result",
                                 result.ExternalId);
-                            // Keep the search result — enrichment still succeeds; cover art just won't be set.
                         }
                     }
                 }
@@ -409,7 +480,88 @@ public class MetadataEnrichmentService(
                 : EnrichmentStatus.Failed;
         }
 
+        // ── Capture diagnostics ────────────────────────────────────────────────
+        try
+        {
+            var queryName  = row.MediaItem?.Name ?? string.Empty;
+            var queryYear  = row.MediaItem?.Year;
+            var candidates = rawCandidates
+                .Select(c =>
+                {
+                    var (ts, ys, tot) = ScoreCandidate(queryName, queryYear, c);
+                    return new EnrichCandidate(c.Title, c.Year, c.ExternalId, ts, ys, tot);
+                })
+                .OrderByDescending(c => c.TotalScore)
+                .ToList();
+
+            var failureReason = row.Status switch
+            {
+                EnrichmentStatus.NotFound  => "No results returned by the provider for this search query.",
+                EnrichmentStatus.Failed    => row.ErrorMessage ?? "Provider call threw an exception.",
+                EnrichmentStatus.Exhausted => "Maximum retries reached with no successful match.",
+                EnrichmentStatus.Completed => "Matched successfully.",
+                _ => string.Empty
+            };
+
+            var diag = new EnrichDiagnostics(
+                searchQuery,
+                rawCandidates.Count,
+                failureReason,
+                candidates,
+                ReadScannerSignals(row.MediaItem));
+
+            row.DiagnosticsJson = JsonSerializer.Serialize(diag,
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        }
+        catch (Exception diagEx)
+        {
+            logger.LogWarning(diagEx,
+                "Failed to build enrichment diagnostics for item {ItemId}", row.MediaItemId);
+        }
+
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Scores a search candidate against a query name and optional year.
+    /// Title: exact=60pts, contains=30pts. Year exact match: 40pts.
+    /// </summary>
+    private static (int title, int year, int total) ScoreCandidate(
+        string queryName, int? queryYear, MediaMetadata candidate)
+    {
+        int titleScore = 0;
+        var cn = (candidate.Title ?? string.Empty).Trim();
+        var qn = queryName.Trim();
+        if (string.Equals(cn, qn, StringComparison.OrdinalIgnoreCase))
+            titleScore = 60;
+        else if (cn.Contains(qn, StringComparison.OrdinalIgnoreCase)
+              || qn.Contains(cn, StringComparison.OrdinalIgnoreCase))
+            titleScore = 30;
+
+        int yearScore = 0;
+        if (queryYear.HasValue && candidate.Year.HasValue && queryYear == candidate.Year)
+            yearScore = 40;
+
+        return (titleScore, yearScore, titleScore + yearScore);
+    }
+
+    private static EnrichScannerSignals? ReadScannerSignals(MediaItem? item)
+    {
+        if (item?.MetadataJson is null) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(item.MetadataJson);
+            if (!doc.RootElement.TryGetProperty("fileScanner", out var fs)) return null;
+            string? folder = fs.TryGetProperty("folderPath", out var fp) ? fp.GetString() : null;
+            bool hasNfo    = fs.TryGetProperty("nfoPosterUrl", out var npo)
+                             && npo.ValueKind == JsonValueKind.String
+                             && !string.IsNullOrEmpty(npo.GetString());
+            bool hasPoster = fs.TryGetProperty("localPosterPath", out var lp)
+                             && lp.ValueKind == JsonValueKind.String
+                             && !string.IsNullOrEmpty(lp.GetString());
+            return new EnrichScannerSignals(folder, hasNfo, hasPoster, null);
+        }
+        catch { return null; }
     }
 
     /// <summary>
@@ -438,6 +590,29 @@ public class MetadataEnrichmentService(
 
     private static string StripYearPrefix(string name) =>
         YearPrefixRe.Replace(name, string.Empty);
+
+    // ── Diagnostics DTOs (serialised to DiagnosticsJson) ─────────────────────
+
+    private sealed record EnrichDiagnostics(
+        string SearchQuery,
+        int CandidatesReturned,
+        string FailureReason,
+        List<EnrichCandidate> TopCandidates,
+        EnrichScannerSignals? ScannerSignals);
+
+    private sealed record EnrichCandidate(
+        string? Title,
+        int? Year,
+        string? ExternalId,
+        int TitleScore,
+        int YearScore,
+        int TotalScore);
+
+    private sealed record EnrichScannerSignals(
+        string? FolderPath,
+        bool HasNfo,
+        bool HasLocalPoster,
+        double? ConfidenceScore);
 
     private static async Task MergeMetadataAsync(ChronicleDbContext db, MediaItem item,
         string pluginId, MediaMetadata result, CancellationToken ct)

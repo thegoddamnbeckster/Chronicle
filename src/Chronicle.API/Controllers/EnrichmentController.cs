@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Chronicle.API.DTOs;
 using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -57,5 +58,69 @@ public class EnrichmentController(
     {
         await enrichmentSvc.SkipAsync(mediaItemId, pluginId, ct);
         return Ok(new { success = true });
+    }
+
+    [HttpGet("{pluginId}/items")]
+    public async Task<IActionResult> GetItems(
+        string pluginId,
+        [FromQuery] string? status,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] string? search = null,
+        CancellationToken ct = default)
+    {
+        if (page < 1) page = 1;
+        if (pageSize is < 1 or > 200) pageSize = 50;
+
+        var result = await enrichmentSvc.GetItemsAsync(pluginId, status, page, pageSize, search, ct);
+
+        var items = result.Items.Select(r =>
+        {
+            JsonElement? diag = null;
+            if (r.DiagnosticsJson is not null)
+            {
+                try { diag = JsonSerializer.Deserialize<JsonElement>(r.DiagnosticsJson); }
+                catch { /* ignore */ }
+            }
+
+            JsonElement? scanner = null;
+            if (r.FileScannerMetadataJson is not null)
+            {
+                try { scanner = JsonSerializer.Deserialize<JsonElement>(r.FileScannerMetadataJson); }
+                catch { /* ignore */ }
+            }
+
+            return new
+            {
+                enrichmentId        = r.EnrichmentId,
+                mediaItemId         = r.MediaItemId,
+                name                = r.Name,
+                year                = r.Year,
+                mediaType           = r.MediaType,
+                hierarchyLevel      = r.HierarchyLevel,
+                posterUrl           = r.PosterUrl,
+                externalId          = r.ExternalId,
+                status              = r.Status.ToString(),
+                errorMessage        = r.ErrorMessage,
+                retryCount          = r.RetryCount,
+                maxRetries          = r.MaxRetries,
+                lastAttemptedAt     = r.LastAttemptedAt,
+                diagnostics         = diag,
+                fileScannerMetadata = scanner,
+            };
+        });
+
+        return Ok(new
+        {
+            success = true,
+            data = new
+            {
+                items,
+                total      = result.Total,
+                page       = result.Page,
+                pageSize   = result.PageSize,
+                totalPages = (int)Math.Ceiling(result.Total / (double)result.PageSize),
+            }
+        });
     }
 }
