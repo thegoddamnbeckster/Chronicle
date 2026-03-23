@@ -18,6 +18,15 @@ public interface IMetadataEnrichmentService
 
     /// <summary>Get enrichment statistics per plugin.</summary>
     Task<IReadOnlyList<EnrichmentStats>> GetStatsAsync(CancellationToken ct = default);
+
+    /// <summary>Get paginated enrichment items for a plugin, with optional status/search filters.</summary>
+    Task<PagedEnrichmentItems> GetItemsAsync(
+        string pluginId,
+        string? status,
+        int page,
+        int pageSize,
+        string? search,
+        CancellationToken ct);
 }
 
 public record EnrichmentStats(
