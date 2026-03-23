@@ -2,76 +2,15 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { refreshMediaForPlugin, clearMediaExternalId, suppressMediaMatch } from '@/api/media'
 import type { ExternalId, RefreshLog } from '@/types'
+import { IMAGE_KEYS, IMAGE_ARRAY_KEYS, toLabel, isImageUrl, extractImages, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './PluginMetadataBox.module.css'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Keys whose values are rendered in the Images row rather than as plain text. */
-const IMAGE_KEYS = new Set([
-  'posterurl', 'backdropurl', 'posterpath', 'stillpath',
-  'thumbnailurl', 'imageurl',
-])
 
 /** Keys that are skip-rendered — already shown elsewhere on the page. */
 const SKIP_KEYS = new Set([
   'title', 'externalid', 'source', 'totalresults', 'total_results',
 ])
-
-/** Keys that hold arrays of image objects (e.g. additionalImages). */
-const IMAGE_ARRAY_KEYS = new Set(['additionalimages', 'images'])
-
-/** Label overrides for well-known field names. */
-const LABELS: Record<string, string> = {
-  rating: 'Rating',
-  voteaverage: 'Rating',
-  genres: 'Genres',
-  cast: 'Cast',
-  directors: 'Director(s)',
-  crew: 'Crew',
-  guestStars: 'Guest Stars',
-  gueststars: 'Guest Stars',
-  airdate: 'Air Date',
-  episodecount: 'Episodes',
-  runtimeminutes: 'Duration',
-  tags: 'Tags',
-  overview: 'About',
-  backdropurl: 'Backdrop',
-  posterurl: 'Poster',
-  posterpath: 'Season Poster',
-  stillpath: 'Still',
-}
-
-function toLabel(key: string): string {
-  const lower = key.toLowerCase()
-  if (LABELS[lower]) return LABELS[lower]
-  // Convert camelCase / snake_case to Title Case
-  return key
-    .replace(/_/g, ' ')
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/^\s/, '')
-    .replace(/\b\w/g, c => c.toUpperCase())
-    .trim()
-}
-
-function isImageUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-  const v = value.toLowerCase()
-  return v.startsWith('http') && (
-    v.includes('.jpg') || v.includes('.jpeg') || v.includes('.png') ||
-    v.includes('.webp') || v.includes('.gif') || v.includes('image.tmdb') ||
-    v.includes('coverartarchive') || v.includes('musicbrainz.org/img') ||
-    v.endsWith('/') // some APIs return directory-style URLs
-  )
-}
-
-function buildImageUrl(key: string, value: string): string {
-  const lower = key.toLowerCase()
-  // TMDB path fields need a base URL prepended
-  if ((lower === 'posterpath' || lower === 'stillpath') && value.startsWith('/')) {
-    return `https://image.tmdb.org/t/p/w500${value}`
-  }
-  return value
-}
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -85,6 +24,17 @@ export interface PluginMetadataBoxProps {
   externalIds: ExternalId[]
   refreshLogs?: RefreshLog[] | null
   hierarchyLevel: number
+  /**
+   * When provided, clicking an image thumbnail calls this instead of opening
+   * the internal lightbox. The argument is the image's index within the
+   * page-level allImages array (imageStartIndex + local index).
+   */
+  onImageClick?: (globalIndex: number) => void
+  /**
+   * The index of this plugin's first image within the page-level allImages array.
+   * Only used when onImageClick is provided.
+   */
+  imageStartIndex?: number
 }
 
 export function PluginMetadataBox({
@@ -97,6 +47,8 @@ export function PluginMetadataBox({
   externalIds,
   refreshLogs,
   hierarchyLevel,
+  onImageClick,
+  imageStartIndex = 0,
 }: PluginMetadataBoxProps) {
   const qc = useQueryClient()
   const [fixMatchOpen, setFixMatchOpen] = useState(false)
@@ -155,40 +107,21 @@ export function PluginMetadataBox({
 
   // ── Partition metadata fields ──────────────────────────────────────────────
 
-  type ImageEntry = { key: string; url: string; label: string }
-  const imageEntries: ImageEntry[] = []
+  const imageEntries: ImageEntry[] = extractImages(metadata, SKIP_KEYS)
   const dataRows: { key: string; value: unknown }[] = []
-
   for (const [key, value] of Object.entries(metadata)) {
     const lower = key.toLowerCase()
     if (SKIP_KEYS.has(lower)) continue
     if (value === null || value === undefined) continue
-
-    if (IMAGE_ARRAY_KEYS.has(lower) && Array.isArray(value)) {
-      // additionalImages / images array
-      for (const img of value as Record<string, unknown>[]) {
-        const url = (img.url ?? img.thumbnailUrl ?? '') as string
-        if (url) imageEntries.push({ key, url, label: (img.type as string) ?? key })
-      }
-      continue
-    }
-
-    if (IMAGE_KEYS.has(lower) && typeof value === 'string') {
-      const url = buildImageUrl(key, value)
-      imageEntries.push({ key, url, label: toLabel(key) })
-      continue
-    }
-
-    if (typeof value === 'string' && isImageUrl(value)) {
-      imageEntries.push({ key, url: value, label: toLabel(key) })
-      continue
-    }
-
+    if (IMAGE_ARRAY_KEYS.has(lower) && Array.isArray(value)) continue
+    if (IMAGE_KEYS.has(lower) && typeof value === 'string') continue
+    if (typeof value === 'string' && isImageUrl(value)) continue
     dataRows.push({ key, value })
   }
 
-  // Close lightbox on Escape key
+  // Close lightbox on Escape key (only when using internal lightbox)
   useEffect(() => {
+    if (onImageClick) return          // page-level lightbox handles keyboard
     if (lightboxIdx === null) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setLightboxIdx(null)
@@ -197,7 +130,7 @@ export function PluginMetadataBox({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [lightboxIdx, imageEntries.length])
+  }, [lightboxIdx, imageEntries.length, onImageClick])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -402,7 +335,10 @@ export function PluginMetadataBox({
                   key={i}
                   className={styles.imageLink}
                   title={img.label}
-                  onClick={() => setLightboxIdx(i)}
+                  onClick={() => onImageClick
+                    ? onImageClick(imageStartIndex + i)
+                    : setLightboxIdx(i)
+                  }
                   type="button"
                 >
                   <img
@@ -426,8 +362,8 @@ export function PluginMetadataBox({
         <p className={styles.error}>{`Clear failed: ${(clearMatchMut.error as Error).message}`}</p>
       )}
 
-        {/* ── Lightbox ──────────────────────────────────────────────── */}
-        {lightboxIdx !== null && (
+        {/* ── Lightbox (internal — only used when no page-level onImageClick) ── */}
+        {!onImageClick && lightboxIdx !== null && (
           <div
             className={styles.lightboxOverlay}
             onClick={() => setLightboxIdx(null)}

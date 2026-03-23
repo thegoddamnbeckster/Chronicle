@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, refreshMedia, deleteMedia } from '@/api/media'
@@ -6,6 +6,7 @@ import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
 import type { LibraryStatus } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
+import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
@@ -72,6 +73,8 @@ function getChildrenLabel(parentMediaType: string, ancestorCount: number): strin
   }
   return 'Items'
 }
+
+const LIGHTBOX_SKIP = new Set(['title', 'externalid', 'source', 'totalresults', 'total_results'])
 
 export default function MediaDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -141,6 +144,23 @@ export default function MediaDetailPage() {
     },
   })
 
+  // ── Page-level unified lightbox ──────────────────────────────────────────
+  // useState/useRef/useEffect must be before early returns (Rules of Hooks)
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const allImagesLenRef = useRef(0)
+
+  useEffect(() => {
+    if (lightboxIdx === null) return
+    const len = allImagesLenRef.current
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxIdx(null)
+      if (e.key === 'ArrowRight') setLightboxIdx(i => (i !== null && i < len - 1 ? i + 1 : i))
+      if (e.key === 'ArrowLeft') setLightboxIdx(i => (i !== null && i > 0 ? i - 1 : i))
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [lightboxIdx])
+
   if (isLoading) return <div className={styles.page}><p className={styles.loading}>Loading…</p></div>
   if (error || !item) {
     return (
@@ -149,6 +169,23 @@ export default function MediaDetailPage() {
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
       </div>
     )
+  }
+
+  // Compute full ordered image list: poster first, then each plugin's images in order
+  const allImages: ImageEntry[] = [
+    ...(item.posterUrl ? [{ url: item.posterUrl, label: 'Poster' }] : []),
+    ...Object.values(item.pluginMetadata ?? {}).flatMap(meta =>
+      extractImages(meta as Record<string, unknown>, LIGHTBOX_SKIP)
+    ),
+  ]
+  allImagesLenRef.current = allImages.length
+
+  // Per-plugin start offsets so PluginMetadataBox can pass the correct global index
+  const pluginImageOffsets = new Map<string, number>()
+  let imgOffset = item.posterUrl ? 1 : 0
+  for (const [pluginId, meta] of Object.entries(item.pluginMetadata ?? {})) {
+    pluginImageOffsets.set(pluginId, imgOffset)
+    imgOffset += extractImages(meta as Record<string, unknown>, LIGHTBOX_SKIP).length
   }
 
   // Grab backdrop URL from any plugin that provides one
@@ -220,9 +257,10 @@ export default function MediaDetailPage() {
           {item.posterUrl
             ? (
               <img
-                className={styles.poster}
+                className={`${styles.poster} ${styles.posterClickable}`}
                 src={item.posterUrl}
                 alt={item.name}
+                onClick={() => setLightboxIdx(0)}
                 onError={e => {
                   const img = e.currentTarget
                   img.style.display = 'none'
@@ -309,6 +347,8 @@ export default function MediaDetailPage() {
                 externalIds={item.externalIds}
                 refreshLogs={item.refreshLogs}
                 hierarchyLevel={item.hierarchyLevel}
+                onImageClick={(localIdx) => setLightboxIdx((pluginImageOffsets.get(pluginId) ?? 0) + localIdx)}
+                imageStartIndex={pluginImageOffsets.get(pluginId) ?? 0}
               />
             )
           })}
@@ -473,6 +513,58 @@ export default function MediaDetailPage() {
         </section>
         )
       })()}
+
+      {/* ── Page-level unified image lightbox ─────────────────────── */}
+      {lightboxIdx !== null && (
+        <div
+          className={styles.lightboxOverlay}
+          onClick={() => setLightboxIdx(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={allImages[lightboxIdx]?.label ?? 'Image'}
+        >
+          <button
+            className={styles.lightboxClose}
+            onClick={() => setLightboxIdx(null)}
+            type="button"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+          {lightboxIdx > 0 && (
+            <button
+              className={`${styles.lightboxNav} ${styles.lightboxNavPrev}`}
+              onClick={e => { e.stopPropagation(); setLightboxIdx(lightboxIdx - 1) }}
+              type="button"
+              aria-label="Previous image"
+            >
+              ‹
+            </button>
+          )}
+          <img
+            className={styles.lightboxImg}
+            src={allImages[lightboxIdx]?.url}
+            alt={allImages[lightboxIdx]?.label}
+            onClick={e => e.stopPropagation()}
+          />
+          <div className={styles.lightboxCaption}>
+            {allImages[lightboxIdx]?.label}
+            {allImages.length > 1 && (
+              <span className={styles.lightboxCounter}> {lightboxIdx + 1} / {allImages.length}</span>
+            )}
+          </div>
+          {lightboxIdx < allImages.length - 1 && (
+            <button
+              className={`${styles.lightboxNav} ${styles.lightboxNavNext}`}
+              onClick={e => { e.stopPropagation(); setLightboxIdx(lightboxIdx + 1) }}
+              type="button"
+              aria-label="Next image"
+            >
+              ›
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
