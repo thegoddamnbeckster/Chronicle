@@ -199,11 +199,79 @@ public class MetadataEnrichmentServiceTests : IDisposable
         skipped!.Status.Should().Be(EnrichmentStatus.Skipped); // unchanged
     }
 
+    // ── GetItemsAsync tests ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetItemsAsync_FiltersByPluginId()
+    {
+        // Arrange: two enrichment rows for different plugins
+        await SeedItemWithStatus(null, EnrichmentStatus.Pending, pluginId: "chronicle.plugin.musicbrainz");
+        await SeedItemWithStatus(null, EnrichmentStatus.Pending, pluginId: "chronicle.plugin.tmdb");
+
+        // Act: fetch items for only one plugin
+        var result = await _svc.GetItemsAsync("chronicle.plugin.musicbrainz", null, 1, 50, null, CancellationToken.None);
+
+        // Assert: only the MusicBrainz item is returned
+        result.Total.Should().Be(1);
+        result.Items.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task GetItemsAsync_FiltersByStatus()
+    {
+        // Arrange: one Pending and one NotFound row for the same plugin
+        await SeedItemWithStatus(null, EnrichmentStatus.Pending, pluginId: "chronicle.plugin.musicbrainz");
+        await SeedItemWithStatus(null, EnrichmentStatus.NotFound, pluginId: "chronicle.plugin.musicbrainz");
+
+        // Act: filter by NotFound status
+        var result = await _svc.GetItemsAsync("chronicle.plugin.musicbrainz", "NotFound", 1, 50, null, CancellationToken.None);
+
+        // Assert: only the NotFound row is returned
+        result.Total.Should().Be(1);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Status.Should().Be(EnrichmentStatus.NotFound);
+    }
+
+    [Fact]
+    public async Task GetItemsAsync_PaginatesCorrectly()
+    {
+        // Arrange: five items for one plugin
+        for (var i = 0; i < 5; i++)
+            await SeedItemWithStatus(null, EnrichmentStatus.Pending, pluginId: "chronicle.plugin.musicbrainz");
+
+        // Act: request page 1 with pageSize 2
+        var result = await _svc.GetItemsAsync("chronicle.plugin.musicbrainz", null, 1, 2, null, CancellationToken.None);
+
+        // Assert: two items on this page, total is five
+        result.Items.Should().HaveCount(2);
+        result.Total.Should().Be(5);
+        result.PageSize.Should().Be(2);
+        result.Page.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetItemsAsync_SearchFiltersByName()
+    {
+        // Arrange: two items with distinct names
+        await SeedItemWithStatus(null, EnrichmentStatus.Pending, pluginId: "chronicle.plugin.musicbrainz", name: "Metallica");
+        await SeedItemWithStatus(null, EnrichmentStatus.Pending, pluginId: "chronicle.plugin.musicbrainz", name: "Alanis Morissette");
+
+        // Act: search for "Metallica"
+        var result = await _svc.GetItemsAsync("chronicle.plugin.musicbrainz", null, 1, 50, "Metallica", CancellationToken.None);
+
+        // Assert: only the Metallica item is returned
+        result.Total.Should().Be(1);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Name.Should().Be("Metallica");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private async Task<(MediaItem, MediaItemEnrichmentStatus)> SeedItemWithStatus(
         string? externalId, EnrichmentStatus status,
-        int retryCount = 0, int maxRetries = 3)
+        int retryCount = 0, int maxRetries = 3,
+        string pluginId = "chronicle.plugin.musicbrainz",
+        string? name = null)
     {
         if (_user == null!)
         {
@@ -222,7 +290,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         var item = new MediaItem
         {
-            Name = "Item " + Guid.NewGuid().ToString("N")[..6],
+            Name = name ?? ("Item " + Guid.NewGuid().ToString("N")[..6]),
             MediaTypeId = _mediaType.Id,
             HierarchyLevel = 0,
             CreatedAt = DateTime.UtcNow,
@@ -234,7 +302,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         var row = new MediaItemEnrichmentStatus
         {
             MediaItemId = item.Id,
-            PluginId    = "chronicle.plugin.musicbrainz",
+            PluginId    = pluginId,
             ExternalId  = externalId,
             Status      = status,
             RetryCount  = retryCount,
