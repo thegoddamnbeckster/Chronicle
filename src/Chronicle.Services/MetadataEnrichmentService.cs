@@ -165,6 +165,86 @@ public class MetadataEnrichmentService(
             MediaMetadata? result = null;
             string searchQuery = string.Empty;
 
+            // ── TV season/episode: derive ExternalId from parent's enrichment ──────
+            // Searching TMDB with a bare name like "Season 01" is unreliable — it
+            // matches random shows.  Instead, if the parent item is already enriched
+            // with TMDB, construct the season/episode ExternalId directly from the
+            // parent's TV ID and this item's number.
+            if (string.IsNullOrEmpty(row.ExternalId) && row.MediaItem is not null)
+            {
+                var parentId = row.MediaItem.ParentId;
+                if (parentId is not null)
+                {
+                    var parentEnrichment = await db.EnrichmentStatuses
+                        .FirstOrDefaultAsync(
+                            e => e.MediaItemId == parentId && e.PluginId == row.PluginId,
+                            ct);
+
+                    if (parentEnrichment?.ExternalId is { } parentExternalId
+                        && parentExternalId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Extract the numeric TMDB show ID from "tv:12345"
+                        var showTmdbId = parentExternalId.Split(':', 2)[1];
+
+                        // Use the item's Number field (season/episode number).
+                        // Fallback: try to parse from the name ("Season 01" → 1).
+                        int? itemNumber = row.MediaItem.Number;
+                        if (itemNumber is null && row.MediaItem.Name is { } nm)
+                        {
+                            var numMatch = System.Text.RegularExpressions.Regex.Match(nm, @"\d+");
+                            if (numMatch.Success)
+                                itemNumber = int.Parse(numMatch.Value);
+                        }
+
+                        if (itemNumber.HasValue)
+                        {
+                            // Load the parent item to check its own parent (grandparent)
+                            var parentItem = await db.MediaItems
+                                .AsNoTracking()
+                                .FirstOrDefaultAsync(m => m.Id == parentId, ct);
+
+                            if (parentItem?.ParentId is not null)
+                            {
+                                // This item is an episode: parent is season, grandparent is show
+                                // Look up season number from parent item
+                                int? seasonNumber = parentItem.Number;
+                                if (seasonNumber is null && parentItem.Name is { } pnm)
+                                {
+                                    var snm = System.Text.RegularExpressions.Regex.Match(pnm, @"\d+");
+                                    if (snm.Success)
+                                        seasonNumber = int.Parse(snm.Value);
+                                }
+                                if (seasonNumber.HasValue)
+                                {
+                                    row.ExternalId = $"tv:{showTmdbId}/season:{seasonNumber}/episode:{itemNumber}";
+                                    logger.LogInformation(
+                                        "TV hierarchy lookup: item={ItemId} → {ExternalId}",
+                                        row.MediaItemId, row.ExternalId);
+                                }
+                            }
+                            else
+                            {
+                                // This item is a season: parent is the show
+                                row.ExternalId = $"tv:{showTmdbId}/season:{itemNumber}";
+                                logger.LogInformation(
+                                    "TV hierarchy lookup: item={ItemId} → {ExternalId}",
+                                    row.MediaItemId, row.ExternalId);
+                            }
+                        }
+                    }
+                    else if (parentEnrichment is null
+                        || parentEnrichment.Status == Chronicle.Core.Models.EnrichmentStatus.Pending)
+                    {
+                        // Parent not enriched yet — skip this item for now, will be
+                        // retried on next run once the parent has a TMDB ID.
+                        logger.LogDebug(
+                            "Skipping child item {ItemId}: parent {ParentId} not yet enriched by {PluginId}",
+                            row.MediaItemId, parentId, row.PluginId);
+                        return; // leave status as Pending
+                    }
+                }
+            }
+
             if (!string.IsNullOrEmpty(row.ExternalId))
             {
                 // Validate the stored ExternalId's entity type is appropriate for

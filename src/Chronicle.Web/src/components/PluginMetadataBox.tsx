@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { refreshMediaForPlugin, clearMediaExternalId, suppressMediaMatch } from '@/api/media'
 import type { ExternalId, RefreshLog } from '@/types'
@@ -14,7 +14,7 @@ const IMAGE_KEYS = new Set([
 
 /** Keys that are skip-rendered — already shown elsewhere on the page. */
 const SKIP_KEYS = new Set([
-  'title', 'externalid', 'source',
+  'title', 'externalid', 'source', 'totalresults', 'total_results',
 ])
 
 /** Keys that hold arrays of image objects (e.g. additionalImages). */
@@ -101,6 +101,7 @@ export function PluginMetadataBox({
   const qc = useQueryClient()
   const [fixMatchOpen, setFixMatchOpen] = useState(false)
   const [fixMatchInput, setFixMatchInput] = useState('')
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -186,6 +187,18 @@ export function PluginMetadataBox({
     dataRows.push({ key, value })
   }
 
+  // Close lightbox on Escape key
+  useEffect(() => {
+    if (lightboxIdx === null) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxIdx(null)
+      if (e.key === 'ArrowRight') setLightboxIdx(i => i !== null && i < imageEntries.length - 1 ? i + 1 : i)
+      if (e.key === 'ArrowLeft') setLightboxIdx(i => i !== null && i > 0 ? i - 1 : i)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [lightboxIdx, imageEntries.length])
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const renderValue = (key: string, value: unknown): React.ReactNode => {
@@ -218,6 +231,15 @@ export function PluginMetadataBox({
 
     if (typeof value === 'boolean') {
       return <span className={styles.value}>{value ? 'Yes' : 'No'}</span>
+    }
+
+    if (typeof value === 'object' && value !== null) {
+      // Pretty-print nested objects rather than showing [object Object]
+      return (
+        <pre className={styles.value} style={{ whiteSpace: 'pre-wrap', fontSize: '0.75rem', margin: 0 }}>
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      )
     }
 
     return <span className={styles.value}>{String(value)}</span>
@@ -376,13 +398,12 @@ export function PluginMetadataBox({
             <span className={styles.label}>Images</span>
             <div className={styles.imageLinks}>
               {imageEntries.slice(0, 8).map((img, i) => (
-                <a
+                <button
                   key={i}
-                  href={img.url}
-                  target="_blank"
-                  rel="noreferrer"
                   className={styles.imageLink}
-                  title={`Open full-size: ${img.label}`}
+                  title={img.label}
+                  onClick={() => setLightboxIdx(i)}
+                  type="button"
                 >
                   <img
                     src={img.url}
@@ -390,8 +411,8 @@ export function PluginMetadataBox({
                     className={styles.thumbnail}
                     onError={e => { e.currentTarget.style.display = 'none' }}
                   />
-                  <span className={styles.thumbnailLabel}>{img.label} ↗</span>
-                </a>
+                  <span className={styles.thumbnailLabel}>{img.label}</span>
+                </button>
               ))}
             </div>
           </div>
@@ -404,6 +425,58 @@ export function PluginMetadataBox({
       {clearMatchMut.isError && (
         <p className={styles.error}>{`Clear failed: ${(clearMatchMut.error as Error).message}`}</p>
       )}
+
+        {/* ── Lightbox ──────────────────────────────────────────────── */}
+        {lightboxIdx !== null && (
+          <div
+            className={styles.lightboxOverlay}
+            onClick={() => setLightboxIdx(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-label={imageEntries[lightboxIdx]?.label ?? 'Image'}
+          >
+            <button
+              className={styles.lightboxClose}
+              onClick={() => setLightboxIdx(null)}
+              type="button"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+            {lightboxIdx > 0 && (
+              <button
+                className={`${styles.lightboxNav} ${styles.lightboxNavPrev}`}
+                onClick={e => { e.stopPropagation(); setLightboxIdx(lightboxIdx - 1) }}
+                type="button"
+                aria-label="Previous image"
+              >
+                ‹
+              </button>
+            )}
+            <img
+              className={styles.lightboxImg}
+              src={imageEntries[lightboxIdx]?.url}
+              alt={imageEntries[lightboxIdx]?.label}
+              onClick={e => e.stopPropagation()}
+            />
+            <div className={styles.lightboxCaption}>
+              {imageEntries[lightboxIdx]?.label}
+              {imageEntries.length > 1 && (
+                <span className={styles.lightboxCounter}> {lightboxIdx + 1} / {Math.min(imageEntries.length, 8)}</span>
+              )}
+            </div>
+            {lightboxIdx < Math.min(imageEntries.length, 8) - 1 && (
+              <button
+                className={`${styles.lightboxNav} ${styles.lightboxNavNext}`}
+                onClick={e => { e.stopPropagation(); setLightboxIdx(lightboxIdx + 1) }}
+                type="button"
+                aria-label="Next image"
+              >
+                ›
+              </button>
+            )}
+          </div>
+        )}
     </div>
   )
 }

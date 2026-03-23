@@ -461,6 +461,7 @@ export default function BackgroundTasksPage() {
   const [error, setError]     = useState<string | null>(null)
   const [editingId, setEditingId]   = useState<string | null>(null)
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set())
+  const [tasksExpanded, setTasksExpanded] = useState(true)
 
   const load = useCallback(async () => {
     try {
@@ -508,120 +509,139 @@ export default function BackgroundTasksPage() {
   if (loading) return <div className={styles.page}><p className={styles.loading}>Loading background tasks…</p></div>
   if (error)   return <div className={styles.page}><p className={styles.errorMsg}>{error}</p></div>
 
+  const scanIsRunning = tasks.some(t => t.taskId === 'scheduled_scan' && (t.isRunning || runningIds.has(t.taskId)))
+  const enrichmentRunning = tasks.some(t =>
+    t.taskId.endsWith('fetch-missing-metadata') &&
+    (t.isRunning || runningIds.has(t.taskId))
+  )
+
   return (
     <div className={styles.page}>
       <h1 className={styles.title}>Background Tasks</h1>
 
-      {tasks.map(task => {
-        const { cls, label } = statusBadge(task)
-        const isRunning = task.isRunning || runningIds.has(task.taskId)
-        const brandColor = task.brandColorDark ?? undefined
+      {/* ── Enrichment Status — always at the top ────────────────────── */}
+      <EnrichmentSection enrichmentRunning={enrichmentRunning} />
 
-        return (
-          <div
-            key={task.taskId}
-            className={`${styles.card} ${task.pluginId ? styles.cardPlugin : ''}`}
-            style={brandColor ? { '--plugin-brand-color': brandColor } as React.CSSProperties : undefined}
-          >
-            <div className={styles.cardHeader}>
-              <div className={styles.cardTitleGroup}>
-                {task.pluginIconUrl && (
-                  <img
-                    src={task.pluginIconUrl}
-                    alt={task.pluginName ?? ''}
-                    className={styles.pluginIcon}
-                  />
-                )}
-                <div className={styles.cardTitleText}>
-                  <h2 className={styles.taskName}>
-                    {task.pluginName ? `${task.pluginName} · ${task.displayName}` : task.displayName}
-                  </h2>
-                  <p className={styles.taskDesc}>{task.description}</p>
+      {/* ── Scan progress banner — shown while a scan is running ─────── */}
+      <ScanProgressBanner scanIsRunning={scanIsRunning} />
+
+      {/* ── Task list — collapsible ──────────────────────────────────── */}
+      <div className={styles.tasksFold}>
+        <button
+          className={styles.tasksFoldHeader}
+          onClick={() => setTasksExpanded(v => !v)}
+          aria-expanded={tasksExpanded}
+        >
+          <span className={styles.tasksFoldTitle}>Scheduled Tasks</span>
+          <span className={`${styles.tasksFoldChevron} ${tasksExpanded ? styles.tasksFoldChevronOpen : ''}`}>
+            ›
+          </span>
+        </button>
+
+        {tasksExpanded && (
+          <div className={styles.tasksFoldBody}>
+            {tasks.map(task => {
+              const { cls, label } = statusBadge(task)
+              const isRunning = task.isRunning || runningIds.has(task.taskId)
+              const brandColor = task.brandColorDark ?? undefined
+
+              return (
+                <div
+                  key={task.taskId}
+                  className={`${styles.card} ${task.pluginId ? styles.cardPlugin : ''}`}
+                  style={brandColor ? { '--plugin-brand-color': brandColor } as React.CSSProperties : undefined}
+                >
+                  <div className={styles.cardHeader}>
+                    <div className={styles.cardTitleGroup}>
+                      {task.pluginIconUrl && (
+                        <img
+                          src={task.pluginIconUrl}
+                          alt={task.pluginName ?? ''}
+                          className={styles.pluginIcon}
+                        />
+                      )}
+                      <div className={styles.cardTitleText}>
+                        <h2 className={styles.taskName}>
+                          {task.pluginName ? `${task.pluginName} · ${task.displayName}` : task.displayName}
+                        </h2>
+                        <p className={styles.taskDesc}>{task.description}</p>
+                      </div>
+                    </div>
+                    <div className={styles.cardActions}>
+                      <span className={`${styles.badge} ${cls}`}>{label}</span>
+                      <button
+                        role="switch"
+                        aria-checked={task.isEnabled}
+                        className={`${styles.toggle} ${task.isEnabled ? styles.toggleOn : ''}`}
+                        onClick={() =>
+                          updateBackgroundTask(task.taskId, { isEnabled: !task.isEnabled }).then(load)
+                        }
+                        title={task.isEnabled ? 'Disable task' : 'Enable task'}
+                      >
+                        <span className={styles.toggleThumb} />
+                      </button>
+                      <button
+                        className={styles.runBtn}
+                        onClick={() => handleRunNow(task.taskId)}
+                        disabled={isRunning}
+                      >
+                        {isRunning ? 'Running…' : 'Run Now'}
+                      </button>
+                      <button
+                        className={styles.editBtn}
+                        onClick={() => setEditingId(editingId === task.taskId ? null : task.taskId)}
+                      >
+                        {editingId === task.taskId ? 'Close' : 'Schedule'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {task.lastRunSucceeded === false && task.lastErrorMessage && !isRunning && (
+                    <p className={styles.errorText}>{task.lastErrorMessage}</p>
+                  )}
+
+                  <div className={styles.metaGrid}>
+                    <div className={styles.metaRow}>
+                      <span className={styles.metaLabel}>Last Run</span>
+                      <span
+                        className={styles.metaValue}
+                        title={task.lastRunAt ? fmtLocal(task.lastRunAt) : undefined}
+                      >
+                        {fmtRelative(task.lastRunAt)}
+                      </span>
+                    </div>
+                    <div className={styles.metaRow}>
+                      <span className={styles.metaLabel}>Next Run</span>
+                      <span
+                        className={styles.metaValue}
+                        title={task.nextRunAt ? fmtLocal(task.nextRunAt) : undefined}
+                      >
+                        {task.isEnabled ? fmtRelative(task.nextRunAt) : 'Disabled'}
+                      </span>
+                    </div>
+                    <div className={styles.metaRow}>
+                      <span className={styles.metaLabel}>Schedule</span>
+                      <span className={styles.metaValue} style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>
+                        {task.cronExpression}
+                      </span>
+                    </div>
+                  </div>
+
+                  {editingId === task.taskId && (
+                    <ScheduleEditor
+                      taskId={task.taskId}
+                      initialCron={task.cronExpression}
+                      isEnabled={task.isEnabled}
+                      onSave={handleSave}
+                      onCancel={() => setEditingId(null)}
+                    />
+                  )}
                 </div>
-              </div>
-              <div className={styles.cardActions}>
-                <span className={`${styles.badge} ${cls}`}>{label}</span>
-                <button
-                  role="switch"
-                  aria-checked={task.isEnabled}
-                  className={`${styles.toggle} ${task.isEnabled ? styles.toggleOn : ''}`}
-                  onClick={() =>
-                    updateBackgroundTask(task.taskId, { isEnabled: !task.isEnabled }).then(load)
-                  }
-                  title={task.isEnabled ? 'Disable task' : 'Enable task'}
-                >
-                  <span className={styles.toggleThumb} />
-                </button>
-                <button
-                  className={styles.runBtn}
-                  onClick={() => handleRunNow(task.taskId)}
-                  disabled={isRunning}
-                >
-                  {isRunning ? 'Running…' : 'Run Now'}
-                </button>
-                <button
-                  className={styles.editBtn}
-                  onClick={() => setEditingId(editingId === task.taskId ? null : task.taskId)}
-                >
-                  {editingId === task.taskId ? 'Close' : 'Schedule'}
-                </button>
-              </div>
-            </div>
-
-            {task.lastRunSucceeded === false && task.lastErrorMessage && !isRunning && (
-              <p className={styles.errorText}>{task.lastErrorMessage}</p>
-            )}
-
-            <div className={styles.metaGrid}>
-              <div className={styles.metaRow}>
-                <span className={styles.metaLabel}>Last Run</span>
-                <span
-                  className={styles.metaValue}
-                  title={task.lastRunAt ? fmtLocal(task.lastRunAt) : undefined}
-                >
-                  {fmtRelative(task.lastRunAt)}
-                </span>
-              </div>
-              <div className={styles.metaRow}>
-                <span className={styles.metaLabel}>Next Run</span>
-                <span
-                  className={styles.metaValue}
-                  title={task.nextRunAt ? fmtLocal(task.nextRunAt) : undefined}
-                >
-                  {task.isEnabled ? fmtRelative(task.nextRunAt) : 'Disabled'}
-                </span>
-              </div>
-              <div className={styles.metaRow}>
-                <span className={styles.metaLabel}>Schedule</span>
-                <span className={styles.metaValue} style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>
-                  {task.cronExpression}
-                </span>
-              </div>
-            </div>
-
-            {editingId === task.taskId && (
-              <ScheduleEditor
-                taskId={task.taskId}
-                initialCron={task.cronExpression}
-                isEnabled={task.isEnabled}
-                onSave={handleSave}
-                onCancel={() => setEditingId(null)}
-              />
-            )}
+              )
+            })}
           </div>
-        )
-      })}
-
-      <ScanProgressBanner
-        scanIsRunning={tasks.some(t => t.taskId === 'scheduled_scan' && (t.isRunning || runningIds.has(t.taskId)))}
-      />
-
-      <EnrichmentSection
-        enrichmentRunning={tasks.some(t =>
-          t.taskId.endsWith('fetch-missing-metadata') &&
-          (t.isRunning || runningIds.has(t.taskId))
         )}
-      />
+      </div>
     </div>
   )
 }
