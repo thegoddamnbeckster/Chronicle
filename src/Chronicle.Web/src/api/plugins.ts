@@ -108,6 +108,7 @@ export interface PluginCatalogEntry {
   dllName: string
   tags: string[]
   isInstalled: boolean
+  version: string
 }
 
 export async function listCatalog(): Promise<PluginCatalogEntry[]> {

@@ -442,7 +442,8 @@ public class PluginsController : ControllerBase
             AssetName:   "Chronicle.Plugin.TMDB.zip",
             DllName:     "Chronicle.Plugin.TMDB.dll",
             Tags:        ["movies", "tv", "metadata"],
-            Sha256:      "e4df581f9a65ed3c8184d062c7eab479a1d97327477f12720cb861c2d9cf2f31"
+            Sha256:      "e4df581f9a65ed3c8184d062c7eab479a1d97327477f12720cb861c2d9cf2f31",
+            Version:     "1.0.0"
         ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.musicbrainz",
@@ -454,19 +455,8 @@ public class PluginsController : ControllerBase
             AssetName:   "Chronicle.Plugin.MusicBrainz.zip",
             DllName:     "Chronicle.Plugin.MusicBrainz.dll",
             Tags:        ["music", "audio", "metadata"],
-            Sha256:      "c0a79c1d1b531db79d82c8449ae5cf6dae496390b8b8b35c42f61d50e39936f1"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.musicbrainz",
-            Name:        "MusicBrainz",
-            Description: "Fetches comprehensive music metadata from MusicBrainz (artist, album, track) and cover art from the Cover Art Archive. No API key required.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "https://musicbrainz.org/favicon.ico",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MusicBrainz",
-            AssetName:   "Chronicle.Plugin.MusicBrainz.zip",
-            DllName:     "Chronicle.Plugin.MusicBrainz.dll",
-            Tags:        ["music", "audio", "metadata"],
-            Sha256:      "dc34647a59f0974154f1d3a50bc4872143475b5be6f9af609a1b575fb755ea3b"
+            Sha256:      "dc34647a59f0974154f1d3a50bc4872143475b5be6f9af609a1b575fb755ea3b",
+            Version:     "1.0.2"
         ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.filescanner",
@@ -478,7 +468,8 @@ public class PluginsController : ControllerBase
             AssetName:   "Chronicle.Plugin.FileScanner.zip",
             DllName:     "Chronicle.Plugin.FileScanner.dll",
             Tags:        ["movies", "tv", "audio", "filescanner", "local"],
-            Sha256:      "30f7996b2b3edd47f57084c1c774aa87d137fabdee50ffd3e0a185c2bef730e9"
+            Sha256:      "30f7996b2b3edd47f57084c1c774aa87d137fabdee50ffd3e0a185c2bef730e9",
+            Version:     "1.2.0"
         ),
     ];
 
