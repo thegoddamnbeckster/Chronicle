@@ -459,6 +459,46 @@
   to { transform: rotate(360deg); }
 }
 
+/* ── Scan settings section ──────────────────────────────────────────────── */
+
+.scanSettingsSection {
+  margin-top: 28px;
+}
+
+.scanSettingRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.scanSettingLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.scanSettingName {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.scanSettingHint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.scanSettingControl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 /* ── Collapsible tasks fold ─────────────────────────────────────────────── */
 
 .tasksFold {
