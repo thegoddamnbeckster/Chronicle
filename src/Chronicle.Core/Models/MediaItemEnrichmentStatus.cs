@@ -13,5 +13,11 @@ public class MediaItemEnrichmentStatus
     public DateTime? LastCompletedAt { get; set; }
     public string? ErrorMessage { get; set; }
 
+    /// <summary>
+    /// JSON blob capturing search diagnostics from the last enrichment attempt.
+    /// Null for items never attempted or enriched before this feature was added.
+    /// </summary>
+    public string? DiagnosticsJson { get; set; }
+
     public MediaItem? MediaItem { get; set; }
 }
