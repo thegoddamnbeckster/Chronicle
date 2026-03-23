@@ -52,6 +52,27 @@ function getPlanToLabel(mediaTypeName: string): string {
   return getStatusLabel('PlanToWatch', mediaTypeName)
 }
 
+/**
+ * Returns the plural label for children of an item based on the parent's
+ * media type and how deep in the hierarchy the parent is.
+ *   TV  level 0 → "Seasons",  level 1 → "Episodes"
+ *   music level 0 → "Albums", level 1 → "Tracks"
+ *   anything else → "Items"
+ */
+function getChildrenLabel(parentMediaType: string, ancestorCount: number): string {
+  const t = parentMediaType.toLowerCase()
+  const childLevel = ancestorCount + 1
+  if (t === 'tv') {
+    if (childLevel === 1) return 'Seasons'
+    if (childLevel === 2) return 'Episodes'
+  }
+  if (t === 'music') {
+    if (childLevel === 1) return 'Albums'
+    if (childLevel === 2) return 'Tracks'
+  }
+  return 'Items'
+}
+
 export default function MediaDetailPage() {
   const { id } = useParams<{ id: string }>()
   const mediaId = Number(id)
@@ -410,14 +431,21 @@ export default function MediaDetailPage() {
           // Neither has a number → natural sort on name (handles "E01" < "E02" < "E10")
           return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
         })
+        const childrenLabel = getChildrenLabel(item.mediaTypeName, item.ancestors?.length ?? 0)
+        const childIds = sortedChildren.map(c => c.id)
         return (
         <section className={styles.children}>
           <h2 className={styles.childrenTitle}>
-            {item.mediaTypeName === 'tv' ? 'Seasons' : 'Items'} ({sortedChildren.length})
+            {childrenLabel} ({sortedChildren.length})
           </h2>
           <div className={styles.childGrid}>
             {sortedChildren.map(child => (
-              <Link key={child.id} to={`/media/${child.id}`} className={styles.childCard}>
+              <Link
+                key={child.id}
+                to={`/media/${child.id}`}
+                state={{ listIds: childIds, listLabel: childrenLabel }}
+                className={styles.childCard}
+              >
                 {child.posterUrl
                   ? <img
                       className={styles.childPoster}
