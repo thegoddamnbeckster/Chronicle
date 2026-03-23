@@ -465,7 +465,7 @@ public class MetadataEnrichmentService(
                 row.Status          = EnrichmentStatus.Completed;
                 row.LastCompletedAt = DateTime.UtcNow;
                 row.ErrorMessage    = null;
-                await MergeMetadataAsync(db, row.MediaItem!, row.PluginId, result, ct);
+                MergeMetadata(row.MediaItem!, row.PluginId, result);
             }
         }
         catch (OperationCanceledException) { throw; }
@@ -614,8 +614,7 @@ public class MetadataEnrichmentService(
         bool HasLocalPoster,
         double? ConfidenceScore);
 
-    private static async Task MergeMetadataAsync(ChronicleDbContext db, MediaItem item,
-        string pluginId, MediaMetadata result, CancellationToken ct)
+    private static void MergeMetadata(MediaItem item, string pluginId, MediaMetadata result)
     {
         var existing = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
             item.MetadataJson ?? "{}") ?? [];
@@ -640,7 +639,5 @@ public class MetadataEnrichmentService(
 
         if (!string.IsNullOrEmpty(result.PosterUrl) && string.IsNullOrEmpty(item.PosterUrl))
             item.PosterUrl = result.PosterUrl;
-
-        await db.SaveChangesAsync(ct);
     }
 }
