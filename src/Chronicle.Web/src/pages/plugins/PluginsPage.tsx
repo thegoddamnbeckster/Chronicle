@@ -307,7 +307,12 @@ export default function PluginsPage() {
                       />
                     )}
                     <div className={styles.catalogInfo}>
-                      <div className={styles.catalogName}>{entry.name}</div>
+                      <div className={styles.catalogName}>
+                        {entry.name}
+                        {entry.version && (
+                          <span className={styles.catalogVersion}>v{entry.version}</span>
+                        )}
+                      </div>
                       <div className={styles.catalogDesc}>{entry.description}</div>
                       <div className={styles.catalogMeta}>by {entry.author}</div>
                       <div className={styles.catalogTags}>

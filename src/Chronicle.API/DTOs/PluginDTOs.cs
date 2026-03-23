@@ -55,5 +55,7 @@ public record PluginCatalogEntry(
     /// When set, Chronicle will reject the download if the computed hash does not match,
     /// protecting against a compromised GitHub release or a man-in-the-middle attack.
     /// </summary>
-    string? Sha256 = null
+    string? Sha256 = null,
+    /// <summary>Version string from the plugin's manifest (e.g. "1.2.0").</summary>
+    string Version = ""
 );

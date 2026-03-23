@@ -452,10 +452,24 @@
 }
 
 .catalogName {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 0.2rem;
+}
+
+.catalogVersion {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 0.05rem 0.4rem;
+  flex-shrink: 0;
 }
 
 .catalogDesc {
