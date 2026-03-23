@@ -1,0 +1,123 @@
+.tree {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.82rem;
+}
+
+.node {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.key {
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  padding-top: 1px;
+}
+
+.keyId {
+  font-family: monospace;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  padding-top: 1px;
+}
+
+.collapseBtn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  line-height: 1.4;
+  text-align: left;
+}
+.collapseBtn:hover { color: var(--text); }
+
+.children {
+  padding-left: 16px;
+  border-left: 1px solid var(--border);
+  margin-left: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.valueStr  { color: var(--text); word-break: break-word; }
+.valueNull { color: var(--text-muted); font-style: italic; }
+.valueNum  { color: var(--text); }
+
+.idBadge {
+  font-family: monospace;
+  font-size: 0.78rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.boolTrue {
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(111, 207, 151, 0.12);
+  color: #6fcf97;
+}
+
+.boolFalse {
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.link {
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+.link:hover { text-decoration: underline; }
+
+.thumbnail {
+  max-width: 130px;
+  max-height: 130px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 3px;
+  cursor: zoom-in;
+  display: block;
+  margin-top: 2px;
+}
+
+.inlineList {
+  color: var(--text);
+  word-break: break-word;
+}
+
+.arrayIndex {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-right: 2px;
+  flex-shrink: 0;
+}

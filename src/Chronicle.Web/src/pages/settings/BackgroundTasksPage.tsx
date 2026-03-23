@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import AdvancedToggle from '@/components/ui/AdvancedToggle'
 import {
   getBackgroundTasks,
@@ -217,12 +218,32 @@ function EnrichmentSection({ enrichmentRunning }: EnrichmentSectionProps) {
               {stats.map(s => (
                 <tr key={s.pluginId} className={styles.enrichRow}>
                   <td className={styles.enrichTd}>{s.pluginName}</td>
-                  <td className={styles.enrichTd}>{s.pending}</td>
-                  <td className={styles.enrichTd}>{s.completed}</td>
-                  <td className={styles.enrichTd}>{s.failed}</td>
-                  <td className={styles.enrichTd}>{s.exhausted}</td>
-                  <td className={styles.enrichTd}>{s.notFound}</td>
-                  <td className={styles.enrichTd}>{s.skipped}</td>
+                  {(
+                    [
+                      ['pending',   'Pending'],
+                      ['completed', 'Completed'],
+                      ['failed',    'Failed'],
+                      ['exhausted', 'Exhausted'],
+                      ['notFound',  'NotFound'],
+                      ['skipped',   'Skipped'],
+                    ] as [keyof typeof s, string][]
+                  ).map(([field, statusParam]) => {
+                    const count = s[field] as number
+                    return (
+                      <td key={field} className={styles.enrichTd}>
+                        {count > 0 ? (
+                          <Link
+                            to={`/settings/enrichment/${encodeURIComponent(s.pluginId)}?status=${statusParam}`}
+                            style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
+                          >
+                            {count}
+                          </Link>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)' }}>0</span>
+                        )}
+                      </td>
+                    )
+                  })}
                   <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
                     <button
                       className={styles.runBtn}

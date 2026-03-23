@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { JsonTree } from './JsonTree'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { refreshMediaForPlugin, clearMediaExternalId, suppressMediaMatch } from '@/api/media'
 import type { ExternalId, RefreshLog } from '@/types'
@@ -167,11 +168,21 @@ export function PluginMetadataBox({
     }
 
     if (typeof value === 'object' && value !== null) {
-      // Pretty-print nested objects rather than showing [object Object]
       return (
-        <pre className={styles.value} style={{ whiteSpace: 'pre-wrap', fontSize: '0.75rem', margin: 0 }}>
-          {JSON.stringify(value, null, 2)}
-        </pre>
+        <div className={styles.value}>
+          <JsonTree
+            data={value}
+            depth={0}
+            onImageClick={onImageClick
+              ? (url) => {
+                  const localIdx = imageEntries.findIndex(img => img.url === url)
+                  if (localIdx >= 0) onImageClick(imageStartIndex + localIdx)
+                  else window.open(url, '_blank')
+                }
+              : undefined
+            }
+          />
+        </div>
       )
     }
 
