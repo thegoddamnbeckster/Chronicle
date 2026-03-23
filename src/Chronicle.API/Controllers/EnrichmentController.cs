@@ -119,7 +119,9 @@ public class EnrichmentController(
                 total      = result.Total,
                 page       = result.Page,
                 pageSize   = result.PageSize,
-                totalPages = (int)Math.Ceiling(result.Total / (double)result.PageSize),
+                totalPages = result.PageSize > 0
+                    ? (int)Math.Ceiling(result.Total / (double)result.PageSize)
+                    : 1,
             }
         });
     }
