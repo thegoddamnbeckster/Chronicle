@@ -84,9 +84,10 @@ namespace Chronicle.API.Controllers
             [FromQuery] string? query,
             [FromQuery] int? mediaTypeId,
             [FromQuery] int page = 1,
-            [FromQuery] int perPage = 20)
+            [FromQuery] int perPage = 20,
+            [FromQuery] bool allLevels = false)
         {
-            var results = await _mediaService.SearchAsync(query ?? string.Empty, mediaTypeId, page, perPage);
+            var results = await _mediaService.SearchAsync(query ?? string.Empty, mediaTypeId, page, perPage, allLevels);
             var dtos = results.Select(m => ToDto(m)).ToList();
             return Ok(ApiResponse<List<MediaItemDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }

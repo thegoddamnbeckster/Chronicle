@@ -84,7 +84,7 @@ export default function ListDetailPage() {
     searchTimer.current = setTimeout(async () => {
       setSearching(true)
       try {
-        setSearchResults(await searchMedia(q, undefined, 1))
+        setSearchResults(await searchMedia(q, undefined, 1, true))
       } catch {
         setSearchResults([])
       } finally {

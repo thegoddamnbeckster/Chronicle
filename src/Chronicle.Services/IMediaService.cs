@@ -26,7 +26,7 @@ namespace Chronicle.Services
     {
         Task<MediaItem> CreateAsync(CreateMediaRequest request);
         Task<MediaItem?> GetByIdAsync(int id);
-        Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20);
+        Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20, bool allLevels = false);
         Task<IEnumerable<MediaItem>> GetChildrenAsync(int parentId);
         Task<MediaItem> UpdateAsync(int id, UpdateMediaRequest request);
         Task DeleteAsync(int id);
