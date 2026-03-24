@@ -21,10 +21,12 @@ export interface PluginMetadataBoxProps {
   pluginName: string
   iconUrl?: string | null
   fixMatchHint?: string | null
-  metadata: Record<string, unknown>
+  /** Undefined when enrichment was attempted but returned no match. */
+  metadata?: Record<string, unknown>
+  /** Enrichment status string from the server: "Pending" | "Completed" | "NotFound" | "Failed" | "Exhausted" */
+  enrichmentStatus?: string
   externalIds: ExternalId[]
   refreshLogs?: RefreshLog[] | null
-  hierarchyLevel: number
   /**
    * When provided, clicking an image thumbnail calls this instead of opening
    * the internal lightbox. The argument is the image's index within the
@@ -45,9 +47,9 @@ export function PluginMetadataBox({
   iconUrl,
   fixMatchHint,
   metadata,
+  enrichmentStatus,
   externalIds,
   refreshLogs,
-  hierarchyLevel,
   onImageClick,
   imageStartIndex = 0,
 }: PluginMetadataBoxProps) {
@@ -108,9 +110,9 @@ export function PluginMetadataBox({
 
   // ── Partition metadata fields ──────────────────────────────────────────────
 
-  const imageEntries: ImageEntry[] = extractImages(metadata, SKIP_KEYS)
+  const imageEntries: ImageEntry[] = metadata ? extractImages(metadata, SKIP_KEYS) : []
   const dataRows: { key: string; value: unknown }[] = []
-  for (const [key, value] of Object.entries(metadata)) {
+  for (const [key, value] of Object.entries(metadata ?? {})) {
     const lower = key.toLowerCase()
     if (SKIP_KEYS.has(lower)) continue
     if (value === null || value === undefined) continue
@@ -211,6 +213,14 @@ export function PluginMetadataBox({
                 : `Last refresh failed: ${log.errorMessage ?? 'unknown error'}`}
             </p>
           )}
+          {!log && enrichmentStatus && enrichmentStatus !== 'Completed' && (
+            <p className={styles.timestamp}>
+              {enrichmentStatus === 'NotFound' && 'No match found — use Fix Match to set one manually'}
+              {enrichmentStatus === 'Pending' && 'Enrichment pending…'}
+              {enrichmentStatus === 'Failed' && 'Enrichment failed — will retry automatically'}
+              {enrichmentStatus === 'Exhausted' && 'Enrichment gave up — use Fix Match to set manually'}
+            </p>
+          )}
         </div>
         <div className={styles.actions}>
           <button
@@ -221,54 +231,40 @@ export function PluginMetadataBox({
           >
             {refreshMut.isPending ? 'Refreshing…' : '↻ Refresh'}
           </button>
-          {hierarchyLevel === 0 && (
-            <>
-              <button
-                className={styles.fixMatchBtn}
-                onClick={() => { setFixMatchOpen(v => !v); fixMatchMut.reset() }}
-                title={`Manually specify the correct ${pluginName} match`}
-              >
-                ✎ Fix Match
-              </button>
-              {hasRealId && (
-                <button
-                  className={styles.clearMatchBtn}
-                  onClick={() => clearMatchMut.mutate()}
-                  disabled={clearMatchMut.isPending}
-                  title="Remove this match — refresh will attempt a new auto-search next cycle"
-                >
-                  {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
-                </button>
-              )}
-              {isSuppressed ? (
-                <button
-                  className={styles.resumeMatchBtn}
-                  onClick={() => clearMatchMut.mutate()}
-                  disabled={clearMatchMut.isPending}
-                  title="Re-enable auto-matching for this item"
-                >
-                  {clearMatchMut.isPending ? 'Resuming…' : '↺ Resume Auto-Match'}
-                </button>
-              ) : !hasRealId && (
-                <button
-                  className={styles.suppressMatchBtn}
-                  onClick={() => suppressMut.mutate()}
-                  disabled={suppressMut.isPending}
-                  title="Mark as unmatched — refresh will never auto-search for this item again"
-                >
-                  {suppressMut.isPending ? 'Suppressing…' : '⊘ No Match'}
-                </button>
-              )}
-            </>
-          )}
-          {hierarchyLevel > 0 && hasRealId && (
+          <button
+            className={styles.fixMatchBtn}
+            onClick={() => { setFixMatchOpen(v => !v); fixMatchMut.reset() }}
+            title={`Manually specify the correct ${pluginName} match`}
+          >
+            ✎ Fix Match
+          </button>
+          {hasRealId && (
             <button
               className={styles.clearMatchBtn}
               onClick={() => clearMatchMut.mutate()}
               disabled={clearMatchMut.isPending}
-              title="Remove the stale match from this item"
+              title="Remove this match — refresh will attempt a new auto-search next cycle"
             >
               {clearMatchMut.isPending ? 'Clearing…' : '✕ Clear Match'}
+            </button>
+          )}
+          {isSuppressed ? (
+            <button
+              className={styles.resumeMatchBtn}
+              onClick={() => clearMatchMut.mutate()}
+              disabled={clearMatchMut.isPending}
+              title="Re-enable auto-matching for this item"
+            >
+              {clearMatchMut.isPending ? 'Resuming…' : '↺ Resume Auto-Match'}
+            </button>
+          ) : !hasRealId && (
+            <button
+              className={styles.suppressMatchBtn}
+              onClick={() => suppressMut.mutate()}
+              disabled={suppressMut.isPending}
+              title="Mark as unmatched — refresh will never auto-search for this item again"
+            >
+              {suppressMut.isPending ? 'Suppressing…' : '⊘ No Match'}
             </button>
           )}
         </div>

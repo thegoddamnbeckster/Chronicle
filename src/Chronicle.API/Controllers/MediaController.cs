@@ -80,7 +80,15 @@ namespace Chronicle.API.Controllers
                 parentId = ancestor.ParentId;
             }
 
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, refreshLogs, ancestors.Count > 0 ? ancestors : null)));
+            var enrichmentStatuses = await _context.EnrichmentStatuses
+                .Where(e => e.MediaItemId == id)
+                .Select(e => new { e.PluginId, Status = e.Status.ToString() })
+                .ToListAsync(ct);
+            var enrichmentStatusDict = enrichmentStatuses.Count > 0
+                ? enrichmentStatuses.ToDictionary(e => e.PluginId, e => e.Status)
+                : null;
+
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, refreshLogs, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict)));
         }
 
         [HttpGet("search")]
@@ -276,7 +284,8 @@ namespace Chronicle.API.Controllers
         private static MediaItemDto ToDto(
             Chronicle.Core.Models.MediaItem m,
             IReadOnlyList<Chronicle.Core.Models.MediaItemRefreshLog>? refreshLogs = null,
-            List<AncestorDto>? ancestors = null)
+            List<AncestorDto>? ancestors = null,
+            Dictionary<string, string>? enrichmentStatuses = null)
         {
             var (fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
             var logDtos = refreshLogs?
@@ -300,7 +309,8 @@ namespace Chronicle.API.Controllers
                 FileScannerMeta: fs,
                 PluginMetadata: pluginMeta?.Count > 0 ? pluginMeta : null,
                 RefreshLogs: logDtos,
-                Ancestors: ancestors
+                Ancestors: ancestors,
+                EnrichmentStatuses: enrichmentStatuses
             );
         }
 

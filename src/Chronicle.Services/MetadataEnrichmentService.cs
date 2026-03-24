@@ -443,9 +443,12 @@ public class MetadataEnrichmentService(
                         catch (OperationCanceledException) { throw; }
                         catch (Exception ex)
                         {
-                            logger.LogWarning(ex,
-                                "Follow-up GetByIdAsync failed for ExternalId={ExternalId}; keeping search result",
-                                result.ExternalId);
+                            // Log without stack trace — GetByIdAsync failures are usually transient
+                            // network issues (timeouts, provider outages). The search result is still
+                            // usable for identification; we'll get full metadata on the next refresh.
+                            logger.LogWarning(
+                                "Follow-up GetByIdAsync failed for ExternalId={ExternalId} ({ErrorType}: {ErrorMessage}); keeping search result",
+                                result.ExternalId, ex.GetType().Name, ex.Message);
                         }
                     }
                 }
@@ -471,8 +474,15 @@ public class MetadataEnrichmentService(
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Enrichment failed for item {ItemId} plugin {PluginId}",
-                row.MediaItemId, row.PluginId);
+            // Include stack trace only for unexpected errors; HTTP/timeout errors are self-describing.
+            var isExpected = ex is HttpRequestException or TaskCanceledException or TimeoutException;
+            if (isExpected)
+                logger.LogWarning(
+                    "Enrichment failed for item {ItemId} plugin {PluginId}: {ErrorType}: {ErrorMessage}",
+                    row.MediaItemId, row.PluginId, ex.GetType().Name, ex.Message);
+            else
+                logger.LogWarning(ex, "Enrichment failed for item {ItemId} plugin {PluginId}",
+                    row.MediaItemId, row.PluginId);
             row.RetryCount++;
             row.ErrorMessage = ex.Message;
             row.Status = row.RetryCount >= row.MaxRetries

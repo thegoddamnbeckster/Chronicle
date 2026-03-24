@@ -54,6 +54,10 @@ export interface MediaItem {
    *  Values are raw JSON objects from each plugin — no typed shapes enforced here. */
   pluginMetadata?: Record<string, Record<string, unknown>> | null
   refreshLogs?: RefreshLog[] | null
+  /** Enrichment attempt status per plugin, keyed by plugin ID.
+   *  Present even when pluginMetadata has no entry (e.g. status is "NotFound").
+   *  Values: "Pending" | "Completed" | "NotFound" | "Failed" | "Exhausted" */
+  enrichmentStatuses?: Record<string, string> | null
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────
