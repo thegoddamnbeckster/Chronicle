@@ -130,6 +130,16 @@
   min-width: 0;
 }
 
+.breadcrumb {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0 0 2px;
+}
+
+.breadcrumbSep {
+  opacity: 0.5;
+}
+
 .itemName {
   font-size: 1.05rem;
   font-weight: 600;

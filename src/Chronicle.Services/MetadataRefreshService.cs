@@ -274,11 +274,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             return;
         }
 
-        var providers          = registry.GetMetadataProviders();
+        var providerEntries    = registry.GetMetadataProviderEntries();
         var mediaTypeName      = item.MediaType?.Name ?? string.Empty;
         var normalizedTypeName = ToMediaTypeHint(mediaTypeName);
 
-        foreach (var provider in providers)
+        foreach (var (pluginId, provider) in providerEntries)
         {
             // Normalize the Chronicle media type name (e.g. "movies" → "movie") before
             // checking provider support, so that pluralised DB names don't silently skip items.
@@ -302,10 +302,10 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
 
             try
             {
-                // Resolve external ID for this provider
+                // Resolve external ID for this provider (using full manifest plugin ID)
                 var extId = item.ExternalIds
                     .FirstOrDefault(e =>
-                        string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase))
+                        string.Equals(e.Source, pluginId, StringComparison.OrdinalIgnoreCase))
                     ?.ExternalId;
 
                 // "__suppress__" means the user explicitly opted out of auto-matching for
@@ -334,7 +334,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
                     }
 
                     extId = best.r.ExternalId;
-                    await UpsertExternalIdAsync(db, item.Id, provider.PluginId, extId, ct);
+                    await UpsertExternalIdAsync(db, item.Id, pluginId, extId, ct);
                     item.ExternalIds = await db.MediaExternalIds
                         .Where(e => e.MediaItemId == item.Id)
                         .ToListAsync(ct);
@@ -348,7 +348,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
                 if (!string.IsNullOrWhiteSpace(meta.PosterUrl))     item.PosterUrl      = meta.PosterUrl;
                 if (meta.RuntimeMinutes.HasValue)                    item.RuntimeMinutes = meta.RuntimeMinutes;
 
-                item.MetadataJson = MergeMetadataJson(item.MetadataJson, provider.PluginId, meta);
+                item.MetadataJson = MergeMetadataJson(item.MetadataJson, pluginId, meta);
                 item.UpdatedAt    = DateTime.UtcNow;
                 log.Succeeded     = true;
 
@@ -360,7 +360,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
                 // Stored external ID no longer exists on the provider — remove it so the
                 // next cycle falls back to a fresh search rather than retrying a dead URL.
                 var badIds = item.ExternalIds
-                    .Where(e => string.Equals(e.Source, provider.PluginId, StringComparison.OrdinalIgnoreCase))
+                    .Where(e => string.Equals(e.Source, pluginId, StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 db.MediaExternalIds.RemoveRange(badIds);
 
@@ -408,7 +408,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         MediaItem item,
         CancellationToken ct)
     {
-        var provider = registry.GetMetadataProviders().FirstOrDefault();
+        var firstEntry = registry.GetMetadataProviderEntries().FirstOrDefault();
+        var (providerPluginId, provider) = firstEntry == default
+            ? (string.Empty, (Chronicle.Plugins.IMetadataProvider?)null)
+            : (firstEntry.PluginId, firstEntry.Provider);
+
         var log = new MediaItemRefreshLog
         {
             MediaItemId  = item.Id,
@@ -422,7 +426,6 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             // Clear any stale provider IDs that old code may have written directly onto a child item
             // (but only format-agnostic ones — structured IDs like "tv:1:s1" or "tv:1:s1:e2"
             // are intentionally stored here and should not be wiped).
-            var providerPluginId = provider?.PluginId ?? string.Empty;
             var staleIds = item.ExternalIds
                 .Where(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
                          && e.ExternalId != "__suppress__"
@@ -476,7 +479,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
                 }
                 else
                 {
-                    await RefreshChildWithProviderAsync(db, provider, item, root, directParent, rootExtId, log, ct);
+                    await RefreshChildWithProviderAsync(db, providerPluginId, provider, item, root, directParent, rootExtId, log, ct);
                 }
             }
         }
@@ -501,6 +504,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
     /// </summary>
     private async Task RefreshChildWithProviderAsync(
         ChronicleDbContext db,
+        string fullPluginId,
         Chronicle.Plugins.IMetadataProvider provider,
         MediaItem item,
         MediaItem root,
@@ -513,7 +517,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         if (!TryParseSeriesId(rootExtId, out var seriesId))
         {
             _log.Warning("RefreshChild: cannot parse series ID from '{ExtId}' for child {Id} — falling back to show-level data", rootExtId, item.Id);
-            await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+            await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
             return;
         }
 
@@ -525,14 +529,14 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (tvProvider is null)
             {
                 _log.Information("RefreshChild: provider {P} does not implement ITvDetailProvider; inheriting show data for season {Id}", provider.Name, item.Id);
-                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
                 return;
             }
 
             if (!TryParseSeasonNumber(item.Name, item.Number, out var seasonNumber))
             {
                 _log.Warning("RefreshChild: cannot parse season number from '{Name}' (item {Id}) — falling back to show data", item.Name, item.Id);
-                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
                 return;
             }
 
@@ -543,7 +547,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (season is null)
             {
                 _log.Information("RefreshChild: TMDB returned no data for series {SId} season {SN}; inheriting show data for item {Id}", seriesId, seasonNumber, item.Id);
-                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
                 return;
             }
 
@@ -557,11 +561,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
                 ? null
                 : $"https://image.tmdb.org/t/p/w500{season.PosterPath}";
 
-            item.MetadataJson = MergeSeasonMetadataJson(item.MetadataJson, provider.PluginId, season);
+            item.MetadataJson = MergeSeasonMetadataJson(item.MetadataJson, fullPluginId, season);
             item.UpdatedAt    = DateTime.UtcNow;
 
             // Store structured external ID (will be saved by caller's SaveChangesAsync)
-            await UpsertExternalIdAsync(db, item.Id, provider.PluginId, $"tv:{seriesId}:s{seasonNumber}", ct);
+            await UpsertExternalIdAsync(db, item.Id, fullPluginId, $"tv:{seriesId}:s{seasonNumber}", ct);
 
             log.Succeeded = true;
             _log.Information("RefreshChild: updated season {Id} ({Name}) — series {SId} s{SN}", item.Id, item.Name, seriesId, seasonNumber);
@@ -574,7 +578,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (tvProvider is null)
             {
                 _log.Information("RefreshChild: provider {P} does not implement ITvDetailProvider; inheriting show data for episode {Id}", provider.Name, item.Id);
-                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
                 return;
             }
 
@@ -582,7 +586,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (!TryParseSeasonNumber(directParent?.Name, directParent?.Number, out var seasonNumber))
             {
                 _log.Warning("RefreshChild: cannot parse season number from parent '{Name}' for episode {Id} — falling back", directParent?.Name, item.Id);
-                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
                 return;
             }
 
@@ -590,7 +594,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (episodeNumber is null)
             {
                 _log.Warning("RefreshChild: cannot determine episode number for item {Id} '{Name}' — falling back", item.Id, item.Name);
-                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
                 return;
             }
 
@@ -601,7 +605,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (episode is null)
             {
                 _log.Information("RefreshChild: TMDB returned no data for series {SId} s{SN}e{EN}; inheriting show data for item {Id}", seriesId, seasonNumber, episodeNumber, item.Id);
-                await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+                await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
                 return;
             }
 
@@ -613,11 +617,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (episode.AirDate?.Length >= 4 && int.TryParse(episode.AirDate[..4], out var ey)) item.Year = ey;
             if (episode.RuntimeMinutes.HasValue) item.RuntimeMinutes = episode.RuntimeMinutes;
 
-            item.MetadataJson = MergeEpisodeMetadataJson(item.MetadataJson, provider.PluginId, episode);
+            item.MetadataJson = MergeEpisodeMetadataJson(item.MetadataJson, fullPluginId, episode);
             item.UpdatedAt    = DateTime.UtcNow;
 
             // Store structured external ID (will be saved by caller's SaveChangesAsync)
-            await UpsertExternalIdAsync(db, item.Id, provider.PluginId, $"tv:{seriesId}:s{seasonNumber}:e{episodeNumber}", ct);
+            await UpsertExternalIdAsync(db, item.Id, fullPluginId, $"tv:{seriesId}:s{seasonNumber}:e{episodeNumber}", ct);
 
             log.Succeeded = true;
             _log.Information("RefreshChild: updated episode {Id} ({Name}) — series {SId} s{SN}e{EN}", item.Id, item.Name, seriesId, seasonNumber, episodeNumber);
@@ -625,7 +629,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         }
 
         // ── Deeper levels or non-TV children: inherit show data ───────────────
-        await ApplyShowInheritanceAsync(db, provider, item, root, rootExtId, log, ct);
+        await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
     }
 
     /// <summary>
@@ -635,6 +639,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
     /// </summary>
     private async Task ApplyShowInheritanceAsync(
         ChronicleDbContext db,
+        string fullPluginId,
         Chronicle.Plugins.IMetadataProvider provider,
         MediaItem item,
         MediaItem root,
@@ -650,7 +655,7 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
 
         // Merge parent show's rich metadata (genres, cast, rating) into child's MetadataJson
         // without touching item.Name, item.Year, or item.Overview — those belong to the child.
-        item.MetadataJson = MergeMetadataJson(item.MetadataJson, provider.PluginId, meta);
+        item.MetadataJson = MergeMetadataJson(item.MetadataJson, fullPluginId, meta);
         item.UpdatedAt    = DateTime.UtcNow;
         log.Succeeded     = true;
 
@@ -690,6 +695,12 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         string? existingJson, string pluginId, Chronicle.Plugins.Models.MediaMetadata meta)
     {
         var root = ParseExistingMetaJson(existingJson);
+
+        // Remove any short-ID alias key (e.g. "tmdb") that old code may have written,
+        // so that refreshing under the full ID (e.g. "chronicle.plugin.tmdb") cleans it up.
+        var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+        if (shortId is not null && root.ContainsKey(shortId))
+            root.Remove(shortId);
 
         // Use the full plugin ID as the key (e.g. "chronicle.plugin.tmdb")
         root[pluginId] = new
@@ -791,6 +802,8 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
     private static string MergeSeasonMetadataJson(string? existingJson, string pluginId, TvSeasonDetail season)
     {
         var root = ParseExistingMetaJson(existingJson);
+        var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+        if (shortId is not null && root.ContainsKey(shortId)) root.Remove(shortId);
 
         root[pluginId] = new
         {
@@ -808,6 +821,8 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
     private static string MergeEpisodeMetadataJson(string? existingJson, string pluginId, TvEpisodeDetail episode)
     {
         var root = ParseExistingMetaJson(existingJson);
+        var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+        if (shortId is not null && root.ContainsKey(shortId)) root.Remove(shortId);
 
         root[pluginId] = new
         {

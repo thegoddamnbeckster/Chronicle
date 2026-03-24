@@ -17,7 +17,9 @@ public record EnrichmentItemResult(
     int MaxRetries,
     DateTime? LastAttemptedAt,
     string? DiagnosticsJson,
-    string? FileScannerMetadataJson
+    string? FileScannerMetadataJson,
+    string? ParentName,
+    string? GrandparentName
 );
 
 public record PagedEnrichmentItems(
