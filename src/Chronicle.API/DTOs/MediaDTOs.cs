@@ -66,7 +66,13 @@ namespace Chronicle.API.DTOs
         /// </summary>
         Dictionary<string, JsonElement>? PluginMetadata = null,
         List<RefreshLogDto>? RefreshLogs = null,
-        List<AncestorDto>? Ancestors = null
+        List<AncestorDto>? Ancestors = null,
+        /// <summary>
+        /// Enrichment attempt status per plugin, keyed by plugin ID.
+        /// Present even when PluginMetadata has no entry for that plugin (e.g. NotFound).
+        /// Values: "Pending", "Completed", "NotFound", "Failed", "Exhausted".
+        /// </summary>
+        Dictionary<string, string>? EnrichmentStatuses = null
     );
 
     public record AddToLibraryRequestDto(

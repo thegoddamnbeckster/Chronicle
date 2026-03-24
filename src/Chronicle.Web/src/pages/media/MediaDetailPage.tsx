@@ -332,26 +332,35 @@ export default function MediaDetailPage() {
             )}
           </div>
 
-          {/* Per-plugin metadata boxes — one box per plugin that has data for this item */}
-          {item.pluginMetadata && Object.entries(item.pluginMetadata).map(([pluginId, metadata]) => {
-            const plugin = plugins.find(p => p.pluginId === pluginId)
-            return (
-              <PluginMetadataBox
-                key={pluginId}
-                mediaId={mediaId}
-                pluginId={pluginId}
-                pluginName={plugin?.name ?? pluginId}
-                iconUrl={plugin?.iconUrl}
-                fixMatchHint={plugin?.fixMatchHint}
-                metadata={metadata}
-                externalIds={item.externalIds}
-                refreshLogs={item.refreshLogs}
-                hierarchyLevel={item.hierarchyLevel}
-                onImageClick={(localIdx) => setLightboxIdx((pluginImageOffsets.get(pluginId) ?? 0) + localIdx)}
-                imageStartIndex={pluginImageOffsets.get(pluginId) ?? 0}
-              />
-            )
-          })}
+          {/* Per-plugin metadata boxes — one box per plugin that has data OR has been attempted.
+              This ensures Fix Match is always available, even for NotFound / failed items. */}
+          {(() => {
+            const pluginIds = new Set([
+              ...Object.keys(item.pluginMetadata ?? {}),
+              ...Object.keys(item.enrichmentStatuses ?? {}),
+            ])
+            return Array.from(pluginIds).map(pluginId => {
+              const plugin = plugins.find(p => p.pluginId === pluginId)
+              const metadata = item.pluginMetadata?.[pluginId]
+              const enrichStatus = item.enrichmentStatuses?.[pluginId]
+              return (
+                <PluginMetadataBox
+                  key={pluginId}
+                  mediaId={mediaId}
+                  pluginId={pluginId}
+                  pluginName={plugin?.name ?? pluginId}
+                  iconUrl={plugin?.iconUrl}
+                  fixMatchHint={plugin?.fixMatchHint}
+                  metadata={metadata}
+                  enrichmentStatus={enrichStatus}
+                  externalIds={item.externalIds}
+                  refreshLogs={item.refreshLogs}
+                  onImageClick={(localIdx) => setLightboxIdx((pluginImageOffsets.get(pluginId) ?? 0) + localIdx)}
+                  imageStartIndex={pluginImageOffsets.get(pluginId) ?? 0}
+                />
+              )
+            })
+          })()}
 
           {/* File Scanner box — show whenever the item came from the scanner */}
           {item.fileScannerMeta &&
