@@ -335,8 +335,17 @@ public class MetadataEnrichmentService(
                                 .AsNoTracking()
                                 .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId, ct);
                             if (parent?.ParentId == null)
-                                // Direct child of root = album/season level
-                                idIsValid = entityType is "release-group" or "season" or "tv";
+                            {
+                                // Direct child of root = album/season level.
+                                // For TMDB: a bare "tv" entity type is a stale show-level ID
+                                // (e.g. "tv:157004" stored on a season item) — only valid when
+                                // the full ID contains "/season:" or ":s" making it season-specific.
+                                if (entityType == "tv")
+                                    idIsValid = row.ExternalId.Contains("/season:", StringComparison.OrdinalIgnoreCase)
+                                             || row.ExternalId.Contains(":s", StringComparison.OrdinalIgnoreCase);
+                                else
+                                    idIsValid = entityType is "release-group" or "season";
+                            }
                             else
                                 // Grandchild = track/episode level
                                 idIsValid = entityType is "recording" or "episode";
