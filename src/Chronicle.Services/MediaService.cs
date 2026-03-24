@@ -48,11 +48,14 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(m => m.Id == id);
         }
 
-        public async Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20)
+        public async Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20, bool allLevels = false)
         {
             var q = _context.MediaItems
                 .Include(m => m.MediaType)
-                .Where(m => m.HierarchyLevel == 0);
+                .AsQueryable();
+
+            if (!allLevels)
+                q = q.Where(m => m.HierarchyLevel == 0);
 
             if (!string.IsNullOrWhiteSpace(query))
                 q = q.Where(m => EF.Functions.Like(m.Name, $"%{query}%"));

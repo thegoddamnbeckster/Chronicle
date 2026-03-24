@@ -6,9 +6,9 @@ export async function getMediaTypes(): Promise<MediaTypeOption[]> {
   return data.data ?? []
 }
 
-export async function searchMedia(query: string, mediaTypeId?: number, page = 1): Promise<MediaItem[]> {
+export async function searchMedia(query: string, mediaTypeId?: number, page = 1, allLevels = false): Promise<MediaItem[]> {
   const { data } = await client.get<ApiResponse<MediaItem[]>>('/media/search', {
-    params: { query, mediaTypeId, page, perPage: 20 },
+    params: { query, mediaTypeId, page, perPage: 20, allLevels: allLevels || undefined },
   })
   return data.data ?? []
 }
