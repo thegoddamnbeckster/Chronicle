@@ -66,19 +66,7 @@ namespace Chronicle.API.Controllers
 
             var refreshLogs = await _refreshService.GetRefreshLogsAsync(id, ct);
 
-            // Build ancestor chain for breadcrumb navigation (root items have no ancestors)
-            var ancestors = new List<AncestorDto>();
-            var parentId = item.ParentId;
-            while (parentId != null)
-            {
-                var ancestor = await _context.MediaItems
-                    .Where(m => m.Id == parentId)
-                    .Select(m => new { m.Id, m.Name, m.ParentId })
-                    .FirstOrDefaultAsync(ct);
-                if (ancestor == null) break;
-                ancestors.Insert(0, new AncestorDto(ancestor.Id, ancestor.Name));
-                parentId = ancestor.ParentId;
-            }
+            var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
 
             var enrichmentStatuses = await _context.EnrichmentStatuses
                 .Where(e => e.MediaItemId == id)
@@ -135,8 +123,9 @@ namespace Chronicle.API.Controllers
                 if (item == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
                 var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
+                var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs, enrichmentStatuses: enrichmentStatuses)));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses)));
             }
             catch (Exception ex)
             {
@@ -160,8 +149,9 @@ namespace Chronicle.API.Controllers
             {
                 var item = await _refreshService.RefreshItemForPluginAsync(id, pluginId, dto?.Input, ct);
                 var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
+                var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs, enrichmentStatuses: enrichmentStatuses)));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses)));
             }
             catch (MediaNotFoundException ex)
             {
@@ -281,6 +271,22 @@ namespace Chronicle.API.Controllers
             {
                 return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", ex.Message));
             }
+        }
+
+        private async Task<List<AncestorDto>> BuildAncestorsAsync(int? parentId, CancellationToken ct)
+        {
+            var ancestors = new List<AncestorDto>();
+            while (parentId != null)
+            {
+                var ancestor = await _context.MediaItems
+                    .Where(m => m.Id == parentId)
+                    .Select(m => new { m.Id, m.Name, m.ParentId })
+                    .FirstOrDefaultAsync(ct);
+                if (ancestor == null) break;
+                ancestors.Insert(0, new AncestorDto(ancestor.Id, ancestor.Name));
+                parentId = ancestor.ParentId;
+            }
+            return ancestors;
         }
 
         private async Task<Dictionary<string, string>?> GetEnrichmentStatusDictAsync(int mediaItemId, CancellationToken ct)
