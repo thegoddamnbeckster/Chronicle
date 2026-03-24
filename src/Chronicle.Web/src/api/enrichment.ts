@@ -68,6 +68,8 @@ export interface EnrichmentItem {
   lastAttemptedAt: string | null
   diagnostics: EnrichmentDiagnostics | null
   fileScannerMetadata: Record<string, unknown> | null
+  parentName: string | null
+  grandparentName: string | null
 }
 
 export interface EnrichmentItemsPage {

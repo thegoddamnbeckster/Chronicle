@@ -164,6 +164,9 @@ public class MetadataEnrichmentService(
         IQueryable<MediaItemEnrichmentStatus> query = db.EnrichmentStatuses
             .Include(x => x.MediaItem)
                 .ThenInclude(m => m!.MediaType)
+            .Include(x => x.MediaItem)
+                .ThenInclude(m => m!.Parent)
+                    .ThenInclude(p => p!.Parent)
             .Where(x => x.PluginId == pluginId);
 
         if (!string.IsNullOrEmpty(status) &&
@@ -211,7 +214,9 @@ public class MetadataEnrichmentService(
                 row.MaxRetries,
                 row.LastAttemptedAt,
                 row.DiagnosticsJson,
-                scannerJson);
+                scannerJson,
+                row.MediaItem?.Parent?.Name,
+                row.MediaItem?.Parent?.Parent?.Name);
         }).ToList();
 
         return new PagedEnrichmentItems(items, total, page, pageSize);
@@ -637,6 +642,10 @@ public class MetadataEnrichmentService(
     {
         var existing = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
             item.MetadataJson ?? "{}") ?? [];
+
+        // Remove any short-ID alias key (e.g. "tmdb") that old code may have written.
+        var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+        if (shortId is not null) existing.Remove(shortId);
 
         // Clear the Results/TotalResults fields before serializing — they are search-result
         // list data used by the UI and must not be persisted (they also create a circular
