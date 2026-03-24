@@ -89,6 +89,14 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
       <div className={styles.body}>
         {/* Title + meta */}
         <div>
+          {item.hierarchyLevel > 0 && (item.grandparentName || item.parentName) && (
+            <p className={styles.breadcrumb}>
+              {item.grandparentName && <span>{item.grandparentName}</span>}
+              {item.grandparentName && item.parentName && <span className={styles.breadcrumbSep}> › </span>}
+              {item.parentName && <span>{item.parentName}</span>}
+              <span className={styles.breadcrumbSep}> › </span>
+            </p>
+          )}
           <h3 className={styles.itemName}>
             {item.name}{item.year ? ` (${item.year})` : ''}
           </h3>

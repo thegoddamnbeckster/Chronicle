@@ -107,6 +107,8 @@ public class EnrichmentController(
                 lastAttemptedAt     = r.LastAttemptedAt,
                 diagnostics         = diag,
                 fileScannerMetadata = scanner,
+                parentName          = r.ParentName,
+                grandparentName     = r.GrandparentName,
             };
         });
 

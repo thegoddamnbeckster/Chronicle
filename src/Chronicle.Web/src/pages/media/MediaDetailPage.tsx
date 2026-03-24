@@ -309,7 +309,7 @@ export default function MediaDetailPage() {
           <div className={styles.metaRow}>
             {item.year && <span className={styles.chip}>{item.year}</span>}
             <span className={styles.chip}>{item.mediaTypeName}</span>
-            {item.runtimeMinutes && (
+            {item.runtimeMinutes != null && item.runtimeMinutes > 0 && (
               <span className={styles.chip}>{item.runtimeMinutes} min</span>
             )}
           </div>
