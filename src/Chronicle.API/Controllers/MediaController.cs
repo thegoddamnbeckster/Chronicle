@@ -135,7 +135,8 @@ namespace Chronicle.API.Controllers
                 if (item == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
                 var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs)));
+                var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs, enrichmentStatuses: enrichmentStatuses)));
             }
             catch (Exception ex)
             {
@@ -159,7 +160,8 @@ namespace Chronicle.API.Controllers
             {
                 var item = await _refreshService.RefreshItemForPluginAsync(id, pluginId, dto?.Input, ct);
                 var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs)));
+                var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs, enrichmentStatuses: enrichmentStatuses)));
             }
             catch (MediaNotFoundException ex)
             {
@@ -279,6 +281,15 @@ namespace Chronicle.API.Controllers
             {
                 return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", ex.Message));
             }
+        }
+
+        private async Task<Dictionary<string, string>?> GetEnrichmentStatusDictAsync(int mediaItemId, CancellationToken ct)
+        {
+            var statuses = await _context.EnrichmentStatuses
+                .Where(e => e.MediaItemId == mediaItemId)
+                .Select(e => new { e.PluginId, Status = e.Status.ToString() })
+                .ToListAsync(ct);
+            return statuses.Count > 0 ? statuses.ToDictionary(e => e.PluginId, e => e.Status) : null;
         }
 
         private static MediaItemDto ToDto(
