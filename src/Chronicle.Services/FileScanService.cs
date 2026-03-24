@@ -1168,7 +1168,7 @@ namespace Chronicle.Services
                 var showTitle = file.ShowTitle ?? file.ParsedTitle;
                 if (string.IsNullOrWhiteSpace(showTitle))
                     continue; // skip files with no parseable title
-                var seasonNum = file.SeasonNumber ?? 0; // 0 = "Specials"
+                var seasonNum = file.SeasonNumber ?? 1; // default to Season 1 when not detectable
 
                 if (!shows.TryGetValue(showTitle, out var show))
                 {
