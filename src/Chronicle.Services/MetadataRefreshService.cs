@@ -551,9 +551,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
             if (!string.IsNullOrWhiteSpace(season.Overview)) item.Overview = season.Overview;
             if (season.AirDate?.Length >= 4 && int.TryParse(season.AirDate[..4], out var sy)) item.Year = sy;
 
-            // Poster: use season-specific poster path to build full URL
-            if (!string.IsNullOrEmpty(season.PosterPath))
-                item.PosterUrl = $"https://image.tmdb.org/t/p/w500{season.PosterPath}";
+            // Poster: use season-specific poster path to build full URL.
+            // Always assign (even null) so stale posters from wrong previous matches are cleared.
+            item.PosterUrl = string.IsNullOrEmpty(season.PosterPath)
+                ? null
+                : $"https://image.tmdb.org/t/p/w500{season.PosterPath}";
 
             item.MetadataJson = MergeSeasonMetadataJson(item.MetadataJson, provider.PluginId, season);
             item.UpdatedAt    = DateTime.UtcNow;
