@@ -265,9 +265,11 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         CancellationToken ct)
     {
         // ── Child items (Season, Episode, Track, etc.) ─────────────────────────
-        // Never independently match child items to TMDB by their generic names
-        // (e.g. "Season 01" would match random shows). Walk up to the root item
-        // and inherit its TMDB context instead.
+        // Child items are never matched by name search — a Season called "Season 01"
+        // or a track called "Track 03" would match arbitrary wrong results.
+        // Instead, each provider independently tries to derive or look up the child's
+        // identity from the root item's known external ID (e.g. TV hierarchy traversal)
+        // or from any direct ID the child already has.
         if (item.HierarchyLevel > 0)
         {
             await RefreshChildFromRootCoreAsync(db, registry, item, ct);
@@ -398,9 +400,20 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
     // ── Child refresh ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Refreshes a child item (Season, Episode, Track, etc.) by walking up to the root
-    /// and using the root show's TMDB series ID to call per-season / per-episode APIs.
-    /// Falls back to inheriting show-level metadata if season/episode numbers cannot be parsed.
+    /// Refreshes a child item (season, episode, album, track, etc.) against every registered
+    /// provider that supports the item's media type.  Each provider is tried independently and
+    /// gets its own refresh-log entry.
+    ///
+    /// Per-provider strategy:
+    ///   1. If the child already has a direct external ID for this provider → fetch it directly.
+    ///   2. Otherwise, if the root ancestor has a matching external ID → attempt hierarchy
+    ///      derivation (e.g. TV season/episode via <see cref="ITvDetailProvider"/>).
+    ///   3. Otherwise → log "root not matched to {provider} yet" and skip.
+    ///
+    /// This design is provider-agnostic: TMDB, TVDB, MusicBrainz, Discogs, etc. all go through
+    /// the same loop.  Adding a new provider requires no changes here — only the provider itself
+    /// needs to declare which media types it supports and (optionally) implement a hierarchy
+    /// interface such as <see cref="ITvDetailProvider"/>.
     /// </summary>
     private async Task RefreshChildFromRootCoreAsync(
         ChronicleDbContext db,
@@ -408,94 +421,125 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         MediaItem item,
         CancellationToken ct)
     {
-        var firstEntry = registry.GetMetadataProviderEntries().FirstOrDefault();
-        var (providerPluginId, provider) = firstEntry == default
-            ? (string.Empty, (Chronicle.Plugins.IMetadataProvider?)null)
-            : (firstEntry.PluginId, firstEntry.Provider);
+        var mediaTypeName  = item.MediaType?.Name ?? string.Empty;
+        var normalizedType = ToMediaTypeHint(mediaTypeName);
 
-        var log = new MediaItemRefreshLog
+        // Walk the parent chain once — shared across all provider attempts.
+        MediaItem? root        = null;
+        MediaItem? directParent = null;
+        var currentId = item.ParentId;
+        while (currentId != null)
         {
-            MediaItemId  = item.Id,
-            ProviderName = provider?.Name ?? string.Empty,
-            RefreshedAt  = DateTime.UtcNow,
-            Succeeded    = false
-        };
+            var candidate = await db.MediaItems
+                .Include(m => m.ExternalIds)
+                .FirstOrDefaultAsync(m => m.Id == currentId, ct);
+            if (candidate is null) break;
+            if (directParent is null) directParent = candidate;
+            if (candidate.ParentId is null) { root = candidate; break; }
+            currentId = candidate.ParentId;
+        }
 
-        try
+        foreach (var (providerPluginId, provider) in registry.GetMetadataProviderEntries())
         {
-            // Clear any stale provider IDs that old code may have written directly onto a child item
-            // (but only format-agnostic ones — structured IDs like "tv:1:s1" or "tv:1:s1:e2"
-            // are intentionally stored here and should not be wiped).
-            var staleIds = item.ExternalIds
-                .Where(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
-                         && e.ExternalId != "__suppress__"
-                         && !e.ExternalId.Contains(":s"))   // keep structured season/episode IDs
-                .ToList();
-            if (staleIds.Count > 0)
-            {
-                db.MediaExternalIds.RemoveRange(staleIds);
-                foreach (var s in staleIds) item.ExternalIds.Remove(s);
-                _log.Information("RefreshChild: cleared {Count} stale provider ID(s) from child {Id}", staleIds.Count, item.Id);
-            }
+            // Only process providers that declare support for this item's media type.
+            var supported = provider.GetSupportedMediaTypes()
+                .Any(m => string.Equals(m.MediaTypeName, normalizedType, StringComparison.OrdinalIgnoreCase));
+            if (!supported) continue;
 
-            // Walk parent chain to find root item and direct parent
-            var currentId = item.ParentId;
-            MediaItem? root = null;
-            MediaItem? directParent = null;
-            while (currentId != null)
+            var log = new MediaItemRefreshLog
             {
-                var candidate = await db.MediaItems
-                    .Include(m => m.ExternalIds)
-                    .FirstOrDefaultAsync(m => m.Id == currentId, ct);
-                if (candidate is null) break;
-                if (directParent is null) directParent = candidate;
-                if (candidate.ParentId is null) { root = candidate; break; }
-                currentId = candidate.ParentId;
-            }
+                MediaItemId  = item.Id,
+                ProviderName = provider.Name,
+                RefreshedAt  = DateTime.UtcNow,
+                Succeeded    = false
+            };
 
-            if (root is null)
+            try
             {
-                log.ErrorMessage = "No root item found in parent chain";
-                _log.Warning("RefreshChild: no root found for child {Id}", item.Id);
-                // fall through to save the failed log entry
-            }
-            else
-            {
-                var rootExtId = root.ExternalIds
-                    .FirstOrDefault(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
-                                     && e.ExternalId != "__suppress__")
-                    ?.ExternalId;
-
-                if (rootExtId is null)
+                if (root is null)
                 {
-                    log.ErrorMessage = "Parent show has no TMDB match — refresh the parent first";
-                    _log.Information("RefreshChild: root {RootId} has no TMDB ID, skipping child {Id}", root.Id, item.Id);
-                    // fall through to save the failed log entry
-                }
-                else if (provider is null)
-                {
-                    log.ErrorMessage = "No metadata provider available";
-                    // fall through to save the failed log entry
+                    log.ErrorMessage = "No root item found in parent chain";
+                    _log.Warning("RefreshChild: no root found for child {Id}", item.Id);
                 }
                 else
                 {
-                    await RefreshChildWithProviderAsync(db, providerPluginId, provider, item, root, directParent, rootExtId, log, ct);
+                    // Strategy 1: child already has its own direct ID for this provider.
+                    var ownExtId = item.ExternalIds
+                        .FirstOrDefault(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
+                                          && e.ExternalId != "__suppress__")
+                        ?.ExternalId;
+
+                    if (ownExtId is not null)
+                    {
+                        await RefreshChildDirectAsync(providerPluginId, provider, item, ownExtId, log, ct);
+                    }
+                    else
+                    {
+                        // Strategy 2: derive child identity from the root's known external ID.
+                        var rootExtId = root.ExternalIds
+                            .FirstOrDefault(e => string.Equals(e.Source, providerPluginId, StringComparison.OrdinalIgnoreCase)
+                                             && e.ExternalId != "__suppress__")
+                            ?.ExternalId;
+
+                        if (rootExtId is null)
+                        {
+                            // Root has not been matched to this provider yet — not an error,
+                            // just means the parent needs to be refreshed first.
+                            log.ErrorMessage = $"Root item has not been matched to {provider.Name} yet — refresh the parent first";
+                            _log.Information(
+                                "RefreshChild: root {RootId} has no {Provider} ID; skipping child {Id}",
+                                root.Id, provider.Name, item.Id);
+                        }
+                        else
+                        {
+                            await RefreshChildWithProviderAsync(
+                                db, providerPluginId, provider, item, root, directParent, rootExtId, log, ct);
+                        }
+                    }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            log.ErrorMessage = ex.Message;
-            _log.Warning(ex, "RefreshChild failed for item {Id}", item.Id);
-        }
-        finally
-        {
-            db.MediaItemRefreshLogs.Add(log);
+            catch (Exception ex)
+            {
+                log.ErrorMessage = ex.Message;
+                _log.Warning(ex, "RefreshChild failed for item {Id} via {Provider}", item.Id, provider.Name);
+            }
+            finally
+            {
+                db.MediaItemRefreshLogs.Add(log);
+            }
         }
 
         var stillExists = await db.MediaItems.AnyAsync(m => m.Id == item.Id, ct);
         if (!stillExists) { db.ChangeTracker.Clear(); return; }
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Refreshes a child item using a direct external ID it already has for this provider,
+    /// bypassing hierarchy derivation entirely.
+    /// </summary>
+    private async Task RefreshChildDirectAsync(
+        string fullPluginId,
+        Chronicle.Plugins.IMetadataProvider provider,
+        MediaItem item,
+        string extId,
+        MediaItemRefreshLog log,
+        CancellationToken ct)
+    {
+        var meta = await provider.GetByIdAsync(extId, ct);
+
+        if (!string.IsNullOrWhiteSpace(meta.Title))     item.Name           = meta.Title;
+        if (meta.Year.HasValue)                          item.Year           = meta.Year;
+        if (!string.IsNullOrWhiteSpace(meta.Overview))  item.Overview       = meta.Overview;
+        if (!string.IsNullOrWhiteSpace(meta.PosterUrl)) item.PosterUrl      = meta.PosterUrl;
+        if (meta.RuntimeMinutes.HasValue)                item.RuntimeMinutes = meta.RuntimeMinutes;
+
+        item.MetadataJson = MergeMetadataJson(item.MetadataJson, fullPluginId, meta);
+        item.UpdatedAt    = DateTime.UtcNow;
+        log.Succeeded     = true;
+
+        _log.Information("RefreshChild: refreshed '{Name}' (item {Id}) directly via {Provider}",
+            item.Name, item.Id, provider.Name);
     }
 
     /// <summary>
@@ -513,11 +557,15 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         MediaItemRefreshLog log,
         CancellationToken ct)
     {
-        // Parse TMDB series ID from root external ID (e.g. "tv:1267" → 1267)
+        // The hierarchy derivation path expects a TV-style root ID ("tv:NNNN").
+        // If the root ID uses a different scheme (e.g. "artist:...", "release-group:..."),
+        // this provider does not support TV-style hierarchy for this media type.
         if (!TryParseSeriesId(rootExtId, out var seriesId))
         {
-            _log.Warning("RefreshChild: cannot parse series ID from '{ExtId}' for child {Id} — falling back to show-level data", rootExtId, item.Id);
-            await ApplyShowInheritanceAsync(db, fullPluginId, provider, item, root, rootExtId, log, ct);
+            log.ErrorMessage = $"Provider {provider.Name} does not support hierarchy derivation for root ID format '{rootExtId}'";
+            _log.Information(
+                "RefreshChild: root ID '{ExtId}' is not a TV series ID; skipping hierarchy for child {Id} via {Provider}",
+                rootExtId, item.Id, provider.Name);
             return;
         }
 
@@ -702,17 +750,22 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         if (shortId is not null && root.ContainsKey(shortId))
             root.Remove(shortId);
 
-        // Use the full plugin ID as the key (e.g. "chronicle.plugin.tmdb")
-        root[pluginId] = new
+        // Use the full plugin ID as the key (e.g. "chronicle.plugin.tmdb").
+        // Serialize the full MediaMetadata object (excluding search-result collections)
+        // so that extended data (ExtendedData, AdditionalImages, Tags, etc.) is never lost.
+        var savedResults = meta.Results;
+        var savedTotal   = meta.TotalResults;
+        meta.Results      = null;
+        meta.TotalResults = 0;
+        try
         {
-            rating      = meta.Rating,
-            genres      = meta.Genres,
-            cast        = meta.Cast,
-            directors   = meta.Directors,
-            posterUrl   = meta.PosterUrl,
-            backdropUrl = meta.BackdropUrl,
-            overview    = meta.Overview
-        };
+            root[pluginId] = JsonSerializer.SerializeToElement(meta);
+        }
+        finally
+        {
+            meta.Results      = savedResults;
+            meta.TotalResults = savedTotal;
+        }
 
         return JsonSerializer.Serialize(root);
     }
