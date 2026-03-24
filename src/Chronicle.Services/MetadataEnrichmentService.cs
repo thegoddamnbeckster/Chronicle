@@ -656,7 +656,25 @@ public class MetadataEnrichmentService(
             result.TotalResults = savedTotal;
         }
 
-        if (!string.IsNullOrEmpty(result.PosterUrl) && string.IsNullOrEmpty(item.PosterUrl))
+        if (!string.IsNullOrEmpty(result.PosterUrl))
+        {
+            // Enrichment has a poster — always apply it (overrides stale or missing values)
             item.PosterUrl = result.PosterUrl;
+        }
+        else if (item.HierarchyLevel > 0
+              && item.PosterUrl?.StartsWith("https://image.tmdb.org/", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // Child item (season/episode/track) has a TMDB-hosted poster but the current
+            // enrichment returned no poster.  This means the previous poster was from a
+            // wrong match (e.g. "Season 02" matched to a random show).  Clear it so the
+            // UI shows a placeholder rather than an incorrect image.
+            item.PosterUrl = null;
+        }
+        else if (item.HierarchyLevel == 0 && string.IsNullOrEmpty(item.PosterUrl))
+        {
+            // Root item with no poster yet — nothing to do (keep null)
+        }
+        // Root items with existing posters are left unchanged when enrichment has no poster.
+        // They may have a file-scanner local/NFO poster that should not be wiped.
     }
 }
