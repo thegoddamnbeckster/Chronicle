@@ -4,6 +4,7 @@ using Chronicle.Core.Models.Scan;
 using Chronicle.Data;
 using Chronicle.Core.Exceptions;
 using Chronicle.Plugins;
+using Chronicle.Plugins.Models;
 using Chronicle.Services.Plugins;
 using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
@@ -296,10 +297,12 @@ namespace Chronicle.Services
                         // already handles year matching on the returned candidates.
                         var query = file.ParsedTitle;
 
-                        var searchResult = await provider.SearchAsync(query, file.MediaTypeHint, ct);
+                        var searchResults = await provider.SearchAsync(
+                            new MediaSearchContext(query, file.ParsedYear), ct);
 
-                        foreach (var r in searchResult.Results.Take(5))
+                        foreach (var c in searchResults.Take(5))
                         {
+                            var r = c.Metadata;
                             candidates.Add(new MetadataCandidate(
                                 r.ExternalId,
                                 r.Title,
@@ -915,11 +918,12 @@ namespace Chronicle.Services
                     .Trim();
                 _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by '{Query}'", mediaItemId, query);
                 var hint = ToMediaTypeHint(item.MediaType?.Name ?? string.Empty);
-                var searchResult = await provider.SearchAsync(query, hint, ct);
+                var searchResults = await provider.SearchAsync(
+                    new MediaSearchContext(query, item.Year), ct);
 
                 // Score each candidate by title + year accuracy, prefer exact year match
-                var best = searchResult.Results
-                    .Select(r => new { Result = r, Score = ScoreByNameYear(r.Title, r.Year, item.Name, item.Year) })
+                var best = searchResults
+                    .Select(c => new { Result = c.Metadata, Score = ScoreByNameYear(c.Metadata.Title, c.Metadata.Year, item.Name, item.Year) })
                     .OrderByDescending(x => x.Score)
                     .FirstOrDefault();
 
@@ -1042,10 +1046,10 @@ namespace Chronicle.Services
                 ?? throw new InvalidOperationException(
                     "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
 
-            var result = await provider.SearchAsync(query, mediaTypeHint, ct);
+            var results = await provider.SearchAsync(new MediaSearchContext(query), ct);
 
-            return result.Results
-                .Select(r => new MetadataCandidate(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, 0))
+            return results
+                .Select(c => new MetadataCandidate(c.Metadata.ExternalId, c.Metadata.Title, c.Metadata.Year, c.Metadata.PosterUrl, c.Metadata.Overview, c.Metadata.Rating, 0))
                 .ToList();
         }
 

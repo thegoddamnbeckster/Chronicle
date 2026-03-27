@@ -59,7 +59,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
         mockProvider.Setup(p => p.GetSupportedMediaTypes())
             .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
-        mockProvider.Setup(p => p.SearchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockProvider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Connection refused"));
         _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
             .Returns(mockProvider.Object);
@@ -81,7 +81,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
         mockProvider.Setup(p => p.GetSupportedMediaTypes())
             .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
-        mockProvider.Setup(p => p.SearchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockProvider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("Still broken"));
         _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
             .Returns(mockProvider.Object);

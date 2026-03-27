@@ -36,11 +36,13 @@ public interface IMetadataProvider
 
     // ── Core operations ───────────────────────────────────────────────────────
 
-    /// <summary>Searches for media matching <paramref name="query"/>.</summary>
-    /// <param name="mediaType">Hint for the provider (e.g. "movie", "tv").</param>
-    Task<MediaMetadata> SearchAsync(
-        string query,
-        string mediaType,
+    /// <summary>
+    /// Searches for media matching <paramref name="context"/> and returns scored candidates.
+    /// The plugin is responsible for query construction, candidate retrieval, and scoring (0–100).
+    /// Chronicle applies the confidence threshold to decide accept/reject.
+    /// </summary>
+    Task<IReadOnlyList<ScoredCandidate>> SearchAsync(
+        MediaSearchContext context,
         CancellationToken ct = default);
 
     /// <summary>Fetches full metadata for the item identified by the provider's external id.</summary>

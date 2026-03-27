@@ -94,8 +94,9 @@ internal sealed class FakeMetadataProvider : IMetadataProvider
     public PluginSettingsSchema GetSettingsSchema() => new();
     public void Configure(IReadOnlyDictionary<string, string> settings) { }
 
-    public Task<MediaMetadata> SearchAsync(string query, string mediaType, CancellationToken ct = default) =>
-        Task.FromResult(new MediaMetadata { Title = "Fake Result" });
+    public Task<IReadOnlyList<ScoredCandidate>> SearchAsync(MediaSearchContext context, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ScoredCandidate>>(
+            [new ScoredCandidate(new MediaMetadata { Title = "Fake Result" }, Score: 90)]);
 
     public Task<MediaMetadata> GetByIdAsync(string externalId, CancellationToken ct = default) =>
         Task.FromResult(new MediaMetadata { ExternalId = externalId });
