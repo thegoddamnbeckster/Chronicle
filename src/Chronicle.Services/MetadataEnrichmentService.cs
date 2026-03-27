@@ -16,18 +16,77 @@ public class MetadataEnrichmentService(
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
 
-    // ── New unified entry points (implemented in Tasks 7–9) ───────────────────
-    public Task EnrichItemAsync(int mediaItemId, string pluginId,
-        EnrichmentOptions options, CancellationToken ct = default)
-        => throw new NotImplementedException("Task 7");
+    // ── Unified entry points ───────────────────────────────────────────────────
 
-    public Task EnrichItemAsync(int mediaItemId,
+    public async Task EnrichItemAsync(
+        int mediaItemId, string pluginId,
         EnrichmentOptions options, CancellationToken ct = default)
-        => throw new NotImplementedException("Task 8");
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
 
-    public Task<IReadOnlyList<EnrichmentRecord>> GetEnrichmentRecordsAsync(
+        var item = await db.MediaItems
+            .Include(m => m.MediaType)
+            .Include(m => m.Parent)
+            .FirstOrDefaultAsync(m => m.Id == mediaItemId, ct);
+        if (item is null) return;
+
+        var provider = registry.GetMetadataProvider(pluginId);
+        if (provider is null) return;
+
+        await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct);
+    }
+
+    public async Task EnrichItemAsync(
+        int mediaItemId, EnrichmentOptions options, CancellationToken ct = default)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
+
+        var item = await db.MediaItems
+            .Include(m => m.MediaType)
+            .Include(m => m.Parent)
+            .FirstOrDefaultAsync(m => m.Id == mediaItemId, ct);
+        if (item is null) return;
+
+        var mediaTypeName = NormalizeMediaTypeName(item.MediaType?.Name ?? string.Empty);
+
+        foreach (var (pluginId, provider) in registry.GetMetadataProviderEntries())
+        {
+            ct.ThrowIfCancellationRequested();
+            var supported = provider.GetSupportedMediaTypes()
+                .Any(t => string.Equals(
+                    NormalizeMediaTypeName(t.MediaTypeName), mediaTypeName,
+                    StringComparison.OrdinalIgnoreCase));
+            if (!supported) continue;
+
+            try { await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "EnrichItemAsync all-plugins: plugin {P} failed for item {Id}", pluginId, mediaItemId);
+            }
+        }
+    }
+
+    public async Task<IReadOnlyList<EnrichmentRecord>> GetEnrichmentRecordsAsync(
         int mediaItemId, CancellationToken ct = default)
-        => throw new NotImplementedException("Task 9");
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+        var rows = await db.MediaEnrichments
+            .Where(e => e.MediaItemId == mediaItemId)
+            .ToListAsync(ct);
+
+        return rows.Select(r => new EnrichmentRecord(
+            r.PluginId, r.ExternalId, r.Status,
+            r.LastCompletedAt, r.ErrorMessage, r.DiagnosticsJson))
+            .ToList();
+    }
 
     // ── Background / batch operations ─────────────────────────────────────────
     public async Task EnrichPendingAsync(string pluginId, CancellationToken ct = default)
@@ -720,5 +779,264 @@ public class MetadataEnrichmentService(
         }
         // Root items with existing posters are left unchanged when enrichment has no poster.
         // They may have a file-scanner local/NFO poster that should not be wiped.
+    }
+
+    // ── EnrichItemCoreAsync ────────────────────────────────────────────────────
+
+    private const int DefaultConfidenceThreshold = 50;
+
+    private async Task EnrichItemCoreAsync(
+        ChronicleDbContext db,
+        IMetadataProvider provider,
+        string pluginId,
+        MediaItem item,
+        EnrichmentOptions options,
+        CancellationToken ct)
+    {
+        // 1. Load or create enrichment row
+        var row = await db.MediaEnrichments
+            .FirstOrDefaultAsync(e => e.MediaItemId == item.Id && e.PluginId == pluginId, ct);
+        if (row is null)
+        {
+            row = new MediaItemEnrichment
+                { MediaItemId = item.Id, PluginId = pluginId, MaxRetries = 3 };
+            db.MediaEnrichments.Add(row);
+        }
+
+        // 2. FillGaps skip
+        if (options.Mode == EnrichmentMode.FillGaps
+            && row.Status == EnrichmentStatus.Completed
+            && options.IdOverride is null)
+        {
+            if (options.Cascade)
+                await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct);
+            return;
+        }
+
+        row.LastAttemptedAt = DateTime.UtcNow;
+        MediaMetadata? result   = null;
+        string?        resolvedId = null;
+
+        try
+        {
+            // 3a. IdOverride
+            if (options.IdOverride is not null)
+            {
+                resolvedId = options.IdOverride.Trim();
+            }
+            // 3b. Stored ID — validate hierarchy level
+            else if (!string.IsNullOrEmpty(row.ExternalId) && IsIdValidForLevel(row.ExternalId, item))
+            {
+                resolvedId = row.ExternalId;
+            }
+            // 3c. Parent-derived ID
+            else if (item.ParentId is not null)
+            {
+                resolvedId = await TryDeriveFromParentAsync(db, pluginId, item, ct);
+            }
+
+            // Fetch if we have a resolved ID from 3a/3b/3c
+            if (resolvedId is not null)
+            {
+                result = await provider.GetByIdAsync(resolvedId, ct);
+                if (result is null) resolvedId = null; // provider returned nothing — fall through to search
+            }
+
+            // 3d. Search (root items with no resolved ID only)
+            if (result is null && item.ParentId is null)
+            {
+                var childCount = await db.MediaItems.CountAsync(m => m.ParentId == item.Id, ct);
+                var ctx = new Chronicle.Plugins.Models.MediaSearchContext(
+                    Name:           NormalizeSearchName(item.Name),
+                    Year:           item.Year,
+                    ChildCount:     childCount > 0 ? childCount : null,
+                    HierarchyLevel: item.HierarchyLevel);
+
+                var candidates = await provider.SearchAsync(ctx, ct);
+                var best = candidates.OrderByDescending(c => c.Score).FirstOrDefault();
+
+                StoreDiagnosticsJson(row, ctx.Name, candidates);
+
+                if (best is null || best.Score < DefaultConfidenceThreshold
+                    || string.IsNullOrEmpty(best.Metadata.ExternalId))
+                {
+                    row.Status = EnrichmentStatus.NotFound;
+                    await db.SaveChangesAsync(ct);
+                    return;
+                }
+
+                resolvedId = best.Metadata.ExternalId;
+                result = await provider.GetByIdAsync(resolvedId, ct);
+                result ??= best.Metadata;
+            }
+
+            if (result is null || string.IsNullOrEmpty(resolvedId))
+            {
+                row.Status = EnrichmentStatus.NotFound;
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+
+            // 6. Merge losslessly
+            MergeProviderResult(item, pluginId, result);
+
+            // 7. Update row
+            row.ExternalId      = resolvedId;
+            row.Status          = EnrichmentStatus.Completed;
+            row.LastCompletedAt = DateTime.UtcNow;
+            row.ErrorMessage    = null;
+            row.RetryCount      = 0;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            var isExpected = ex is HttpRequestException or TaskCanceledException
+                                                         or TimeoutException
+                                                         or OperationCanceledException;
+            if (isExpected)
+                logger.LogWarning(
+                    "Enrichment transient error for item {ItemId} plugin {PluginId}: {Type}: {Msg}",
+                    item.Id, pluginId, ex.GetType().Name, ex.Message);
+            else
+                logger.LogWarning(ex, "Enrichment failed for item {ItemId} plugin {PluginId}",
+                    item.Id, pluginId);
+
+            row.RetryCount++;
+            row.ErrorMessage = ex.Message;
+            row.Status = row.RetryCount >= row.MaxRetries
+                ? EnrichmentStatus.Exhausted
+                : EnrichmentStatus.Failed;
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        // 8. Cascade to children
+        if (options.Cascade)
+            await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct);
+    }
+
+    private static bool IsIdValidForLevel(string externalId, MediaItem item)
+    {
+        var sep = externalId.IndexOf(':');
+        if (sep <= 0) return true;
+        var prefix = externalId[..sep];
+        if (item.ParentId is null)
+            return prefix is "artist" or "movie" or "tv";
+        // Child-level: reject bare show-level IDs on season/episode rows
+        if (prefix == "tv" && !externalId.Contains('/'))
+            return false;
+        return true;
+    }
+
+    private async Task<string?> TryDeriveFromParentAsync(
+        ChronicleDbContext db, string pluginId, MediaItem item, CancellationToken ct)
+    {
+        var parentRow = await db.MediaEnrichments
+            .FirstOrDefaultAsync(e => e.MediaItemId == item.ParentId && e.PluginId == pluginId, ct);
+
+        if (parentRow?.ExternalId is null || parentRow.Status != EnrichmentStatus.Completed)
+            return null;
+
+        if (item.Number is null) return null;
+
+        var parentId = parentRow.ExternalId;
+
+        if (item.HierarchyLevel == 1)
+            return $"{parentId}/season:{item.Number}";
+
+        if (item.HierarchyLevel == 2)
+        {
+            var grandparentRow = await db.MediaEnrichments
+                .Include(e => e.MediaItem)
+                .FirstOrDefaultAsync(e => e.MediaItem!.Id == item.Parent!.ParentId
+                                       && e.PluginId == pluginId, ct);
+            if (grandparentRow?.ExternalId is null) return null;
+            var seasonNum = item.Parent?.Number;
+            if (seasonNum is null) return null;
+            return $"{grandparentRow.ExternalId}/season:{seasonNum}/episode:{item.Number}";
+        }
+
+        return null;
+    }
+
+    private async Task CascadeToChildrenAsync(
+        ChronicleDbContext db, IMetadataProvider provider, string pluginId,
+        MediaItem parent, EnrichmentOptions options, CancellationToken ct)
+    {
+        var children = await db.MediaItems
+            .Include(m => m.MediaType)
+            .Include(m => m.Parent)
+            .Where(m => m.ParentId == parent.Id)
+            .OrderBy(m => m.Number).ThenBy(m => m.Name)
+            .ToListAsync(ct);
+
+        foreach (var child in children)
+        {
+            if (ct.IsCancellationRequested) return;
+            try
+            {
+                await EnrichItemCoreAsync(db, provider, pluginId, child,
+                    options with { IdOverride = null }, ct);
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Cascade: failed enriching child {Id} '{Name}'",
+                    child.Id, child.Name);
+            }
+        }
+    }
+
+    private static string NormalizeSearchName(string name) =>
+        System.Text.RegularExpressions.Regex
+            .Replace(name, @"[:\-,\.']", " ")
+            .Replace("  ", " ")
+            .Trim()
+            .ToLowerInvariant();
+
+    private static void StoreDiagnosticsJson(
+        MediaItemEnrichment row, string query,
+        IReadOnlyList<Chronicle.Plugins.Models.ScoredCandidate> candidates)
+    {
+        var top5 = candidates.OrderByDescending(c => c.Score).Take(5)
+            .Select(c => new { c.Metadata.Title, c.Metadata.Year,
+                               c.Metadata.ExternalId, c.Score, c.ScoreReason })
+            .ToList();
+        row.DiagnosticsJson = JsonSerializer.Serialize(new
+        {
+            query,
+            threshold          = DefaultConfidenceThreshold,
+            candidatesReturned = candidates.Count,
+            topCandidates      = top5
+        });
+    }
+
+    private static void MergeProviderResult(MediaItem item, string pluginId, MediaMetadata meta)
+    {
+        var existing = JsonSerializer
+            .Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson ?? "{}") ?? [];
+
+        var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+        if (shortId is not null) existing.Remove(shortId);
+
+        var savedResults = meta.Results;
+        var savedTotal   = meta.TotalResults;
+        meta.Results      = null;
+        meta.TotalResults = 0;
+        try   { existing[pluginId] = JsonSerializer.SerializeToElement(meta); }
+        finally { meta.Results = savedResults; meta.TotalResults = savedTotal; }
+        item.MetadataJson = JsonSerializer.Serialize(existing);
+
+        if (!string.IsNullOrWhiteSpace(meta.PosterUrl))  item.PosterUrl      = meta.PosterUrl;
+        if (!string.IsNullOrWhiteSpace(meta.Overview))   item.Overview       = meta.Overview;
+        if (meta.RuntimeMinutes.HasValue)                 item.RuntimeMinutes = meta.RuntimeMinutes;
+
+        if (item.HierarchyLevel == 0)
+        {
+            if (!string.IsNullOrWhiteSpace(meta.Title)) item.Name = meta.Title;
+            if (meta.Year.HasValue)                      item.Year = meta.Year;
+        }
+
+        item.UpdatedAt = DateTime.UtcNow;
     }
 }
