@@ -265,6 +265,151 @@ public class MetadataEnrichmentServiceTests : IDisposable
         result.Items[0].Name.Should().Be("Metallica");
     }
 
+    // ── EnrichItemAsync (unified) tests ───────────────────────────────────────
+
+    [Fact]
+    public async Task EnrichItemAsync_UsesIdOverrideDirectly()
+    {
+        var item = await SeedRootItem("Wrong Movie", 2000);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.GetByIdAsync("movie:999", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:999" });
+
+        var opts = new EnrichmentOptions(EnrichmentMode.Force, IdOverride: "movie:999", Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        var row = await _db.MediaEnrichments
+            .FirstAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.tmdb");
+        row.ExternalId.Should().Be("movie:999");
+        row.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
+    public async Task EnrichItemAsync_FillGaps_SkipsCompleted()
+    {
+        var item = await SeedRootItem("Blade Runner", 1982);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", "movie:78", EnrichmentStatus.Completed);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+
+        var opts = new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnrichItemAsync_Force_UsesStoredExternalId()
+    {
+        var item = await SeedRootItem("Blade Runner", 1982);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", "movie:78", EnrichmentStatus.Completed);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:78" });
+
+        var opts = new EnrichmentOptions(EnrichmentMode.Force, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        provider.Verify(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnrichItemAsync_SearchesWhenNoStoredId()
+    {
+        var item = await SeedRootItem("Blade Runner", 1982);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:78" }, Score: 80)
+            });
+        provider.Setup(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:78" });
+
+        var opts = new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        var row = await _db.MediaEnrichments.FirstAsync(e => e.MediaItemId == item.Id);
+        row.ExternalId.Should().Be("movie:78");
+        row.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
+    public async Task EnrichItemAsync_SearchBelowThreshold_SetsNotFound()
+    {
+        var item = await SeedRootItem("Xyzzy Unmatched", null);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Something Else", ExternalId = "movie:1" }, Score: 20)
+            });
+
+        var opts = new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        var row = await _db.MediaEnrichments.FirstAsync(e => e.MediaItemId == item.Id);
+        row.Status.Should().Be(EnrichmentStatus.NotFound);
+        row.ExternalId.Should().BeNull();
+    }
+
+    // ── New helpers ───────────────────────────────────────────────────────────
+
+    private async Task<MediaItem> SeedRootItem(string name, int? year)
+    {
+        if (_mediaType == null!)
+        {
+            _mediaType = new MediaType
+            {
+                Name = "movies", DisplayName = "Movies", HierarchyLevels = 1,
+                HierarchyLabels = "Movie", InteractionVerb = "watched", ProgressUnit = "movies"
+            };
+            _db.MediaTypes.Add(_mediaType);
+            await _db.SaveChangesAsync();
+        }
+
+        var item = new MediaItem
+        {
+            Name = name, Year = year, MediaTypeId = _mediaType.Id,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+        return item;
+    }
+
+    private async Task<MediaItemEnrichment> SeedEnrichmentRow(
+        int itemId, string pluginId, string? externalId, EnrichmentStatus status)
+    {
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = itemId, PluginId = pluginId,
+            ExternalId = externalId, Status = status, MaxRetries = 3
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+        return row;
+    }
+
+    private Mock<IMetadataProvider> SetupProvider(string pluginId, string mediaTypeName)
+    {
+        var mock = new Mock<IMetadataProvider>();
+        mock.Setup(p => p.PluginId).Returns(pluginId);
+        mock.Setup(p => p.GetSupportedMediaTypes())
+            .Returns(new[] { new MediaTypeSupport { MediaTypeName = mediaTypeName } });
+        _registry.Setup(r => r.GetMetadataProvider(pluginId)).Returns(mock.Object);
+        _registry.Setup(r => r.GetMetadataProviderEntries())
+            .Returns(new[] { (pluginId, mock.Object) });
+        return mock;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private async Task<(MediaItem, MediaItemEnrichmentStatus)> SeedItemWithStatus(
