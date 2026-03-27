@@ -26,6 +26,7 @@ namespace Chronicle.Data
         public DbSet<BackgroundTask> BackgroundTasks => Set<BackgroundTask>();
         public DbSet<ScanFolder> ScanFolders => Set<ScanFolder>();
         public DbSet<MediaItemEnrichmentStatus> EnrichmentStatuses { get; set; }
+        public DbSet<MediaItemEnrichment> MediaEnrichments { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -320,6 +321,18 @@ namespace Chronicle.Data
             modelBuilder.Entity<MediaItemEnrichmentStatus>(e =>
             {
                 e.ToTable("media_item_enrichment_status");
+                e.HasKey(x => x.Id);
+                e.HasIndex(x => new { x.MediaItemId, x.PluginId }).IsUnique();
+                e.Property(x => x.Status).HasConversion<string>();
+                e.HasOne(x => x.MediaItem)
+                 .WithMany()
+                 .HasForeignKey(x => x.MediaItemId)
+                 .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<MediaItemEnrichment>(e =>
+            {
+                e.ToTable("media_enrichment");
                 e.HasKey(x => x.Id);
                 e.HasIndex(x => new { x.MediaItemId, x.PluginId }).IsUnique();
                 e.Property(x => x.Status).HasConversion<string>();
