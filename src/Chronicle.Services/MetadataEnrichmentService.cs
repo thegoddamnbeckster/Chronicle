@@ -453,15 +453,13 @@ public class MetadataEnrichmentService(
                         }
                     }
 
-                    var searchResult = await provider.SearchAsync(searchQuery, mediaTypeName, ct);
+                    var searchResults = await provider.SearchAsync(
+                        new MediaSearchContext(row.MediaItem.Name, row.MediaItem.Year, HierarchyLevel: 0), ct);
 
                     // Capture candidates for diagnostics BEFORE GetByIdAsync might overwrite result
-                    rawCandidates = searchResult?.Results?.Take(5).ToList()
-                        ?? (searchResult is not null
-                            ? new List<MediaMetadata> { searchResult }
-                            : new List<MediaMetadata>());
+                    rawCandidates = searchResults.Take(5).Select(c => c.Metadata).ToList();
 
-                    result = searchResult;
+                    result = searchResults.OrderByDescending(c => c.Score).FirstOrDefault()?.Metadata;
 
                     // SearchAsync returns only search-index fields (no cover art).
                     // If we got a match, fetch the full entity so that PosterUrl
@@ -505,11 +503,14 @@ public class MetadataEnrichmentService(
                 MergeMetadata(row.MediaItem!, row.PluginId, result);
             }
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             // Include stack trace only for unexpected errors; HTTP/timeout errors are self-describing.
-            var isExpected = ex is HttpRequestException or TaskCanceledException or TimeoutException;
+            // Note: HttpClient timeout throws TaskCanceledException with its own internal token —
+            // that is NOT an external cancellation and must be caught here so the batch continues.
+            var isExpected = ex is HttpRequestException or TaskCanceledException or TimeoutException
+                                                        or OperationCanceledException;
             if (isExpected)
                 logger.LogWarning(
                     "Enrichment failed for item {ItemId} plugin {PluginId}: {ErrorType}: {ErrorMessage}",
