@@ -8,7 +8,7 @@ namespace Chronicle.Plugins.Models;
 public record MediaSearchContext(
     /// <summary>Item name, pre-normalised by Chronicle (punctuation stripped, lowercased).</summary>
     string  Name,
-    int?    Year,
+    int?    Year              = null,
     /// <summary>Parent item name — artist for an album, show for a season.</summary>
     string? ParentName        = null,
     /// <summary>Grandparent item name — artist for a track.</summary>
