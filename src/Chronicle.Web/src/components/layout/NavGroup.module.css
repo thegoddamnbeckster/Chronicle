@@ -42,5 +42,5 @@
 }
 
 .childrenOpen {
-  max-height: 400px; /* large enough for any realistic nav group */
+  max-height: 600px; /* large enough for nested nav groups */
 }

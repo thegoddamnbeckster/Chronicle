@@ -270,7 +270,11 @@ export default function ListDetailPage() {
                 </span>
               )}
               <div className={styles.itemInfo}>
-                <Link to={`/media/${item.mediaItem.id}`} className={styles.itemName}>
+                <Link
+                  to={`/media/${item.mediaItem.id}`}
+                  state={{ listIds: list.items.map(i => i.mediaItem.id), listLabel: list.name }}
+                  className={styles.itemName}
+                >
                   {item.mediaItem.name}
                 </Link>
                 <span className={styles.itemMeta}>
