@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
 import { getScanStatus } from '@/api/scan'
 import { getDiagnostics } from '@/api/diagnostics'
+import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import NavGroup from './NavGroup'
 import ActivityPanel from './ActivityPanel'
 import AppFooter from './AppFooter'
@@ -12,6 +13,8 @@ import styles from './Layout.module.css'
 export default function Layout() {
   const { user, logout } = useAuth()
   const [version, setVersion] = useState<string | undefined>()
+  const mainRef = useRef<HTMLElement>(null)
+  useScrollRestoration(mainRef)
 
   useEffect(() => {
     getDiagnostics()
@@ -46,26 +49,28 @@ export default function Layout() {
 
         {/* Media group — default open */}
         <NavGroup label="Media" storageKey="nav_group_media" defaultOpen={true}>
-          <NavLink to="/media/add" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Add Media
-          </NavLink>
-          {scanStatus?.available && (
-            <NavLink to="/scan" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-              File Scan
-            </NavLink>
-          )}
           <NavLink to="/history" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             History
           </NavLink>
-          <NavLink to="/import" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Import
-          </NavLink>
-          <NavLink to="/library" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Library
-          </NavLink>
-          <NavLink to="/lists" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Lists
-          </NavLink>
+          <NavGroup label="Library" storageKey="nav_group_library" defaultOpen={true}>
+            <NavLink to="/library" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              Library
+            </NavLink>
+            <NavLink to="/media/add" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              Add Media
+            </NavLink>
+            {scanStatus?.available && (
+              <NavLink to="/scan" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+                File Scan
+              </NavLink>
+            )}
+            <NavLink to="/import" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              Import
+            </NavLink>
+            <NavLink to="/lists" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              Lists
+            </NavLink>
+          </NavGroup>
         </NavGroup>
 
         {/* Settings group — default closed */}
@@ -98,7 +103,7 @@ export default function Layout() {
         <ActivityPanel />
       </nav>
 
-      <main className={styles.content}>
+      <main ref={mainRef} className={styles.content}>
         <Outlet />
       </main>
 

@@ -63,7 +63,7 @@ function getPlanToLabel(mediaTypeName: string): string {
 function getChildrenLabel(parentMediaType: string, ancestorCount: number): string {
   const t = parentMediaType.toLowerCase()
   const childLevel = ancestorCount + 1
-  if (t === 'tv') {
+  if (t === 'tv' || t === 'tv shows') {
     if (childLevel === 1) return 'Seasons'
     if (childLevel === 2) return 'Episodes'
   }
