@@ -385,7 +385,7 @@ public class PluginsController : ControllerBase
 
         try
         {
-            var result = await loaded.MetadataProviders[0].SearchAsync(query, mediaType, ct);
+            var result = await loaded.MetadataProviders[0].SearchAsync(new MediaSearchContext(query), ct);
             return Ok(ApiResponse<object>.Ok(result));
         }
         catch (InvalidOperationException ex)

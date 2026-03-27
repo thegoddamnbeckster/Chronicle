@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
+using Chronicle.Plugins.Models;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -321,10 +322,9 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
 
                 if (extId is null)
                 {
-                    var hint         = ToMediaTypeHint(mediaTypeName);
-                    var searchResult = await provider.SearchAsync(item.Name, hint, ct);
-                    var best         = searchResult.Results
-                        .Select(r => new { r, Score = ScoreByNameYear(r.Title, r.Year, item.Name, item.Year) })
+                    var searchResults = await provider.SearchAsync(new MediaSearchContext(item.Name, item.Year), ct);
+                    var best          = searchResults
+                        .Select(c => new { r = c.Metadata, Score = ScoreByNameYear(c.Metadata.Title, c.Metadata.Year, item.Name, item.Year) })
                         .OrderByDescending(x => x.Score)
                         .FirstOrDefault();
 

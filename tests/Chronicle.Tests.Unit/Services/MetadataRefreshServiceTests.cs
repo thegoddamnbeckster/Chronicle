@@ -161,13 +161,10 @@ public class MetadataRefreshServiceTests
 
         // SearchAsync returns a result list
         providerMock
-            .Setup(p => p.SearchAsync("Fight Club", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MediaMetadata
+            .Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
             {
-                Results =
-                [
-                    new MediaMetadata { ExternalId = "movie:550", Title = "Fight Club", Year = 1999, Source = "tmdb" }
-                ]
+                new(new MediaMetadata { ExternalId = "movie:550", Title = "Fight Club", Year = 1999, Source = "tmdb" }, Score: 90)
             });
 
         // GetByIdAsync returns full metadata for the top result
@@ -187,7 +184,7 @@ public class MetadataRefreshServiceTests
 
         // Assert
         providerMock.Verify(
-            p => p.SearchAsync("Fight Club", It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()),
             Times.Once);
 
         providerMock.Verify(
