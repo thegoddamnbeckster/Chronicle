@@ -931,3 +931,39 @@ public sealed class MetadataRefreshService : IMetadataRefreshService
         return score;
     }
 }
+
+// TODO: delete with MetadataRefreshService (Task 12) — ITvDetailProvider and its detail types relocated
+// here temporarily after ITvDetailProvider.cs was removed in the unified-enrichment refactor.
+internal interface ITvDetailProvider
+{
+    Task<TvSeasonDetail?> GetTvSeasonAsync(int seriesId, int seasonNumber, CancellationToken ct = default);
+    Task<TvEpisodeDetail?> GetTvEpisodeAsync(int seriesId, int seasonNumber, int episodeNumber, CancellationToken ct = default);
+}
+
+internal sealed class TvSeasonDetail
+{
+    public int?    SeasonId     { get; set; }
+    public int     SeasonNumber { get; set; }
+    public string? Name         { get; set; }
+    public string? Overview     { get; set; }
+    public string? AirDate      { get; set; }
+    public string? PosterPath   { get; set; }
+    public double? VoteAverage  { get; set; }
+    public int?    EpisodeCount { get; set; }
+    public string? RawJson      { get; set; }
+}
+
+internal sealed class TvEpisodeDetail
+{
+    public int     SeasonNumber  { get; set; }
+    public int     EpisodeNumber { get; set; }
+    public string? Name          { get; set; }
+    public string? Overview      { get; set; }
+    public string? AirDate       { get; set; }
+    public string? StillPath     { get; set; }
+    public double? VoteAverage   { get; set; }
+    public int?    RuntimeMinutes { get; set; }
+    public List<string> GuestStars { get; set; } = [];
+    public List<string> Crew       { get; set; } = [];
+    public string? RawJson         { get; set; }
+}
