@@ -16,6 +16,20 @@ public class MetadataEnrichmentService(
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
 
+    // ── New unified entry points (implemented in Tasks 7–9) ───────────────────
+    public Task EnrichItemAsync(int mediaItemId, string pluginId,
+        EnrichmentOptions options, CancellationToken ct = default)
+        => throw new NotImplementedException("Task 7");
+
+    public Task EnrichItemAsync(int mediaItemId,
+        EnrichmentOptions options, CancellationToken ct = default)
+        => throw new NotImplementedException("Task 8");
+
+    public Task<IReadOnlyList<EnrichmentRecord>> GetEnrichmentRecordsAsync(
+        int mediaItemId, CancellationToken ct = default)
+        => throw new NotImplementedException("Task 9");
+
+    // ── Background / batch operations ─────────────────────────────────────────
     public async Task EnrichPendingAsync(string pluginId, CancellationToken ct = default)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
