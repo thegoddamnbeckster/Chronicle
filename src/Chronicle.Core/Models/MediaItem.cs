@@ -29,6 +29,5 @@ namespace Chronicle.Core.Models
         public MediaItem? Parent { get; set; }
         public ICollection<MediaItem> Children { get; set; } = new List<MediaItem>();
         public ICollection<MediaExternalId> ExternalIds { get; set; } = new List<MediaExternalId>();
-        public ICollection<MediaItemRefreshLog> RefreshLogs { get; set; } = new List<MediaItemRefreshLog>();
     }
 }

@@ -22,10 +22,8 @@ namespace Chronicle.Data
         public DbSet<MediaListItem> MediaListItems => Set<MediaListItem>();
         public DbSet<DeviceAuthCode> DeviceAuthCodes => Set<DeviceAuthCode>();
         public DbSet<AppSetting> AppSettings => Set<AppSetting>();
-        public DbSet<MediaItemRefreshLog> MediaItemRefreshLogs => Set<MediaItemRefreshLog>();
         public DbSet<BackgroundTask> BackgroundTasks => Set<BackgroundTask>();
         public DbSet<ScanFolder> ScanFolders => Set<ScanFolder>();
-        public DbSet<MediaItemEnrichmentStatus> EnrichmentStatuses { get; set; }
         public DbSet<MediaItemEnrichment> MediaEnrichments { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -255,18 +253,6 @@ namespace Chronicle.Data
                 e.Property(s => s.Value).IsRequired();
             });
 
-            modelBuilder.Entity<MediaItemRefreshLog>(e =>
-            {
-                e.ToTable("media_item_refresh_log");
-                e.HasKey(l => l.Id);
-                e.Property(l => l.ProviderName).HasMaxLength(200).IsRequired();
-                e.HasIndex(l => new { l.MediaItemId, l.ProviderName });
-                e.HasOne(l => l.MediaItem)
-                 .WithMany(m => m.RefreshLogs)
-                 .HasForeignKey(l => l.MediaItemId)
-                 .OnDelete(DeleteBehavior.Cascade);
-            });
-
             modelBuilder.Entity<BackgroundTask>(e =>
             {
                 e.ToTable("background_tasks");
@@ -316,18 +302,6 @@ namespace Chronicle.Data
                     .WithMany()
                     .HasForeignKey(e => e.ApiTokenId)
                     .OnDelete(DeleteBehavior.SetNull);
-            });
-
-            modelBuilder.Entity<MediaItemEnrichmentStatus>(e =>
-            {
-                e.ToTable("media_item_enrichment_status");
-                e.HasKey(x => x.Id);
-                e.HasIndex(x => new { x.MediaItemId, x.PluginId }).IsUnique();
-                e.Property(x => x.Status).HasConversion<string>();
-                e.HasOne(x => x.MediaItem)
-                 .WithMany()
-                 .HasForeignKey(x => x.MediaItemId)
-                 .OnDelete(DeleteBehavior.Cascade);
             });
 
             modelBuilder.Entity<MediaItemEnrichment>(e =>

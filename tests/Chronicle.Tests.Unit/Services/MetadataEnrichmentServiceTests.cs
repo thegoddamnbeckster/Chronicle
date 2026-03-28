@@ -45,7 +45,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
 
-        var updated = await _db.EnrichmentStatuses.FindAsync(status.Id);
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
         updated!.Status.Should().Be(EnrichmentStatus.Completed);
         updated.LastCompletedAt.Should().NotBeNull();
     }
@@ -66,7 +66,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
 
-        var updated = await _db.EnrichmentStatuses.FindAsync(status.Id);
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
         updated!.Status.Should().Be(EnrichmentStatus.Failed);
         updated.RetryCount.Should().Be(1);
         updated.ErrorMessage.Should().Contain("Connection refused");
@@ -88,7 +88,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
 
-        var updated = await _db.EnrichmentStatuses.FindAsync(status.Id);
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
         updated!.Status.Should().Be(EnrichmentStatus.Exhausted);
         updated.RetryCount.Should().Be(3);
     }
@@ -100,7 +100,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         await _svc.ResetAsync("chronicle.plugin.musicbrainz", ResetScope.Single, item.Id);
 
-        var updated = await _db.EnrichmentStatuses.FindAsync(status.Id);
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
         updated!.Status.Should().Be(EnrichmentStatus.Pending);
         updated.RetryCount.Should().Be(0);
         updated.ErrorMessage.Should().BeNull();
@@ -113,7 +113,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         await _svc.SkipAsync(item.Id, "chronicle.plugin.musicbrainz");
 
-        var updated = await _db.EnrichmentStatuses.FindAsync(status.Id);
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
         updated!.Status.Should().Be(EnrichmentStatus.Skipped);
     }
 
@@ -166,7 +166,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
 
-        var updated = await _db.EnrichmentStatuses.FindAsync(status.Id);
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
         updated!.Status.Should().Be(EnrichmentStatus.NotFound);
     }
 
@@ -178,8 +178,8 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         await _svc.ResetAsync("chronicle.plugin.musicbrainz", ResetScope.AllExhausted);
 
-        var exhausted = await _db.EnrichmentStatuses.FindAsync(exhaustedStatus.Id);
-        var skipped   = await _db.EnrichmentStatuses.FindAsync(skippedStatus.Id);
+        var exhausted = await _db.MediaEnrichments.FindAsync(exhaustedStatus.Id);
+        var skipped   = await _db.MediaEnrichments.FindAsync(skippedStatus.Id);
         exhausted!.Status.Should().Be(EnrichmentStatus.Pending);
         exhausted.RetryCount.Should().Be(0);
         skipped!.Status.Should().Be(EnrichmentStatus.Skipped); // unchanged
@@ -193,8 +193,8 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         await _svc.ResetAsync("chronicle.plugin.musicbrainz", ResetScope.AllForPlugin);
 
-        var failed  = await _db.EnrichmentStatuses.FindAsync(failedStatus.Id);
-        var skipped = await _db.EnrichmentStatuses.FindAsync(skippedStatus.Id);
+        var failed  = await _db.MediaEnrichments.FindAsync(failedStatus.Id);
+        var skipped = await _db.MediaEnrichments.FindAsync(skippedStatus.Id);
         failed!.Status.Should().Be(EnrichmentStatus.Pending);
         skipped!.Status.Should().Be(EnrichmentStatus.Skipped); // unchanged
     }
@@ -412,7 +412,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private async Task<(MediaItem, MediaItemEnrichmentStatus)> SeedItemWithStatus(
+    private async Task<(MediaItem, MediaItemEnrichment)> SeedItemWithStatus(
         string? externalId, EnrichmentStatus status,
         int retryCount = 0, int maxRetries = 3,
         string pluginId = "chronicle.plugin.musicbrainz",
@@ -444,7 +444,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         _db.MediaItems.Add(item);
         await _db.SaveChangesAsync();
 
-        var row = new MediaItemEnrichmentStatus
+        var row = new MediaItemEnrichment
         {
             MediaItemId = item.Id,
             PluginId    = pluginId,
@@ -453,7 +453,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
             RetryCount  = retryCount,
             MaxRetries  = maxRetries
         };
-        _db.EnrichmentStatuses.Add(row);
+        _db.MediaEnrichments.Add(row);
         await _db.SaveChangesAsync();
 
         return (item, row);
