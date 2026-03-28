@@ -120,6 +120,33 @@ public class MetadataEnrichmentService(
         }
     }
 
+    public async Task ResyncAllForPluginAsync(string pluginId, CancellationToken ct = default)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+        var libraryItemIds = await db.UserLibraries
+            .Select(ul => ul.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var rootIds = await db.MediaItems
+            .Where(m => libraryItemIds.Contains(m.Id) && m.HierarchyLevel == 0)
+            .Select(m => m.Id)
+            .ToListAsync(ct);
+
+        logger.LogInformation(
+            "ResyncAllForPlugin {PluginId}: force-refreshing {Count} root items",
+            pluginId, rootIds.Count);
+
+        foreach (var id in rootIds)
+        {
+            ct.ThrowIfCancellationRequested();
+            await EnrichItemAsync(id, pluginId,
+                new EnrichmentOptions(EnrichmentMode.Force, Cascade: true), ct);
+        }
+    }
+
     public async Task EnrichAllAsync(CancellationToken ct = default)
     {
         await using var scope = scopeFactory.CreateAsyncScope();

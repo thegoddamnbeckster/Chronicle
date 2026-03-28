@@ -1,5 +1,6 @@
 using Chronicle.API.DTOs;
 using Chronicle.Core.Exceptions;
+using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -15,15 +16,15 @@ namespace Chronicle.API.Controllers
     {
         private readonly IMediaService _mediaService;
         private readonly IFileScanService _fileScanService;
-        private readonly IMetadataRefreshService _refreshService;
+        private readonly IMetadataEnrichmentService _enrichment;
         private readonly ChronicleDbContext _context;
 
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
-            IMetadataRefreshService refreshService, ChronicleDbContext context)
+            IMetadataEnrichmentService enrichment, ChronicleDbContext context)
         {
             _mediaService    = mediaService;
             _fileScanService = fileScanService;
-            _refreshService  = refreshService;
+            _enrichment      = enrichment;
             _context         = context;
         }
 
@@ -64,19 +65,11 @@ namespace Chronicle.API.Controllers
             if (item == null)
                 return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
-            var refreshLogs = await _refreshService.GetRefreshLogsAsync(id, ct);
-
+            var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
             var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
+            var enrichmentStatusDict = await GetEnrichmentStatusDictAsync(id, ct);
 
-            var enrichmentStatuses = await _context.EnrichmentStatuses
-                .Where(e => e.MediaItemId == id)
-                .Select(e => new { e.PluginId, Status = e.Status.ToString() })
-                .ToListAsync(ct);
-            var enrichmentStatusDict = enrichmentStatuses.Count > 0
-                ? enrichmentStatuses.ToDictionary(e => e.PluginId, e => e.Status)
-                : null;
-
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, refreshLogs, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict)));
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict)));
         }
 
         [HttpGet("search")]
@@ -119,14 +112,15 @@ namespace Chronicle.API.Controllers
         {
             try
             {
-                await _refreshService.RefreshItemAsync(id, ct);
+                await _enrichment.EnrichItemAsync(id,
+                    new EnrichmentOptions(EnrichmentMode.Force, Cascade: true), ct);
                 var item = await _mediaService.GetByIdAsync(id);
                 if (item == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
-                var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
+                var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
                 var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses)));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses)));
             }
             catch (Exception ex)
             {
@@ -148,11 +142,18 @@ namespace Chronicle.API.Controllers
         {
             try
             {
-                var item = await _refreshService.RefreshItemForPluginAsync(id, pluginId, dto?.Input, ct);
-                var logs = await _refreshService.GetRefreshLogsAsync(id, ct);
+                var opts = new EnrichmentOptions(
+                    EnrichmentMode.Force,
+                    IdOverride: string.IsNullOrWhiteSpace(dto?.Input) ? null : dto.Input.Trim(),
+                    Cascade: false);
+                await _enrichment.EnrichItemAsync(id, pluginId, opts, ct);
+                var item = await _mediaService.GetByIdAsync(id);
+                if (item == null)
+                    return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+                var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
                 var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, logs, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses)));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses)));
             }
             catch (MediaNotFoundException ex)
             {
@@ -292,22 +293,28 @@ namespace Chronicle.API.Controllers
 
         private async Task<Dictionary<string, string>?> GetEnrichmentStatusDictAsync(int mediaItemId, CancellationToken ct)
         {
-            var statuses = await _context.EnrichmentStatuses
+            var rows = await _context.MediaEnrichments
                 .Where(e => e.MediaItemId == mediaItemId)
                 .Select(e => new { e.PluginId, Status = e.Status.ToString() })
                 .ToListAsync(ct);
-            return statuses.Count > 0 ? statuses.ToDictionary(e => e.PluginId, e => e.Status) : null;
+            return rows.Count > 0 ? rows.ToDictionary(e => e.PluginId, e => e.Status) : null;
         }
 
         private static MediaItemDto ToDto(
             Chronicle.Core.Models.MediaItem m,
-            IReadOnlyList<Chronicle.Core.Models.MediaItemRefreshLog>? refreshLogs = null,
+            IReadOnlyList<EnrichmentRecord>? enrichmentRecords = null,
             List<AncestorDto>? ancestors = null,
             Dictionary<string, string>? enrichmentStatuses = null)
         {
             var (fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
-            var logDtos = refreshLogs?
-                .Select(l => new RefreshLogDto(l.ProviderName, l.RefreshedAt, l.Succeeded, l.ErrorMessage))
+            // Map enrichment records to RefreshLogDto for frontend compatibility
+            var logDtos = enrichmentRecords?
+                .Where(r => r.LastCompletedAt.HasValue || r.ErrorMessage is not null)
+                .Select(r => new RefreshLogDto(
+                    r.PluginId,
+                    r.LastCompletedAt ?? DateTime.UtcNow,
+                    r.Status == EnrichmentStatus.Completed,
+                    r.ErrorMessage))
                 .ToList();
             return new MediaItemDto(
                 m.Id,
