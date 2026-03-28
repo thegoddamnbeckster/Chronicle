@@ -52,7 +52,6 @@ public sealed class DuplicateCleanupService : IScheduledTask
         // can have a physical file path to match on.
         var itemsWithPaths = await context.MediaItems
             .Include(m => m.ExternalIds)
-            .Include(m => m.RefreshLogs)
             .Where(m => m.MetadataJson != null
                      && EF.Functions.Like(m.MetadataJson, "%fileScanner%"))
             .ToListAsync(ct);
@@ -156,12 +155,9 @@ public sealed class DuplicateCleanupService : IScheduledTask
         foreach (var child in loserChildren)
             child.ParentId = winner.Id;
 
-        // ── Owned records — simply delete (not worth migrating logs/IDs) ──────────
+        // ── Owned records — simply delete (not worth migrating) ──────────────────
         context.MediaExternalIds.RemoveRange(
             await context.MediaExternalIds.Where(e => e.MediaItemId == loser.Id).ToListAsync(ct));
-
-        context.MediaItemRefreshLogs.RemoveRange(
-            await context.MediaItemRefreshLogs.Where(l => l.MediaItemId == loser.Id).ToListAsync(ct));
 
         // ── Finally delete the loser ──────────────────────────────────────────────
         context.MediaItems.Remove(loser);
@@ -177,7 +173,6 @@ public sealed class DuplicateCleanupService : IScheduledTask
         if (!string.IsNullOrEmpty(item.PosterUrl))  score += 40;
         if (!string.IsNullOrEmpty(item.Overview))   score += 30;
         if (item.ExternalIds.Any())                 score += 20;
-        if (item.RefreshLogs.Any())                 score += 10;
         return score;
     }
 

@@ -211,7 +211,7 @@ public class PluginService : IPluginService
     }
 
     /// <summary>
-    /// Inserts pending <see cref="MediaItemEnrichmentStatus"/> rows for every existing
+    /// Inserts pending <see cref="MediaItemEnrichment"/> rows for every existing
     /// <see cref="MediaItem"/> whose media type is supported by <paramref name="provider"/>.
     /// Rows that already exist are skipped.
     /// </summary>
@@ -238,7 +238,7 @@ public class PluginService : IPluginService
         if (itemIds.Count == 0)
             return;
 
-        var existingSet = (await _db.EnrichmentStatuses
+        var existingSet = (await _db.MediaEnrichments
             .Where(x => x.PluginId == manifestPluginId && itemIds.Contains(x.MediaItemId))
             .Select(x => x.MediaItemId)
             .ToListAsync(ct))
@@ -249,7 +249,7 @@ public class PluginService : IPluginService
             if (existingSet.Contains(itemId))
                 continue;
 
-            _db.EnrichmentStatuses.Add(new MediaItemEnrichmentStatus
+            _db.MediaEnrichments.Add(new MediaItemEnrichment
             {
                 MediaItemId = itemId,
                 PluginId    = manifestPluginId,
