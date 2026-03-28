@@ -176,9 +176,6 @@ builder.Services.AddHostedService<PluginHostService>();
 // System IScheduledTask implementations are registered as singletons so the same
 // instance is shared between IScheduledTask (consumed by TaskSchedulerService) and
 // any additional service interfaces.
-// MetadataRefreshService no longer implements IScheduledTask — it is scoped and
-// invoked via IPluginTaskRunner (per-plugin task architecture).
-builder.Services.AddScoped<IMetadataRefreshService, MetadataRefreshService>();
 
 builder.Services.AddSingleton<DuplicateCleanupService>();
 builder.Services.AddSingleton<IScheduledTask>(
