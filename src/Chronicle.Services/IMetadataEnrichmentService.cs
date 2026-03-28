@@ -41,6 +41,10 @@ public interface IMetadataEnrichmentService
     /// <summary>Run enrichment for all pending/retryable items for a specific plugin.</summary>
     Task EnrichPendingAsync(string pluginId, CancellationToken ct = default);
 
+    /// <summary>Force-refresh all library root items for a specific plugin (cascade=true).
+    /// Replaces the old MetadataRefreshService.RefreshForPluginAsync.</summary>
+    Task ResyncAllForPluginAsync(string pluginId, CancellationToken ct = default);
+
     /// <summary>Run enrichment for all registered plugins.</summary>
     Task EnrichAllAsync(CancellationToken ct = default);
 
