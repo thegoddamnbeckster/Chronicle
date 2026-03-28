@@ -36,6 +36,7 @@ export default defineConfig({
   },
   server: {
     port: webPort,
+    host: true,
     strictPort: false,
     proxy: {
       // Scan endpoints are long-running: enumerating a large movie folder

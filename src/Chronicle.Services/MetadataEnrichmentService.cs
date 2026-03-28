@@ -103,7 +103,7 @@ public class MetadataEnrichmentService(
         }
 
         var cutoff = DateTime.UtcNow - RetryWindow;
-        var rows = await db.EnrichmentStatuses
+        var rows = await db.MediaEnrichments
             .Include(x => x.MediaItem)
             .Where(x => x.PluginId == pluginId &&
                         (x.Status == EnrichmentStatus.Pending ||
@@ -164,7 +164,7 @@ public class MetadataEnrichmentService(
         await using var svc = scopeFactory.CreateAsyncScope();
         var db = svc.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        IQueryable<MediaItemEnrichmentStatus> query = db.EnrichmentStatuses
+        IQueryable<MediaItemEnrichment> query = db.MediaEnrichments
             .Where(x => x.PluginId == pluginId);
 
         query = scope switch
@@ -193,7 +193,7 @@ public class MetadataEnrichmentService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        var row = await db.EnrichmentStatuses
+        var row = await db.MediaEnrichments
             .FirstOrDefaultAsync(x => x.MediaItemId == mediaItemId && x.PluginId == pluginId, ct);
         if (row is not null)
         {
@@ -220,7 +220,7 @@ public class MetadataEnrichmentService(
             .ToListAsync(ct);
 
         // Enrichment counts grouped by plugin ID
-        var rows = await db.EnrichmentStatuses
+        var rows = await db.MediaEnrichments
             .GroupBy(x => x.PluginId)
             .Select(g => new
             {
@@ -261,7 +261,7 @@ public class MetadataEnrichmentService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        IQueryable<MediaItemEnrichmentStatus> query = db.EnrichmentStatuses
+        IQueryable<MediaItemEnrichment> query = db.MediaEnrichments
             .Include(x => x.MediaItem)
                 .ThenInclude(m => m!.MediaType)
             .Include(x => x.MediaItem)
@@ -325,7 +325,7 @@ public class MetadataEnrichmentService(
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private async Task EnrichOneAsync(ChronicleDbContext db, IMetadataProvider provider,
-        MediaItemEnrichmentStatus row, CancellationToken ct)
+        MediaItemEnrichment row, CancellationToken ct)
     {
         row.LastAttemptedAt = DateTime.UtcNow;
         string searchQuery = string.Empty;
@@ -418,7 +418,7 @@ public class MetadataEnrichmentService(
                 if (parentItem?.ParentId is not null)
                 {
                     // ── Episode level: parent=season, grandparent=show ──────────────
-                    var showEnrichment = await db.EnrichmentStatuses
+                    var showEnrichment = await db.MediaEnrichments
                         .FirstOrDefaultAsync(
                             e => e.MediaItemId == parentItem.ParentId && e.PluginId == row.PluginId,
                             ct);
@@ -458,7 +458,7 @@ public class MetadataEnrichmentService(
                 else
                 {
                     // ── Season level: parent=show ───────────────────────────────────
-                    var showEnrichment = await db.EnrichmentStatuses
+                    var showEnrichment = await db.MediaEnrichments
                         .FirstOrDefaultAsync(
                             e => e.MediaItemId == parentId && e.PluginId == row.PluginId,
                             ct);

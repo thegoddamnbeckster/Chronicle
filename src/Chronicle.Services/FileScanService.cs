@@ -1570,7 +1570,7 @@ namespace Chronicle.Services
         // ── Enrichment seeding ───────────────────────────────────────────────────
 
         /// <summary>
-        /// Inserts pending <see cref="MediaItemEnrichmentStatus"/> rows for each of
+        /// Inserts pending <see cref="MediaItemEnrichment"/> rows for each of
         /// <paramref name="itemIds"/> against every installed <see cref="IMetadataProvider"/>
         /// that supports <paramref name="mediaTypeName"/>. Existing rows are skipped.
         /// </summary>
@@ -1595,7 +1595,7 @@ namespace Chronicle.Services
                 if (!supportedNames.Any(n => NormalizeMediaTypeName(n) == NormalizeMediaTypeName(mediaTypeName)))
                     continue;
 
-                var existingSet = (await _context.EnrichmentStatuses
+                var existingSet = (await _context.MediaEnrichments
                     .Where(x => x.PluginId == manifestPluginId && itemIds.Contains(x.MediaItemId))
                     .Select(x => x.MediaItemId)
                     .ToListAsync(ct))
@@ -1606,7 +1606,7 @@ namespace Chronicle.Services
                     if (existingSet.Contains(itemId))
                         continue;
 
-                    _context.EnrichmentStatuses.Add(new Chronicle.Core.Models.MediaItemEnrichmentStatus
+                    _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
                     {
                         MediaItemId = itemId,
                         PluginId    = manifestPluginId,

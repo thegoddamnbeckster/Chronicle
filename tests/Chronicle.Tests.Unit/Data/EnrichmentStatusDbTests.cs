@@ -35,17 +35,17 @@ public class EnrichmentStatusDbTests : IDisposable
         _db.MediaItems.Add(item);
         await _db.SaveChangesAsync();
 
-        var status = new MediaItemEnrichmentStatus
+        var enrichment = new MediaItemEnrichment
         {
             MediaItemId = item.Id,
             PluginId    = "chronicle.plugin.musicbrainz",
             Status      = EnrichmentStatus.Pending,
             MaxRetries  = 3
         };
-        _db.EnrichmentStatuses.Add(status);
+        _db.MediaEnrichments.Add(enrichment);
         await _db.SaveChangesAsync();
 
-        var retrieved = await _db.EnrichmentStatuses.FirstAsync(x => x.MediaItemId == item.Id);
+        var retrieved = await _db.MediaEnrichments.FirstAsync(x => x.MediaItemId == item.Id);
         retrieved.Status.Should().Be(EnrichmentStatus.Pending);
         retrieved.PluginId.Should().Be("chronicle.plugin.musicbrainz");
     }

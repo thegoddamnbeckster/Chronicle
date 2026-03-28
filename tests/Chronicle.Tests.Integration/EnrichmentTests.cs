@@ -184,7 +184,7 @@ public class EnrichmentTests : IClassFixture<ChronicleApiFactory>
         db.MediaItems.Add(item);
         db.SaveChanges();
 
-        db.EnrichmentStatuses.Add(new MediaItemEnrichmentStatus
+        db.MediaEnrichments.Add(new MediaItemEnrichment
         {
             MediaItemId = item.Id,
             PluginId    = pluginId,
