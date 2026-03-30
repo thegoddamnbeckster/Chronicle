@@ -1483,6 +1483,51 @@ namespace Chronicle.Services
             }
         }
 
+        public async Task BackfillFolderPathsAsync(CancellationToken ct = default)
+        {
+            // Find items where fileScanner.folderPath is explicitly JSON null.
+            // The literal text `"folderPath":null` will always be present because
+            // JsonSerializer serializes nullable reference types as null, not omitting them.
+            var candidates = await _context.MediaItems
+                .Where(m => m.MetadataJson != null
+                         && EF.Functions.Like(m.MetadataJson, "%\"folderPath\":null%"))
+                .ToListAsync(ct);
+
+            int updated = 0;
+            foreach (var item in candidates)
+            {
+                try
+                {
+                    var node = System.Text.Json.Nodes.JsonNode.Parse(item.MetadataJson!);
+                    if (node is not System.Text.Json.Nodes.JsonObject root) continue;
+                    if (root["fileScanner"] is not System.Text.Json.Nodes.JsonObject fs) continue;
+
+                    // Only backfill if folderPath is truly null (not missing)
+                    if (!fs.ContainsKey("folderPath") || fs["folderPath"] is not null) continue;
+
+                    var filePaths = fs["filePaths"]?.AsArray();
+                    if (filePaths is null || filePaths.Count == 0) continue;
+
+                    var firstFile = filePaths[0]?.GetValue<string>();
+                    if (string.IsNullOrEmpty(firstFile)) continue;
+
+                    var folderPath = Path.GetDirectoryName(firstFile);
+                    if (string.IsNullOrEmpty(folderPath)) continue;
+
+                    fs["folderPath"] = folderPath;
+                    item.MetadataJson = root.ToJsonString();
+                    updated++;
+                }
+                catch { /* skip malformed JSON */ }
+            }
+
+            if (updated > 0)
+                await _context.SaveChangesAsync(ct);
+
+            _log.Information("BackfillFolderPaths: updated {Count} of {Total} candidate items",
+                updated, candidates.Count);
+        }
+
         private async Task<(MediaItem Item, bool IsNew)> UpsertGroupItemAsync(
             ScanGroupImport group, int mediaTypeId,
             int? parentId, int hierarchyLevel, CancellationToken ct)

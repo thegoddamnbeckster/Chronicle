@@ -80,5 +80,13 @@ namespace Chronicle.Services
         /// </summary>
         Task<int> GetConfidenceThresholdAsync(CancellationToken ct = default);
 
+        /// <summary>
+        /// One-time data migration: finds all file-scanner MediaItems where
+        /// <c>fileScanner.folderPath</c> was stored as JSON null and backfills it
+        /// from the first entry in <c>filePaths</c>. Safe to call on every startup —
+        /// items already having a non-null folderPath are skipped.
+        /// </summary>
+        Task BackfillFolderPathsAsync(CancellationToken ct = default);
+
     }
 }
