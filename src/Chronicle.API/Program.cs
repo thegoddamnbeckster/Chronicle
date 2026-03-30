@@ -302,6 +302,10 @@ using (var scope = app.Services.CreateScope())
         // migrations, which can hang on Windows. Only call Migrate() when needed.
         if (db.Database.GetPendingMigrations().Any())
             db.Database.Migrate();
+
+        // Backfill folderPath for items imported before it was wired up.
+        var fileScanService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IFileScanService>();
+        await fileScanService.BackfillFolderPathsAsync();
     }
     else
         db.Database.EnsureCreated();
