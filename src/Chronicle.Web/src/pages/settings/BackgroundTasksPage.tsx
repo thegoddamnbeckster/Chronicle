@@ -68,57 +68,36 @@ const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 // without needing to navigate to the Scan page.
 
 interface ScanProgressBannerProps {
-  /** Whether the scheduled_scan task is currently marked as running. */
-  scanIsRunning: boolean
+  progress: ImportProgressState | null
 }
 
-function ScanProgressBanner({ scanIsRunning }: ScanProgressBannerProps) {
-  const [progress, setProgress] = useState<ImportProgressState | null>(null)
-
-  useEffect(() => {
-    if (!scanIsRunning) {
-      setProgress(null)
-      return
-    }
-
-    // Fetch immediately, then every second while running
-    let cancelled = false
-    async function poll() {
-      try {
-        const p = await getImportProgress()
-        if (!cancelled) setProgress(p)
-      } catch {
-        // silently ignore transient errors
-      }
-    }
-
-    poll()
-    const id = setInterval(poll, 1000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [scanIsRunning])
-
-  if (!scanIsRunning || !progress?.isRunning) return null
+function ScanProgressBanner({ progress }: ScanProgressBannerProps) {
+  if (!progress?.isRunning) return null
 
   const pct = progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0
+  const hasCount = progress.total > 0
+  const detail = progress.currentItemName ?? progress.statusMessage
 
   return (
     <div className={styles.scanProgressBanner}>
       <div className={styles.scanProgressHeader}>
         <span className={styles.progressSpinnerInline} />
         <span className={styles.scanProgressTitle}>
-          Importing: {progress.processed} of {progress.total} groups
-          {progress.currentItemName && (
-            <span className={styles.scanProgressCurrent}> — {progress.currentItemName}</span>
-          )}
+          {hasCount
+            ? <>
+                {progress.processed.toLocaleString()} of {progress.total.toLocaleString()} files
+                {detail && <span className={styles.scanProgressCurrent}> — {detail}</span>}
+              </>
+            : (progress.statusMessage ?? 'File Scanner running…')
+          }
         </span>
-        <span className={styles.scanProgressPct}>{pct}%</span>
+        {hasCount && <span className={styles.scanProgressPct}>{pct}%</span>}
       </div>
-      <div className={styles.scanProgressTrack}>
-        <div className={styles.scanProgressFill} style={{ width: `${pct}%` }} />
-      </div>
+      {hasCount && (
+        <div className={styles.scanProgressTrack}>
+          <div className={styles.scanProgressFill} style={{ width: `${pct}%` }} />
+        </div>
+      )}
     </div>
   )
 }
@@ -128,9 +107,17 @@ function ScanProgressBanner({ scanIsRunning }: ScanProgressBannerProps) {
 interface EnrichmentSectionProps {
   /** True when any enrichment background task is actively running. */
   enrichmentRunning: boolean
+  /** The scheduled_scan background task, if present. */
+  scanTask: BackgroundTask | undefined
+  /** Whether the scan task is currently marked running (optimistic). */
+  scanIsRunning: boolean
+  /** Live scan progress from GET /scan/import-progress (null when not running). */
+  scanProgress: ImportProgressState | null
+  /** Callback to trigger a Run Now on the scan task. */
+  onRunScan: () => Promise<void>
 }
 
-function EnrichmentSection({ enrichmentRunning }: EnrichmentSectionProps) {
+function EnrichmentSection({ enrichmentRunning, scanTask, scanIsRunning, scanProgress, onRunScan }: EnrichmentSectionProps) {
   const [stats, setStats] = useState<EnrichmentStats[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -182,7 +169,7 @@ function EnrichmentSection({ enrichmentRunning }: EnrichmentSectionProps) {
     }
   }
 
-  return (
+return (
     <div className={styles.enrichmentSection}>
       <div className={styles.sectionHeader}>
         <h2 className={styles.sectionTitle}>Enrichment Status</h2>
@@ -215,6 +202,43 @@ function EnrichmentSection({ enrichmentRunning }: EnrichmentSectionProps) {
               </tr>
             </thead>
             <tbody>
+              {scanTask && (
+                <tr key="__scan" className={styles.enrichRow}>
+                  <td className={styles.enrichTd}>File Scanner</td>
+                  {/* Pending = files remaining */}
+                  <td className={styles.enrichTd}>
+                    {scanProgress
+                      ? <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{Math.max(0, scanProgress.total - scanProgress.processed)}</span>
+                      : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                  </td>
+                  {/* Completed = files processed / total */}
+                  <td className={styles.enrichTd}>
+                    {scanProgress
+                      ? <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                          {scanProgress.processed}
+                          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> / {scanProgress.total}</span>
+                        </span>
+                      : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                  </td>
+                  {/* Remaining columns merged — show folder/item context while scanning */}
+                  <td colSpan={4} className={styles.enrichTd} style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.82rem' }}>
+                    {scanProgress
+                      ? scanProgress.currentItemName
+                        ? <>{scanProgress.statusMessage && <span style={{ opacity: 0.6 }}>{scanProgress.statusMessage} — </span>}{scanProgress.currentItemName}</>
+                        : (scanProgress.statusMessage ?? null)
+                      : null}
+                  </td>
+                  <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
+                    <button
+                      className={styles.runBtn}
+                      onClick={onRunScan}
+                      disabled={scanIsRunning}
+                    >
+                      {scanIsRunning ? 'Running…' : 'Run Now'}
+                    </button>
+                  </td>
+                </tr>
+              )}
               {stats.map(s => (
                 <tr key={s.pluginId} className={styles.enrichRow}>
                   <td className={styles.enrichTd}>{s.pluginName}</td>
@@ -553,6 +577,7 @@ export default function BackgroundTasksPage() {
   const [editingId, setEditingId]   = useState<string | null>(null)
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set())
   const [tasksExpanded, setTasksExpanded] = useState(true)
+  const [scanProgress, setScanProgress] = useState<ImportProgressState | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -597,24 +622,50 @@ export default function BackgroundTasksPage() {
     await load()
   }
 
-  if (loading) return <div className={styles.page}><p className={styles.loading}>Loading background tasks…</p></div>
-  if (error)   return <div className={styles.page}><p className={styles.errorMsg}>{error}</p></div>
-
+  // Derived state — computed before early returns so hooks below are always called.
   const scanIsRunning = tasks.some(t => t.taskId === 'scheduled_scan' && (t.isRunning || runningIds.has(t.taskId)))
   const enrichmentRunning = tasks.some(t =>
     t.taskId.endsWith('fetch-missing-metadata') &&
     (t.isRunning || runningIds.has(t.taskId))
   )
 
+  // Poll scan import progress every second while a scan is running.
+  // Cleared when the scan stops so counts reset to — rather than showing stale data.
+  useEffect(() => {
+    if (!scanIsRunning) {
+      setScanProgress(null)
+      return
+    }
+    let cancelled = false
+    async function poll() {
+      try {
+        const p = await getImportProgress()
+        if (!cancelled) setScanProgress(p)
+      } catch { /* ignore transient errors */ }
+    }
+    poll()
+    const id = setInterval(poll, 1000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [scanIsRunning])
+
+  if (loading) return <div className={styles.page}><p className={styles.loading}>Loading background tasks…</p></div>
+  if (error)   return <div className={styles.page}><p className={styles.errorMsg}>{error}</p></div>
+
   return (
     <div className={styles.page}>
       <h1 className={styles.title}>Background Tasks</h1>
 
       {/* ── Enrichment Status — always at the top ────────────────────── */}
-      <EnrichmentSection enrichmentRunning={enrichmentRunning} />
+      <EnrichmentSection
+        enrichmentRunning={enrichmentRunning}
+        scanTask={tasks.find(t => t.taskId === 'scheduled_scan')}
+        scanIsRunning={scanIsRunning}
+        scanProgress={scanProgress}
+        onRunScan={() => handleRunNow('scheduled_scan')}
+      />
 
       {/* ── Scan progress banner — shown while a scan is running ─────── */}
-      <ScanProgressBanner scanIsRunning={scanIsRunning} />
+      <ScanProgressBanner progress={scanProgress} />
 
       {/* ── Scan settings ────────────────────────────────────────────── */}
       <ScanSettingsSection />

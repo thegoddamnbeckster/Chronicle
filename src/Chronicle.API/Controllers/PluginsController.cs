@@ -636,8 +636,14 @@ public class PluginsController : ControllerBase
 
         var fixMatchHint = loaded?.Manifest.FixMatchHint ?? p.FixMatchHint;
 
+        var supportedMediaTypes = loaded?.MetadataProviders
+            .SelectMany(mp => mp.GetSupportedMediaTypes())
+            .Select(t => t.MediaTypeName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+
         return new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
-            p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint);
+            p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint, supportedMediaTypes);
     }
 
     /// <summary>

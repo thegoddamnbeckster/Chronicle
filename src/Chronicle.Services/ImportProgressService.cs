@@ -9,6 +9,12 @@ public sealed class ImportProgressState
     public int Total { get; set; }
     public int Processed { get; set; }
     public string? CurrentItemName { get; set; }
+    /// <summary>
+    /// Phase-level status description (e.g. "Scanning folders…").
+    /// Shown in the UI when <see cref="CurrentItemName"/> is null.
+    /// Cleared when the import completes.
+    /// </summary>
+    public string? StatusMessage { get; set; }
     public string? Error { get; set; }
     public bool IsComplete { get; set; }
     public ImportProgressResult? Result { get; set; }
@@ -21,6 +27,7 @@ public sealed class ImportProgressResult
     public int Failed { get; set; }
     public List<string> Failures { get; set; } = [];
     public int Duplicates { get; set; }
+    public int TotalFiles { get; set; }
 }
 
 /// <summary>
@@ -61,14 +68,52 @@ public sealed class ImportProgressService
             CurrentItemName = currentItemName,
         };
 
+    /// <summary>
+    /// Update processed count and item name without changing the running total or
+    /// <see cref="ImportProgressState.StatusMessage"/>. Used when
+    /// <see cref="ScheduledScanService"/> manages the grand total externally across
+    /// multiple <c>ImportGroupsAsync</c> calls.
+    /// </summary>
+    public void UpdateProcessed(int processed, string? currentItemName)
+    {
+        var current = _state;
+        _state = new ImportProgressState
+        {
+            IsRunning = true,
+            Total = current.Total,
+            Processed = processed,
+            CurrentItemName = currentItemName,
+            StatusMessage = current.StatusMessage,  // preserve folder context
+        };
+    }
+
+    /// <summary>
+    /// Set a phase-level status message (e.g. "Scanning: /path/to/folder") that the UI
+    /// shows when no <see cref="ImportProgressState.CurrentItemName"/> is available.
+    /// Preserves <see cref="ImportProgressState.Total"/> and
+    /// <see cref="ImportProgressState.Processed"/>; clears <see cref="ImportProgressState.CurrentItemName"/>.
+    /// </summary>
+    public void UpdateStatus(string message)
+    {
+        var current = _state;
+        _state = new ImportProgressState
+        {
+            IsRunning = true,
+            Total = current.Total,
+            Processed = current.Processed,
+            CurrentItemName = null,
+            StatusMessage = message,
+        };
+    }
+
     /// <summary>Signal successful completion and attach the final result.</summary>
     public void Complete(ImportProgressResult result) =>
         _state = new ImportProgressState
         {
             IsRunning = false,
             IsComplete = true,
-            Total = result.Imported + result.Failed + result.Duplicates,
-            Processed = result.Imported + result.Failed + result.Duplicates,
+            Total = result.TotalFiles,
+            Processed = result.TotalFiles,
             Result = result,
         };
 

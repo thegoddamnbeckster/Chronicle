@@ -47,6 +47,50 @@ Write-Host "  Logs        : $LogDir"
 Write-Host "  Branch      : $Branch  ($Commit)"
 Write-Host ""
 
+# ── Build & deploy plugins ────────────────────────────────────────────────────
+# Plugins live in sibling directories and share Chronicle.Plugins via ProjectReference.
+# They must be rebuilt whenever Chronicle.Plugins changes (e.g. interface updates)
+# so that the deployed DLLs match the host's interface contract.
+$PluginsDir   = Join-Path $ApiDir "plugins"
+$PluginProjects = @(
+    @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.TMDB\Chronicle.Plugin.TMDB.csproj"
+        DllName    = "Chronicle.Plugin.TMDB.dll"
+        OutputDir  = Join-Path $PluginsDir "tmdb"
+    },
+    @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.MusicBrainz\Chronicle.Plugin.MusicBrainz.csproj"
+        DllName    = "Chronicle.Plugin.MusicBrainz.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.musicbrainz"
+    },
+    @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.FileScanner\Chronicle.Plugin.FileScanner.csproj"
+        DllName    = "Chronicle.Plugin.FileScanner.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.filescanner"
+    }
+)
+
+foreach ($plugin in $PluginProjects) {
+    if (-not (Test-Path $plugin.Project)) {
+        Write-Host "  [SKIP] Plugin project not found: $($plugin.Project)" -ForegroundColor DarkYellow
+        continue
+    }
+    Write-Host "  Building $($plugin.DllName)..." -ForegroundColor DarkCyan -NoNewline
+    $result = dotnet build $plugin.Project -c Debug --no-restore -v quiet 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host " FAILED" -ForegroundColor Red
+        Write-Host $result
+        continue
+    }
+    $srcDll = Join-Path (Split-Path $plugin.Project -Parent) "bin\Debug\net9.0\$($plugin.DllName)"
+    if (Test-Path $srcDll) {
+        Copy-Item -Path $srcDll -Destination (Join-Path $plugin.OutputDir $plugin.DllName) -Force
+        Write-Host " OK" -ForegroundColor Green
+    } else {
+        Write-Host " DLL not found at $srcDll" -ForegroundColor Red
+    }
+}
+
 # ── Kill existing dev processes ───────────────────────────────────────────────
 Write-Host "Stopping any running Chronicle dev processes..." -ForegroundColor Yellow
 

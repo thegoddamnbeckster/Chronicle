@@ -146,8 +146,51 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(l => l.Id == entryId && l.UserId == userId)
                 ?? throw new LibraryEntryNotFoundException(entryId);
 
-            _context.UserLibraries.Remove(entry);
-            await _context.SaveChangesAsync();
+            // Delete the MediaItem and its entire tree so GetForUserAsync doesn't
+            // re-create a UserLibrary row for it on the next library load.
+            await DeleteMediaItemTreeAsync(entry.MediaItemId);
+        }
+
+        /// <summary>
+        /// Recursively deletes a media item and all its descendants, together with every
+        /// related row (UserLibrary entries for all users, enrichment rows, external IDs,
+        /// interaction events, and list memberships).
+        /// </summary>
+        private async Task DeleteMediaItemTreeAsync(int mediaItemId)
+        {
+            // Delete all child items depth-first so FK constraints are satisfied.
+            var childIds = await _context.MediaItems
+                .Where(m => m.ParentId == mediaItemId)
+                .Select(m => m.Id)
+                .ToListAsync();
+
+            foreach (var childId in childIds)
+                await DeleteMediaItemTreeAsync(childId);
+
+            // Remove all rows that reference this item.
+            await _context.UserLibraries
+                .Where(l => l.MediaItemId == mediaItemId)
+                .ExecuteDeleteAsync();
+
+            await _context.MediaEnrichments
+                .Where(e => e.MediaItemId == mediaItemId)
+                .ExecuteDeleteAsync();
+
+            await _context.MediaExternalIds
+                .Where(e => e.MediaItemId == mediaItemId)
+                .ExecuteDeleteAsync();
+
+            await _context.InteractionEvents
+                .Where(e => e.MediaItemId == mediaItemId)
+                .ExecuteDeleteAsync();
+
+            await _context.MediaListItems
+                .Where(li => li.MediaItemId == mediaItemId)
+                .ExecuteDeleteAsync();
+
+            await _context.MediaItems
+                .Where(m => m.Id == mediaItemId)
+                .ExecuteDeleteAsync();
         }
 
         public async Task<int> ClearAllAsync(int userId, CancellationToken ct = default)

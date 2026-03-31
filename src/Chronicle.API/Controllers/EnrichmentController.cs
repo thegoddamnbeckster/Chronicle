@@ -52,7 +52,7 @@ public class EnrichmentController(
         return Ok(new { success = true });
     }
 
-    [HttpPost("{pluginId}/items/{mediaItemId:int}/skip")]
+[HttpPost("{pluginId}/items/{mediaItemId:int}/skip")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Skip(string pluginId, int mediaItemId, CancellationToken ct)
     {

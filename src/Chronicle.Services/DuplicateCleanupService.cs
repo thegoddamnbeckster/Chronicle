@@ -182,9 +182,18 @@ public sealed class DuplicateCleanupService : IScheduledTask
         try
         {
             using var doc = JsonDocument.Parse(metadataJson);
-            if (doc.RootElement.TryGetProperty("fileScanner", out var scanner)
-                && scanner.TryGetProperty("filePath", out var fp))
-                return fp.GetString();
+            if (!doc.RootElement.TryGetProperty("fileScanner", out var scanner))
+                return null;
+
+            // Prefer the folder path (single canonical key stored since grouped import).
+            if (scanner.TryGetProperty("folderPath", out var fp) && fp.GetString() is { } folder)
+                return folder;
+
+            // Fallback: use the first entry in filePaths (legacy flat import).
+            if (scanner.TryGetProperty("filePaths", out var fps)
+                && fps.ValueKind == JsonValueKind.Array
+                && fps.GetArrayLength() > 0)
+                return fps[0].GetString();
         }
         catch { /* malformed JSON — treat as no path */ }
         return null;
