@@ -54,6 +54,14 @@ public interface IMetadataEnrichmentService
     /// <summary>Mark a specific item as skipped for a plugin.</summary>
     Task SkipAsync(int mediaItemId, string pluginId, CancellationToken ct = default);
 
+    /// <summary>
+    /// One-time data migration: creates <c>media_enrichment</c> rows (Status=Completed)
+    /// for every library item that has a <c>media_external_ids</c> entry but no existing
+    /// enrichment row. Safe to call on every startup — items already having rows are skipped.
+    /// Repairs the gap left by dropping the old enrichment tables without migrating data.
+    /// </summary>
+    Task SeedEnrichmentRowsFromExternalIdsAsync(CancellationToken ct = default);
+
     /// <summary>Get enrichment statistics per plugin.</summary>
     Task<IReadOnlyList<EnrichmentStats>> GetStatsAsync(CancellationToken ct = default);
 

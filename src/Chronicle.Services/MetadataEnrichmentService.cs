@@ -102,14 +102,28 @@ public class MetadataEnrichmentService(
             return;
         }
 
+        var supportedTypes = provider.GetSupportedMediaTypes()
+            .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var cutoff = DateTime.UtcNow - RetryWindow;
         var rows = await db.MediaEnrichments
             .Include(x => x.MediaItem)
+                .ThenInclude(m => m!.MediaType)
             .Where(x => x.PluginId == pluginId &&
                         (x.Status == EnrichmentStatus.Pending ||
                          (x.Status == EnrichmentStatus.Failed &&
                           (x.LastAttemptedAt == null || x.LastAttemptedAt < cutoff))))
             .ToListAsync(ct);
+
+        // Filter out items whose media type is not supported by this plugin.
+        // This prevents e.g. TMDB from processing music items it will never match.
+        if (supportedTypes.Count > 0)
+            rows = rows.Where(r =>
+            {
+                var mt = NormalizeMediaTypeName(r.MediaItem?.MediaType?.Name ?? string.Empty);
+                return supportedTypes.Contains(mt);
+            }).ToList();
 
         logger.LogInformation("Enriching {Count} items for plugin {PluginId}", rows.Count, pluginId);
 
@@ -125,15 +139,29 @@ public class MetadataEnrichmentService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
+        await using var registryScope = scopeFactory.CreateAsyncScope();
+        var registry = registryScope.ServiceProvider.GetRequiredService<IPluginRegistry>();
+        var provider = registry.GetMetadataProvider(pluginId);
+        var supportedTypes = provider?.GetSupportedMediaTypes()
+            .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var libraryItemIds = await db.UserLibraries
             .Select(ul => ul.MediaItemId)
             .Distinct()
             .ToListAsync(ct);
 
-        var rootIds = await db.MediaItems
+        var rootItems = await db.MediaItems
+            .Include(m => m.MediaType)
             .Where(m => libraryItemIds.Contains(m.Id) && m.HierarchyLevel == 0)
-            .Select(m => m.Id)
             .ToListAsync(ct);
+
+        var rootIds = supportedTypes is { Count: > 0 }
+            ? rootItems
+                .Where(m => supportedTypes.Contains(NormalizeMediaTypeName(m.MediaType?.Name ?? string.Empty)))
+                .Select(m => m.Id)
+                .ToList()
+            : rootItems.Select(m => m.Id).ToList();
 
         logger.LogInformation(
             "ResyncAllForPlugin {PluginId}: force-refreshing {Count} root items",
@@ -157,6 +185,42 @@ public class MetadataEnrichmentService(
             ct.ThrowIfCancellationRequested();
             await EnrichPendingAsync(id, ct);
         }
+    }
+
+    public async Task SeedEnrichmentRowsFromExternalIdsAsync(CancellationToken ct = default)
+    {
+        await using var svc = scopeFactory.CreateAsyncScope();
+        var db = svc.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+        // Find items with external IDs that have no media_enrichment row yet.
+        // These are items enriched before the unified enrichment table was introduced.
+        // Create Completed rows so they're not re-queued for enrichment unnecessarily
+        // and so the enrichment status box renders correctly on the media detail page.
+        var seeded = await db.Database.ExecuteSqlRawAsync("""
+            INSERT OR IGNORE INTO "media_enrichment" (
+                "MediaItemId", "PluginId", "ExternalId",
+                "Status", "RetryCount", "MaxRetries"
+            )
+            SELECT
+                mei."MediaItemId",
+                mei."Source",
+                mei."ExternalId",
+                'Completed',
+                0,
+                3
+            FROM "media_external_ids" mei
+            WHERE NOT EXISTS (
+                SELECT 1 FROM "media_enrichment" me
+                WHERE me."MediaItemId" = mei."MediaItemId"
+                  AND LOWER(me."PluginId") = LOWER(mei."Source")
+            )
+              AND mei."ExternalId" != '__suppress__'
+            """, ct);
+
+        if (seeded > 0)
+            logger.LogInformation(
+                "SeedEnrichmentRows: created {Count} media_enrichment rows from media_external_ids",
+                seeded);
     }
 
     public async Task ResetAsync(string pluginId, ResetScope scope, int? mediaItemId = null, CancellationToken ct = default)
@@ -851,13 +915,34 @@ public class MetadataEnrichmentService(
             {
                 resolvedId = options.IdOverride.Trim();
             }
-            // 3b. Stored ID — validate hierarchy level
+            // 3b. Stored ID — validate hierarchy level and parent consistency
             else if (!string.IsNullOrEmpty(row.ExternalId) && IsIdValidForLevel(row.ExternalId, item))
             {
-                resolvedId = row.ExternalId;
+                // For hierarchical items, verify the stored ID's show portion matches the parent's
+                // show ID. This catches cases where a child was enriched against the wrong show
+                // (e.g. episodes matched to tv:157239 while the parent season is tv:243129/season:1).
+                var storedIdConsistent = true;
+                if (item.HierarchyLevel > 0 && item.ParentId is not null)
+                {
+                    var parentRow = await db.MediaEnrichments
+                        .FirstOrDefaultAsync(e => e.MediaItemId == item.ParentId && e.PluginId == pluginId, ct);
+                    if (parentRow?.ExternalId is not null)
+                    {
+                        var storedBase  = row.ExternalId.Split('/')[0]; // e.g. "tv:157239"
+                        var parentBase  = parentRow.ExternalId.Split('/')[0]; // e.g. "tv:243129"
+                        storedIdConsistent = string.Equals(storedBase, parentBase, StringComparison.OrdinalIgnoreCase);
+                        if (!storedIdConsistent)
+                            logger.LogInformation(
+                                "Stored ExternalId {StoredId} for item {ItemId} is inconsistent with parent ({ParentId}); re-deriving",
+                                row.ExternalId, item.Id, parentRow.ExternalId);
+                    }
+                }
+
+                if (storedIdConsistent)
+                    resolvedId = row.ExternalId;
             }
-            // 3c. Parent-derived ID
-            else if (item.ParentId is not null)
+            // 3c. Parent-derived ID (also runs when 3b discards an inconsistent stored ID)
+            if (resolvedId is null && item.ParentId is not null)
             {
                 resolvedId = await TryDeriveFromParentAsync(db, pluginId, item, ct);
             }
@@ -869,13 +954,20 @@ public class MetadataEnrichmentService(
                 if (result is null) resolvedId = null; // provider returned nothing — fall through to search
             }
 
-            // 3d. Search (root items with no resolved ID only)
-            if (result is null && item.ParentId is null)
+            // 3d. Search
+            // Always runs for root items (no parent).
+            // Also runs for HierarchyLevel-1 items (albums/seasons) when derivation returned null —
+            // music albums have no derivable ID from the artist MBID, so search is the only path.
+            // TV seasons always get a derived ID (show MBID + season number), so derivation
+            // succeeds there and this branch is skipped.
+            // Tracks/episodes (HierarchyLevel 2) are never searched; they rely on derivation only.
+            if (result is null && (item.ParentId is null || (resolvedId is null && item.HierarchyLevel == 1)))
             {
                 var childCount = await db.MediaItems.CountAsync(m => m.ParentId == item.Id, ct);
                 var ctx = new Chronicle.Plugins.Models.MediaSearchContext(
                     Name:           NormalizeSearchName(item.Name),
                     Year:           item.Year,
+                    ParentName:     item.Parent?.Name,
                     ChildCount:     childCount > 0 ? childCount : null,
                     HierarchyLevel: item.HierarchyLevel);
 
@@ -1016,7 +1108,7 @@ public class MetadataEnrichmentService(
 
     private static string NormalizeSearchName(string name) =>
         System.Text.RegularExpressions.Regex
-            .Replace(name, @"[:\-,\.']", " ")
+            .Replace(name, @"[:\-,]", " ")   // keep apostrophes and dots — dots are meaningful in names like "shutdown.exe"
             .Replace("  ", " ")
             .Trim()
             .ToLowerInvariant();
