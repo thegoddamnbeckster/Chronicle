@@ -268,11 +268,45 @@ public class MetadataEnrichmentService(
             });
         }
 
-        db.MediaEnrichments.AddRange(toAdd);
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation(
-            "SeedEnrichmentRows: created {Completed} Completed + {Pending} Pending rows from media_external_ids",
-            completedCount, pendingCount);
+        if (toAdd.Count > 0)
+        {
+            db.MediaEnrichments.AddRange(toAdd);
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation(
+                "SeedEnrichmentRows: created {Completed} Completed + {Pending} Pending rows from media_external_ids",
+                completedCount, pendingCount);
+        }
+
+        // ── Phase 2: reset "stuck" rows ───────────────────────────────────────
+        // Completed or Exhausted rows where MetadataJson has no plugin data are
+        // broken — either they were seeded incorrectly or data was wiped and the
+        // row was never cleared. Reset them to Pending so they re-enrich on the
+        // next background pass (which will also apply the CAA release-level fallback
+        // and the Lucene operator fixes introduced alongside this change).
+        var stuckRows = await db.MediaEnrichments
+            .Include(me => me.MediaItem)
+            .Where(me => me.Status == EnrichmentStatus.Completed ||
+                         me.Status == EnrichmentStatus.Exhausted  ||
+                         me.Status == EnrichmentStatus.NotFound)
+            .ToListAsync(ct);
+
+        int resetCount = 0;
+        foreach (var row in stuckRows)
+        {
+            if (HasPluginDataInJson(row.MediaItem?.MetadataJson, row.PluginId)) continue;
+            row.Status     = EnrichmentStatus.Pending;
+            row.RetryCount = 0;
+            row.ErrorMessage = null;
+            resetCount++;
+        }
+
+        if (resetCount > 0)
+        {
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation(
+                "SeedEnrichmentRows: reset {Count} Completed/Exhausted/NotFound rows with no plugin data to Pending",
+                resetCount);
+        }
     }
 
     /// <summary>
