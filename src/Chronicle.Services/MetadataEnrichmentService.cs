@@ -192,35 +192,108 @@ public class MetadataEnrichmentService(
         await using var svc = scopeFactory.CreateAsyncScope();
         var db = svc.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        // Find items with external IDs that have no media_enrichment row yet.
-        // These are items enriched before the unified enrichment table was introduced.
-        // Create Completed rows so they're not re-queued for enrichment unnecessarily
-        // and so the enrichment status box renders correctly on the media detail page.
-        var seeded = await db.Database.ExecuteSqlRawAsync("""
-            INSERT OR IGNORE INTO "media_enrichment" (
-                "MediaItemId", "PluginId", "ExternalId",
-                "Status", "RetryCount", "MaxRetries"
-            )
-            SELECT
-                mei."MediaItemId",
-                mei."Source",
-                mei."ExternalId",
-                'Completed',
-                0,
-                3
-            FROM "media_external_ids" mei
-            WHERE NOT EXISTS (
-                SELECT 1 FROM "media_enrichment" me
-                WHERE me."MediaItemId" = mei."MediaItemId"
-                  AND LOWER(me."PluginId") = LOWER(mei."Source")
-            )
-              AND mei."ExternalId" != '__suppress__'
-            """, ct);
+        // Build a short-suffix → canonical-plugin-id map from installed plugins.
+        // Handles both old short-form sources ("musicbrainz") and new full-form
+        // ("chronicle.plugin.musicbrainz") that may appear in media_external_ids.Source.
+        var installedPluginIds = await db.Plugins
+            .Where(p => p.IsEnabled)
+            .Select(p => p.PluginId)
+            .ToListAsync(ct);
 
-        if (seeded > 0)
-            logger.LogInformation(
-                "SeedEnrichmentRows: created {Count} media_enrichment rows from media_external_ids",
-                seeded);
+        var shortToFull = installedPluginIds
+            .GroupBy(pid => pid.Contains('.') ? pid.Split('.').Last() : pid,
+                     StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        string CanonicalPluginId(string source)
+        {
+            // Already a full canonical ID (present in installed list verbatim)
+            if (installedPluginIds.Contains(source, StringComparer.OrdinalIgnoreCase))
+                return source;
+            // Try mapping short suffix → full ID
+            var suffix = source.Contains('.') ? source.Split('.').Last() : source;
+            return shortToFull.GetValueOrDefault(suffix, source);
+        }
+
+        // Load all existing enrichment rows (for deduplication)
+        var enrichmentSet = (await db.MediaEnrichments
+            .Select(me => new { me.MediaItemId, PluginId = me.PluginId.ToLower() })
+            .ToListAsync(ct))
+            .Select(e => (e.MediaItemId, e.PluginId))
+            .ToHashSet();
+
+        // Candidates: external IDs mapped to canonical plugin IDs, deduplicated
+        var candidates = (await db.Set<MediaExternalId>()
+            .Where(mei => mei.ExternalId != "__suppress__")
+            .ToListAsync(ct))
+            .Select(mei => (MediaItemId: mei.MediaItemId,
+                            PluginId:    CanonicalPluginId(mei.Source),
+                            ExternalId:  mei.ExternalId))
+            .Where(c => !enrichmentSet.Contains((c.MediaItemId, c.PluginId.ToLower())))
+            .GroupBy(c => (c.MediaItemId, c.PluginId))   // dedup same item+plugin
+            .Select(g => g.First())
+            .ToList();
+
+        if (candidates.Count == 0) return;
+
+        // Load MetadataJson for all affected items in one query
+        var itemIds = candidates.Select(c => c.MediaItemId).Distinct().ToList();
+        var metadataByItem = await db.MediaItems
+            .Where(mi => itemIds.Contains(mi.Id))
+            .Select(mi => new { mi.Id, mi.MetadataJson })
+            .ToDictionaryAsync(mi => mi.Id, mi => mi.MetadataJson, ct);
+
+        // For each candidate: Completed if plugin data is intact in MetadataJson,
+        // Pending if data is absent (wiped by re-scan) so it re-enriches automatically.
+        int completedCount = 0, pendingCount = 0;
+        var toAdd = new List<MediaItemEnrichment>(candidates.Count);
+        foreach (var (mediaItemId, pluginId, externalId) in candidates)
+        {
+            var json   = metadataByItem.GetValueOrDefault(mediaItemId);
+            var status = HasPluginDataInJson(json, pluginId)
+                ? EnrichmentStatus.Completed
+                : EnrichmentStatus.Pending;
+
+            if (status == EnrichmentStatus.Completed) completedCount++;
+            else                                       pendingCount++;
+
+            toAdd.Add(new MediaItemEnrichment
+            {
+                MediaItemId = mediaItemId,
+                PluginId    = pluginId,
+                ExternalId  = externalId,
+                Status      = status,
+                RetryCount  = 0,
+                MaxRetries  = 3,
+            });
+        }
+
+        db.MediaEnrichments.AddRange(toAdd);
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation(
+            "SeedEnrichmentRows: created {Completed} Completed + {Pending} Pending rows from media_external_ids",
+            completedCount, pendingCount);
+    }
+
+    /// <summary>
+    /// Returns true if <paramref name="json"/> contains a top-level property for the given plugin.
+    /// Checks both the full plugin ID (e.g. "chronicle.plugin.musicbrainz") and the short suffix
+    /// ("musicbrainz") to handle data written by older code versions.
+    /// </summary>
+    private static bool HasPluginDataInJson(string? json, string pluginId)
+    {
+        if (string.IsNullOrEmpty(json)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty(pluginId, out _)) return true;
+            // Also check short-form key written by older code (e.g. "musicbrainz")
+            var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+            if (shortId is not null && root.TryGetProperty(shortId, out _)) return true;
+            return false;
+        }
+        catch { return false; }
     }
 
     public async Task ResetAsync(string pluginId, ResetScope scope, int? mediaItemId = null, CancellationToken ct = default)
@@ -783,11 +856,15 @@ public class MetadataEnrichmentService(
         name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
     /// <summary>
-    /// Wraps a MusicBrainz Lucene search term in double quotes for exact phrase matching,
-    /// escaping any embedded double quotes. Example: Load → "Load", AC/DC → "AC/DC".
+    /// Strips Lucene range/special operators then wraps in double quotes for exact phrase matching.
+    /// Operators like &lt;&gt;{}[]^~ break MusicBrainz SOLR if left unescaped in the query string.
     /// </summary>
-    private static string MbQuote(string term) =>
-        $"\"{term.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
+    private static string MbQuote(string term)
+    {
+        // Remove Lucene range and boost operators that cannot be safely escaped inside phrases
+        term = System.Text.RegularExpressions.Regex.Replace(term, @"[<>{}[\]^~]", "").Trim();
+        return $"\"{term.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
+    }
 
     /// <summary>
     /// Strips a leading "(YYYY) " year prefix from a name before building MusicBrainz queries.
