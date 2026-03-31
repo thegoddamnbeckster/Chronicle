@@ -137,7 +137,7 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
                   </span>
                 </>
               )}
-              {Array.isArray(scanner?.filePaths) && (
+              {Array.isArray(scanner?.filePaths) && (scanner!.filePaths as string[]).length > 0 && (
                 <span className={styles.signal}>
                   <span className={styles.signalYes}>✓</span>
                   {(scanner!.filePaths as string[]).length} file(s)
@@ -297,13 +297,24 @@ export default function EnrichmentDrillDownPage() {
     }
   }, [pluginId, activeStatus, page, debouncedSearch])
 
-  useEffect(() => {
+  const loadStats = useCallback(() => {
     getEnrichmentStats()
       .then(all => setStats(all.find(s => s.pluginId === pluginId) ?? null))
       .catch(() => {})
   }, [pluginId])
 
+  useEffect(() => { loadStats() }, [loadStats])
+
   useEffect(() => { load() }, [load])
+
+  // Auto-refresh every 10 s while viewing actionable statuses so items disappear
+  // from the list as enrichment processes them in the background.
+  const isLive = activeStatus === 'Pending' || activeStatus === 'Failed' || activeStatus === 'Exhausted' || activeStatus === 'All'
+  useEffect(() => {
+    if (!isLive) return
+    const id = setInterval(() => { load(); loadStats() }, 10_000)
+    return () => clearInterval(id)
+  }, [isLive, load, loadStats])
 
   function setStatus(s: string) {
     setSearchParams(s === 'All' ? {} : { status: s })

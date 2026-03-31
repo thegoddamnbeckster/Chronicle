@@ -306,6 +306,11 @@ using (var scope = app.Services.CreateScope())
         // Backfill folderPath for items imported before it was wired up.
         var fileScanService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IFileScanService>();
         await fileScanService.BackfillFolderPathsAsync();
+
+        // Seed media_enrichment rows for items enriched before the unified table was
+        // introduced — restores enrichment status display for all pre-existing items.
+        var enrichmentService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IMetadataEnrichmentService>();
+        await enrichmentService.SeedEnrichmentRowsFromExternalIdsAsync();
     }
     else
         db.Database.EnsureCreated();
