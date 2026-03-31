@@ -14,6 +14,8 @@ export interface PluginDto {
   iconUrl: string | null
   /** User-facing hint shown in the Fix Match input. Comes from the plugin manifest. */
   fixMatchHint: string | null
+  /** Media type names this plugin can enrich (e.g. ["TV", "Movies"]). Empty when not loaded. */
+  supportedMediaTypes: string[] | null
 }
 
 export async function listPlugins(): Promise<PluginDto[]> {

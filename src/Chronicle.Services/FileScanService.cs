@@ -1344,7 +1344,11 @@ namespace Chronicle.Services
         // ── Import groups ────────────────────────────────────────────────────────
 
         public async Task<ImportApprovedSummary> ImportGroupsAsync(
-            ImportGroupsRequest request, IReadOnlyList<int> userIds, CancellationToken ct = default)
+            ImportGroupsRequest request,
+            IReadOnlyList<int> userIds,
+            CancellationToken ct = default,
+            int progressOffset = 0,
+            bool manageProgress = true)
         {
             var mediaType = await _context.MediaTypes
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
@@ -1353,7 +1357,7 @@ namespace Chronicle.Services
             int imported = 0, failed = 0, duplicates = 0;
             var failures = new List<string>();
             int processed = 0;
-            int total = request.Groups.Count;
+            int total = request.Groups.Sum(g => g.TotalFileCount);
             var createdItemIds = new List<int>();
 
             // Read batch size from app settings (default 50 if not configured or invalid)
@@ -1367,12 +1371,16 @@ namespace Chronicle.Services
             // after each batch commit rather than re-scanning the whole list every time.
             int lastSeededIndex = 0;
 
-            _importProgress.Start(total);
+            if (manageProgress)
+                _importProgress.Start(total);
 
             foreach (var rootGroup in request.Groups)
             {
                 ct.ThrowIfCancellationRequested();
-                _importProgress.Update(processed, total, rootGroup.Name);
+                if (manageProgress)
+                    _importProgress.Update(processed, total, rootGroup.Name);
+                else
+                    _importProgress.UpdateProcessed(progressOffset + processed, rootGroup.Name);
                 try
                 {
                     var (rootItem, rootIsNew) = await UpsertGroupItemAsync(
@@ -1441,7 +1449,7 @@ namespace Chronicle.Services
                 }
                 finally
                 {
-                    processed++;
+                    processed += rootGroup.TotalFileCount;
                 }
             }
 
@@ -1458,13 +1466,15 @@ namespace Chronicle.Services
                     createdItemIds[lastSeededIndex..], mediaType.Name, ct);
 
             var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
-            _importProgress.Complete(new ImportProgressResult
-            {
-                Imported   = summary.Imported,
-                Failed     = summary.Failed,
-                Failures   = summary.Failures,
-                Duplicates = summary.Duplicates,
-            });
+            if (manageProgress)
+                _importProgress.Complete(new ImportProgressResult
+                {
+                    Imported   = summary.Imported,
+                    Failed     = summary.Failed,
+                    Failures   = summary.Failures,
+                    Duplicates = summary.Duplicates,
+                    TotalFiles = total,
+                });
             return summary;
         }
 
@@ -1583,11 +1593,13 @@ namespace Chronicle.Services
                 existing.UpdatedAt   = DateTime.UtcNow;
                 if (group.Year.HasValue)   existing.Year   = group.Year;
                 if (group.Number.HasValue) existing.Number = group.Number;
-                // Refresh MetadataJson so folderPath is written even on pre-existing items
-                existing.MetadataJson = JsonSerializer.Serialize(new
-                {
-                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }
-                });
+                // Merge fileScanner data into MetadataJson — preserve any plugin keys
+                // (TMDB, MusicBrainz, etc.) already stored by enrichment.
+                var existingNode = System.Text.Json.Nodes.JsonNode.Parse(existing.MetadataJson ?? "{}")
+                    as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                existingNode["fileScanner"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(
+                    new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }));
+                existing.MetadataJson = existingNode.ToJsonString();
                 return (existing, false);
             }
 

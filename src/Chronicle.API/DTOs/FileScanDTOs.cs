@@ -145,6 +145,7 @@ namespace Chronicle.API.DTOs
         int Total,
         int Processed,
         string? CurrentItemName,
+        string? StatusMessage,
         string? Error,
         ImportSummaryDto? Result
     );

@@ -70,9 +70,16 @@ public class DiagnosticsController : ControllerBase
         if (match.Success)
         {
             var path = match.Groups[1].Value.Trim();
-            return Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, path));
+            if (Path.IsPathRooted(path))
+                return path;
+
+            // SQLite resolves relative Data Source paths against the process working directory
+            // (Environment.CurrentDirectory), NOT AppContext.BaseDirectory (the bin/ folder).
+            // Under `dotnet run` these differ: CWD is the project folder, BaseDirectory is
+            // bin/Debug/net9.0/.  In a published deployment they are the same.
+            return Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, path));
         }
-        return Path.Combine(AppContext.BaseDirectory, "chronicle.db");
+        return Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "chronicle.db"));
     }
 
     private static string? FindRepoRoot(string start)

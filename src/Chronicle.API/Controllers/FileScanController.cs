@@ -402,6 +402,7 @@ public class FileScanController : ControllerBase
             state.Total,
             state.Processed,
             state.CurrentItemName,
+            state.StatusMessage,
             state.Error,
             result)));
     }

@@ -84,7 +84,24 @@ export default function MediaDetailPage() {
   const qc = useQueryClient()
 
   const navState = (location.state as { listIds?: number[]; listLabel?: string } | null) ?? null
-  const listIds = navState?.listIds ?? []
+
+  // Persist navigation state so breadcrumb / up-button navigation (which carries no state) can restore it
+  useEffect(() => {
+    if (navState?.listIds?.length) {
+      sessionStorage.setItem(`chronicle.listNav.${mediaId}`, JSON.stringify(navState))
+    }
+  }, [mediaId, navState])
+
+  // Fall back to sessionStorage when arriving via breadcrumb or direct URL (no location.state)
+  const effectiveNavState = (() => {
+    if (navState?.listIds?.length) return navState
+    try {
+      const stored = sessionStorage.getItem(`chronicle.listNav.${mediaId}`)
+      return stored ? JSON.parse(stored) as { listIds: number[]; listLabel?: string } : null
+    } catch { return null }
+  })()
+
+  const listIds = effectiveNavState?.listIds ?? []
   const currentIndex = listIds.indexOf(mediaId)
   const prevId = currentIndex > 0 ? listIds[currentIndex - 1] : null
   const nextId = currentIndex < listIds.length - 1 ? listIds[currentIndex + 1] : null
@@ -124,6 +141,7 @@ export default function MediaDetailPage() {
     onSuccess: (updated) => {
       qc.setQueryData(['media', mediaId], updated)
       qc.invalidateQueries({ queryKey: ['library'] })
+      qc.invalidateQueries({ queryKey: ['media', mediaId, 'children'] })
     },
   })
 
@@ -235,16 +253,16 @@ export default function MediaDetailPage() {
         {listIds.length > 0 && (
           <div className={styles.listNav}>
             {prevId != null ? (
-              <Link to={`/media/${prevId}`} state={navState} className={styles.navBtn}>‹ Prev</Link>
+              <Link to={`/media/${prevId}`} state={effectiveNavState} className={styles.navBtn}>‹ Prev</Link>
             ) : (
               <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>‹ Prev</span>
             )}
             <span className={styles.navPos}>
-              {navState?.listLabel && <span className={styles.navLabel}>{navState.listLabel} · </span>}
+              {effectiveNavState?.listLabel && <span className={styles.navLabel}>{effectiveNavState.listLabel} · </span>}
               {currentIndex + 1} / {listIds.length}
             </span>
             {nextId != null ? (
-              <Link to={`/media/${nextId}`} state={navState} className={styles.navBtn}>Next ›</Link>
+              <Link to={`/media/${nextId}`} state={effectiveNavState} className={styles.navBtn}>Next ›</Link>
             ) : (
               <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>Next ›</span>
             )}
@@ -341,6 +359,13 @@ export default function MediaDetailPage() {
             ])
             return Array.from(pluginIds).map(pluginId => {
               const plugin = plugins.find(p => p.pluginId === pluginId)
+              // Skip plugins that don't support this item's media type.
+              // This prevents e.g. a TMDB "No match" box from appearing on Music items.
+              if (plugin?.supportedMediaTypes?.length) {
+                const itemType = item.mediaTypeName.toLowerCase()
+                const supported = plugin.supportedMediaTypes.some(t => t.toLowerCase() === itemType)
+                if (!supported) return null
+              }
               const metadata = item.pluginMetadata?.[pluginId]
               const enrichStatus = item.enrichmentStatuses?.[pluginId]
               return (
