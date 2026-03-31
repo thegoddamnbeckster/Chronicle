@@ -21,7 +21,12 @@ public record PluginDto(
     /// Short hint shown in the Fix Match panel. From manifest fixMatchHint.
     /// Null when the plugin has no fixMatchHint in its manifest.
     /// </summary>
-    string? FixMatchHint = null
+    string? FixMatchHint = null,
+    /// <summary>
+    /// Media type names this plugin can enrich (e.g. ["TV", "Movies"]).
+    /// Empty list means the plugin is not loaded or has no providers.
+    /// </summary>
+    IReadOnlyList<string>? SupportedMediaTypes = null
 );
 
 public record InstallPluginRequest(

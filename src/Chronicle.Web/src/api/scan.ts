@@ -131,6 +131,7 @@ export interface ImportProgressState {
   total: number
   processed: number
   currentItemName: string | null
+  statusMessage: string | null
   error: string | null
   result: ImportSummary | null
 }
@@ -154,6 +155,7 @@ export async function getImportProgress(): Promise<ImportProgressState> {
       total: 0,
       processed: 0,
       currentItemName: null,
+      statusMessage: null,
       error: null,
       result: null,
     }

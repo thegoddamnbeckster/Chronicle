@@ -50,9 +50,17 @@ namespace Chronicle.Services
         /// <summary>
         /// Persists accepted ScanGroups as a MediaItem hierarchy.
         /// Root groups get UserLibrary entries; children do not.
+        /// When <paramref name="manageProgress"/> is <c>false</c>, the caller owns the
+        /// <see cref="ImportProgressService"/> lifecycle (Start / Complete); this method only
+        /// calls <c>UpdateProcessed(offset + processed, name)</c> so the caller can accumulate
+        /// progress across multiple folders into a single grand-total counter.
         /// </summary>
         Task<ImportApprovedSummary> ImportGroupsAsync(
-            ImportGroupsRequest request, IReadOnlyList<int> userIds, CancellationToken ct = default);
+            ImportGroupsRequest request,
+            IReadOnlyList<int> userIds,
+            CancellationToken ct = default,
+            int progressOffset = 0,
+            bool manageProgress = true);
 
         /// <summary>
         /// Queries the first available metadata provider for <paramref name="query"/> and
