@@ -768,19 +768,39 @@ public class MetadataEnrichmentService(
                         }
                     }
 
-                    var searchResults = await provider.SearchAsync(
-                        new MediaSearchContext(
+                    var searchCtx = new MediaSearchContext(
                             Name:            row.MediaItem.Name,
                             Year:            row.MediaItem.Year,
                             ParentName:      row.MediaItem.Parent?.Name,
                             GrandparentName: row.MediaItem.Parent?.Parent?.Name,
                             ItemNumber:      row.MediaItem.Number,
-                            HierarchyLevel:  row.MediaItem.HierarchyLevel), ct);
+                            HierarchyLevel:  row.MediaItem.HierarchyLevel);
+
+                    logger.LogDebug(
+                        "Searching {Plugin} for item {ItemId} \"{Name}\" " +
+                        "(level={Level}, year={Year}, parent={Parent})",
+                        provider.PluginId, row.MediaItemId, row.MediaItem.Name,
+                        searchCtx.HierarchyLevel, searchCtx.Year, searchCtx.ParentName ?? "(none)");
+
+                    var searchResults = await provider.SearchAsync(searchCtx, ct);
 
                     // Capture candidates for diagnostics BEFORE GetByIdAsync might overwrite result
                     rawCandidates = searchResults.Take(5).Select(c => c.Metadata).ToList();
 
-                    result = searchResults.OrderByDescending(c => c.Score).FirstOrDefault()?.Metadata;
+                    var topCandidate = searchResults.OrderByDescending(c => c.Score).FirstOrDefault();
+                    if (topCandidate is not null)
+                        logger.LogDebug(
+                            "Search returned {Count} candidates for item {ItemId} \"{Name}\" " +
+                            "— top: \"{TopTitle}\" ({TopId}) score={Score} reasons={Reasons}",
+                            searchResults.Count, row.MediaItemId, row.MediaItem.Name,
+                            topCandidate.Metadata.Title, topCandidate.Metadata.ExternalId,
+                            topCandidate.Score, topCandidate.ScoreReason);
+                    else
+                        logger.LogDebug(
+                            "Search returned 0 candidates for item {ItemId} \"{Name}\" (plugin={Plugin})",
+                            row.MediaItemId, row.MediaItem.Name, provider.PluginId);
+
+                    result = topCandidate?.Metadata;
 
                     // SearchAsync returns only search-index fields (no cover art).
                     // If we got a match, fetch the full entity so that PosterUrl
@@ -822,6 +842,10 @@ public class MetadataEnrichmentService(
                 row.LastCompletedAt = DateTime.UtcNow;
                 row.ErrorMessage    = null;
                 MergeMetadata(row.MediaItem!, row.PluginId, result);
+                logger.LogInformation(
+                    "Enrichment matched: plugin={Plugin} item={ItemId} \"{Name}\" (level={Level}) → {ExternalId} \"{MatchedTitle}\"",
+                    provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
+                    row.MediaItem?.HierarchyLevel ?? -1, result.ExternalId, result.Title);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
