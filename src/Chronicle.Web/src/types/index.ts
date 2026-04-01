@@ -58,6 +58,10 @@ export interface MediaItem {
    *  Present even when pluginMetadata has no entry (e.g. status is "NotFound").
    *  Values: "Pending" | "Completed" | "NotFound" | "Failed" | "Exhausted" */
   enrichmentStatuses?: Record<string, string> | null
+  /** Canonical internal media type name (e.g. "tv", "movies", "music").
+   *  Used for plugin compatibility checks. mediaTypeName is the user-facing display
+   *  name (e.g. "TV Shows") and should be used for display only. */
+  mediaTypeInternalName?: string | null
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────

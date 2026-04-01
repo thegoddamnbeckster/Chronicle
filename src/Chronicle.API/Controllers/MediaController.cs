@@ -335,7 +335,8 @@ namespace Chronicle.API.Controllers
                 PluginMetadata: pluginMeta?.Count > 0 ? pluginMeta : null,
                 RefreshLogs: logDtos,
                 Ancestors: ancestors,
-                EnrichmentStatuses: enrichmentStatuses
+                EnrichmentStatuses: enrichmentStatuses,
+                MediaTypeInternalName: m.MediaType?.Name
             );
         }
 
