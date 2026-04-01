@@ -72,7 +72,13 @@ namespace Chronicle.API.DTOs
         /// Present even when PluginMetadata has no entry for that plugin (e.g. NotFound).
         /// Values: "Pending", "Completed", "NotFound", "Failed", "Exhausted".
         /// </summary>
-        Dictionary<string, string>? EnrichmentStatuses = null
+        Dictionary<string, string>? EnrichmentStatuses = null,
+        /// <summary>
+        /// The canonical internal name of the media type (e.g. "tv", "movies", "music").
+        /// Used for plugin compatibility checks. Distinct from <see cref="MediaTypeName"/>
+        /// which carries the user-facing display name (e.g. "TV Shows").
+        /// </summary>
+        string? MediaTypeInternalName = null
     );
 
     public record AddToLibraryRequestDto(
