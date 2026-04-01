@@ -361,8 +361,10 @@ export default function MediaDetailPage() {
               const plugin = plugins.find(p => p.pluginId === pluginId)
               // Skip plugins that don't support this item's media type.
               // This prevents e.g. a TMDB "No match" box from appearing on Music items.
+              // Use mediaTypeInternalName (canonical DB name like "tv") for comparison since
+              // mediaTypeName is the display name ("TV Shows") which won't match plugin declarations.
               if (plugin?.supportedMediaTypes?.length) {
-                const itemType = item.mediaTypeName.toLowerCase()
+                const itemType = (item.mediaTypeInternalName ?? item.mediaTypeName).toLowerCase()
                 const supported = plugin.supportedMediaTypes.some(t => t.toLowerCase() === itemType)
                 if (!supported) return null
               }

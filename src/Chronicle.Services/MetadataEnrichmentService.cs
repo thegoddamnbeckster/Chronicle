@@ -4,6 +4,7 @@ using Chronicle.Data;
 using Chronicle.Plugins;
 using Chronicle.Plugins.Models;
 using Chronicle.Services.Plugins;
+using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,7 @@ public class MetadataEnrichmentService(
     ILogger<MetadataEnrichmentService> logger) : IMetadataEnrichmentService
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
+    private static readonly NfoSignalExtractor _nfoExtractor = new();
 
     // ── Unified entry points ───────────────────────────────────────────────────
 
@@ -110,6 +112,9 @@ public class MetadataEnrichmentService(
         var rows = await db.MediaEnrichments
             .Include(x => x.MediaItem)
                 .ThenInclude(m => m!.MediaType)
+            .Include(x => x.MediaItem)
+                .ThenInclude(m => m!.Parent)
+                    .ThenInclude(p => p!.Parent)
             .Where(x => x.PluginId == pluginId &&
                         (x.Status == EnrichmentStatus.Pending ||
                          (x.Status == EnrichmentStatus.Failed &&
@@ -663,6 +668,45 @@ public class MetadataEnrichmentService(
                     result = await provider.GetByIdAsync(row.ExternalId, ct);
             }
 
+            // ── NFO sidecar fallback (root items only, TMDB-style plugins) ─────────
+            // Before doing a name search, check whether the item's scan folder contains
+            // a tvshow.nfo or movie.nfo with a <uniqueid type="tmdb"> element.
+            // This handles ambiguous show names (e.g. "What If") where year-based search
+            // may still pick the wrong entry — an NFO is an authoritative identifier.
+            // Only TMDB-compatible plugins recognise the numeric ID; skip for others.
+            if (result is null && string.IsNullOrEmpty(row.ExternalId)
+                && row.MediaItem?.ParentId is null            // root item only
+                && row.PluginId.Contains("tmdb", StringComparison.OrdinalIgnoreCase))
+            {
+                var folderPath = TryGetFileScannerFolderPath(row.MediaItem!.MetadataJson);
+                if (!string.IsNullOrEmpty(folderPath))
+                {
+                    var nfoId = TryReadNfoTmdbId(folderPath);
+                    if (!string.IsNullOrEmpty(nfoId))
+                    {
+                        // Determine prefix: TV shows get "tv:", movies get "movie:"
+                        var mtName = NormalizeMediaTypeName(row.MediaItem.MediaType?.Name ?? string.Empty);
+                        var prefix = mtName == "tv" ? "tv" : "movie";
+                        row.ExternalId = $"{prefix}:{nfoId}";
+                        logger.LogInformation(
+                            "NFO sidecar match: item={ItemId} ({Name}) → {ExternalId}",
+                            row.MediaItemId, row.MediaItem.Name, row.ExternalId);
+                        try
+                        {
+                            result = await provider.GetByIdAsync(row.ExternalId, ct);
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(
+                                "NFO sidecar GetByIdAsync failed for {ExternalId}: {ErrorMessage}",
+                                row.ExternalId, ex.Message);
+                            row.ExternalId = null; // reset — fall through to name search
+                        }
+                    }
+                }
+            }
+
             if (result is null && row.ExternalId is null && row.MediaItem is not null)
             {
                 var supportedTypes = provider.GetSupportedMediaTypes()
@@ -725,7 +769,13 @@ public class MetadataEnrichmentService(
                     }
 
                     var searchResults = await provider.SearchAsync(
-                        new MediaSearchContext(row.MediaItem.Name, row.MediaItem.Year, HierarchyLevel: 0), ct);
+                        new MediaSearchContext(
+                            Name:            row.MediaItem.Name,
+                            Year:            row.MediaItem.Year,
+                            ParentName:      row.MediaItem.Parent?.Name,
+                            GrandparentName: row.MediaItem.Parent?.Parent?.Name,
+                            ItemNumber:      row.MediaItem.Number,
+                            HierarchyLevel:  row.MediaItem.HierarchyLevel), ct);
 
                     // Capture candidates for diagnostics BEFORE GetByIdAsync might overwrite result
                     rawCandidates = searchResults.Take(5).Select(c => c.Metadata).ToList();
@@ -910,6 +960,58 @@ public class MetadataEnrichmentService(
 
     private static string StripYearPrefix(string name) =>
         YearPrefixRe.Replace(name, string.Empty);
+
+    // ── NFO sidecar helpers ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Extracts the folder path stored by the file scanner in a media item's MetadataJson,
+    /// so that enrichment can look for NFO sidecars without re-walking the file system.
+    /// </summary>
+    private static string? TryGetFileScannerFolderPath(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
+                fs.TryGetProperty("folderPath", out var fp))
+                return fp.GetString();
+        }
+        catch { /* malformed JSON */ }
+        return null;
+    }
+
+    /// <summary>
+    /// Looks for tvshow.nfo / movie.nfo (and any *.nfo as fallback) in
+    /// <paramref name="folderPath"/> and returns the numeric TMDB ID from
+    /// &lt;uniqueid type="tmdb"&gt; if present.
+    /// </summary>
+    private static string? TryReadNfoTmdbId(string folderPath)
+    {
+        if (!Directory.Exists(folderPath)) return null;
+        try
+        {
+            // Prefer well-known names (Kodi/Jellyfin convention)
+            foreach (var name in new[] { "tvshow.nfo", "movie.nfo" })
+            {
+                var path = Path.Combine(folderPath, name);
+                if (File.Exists(path))
+                {
+                    var id = _nfoExtractor.Extract(path)?.ExternalId;
+                    if (!string.IsNullOrEmpty(id)) return id;
+                }
+            }
+            // Fallback: first *.nfo found in the folder (excluding sub-folders)
+            var any = Directory.EnumerateFiles(folderPath, "*.nfo").FirstOrDefault();
+            if (any is not null)
+            {
+                var id = _nfoExtractor.Extract(any)?.ExternalId;
+                if (!string.IsNullOrEmpty(id)) return id;
+            }
+        }
+        catch { /* I/O error — network drive unavailable etc. */ }
+        return null;
+    }
 
     // ── Diagnostics DTOs (serialised to DiagnosticsJson) ─────────────────────
 
