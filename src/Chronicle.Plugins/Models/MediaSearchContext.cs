@@ -29,5 +29,13 @@ public record MediaSearchContext(
     /// from "What If".  Only set when a reliable file-metadata source is available;
     /// null means fall back to <see cref="Name"/>-based scoring only.
     /// </summary>
-    string? PreciseName      = null
+    string? PreciseName      = null,
+    /// <summary>
+    /// Clean title derived from the source file's filename (extension and leading track-number
+    /// stripped).  Set only when it differs meaningfully from <see cref="Name"/>.
+    /// Plugins use this as a fallback search term when the tag-based <see cref="Name"/> returns
+    /// zero results from the provider — e.g. a tag says "Duck and Run (LP version)" but the
+    /// filename is "01 - Duck and Run.mp3", giving a stem of "Duck and Run" that matches MusicBrainz.
+    /// </summary>
+    string? FilenameStem     = null
 );
