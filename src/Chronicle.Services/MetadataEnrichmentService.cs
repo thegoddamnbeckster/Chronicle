@@ -1354,16 +1354,24 @@ public class MetadataEnrichmentService(
         MediaItemEnrichment row, string query,
         IReadOnlyList<Chronicle.Plugins.Models.ScoredCandidate> candidates)
     {
-        var top5 = candidates.OrderByDescending(c => c.Score).Take(5)
-            .Select(c => new { c.Metadata.Title, c.Metadata.Year,
-                               c.Metadata.ExternalId, c.Score, c.ScoreReason })
-            .ToList();
+        // Use camelCase property names in anonymous type literals so the JSON matches
+        // the field names the frontend's EnrichmentDiagnostics / EnrichmentCandidate
+        // TypeScript interfaces expect (searchQuery, totalScore, scoreReason, etc.).
         row.DiagnosticsJson = JsonSerializer.Serialize(new
         {
-            query,
+            searchQuery        = query,
             threshold          = DefaultConfidenceThreshold,
             candidatesReturned = candidates.Count,
-            topCandidates      = top5
+            topCandidates      = candidates.OrderByDescending(c => c.Score).Take(5)
+                .Select(c => new
+                {
+                    title       = c.Metadata.Title,
+                    year        = c.Metadata.Year,
+                    externalId  = c.Metadata.ExternalId,
+                    totalScore  = c.Score,
+                    scoreReason = c.ScoreReason,
+                })
+                .ToList(),
         });
     }
 
