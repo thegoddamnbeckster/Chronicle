@@ -168,29 +168,27 @@ namespace Chronicle.Services
                 await DeleteMediaItemTreeAsync(childId);
 
             // Remove all rows that reference this item.
-            await _context.UserLibraries
-                .Where(l => l.MediaItemId == mediaItemId)
-                .ExecuteDeleteAsync();
+            // Use RemoveRange+SaveChanges (not ExecuteDeleteAsync) so this works with
+            // both SQLite and the EF InMemory provider used in integration tests.
+            _context.UserLibraries.RemoveRange(
+                await _context.UserLibraries.Where(l => l.MediaItemId == mediaItemId).ToListAsync());
 
-            await _context.MediaEnrichments
-                .Where(e => e.MediaItemId == mediaItemId)
-                .ExecuteDeleteAsync();
+            _context.MediaEnrichments.RemoveRange(
+                await _context.MediaEnrichments.Where(e => e.MediaItemId == mediaItemId).ToListAsync());
 
-            await _context.MediaExternalIds
-                .Where(e => e.MediaItemId == mediaItemId)
-                .ExecuteDeleteAsync();
+            _context.MediaExternalIds.RemoveRange(
+                await _context.MediaExternalIds.Where(e => e.MediaItemId == mediaItemId).ToListAsync());
 
-            await _context.InteractionEvents
-                .Where(e => e.MediaItemId == mediaItemId)
-                .ExecuteDeleteAsync();
+            _context.InteractionEvents.RemoveRange(
+                await _context.InteractionEvents.Where(e => e.MediaItemId == mediaItemId).ToListAsync());
 
-            await _context.MediaListItems
-                .Where(li => li.MediaItemId == mediaItemId)
-                .ExecuteDeleteAsync();
+            _context.MediaListItems.RemoveRange(
+                await _context.MediaListItems.Where(li => li.MediaItemId == mediaItemId).ToListAsync());
 
-            await _context.MediaItems
-                .Where(m => m.Id == mediaItemId)
-                .ExecuteDeleteAsync();
+            _context.MediaItems.RemoveRange(
+                await _context.MediaItems.Where(m => m.Id == mediaItemId).ToListAsync());
+
+            await _context.SaveChangesAsync();
         }
 
         public async Task<int> ClearAllAsync(int userId, CancellationToken ct = default)

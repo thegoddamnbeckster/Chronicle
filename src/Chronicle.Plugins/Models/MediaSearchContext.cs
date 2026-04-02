@@ -21,5 +21,13 @@ public record MediaSearchContext(
     /// </summary>
     int?    ChildCount        = null,
     /// <summary>0 = root (show/artist/movie), 1 = season/album, 2 = episode/track.</summary>
-    int     HierarchyLevel   = 0
+    int     HierarchyLevel   = 0,
+    /// <summary>
+    /// Precise title read directly from file metadata (e.g. NFO &lt;title&gt; element).
+    /// When present, plugins use it for an exact case-insensitive comparison against
+    /// candidate titles WITHOUT punctuation stripping — so "What If...?" stays distinct
+    /// from "What If".  Only set when a reliable file-metadata source is available;
+    /// null means fall back to <see cref="Name"/>-based scoring only.
+    /// </summary>
+    string? PreciseName      = null
 );

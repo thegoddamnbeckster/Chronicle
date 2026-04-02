@@ -35,17 +35,17 @@ export interface EnrichmentCandidate {
   title: string | null
   year: number | null
   externalId: string | null
-  titleScore: number
-  yearScore: number
   totalScore: number
+  scoreReason: string | null
 }
 
 export interface EnrichmentDiagnostics {
   searchQuery: string
   candidatesReturned: number
-  failureReason: string
+  threshold?: number
+  failureReason?: string | null
   topCandidates: EnrichmentCandidate[]
-  scannerSignals: {
+  scannerSignals?: {
     folderPath: string | null
     hasNfo: boolean
     hasLocalPoster: boolean
