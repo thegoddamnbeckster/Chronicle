@@ -774,7 +774,8 @@ public class MetadataEnrichmentService(
                             ParentName:      row.MediaItem.Parent?.Name,
                             GrandparentName: row.MediaItem.Parent?.Parent?.Name,
                             ItemNumber:      row.MediaItem.Number,
-                            HierarchyLevel:  row.MediaItem.HierarchyLevel);
+                            HierarchyLevel:  row.MediaItem.HierarchyLevel,
+                            FilenameStem:    ExtractFilenameStem(row.MediaItem));
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
@@ -984,6 +985,46 @@ public class MetadataEnrichmentService(
 
     private static string StripYearPrefix(string name) =>
         YearPrefixRe.Replace(name, string.Empty);
+
+    // Leading track-number prefix: "01 - ", "02. ", "3 ", "1-01 - " etc.
+    private static readonly System.Text.RegularExpressions.Regex TrackNumPrefixRe =
+        new(@"^\d{1,2}(?:-\d{1,2})?[\s\-._]+",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Derives a clean search-friendly title from the first file path stored in the item's
+    /// fileScanner metadata.  Returns null when no file path is available or when the
+    /// resulting stem is not meaningfully different from <paramref name="item"/>.Name.
+    /// </summary>
+    private static string? ExtractFilenameStem(Chronicle.Core.Models.MediaItem item)
+    {
+        if (string.IsNullOrEmpty(item.MetadataJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(item.MetadataJson);
+            if (!doc.RootElement.TryGetProperty("fileScanner", out var fs)) return null;
+
+            string? filePath = null;
+            if (fs.TryGetProperty("filePaths", out var fps) &&
+                fps.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                filePath = fps.EnumerateArray().FirstOrDefault().GetString();
+            }
+            if (filePath is null && fs.TryGetProperty("filePath", out var fp))
+                filePath = fp.GetString();
+            if (filePath is null) return null;
+
+            var stem = System.IO.Path.GetFileNameWithoutExtension(filePath);
+            // Strip leading track numbers: "01 - Duck and Run" → "Duck and Run"
+            stem = TrackNumPrefixRe.Replace(stem, string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(stem)) return null;
+
+            // Only return when meaningfully different from the item name (case-insensitive).
+            return string.Equals(stem, item.Name, StringComparison.OrdinalIgnoreCase)
+                ? null : stem;
+        }
+        catch { return null; }
+    }
 
     // ── NFO sidecar helpers ───────────────────────────────────────────────────
 
