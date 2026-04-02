@@ -66,7 +66,7 @@ public class FileScanServiceHierarchyTests
     }
 
     [Fact]
-    public void GroupFilesForHierarchyImport_NullSeasonNumber_GroupsIntoSeasonZero()
+    public void GroupFilesForHierarchyImport_NullSeasonNumber_GroupsIntoSeasonOne()
     {
         var files = new[]
         {
@@ -80,7 +80,7 @@ public class FileScanServiceHierarchyTests
         var groups = FileScanService.GroupByShowForTest(files);
 
         Assert.Single(groups);
-        Assert.True(groups[0].Seasons.ContainsKey(0)); // 0 = Specials
+        Assert.True(groups[0].Seasons.ContainsKey(1)); // null season defaults to Season 1
     }
 
     [Fact]

@@ -155,9 +155,12 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
               <p className={styles.searchLine}>
                 Searched: <code className={styles.searchQuery}>{diag.searchQuery}</code>
                 {' — '}{diag.candidatesReturned} candidate(s) returned
+                {diag.threshold != null && ` · threshold: ${diag.threshold}/100`}
               </p>
             )}
-            {diag.failureReason && item.status !== 'Completed' && (
+            {diag.failureReason
+              && item.status !== 'Completed'
+              && diag.failureReason !== 'Matched successfully.' && (
               <p className={styles.failureReason}>{diag.failureReason}</p>
             )}
             {diag.topCandidates.length > 0 && (
@@ -167,18 +170,17 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
                   {diag.topCandidates.map((c, i) => (
                     <div key={i} className={styles.candidate}>
                       <span className={styles.candidateName}>
-                        {c.title ?? '(no title)'}{c.year ? ` (${c.year})` : ''}
+                        {c.title || c.externalId || '(unknown)'}{c.year ? ` (${c.year})` : ''}
                       </span>
-                      {c.externalId && (
+                      {c.title && c.externalId && (
                         <code style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                           {c.externalId}
                         </code>
                       )}
                       <div className={styles.scoreBar}>
-                        <span>title {c.titleScore}pt</span>
-                        <span>year {c.yearScore}pt</span>
-                        <span className={`${styles.scorePill} ${scoreClass(c.totalScore)}`}>
-                          {c.totalScore}/100
+                        {c.scoreReason && <span>{c.scoreReason}</span>}
+                        <span className={`${styles.scorePill} ${scoreClass(c.totalScore ?? 0)}`}>
+                          {c.totalScore ?? 0}/{diag.threshold ?? 100}
                         </span>
                       </div>
                     </div>

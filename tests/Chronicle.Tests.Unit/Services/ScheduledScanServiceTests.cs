@@ -53,7 +53,7 @@ public class ScheduledScanServiceTests
             .ReturnsAsync(new List<ScanFolder>());
 
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
-        var service = new ScheduledScanService(scopeFactory);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService());
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
@@ -82,7 +82,7 @@ public class ScheduledScanServiceTests
             });
 
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
-        var service = new ScheduledScanService(scopeFactory);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService());
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
@@ -119,7 +119,7 @@ public class ScheduledScanServiceTests
             .ReturnsAsync(new ScanGroupResult { Groups = [], Ungrouped = [], TotalFiles = 0 });
 
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
-        var service = new ScheduledScanService(scopeFactory);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService());
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
@@ -169,7 +169,7 @@ public class ScheduledScanServiceTests
             .ReturnsAsync(new ScanGroupResult { Groups = [], Ungrouped = [], TotalFiles = 0 });
 
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
-        var service = new ScheduledScanService(scopeFactory);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService());
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
@@ -183,7 +183,12 @@ public class ScheduledScanServiceTests
 
         // Import must NOT be called when there are no qualifying groups
         mockFileScanSvc.Verify(
-            s => s.ImportGroupsAsync(It.IsAny<ImportGroupsRequest>(), It.IsAny<IReadOnlyList<int>>(), It.IsAny<CancellationToken>()),
+            s => s.ImportGroupsAsync(
+                It.IsAny<ImportGroupsRequest>(),
+                It.IsAny<IReadOnlyList<int>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<int>(),
+                It.IsAny<bool>()),
             Times.Never);
     }
 }
