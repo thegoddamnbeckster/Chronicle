@@ -265,6 +265,154 @@ public class MetadataEnrichmentServiceTests : IDisposable
         result.Items[0].Name.Should().Be("Metallica");
     }
 
+    // ── FilenameStem population tests ────────────────────────────────────────
+
+    [Fact]
+    public async Task EnrichPendingAsync_PopulatesFilenameStem_FromFileScannerFilePaths()
+    {
+        // Arrange: item whose tag says "(LP version)" but filename stem is the clean title.
+        var item = new MediaItem
+        {
+            Name          = "Duck and Run (LP version)",
+            MediaTypeId   = (await EnsureMediaTypeAsync("music")).Id,
+            HierarchyLevel = 2,
+            CreatedAt     = DateTime.UtcNow,
+            UpdatedAt     = DateTime.UtcNow,
+            MetadataJson  = """{"fileScanner":{"filePaths":["H:/Music/3 Doors Down/Away From the Sun/01 - Duck and Run.mp3"]}}""",
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = item.Id,
+            PluginId    = "chronicle.plugin.musicbrainz",
+            Status      = EnrichmentStatus.Pending,
+            MaxRetries  = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        MediaSearchContext? capturedCtx = null;
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        provider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .Callback((MediaSearchContext ctx, CancellationToken _) => capturedCtx = ctx)
+            .ReturnsAsync(new List<ScoredCandidate>());
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
+            .Returns(provider.Object);
+
+        // Act
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        // Assert: FilenameStem must be the clean title stripped of the track-number prefix
+        capturedCtx.Should().NotBeNull();
+        capturedCtx!.FilenameStem.Should().Be("Duck and Run");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_FilenameStemNull_WhenStemMatchesItemName()
+    {
+        // Arrange: filename stem equals the item name — no meaningful difference, so null expected.
+        var item = new MediaItem
+        {
+            Name          = "Kryptonite",
+            MediaTypeId   = (await EnsureMediaTypeAsync("music")).Id,
+            HierarchyLevel = 2,
+            CreatedAt     = DateTime.UtcNow,
+            UpdatedAt     = DateTime.UtcNow,
+            MetadataJson  = """{"fileScanner":{"filePaths":["H:/Music/3 Doors Down/The Better Life/02 - Kryptonite.mp3"]}}""",
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = item.Id,
+            PluginId    = "chronicle.plugin.musicbrainz",
+            Status      = EnrichmentStatus.Pending,
+            MaxRetries  = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        MediaSearchContext? capturedCtx = null;
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        provider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .Callback((MediaSearchContext ctx, CancellationToken _) => capturedCtx = ctx)
+            .ReturnsAsync(new List<ScoredCandidate>());
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
+            .Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        capturedCtx.Should().NotBeNull();
+        capturedCtx!.FilenameStem.Should().BeNull("stem equals item name — no useful fallback");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_FilenameStemNull_WhenNoFileScannerMetadata()
+    {
+        // Arrange: item imported from TMDB (no fileScanner metadata).
+        var item = new MediaItem
+        {
+            Name          = "Blade Runner",
+            MediaTypeId   = (await EnsureMediaTypeAsync("movies")).Id,
+            HierarchyLevel = 0,
+            CreatedAt     = DateTime.UtcNow,
+            UpdatedAt     = DateTime.UtcNow,
+            MetadataJson  = null,
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = item.Id,
+            PluginId    = "chronicle.plugin.tmdb",
+            Status      = EnrichmentStatus.Pending,
+            MaxRetries  = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        MediaSearchContext? capturedCtx = null;
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.tmdb");
+        provider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "movies" }]);
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .Callback((MediaSearchContext ctx, CancellationToken _) => capturedCtx = ctx)
+            .ReturnsAsync(new List<ScoredCandidate>());
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.tmdb"))
+            .Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.tmdb");
+
+        capturedCtx.Should().NotBeNull();
+        capturedCtx!.FilenameStem.Should().BeNull("no fileScanner metadata present");
+    }
+
+    private async Task<MediaType> EnsureMediaTypeAsync(string name)
+    {
+        var existing = await _db.MediaTypes.FirstOrDefaultAsync(m => m.Name == name);
+        if (existing is not null) return existing;
+        var mt = new MediaType
+        {
+            Name = name, DisplayName = name, HierarchyLevels = 3,
+            HierarchyLabels = "Artist,Album,Track",
+            InteractionVerb = "listened", ProgressUnit = "tracks"
+        };
+        _db.MediaTypes.Add(mt);
+        await _db.SaveChangesAsync();
+        return mt;
+    }
+
     // ── EnrichItemAsync (unified) tests ───────────────────────────────────────
 
     [Fact]
