@@ -768,6 +768,21 @@ public class MetadataEnrichmentService(
                         }
                     }
 
+                    // For leaf-level items (tracks, episodes), include sibling names so
+                    // plugins can use multi-track fingerprinting to pin down the exact release.
+                    IReadOnlyList<string>? siblingNames = null;
+                    if (row.MediaItem.HierarchyLevel == 2 && row.MediaItem.ParentId is not null)
+                    {
+                        var siblings = await db.MediaItems
+                            .Where(m => m.ParentId == row.MediaItem.ParentId
+                                     && m.Id       != row.MediaItem.Id)
+                            .Select(m => m.Name)
+                            .Take(8)
+                            .ToListAsync(ct);
+                        if (siblings.Count > 0)
+                            siblingNames = siblings;
+                    }
+
                     var searchCtx = new MediaSearchContext(
                             Name:            row.MediaItem.Name,
                             Year:            row.MediaItem.Year,
@@ -775,7 +790,8 @@ public class MetadataEnrichmentService(
                             GrandparentName: row.MediaItem.Parent?.Parent?.Name,
                             ItemNumber:      row.MediaItem.Number,
                             HierarchyLevel:  row.MediaItem.HierarchyLevel,
-                            FilenameStem:    ExtractFilenameStem(row.MediaItem));
+                            FilenameStem:    ExtractFilenameStem(row.MediaItem),
+                            SiblingNames:    siblingNames);
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
