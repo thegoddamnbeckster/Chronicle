@@ -868,23 +868,38 @@ public class MetadataEnrichmentService(
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            // Include stack trace only for unexpected errors; HTTP/timeout errors are self-describing.
-            // Note: HttpClient timeout throws TaskCanceledException with its own internal token —
-            // that is NOT an external cancellation and must be caught here so the batch continues.
-            var isExpected = ex is HttpRequestException or TaskCanceledException or TimeoutException
-                                                        or OperationCanceledException;
-            if (isExpected)
-                logger.LogWarning(
-                    "Enrichment failed for item {ItemId} plugin {PluginId}: {ErrorType}: {ErrorMessage}",
-                    row.MediaItemId, row.PluginId, ex.GetType().Name, ex.Message);
+            // A 404 from the provider means "this item definitively does not exist upstream" —
+            // treat as NotFound rather than a transient error so retries are not wasted.
+            // Example: TMDB seasons/episodes that are not yet in TMDB's database return 404.
+            if (ex is HttpRequestException httpEx &&
+                httpEx.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                logger.LogInformation(
+                    "Enrichment not found (404): plugin={Plugin} item={ItemId} \"{Name}\" — provider returned 404",
+                    row.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?");
+                row.Status       = EnrichmentStatus.NotFound;
+                row.ErrorMessage = ex.Message;
+            }
             else
-                logger.LogWarning(ex, "Enrichment failed for item {ItemId} plugin {PluginId}",
-                    row.MediaItemId, row.PluginId);
-            row.RetryCount++;
-            row.ErrorMessage = ex.Message;
-            row.Status = row.RetryCount >= row.MaxRetries
-                ? EnrichmentStatus.Exhausted
-                : EnrichmentStatus.Failed;
+            {
+                // Include stack trace only for unexpected errors; HTTP/timeout errors are self-describing.
+                // Note: HttpClient timeout throws TaskCanceledException with its own internal token —
+                // that is NOT an external cancellation and must be caught here so the batch continues.
+                var isExpected = ex is HttpRequestException or TaskCanceledException or TimeoutException
+                                                            or OperationCanceledException;
+                if (isExpected)
+                    logger.LogWarning(
+                        "Enrichment failed for item {ItemId} plugin {PluginId}: {ErrorType}: {ErrorMessage}",
+                        row.MediaItemId, row.PluginId, ex.GetType().Name, ex.Message);
+                else
+                    logger.LogWarning(ex, "Enrichment failed for item {ItemId} plugin {PluginId}",
+                        row.MediaItemId, row.PluginId);
+                row.RetryCount++;
+                row.ErrorMessage = ex.Message;
+                row.Status = row.RetryCount >= row.MaxRetries
+                    ? EnrichmentStatus.Exhausted
+                    : EnrichmentStatus.Failed;
+            }
         }
 
         // ── Capture diagnostics ────────────────────────────────────────────────
