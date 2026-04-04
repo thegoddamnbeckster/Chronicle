@@ -37,5 +37,13 @@ public record MediaSearchContext(
     /// zero results from the provider — e.g. a tag says "Duck and Run (LP version)" but the
     /// filename is "01 - Duck and Run.mp3", giving a stem of "Duck and Run" that matches MusicBrainz.
     /// </summary>
-    string? FilenameStem     = null
+    string? FilenameStem     = null,
+    /// <summary>
+    /// Names of sibling items that share the same parent (e.g. other tracks on the same album or
+    /// single).  Plugins can use these to identify the precise release when the current item's
+    /// title alone is ambiguous — e.g. search for a sibling with <c>inc=releases</c> to obtain a
+    /// release MBID, then search the current item with <c>reid:{mbid}</c>.
+    /// Null or empty when no siblings are available or when the item is not a leaf node.
+    /// </summary>
+    IReadOnlyList<string>? SiblingNames = null
 );
