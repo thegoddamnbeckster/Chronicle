@@ -413,6 +413,79 @@ public class MetadataEnrichmentServiceTests : IDisposable
         return mt;
     }
 
+    // ── ValidateYear tests ────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(1899, null)]       // too old
+    [InlineData(1900, 1900)]       // boundary: valid
+    [InlineData(2024, 2024)]       // typical
+    [InlineData(null, null)]       // no year stays null
+    public void ValidateYear_ReturnsExpected(int? input, int? expected)
+    {
+        var result = MetadataEnrichmentService.ValidateYear(input);
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void ValidateYear_FuturePlusThree_IsValid()
+    {
+        var farFuture = DateTime.Now.Year + 3;
+        MetadataEnrichmentService.ValidateYear(farFuture).Should().Be(farFuture);
+    }
+
+    [Fact]
+    public void ValidateYear_FuturePlusFour_IsNull()
+    {
+        var tooFar = DateTime.Now.Year + 4;
+        MetadataEnrichmentService.ValidateYear(tooFar).Should().BeNull();
+    }
+
+    // ── BuildAltTitles tests ──────────────────────────────────────────────────
+
+    [Fact]
+    public void BuildAltTitles_YearPrefix_IsStripped()
+    {
+        var result = MetadataEnrichmentService.BuildAltTitles(
+            name: "(2014) Remixed", filenameStem: null, preciseName: null);
+        result.Should().Contain("Remixed");
+        result.Should().NotContain("(2014)");
+        result.Should().NotContain("2014");
+    }
+
+    [Fact]
+    public void BuildAltTitles_YearSuffix_IsStripped()
+    {
+        var result = MetadataEnrichmentService.BuildAltTitles(
+            name: "The Better Life (2000)", filenameStem: null, preciseName: null);
+        result[0].Should().Be("The Better Life");
+    }
+
+    [Fact]
+    public void BuildAltTitles_VersionQualifier_AddsStrippedVariant()
+    {
+        var result = MetadataEnrichmentService.BuildAltTitles(
+            name: "Kryptonite (LP version)", filenameStem: "Kryptonite", preciseName: null);
+        result.Should().Contain("Kryptonite (LP version)");
+        result.Should().Contain("Kryptonite");
+    }
+
+    [Fact]
+    public void BuildAltTitles_Deduplicates()
+    {
+        // filenameStem same as the canonical name — should not appear twice
+        var result = MetadataEnrichmentService.BuildAltTitles(
+            name: "Kryptonite", filenameStem: "Kryptonite", preciseName: null);
+        result.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void BuildAltTitles_PreciseName_PrependedFirst()
+    {
+        var result = MetadataEnrichmentService.BuildAltTitles(
+            name: "what if", filenameStem: null, preciseName: "What If...?");
+        result[0].Should().Be("What If...?");
+    }
+
     // ── EnrichItemAsync (unified) tests ───────────────────────────────────────
 
     [Fact]
