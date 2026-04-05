@@ -429,14 +429,14 @@ public class MetadataEnrichmentServiceTests : IDisposable
     [Fact]
     public void ValidateYear_FuturePlusThree_IsValid()
     {
-        var farFuture = DateTime.Now.Year + 3;
+        var farFuture = DateTime.UtcNow.Year + 3;
         MetadataEnrichmentService.ValidateYear(farFuture).Should().Be(farFuture);
     }
 
     [Fact]
     public void ValidateYear_FuturePlusFour_IsNull()
     {
-        var tooFar = DateTime.Now.Year + 4;
+        var tooFar = DateTime.UtcNow.Year + 4;
         MetadataEnrichmentService.ValidateYear(tooFar).Should().BeNull();
     }
 
