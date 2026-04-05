@@ -45,5 +45,27 @@ public record MediaSearchContext(
     /// release MBID, then search the current item with <c>reid:{mbid}</c>.
     /// Null or empty when no siblings are available or when the item is not a leaf node.
     /// </summary>
-    IReadOnlyList<string>? SiblingNames = null
+    IReadOnlyList<string>? SiblingNames = null,
+
+    /// <summary>
+    /// Ordered list of alternative title forms to try in each search stage:
+    /// [PreciseName?, year-stripped name, filename stem?, version-qualifier-stripped?].
+    /// Duplicates are removed. Null means the plugin should fall back to <see cref="Name"/>.
+    /// </summary>
+    IReadOnlyList<string>? AltTitles = null,
+
+    /// <summary>
+    /// Names of direct child items for HierarchyLevel 0 (artist → albums) or
+    /// HierarchyLevel 1 (album → tracks, show → episodes). Used in Stage 3 to compare
+    /// the provider's sub-item list against what Chronicle already has.
+    /// Null or empty for leaf items (HierarchyLevel 2) — use <see cref="SiblingNames"/> instead.
+    /// </summary>
+    IReadOnlyList<string>? ChildNames = null,
+
+    /// <summary>
+    /// Structured metadata for sibling items (leaf level) or child items (parent levels).
+    /// Used in Stage 4 sub-item metadata comparison against the provider's data.
+    /// Populated in tiers: filename/path info first, then duration, then full tags.
+    /// </summary>
+    IReadOnlyList<SiblingInfo>? SubItemMetadata = null
 );
