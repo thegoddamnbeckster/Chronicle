@@ -631,19 +631,121 @@ public class MetadataEnrichmentServiceTests : IDisposable
         return mock;
     }
 
-    // ── BuildSubItemMetadataTier1 tests ──────────────────────────────────────
+    // ── ChildNames / SubItemMetadata context-wiring tests ────────────────────
 
     [Fact]
-    public void BuildSubItemMetadataTier1_ExtractsTrackNumber_FromFilenamePrefix()
+    public async Task EnrichBatch_AlbumLevel_PopulatesChildNamesAndSubItemMetadata()
+    {
+        // Arrange: artist → album → 3 tracks
+        var mt = await EnsureMediaTypeAsync("music");
+
+        var artist = new MediaItem
+        {
+            Name = "3TEETH", HierarchyLevel = 0, MediaTypeId = mt.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        };
+        _db.MediaItems.Add(artist);
+        await _db.SaveChangesAsync();
+
+        var album = new MediaItem
+        {
+            Name = "shutdown.exe", HierarchyLevel = 1, ParentId = artist.Id,
+            Year = 2017, MediaTypeId = mt.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        };
+        _db.MediaItems.Add(album);
+        await _db.SaveChangesAsync();
+
+        var track1 = new MediaItem
+        {
+            Name = "SHUTDOWN", HierarchyLevel = 2, ParentId = album.Id, MediaTypeId = mt.Id,
+            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\3TEETH\\shutdown.exe\\01 - SHUTDOWN.mp3"],"duration":210}}""",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        };
+        var track2 = new MediaItem
+        {
+            Name = "VOIDSONG", HierarchyLevel = 2, ParentId = album.Id, MediaTypeId = mt.Id,
+            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\3TEETH\\shutdown.exe\\02 - VOIDSONG.mp3"],"duration":253}}""",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        };
+        var track3 = new MediaItem
+        {
+            Name = "Eradication", HierarchyLevel = 2, ParentId = album.Id, MediaTypeId = mt.Id,
+            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\3TEETH\\shutdown.exe\\03 - Eradication.mp3"],"duration":195}}""",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        };
+        _db.MediaItems.AddRange(track1, track2, track3);
+        await _db.SaveChangesAsync();
+
+        // Artist enrichment row must be Completed so the album is not blocked by
+        // the TV-hierarchy guard (which waits for the parent to be enriched first).
+        _db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = artist.Id,
+            PluginId    = "chronicle.plugin.musicbrainz",
+            ExternalId  = "artist:some-mbid",
+            Status      = EnrichmentStatus.Completed,
+            MaxRetries  = 3
+        });
+
+        // Enrichment row for the album (no external ID — triggers SearchAsync path)
+        _db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = album.Id,
+            PluginId    = "chronicle.plugin.musicbrainz",
+            Status      = EnrichmentStatus.Pending,
+            MaxRetries  = 3
+        });
+        await _db.SaveChangesAsync();
+
+        // Capture the MediaSearchContext passed to SearchAsync
+        MediaSearchContext? capturedCtx = null;
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        provider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .Callback((MediaSearchContext ctx, CancellationToken _) => capturedCtx = ctx)
+            .ReturnsAsync(new List<ScoredCandidate>());
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
+            .Returns(provider.Object);
+
+        // Act
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        // Assert: the context must carry child names and sub-item metadata for all 3 tracks
+        capturedCtx.Should().NotBeNull();
+        capturedCtx!.ChildNames.Should().NotBeNull();
+        capturedCtx.ChildNames.Should().Contain("SHUTDOWN");
+        capturedCtx.ChildNames.Should().Contain("VOIDSONG");
+        capturedCtx.ChildNames.Should().Contain("Eradication");
+
+        capturedCtx.SubItemMetadata.Should().NotBeNull();
+        capturedCtx.SubItemMetadata!.Count.Should().Be(3);
+
+        // The first child (track1, "01 - SHUTDOWN.mp3") should have ItemNumber=1, DurationSeconds=210
+        var shutdownMeta = capturedCtx.SubItemMetadata.FirstOrDefault(s => s.Name == "SHUTDOWN");
+        shutdownMeta.Should().NotBeNull();
+        shutdownMeta!.ItemNumber.Should().Be(1);
+        shutdownMeta.DurationSeconds.Should().Be(210);
+    }
+
+    // ── BuildSubItemMetadataTier1 tests ──────────────────────────────────────
+
+    [Theory]
+    [InlineData("01 - Kryptonite.mp3", 1)]
+    [InlineData("1-01 - SHUTDOWN.mp3", 1)]   // disc-track: track is 01
+    [InlineData("2-05 - Song.mp3", 5)]        // disc 2, track 5
+    public void BuildSubItemMetadataTier1_ExtractsTrackNumber_FromFilenamePrefix(
+        string fileName, int expectedTrack)
     {
         var item = new Chronicle.Core.Models.MediaItem
         {
-            Name = "Kryptonite",
-            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\Album\\01 - Kryptonite.mp3"]}}"""
+            Name = "Track",
+            MetadataJson = $"{{\"fileScanner\":{{\"filePaths\":[\"E:\\\\Music\\\\Album\\\\{fileName}\"]}}}}"
         };
         var result = MetadataEnrichmentService.BuildSubItemMetadataTier1(item);
-        result.ItemNumber.Should().Be(1);
-        result.Name.Should().Be("Kryptonite");
+        result.ItemNumber.Should().Be(expectedTrack);
     }
 
     [Fact]

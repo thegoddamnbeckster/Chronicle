@@ -1149,10 +1149,12 @@ public class MetadataEnrichmentService(
         catch { return null; }
     }
 
-    // Track-number prefix with capture group (for BuildSubItemMetadataTier1).
+    // Matches plain track prefix ("01 - Song") or disc-track prefix ("1-01 - Song").
+    // Captures the last numeric group before the separator so disc-track gives the
+    // track number (01), not the disc number (1).
     // Distinct from TrackNumPrefixRe which has no capture group and is used by ExtractFilenameStem.
     private static readonly System.Text.RegularExpressions.Regex TrackPrefixRe =
-        new(@"^(\d{1,3})[\s\-\.]+",
+        new(@"^(?:\d{1,2}-)?(\d{1,3})[\s\-\.]+",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
     // Disc/CD folder pattern — e.g. "Disc 1", "disk2", "CD 3"
