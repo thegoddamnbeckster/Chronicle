@@ -771,16 +771,41 @@ public class MetadataEnrichmentService(
                     // For leaf-level items (tracks, episodes), include sibling names so
                     // plugins can use multi-track fingerprinting to pin down the exact release.
                     IReadOnlyList<string>? siblingNames = null;
+                    IReadOnlyList<string>? childNames = null;
+                    IReadOnlyList<SiblingInfo>? subItemMetadata = null;
+
                     if (row.MediaItem.HierarchyLevel == 2 && row.MediaItem.ParentId is not null)
                     {
-                        var siblings = await db.MediaItems
+                        // Leaf: fetch siblings for both SiblingNames and SubItemMetadata
+                        var siblingItems = await db.MediaItems
                             .Where(m => m.ParentId == row.MediaItem.ParentId
                                      && m.Id       != row.MediaItem.Id)
-                            .Select(m => m.Name)
-                            .Take(8)
+                            .Take(50)
                             .ToListAsync(ct);
-                        if (siblings.Count > 0)
-                            siblingNames = siblings;
+                        if (siblingItems.Count > 0)
+                        {
+                            siblingNames = siblingItems.Take(8).Select(m => m.Name).ToList().AsReadOnly();
+                            subItemMetadata = siblingItems
+                                .Select(s => AddDurationTier2(BuildSubItemMetadataTier1(s), s))
+                                .ToList()
+                                .AsReadOnly();
+                        }
+                    }
+                    else if (row.MediaItem.HierarchyLevel <= 1)
+                    {
+                        // Parent: fetch children — shared between ChildNames and SubItemMetadata
+                        var childItems = await db.MediaItems
+                            .Where(m => m.ParentId == row.MediaItem.Id)
+                            .Take(200)
+                            .ToListAsync(ct);
+                        if (childItems.Count > 0)
+                        {
+                            childNames = childItems.Select(m => m.Name).ToList().AsReadOnly();
+                            subItemMetadata = childItems
+                                .Select(c => AddDurationTier2(BuildSubItemMetadataTier1(c), c))
+                                .ToList()
+                                .AsReadOnly();
+                        }
                     }
 
                     var filenameStem = ExtractFilenameStem(row.MediaItem);
@@ -796,7 +821,9 @@ public class MetadataEnrichmentService(
                             AltTitles:       BuildAltTitles(
                                                  row.MediaItem.Name,
                                                  filenameStem,
-                                                 null));
+                                                 null),
+                            ChildNames:      childNames,
+                            SubItemMetadata: subItemMetadata);
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
@@ -1120,6 +1147,88 @@ public class MetadataEnrichmentService(
                 ? null : stem;
         }
         catch { return null; }
+    }
+
+    // Track-number prefix with capture group (for BuildSubItemMetadataTier1).
+    // Distinct from TrackNumPrefixRe which has no capture group and is used by ExtractFilenameStem.
+    private static readonly System.Text.RegularExpressions.Regex TrackPrefixRe =
+        new(@"^(\d{1,3})[\s\-\.]+",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // Disc/CD folder pattern — e.g. "Disc 1", "disk2", "CD 3"
+    private static readonly System.Text.RegularExpressions.Regex DiscFolderRe =
+        new(@"\b(?:disc|disk|cd)\s*(\d+)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Tier 1: extract what we can from filename and folder path alone — no file I/O beyond
+    /// what the file scanner has already stored in MetadataJson.
+    /// </summary>
+    internal static SiblingInfo BuildSubItemMetadataTier1(Chronicle.Core.Models.MediaItem item)
+    {
+        string? filePath   = null;
+        string? folderPath = null;
+
+        if (!string.IsNullOrEmpty(item.MetadataJson))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(item.MetadataJson);
+                if (doc.RootElement.TryGetProperty("fileScanner", out var fs))
+                {
+                    if (fs.TryGetProperty("filePaths", out var fps) && fps.GetArrayLength() > 0)
+                        filePath = fps[0].GetString();
+                    if (fs.TryGetProperty("folderPath", out var fp))
+                        folderPath = fp.GetString();
+                }
+            }
+            catch { /* corrupt JSON — ignore */ }
+        }
+
+        int? trackNumber = null;
+        int? discNumber  = null;
+
+        if (filePath is not null)
+        {
+            var fileName = System.IO.Path.GetFileNameWithoutExtension(filePath);
+            var tm = TrackPrefixRe.Match(fileName);
+            if (tm.Success && int.TryParse(tm.Groups[1].Value, out var tn))
+                trackNumber = tn;
+        }
+
+        if (folderPath is not null)
+        {
+            var dm = DiscFolderRe.Match(folderPath);
+            if (dm.Success && int.TryParse(dm.Groups[1].Value, out var dn))
+                discNumber = dn;
+        }
+
+        return new SiblingInfo(
+            Name:       item.Name,
+            ItemNumber: trackNumber,
+            DiscNumber: discNumber);
+    }
+
+    /// <summary>
+    /// Tier 2: add duration (in seconds) from fileScanner metadata already stored in
+    /// MetadataJson. No additional file I/O — the duration was captured during the scan.
+    /// </summary>
+    internal static SiblingInfo AddDurationTier2(SiblingInfo tier1, Chronicle.Core.Models.MediaItem item)
+    {
+        if (string.IsNullOrEmpty(item.MetadataJson)) return tier1;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(item.MetadataJson);
+            if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
+                fs.TryGetProperty("duration", out var dur) &&
+                dur.TryGetInt32(out var seconds))
+            {
+                return tier1 with { DurationSeconds = seconds };
+            }
+        }
+        catch { }
+        return tier1;
     }
 
     // ── NFO sidecar helpers ───────────────────────────────────────────────────
