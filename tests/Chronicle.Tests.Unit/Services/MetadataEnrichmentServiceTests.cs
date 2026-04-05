@@ -631,6 +631,69 @@ public class MetadataEnrichmentServiceTests : IDisposable
         return mock;
     }
 
+    // ── BuildSubItemMetadataTier1 tests ──────────────────────────────────────
+
+    [Fact]
+    public void BuildSubItemMetadataTier1_ExtractsTrackNumber_FromFilenamePrefix()
+    {
+        var item = new Chronicle.Core.Models.MediaItem
+        {
+            Name = "Kryptonite",
+            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\Album\\01 - Kryptonite.mp3"]}}"""
+        };
+        var result = MetadataEnrichmentService.BuildSubItemMetadataTier1(item);
+        result.ItemNumber.Should().Be(1);
+        result.Name.Should().Be("Kryptonite");
+    }
+
+    [Fact]
+    public void BuildSubItemMetadataTier1_ExtractsDiscNumber_FromFolderPath()
+    {
+        var item = new Chronicle.Core.Models.MediaItem
+        {
+            Name = "Song",
+            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\Artist\\Album\\Disc 2\\01 - Song.mp3"],"folderPath":"E:\\Music\\Artist\\Album\\Disc 2"}}"""
+        };
+        var result = MetadataEnrichmentService.BuildSubItemMetadataTier1(item);
+        result.DiscNumber.Should().Be(2);
+    }
+
+    [Fact]
+    public void BuildSubItemMetadataTier1_NullMetadataJson_ReturnsNameOnly()
+    {
+        var item = new Chronicle.Core.Models.MediaItem { Name = "Track", MetadataJson = null };
+        var result = MetadataEnrichmentService.BuildSubItemMetadataTier1(item);
+        result.Name.Should().Be("Track");
+        result.ItemNumber.Should().BeNull();
+        result.DiscNumber.Should().BeNull();
+    }
+
+    [Fact]
+    public void AddDurationTier2_AddsDuration_WhenPresentInJson()
+    {
+        var item = new Chronicle.Core.Models.MediaItem
+        {
+            Name = "Song",
+            MetadataJson = """{"fileScanner":{"duration":247}}"""
+        };
+        var tier1  = new Chronicle.Plugins.Models.SiblingInfo("Song");
+        var result = MetadataEnrichmentService.AddDurationTier2(tier1, item);
+        result.DurationSeconds.Should().Be(247);
+    }
+
+    [Fact]
+    public void AddDurationTier2_NoDuration_ReturnsTier1Unchanged()
+    {
+        var item = new Chronicle.Core.Models.MediaItem
+        {
+            Name = "Song",
+            MetadataJson = """{"fileScanner":{}}"""
+        };
+        var tier1  = new Chronicle.Plugins.Models.SiblingInfo("Song");
+        var result = MetadataEnrichmentService.AddDurationTier2(tier1, item);
+        result.DurationSeconds.Should().BeNull();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private async Task<(MediaItem, MediaItemEnrichment)> SeedItemWithStatus(
