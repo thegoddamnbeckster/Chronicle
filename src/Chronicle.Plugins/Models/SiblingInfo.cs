@@ -16,7 +16,9 @@ public record SiblingInfo(
     int?   DurationSeconds = null,
     /// <summary>
     /// Additional tag fields keyed by lowercase tag name (e.g. "isrc", "genre").
-    /// Populated only in Tier 3 (full tag read). Null when Tier 3 was not reached.
+    /// Populated only when a full tag-read pass has been performed on the file
+    /// (the third and most expensive data-population tier). Null when only
+    /// filename/path and duration data were collected.
     /// </summary>
     IReadOnlyDictionary<string, string>? Tags = null
 );
