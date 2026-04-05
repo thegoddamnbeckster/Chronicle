@@ -783,6 +783,7 @@ public class MetadataEnrichmentService(
                             siblingNames = siblings;
                     }
 
+                    var filenameStem = ExtractFilenameStem(row.MediaItem);
                     var searchCtx = new MediaSearchContext(
                             Name:            row.MediaItem.Name,
                             Year:            ValidateYear(row.MediaItem.Year),
@@ -790,11 +791,11 @@ public class MetadataEnrichmentService(
                             GrandparentName: row.MediaItem.Parent?.Parent?.Name,
                             ItemNumber:      row.MediaItem.Number,
                             HierarchyLevel:  row.MediaItem.HierarchyLevel,
-                            FilenameStem:    ExtractFilenameStem(row.MediaItem),
+                            FilenameStem:    filenameStem,
                             SiblingNames:    siblingNames,
                             AltTitles:       BuildAltTitles(
                                                  row.MediaItem.Name,
-                                                 ExtractFilenameStem(row.MediaItem),
+                                                 filenameStem,
                                                  null));
 
                     logger.LogDebug(
@@ -1337,16 +1338,17 @@ public class MetadataEnrichmentService(
             if (result is null && (item.ParentId is null || (resolvedId is null && item.HierarchyLevel == 1)))
             {
                 var childCount = await db.MediaItems.CountAsync(m => m.ParentId == item.Id, ct);
+                var filenameStem = ExtractFilenameStem(item);
                 var ctx = new Chronicle.Plugins.Models.MediaSearchContext(
                     Name:           NormalizeSearchName(item.Name),
                     Year:           ValidateYear(item.Year),
                     ParentName:     item.Parent?.Name,
                     ChildCount:     childCount > 0 ? childCount : null,
                     HierarchyLevel: item.HierarchyLevel,
-                    FilenameStem:   ExtractFilenameStem(item),
+                    FilenameStem:   filenameStem,
                     AltTitles:      BuildAltTitles(
                                         item.Name,
-                                        ExtractFilenameStem(item),
+                                        filenameStem,
                                         null));
 
                 var candidates = await provider.SearchAsync(ctx, ct);
