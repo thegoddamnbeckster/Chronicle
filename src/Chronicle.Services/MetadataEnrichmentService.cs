@@ -785,13 +785,17 @@ public class MetadataEnrichmentService(
 
                     var searchCtx = new MediaSearchContext(
                             Name:            row.MediaItem.Name,
-                            Year:            row.MediaItem.Year,
+                            Year:            ValidateYear(row.MediaItem.Year),
                             ParentName:      row.MediaItem.Parent?.Name,
                             GrandparentName: row.MediaItem.Parent?.Parent?.Name,
                             ItemNumber:      row.MediaItem.Number,
                             HierarchyLevel:  row.MediaItem.HierarchyLevel,
                             FilenameStem:    ExtractFilenameStem(row.MediaItem),
-                            SiblingNames:    siblingNames);
+                            SiblingNames:    siblingNames,
+                            AltTitles:       BuildAltTitles(
+                                                 row.MediaItem.Name,
+                                                 ExtractFilenameStem(row.MediaItem),
+                                                 null));
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
@@ -1016,6 +1020,66 @@ public class MetadataEnrichmentService(
 
     private static string StripYearPrefix(string name) =>
         YearPrefixRe.Replace(name, string.Empty);
+
+    private static readonly System.Text.RegularExpressions.Regex YearSuffixRe =
+        new(@"\s*\(\d{4}\)\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string StripYearSuffix(string name) =>
+        YearSuffixRe.Replace(name, string.Empty);
+
+    /// <summary>
+    /// Returns the year if it falls within the plausible media release range
+    /// (1900 to current year + 3). Returns null for values outside that range
+    /// so plugins do not waste a search attempt on a garbage year.
+    /// </summary>
+    internal static int? ValidateYear(int? year)
+    {
+        if (year is null) return null;
+        var maxYear = DateTime.UtcNow.Year + 3;
+        return year >= 1900 && year <= maxYear ? year : null;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex VersionQualifierEnrichRe =
+        new(@"\s*\([^)]+\)\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Builds an ordered, deduplicated list of title forms to try in each search stage.
+    /// Order: PreciseName (if any) → year-stripped canonical name → filenameStem (if different) →
+    /// version-qualifier-stripped form (if different from already-added forms).
+    /// </summary>
+    internal static IReadOnlyList<string> BuildAltTitles(
+        string name, string? filenameStem, string? preciseName)
+    {
+        var seen    = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<string>();
+
+        void Add(string? s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return;
+            var trimmed = s.Trim();
+            if (seen.Add(trimmed)) results.Add(trimmed);
+        }
+
+        // 1. Precise name (NFO/reliable source) first
+        Add(preciseName);
+
+        // 2. Year-stripped canonical name (strip both prefix and suffix patterns)
+        var stripped = StripYearPrefix(StripYearSuffix(name)).Trim();
+        Add(string.IsNullOrWhiteSpace(stripped) ? name : stripped);
+
+        // 3. Filename stem (often cleaner than the tag title)
+        Add(filenameStem);
+
+        // 4. Version-qualifier-stripped form (e.g. "Kryptonite" from "Kryptonite (LP version)")
+        //    Apply to the year-stripped form (results[0] after preciseName, or results[0] overall)
+        var baseForStripping = results.Count > 0
+            ? results[preciseName != null ? Math.Min(1, results.Count - 1) : 0]
+            : name;
+        var noQualifier = VersionQualifierEnrichRe.Replace(baseForStripping, string.Empty).Trim();
+        Add(noQualifier);
+
+        return results.AsReadOnly();
+    }
 
     // Leading track-number prefix: "01 - ", "02. ", "3 ", "1-01 - " etc.
     private static readonly System.Text.RegularExpressions.Regex TrackNumPrefixRe =
@@ -1275,10 +1339,15 @@ public class MetadataEnrichmentService(
                 var childCount = await db.MediaItems.CountAsync(m => m.ParentId == item.Id, ct);
                 var ctx = new Chronicle.Plugins.Models.MediaSearchContext(
                     Name:           NormalizeSearchName(item.Name),
-                    Year:           item.Year,
+                    Year:           ValidateYear(item.Year),
                     ParentName:     item.Parent?.Name,
                     ChildCount:     childCount > 0 ? childCount : null,
-                    HierarchyLevel: item.HierarchyLevel);
+                    HierarchyLevel: item.HierarchyLevel,
+                    FilenameStem:   ExtractFilenameStem(item),
+                    AltTitles:      BuildAltTitles(
+                                        item.Name,
+                                        ExtractFilenameStem(item),
+                                        null));
 
                 var candidates = await provider.SearchAsync(ctx, ct);
                 var best = candidates.OrderByDescending(c => c.Score).FirstOrDefault();
