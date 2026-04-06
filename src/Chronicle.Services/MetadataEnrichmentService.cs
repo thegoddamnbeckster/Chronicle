@@ -360,7 +360,9 @@ public class MetadataEnrichmentService(
         query = scope switch
         {
             ResetScope.Single       => query.Where(x => x.MediaItemId == mediaItemId),
+            ResetScope.AllFailed    => query.Where(x => x.Status == EnrichmentStatus.Failed),
             ResetScope.AllExhausted => query.Where(x => x.Status == EnrichmentStatus.Exhausted),
+            ResetScope.AllNotFound  => query.Where(x => x.Status == EnrichmentStatus.NotFound),
             ResetScope.AllForPlugin => query.Where(x => x.Status != EnrichmentStatus.Skipped),
             _                       => query
         };
