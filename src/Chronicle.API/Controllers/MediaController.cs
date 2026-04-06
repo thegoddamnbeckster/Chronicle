@@ -86,10 +86,33 @@ namespace Chronicle.API.Controllers
         }
 
         [HttpGet("{id:int}/children")]
-        public async Task<IActionResult> GetChildren(int id)
+        public async Task<IActionResult> GetChildren(int id, CancellationToken ct)
         {
-            var children = await _mediaService.GetChildrenAsync(id);
-            return Ok(ApiResponse<List<MediaItemDto>>.Ok(children.Select(m => ToDto(m)).ToList()));
+            var childrenSeq = await _mediaService.GetChildrenAsync(id);
+            var children = childrenSeq.ToList();
+            if (children.Count == 0)
+                return Ok(ApiResponse<List<MediaItemDto>>.Ok([]));
+
+            // Batch-fetch enrichment statuses for all children in a single query.
+            var childIds = children.Select(c => c.Id).ToList();
+            var enrichmentRows = await _context.MediaEnrichments
+                .Where(e => childIds.Contains(e.MediaItemId))
+                .Select(e => new { e.MediaItemId, e.PluginId, Status = e.Status.ToString() })
+                .ToListAsync(ct);
+
+            var enrichmentByChild = enrichmentRows
+                .GroupBy(e => e.MediaItemId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.ToDictionary(e => e.PluginId, e => e.Status));
+
+            var dtos = children.Select(m =>
+            {
+                enrichmentByChild.TryGetValue(m.Id, out var statuses);
+                return ToDto(m, enrichmentStatuses: statuses?.Count > 0 ? statuses : null);
+            }).ToList();
+
+            return Ok(ApiResponse<List<MediaItemDto>>.Ok(dtos));
         }
 
         [HttpPatch("{id:int}")]

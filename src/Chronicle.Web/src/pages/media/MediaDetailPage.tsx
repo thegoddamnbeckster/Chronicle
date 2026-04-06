@@ -372,7 +372,7 @@ export default function MediaDetailPage() {
               const enrichStatus = item.enrichmentStatuses?.[pluginId]
               return (
                 <PluginMetadataBox
-                  key={pluginId}
+                  key={`${mediaId}-${pluginId}`}
                   mediaId={mediaId}
                   pluginId={pluginId}
                   pluginName={plugin?.name ?? pluginId}
@@ -535,12 +535,20 @@ export default function MediaDetailPage() {
                       }}
                     />
                   : null}
-                <div
-                  className={styles.childPosterPlaceholder}
-                  style={{ display: child.posterUrl ? 'none' : 'flex' }}
-                >
-                  {child.number ?? child.name.charAt(0)}
-                </div>
+                {(() => {
+                  const enriched = child.enrichmentStatuses != null &&
+                    Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
+                  return (
+                    <div
+                      className={styles.childPosterPlaceholder}
+                      style={{ display: child.posterUrl ? 'none' : 'flex' }}
+                    >
+                      {enriched
+                        ? <span className={styles.childNoArt}>No art</span>
+                        : (child.number ?? child.name.charAt(0))}
+                    </div>
+                  )
+                })()}
                 <div className={styles.childName}>{child.name}</div>
                 {child.year && <div className={styles.childYear}>{child.year}</div>}
               </Link>
