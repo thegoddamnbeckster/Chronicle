@@ -850,6 +850,14 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   margin-bottom: 6px;
 }
 
+.childNoArt {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+
 .childName {
   font-size: 12px;
   overflow: hidden;
