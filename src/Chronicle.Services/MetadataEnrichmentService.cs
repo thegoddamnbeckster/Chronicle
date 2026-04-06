@@ -18,6 +18,11 @@ public class MetadataEnrichmentService(
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
     private static readonly NfoSignalExtractor _nfoExtractor = new();
 
+    // Per-plugin semaphore: prevents two concurrent batch runs for the same plugin
+    // (e.g. scheduled task + manual Run Now firing simultaneously).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim>
+        _pluginLocks = new(StringComparer.OrdinalIgnoreCase);
+
     // ── Unified entry points ───────────────────────────────────────────────────
 
     public async Task EnrichItemAsync(
@@ -93,6 +98,16 @@ public class MetadataEnrichmentService(
     // ── Background / batch operations ─────────────────────────────────────────
     public async Task EnrichPendingAsync(string pluginId, CancellationToken ct = default)
     {
+        // Acquire the per-plugin lock. If another run is already in progress for this plugin,
+        // skip immediately rather than queueing a duplicate batch.
+        var sem = _pluginLocks.GetOrAdd(pluginId, _ => new SemaphoreSlim(1, 1));
+        if (!await sem.WaitAsync(0, ct))
+        {
+            logger.LogDebug("EnrichPendingAsync skipped for {PluginId} — run already in progress", pluginId);
+            return;
+        }
+        try
+        {
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
         var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
@@ -151,6 +166,8 @@ public class MetadataEnrichmentService(
             ct.ThrowIfCancellationRequested();
             await EnrichOneAsync(db, provider, row, ct);
         }
+        } // end try
+        finally { sem.Release(); }
     }
 
     public async Task ResyncAllForPluginAsync(string pluginId, CancellationToken ct = default)
