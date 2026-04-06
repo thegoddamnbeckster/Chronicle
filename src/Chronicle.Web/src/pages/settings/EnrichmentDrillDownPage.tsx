@@ -326,7 +326,10 @@ export default function EnrichmentDrillDownPage() {
   async function handleBulkReset() {
     setBulkWorking(true)
     try {
-      const scope = activeStatus === 'Exhausted' ? 'exhausted' : 'all'
+      const scope =
+        activeStatus === 'Failed'    ? 'failed'    :
+        activeStatus === 'Exhausted' ? 'exhausted' :
+        activeStatus === 'NotFound'  ? 'notfound'  : 'all'
       await resetEnrichment(pluginId, scope)
       await load()
     } finally { setBulkWorking(false) }
