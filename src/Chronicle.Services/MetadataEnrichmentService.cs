@@ -109,6 +109,15 @@ public class MetadataEnrichmentService(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var cutoff = DateTime.UtcNow - RetryWindow;
+
+        // Fetch the set of MediaItemIds whose enrichment is Completed for this plugin.
+        // Used below to gate child items: a child is only eligible once its parent is Completed.
+        // Two-step approach avoids correlated subquery EF translation issues.
+        var completedItemIds = await db.MediaEnrichments
+            .Where(e => e.PluginId == pluginId && e.Status == EnrichmentStatus.Completed)
+            .Select(e => e.MediaItemId)
+            .ToListAsync(ct);
+
         var rows = await db.MediaEnrichments
             .Include(x => x.MediaItem)
                 .ThenInclude(m => m!.MediaType)
@@ -118,7 +127,12 @@ public class MetadataEnrichmentService(
             .Where(x => x.PluginId == pluginId &&
                         (x.Status == EnrichmentStatus.Pending ||
                          (x.Status == EnrichmentStatus.Failed &&
-                          (x.LastAttemptedAt == null || x.LastAttemptedAt < cutoff))))
+                          (x.LastAttemptedAt == null || x.LastAttemptedAt < cutoff))) &&
+                        // Only attempt a child item once its direct parent is Completed.
+                        // Root items (no parent) are always eligible.
+                        (x.MediaItem!.ParentId == null ||
+                         completedItemIds.Contains(x.MediaItem!.ParentId.Value)))
+            .OrderBy(x => x.MediaItem!.HierarchyLevel)
             .ToListAsync(ct);
 
         // Filter out items whose media type is not supported by this plugin.
@@ -621,15 +635,7 @@ public class MetadataEnrichmentService(
                                 row.MediaItemId, row.ExternalId);
                         }
                     }
-                    else if (showEnrichment is null
-                        || showEnrichment.Status == Chronicle.Core.Models.EnrichmentStatus.Pending)
-                    {
-                        logger.LogDebug(
-                            "Skipping episode {ItemId}: grandparent show {ShowId} not yet enriched by {PluginId}",
-                            row.MediaItemId, parentItem.ParentId, row.PluginId);
-                        return; // leave status as Pending
-                    }
-                    // else: show enriched but no tv: ID (different plugin) — fall through to search
+                    // else: show not enriched or no tv: ID — fall through to name search
                 }
                 else
                 {
@@ -653,14 +659,7 @@ public class MetadataEnrichmentService(
                                 row.MediaItemId, row.ExternalId);
                         }
                     }
-                    else if (showEnrichment is null
-                        || showEnrichment.Status == Chronicle.Core.Models.EnrichmentStatus.Pending)
-                    {
-                        logger.LogDebug(
-                            "Skipping child item {ItemId}: parent {ParentId} not yet enriched by {PluginId}",
-                            row.MediaItemId, parentId, row.PluginId);
-                        return; // leave status as Pending
-                    }
+                    // else: parent not enriched with a tv: ID — fall through to name search
                 }
 
                 // If we derived an ID, call the provider now
