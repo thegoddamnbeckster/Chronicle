@@ -125,47 +125,64 @@ public class MetadataEnrichmentService(
 
         var cutoff = DateTime.UtcNow - RetryWindow;
 
-        // Fetch the set of MediaItemIds whose enrichment is Completed for this plugin.
-        // Used below to gate child items: a child is only eligible once its parent is Completed.
-        // Two-step approach avoids correlated subquery EF translation issues.
-        var completedItemIds = await db.MediaEnrichments
-            .Where(e => e.PluginId == pluginId && e.Status == EnrichmentStatus.Completed)
-            .Select(e => e.MediaItemId)
-            .ToListAsync(ct);
-
-        var rows = await db.MediaEnrichments
-            .Include(x => x.MediaItem)
-                .ThenInclude(m => m!.MediaType)
-            .Include(x => x.MediaItem)
-                .ThenInclude(m => m!.Parent)
-                    .ThenInclude(p => p!.Parent)
-            .Where(x => x.PluginId == pluginId &&
-                        (x.Status == EnrichmentStatus.Pending ||
-                         (x.Status == EnrichmentStatus.Failed &&
-                          (x.LastAttemptedAt == null || x.LastAttemptedAt < cutoff))) &&
-                        // Only attempt a child item once its direct parent is Completed.
-                        // Root items (no parent) are always eligible.
-                        (x.MediaItem!.ParentId == null ||
-                         completedItemIds.Contains(x.MediaItem!.ParentId.Value)))
-            .OrderBy(x => x.MediaItem!.HierarchyLevel)
-            .ToListAsync(ct);
-
-        // Filter out items whose media type is not supported by this plugin.
-        // This prevents e.g. TMDB from processing music items it will never match.
-        if (supportedTypes.Count > 0)
-            rows = rows.Where(r =>
-            {
-                var mt = NormalizeMediaTypeName(r.MediaItem?.MediaType?.Name ?? string.Empty);
-                return supportedTypes.Contains(mt);
-            }).ToList();
-
-        logger.LogInformation("Enriching {Count} items for plugin {PluginId}", rows.Count, pluginId);
-
-        foreach (var row in rows)
+        // Loop until no more eligible items remain.
+        // Each pass re-fetches completedItemIds so that items whose parents were completed
+        // in the previous pass become eligible immediately — without waiting for tomorrow's
+        // scheduled run. This is required for hierarchical content (Show→Season→Episode):
+        // pass 1 completes shows, pass 2 completes seasons, pass 3 completes episodes.
+        int passNumber = 0;
+        while (true)
         {
             ct.ThrowIfCancellationRequested();
-            await EnrichOneAsync(db, provider, row, ct);
+
+            // Re-fetch completed IDs on every pass so newly-completed parents gate their children.
+            var completedItemIds = await db.MediaEnrichments
+                .Where(e => e.PluginId == pluginId && e.Status == EnrichmentStatus.Completed)
+                .Select(e => e.MediaItemId)
+                .ToListAsync(ct);
+
+            var rows = await db.MediaEnrichments
+                .Include(x => x.MediaItem)
+                    .ThenInclude(m => m!.MediaType)
+                .Include(x => x.MediaItem)
+                    .ThenInclude(m => m!.Parent)
+                        .ThenInclude(p => p!.Parent)
+                .Where(x => x.PluginId == pluginId &&
+                            (x.Status == EnrichmentStatus.Pending ||
+                             (x.Status == EnrichmentStatus.Failed &&
+                              (x.LastAttemptedAt == null || x.LastAttemptedAt < cutoff))) &&
+                            // Only attempt a child item once its direct parent is Completed.
+                            // Root items (no parent) are always eligible.
+                            (x.MediaItem!.ParentId == null ||
+                             completedItemIds.Contains(x.MediaItem!.ParentId.Value)))
+                .OrderBy(x => x.MediaItem!.HierarchyLevel)
+                .ToListAsync(ct);
+
+            // Filter out items whose media type is not supported by this plugin.
+            if (supportedTypes.Count > 0)
+                rows = rows.Where(r =>
+                {
+                    var mt = NormalizeMediaTypeName(r.MediaItem?.MediaType?.Name ?? string.Empty);
+                    return supportedTypes.Contains(mt);
+                }).ToList();
+
+            if (rows.Count == 0)
+                break; // No more eligible work — all passes complete.
+
+            passNumber++;
+            logger.LogInformation(
+                "EnrichPendingAsync pass {Pass}: enriching {Count} items for plugin {PluginId}",
+                passNumber, rows.Count, pluginId);
+
+            foreach (var row in rows)
+            {
+                ct.ThrowIfCancellationRequested();
+                await EnrichOneAsync(db, provider, row, ct);
+            }
         }
+
+        if (passNumber == 0)
+            logger.LogDebug("EnrichPendingAsync: no eligible items for plugin {PluginId}", pluginId);
         } // end try
         finally { sem.Release(); }
     }
@@ -1417,6 +1434,58 @@ public class MetadataEnrichmentService(
             if (options.IdOverride is not null)
             {
                 resolvedId = options.IdOverride.Trim();
+
+                // For TV season/episode items, a bare show-level ID (e.g. "tv:63197") entered in
+                // Fix Match must be promoted to a compound ID using the item's position in the
+                // hierarchy — otherwise GetByIdAsync returns show-level data applied to an episode.
+                //   Season  → tv:{showId}/season:{N}
+                //   Episode → tv:{showId}/season:{S}/episode:{E}
+                if (item.ParentId is not null
+                    && resolvedId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase)
+                    && !resolvedId.Contains('/'))
+                {
+                    var showTmdbId = resolvedId.Split(':', 2)[1];
+                    if (item.HierarchyLevel >= 2 && item.Parent is not null)
+                    {
+                        // Episode: parent is the season — use parent.Number for the season number
+                        int? seasonNum = item.Parent.Number;
+                        if (seasonNum is null && item.Parent.Name is { } pn)
+                        {
+                            var m2 = System.Text.RegularExpressions.Regex.Match(pn, @"\d+");
+                            if (m2.Success) seasonNum = int.Parse(m2.Value);
+                        }
+                        int? epNum = item.Number;
+                        if (epNum is null && item.Name is { } en)
+                        {
+                            var m3 = System.Text.RegularExpressions.Regex.Match(en, @"\d+");
+                            if (m3.Success) epNum = int.Parse(m3.Value);
+                        }
+                        if (seasonNum.HasValue && epNum.HasValue)
+                        {
+                            resolvedId = $"tv:{showTmdbId}/season:{seasonNum}/episode:{epNum}";
+                            logger.LogInformation(
+                                "Fix Match: promoted bare show ID to episode compound ID {Id} for item {ItemId}",
+                                resolvedId, item.Id);
+                        }
+                    }
+                    else if (item.HierarchyLevel == 1)
+                    {
+                        // Season: item.Number is the season number
+                        int? seasonNum = item.Number;
+                        if (seasonNum is null && item.Name is { } sn)
+                        {
+                            var m2 = System.Text.RegularExpressions.Regex.Match(sn, @"\d+");
+                            if (m2.Success) seasonNum = int.Parse(m2.Value);
+                        }
+                        if (seasonNum.HasValue)
+                        {
+                            resolvedId = $"tv:{showTmdbId}/season:{seasonNum}";
+                            logger.LogInformation(
+                                "Fix Match: promoted bare show ID to season compound ID {Id} for item {ItemId}",
+                                resolvedId, item.Id);
+                        }
+                    }
+                }
             }
             // 3b. Stored ID — validate hierarchy level and parent consistency
             else if (!string.IsNullOrEmpty(row.ExternalId) && IsIdValidForLevel(row.ExternalId, item))
