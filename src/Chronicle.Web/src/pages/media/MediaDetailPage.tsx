@@ -248,7 +248,7 @@ export default function MediaDetailPage() {
             })()}
           </>
         ) : (
-          <Link to="/library" className={styles.upBtn}>↑ Library</Link>
+          <Link to={`/library#media-${mediaId}`} className={styles.upBtn}>↑ Library</Link>
         )}
         {listIds.length > 0 && (
           <div className={styles.listNav}>
