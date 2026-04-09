@@ -2,7 +2,7 @@ using Chronicle.Core.Models;
 
 namespace Chronicle.Services;
 
-public enum ResetScope { Single, AllFailed, AllExhausted, AllNotFound, AllForPlugin }
+public enum ResetScope { Single, AllFailed, AllExhausted, AllNotFound, AllSkipped, AllForPlugin }
 
 public enum EnrichmentMode
 {
