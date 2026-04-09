@@ -22,7 +22,7 @@ export const runEnrichment = async (pluginId: string): Promise<void> => {
 
 export const resetEnrichment = async (
   pluginId: string,
-  scope: 'failed' | 'exhausted' | 'notfound' | 'all'
+  scope: 'failed' | 'exhausted' | 'notfound' | 'skipped' | 'all'
 ): Promise<void> => {
   await client.post(`/enrichment/${encodeURIComponent(pluginId)}/reset`, {
     scope,
