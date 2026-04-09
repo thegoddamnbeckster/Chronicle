@@ -343,6 +343,7 @@ export default function EnrichmentDrillDownPage() {
         activeStatus === 'Skipped'   ? 'skipped'   : 'all'
       await resetEnrichment(pluginId, scope)
       await load()
+      loadStats()
     } finally { setBulkWorking(false) }
   }
 
