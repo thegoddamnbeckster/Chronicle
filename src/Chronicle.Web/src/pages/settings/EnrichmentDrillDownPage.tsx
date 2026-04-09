@@ -229,7 +229,7 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
 
         {/* Actions */}
         <div className={styles.actions}>
-          {item.hierarchyLevel === 0 && item.status !== 'Skipped' && (
+          {item.status !== 'Pending' && (
             <button
               className={styles.actionBtnPrimary}
               onClick={() => setFixOpen(v => !v)}
@@ -245,6 +245,11 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
           {item.status !== 'Completed' && item.status !== 'Pending' && (
             <button className={styles.actionBtn} onClick={handleReset} disabled={resetting}>
               {resetting ? 'Resetting…' : '↺ Reset & Retry'}
+            </button>
+          )}
+          {item.status === 'Completed' && (
+            <button className={styles.actionBtn} onClick={handleReset} disabled={resetting}>
+              {resetting ? 'Refreshing…' : '↺ Refresh'}
             </button>
           )}
           <button
@@ -309,9 +314,14 @@ export default function EnrichmentDrillDownPage() {
 
   useEffect(() => { load() }, [load])
 
+  const refresh = useCallback(() => {
+    load()
+    loadStats()
+  }, [load, loadStats])
+
   // Auto-refresh every 10 s while viewing actionable statuses so items disappear
   // from the list as enrichment processes them in the background.
-  const isLive = activeStatus === 'Pending' || activeStatus === 'Failed' || activeStatus === 'Exhausted' || activeStatus === 'All'
+  const isLive = activeStatus !== 'Completed'
   useEffect(() => {
     if (!isLive) return
     const id = setInterval(() => { load(); loadStats() }, 10_000)
@@ -329,7 +339,8 @@ export default function EnrichmentDrillDownPage() {
       const scope =
         activeStatus === 'Failed'    ? 'failed'    :
         activeStatus === 'Exhausted' ? 'exhausted' :
-        activeStatus === 'NotFound'  ? 'notfound'  : 'all'
+        activeStatus === 'NotFound'  ? 'notfound'  :
+        activeStatus === 'Skipped'   ? 'skipped'   : 'all'
       await resetEnrichment(pluginId, scope)
       await load()
     } finally { setBulkWorking(false) }
@@ -381,7 +392,7 @@ export default function EnrichmentDrillDownPage() {
           onChange={e => setSearch(e.target.value)}
         />
         <span className={styles.totalCount}>{total} item(s)</span>
-        {activeStatus !== 'All' && activeStatus !== 'Completed' && activeStatus !== 'Skipped' && (
+        {activeStatus !== 'All' && activeStatus !== 'Completed' && activeStatus !== 'Pending' && (
           <button
             className={styles.bulkBtn}
             onClick={handleBulkReset}
@@ -404,7 +415,7 @@ export default function EnrichmentDrillDownPage() {
               key={item.enrichmentId}
               item={item}
               pluginId={pluginId}
-              onChanged={load}
+              onChanged={refresh}
             />
           ))}
         </div>
