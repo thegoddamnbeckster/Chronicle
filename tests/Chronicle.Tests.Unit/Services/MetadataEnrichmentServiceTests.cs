@@ -199,6 +199,24 @@ public class MetadataEnrichmentServiceTests : IDisposable
         skipped!.Status.Should().Be(EnrichmentStatus.Skipped); // unchanged
     }
 
+    [Fact]
+    public async Task ResetAsync_AllSkipped_ResetsSkippedRowsToPending()
+    {
+        // Arrange — seed one Skipped and one Exhausted enrichment row
+        var (_, skippedStatus)  = await SeedItemWithStatus(null, EnrichmentStatus.Skipped);
+        var (_, exhaustedStatus) = await SeedItemWithStatus(null, EnrichmentStatus.Exhausted, retryCount: 3);
+
+        // Act
+        await _svc.ResetAsync("chronicle.plugin.musicbrainz", ResetScope.AllSkipped);
+
+        // Assert — Skipped row becomes Pending; Exhausted row is unchanged
+        var skipped  = await _db.MediaEnrichments.FindAsync(skippedStatus.Id);
+        var exhausted = await _db.MediaEnrichments.FindAsync(exhaustedStatus.Id);
+        skipped!.Status.Should().Be(EnrichmentStatus.Pending);
+        skipped.RetryCount.Should().Be(0);
+        exhausted!.Status.Should().Be(EnrichmentStatus.Exhausted); // unchanged
+    }
+
     // ── GetItemsAsync tests ───────────────────────────────────────────────────
 
     [Fact]

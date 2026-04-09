@@ -46,9 +46,10 @@ public class EnrichmentController(
             case "failed":    scope = ResetScope.AllFailed; break;
             case "exhausted": scope = ResetScope.AllExhausted; break;
             case "notfound":  scope = ResetScope.AllNotFound; break;
+            case "skipped":   scope = ResetScope.AllSkipped; break;
             case "all":       scope = ResetScope.AllForPlugin; break;
             default:
-                return BadRequest(new { success = false, error = new { code = "INVALID_SCOPE", message = $"Invalid scope '{dto.Scope}'. Valid values: single, failed, exhausted, notfound, all." } });
+                return BadRequest(new { success = false, error = new { code = "INVALID_SCOPE", message = $"Invalid scope '{dto.Scope}'. Valid values: single, failed, exhausted, notfound, skipped, all." } });
         }
         await enrichmentSvc.ResetAsync(pluginId, scope, dto.MediaItemId, ct);
         return Ok(new { success = true });
