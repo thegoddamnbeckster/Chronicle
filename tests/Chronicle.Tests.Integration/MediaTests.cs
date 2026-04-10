@@ -188,7 +188,83 @@ namespace Chronicle.Tests.Integration
         }
 
         [Fact]
-        public async Task GetMedia_ImportDirectItem_ReturnsFileScannerMeta()
+        public async Task GetMediaItem_WithFileScannerData_HasPhysicalFileTrue()
+        {
+            // Arrange — create a movie with fileScanner metadata (filePaths array style)
+            const string metaJson =
+                """{"fileScanner": {"filePaths": ["/path/to/file.mkv"], "importedAt": "2026-01-01T00:00:00Z"}}""";
+
+            int seededId;
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
+                var item = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    Name = "HasPhysicalFile Test Movie",
+                    HierarchyLevel = 0,
+                    MetadataJson = metaJson,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(item);
+                await db.SaveChangesAsync();
+                seededId = item.Id;
+            }
+
+            var client = await AuthClientAsync();
+
+            // Act
+            var response = await client.GetAsync($"/api/v1/media/{seededId}");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            var data = body.GetProperty("data");
+            data.GetProperty("hasPhysicalFile").GetBoolean().Should().BeTrue();
+            data.GetProperty("hasMetadataOnly").GetBoolean().Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task GetMediaItem_WithoutFileScannerData_HasMetadataOnlyTrue()
+        {
+            // Arrange — create a movie with only plugin metadata (no fileScanner key)
+            const string metaJson =
+                """{"chronicle.plugin.tmdb": {"title": "Some Movie"}}""";
+
+            int seededId;
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
+                var item = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    Name = "HasMetadataOnly Test Movie",
+                    HierarchyLevel = 0,
+                    MetadataJson = metaJson,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(item);
+                await db.SaveChangesAsync();
+                seededId = item.Id;
+            }
+
+            var client = await AuthClientAsync();
+
+            // Act
+            var response = await client.GetAsync($"/api/v1/media/{seededId}");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            var data = body.GetProperty("data");
+            data.GetProperty("hasPhysicalFile").GetBoolean().Should().BeFalse();
+            data.GetProperty("hasMetadataOnly").GetBoolean().Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task GetMediaItem_ImportDirectItem_ReturnsFileScannerMeta()
         {
             // Arrange: seed a media item that has only fileScanner metadata (no plugin data yet).
             // This simulates an item imported via /scan/import-direct before metadata enrichment.
@@ -235,6 +311,80 @@ namespace Chronicle.Tests.Integration
             // pluginMetadata must be null/absent (item was imported directly without any plugin metadata)
             if (data.TryGetProperty("pluginMetadata", out var pluginMetadata))
                 pluginMetadata.ValueKind.Should().Be(JsonValueKind.Null);
+        }
+
+        [Fact]
+        public async Task GetMediaItem_ShowWithEpisodeFile_HasPhysicalFileTrueAndHasMetadataOnlyFalse()
+        {
+            // Arrange — create a TV Show (level 0) with no own fileScanner data,
+            // a Season child (level 1) with no file, and an Episode grandchild (level 2) with a file.
+            // The Show should report hasPhysicalFile=true and hasMetadataOnly=false because
+            // a descendant (the Episode) has a physical file.
+            const string episodeMeta =
+                """{"fileScanner": {"filePaths": ["/tv/show/s01e01.mkv"], "importedAt": "2026-01-01T00:00:00Z"}}""";
+            const string showMeta =
+                """{"chronicle.plugin.tmdb": {"title": "Descendant Test Show"}}""";
+
+            int showId;
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
+
+                var show = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    Name = "Descendant Test Show",
+                    HierarchyLevel = 0,
+                    MetadataJson = showMeta,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(show);
+                await db.SaveChangesAsync();
+                showId = show.Id;
+
+                var season = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    ParentId = showId,
+                    Name = "Season 1",
+                    HierarchyLevel = 1,
+                    Number = 1,
+                    MetadataJson = null,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(season);
+                await db.SaveChangesAsync();
+
+                var episode = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    ParentId = season.Id,
+                    Name = "Pilot",
+                    HierarchyLevel = 2,
+                    Number = 1,
+                    MetadataJson = episodeMeta,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(episode);
+                await db.SaveChangesAsync();
+            }
+
+            var client = await AuthClientAsync();
+
+            // Act
+            var response = await client.GetAsync($"/api/v1/media/{showId}");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            var data = body.GetProperty("data");
+            data.GetProperty("hasPhysicalFile").GetBoolean().Should().BeTrue(
+                "the show has a grandchild episode with a physical file");
+            data.GetProperty("hasMetadataOnly").GetBoolean().Should().BeFalse(
+                "the show is not metadata-only because at least one descendant has a file");
         }
     }
 }
