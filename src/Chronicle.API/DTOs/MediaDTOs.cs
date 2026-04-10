@@ -78,7 +78,17 @@ namespace Chronicle.API.DTOs
         /// Used for plugin compatibility checks. Distinct from <see cref="MediaTypeName"/>
         /// which carries the user-facing display name (e.g. "TV Shows").
         /// </summary>
-        string? MediaTypeInternalName = null
+        string? MediaTypeInternalName = null,
+        /// <summary>
+        /// True when this item or any of its descendants has an associated physical file
+        /// (i.e. the fileScanner metadata key contains a non-empty filePaths array or a filePath string).
+        /// </summary>
+        bool HasPhysicalFile = false,
+        /// <summary>
+        /// True when neither this item nor any of its descendants has a physical file — i.e. it exists
+        /// only as metadata (from a plugin or manual entry, with no local file tracked anywhere in its subtree).
+        /// </summary>
+        bool HasMetadataOnly = false
     );
 
     public record AddToLibraryRequestDto(
