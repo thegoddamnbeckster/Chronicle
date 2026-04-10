@@ -62,6 +62,10 @@ export interface MediaItem {
    *  Used for plugin compatibility checks. mediaTypeName is the user-facing display
    *  name (e.g. "TV Shows") and should be used for display only. */
   mediaTypeInternalName?: string | null
+  /** True when this item or any descendant has a tracked physical file on disk. */
+  hasPhysicalFile?: boolean | null
+  /** True when neither this item nor any descendant has a tracked physical file (metadata only). */
+  hasMetadataOnly?: boolean | null
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────

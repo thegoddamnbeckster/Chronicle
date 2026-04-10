@@ -69,7 +69,13 @@ namespace Chronicle.API.Controllers
             var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
             var enrichmentStatusDict = await GetEnrichmentStatusDictAsync(id, ct);
 
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict)));
+            // Fetch MetadataJson for all descendants (children + grandchildren) so we can compute
+            // hasPhysicalFile / hasMetadataOnly for parent items (TV shows, artists, etc.) that
+            // don't own files themselves. Chronicle's deepest hierarchy is 3 levels
+            // (Show→Season→Episode or Artist→Album→Track), so two levels covers all cases.
+            var childrenMetaJson = await GetDescendantMetaAsync(id, ct);
+
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict, childrenMetaJson)));
         }
 
         [HttpGet("search")]
@@ -143,7 +149,8 @@ namespace Chronicle.API.Controllers
                 var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
                 var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses)));
+                var childrenMetaJson = await GetDescendantMetaAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, childrenMetaJson)));
             }
             catch (Exception ex)
             {
@@ -176,7 +183,8 @@ namespace Chronicle.API.Controllers
                 var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
                 var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses)));
+                var childrenMetaJson = await GetDescendantMetaAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, childrenMetaJson)));
             }
             catch (MediaNotFoundException ex)
             {
@@ -323,11 +331,32 @@ namespace Chronicle.API.Controllers
             return rows.Count > 0 ? rows.ToDictionary(e => e.PluginId, e => e.Status) : null;
         }
 
+        private async Task<List<string?>> GetDescendantMetaAsync(int id, CancellationToken ct = default)
+        {
+            var directChildren = await _context.MediaItems
+                .Where(m => m.ParentId == id)
+                .Select(m => new { m.Id, m.MetadataJson })
+                .ToListAsync(ct);
+
+            if (!directChildren.Any())
+                return new List<string?>();
+
+            var directChildIds = directChildren.Select(c => c.Id).ToList();
+
+            var grandchildrenMeta = await _context.MediaItems
+                .Where(m => m.ParentId != null && directChildIds.Contains(m.ParentId.Value))
+                .Select(m => m.MetadataJson)
+                .ToListAsync(ct);
+
+            return directChildren.Select(c => c.MetadataJson).Concat(grandchildrenMeta).ToList();
+        }
+
         private static MediaItemDto ToDto(
             Chronicle.Core.Models.MediaItem m,
             IReadOnlyList<EnrichmentRecord>? enrichmentRecords = null,
             List<AncestorDto>? ancestors = null,
-            Dictionary<string, string>? enrichmentStatuses = null)
+            Dictionary<string, string>? enrichmentStatuses = null,
+            List<string?>? childrenMetaJson = null)
         {
             var (fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
             // Map enrichment records to RefreshLogDto for frontend compatibility
@@ -339,6 +368,17 @@ namespace Chronicle.API.Controllers
                     r.Status == EnrichmentStatus.Completed,
                     r.ErrorMessage))
                 .ToList();
+
+            // Compute physical-file indicators.
+            bool hasOwnFile        = HasFileScannerData(m.MetadataJson);
+            bool childrenHaveFile  = childrenMetaJson?.Any(HasFileScannerData) ?? false;
+            bool hasPhysicalFile   = hasOwnFile || childrenHaveFile;
+            // Item is metadata-only when no descendant (and itself) has a physical file.
+            // For hierarchical items (TV shows, artists) the intermediate nodes (seasons) naturally
+            // have no files — only leaf nodes (episodes, tracks) do, so we must not penalise
+            // an intermediate node for having child-less-file descendants.
+            bool hasMetadataOnly   = !hasPhysicalFile;
+
             return new MediaItemDto(
                 m.Id,
                 m.MediaTypeId,
@@ -359,8 +399,35 @@ namespace Chronicle.API.Controllers
                 RefreshLogs: logDtos,
                 Ancestors: ancestors,
                 EnrichmentStatuses: enrichmentStatuses,
-                MediaTypeInternalName: m.MediaType?.Name
+                MediaTypeInternalName: m.MediaType?.Name,
+                HasPhysicalFile: hasPhysicalFile,
+                HasMetadataOnly: hasMetadataOnly
             );
+        }
+
+        /// <summary>
+        /// Returns true when <paramref name="metadataJson"/> contains a <c>fileScanner</c> entry
+        /// with at least one non-null file path (filePaths array or filePath string).
+        /// </summary>
+        private static bool HasFileScannerData(string? metadataJson)
+        {
+            if (string.IsNullOrEmpty(metadataJson)) return false;
+            if (!metadataJson.Contains("\"fileScanner\"", StringComparison.Ordinal)) return false;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(metadataJson);
+                if (!doc.RootElement.TryGetProperty("fileScanner", out var fs)) return false;
+                if (fs.TryGetProperty("filePaths", out var fp) &&
+                    fp.ValueKind == System.Text.Json.JsonValueKind.Array &&
+                    fp.GetArrayLength() > 0)
+                    return true;
+                if (fs.TryGetProperty("filePath", out var f) &&
+                    f.ValueKind != System.Text.Json.JsonValueKind.Null &&
+                    !string.IsNullOrEmpty(f.GetString()))
+                    return true;
+                return false;
+            }
+            catch { return false; }
         }
 
         /// <summary>
