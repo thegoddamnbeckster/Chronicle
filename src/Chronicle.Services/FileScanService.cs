@@ -1643,7 +1643,7 @@ namespace Chronicle.Services
                 return;
 
             int seeded = 0;
-            foreach (var (manifestPluginId, provider) in entries)
+            foreach (var (manifestPluginId, provider, _) in entries)
             {
                 var supportedNames = provider.GetSupportedMediaTypes()
                     .Select(t => t.MediaTypeName)
