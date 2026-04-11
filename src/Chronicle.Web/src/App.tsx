@@ -22,6 +22,7 @@ import ListDetailPage from '@/pages/lists/ListDetailPage'
 import DeviceAuthPage from '@/pages/device-auth/DeviceAuthPage'
 import ScanPage from '@/pages/scan/ScanPage'
 import PreferencesPage from '@/pages/preferences/PreferencesPage'
+import MetadataAssignmentPage from '@/pages/settings/MetadataAssignmentPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -62,6 +63,7 @@ export default function App() {
         <Route path="settings/library" element={<LibrarySettingsPage />} />
         <Route path="settings/background-tasks" element={<BackgroundTasksPage />} />
         <Route path="settings/enrichment/:pluginId" element={<EnrichmentDrillDownPage />} />
+        <Route path="settings/metadata-assignment" element={<MetadataAssignmentPage />} />
         <Route path="plugins" element={<PluginsPage />} />
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListDetailPage />} />

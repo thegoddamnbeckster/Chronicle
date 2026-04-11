@@ -22,6 +22,23 @@ export async function putAppSetting(key: string, value: string): Promise<void> {
   await client.put(`/settings/app/${key}`, { value })
 }
 
+export interface MetadataAssignmentConfig {
+  assignments: Record<string, Record<string, string[]>>
+  assignableFields: Record<string, string[]>
+  availablePlugins: { pluginId: string; name: string; iconUrl: string | null }[]
+}
+
+export async function getMetadataAssignment(): Promise<MetadataAssignmentConfig> {
+  const res = await client.get<{ success: true; data: MetadataAssignmentConfig }>('/settings/metadata-assignment')
+  return res.data.data
+}
+
+export async function putMetadataAssignment(
+  assignments: Record<string, Record<string, string[]>>
+): Promise<void> {
+  await client.put('/settings/metadata-assignment', { assignments })
+}
+
 export async function getChangeAccountCommand(
   accountType: string,
   username?: string,

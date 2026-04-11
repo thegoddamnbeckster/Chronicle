@@ -1,0 +1,158 @@
+import { useState, useEffect } from 'react'
+import { getMetadataAssignment, putMetadataAssignment, type MetadataAssignmentConfig } from '@/api/settings'
+import { useAuth } from '@/hooks/useAuth'
+import styles from './MetadataAssignmentPage.module.css'
+
+const MEDIA_TYPE_LABELS: Record<string, string> = {
+  tv:          'TV',
+  movies:      'Movies',
+  music:       'Music',
+  albums:      'Albums',
+  tracks:      'Tracks',
+  books:       'Books',
+  audiobooks:  'Audiobooks',
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  title:           'Title',
+  overview:        'Description',
+  year:            'Year',
+  poster_url:      'Poster Image',
+  backdrop_url:    'Backdrop Image',
+  runtime_minutes: 'Runtime',
+  rating:          'Rating',
+  genres:          'Genres',
+  cast:            'Cast',
+  directors:       'Directors',
+  tags:            'Tags',
+}
+
+export default function MetadataAssignmentPage() {
+  const { user }                      = useAuth()
+  const isAdmin                       = user?.isAdmin ?? false
+  const [config, setConfig]           = useState<MetadataAssignmentConfig | null>(null)
+  const [assignments, setAssignments] = useState<Record<string, Record<string, string[]>>>({})
+  const [saving, setSaving]           = useState(false)
+  const [saved, setSaved]             = useState(false)
+  const [error, setError]             = useState<string | null>(null)
+
+  useEffect(() => {
+    getMetadataAssignment()
+      .then(cfg => { setConfig(cfg); setAssignments(cfg.assignments) })
+      .catch(e => setError(String(e)))
+  }, [])
+
+  function movePlugin(mediaType: string, field: string, pluginId: string, direction: 'up' | 'down') {
+    setAssignments(prev => {
+      const list = [...(prev[mediaType]?.[field] ?? config?.availablePlugins.map(p => p.pluginId) ?? [])]
+      const idx  = list.indexOf(pluginId)
+      if (idx === -1) return prev
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+      if (swapIdx < 0 || swapIdx >= list.length) return prev
+      ;[list[idx], list[swapIdx]] = [list[swapIdx], list[idx]]
+      return { ...prev, [mediaType]: { ...(prev[mediaType] ?? {}), [field]: list } }
+    })
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setError(null)
+    try {
+      await putMetadataAssignment(assignments)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!config) return (
+    <div className={styles.page}>
+      {error ? <p className={styles.error}>{error}</p> : <p>Loading…</p>}
+    </div>
+  )
+
+  const mediaTypes = Object.keys(config.assignableFields)
+
+  return (
+    <div className={styles.page}>
+      <div className={styles.header}>
+        <h1 className={styles.title}>Metadata Assignment</h1>
+        <p className={styles.subtitle}>
+          Control which plugin's data is used for each field. The first plugin in each list is the
+          primary source; the rest are fallbacks in order.
+        </p>
+        <button
+          className={styles.saveBtn}
+          onClick={handleSave}
+          disabled={saving || !isAdmin}
+          title={!isAdmin ? 'Admin access required to change metadata assignment' : undefined}
+        >
+          {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save Changes'}
+        </button>
+        {error && <p className={styles.error}>{error}</p>}
+      </div>
+
+      {mediaTypes.map(mediaType => (
+        <section key={mediaType} className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <h2 className={styles.sectionTitle}>{MEDIA_TYPE_LABELS[mediaType] ?? (mediaType.charAt(0).toUpperCase() + mediaType.slice(1))}</h2>
+          </div>
+
+          <div className={styles.table}>
+            <div className={styles.tableHead}>
+              <div className={styles.colField}>Field</div>
+              <div className={styles.colPlugins}>Plugin Priority</div>
+            </div>
+
+            {config.assignableFields[mediaType].map(field => {
+              const currentOrder = assignments[mediaType]?.[field]
+                ?? config.availablePlugins.map(p => p.pluginId)
+
+              return (
+                <div key={field} className={styles.row}>
+                  <div className={styles.colField}>{FIELD_LABELS[field] ?? field}</div>
+                  <div className={styles.colPlugins}>
+                    {currentOrder.map((pluginId, idx) => {
+                      const plugin = config.availablePlugins.find(p => p.pluginId === pluginId)
+                      if (!plugin) return null
+                      return (
+                        <div key={pluginId} className={styles.pluginRow}>
+                          {plugin.iconUrl && (
+                            <img
+                              src={plugin.iconUrl}
+                              alt=""
+                              className={styles.pluginIcon}
+                              onError={e => { e.currentTarget.style.display = 'none' }}
+                            />
+                          )}
+                          <span className={styles.pluginName}>{plugin.name}</span>
+                          <div className={styles.arrows}>
+                            <button
+                              className={styles.arrowBtn}
+                              onClick={() => movePlugin(mediaType, field, pluginId, 'up')}
+                              disabled={idx === 0}
+                              title="Move up (higher priority)"
+                            >↑</button>
+                            <button
+                              className={styles.arrowBtn}
+                              onClick={() => movePlugin(mediaType, field, pluginId, 'down')}
+                              disabled={idx === currentOrder.length - 1}
+                              title="Move down (lower priority)"
+                            >↓</button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
