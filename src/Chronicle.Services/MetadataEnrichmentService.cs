@@ -60,7 +60,7 @@ public class MetadataEnrichmentService(
 
         var mediaTypeName = NormalizeMediaTypeName(item.MediaType?.Name ?? string.Empty);
 
-        foreach (var (pluginId, provider) in registry.GetMetadataProviderEntries())
+        foreach (var (pluginId, provider, _) in registry.GetMetadataProviderEntries())
         {
             ct.ThrowIfCancellationRequested();
             var supported = provider.GetSupportedMediaTypes()

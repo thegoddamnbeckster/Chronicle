@@ -136,9 +136,9 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         var mockProvider = new Mock<IMetadataProvider>();
         _registry.Setup(r => r.GetMetadataProviderEntries())
-            .Returns(new List<(string, IMetadataProvider)>
+            .Returns(new List<(string, IMetadataProvider, string?)>
             {
-                ("chronicle.plugin.musicbrainz", mockProvider.Object)
+                ("chronicle.plugin.musicbrainz", mockProvider.Object, null)
             });
 
         await SeedItemWithStatus(null, EnrichmentStatus.Pending);
@@ -645,7 +645,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
             .Returns(new[] { new MediaTypeSupport { MediaTypeName = mediaTypeName } });
         _registry.Setup(r => r.GetMetadataProvider(pluginId)).Returns(mock.Object);
         _registry.Setup(r => r.GetMetadataProviderEntries())
-            .Returns(new[] { (pluginId, mock.Object) });
+            .Returns(new[] { (pluginId, mock.Object, (string?)null) });
         return mock;
     }
 

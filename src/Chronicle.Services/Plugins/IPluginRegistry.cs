@@ -18,7 +18,7 @@ public interface IPluginRegistry
     /// Always prefer this over <see cref="GetMetadataProviders"/> when you need the plugin ID as a
     /// database key (enrichment rows, metadata_json keys, etc.).
     /// </summary>
-    IReadOnlyList<(string PluginId, IMetadataProvider Provider)> GetMetadataProviderEntries();
+    IReadOnlyList<(string PluginId, IMetadataProvider Provider, string? IconUrl)> GetMetadataProviderEntries();
 
     /// <summary>
     /// Returns the <see cref="IMetadataProvider"/> whose <b>manifest</b> plugin ID matches, or <c>null</c>.

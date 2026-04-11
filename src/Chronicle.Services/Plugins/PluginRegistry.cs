@@ -26,11 +26,11 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     }
 
     /// <inheritdoc/>
-    public IReadOnlyList<(string PluginId, IMetadataProvider Provider)> GetMetadataProviderEntries()
+    public IReadOnlyList<(string PluginId, IMetadataProvider Provider, string? IconUrl)> GetMetadataProviderEntries()
     {
         lock (_lock)
             return _plugins.Values
-                .SelectMany(p => p.MetadataProviders.Select(m => (p.Manifest.PluginId, m)))
+                .SelectMany(p => p.MetadataProviders.Select(m => (p.Manifest.PluginId, m, p.Manifest.IconUrl)))
                 .ToList();
     }
 
