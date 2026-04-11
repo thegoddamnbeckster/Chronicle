@@ -1,0 +1,70 @@
+.page { padding: 24px; max-width: 900px; }
+.header { margin-bottom: 24px; }
+.title { font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }
+.subtitle { color: var(--text-muted); margin-bottom: 16px; font-size: 0.9rem; }
+
+.saveBtn {
+  padding: 8px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.saveBtn:disabled { opacity: 0.6; cursor: default; }
+.error { color: #eb5757; margin-top: 8px; font-size: 0.85rem; }
+
+.section { margin-bottom: 32px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.sectionHeader { background: var(--bg-sidebar, var(--bg-card)); border-bottom: 2px solid var(--accent); padding: 12px 16px; }
+.sectionTitle { font-size: 1rem; font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.table { width: 100%; }
+.tableHead {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  padding: 8px 16px;
+  background: var(--bg-card);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  align-items: start;
+}
+.row:last-child { border-bottom: none; }
+.colField { font-weight: 500; font-size: 0.9rem; padding-top: 6px; }
+.colPlugins { display: flex; flex-direction: column; gap: 4px; }
+
+.pluginRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.pluginIcon { width: 16px; height: 16px; object-fit: contain; }
+.pluginName { flex: 1; font-size: 0.85rem; }
+.arrows { display: flex; gap: 4px; }
+.arrowBtn {
+  width: 24px; height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text);
+}
+.arrowBtn:disabled { opacity: 0.3; cursor: default; }
+.arrowBtn:not(:disabled):hover { background: var(--border); }
