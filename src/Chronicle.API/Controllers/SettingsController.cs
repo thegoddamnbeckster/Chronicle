@@ -1,11 +1,13 @@
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Win32;
 using System.ComponentModel.DataAnnotations;
 using System.ServiceProcess;
+using System.Text.Json;
 
 namespace Chronicle.API.Controllers;
 
@@ -17,10 +19,23 @@ public class SettingsController : ControllerBase
     private const string ServiceName = "Chronicle";
 
     private readonly ChronicleDbContext _db;
+    private readonly IPluginRegistry    _pluginRegistry;
 
-    public SettingsController(ChronicleDbContext db)
+    private static readonly Dictionary<string, string[]> AssignableFields = new()
     {
-        _db = db;
+        ["movies"]     = ["title", "overview", "year", "poster_url", "backdrop_url", "runtime_minutes", "rating", "genres", "cast", "directors", "tags"],
+        ["tv"]         = ["title", "overview", "year", "poster_url", "backdrop_url", "runtime_minutes", "rating", "genres", "cast", "directors", "tags"],
+        ["music"]      = ["title", "overview", "poster_url", "rating", "genres", "tags"],
+        ["albums"]     = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
+        ["tracks"]     = ["title", "year", "runtime_minutes", "tags"],
+        ["books"]      = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
+        ["audiobooks"] = ["title", "overview", "year", "poster_url", "runtime_minutes", "rating", "genres", "tags"],
+    };
+
+    public SettingsController(ChronicleDbContext db, IPluginRegistry pluginRegistry)
+    {
+        _db             = db;
+        _pluginRegistry = pluginRegistry;
     }
 
     // ── App settings (key/value store) ───────────────────────────────────────
@@ -104,6 +119,80 @@ public class SettingsController : ControllerBase
         return Ok(new { command = cmd });
     }
 
+    // ── Metadata assignment ───────────────────────────────────────────────────
+
+    /// <summary>Returns current metadata assignment config, available plugins, and assignable fields per media type.</summary>
+    [HttpGet("metadata-assignment")]
+    public async Task<IActionResult> GetMetadataAssignment()
+    {
+        var setting = await _db.AppSettings.FindAsync("metadata_assignment.config");
+        Dictionary<string, Dictionary<string, string[]>> assignments;
+
+        if (setting?.Value is not null)
+            assignments = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string[]>>>(setting.Value)
+                          ?? new();
+        else
+            assignments = new();
+
+        // Load DB plugin records to map PluginId → DB id for the proxy URL
+        var dbPlugins = await _db.Plugins.ToListAsync();
+
+        var plugins = _pluginRegistry.GetMetadataProviderEntries()
+            .Select(e =>
+            {
+                var dbPlugin = dbPlugins.FirstOrDefault(p =>
+                    string.Equals(p.PluginId, e.PluginId, StringComparison.OrdinalIgnoreCase));
+                var iconUrl = dbPlugin != null && e.IconUrl != null
+                    ? $"/api/v1/plugins/{dbPlugin.Id}/icon"
+                    : (string?)null;
+                return new { pluginId = e.PluginId, name = e.Provider.Name, iconUrl };
+            })
+            .ToList();
+
+        return Ok(new
+        {
+            success = true,
+            data = new
+            {
+                assignments,
+                assignableFields = AssignableFields,
+                availablePlugins = plugins,
+            },
+        });
+    }
+
+    /// <summary>Saves metadata assignment config to the app_settings table. Admin only.</summary>
+    [HttpPut("metadata-assignment")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> PutMetadataAssignment([FromBody] MetadataAssignmentRequest request)
+    {
+        if (request.Assignments is null)
+            return BadRequest(new { success = false, error = new { message = "assignments required" } });
+
+        foreach (var (mediaType, fields) in request.Assignments)
+        {
+            if (!AssignableFields.TryGetValue(mediaType, out var allowedFields))
+                return BadRequest(new { success = false, error = new { message = $"Unknown media type: {mediaType}" } });
+
+            foreach (var field in fields.Keys)
+            {
+                if (!allowedFields.Contains(field))
+                    return BadRequest(new { success = false, error = new { message = $"Field '{field}' is not assignable for media type '{mediaType}'" } });
+            }
+        }
+
+        var json = JsonSerializer.Serialize(request.Assignments);
+        var existing = await _db.AppSettings.FindAsync("metadata_assignment.config");
+
+        if (existing is null)
+            _db.AppSettings.Add(new AppSetting { Key = "metadata_assignment.config", Value = json });
+        else
+            existing.Value = json;
+
+        await _db.SaveChangesAsync();
+        return Ok(new { success = true });
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
@@ -148,6 +237,10 @@ public class SettingsController : ControllerBase
 }
 
 public record AppSettingUpdateRequest([Required] string Value);
+
+public record MetadataAssignmentRequest(
+    [Required] Dictionary<string, Dictionary<string, string[]>>? Assignments
+);
 
 public record ServiceStatusDto(
     bool IsInstalled,
