@@ -546,3 +546,55 @@
   flex-direction: column;
   gap: 16px;
 }
+
+/* ── Plugin task groups ─────────────────────────────────────────────────── */
+
+.pluginGroup {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pluginGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.pluginGroupHeader:hover { background: var(--bg-hover, var(--border)); }
+
+.pluginGroupIcon { width: 18px; height: 18px; object-fit: contain; }
+
+.pluginGroupName { flex: 1; }
+
+.pluginGroupChevron {
+  display: inline-block;
+  transform: rotate(0deg);
+  transition: transform 0.15s;
+  font-style: normal;
+}
+
+.pluginGroupChevronOpen { transform: rotate(90deg); }
+
+.pluginGroupBody {
+  border-top: 1px solid var(--border);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Cards inside a plugin group: suppress individual bottom margin (gap handles spacing) */
+.pluginGroupBody .card {
+  margin-bottom: 0;
+}
