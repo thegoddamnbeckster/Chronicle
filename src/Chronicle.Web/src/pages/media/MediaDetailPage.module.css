@@ -1022,3 +1022,57 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .fileIcon { color: #6fcf97; }
 .metaIcon { color: #56ccf2; }
+
+/* ── Plugin metadata folds ───────────────────────────────────────────────── */
+
+.pluginFold {
+  margin-bottom: 8px;
+}
+
+.pluginFoldHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.pluginFoldHeader:hover {
+  background: var(--bg-hover, var(--border));
+}
+
+.pluginFoldIcon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.pluginFoldLabel {
+  flex: 1;
+}
+
+.pluginFoldChevron {
+  display: inline-block;
+  transform: rotate(0deg);
+  transition: transform 0.15s;
+  font-style: normal;
+}
+
+.pluginFoldChevronOpen {
+  transform: rotate(90deg);
+}
+
+.pluginFoldBody {
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  overflow: hidden;
+}
