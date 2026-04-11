@@ -568,6 +568,141 @@ function ScheduleEditor({ taskId, initialCron, isEnabled, onSave, onCancel }: Sc
   )
 }
 
+// ── TaskCard ─────────────────────────────────────────────────────────────────
+
+interface TaskCardProps {
+  task: BackgroundTask
+  isRunning: boolean
+  isEditing: boolean
+  onRunNow: () => void
+  onEdit: () => void
+  onSave: (taskId: string, cron: string, enabled: boolean) => Promise<void>
+  onCancelEdit: () => void
+  onToggle: () => void
+}
+
+function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCancelEdit, onToggle }: TaskCardProps) {
+  const { cls, label } = statusBadge(task)
+  const brandColor = task.brandColorDark ?? undefined
+
+  return (
+    <div
+      className={`${styles.card} ${task.pluginId ? styles.cardPlugin : ''}`}
+      style={brandColor ? { '--plugin-brand-color': brandColor } as React.CSSProperties : undefined}
+    >
+      <div className={styles.cardHeader}>
+        <div className={styles.cardTitleGroup}>
+          <div className={styles.cardTitleText}>
+            <h2 className={styles.taskName}>{task.displayName}</h2>
+            <p className={styles.taskDesc}>{task.description}</p>
+          </div>
+        </div>
+        <div className={styles.cardActions}>
+          <span className={`${styles.badge} ${cls}`}>{label}</span>
+          <button
+            role="switch"
+            aria-checked={task.isEnabled}
+            className={`${styles.toggle} ${task.isEnabled ? styles.toggleOn : ''}`}
+            onClick={onToggle}
+            title={task.isEnabled ? 'Disable task' : 'Enable task'}
+          >
+            <span className={styles.toggleThumb} />
+          </button>
+          <button
+            className={styles.runBtn}
+            onClick={onRunNow}
+            disabled={isRunning}
+          >
+            {isRunning ? 'Running…' : 'Run Now'}
+          </button>
+          <button
+            className={styles.editBtn}
+            onClick={onEdit}
+          >
+            {isEditing ? 'Close' : 'Schedule'}
+          </button>
+        </div>
+      </div>
+
+      {task.lastRunSucceeded === false && task.lastErrorMessage && !isRunning && (
+        <p className={styles.errorText}>{task.lastErrorMessage}</p>
+      )}
+
+      <div className={styles.metaGrid}>
+        <div className={styles.metaRow}>
+          <span className={styles.metaLabel}>Last Run</span>
+          <span
+            className={styles.metaValue}
+            title={task.lastRunAt ? fmtLocal(task.lastRunAt) : undefined}
+          >
+            {fmtRelative(task.lastRunAt)}
+          </span>
+        </div>
+        <div className={styles.metaRow}>
+          <span className={styles.metaLabel}>Next Run</span>
+          <span
+            className={styles.metaValue}
+            title={task.nextRunAt ? fmtLocal(task.nextRunAt) : undefined}
+          >
+            {task.isEnabled ? fmtRelative(task.nextRunAt) : 'Disabled'}
+          </span>
+        </div>
+        <div className={styles.metaRow}>
+          <span className={styles.metaLabel}>Schedule</span>
+          <span className={styles.metaValue} style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>
+            {task.cronExpression}
+          </span>
+        </div>
+      </div>
+
+      {isEditing && (
+        <ScheduleEditor
+          taskId={task.taskId}
+          initialCron={task.cronExpression}
+          isEnabled={task.isEnabled}
+          onSave={onSave}
+          onCancel={onCancelEdit}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── PluginTaskGroup ──────────────────────────────────────────────────────────
+
+interface PluginTaskGroupProps {
+  foldKey: string
+  pluginName: string
+  iconUrl: string | null | undefined
+  children: React.ReactNode
+}
+
+function PluginTaskGroup({ foldKey, pluginName, iconUrl, children }: PluginTaskGroupProps) {
+  const storageKey = `chronicle_fold_${foldKey}`
+  const [isOpen, setIsOpen] = useState<boolean>(() => {
+    // Default: closed. Persist in localStorage.
+    const saved = localStorage.getItem(storageKey)
+    return saved === null ? false : saved === 'true'
+  })
+
+  function toggle() {
+    const next = !isOpen
+    setIsOpen(next)
+    localStorage.setItem(storageKey, String(next))
+  }
+
+  return (
+    <div className={styles.pluginGroup}>
+      <button className={styles.pluginGroupHeader} onClick={toggle} aria-expanded={isOpen}>
+        {iconUrl && <img src={iconUrl} alt="" className={styles.pluginGroupIcon} onError={e => { e.currentTarget.style.display = 'none' }} />}
+        <span className={styles.pluginGroupName}>{pluginName}</span>
+        <span className={`${styles.pluginGroupChevron} ${isOpen ? styles.pluginGroupChevronOpen : ''}`}>›</span>
+      </button>
+      {isOpen && <div className={styles.pluginGroupBody}>{children}</div>}
+    </div>
+  )
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export default function BackgroundTasksPage() {
@@ -685,105 +820,51 @@ export default function BackgroundTasksPage() {
 
         {tasksExpanded && (
           <div className={styles.tasksFoldBody}>
-            {tasks.map(task => {
-              const { cls, label } = statusBadge(task)
-              const isRunning = task.isRunning || runningIds.has(task.taskId)
-              const brandColor = task.brandColorDark ?? undefined
+            {(() => {
+              // Build ordered groups: system first, then plugins alphabetically
+              const groups = new Map<string | null, typeof tasks>()
+              for (const task of tasks) {
+                const key = task.pluginId ?? null
+                if (!groups.has(key)) groups.set(key, [])
+                groups.get(key)!.push(task)
+              }
 
-              return (
-                <div
-                  key={task.taskId}
-                  className={`${styles.card} ${task.pluginId ? styles.cardPlugin : ''}`}
-                  style={brandColor ? { '--plugin-brand-color': brandColor } as React.CSSProperties : undefined}
-                >
-                  <div className={styles.cardHeader}>
-                    <div className={styles.cardTitleGroup}>
-                      {task.pluginIconUrl && (
-                        <img
-                          src={task.pluginIconUrl}
-                          alt={task.pluginName ?? ''}
-                          className={styles.pluginIcon}
-                        />
-                      )}
-                      <div className={styles.cardTitleText}>
-                        <h2 className={styles.taskName}>
-                          {task.pluginName ? `${task.pluginName} · ${task.displayName}` : task.displayName}
-                        </h2>
-                        <p className={styles.taskDesc}>{task.description}</p>
-                      </div>
-                    </div>
-                    <div className={styles.cardActions}>
-                      <span className={`${styles.badge} ${cls}`}>{label}</span>
-                      <button
-                        role="switch"
-                        aria-checked={task.isEnabled}
-                        className={`${styles.toggle} ${task.isEnabled ? styles.toggleOn : ''}`}
-                        onClick={() =>
-                          updateBackgroundTask(task.taskId, { isEnabled: !task.isEnabled }).then(load)
-                        }
-                        title={task.isEnabled ? 'Disable task' : 'Enable task'}
-                      >
-                        <span className={styles.toggleThumb} />
-                      </button>
-                      <button
-                        className={styles.runBtn}
-                        onClick={() => handleRunNow(task.taskId)}
-                        disabled={isRunning}
-                      >
-                        {isRunning ? 'Running…' : 'Run Now'}
-                      </button>
-                      <button
-                        className={styles.editBtn}
-                        onClick={() => setEditingId(editingId === task.taskId ? null : task.taskId)}
-                      >
-                        {editingId === task.taskId ? 'Close' : 'Schedule'}
-                      </button>
-                    </div>
-                  </div>
+              // Sort: system (null) first, then alphabetically by plugin name
+              const sortedEntries = Array.from(groups.entries()).sort(([a], [b]) => {
+                if (a === null) return -1
+                if (b === null) return 1
+                return (a ?? '').localeCompare(b ?? '')
+              })
 
-                  {task.lastRunSucceeded === false && task.lastErrorMessage && !isRunning && (
-                    <p className={styles.errorText}>{task.lastErrorMessage}</p>
-                  )}
+              return sortedEntries.map(([pluginId, groupTasks]) => {
+                const pluginName = pluginId === null ? 'System' : (groupTasks[0].pluginName ?? pluginId)
+                const iconUrl = groupTasks[0].pluginIconUrl
+                const foldKey = `backgroundTasks.${pluginId ?? 'system'}`
 
-                  <div className={styles.metaGrid}>
-                    <div className={styles.metaRow}>
-                      <span className={styles.metaLabel}>Last Run</span>
-                      <span
-                        className={styles.metaValue}
-                        title={task.lastRunAt ? fmtLocal(task.lastRunAt) : undefined}
-                      >
-                        {fmtRelative(task.lastRunAt)}
-                      </span>
-                    </div>
-                    <div className={styles.metaRow}>
-                      <span className={styles.metaLabel}>Next Run</span>
-                      <span
-                        className={styles.metaValue}
-                        title={task.nextRunAt ? fmtLocal(task.nextRunAt) : undefined}
-                      >
-                        {task.isEnabled ? fmtRelative(task.nextRunAt) : 'Disabled'}
-                      </span>
-                    </div>
-                    <div className={styles.metaRow}>
-                      <span className={styles.metaLabel}>Schedule</span>
-                      <span className={styles.metaValue} style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>
-                        {task.cronExpression}
-                      </span>
-                    </div>
-                  </div>
-
-                  {editingId === task.taskId && (
-                    <ScheduleEditor
-                      taskId={task.taskId}
-                      initialCron={task.cronExpression}
-                      isEnabled={task.isEnabled}
-                      onSave={handleSave}
-                      onCancel={() => setEditingId(null)}
-                    />
-                  )}
-                </div>
-              )
-            })}
+                return (
+                  <PluginTaskGroup
+                    key={foldKey}
+                    foldKey={foldKey}
+                    pluginName={pluginName}
+                    iconUrl={iconUrl}
+                  >
+                    {groupTasks.map(task => (
+                      <TaskCard
+                        key={task.taskId}
+                        task={task}
+                        isRunning={task.isRunning || runningIds.has(task.taskId)}
+                        isEditing={editingId === task.taskId}
+                        onRunNow={() => handleRunNow(task.taskId)}
+                        onEdit={() => setEditingId(editingId === task.taskId ? null : task.taskId)}
+                        onSave={handleSave}
+                        onCancelEdit={() => setEditingId(null)}
+                        onToggle={() => updateBackgroundTask(task.taskId, { isEnabled: !task.isEnabled }).then(load)}
+                      />
+                    ))}
+                  </PluginTaskGroup>
+                )
+              })
+            })()}
           </div>
         )}
       </div>
