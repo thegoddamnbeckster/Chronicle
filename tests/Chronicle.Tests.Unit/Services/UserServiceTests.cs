@@ -103,6 +103,46 @@ namespace Chronicle.Tests.Unit.Services
             result.Should().BeNull();
         }
 
+        [Fact]
+        public async Task UpdatePreferencesAsync_FoldsMerges_DoesNotReplaceExistingKeys()
+        {
+            // Arrange — seed a user, set initial folds
+            var user = await _service.RegisterAsync("alice", "correct", null);
+
+            await _service.UpdatePreferencesAsync(user.Id, new UserPreferences
+            {
+                Folds = new() { { "media.1.tmdb", true } }
+            });
+
+            // Act — update a different key
+            await _service.UpdatePreferencesAsync(user.Id, new UserPreferences
+            {
+                Folds = new() { { "media.2.tmdb", false } }
+            });
+
+            // Assert — both keys present with correct values
+            var prefs = await _service.GetPreferencesAsync(user.Id);
+            prefs.Folds.Should().ContainKey("media.1.tmdb");
+            prefs.Folds.Should().ContainKey("media.2.tmdb");
+            prefs.Folds!["media.1.tmdb"].Should().BeTrue();
+            prefs.Folds["media.2.tmdb"].Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task UpdatePreferencesAsync_DefaultFoldsOpen_NullPatchDoesNotOverwrite()
+        {
+            // Arrange — set DefaultFoldsOpen to true
+            var user = await _service.RegisterAsync("bob", "correct", null);
+            await _service.UpdatePreferencesAsync(user.Id, new UserPreferences { DefaultFoldsOpen = true });
+
+            // Act — patch with null (no value for DefaultFoldsOpen)
+            await _service.UpdatePreferencesAsync(user.Id, new UserPreferences { DefaultFoldsOpen = null });
+
+            // Assert — original value preserved
+            var prefs = await _service.GetPreferencesAsync(user.Id);
+            prefs.DefaultFoldsOpen.Should().BeTrue();
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

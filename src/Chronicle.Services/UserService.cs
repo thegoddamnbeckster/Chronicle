@@ -82,6 +82,17 @@ namespace Chronicle.Services
             try { current = JsonSerializer.Deserialize<UserPreferences>(user.PreferencesJson) ?? new(); }
             catch { current = new(); }
             if (patch.ShowDiagnostics.HasValue) current.ShowDiagnostics = patch.ShowDiagnostics;
+
+            if (patch.DefaultFoldsOpen.HasValue)
+                current.DefaultFoldsOpen = patch.DefaultFoldsOpen;
+
+            if (patch.Folds is { Count: > 0 })
+            {
+                current.Folds ??= new Dictionary<string, bool>();
+                foreach (var (key, value) in patch.Folds)
+                    current.Folds[key] = value;
+            }
+
             user.PreferencesJson = JsonSerializer.Serialize(current);
             user.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
