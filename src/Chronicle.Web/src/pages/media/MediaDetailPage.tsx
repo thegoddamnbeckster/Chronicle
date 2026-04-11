@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, refreshMedia, deleteMedia } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
+import { updateMyPreferences } from '@/api/users'
 import type { LibraryStatus } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
@@ -76,6 +77,46 @@ function getChildrenLabel(parentMediaType: string, ancestorCount: number): strin
 }
 
 const LIGHTBOX_SKIP = new Set(['title', 'externalid', 'source', 'totalresults', 'total_results'])
+
+// ── Plugin fold ──────────────────────────────────────────────────────────────
+
+function useFold(key: string, defaultOpen: boolean) {
+  // TODO: initialise from loaded UserPreferences context when preferences are made available app-wide
+  const [isOpen, setIsOpen] = useState(defaultOpen)
+
+  function toggle() {
+    const next = !isOpen
+    setIsOpen(next)
+    // Fire-and-forget — don't block UI on save
+    updateMyPreferences({ folds: { [key]: next } }).catch(() => {})
+  }
+
+  return { isOpen, toggle }
+}
+
+interface PluginFoldProps {
+  foldKey: string
+  label: string
+  iconUrl?: string | null
+  children: React.ReactNode
+}
+
+function PluginFold({ foldKey, label, iconUrl, children }: PluginFoldProps) {
+  const { isOpen, toggle } = useFold(foldKey, true)
+
+  return (
+    <div className={styles.pluginFold}>
+      <button className={styles.pluginFoldHeader} onClick={toggle} aria-expanded={isOpen}>
+        {iconUrl && <img src={iconUrl} alt="" className={styles.pluginFoldIcon} onError={e => { e.currentTarget.style.display = 'none' }} />}
+        <span className={styles.pluginFoldLabel}>{label}</span>
+        <span className={`${styles.pluginFoldChevron} ${isOpen ? styles.pluginFoldChevronOpen : ''}`}>
+          ›
+        </span>
+      </button>
+      {isOpen && <div className={styles.pluginFoldBody}>{children}</div>}
+    </div>
+  )
+}
 
 export default function MediaDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -382,20 +423,26 @@ export default function MediaDetailPage() {
               const metadata = item.pluginMetadata?.[pluginId]
               const enrichStatus = item.enrichmentStatuses?.[pluginId]
               return (
-                <PluginMetadataBox
+                <PluginFold
                   key={`${mediaId}-${pluginId}`}
-                  mediaId={mediaId}
-                  pluginId={pluginId}
-                  pluginName={plugin?.name ?? pluginId}
+                  foldKey={`media.${mediaId}.${pluginId}`}
+                  label={plugin?.name ?? pluginId}
                   iconUrl={plugin?.iconUrl}
-                  fixMatchHint={plugin?.fixMatchHint}
-                  metadata={metadata}
-                  enrichmentStatus={enrichStatus}
-                  externalIds={item.externalIds}
-                  refreshLogs={item.refreshLogs}
-                  onImageClick={(localIdx) => setLightboxIdx((pluginImageOffsets.get(pluginId) ?? 0) + localIdx)}
-                  imageStartIndex={pluginImageOffsets.get(pluginId) ?? 0}
-                />
+                >
+                  <PluginMetadataBox
+                    mediaId={mediaId}
+                    pluginId={pluginId}
+                    pluginName={plugin?.name ?? pluginId}
+                    iconUrl={plugin?.iconUrl}
+                    fixMatchHint={plugin?.fixMatchHint}
+                    metadata={metadata}
+                    enrichmentStatus={enrichStatus}
+                    externalIds={item.externalIds}
+                    refreshLogs={item.refreshLogs}
+                    onImageClick={(localIdx) => setLightboxIdx((pluginImageOffsets.get(pluginId) ?? 0) + localIdx)}
+                    imageStartIndex={pluginImageOffsets.get(pluginId) ?? 0}
+                  />
+                </PluginFold>
               )
             })
           })()}
