@@ -8,6 +8,7 @@ import type { LibraryStatus } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
+import { IconHdd, IconCloud } from '@/components/FileStatusIcons'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
   'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
@@ -329,6 +330,16 @@ export default function MediaDetailPage() {
             <span className={styles.chip}>{item.mediaTypeName}</span>
             {item.runtimeMinutes != null && item.runtimeMinutes > 0 && (
               <span className={styles.chip}>{item.runtimeMinutes} min</span>
+            )}
+            {(item.hasPhysicalFile || item.hasMetadataOnly) && (
+              <div className={styles.fileIndicator}>
+                {item.hasPhysicalFile && (
+                  <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
+                )}
+                {item.hasMetadataOnly && (
+                  <span className={styles.metaIcon} title="Metadata only (no physical file)"><IconCloud /></span>
+                )}
+              </div>
             )}
           </div>
 

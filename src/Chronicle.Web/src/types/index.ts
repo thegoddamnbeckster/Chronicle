@@ -64,7 +64,9 @@ export interface MediaItem {
   mediaTypeInternalName?: string | null
   /** True when this item or any descendant has a tracked physical file on disk. */
   hasPhysicalFile?: boolean | null
-  /** True when neither this item nor any descendant has a tracked physical file (metadata only). */
+  /** True when this item or any leaf descendant lacks a tracked physical file.
+   *  Set for both the pure metadata-only case (no files anywhere in the subtree)
+   *  and the mixed case (some leaves have files, some do not). */
   hasMetadataOnly?: boolean | null
 }
 

@@ -73,9 +73,9 @@ namespace Chronicle.API.Controllers
             // hasPhysicalFile / hasMetadataOnly for parent items (TV shows, artists, etc.) that
             // don't own files themselves. Chronicle's deepest hierarchy is 3 levels
             // (Show→Season→Episode or Artist→Album→Track), so two levels covers all cases.
-            var childrenMetaJson = await GetDescendantMetaAsync(id, ct);
+            var (directChildrenMeta, grandchildrenMeta) = await GetDescendantMetaAsync(id, ct);
 
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict, childrenMetaJson)));
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict, directChildrenMeta, grandchildrenMeta)));
         }
 
         [HttpGet("search")]
@@ -149,8 +149,8 @@ namespace Chronicle.API.Controllers
                 var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
                 var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
-                var childrenMetaJson = await GetDescendantMetaAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, childrenMetaJson)));
+                var (directChildrenMeta, grandchildrenMeta) = await GetDescendantMetaAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, directChildrenMeta, grandchildrenMeta)));
             }
             catch (Exception ex)
             {
@@ -183,8 +183,8 @@ namespace Chronicle.API.Controllers
                 var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
                 var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
-                var childrenMetaJson = await GetDescendantMetaAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, childrenMetaJson)));
+                var (refreshedDirectMeta, refreshedGrandchildMeta) = await GetDescendantMetaAsync(id, ct);
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, refreshedDirectMeta, refreshedGrandchildMeta)));
             }
             catch (MediaNotFoundException ex)
             {
@@ -331,7 +331,8 @@ namespace Chronicle.API.Controllers
             return rows.Count > 0 ? rows.ToDictionary(e => e.PluginId, e => e.Status) : null;
         }
 
-        private async Task<List<string?>> GetDescendantMetaAsync(int id, CancellationToken ct = default)
+        private async Task<(List<string?> DirectChildren, List<string?> Grandchildren)>
+            GetDescendantMetaAsync(int id, CancellationToken ct = default)
         {
             var directChildren = await _context.MediaItems
                 .Where(m => m.ParentId == id)
@@ -339,7 +340,7 @@ namespace Chronicle.API.Controllers
                 .ToListAsync(ct);
 
             if (!directChildren.Any())
-                return new List<string?>();
+                return (new List<string?>(), new List<string?>());
 
             var directChildIds = directChildren.Select(c => c.Id).ToList();
 
@@ -348,7 +349,7 @@ namespace Chronicle.API.Controllers
                 .Select(m => m.MetadataJson)
                 .ToListAsync(ct);
 
-            return directChildren.Select(c => c.MetadataJson).Concat(grandchildrenMeta).ToList();
+            return (directChildren.Select(c => c.MetadataJson).ToList(), grandchildrenMeta);
         }
 
         private static MediaItemDto ToDto(
@@ -356,7 +357,8 @@ namespace Chronicle.API.Controllers
             IReadOnlyList<EnrichmentRecord>? enrichmentRecords = null,
             List<AncestorDto>? ancestors = null,
             Dictionary<string, string>? enrichmentStatuses = null,
-            List<string?>? childrenMetaJson = null)
+            List<string?>? directChildrenMeta = null,
+            List<string?>? grandchildrenMeta = null)
         {
             var (fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
             // Map enrichment records to RefreshLogDto for frontend compatibility
@@ -370,14 +372,34 @@ namespace Chronicle.API.Controllers
                 .ToList();
 
             // Compute physical-file indicators.
-            bool hasOwnFile        = HasFileScannerData(m.MetadataJson);
-            bool childrenHaveFile  = childrenMetaJson?.Any(HasFileScannerData) ?? false;
-            bool hasPhysicalFile   = hasOwnFile || childrenHaveFile;
-            // Item is metadata-only when no descendant (and itself) has a physical file.
-            // For hierarchical items (TV shows, artists) the intermediate nodes (seasons) naturally
-            // have no files — only leaf nodes (episodes, tracks) do, so we must not penalise
-            // an intermediate node for having child-less-file descendants.
-            bool hasMetadataOnly   = !hasPhysicalFile;
+            // Use only the deepest available level for "missing file" checks so that
+            // intermediate nodes (seasons) do not falsely trigger the metadata-only flag.
+            bool hasOwnFile = HasFileScannerData(m.MetadataJson);
+            bool childrenHaveFile;
+            bool childrenMissFile;
+
+            if (grandchildrenMeta?.Count > 0)
+            {
+                // Grandchildren (episodes/tracks) are the real leaf level — use them exclusively.
+                childrenHaveFile = grandchildrenMeta.Any(HasFileScannerData);
+                childrenMissFile = grandchildrenMeta.Any(j => !HasFileScannerData(j));
+            }
+            else if (directChildrenMeta?.Count > 0)
+            {
+                // No grandchildren — use direct children as the leaf level.
+                childrenHaveFile = directChildrenMeta.Any(HasFileScannerData);
+                childrenMissFile = directChildrenMeta.Any(j => !HasFileScannerData(j));
+            }
+            else
+            {
+                childrenHaveFile = false;
+                childrenMissFile = false;
+            }
+
+            bool hasPhysicalFile = hasOwnFile || childrenHaveFile;
+            // hasMetadataOnly is true when the item (and all its leaves) have no physical file,
+            // OR when some leaves exist but not all of them have a file (mixed state).
+            bool hasMetadataOnly = !hasPhysicalFile || childrenMissFile;
 
             return new MediaItemDto(
                 m.Id,
