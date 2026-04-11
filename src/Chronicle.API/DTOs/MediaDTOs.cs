@@ -85,8 +85,10 @@ namespace Chronicle.API.DTOs
         /// </summary>
         bool HasPhysicalFile = false,
         /// <summary>
-        /// True when neither this item nor any of its descendants has a physical file — i.e. it exists
-        /// only as metadata (from a plugin or manual entry, with no local file tracked anywhere in its subtree).
+        /// True when this item or any leaf in its subtree lacks a physical file.
+        /// Covers two cases: (1) purely metadata-only — no descendant has a file;
+        /// (2) mixed state — at least one leaf has a file and at least one does not.
+        /// Both cases indicate incomplete file coverage and warrant the cloud icon.
         /// </summary>
         bool HasMetadataOnly = false
     );

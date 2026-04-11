@@ -386,5 +386,152 @@ namespace Chronicle.Tests.Integration
             data.GetProperty("hasMetadataOnly").GetBoolean().Should().BeFalse(
                 "the show is not metadata-only because at least one descendant has a file");
         }
+
+        [Fact]
+        public async Task GetLibrary_ItemWithFileScannerData_HasPhysicalFileTrueInResponse()
+        {
+            // Arrange — seed a movie with fileScanner metadata, then add it to the user's library
+            const string metaJson =
+                """{"fileScanner": {"filePaths": ["/path/to/library-movie.mkv"], "importedAt": "2026-01-01T00:00:00Z"}}""";
+
+            int seededId;
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
+                var item = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    Name = "Library Physical File Test Movie",
+                    HierarchyLevel = 0,
+                    MetadataJson = metaJson,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(item);
+                await db.SaveChangesAsync();
+                seededId = item.Id;
+            }
+
+            var client = await AuthClientAsync();
+
+            // Add item to library
+            var addResp = await client.PostAsJsonAsync("/api/v1/library", new
+            {
+                mediaItemId = seededId,
+                status = "PlanToWatch"
+            });
+            addResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            // Act
+            var response = await client.GetAsync("/api/v1/library");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            var entries = doc.GetProperty("data");
+
+            // Find the library entry for our seeded item
+            JsonElement? match = null;
+            foreach (var entry in entries.EnumerateArray())
+            {
+                if (entry.GetProperty("mediaItem").GetProperty("id").GetInt32() == seededId)
+                {
+                    match = entry;
+                    break;
+                }
+            }
+
+            match.Should().NotBeNull("the library entry for the seeded item should be present");
+            var mediaItem = match!.Value.GetProperty("mediaItem");
+            mediaItem.GetProperty("hasPhysicalFile").GetBoolean().Should().BeTrue(
+                "the item has fileScanner data with a filePaths entry");
+            mediaItem.GetProperty("hasMetadataOnly").GetBoolean().Should().BeFalse(
+                "the item has a physical file so it is not metadata-only");
+        }
+
+        [Fact]
+        public async Task GetMediaItem_ShowWithMixedEpisodes_HasBothPhysicalFileAndMetadataOnly()
+        {
+            // Arrange — a TV Show (level 0) with one season containing two episodes:
+            // one episode has a file, the other does not.  The show should report
+            // hasPhysicalFile=true AND hasMetadataOnly=true (mixed state).
+            const string episodeWithFileMeta =
+                """{"fileScanner": {"filePaths": ["/tv/mixed/s01e01.mkv"], "importedAt": "2026-01-01T00:00:00Z"}}""";
+            // episode without any file scanner data (metadata-only)
+            const string episodeNoFileMeta =
+                """{"chronicle.plugin.tmdb": {"title": "Episode 2"}}""";
+
+            int showId;
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
+
+                var show = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    Name = "Mixed Episodes Test Show",
+                    HierarchyLevel = 0,
+                    MetadataJson = null,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(show);
+                await db.SaveChangesAsync();
+                showId = show.Id;
+
+                var season = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    ParentId = showId,
+                    Name = "Season 1",
+                    HierarchyLevel = 1,
+                    Number = 1,
+                    MetadataJson = null,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.Add(season);
+                await db.SaveChangesAsync();
+
+                var ep1 = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    ParentId = season.Id,
+                    Name = "Pilot",
+                    HierarchyLevel = 2,
+                    Number = 1,
+                    MetadataJson = episodeWithFileMeta,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                var ep2 = new Chronicle.Core.Models.MediaItem
+                {
+                    MediaTypeId = 1,
+                    ParentId = season.Id,
+                    Name = "Episode 2",
+                    HierarchyLevel = 2,
+                    Number = 2,
+                    MetadataJson = episodeNoFileMeta,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.MediaItems.AddRange(ep1, ep2);
+                await db.SaveChangesAsync();
+            }
+
+            var client = await AuthClientAsync();
+
+            // Act
+            var response = await client.GetAsync($"/api/v1/media/{showId}");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            var data = body.GetProperty("data");
+            data.GetProperty("hasPhysicalFile").GetBoolean().Should().BeTrue(
+                "at least one episode has a physical file");
+            data.GetProperty("hasMetadataOnly").GetBoolean().Should().BeTrue(
+                "at least one episode is metadata-only, so the show is in a mixed state");
+        }
     }
 }

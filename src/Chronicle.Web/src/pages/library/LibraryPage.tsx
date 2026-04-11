@@ -6,6 +6,7 @@ import { deleteMedia } from '@/api/media'
 import type { LibraryEntry, LibraryStatus } from '@/types'
 import { loadSortSettings, stripLeadingArticle } from '@/utils/sortSettings'
 import styles from './LibraryPage.module.css'
+import { IconHdd, IconCloud } from '@/components/FileStatusIcons'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -563,6 +564,16 @@ export default function LibraryPage() {
                         >
                           {entry.mediaItem.name.charAt(0)}
                         </div>
+                        {(entry.mediaItem.hasPhysicalFile || entry.mediaItem.hasMetadataOnly) && (
+                          <div className={styles.fileIndicator}>
+                            {entry.mediaItem.hasPhysicalFile && (
+                              <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
+                            )}
+                            {entry.mediaItem.hasMetadataOnly && (
+                              <span className={styles.metaIcon} title="Metadata only (no physical file)"><IconCloud /></span>
+                            )}
+                          </div>
+                        )}
                       </div>
                       {selectedIds.has(entry.mediaItem.id) && (
                         <div className={styles.selectOverlay}>✓</div>
@@ -589,6 +600,16 @@ export default function LibraryPage() {
                         >
                           {entry.mediaItem.name.charAt(0)}
                         </div>
+                        {(entry.mediaItem.hasPhysicalFile || entry.mediaItem.hasMetadataOnly) && (
+                          <div className={styles.fileIndicator}>
+                            {entry.mediaItem.hasPhysicalFile && (
+                              <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
+                            )}
+                            {entry.mediaItem.hasMetadataOnly && (
+                              <span className={styles.metaIcon} title="Metadata only (no physical file)"><IconCloud /></span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </Link>
                   )}

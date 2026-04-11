@@ -1,10 +1,13 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Chronicle.API.DTOs;
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
+using Chronicle.Data;
 using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Chronicle.API.Controllers
 {
@@ -14,10 +17,12 @@ namespace Chronicle.API.Controllers
     public class LibraryController : ControllerBase
     {
         private readonly ILibraryService _libraryService;
+        private readonly ChronicleDbContext _context;
 
-        public LibraryController(ILibraryService libraryService)
+        public LibraryController(ILibraryService libraryService, ChronicleDbContext context)
         {
             _libraryService = libraryService;
+            _context = context;
         }
 
         [HttpPost]
@@ -50,9 +55,66 @@ namespace Chronicle.API.Controllers
             }
 
             var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, ct);
-            return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(
-                entries.Select(ToDto).ToList(),
-                new PaginationInfo(page, perPage, null)));
+
+            // Batch-fetch descendant MetadataJson for all root items in two queries
+            // (direct children + grandchildren) to avoid N+1 when computing physical-file flags.
+            var rootIds = entries
+                .Where(e => e.MediaItem != null)
+                .Select(e => e.MediaItem.Id)
+                .ToList();
+
+            Dictionary<int, List<string?>> directChildrenByRoot = new();
+            Dictionary<int, List<string?>> grandchildrenByRoot = new();
+
+            if (rootIds.Count > 0)
+            {
+                var directChildren = await _context.MediaItems
+                    .Where(m => m.ParentId != null && rootIds.Contains(m.ParentId.Value))
+                    .Select(m => new { m.Id, m.ParentId, m.MetadataJson })
+                    .ToListAsync(ct);
+
+                foreach (var c in directChildren)
+                {
+                    var pid = c.ParentId!.Value;
+                    if (!directChildrenByRoot.TryGetValue(pid, out var list))
+                        directChildrenByRoot[pid] = list = new List<string?>();
+                    list.Add(c.MetadataJson);
+                }
+
+                var directChildIds = directChildren.Select(c => c.Id).ToList();
+                if (directChildIds.Count > 0)
+                {
+                    // Map grandchildren back to the root item via the direct child's parent.
+                    var directChildToRoot = directChildren.ToDictionary(c => c.Id, c => c.ParentId!.Value);
+
+                    var grandchildren = await _context.MediaItems
+                        .Where(m => m.ParentId != null && directChildIds.Contains(m.ParentId.Value))
+                        .Select(m => new { m.ParentId, m.MetadataJson })
+                        .ToListAsync(ct);
+
+                    foreach (var gc in grandchildren)
+                    {
+                        if (!directChildToRoot.TryGetValue(gc.ParentId!.Value, out var rootId)) continue;
+                        if (!grandchildrenByRoot.TryGetValue(rootId, out var list))
+                            grandchildrenByRoot[rootId] = list = new List<string?>();
+                        list.Add(gc.MetadataJson);
+                    }
+                }
+            }
+
+            var dtos = entries.Select(e =>
+            {
+                List<string?>? dc = null;
+                List<string?>? gc = null;
+                if (e.MediaItem != null)
+                {
+                    directChildrenByRoot.TryGetValue(e.MediaItem.Id, out dc);
+                    grandchildrenByRoot.TryGetValue(e.MediaItem.Id, out gc);
+                }
+                return ToDto(e, dc, gc);
+            }).ToList();
+
+            return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }
 
         [HttpPatch("{id:int}")]
@@ -134,19 +196,77 @@ namespace Chronicle.API.Controllers
         private int GetUserId() =>
             int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
-        private static LibraryEntryDto ToDto(UserLibrary e)
+        /// <summary>
+        /// Returns true when the given MetadataJson contains a fileScanner entry with at least
+        /// one non-null file path.  Mirrors the same helper in MediaController.
+        /// </summary>
+        private static bool HasFileScannerData(string? metadataJson)
         {
-            var mediaDto = e.MediaItem == null ? null! : new MediaItemDto(
-                e.MediaItem.Id, e.MediaItem.MediaTypeId,
-                e.MediaItem.MediaType?.DisplayName ?? string.Empty,
-                e.MediaItem.ParentId, e.MediaItem.Name, e.MediaItem.Year,
-                e.MediaItem.Overview, e.MediaItem.PosterUrl, e.MediaItem.RuntimeMinutes,
-                e.MediaItem.HierarchyLevel, e.MediaItem.Number,
-                e.MediaItem.CreatedAt, e.MediaItem.UpdatedAt,
-                e.MediaItem.ExternalIds.Select(x => new ExternalIdDto(x.Source, x.ExternalId)).ToList());
+            if (string.IsNullOrEmpty(metadataJson)) return false;
+            if (!metadataJson.Contains("\"fileScanner\"", StringComparison.Ordinal)) return false;
+            try
+            {
+                using var doc = JsonDocument.Parse(metadataJson);
+                if (!doc.RootElement.TryGetProperty("fileScanner", out var fs)) return false;
+                if (fs.TryGetProperty("filePaths", out var fp) &&
+                    fp.ValueKind == JsonValueKind.Array &&
+                    fp.GetArrayLength() > 0)
+                    return true;
+                if (fs.TryGetProperty("filePath", out var f) &&
+                    f.ValueKind != JsonValueKind.Null &&
+                    !string.IsNullOrEmpty(f.GetString()))
+                    return true;
+                return false;
+            }
+            catch { return false; }
+        }
+
+        private static LibraryEntryDto ToDto(
+            UserLibrary e,
+            List<string?>? directChildrenMeta = null,
+            List<string?>? grandchildrenMeta = null)
+        {
+            MediaItemDto? mediaDto = null;
+            if (e.MediaItem != null)
+            {
+                // Compute physical-file indicators using the same leaf-level logic as MediaController.
+                bool hasOwnFile = HasFileScannerData(e.MediaItem.MetadataJson);
+                bool childrenHaveFile;
+                bool childrenMissFile;
+
+                if (grandchildrenMeta?.Count > 0)
+                {
+                    childrenHaveFile = grandchildrenMeta.Any(HasFileScannerData);
+                    childrenMissFile = grandchildrenMeta.Any(j => !HasFileScannerData(j));
+                }
+                else if (directChildrenMeta?.Count > 0)
+                {
+                    childrenHaveFile = directChildrenMeta.Any(HasFileScannerData);
+                    childrenMissFile = directChildrenMeta.Any(j => !HasFileScannerData(j));
+                }
+                else
+                {
+                    childrenHaveFile = false;
+                    childrenMissFile = false;
+                }
+
+                bool hasPhysicalFile = hasOwnFile || childrenHaveFile;
+                bool hasMetadataOnly = !hasPhysicalFile || childrenMissFile;
+
+                mediaDto = new MediaItemDto(
+                    e.MediaItem.Id, e.MediaItem.MediaTypeId,
+                    e.MediaItem.MediaType?.DisplayName ?? string.Empty,
+                    e.MediaItem.ParentId, e.MediaItem.Name, e.MediaItem.Year,
+                    e.MediaItem.Overview, e.MediaItem.PosterUrl, e.MediaItem.RuntimeMinutes,
+                    e.MediaItem.HierarchyLevel, e.MediaItem.Number,
+                    e.MediaItem.CreatedAt, e.MediaItem.UpdatedAt,
+                    e.MediaItem.ExternalIds.Select(x => new ExternalIdDto(x.Source, x.ExternalId)).ToList(),
+                    HasPhysicalFile: hasPhysicalFile,
+                    HasMetadataOnly: hasMetadataOnly);
+            }
 
             return new LibraryEntryDto(
-                e.Id, e.UserId, mediaDto, e.Status.ToString(),
+                e.Id, e.UserId, mediaDto!, e.Status.ToString(),
                 e.UserRating, e.Notes, e.AddedAt, e.UpdatedAt,
                 e.StartedAt, e.CompletedAt);
         }
