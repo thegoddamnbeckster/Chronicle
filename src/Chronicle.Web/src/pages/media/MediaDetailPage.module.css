@@ -999,3 +999,26 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 }
 
 .lightboxCounter { color: rgba(255,255,255,0.5); }
+
+/* ── Physical file / metadata-only indicators ────────────────────────────── */
+
+.fileIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.fileIcon,
+.metaIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.fileIcon { color: #6fcf97; }
+.metaIcon { color: #56ccf2; }

@@ -240,8 +240,30 @@
   position: relative;
 }
 
-.poster { background: var(--bg-card); }
+.poster { background: var(--bg-card); position: relative; }
 .poster img { width: 100%; height: auto; object-fit: contain; display: block; }
+
+.fileIndicator {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  display: flex;
+  gap: 2px;
+}
+
+.fileIcon,
+.metaIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.fileIcon { color: #6fcf97; }
+.metaIcon { color: #56ccf2; }
 
 .posterPlaceholder {
   width: 100%;
