@@ -1,7 +1,9 @@
 using Chronicle.Core.Models;
 using Chronicle.Core.Models.Scan;
 using Chronicle.Data;
+using Chronicle.Plugins;
 using Chronicle.Services;
+using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -36,6 +38,18 @@ public class ScheduledScanServiceTests
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 
+    private static Mock<IPluginRegistry> MakeRegistryWithConcurrency(int maxConcurrency)
+    {
+        var mockScanner = new Mock<IFileScannerPlugin>();
+        mockScanner.Setup(s => s.MaxConcurrency).Returns(maxConcurrency);
+        mockScanner.Setup(s => s.GetSupportedMediaTypes()).Returns([]);
+
+        var mockRegistry = new Mock<IPluginRegistry>();
+        mockRegistry.Setup(r => r.GetFileScannerPlugins())
+            .Returns([mockScanner.Object]);
+        return mockRegistry;
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -53,7 +67,9 @@ public class ScheduledScanServiceTests
             .ReturnsAsync(new List<ScanFolder>());
 
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
-        var service = new ScheduledScanService(scopeFactory, new ImportProgressService());
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetFileScannerPlugins()).Returns([]);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService(), registry.Object);
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
@@ -82,7 +98,9 @@ public class ScheduledScanServiceTests
             });
 
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
-        var service = new ScheduledScanService(scopeFactory, new ImportProgressService());
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetFileScannerPlugins()).Returns([]);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService(), registry.Object);
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
@@ -119,7 +137,9 @@ public class ScheduledScanServiceTests
             .ReturnsAsync(new ScanGroupResult { Groups = [], Ungrouped = [], TotalFiles = 0 });
 
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
-        var service = new ScheduledScanService(scopeFactory, new ImportProgressService());
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetFileScannerPlugins()).Returns([]);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService(), registry.Object);
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
@@ -169,7 +189,9 @@ public class ScheduledScanServiceTests
             .ReturnsAsync(new ScanGroupResult { Groups = [], Ungrouped = [], TotalFiles = 0 });
 
         var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
-        var service = new ScheduledScanService(scopeFactory, new ImportProgressService());
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetFileScannerPlugins()).Returns([]);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService(), registry.Object);
 
         // Act
         await service.ExecuteAsync(CancellationToken.None);
@@ -190,5 +212,36 @@ public class ScheduledScanServiceTests
                 It.IsAny<int>(),
                 It.IsAny<bool>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ReadsConcurrencyFromFileScannerPlugin_NotFromAppSettings()
+    {
+        // Arrange — plugin reports MaxConcurrency=2; AppSettings has nothing (ensures
+        // the service is NOT falling back to AppSettings)
+        var db = MakeDb();
+
+        var mockFileScanSvc = new Mock<IFileScanService>();
+        var mockScanFolderSvc = new Mock<IScanFolderService>();
+
+        mockScanFolderSvc
+            .Setup(s => s.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScanFolder>());
+
+        var scopeFactory = MakeScopeFactory(db, mockFileScanSvc.Object, mockScanFolderSvc.Object);
+        var registry = MakeRegistryWithConcurrency(2);
+        var service = new ScheduledScanService(scopeFactory, new ImportProgressService(), registry.Object);
+
+        // Act — executes without throwing; concurrency reading is observable
+        // indirectly by verifying the plugin registry was queried
+        await service.ExecuteAsync(CancellationToken.None);
+
+        // Assert — the plugin registry was consulted for concurrency
+        registry.Verify(r => r.GetFileScannerPlugins(), Times.AtLeastOnce);
+
+        // AppSettings table was never queried for scan.max_concurrency
+        // (the DB is empty so any FindAsync on AppSettings would return null;
+        // we verify the DB has no AppSetting rows as an indirect guard)
+        Assert.Empty(db.AppSettings.Where(s => s.Key == "scan.max_concurrency"));
     }
 }

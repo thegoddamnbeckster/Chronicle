@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import AdvancedToggle from '@/components/ui/AdvancedToggle'
 import {
@@ -9,12 +9,10 @@ import {
 } from '@/api/backgroundTasks'
 import {
   getEnrichmentStats,
-  runEnrichment,
   resetEnrichment,
   type EnrichmentStats,
 } from '@/api/enrichment'
 import { getImportProgress, type ImportProgressState } from '@/api/scan'
-import { getAppSettings, putAppSetting } from '@/api/settings'
 import {
   cronToParams,
   paramsToCron,
@@ -115,13 +113,16 @@ interface EnrichmentSectionProps {
   scanProgress: ImportProgressState | null
   /** Callback to trigger a Run Now on the scan task. */
   onRunScan: () => Promise<void>
+  /** Callback to trigger enrichment for a specific plugin via the task scheduler. */
+  onRunPlugin: (pluginId: string) => void
+  /** Set of plugin IDs whose enrichment task is currently running (optimistic). */
+  runningPluginIds: Set<string>
 }
 
-function EnrichmentSection({ enrichmentRunning, scanTask, scanIsRunning, scanProgress, onRunScan }: EnrichmentSectionProps) {
+function EnrichmentSection({ enrichmentRunning, scanTask, scanIsRunning, scanProgress, onRunScan, onRunPlugin, runningPluginIds }: EnrichmentSectionProps) {
   const [stats, setStats] = useState<EnrichmentStats[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [runStarted, setRunStarted] = useState<Record<string, boolean>>({})
 
   const load = useCallback(async () => {
     try {
@@ -144,20 +145,18 @@ function EnrichmentSection({ enrichmentRunning, scanTask, scanIsRunning, scanPro
     return () => clearInterval(id)
   }, [load, enrichmentRunning])
 
+  // When enrichment transitions from running → idle, fire one immediate refresh
+  // so the final pending→completed counts are captured before polling slows to 10s.
+  const prevRunningRef = useRef(enrichmentRunning)
+  useEffect(() => {
+    if (prevRunningRef.current && !enrichmentRunning) load()
+    prevRunningRef.current = enrichmentRunning
+  }, [enrichmentRunning, load])
+
   async function handleRefresh() {
     setRefreshing(true)
     await load()
     setRefreshing(false)
-  }
-
-  async function handleRun(pluginId: string) {
-    try {
-      await runEnrichment(pluginId)
-      setRunStarted(prev => ({ ...prev, [pluginId]: true }))
-      setTimeout(() => setRunStarted(prev => ({ ...prev, [pluginId]: false })), 3000)
-    } catch {
-      // ignore
-    }
   }
 
   async function handleReset(pluginId: string, scope: 'exhausted' | 'all') {
@@ -220,8 +219,10 @@ return (
                         </span>
                       : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                   </td>
-                  {/* Remaining columns merged — show folder/item context while scanning */}
-                  <td colSpan={4} className={styles.enrichTd} style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.82rem' }}>
+                  {/* Remaining columns merged — show folder/item context while scanning.
+                      max-width:0 + overflow:hidden stops long paths from wrapping and
+                      growing the row height (standard table-cell truncation trick). */}
+                  <td colSpan={4} className={`${styles.enrichTd} ${styles.enrichTdClip}`} style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.82rem' }}>
                     {scanProgress
                       ? scanProgress.currentItemName
                         ? <>{scanProgress.statusMessage && <span style={{ opacity: 0.6 }}>{scanProgress.statusMessage} — </span>}{scanProgress.currentItemName}</>
@@ -271,9 +272,10 @@ return (
                   <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
                     <button
                       className={styles.runBtn}
-                      onClick={() => handleRun(s.pluginId)}
+                      onClick={() => onRunPlugin(s.pluginId)}
+                      disabled={runningPluginIds.has(s.pluginId)}
                     >
-                      {runStarted[s.pluginId] ? 'Started' : 'Run Now'}
+                      {runningPluginIds.has(s.pluginId) ? 'Running…' : 'Run Now'}
                     </button>
                     <button
                       className={styles.editBtn}
@@ -296,75 +298,6 @@ return (
           </table>
         </div>
       )}
-    </div>
-  )
-}
-
-// ── Scan settings section ─────────────────────────────────────────────────────
-// Lets the user tune scan concurrency (how many folders scan at the same time).
-
-function ScanSettingsSection() {
-  const [concurrency, setConcurrency] = useState<string>('')
-  const [loaded, setLoaded] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-
-  useEffect(() => {
-    getAppSettings().then(s => {
-      setConcurrency(s['scan.max_concurrency'] ?? '')
-      setLoaded(true)
-    }).catch(() => setLoaded(true))
-  }, [])
-
-  async function handleSave() {
-    const val = concurrency.trim()
-    if (!val || isNaN(Number(val)) || Number(val) < 1) return
-    setSaving(true)
-    try {
-      await putAppSetting('scan.max_concurrency', String(Math.round(Number(val))))
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (!loaded) return null
-
-  return (
-    <div className={styles.scanSettingsSection}>
-      <div className={styles.sectionHeader}>
-        <h2 className={styles.sectionTitle}>Scan Settings</h2>
-      </div>
-      <div className={styles.card}>
-        <div className={styles.scanSettingRow}>
-          <div className={styles.scanSettingLabel}>
-            <span className={styles.scanSettingName}>Scan Concurrency</span>
-            <span className={styles.scanSettingHint}>
-              How many scan folders run in parallel. Default: max(1, CPU&nbsp;cores&nbsp;÷&nbsp;4).
-              Raise this to speed up multi-folder scans on fast storage.
-            </span>
-          </div>
-          <div className={styles.scanSettingControl}>
-            <input
-              type="number"
-              className={styles.numberInput}
-              min={1}
-              value={concurrency}
-              placeholder="default"
-              onChange={e => setConcurrency(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
-            />
-            <button
-              className={styles.saveBtn}
-              onClick={handleSave}
-              disabled={saving || !concurrency.trim() || isNaN(Number(concurrency))}
-            >
-              {saved ? 'Saved ✓' : saving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
@@ -718,6 +651,18 @@ export default function BackgroundTasksPage() {
     try {
       const data = await getBackgroundTasks()
       setTasks(data)
+      // Clean up stale optimistic runningIds entries: once the backend confirms
+      // a task is known but not running, the optimistic flag is no longer needed.
+      setRunningIds(prev => {
+        if (prev.size === 0) return prev
+        const backendRunning = new Set(data.filter(t => t.isRunning).map(t => t.taskId))
+        const knownIds = new Set(data.map(t => t.taskId))
+        const next = new Set(prev)
+        for (const id of prev) {
+          if (knownIds.has(id) && !backendRunning.has(id)) next.delete(id)
+        }
+        return next.size === prev.size ? prev : next
+      })
       setError(null)
     } catch {
       setError('Could not reach the Chronicle API. Check that the service is running.')
@@ -740,14 +685,17 @@ export default function BackgroundTasksPage() {
     setRunningIds(prev => new Set(prev).add(taskId))
     try {
       await runBackgroundTask(taskId)
-      await load()
+      // Don't call load() immediately — the task scheduler is async and the task
+      // won't show as running yet. The polling interval (every 3s while runningIds
+      // is non-empty) picks up the real state. load() will clean up runningIds
+      // once the backend confirms the task has started or finished.
     } catch (err) {
+      // On failure clear the optimistic state immediately and refresh.
+      setRunningIds(prev => { const s = new Set(prev); s.delete(taskId); return s })
       if (err instanceof ApiError) {
         if (err.statusCode === 409) await load()
         else alert(err.message)
       }
-    } finally {
-      setRunningIds(prev => { const s = new Set(prev); s.delete(taskId); return s })
     }
   }
 
@@ -762,6 +710,17 @@ export default function BackgroundTasksPage() {
   const enrichmentRunning = tasks.some(t =>
     t.taskId.endsWith('fetch-missing-metadata') &&
     (t.isRunning || runningIds.has(t.taskId))
+  )
+
+  // Plugin IDs whose enrichment task is actively running (optimistic).
+  // Task IDs are namespaced as "{pluginId}:fetch-missing-metadata".
+  const runningPluginIds = new Set(
+    tasks
+      .filter(t =>
+        t.taskId.endsWith(':fetch-missing-metadata') &&
+        (t.isRunning || runningIds.has(t.taskId))
+      )
+      .map(t => t.taskId.slice(0, t.taskId.lastIndexOf(':')))
   )
 
   // Poll scan import progress every second while a scan is running.
@@ -797,13 +756,12 @@ export default function BackgroundTasksPage() {
         scanIsRunning={scanIsRunning}
         scanProgress={scanProgress}
         onRunScan={() => handleRunNow('scheduled_scan')}
+        onRunPlugin={(pluginId) => handleRunNow(`${pluginId}:fetch-missing-metadata`)}
+        runningPluginIds={runningPluginIds}
       />
 
       {/* ── Scan progress banner — shown while a scan is running ─────── */}
       <ScanProgressBanner progress={scanProgress} />
-
-      {/* ── Scan settings ────────────────────────────────────────────── */}
-      <ScanSettingsSection />
 
       {/* ── Task list — collapsible ──────────────────────────────────── */}
       <div className={styles.tasksFold}>

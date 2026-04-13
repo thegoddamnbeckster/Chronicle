@@ -394,6 +394,16 @@
   flex-wrap: wrap;
 }
 
+/* Prevents long file paths from wrapping and growing the row height.
+   max-width:0 is the standard trick to enable text-overflow in table cells —
+   the colSpan still provides actual rendered width. */
+.enrichTdClip {
+  max-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* -- Scan import progress banner ------------------------------------------- */
 
 .scanProgressBanner {

@@ -22,10 +22,17 @@ export async function putAppSetting(key: string, value: string): Promise<void> {
   await client.put(`/settings/app/${key}`, { value })
 }
 
+export interface PluginInfo {
+  pluginId: string
+  name: string
+  iconUrl: string | null
+}
+
 export interface MetadataAssignmentConfig {
   assignments: Record<string, Record<string, string[]>>
   assignableFields: Record<string, string[]>
-  availablePlugins: { pluginId: string; name: string; iconUrl: string | null }[]
+  /** Plugins available per media type — only includes plugins that declare support for that type. */
+  availablePlugins: Record<string, PluginInfo[]>
 }
 
 export async function getMetadataAssignment(): Promise<MetadataAssignmentConfig> {
