@@ -519,6 +519,7 @@ interface TaskCardProps {
 function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCancelEdit, onToggle }: TaskCardProps) {
   const { cls, label } = statusBadge(task)
   const brandColor = task.brandColorDark ?? undefined
+  const [confirmPending, setConfirmPending] = useState(false)
 
   return (
     <div
@@ -545,17 +546,19 @@ function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCanc
           </button>
           <button
             className={styles.runBtn}
-            onClick={onRunNow}
+            onClick={() => task.runConfirmation ? setConfirmPending(true) : onRunNow()}
             disabled={isRunning}
           >
             {isRunning ? 'Running…' : 'Run Now'}
           </button>
-          <button
-            className={styles.editBtn}
-            onClick={onEdit}
-          >
-            {isEditing ? 'Close' : 'Schedule'}
-          </button>
+          {task.schedulable && (
+            <button
+              className={styles.editBtn}
+              onClick={onEdit}
+            >
+              {isEditing ? 'Close' : 'Schedule'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -590,7 +593,7 @@ function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCanc
         </div>
       </div>
 
-      {isEditing && (
+      {isEditing && task.schedulable && (
         <ScheduleEditor
           taskId={task.taskId}
           initialCron={task.cronExpression}
@@ -598,6 +601,26 @@ function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCanc
           onSave={onSave}
           onCancel={onCancelEdit}
         />
+      )}
+
+      {confirmPending && task.runConfirmation && (
+        <div className={styles.confirmOverlay}>
+          <div className={styles.confirmModal}>
+            <h3 className={styles.confirmTitle}>{task.runConfirmation.title}</h3>
+            <p className={styles.confirmBody}>{task.runConfirmation.message}</p>
+            <div className={styles.confirmActions}>
+              <button className={styles.editBtn} onClick={() => setConfirmPending(false)}>
+                Cancel
+              </button>
+              <button
+                className={styles.runBtn}
+                onClick={() => { setConfirmPending(false); onRunNow() }}
+              >
+                Run Now
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
