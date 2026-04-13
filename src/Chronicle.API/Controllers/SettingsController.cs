@@ -137,17 +137,34 @@ public class SettingsController : ControllerBase
         // Load DB plugin records to map PluginId → DB id for the proxy URL
         var dbPlugins = await _db.Plugins.ToListAsync();
 
-        var plugins = _pluginRegistry.GetMetadataProviderEntries()
-            .Select(e =>
+        var allEntries = _pluginRegistry.GetMetadataProviderEntries().ToList();
+
+        // Build per-media-type plugin lists, filtering by each plugin's declared supported types.
+        // "movies" normalises to "movie" to match how TMDB (and similar) plugins declare support.
+        static string NormalizeForAssignment(string name) =>
+            name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
+
+        var availablePlugins = AssignableFields.Keys.ToDictionary(
+            mediaType => mediaType,
+            mediaType =>
             {
-                var dbPlugin = dbPlugins.FirstOrDefault(p =>
-                    string.Equals(p.PluginId, e.PluginId, StringComparison.OrdinalIgnoreCase));
-                var iconUrl = dbPlugin != null && e.IconUrl != null
-                    ? $"/api/v1/plugins/{dbPlugin.Id}/icon"
-                    : (string?)null;
-                return new { pluginId = e.PluginId, name = e.Provider.Name, iconUrl };
-            })
-            .ToList();
+                var normalised = NormalizeForAssignment(mediaType);
+                return allEntries
+                    .Where(e => e.Provider.GetSupportedMediaTypes()
+                        .Any(t => string.Equals(
+                            NormalizeForAssignment(t.MediaTypeName), normalised,
+                            StringComparison.OrdinalIgnoreCase)))
+                    .Select(e =>
+                    {
+                        var dbPlugin = dbPlugins.FirstOrDefault(p =>
+                            string.Equals(p.PluginId, e.PluginId, StringComparison.OrdinalIgnoreCase));
+                        var iconUrl = dbPlugin != null && e.IconUrl != null
+                            ? $"/api/v1/plugins/{dbPlugin.Id}/icon"
+                            : (string?)null;
+                        return new { pluginId = e.PluginId, name = e.Provider.Name, iconUrl };
+                    })
+                    .ToList<object>();
+            });
 
         return Ok(new
         {
@@ -156,7 +173,7 @@ public class SettingsController : ControllerBase
             {
                 assignments,
                 assignableFields = AssignableFields,
-                availablePlugins = plugins,
+                availablePlugins,
             },
         });
     }
