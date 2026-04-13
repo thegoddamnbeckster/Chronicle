@@ -372,22 +372,40 @@ namespace Chronicle.Services
                     }
                     else
                     {
-                        mediaItem = new MediaItem
+                        // Fall back to title+year match so a file-scanner stub with the same
+                        // title (in any normalised variant) is reused instead of duplicated.
+                        var existingByTitle = await FindByTitleAsync(meta.Title, request.MediaTypeId, meta.Year, ct);
+                        if (existingByTitle is not null)
                         {
-                            MediaTypeId    = request.MediaTypeId,
-                            Name           = meta.Title,
-                            Year           = meta.Year,
-                            Overview       = meta.Overview,
-                            PosterUrl      = meta.PosterUrl,
-                            RuntimeMinutes = meta.RuntimeMinutes,
-                            MetadataJson   = SerializeMetadata(tmdbMeta: meta),
-                            HierarchyLevel = 0,
-                            CreatedAt      = DateTime.UtcNow,
-                            UpdatedAt      = DateTime.UtcNow,
-                        };
-                        _context.MediaItems.Add(mediaItem);
-                        await _context.SaveChangesAsync(ct);
-                        await UpsertExternalIdAsync(mediaItem.Id, approval.ExternalId, ct);
+                            mediaItem                  = existingByTitle;
+                            mediaItem.Name             = meta.Title;
+                            mediaItem.Year             = meta.Year;
+                            mediaItem.Overview         = meta.Overview;
+                            mediaItem.PosterUrl        = meta.PosterUrl;
+                            mediaItem.RuntimeMinutes   = meta.RuntimeMinutes;
+                            mediaItem.MetadataJson     = SerializeMetadata(tmdbMeta: meta, existingJson: mediaItem.MetadataJson);
+                            mediaItem.UpdatedAt        = DateTime.UtcNow;
+                            await UpsertExternalIdAsync(mediaItem.Id, approval.ExternalId, ct);
+                        }
+                        else
+                        {
+                            mediaItem = new MediaItem
+                            {
+                                MediaTypeId    = request.MediaTypeId,
+                                Name           = meta.Title,
+                                Year           = meta.Year,
+                                Overview       = meta.Overview,
+                                PosterUrl      = meta.PosterUrl,
+                                RuntimeMinutes = meta.RuntimeMinutes,
+                                MetadataJson   = SerializeMetadata(tmdbMeta: meta),
+                                HierarchyLevel = 0,
+                                CreatedAt      = DateTime.UtcNow,
+                                UpdatedAt      = DateTime.UtcNow,
+                            };
+                            _context.MediaItems.Add(mediaItem);
+                            await _context.SaveChangesAsync(ct);
+                            await UpsertExternalIdAsync(mediaItem.Id, approval.ExternalId, ct);
+                        }
                     }
 
                     // Upsert user library entry
@@ -746,28 +764,54 @@ namespace Chronicle.Services
             return null;
         }
 
+        // Matches a trailing " (YYYY)" or " [YYYY]" that may be embedded in a parsed filename title.
+        private static readonly System.Text.RegularExpressions.Regex _trailingYearInTitle =
+            new(@"\s*[\(\[]\d{4}[\)\]]$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
         /// <summary>
-        /// Looks up a media item by title (and optionally year), trying both the literal
-        /// parsed title and a colon-variant.  Filenames on Windows cannot contain ":" so
-        /// titles like "Movie: Subtitle" are stored on disk as "Movie - Subtitle"; the
-        /// colon-variant ensures the file-scanned item is matched to an existing TMDB entry.
+        /// Looks up a media item by title (and optionally year), trying several normalised
+        /// variants so that file-scanner titles (e.g. <c>Movie - Subtitle (2025)</c>) and
+        /// canonical metadata titles (e.g. <c>Movie: Subtitle</c>) resolve to the same row.
+        ///
+        /// Variants tried in order:
+        ///   1. Literal title
+        ///   2. Colon-variant  (" - " → ": ")
+        ///   3. Dash-variant   (": " → " - ")
+        ///   4–6. The same three variants with any trailing " (YYYY)" / " [YYYY]" stripped
         /// </summary>
         private async Task<MediaItem?> FindByTitleAsync(
             string title, int mediaTypeId, int? year, CancellationToken ct)
         {
-            var result = await _context.MediaItems.FirstOrDefaultAsync(
-                m => m.MediaTypeId == mediaTypeId
-                  && (year == null || m.Year == year)
-                  && EF.Functions.Like(m.Name, title), ct);
-            if (result is not null) return result;
-
             var colonTitle = title.Replace(" - ", ": ");
-            if (colonTitle == title) return null;
+            var dashTitle  = title.Replace(": ", " - ");
 
-            return await _context.MediaItems.FirstOrDefaultAsync(
-                m => m.MediaTypeId == mediaTypeId
-                  && (year == null || m.Year == year)
-                  && EF.Functions.Like(m.Name, colonTitle), ct);
+            foreach (var variant in new[] { title, colonTitle, dashTitle }.Distinct(StringComparer.Ordinal))
+            {
+                var hit = await _context.MediaItems.FirstOrDefaultAsync(
+                    m => m.MediaTypeId == mediaTypeId
+                      && (year == null || m.Year == year)
+                      && EF.Functions.Like(m.Name, variant), ct);
+                if (hit is not null) return hit;
+            }
+
+            // Strip embedded trailing year (e.g. "Title (2026)") and retry all three variants.
+            var stripped = _trailingYearInTitle.Replace(title, string.Empty).Trim();
+            if (stripped == title) return null;   // nothing to strip
+
+            var strippedColon = stripped.Replace(" - ", ": ");
+            var strippedDash  = stripped.Replace(": ", " - ");
+
+            foreach (var variant in new[] { stripped, strippedColon, strippedDash }.Distinct(StringComparer.Ordinal))
+            {
+                var hit = await _context.MediaItems.FirstOrDefaultAsync(
+                    m => m.MediaTypeId == mediaTypeId
+                      && (year == null || m.Year == year)
+                      && EF.Functions.Like(m.Name, variant), ct);
+                if (hit is not null) return hit;
+            }
+
+            return null;
         }
 
         private async Task<MediaItem> CreateStubItemAsync(
