@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Chronicle.Data;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.Tests.Integration;
 
@@ -148,5 +150,38 @@ public class BackgroundTasksTests : IClassFixture<ChronicleApiFactory>
         var client = await AdminClientAsync();
         var resp = await client.PostAsync("/api/v1/background-tasks/ghost_task/run", null);
         resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetAll_ReturnsSchedulableAndRunConfirmation_Fields()
+    {
+        var client = await AdminClientAsync();
+
+        // Seed a task with the new fields directly in the test DB
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        db.BackgroundTasks.Add(new Chronicle.Core.Models.BackgroundTask
+        {
+            TaskId                 = "test:confirm-task",
+            DisplayName            = "Test",
+            Description            = "Test task",
+            CronExpression         = string.Empty,
+            Schedulable            = false,
+            RunConfirmationTitle   = "Sure?",
+            RunConfirmationMessage = "Body text.",
+        });
+        await db.SaveChangesAsync();
+
+        var resp = await client.GetAsync("/api/v1/background-tasks");
+        resp.EnsureSuccessStatusCode();
+
+        var json = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var task = json.RootElement.GetProperty("data")
+            .EnumerateArray()
+            .First(t => t.GetProperty("taskId").GetString() == "test:confirm-task");
+
+        Assert.False(task.GetProperty("schedulable").GetBoolean());
+        Assert.Equal("Sure?",      task.GetProperty("runConfirmation").GetProperty("title").GetString());
+        Assert.Equal("Body text.", task.GetProperty("runConfirmation").GetProperty("message").GetString());
     }
 }

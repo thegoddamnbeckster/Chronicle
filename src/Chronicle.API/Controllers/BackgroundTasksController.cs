@@ -47,7 +47,11 @@ public class BackgroundTasksController : ControllerBase
             PluginName:       r.Plugin?.Name,
             PluginIconUrl:    r.Plugin?.IconUrl,
             BrandColorLight:  r.Plugin?.BrandColorLight,
-            BrandColorDark:   r.Plugin?.BrandColorDark
+            BrandColorDark:   r.Plugin?.BrandColorDark,
+            Schedulable:      r.Schedulable,
+            RunConfirmation:  r.RunConfirmationTitle is not null
+                ? new BackgroundTaskRunConfirmationDto(r.RunConfirmationTitle, r.RunConfirmationMessage ?? string.Empty)
+                : null
         ));
 
         return Ok(new { success = true, data = dtos });
@@ -153,8 +157,12 @@ public record BackgroundTaskDto(
     string?   PluginName,
     string?   PluginIconUrl,
     string?   BrandColorLight,
-    string?   BrandColorDark
+    string?   BrandColorDark,
+    bool      Schedulable,
+    BackgroundTaskRunConfirmationDto? RunConfirmation
 );
+
+public record BackgroundTaskRunConfirmationDto(string Title, string Message);
 
 public record UpdateBackgroundTaskRequest(
     string? CronExpression,
