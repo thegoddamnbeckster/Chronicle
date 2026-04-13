@@ -1,6 +1,7 @@
 using Chronicle.Core.Models;
 using Chronicle.Core.Models.Scan;
 using Chronicle.Data;
+using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
@@ -22,12 +23,14 @@ public sealed class ScheduledScanService : IScheduledTask
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ImportProgressService _importProgress;
+    private readonly IPluginRegistry _registry;
     private readonly ILogger _log = Log.ForContext<ScheduledScanService>();
 
-    public ScheduledScanService(IServiceScopeFactory scopeFactory, ImportProgressService importProgress)
+    public ScheduledScanService(IServiceScopeFactory scopeFactory, ImportProgressService importProgress, IPluginRegistry registry)
     {
         _scopeFactory    = scopeFactory;
         _importProgress  = importProgress;
+        _registry        = registry;
     }
 
     // ── IScheduledTask ────────────────────────────────────────────────────────
@@ -41,25 +44,23 @@ public sealed class ScheduledScanService : IScheduledTask
     {
         _log.Information("ScheduledScanService: Scheduled scan starting");
 
-        // ── Load folders and concurrency setting in a short-lived scope ────────
+        // ── Load folders and concurrency setting ─────────────────────────────
         IReadOnlyList<ScanFolder> folders;
         int maxConcurrency;
 
         using (var setupScope = _scopeFactory.CreateScope())
         {
             var scanFolderSvc = setupScope.ServiceProvider.GetRequiredService<IScanFolderService>();
-            var db            = setupScope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
             var allFolders = await scanFolderSvc.GetAllAsync(ct);
             folders = allFolders.Where(f => f.IsEnabled).ToList();
 
-            // scan.max_concurrency: default = max(1, ProcessorCount / 4), capped at ProcessorCount
-            var concurrencySetting = await db.AppSettings.FindAsync(["scan.max_concurrency"], ct);
+            // Read max_concurrency from the file scanner plugin settings.
+            // 0 from the plugin means "auto": max(1, CPU cores / 4), capped at core count.
             int defaultConcurrency = Math.Max(1, Environment.ProcessorCount / 4);
-            maxConcurrency = (concurrencySetting is not null
-                              && int.TryParse(concurrencySetting.Value, out var mc)
-                              && mc >= 1)
-                ? Math.Min(mc, Environment.ProcessorCount)
+            var configuredConcurrency = _registry.GetFileScannerPlugins().FirstOrDefault()?.MaxConcurrency ?? 0;
+            maxConcurrency = configuredConcurrency >= 1
+                ? Math.Min(configuredConcurrency, Environment.ProcessorCount)
                 : defaultConcurrency;
         }
 
