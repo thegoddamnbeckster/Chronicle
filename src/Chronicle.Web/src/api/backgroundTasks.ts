@@ -17,6 +17,8 @@ export interface BackgroundTask {
   pluginIconUrl: string | null
   brandColorLight: string | null
   brandColorDark: string | null
+  schedulable: boolean
+  runConfirmation: { title: string; message: string } | null
 }
 
 export async function getBackgroundTasks(): Promise<BackgroundTask[]> {
