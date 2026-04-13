@@ -361,6 +361,11 @@
   padding: 8px 0;
 }
 
+/* Scroll wrapper prevents the card from being pushed wide by large row counts. */
+.enrichTableWrap {
+  overflow-x: auto;
+}
+
 .enrichTable {
   width: 100%;
   border-collapse: collapse;
@@ -378,6 +383,13 @@
   white-space: nowrap;
 }
 
+/* Number-column headers: right-aligned, fixed minimum so columns don't
+   dance around as counts change from 0 → large values. */
+.enrichTh.enrichThNum {
+  text-align: right;
+  min-width: 72px;
+}
+
 .enrichRow:not(:last-child) .enrichTd {
   border-bottom: 1px solid var(--border);
 }
@@ -385,13 +397,20 @@
 .enrichTd {
   padding: 10px 12px 10px 0;
   vertical-align: middle;
+  white-space: nowrap;   /* prevents large counts from wrapping mid-cell */
+}
+
+/* Number cells: right-aligned to mirror header, no wrapping. */
+.enrichTd.enrichTdNum {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .enrichActions {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  /* no flex-wrap: row height must stay stable regardless of button count */
 }
 
 /* Prevents long file paths from wrapping and growing the row height.
