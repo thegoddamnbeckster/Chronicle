@@ -28,6 +28,9 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
     /// <summary>Legacy single-threshold fallback (populated if old key is still present).</summary>
     private int? _legacyThreshold;
 
+    /// <summary>Configured max concurrency; 0 means "auto".</summary>
+    private int _maxConcurrency;
+
     private static readonly FolderSignalExtractor _folderExtractor = new();
     private static readonly TagSignalExtractor    _tagExtractor    = new();
     private static readonly NfoSignalExtractor    _nfoExtractor    = new();
@@ -78,20 +81,32 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
     /// </summary>
     public PluginSettingsSchema GetSettingsSchema()
     {
-        return new PluginSettingsSchema
+        var settings = GetSupportedMediaTypes()
+            .Select(mt => new SettingDefinition
+            {
+                Key          = $"confidence_threshold_{mt.MediaTypeName}",
+                Label        = $"Confidence threshold — {FriendlyName(mt.MediaTypeName)} (0–100)",
+                Description  = ConfidenceDescription(mt.MediaTypeName),
+                Type         = SettingType.Number,
+                Required     = false,
+                DefaultValue = "75",
+            })
+            .ToList();
+
+        settings.Add(new SettingDefinition
         {
-            Settings = GetSupportedMediaTypes()
-                .Select(mt => new SettingDefinition
-                {
-                    Key          = $"confidence_threshold_{mt.MediaTypeName}",
-                    Label        = $"Confidence threshold — {FriendlyName(mt.MediaTypeName)} (0–100)",
-                    Description  = ConfidenceDescription(mt.MediaTypeName),
-                    Type         = SettingType.Number,
-                    Required     = false,
-                    DefaultValue = "75",
-                })
-                .ToList(),
-        };
+            Key          = "max_concurrency",
+            Label        = "Scan concurrency",
+            Description  =
+                "Maximum number of scan folders processed in parallel during a scheduled scan.\n\n" +
+                "Leave blank (or 0) for the automatic default: max(1, CPU cores ÷ 4), capped at CPU core count.\n" +
+                "Raise this to speed up multi-folder scans on fast storage (e.g. NVMe or NAS with high throughput).",
+            Type         = SettingType.Number,
+            Required     = false,
+            DefaultValue = null,
+        });
+
+        return new PluginSettingsSchema { Settings = settings };
     }
 
     /// <summary>
@@ -165,6 +180,9 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
     // ConfidenceThreshold returns the fallback default; per-type values are in _thresholds.
     public int ConfidenceThreshold => 75;
 
+    /// <inheritdoc/>
+    public int MaxConcurrency => _maxConcurrency;
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     public void Configure(IReadOnlyDictionary<string, string> settings)
@@ -188,6 +206,13 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
         {
             _legacyThreshold = legacyParsed;
         }
+
+        // Scan concurrency (0 = auto)
+        _maxConcurrency = settings.TryGetValue("max_concurrency", out var concRaw)
+            && int.TryParse(concRaw, out var concParsed)
+            && concParsed >= 1
+            ? concParsed
+            : 0;
     }
 
     public int GetConfidenceThreshold(string mediaTypeName)

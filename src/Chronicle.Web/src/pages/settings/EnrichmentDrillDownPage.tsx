@@ -254,7 +254,7 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
           )}
           <button
             className={styles.actionBtn}
-            onClick={() => navigate(`/media/${item.mediaItemId}`)}
+            onClick={() => navigate(`/library#media-${item.mediaItemId}`)}
           >
             View in Library →
           </button>
