@@ -18,6 +18,23 @@ public class BackgroundTask
     /// </summary>
     public string? PluginId { get; set; }
 
+    /// <summary>
+    /// When false the task cannot be scheduled via cron — it must be triggered manually.
+    /// Defaults to true for backward compatibility.
+    /// </summary>
+    public bool Schedulable { get; set; } = true;
+
+    /// <summary>
+    /// Optional title shown in a confirmation dialog before the task is run manually.
+    /// Null means no confirmation is required.
+    /// </summary>
+    public string? RunConfirmationTitle   { get; set; }
+
+    /// <summary>
+    /// Optional body text shown in the confirmation dialog before the task is run manually.
+    /// </summary>
+    public string? RunConfirmationMessage { get; set; }
+
     /// <summary>Navigation property — loaded via Include in queries that need branding.</summary>
     public Plugin? Plugin { get; set; }
 }

@@ -348,12 +348,15 @@ public class PluginService : IPluginService
             {
                 db.BackgroundTasks.Add(new BackgroundTask
                 {
-                    TaskId         = namespacedId,
-                    PluginId       = pluginId,
-                    DisplayName    = task.DisplayName,
-                    Description    = task.Description ?? string.Empty,
-                    CronExpression = task.DefaultCron,
-                    IsEnabled      = task.DefaultEnabled,
+                    TaskId                 = namespacedId,
+                    PluginId               = pluginId,
+                    DisplayName            = task.DisplayName,
+                    Description            = task.Description ?? string.Empty,
+                    CronExpression         = task.DefaultCron ?? string.Empty,
+                    IsEnabled              = task.DefaultEnabled,
+                    Schedulable            = task.Schedulable,
+                    RunConfirmationTitle   = task.RunConfirmationTitle,
+                    RunConfirmationMessage = task.RunConfirmationMessage,
                 });
             }
         }
