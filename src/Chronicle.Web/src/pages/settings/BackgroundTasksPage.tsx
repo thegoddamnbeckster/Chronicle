@@ -187,16 +187,17 @@ return (
         <p className={styles.enrichmentEmpty}>No metadata plugins installed. Install a plugin in Settings → Plugins to enable enrichment.</p>
       ) : (
         <div className={styles.card}>
+          <div className={styles.enrichTableWrap}>
           <table className={styles.enrichTable}>
             <thead>
               <tr>
                 <th className={styles.enrichTh}>Plugin</th>
-                <th className={styles.enrichTh}>Pending</th>
-                <th className={styles.enrichTh}>Completed</th>
-                <th className={styles.enrichTh}>Failed</th>
-                <th className={styles.enrichTh}>Exhausted</th>
-                <th className={styles.enrichTh}>Not Found</th>
-                <th className={styles.enrichTh}>Skipped</th>
+                <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Pending</th>
+                <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Completed</th>
+                <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Failed</th>
+                <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Exhausted</th>
+                <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Not Found</th>
+                <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Skipped</th>
                 <th className={styles.enrichTh}>Actions</th>
               </tr>
             </thead>
@@ -205,17 +206,17 @@ return (
                 <tr key="__scan" className={styles.enrichRow}>
                   <td className={styles.enrichTd}>File Scanner</td>
                   {/* Pending = files remaining */}
-                  <td className={styles.enrichTd}>
+                  <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
                     {scanProgress
-                      ? <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{Math.max(0, scanProgress.total - scanProgress.processed)}</span>
+                      ? <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{Math.max(0, scanProgress.total - scanProgress.processed).toLocaleString()}</span>
                       : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                   </td>
                   {/* Completed = files processed / total */}
-                  <td className={styles.enrichTd}>
+                  <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
                     {scanProgress
                       ? <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
-                          {scanProgress.processed}
-                          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> / {scanProgress.total}</span>
+                          {scanProgress.processed.toLocaleString()}
+                          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> / {scanProgress.total.toLocaleString()}</span>
                         </span>
                       : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                   </td>
@@ -255,13 +256,13 @@ return (
                   ).map(([field, statusParam]) => {
                     const count = s[field] as number
                     return (
-                      <td key={field} className={styles.enrichTd}>
+                      <td key={field} className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
                         {count > 0 ? (
                           <Link
                             to={`/settings/enrichment/${encodeURIComponent(s.pluginId)}?status=${statusParam}`}
                             style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
                           >
-                            {count}
+                            {count.toLocaleString()}
                           </Link>
                         ) : (
                           <span style={{ color: 'var(--text-muted)' }}>0</span>
@@ -296,6 +297,7 @@ return (
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
