@@ -732,25 +732,42 @@ namespace Chronicle.Services
             // 2. Match by title + year
             if (file.ParsedYear.HasValue)
             {
-                var byTitleYear = await _context.MediaItems.FirstOrDefaultAsync(
-                    m => m.MediaTypeId == mediaTypeId
-                      && m.Year == file.ParsedYear
-                      && EF.Functions.Like(m.Name, file.ParsedTitle), ct);
-                if (byTitleYear is not null)
-                    return byTitleYear;
+                var hit = await FindByTitleAsync(file.ParsedTitle, mediaTypeId, file.ParsedYear, ct);
+                if (hit is not null) return hit;
             }
 
             // 3. Title-only match (lower confidence — only when year is unknown)
             if (!file.ParsedYear.HasValue)
             {
-                var byTitle = await _context.MediaItems.FirstOrDefaultAsync(
-                    m => m.MediaTypeId == mediaTypeId
-                      && EF.Functions.Like(m.Name, file.ParsedTitle), ct);
-                if (byTitle is not null)
-                    return byTitle;
+                var hit = await FindByTitleAsync(file.ParsedTitle, mediaTypeId, year: null, ct);
+                if (hit is not null) return hit;
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Looks up a media item by title (and optionally year), trying both the literal
+        /// parsed title and a colon-variant.  Filenames on Windows cannot contain ":" so
+        /// titles like "Movie: Subtitle" are stored on disk as "Movie - Subtitle"; the
+        /// colon-variant ensures the file-scanned item is matched to an existing TMDB entry.
+        /// </summary>
+        private async Task<MediaItem?> FindByTitleAsync(
+            string title, int mediaTypeId, int? year, CancellationToken ct)
+        {
+            var result = await _context.MediaItems.FirstOrDefaultAsync(
+                m => m.MediaTypeId == mediaTypeId
+                  && (year == null || m.Year == year)
+                  && EF.Functions.Like(m.Name, title), ct);
+            if (result is not null) return result;
+
+            var colonTitle = title.Replace(" - ", ": ");
+            if (colonTitle == title) return null;
+
+            return await _context.MediaItems.FirstOrDefaultAsync(
+                m => m.MediaTypeId == mediaTypeId
+                  && (year == null || m.Year == year)
+                  && EF.Functions.Like(m.Name, colonTitle), ct);
         }
 
         private async Task<MediaItem> CreateStubItemAsync(
