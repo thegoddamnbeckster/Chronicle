@@ -40,6 +40,13 @@ public interface IFileScannerPlugin
     /// </summary>
     int ConfidenceThreshold => 75;
 
+    /// <summary>
+    /// Maximum number of folders to scan concurrently during a scheduled scan.
+    /// Returns 0 when unconfigured, which means "auto" (max(1, CPU cores / 4)).
+    /// Configured via the plugin settings schema key <c>max_concurrency</c>.
+    /// </summary>
+    int MaxConcurrency => 0;
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     /// <summary>
