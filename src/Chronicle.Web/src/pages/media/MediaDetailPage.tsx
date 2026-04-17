@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, deleteMedia } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType } from '@/api/media'
+import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
 import { updateMyPreferences } from '@/api/users'
+import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
@@ -124,6 +126,8 @@ export default function MediaDetailPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const qc = useQueryClient()
+  const { user } = useAuth()
+  const isAdmin = user?.isAdmin ?? false
 
   const navState = (location.state as { listIds?: number[]; listLabel?: string } | null) ?? null
 
@@ -201,6 +205,30 @@ export default function MediaDetailPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['library'] })
       navigate('/library')
+    },
+  })
+
+  // ── Change Type ──────────────────────────────────────────────────────────
+  const [changeTypeOpen, setChangeTypeOpen] = useState(false)
+  const [changeTypeError, setChangeTypeError] = useState<string | null>(null)
+
+  const { data: mediaTypes = [] } = useQuery({
+    queryKey: ['media-types'],
+    queryFn: getMediaTypes,
+    staleTime: 5 * 60 * 1000,
+    enabled: changeTypeOpen,
+  })
+
+  const changeTypeMut = useMutation({
+    mutationFn: (targetTypeId: number) => changeMediaType(mediaId, targetTypeId),
+    onSuccess: () => {
+      setChangeTypeOpen(false)
+      setChangeTypeError(null)
+      qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+    onError: (err: unknown) => {
+      setChangeTypeError(err instanceof Error ? err.message : String(err))
     },
   })
 
@@ -343,6 +371,14 @@ export default function MediaDetailPage() {
           <h1 className={styles.title}>{item.name}</h1>
 
           <div className={styles.deleteArea}>
+            {isAdmin && item.parentId == null && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => { setChangeTypeOpen(true); setChangeTypeError(null) }}
+              >
+                Change Type
+              </button>
+            )}
             {!deleteConfirm ? (
               <button className={styles.deleteBtn} onClick={() => setDeleteConfirm(true)}>
                 Delete
@@ -365,6 +401,50 @@ export default function MediaDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Change Type modal */}
+          {changeTypeOpen && (
+            <div className={styles.changeTypeOverlay} onClick={() => setChangeTypeOpen(false)}>
+              <div className={styles.changeTypeModal} onClick={e => e.stopPropagation()}>
+                <h3 className={styles.changeTypeTitle}>Change Media Type</h3>
+                <p className={styles.changeTypeWarning}>
+                  This will reset all metadata, enrichment status, and external IDs for this item.
+                  This cannot be undone.
+                </p>
+                <select
+                  className={styles.changeTypeSelect}
+                  defaultValue=""
+                  onChange={e => {
+                    if (e.target.value) {
+                      setChangeTypeError(null)
+                      changeTypeMut.mutate(Number(e.target.value))
+                    }
+                  }}
+                  disabled={changeTypeMut.isPending}
+                >
+                  <option value="" disabled>Select new type…</option>
+                  {mediaTypes
+                    .filter(t => t.id !== item.mediaTypeId)
+                    .map(t => (
+                      <option key={t.id} value={t.id}>{t.displayName}</option>
+                    ))
+                  }
+                </select>
+                {changeTypeError && (
+                  <p className={styles.changeTypeError}>{changeTypeError}</p>
+                )}
+                <div className={styles.changeTypeActions}>
+                  <button
+                    className={styles.deleteConfirmCancel}
+                    onClick={() => setChangeTypeOpen(false)}
+                    disabled={changeTypeMut.isPending}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className={styles.metaRow}>
             {item.year && <span className={styles.chip}>{item.year}</span>}
