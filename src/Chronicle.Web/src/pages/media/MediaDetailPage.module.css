@@ -529,7 +529,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 /* ── Delete (single item) ── */
 
-.deleteArea { margin-bottom: 12px; }
+.deleteArea { margin-bottom: 12px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 
 .deleteBtn {
   font-size: 12px;
@@ -556,6 +556,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   border-radius: 4px;
   background: rgba(224, 85, 85, 0.08);
   border: 1px solid rgba(224, 85, 85, 0.35);
+  width: 100%;
 }
 
 .deleteConfirmText { font-size: 13px; flex: 1; }
@@ -1076,3 +1077,66 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   border-radius: 0 0 6px 6px;
   overflow: hidden;
 }
+
+/* ── Change Type button & modal ─────────────────────────────────────────── */
+
+.changeTypeBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  margin-right: 6px;
+}
+
+.changeTypeBtn:hover {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.changeTypeOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+}
+
+.changeTypeModal {
+  background: var(--surface-raised, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px 28px;
+  max-width: 420px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.changeTypeTitle { margin: 0; font-size: 1rem; font-weight: 600; }
+
+.changeTypeWarning {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.changeTypeSelect {
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.changeTypeError { color: var(--status-danger-fg, #e05555); font-size: 0.82rem; margin: 0; }
+
+.changeTypeActions { display: flex; justify-content: flex-end; }

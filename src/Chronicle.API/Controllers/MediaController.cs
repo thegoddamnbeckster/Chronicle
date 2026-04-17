@@ -34,7 +34,7 @@ namespace Chronicle.API.Controllers
             var types = await _context.MediaTypes
                 .Where(t => t.IsActive)
                 .OrderBy(t => t.DisplayName)
-                .Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName))
+                .Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName, t.HierarchyLevels))
                 .ToListAsync();
             return Ok(ApiResponse<List<MediaTypeDto>>.Ok(types));
         }
