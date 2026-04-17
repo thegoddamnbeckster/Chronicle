@@ -240,6 +240,7 @@ export interface MediaTypeOption {
   id: number
   name: string
   displayName: string
+  hierarchyLevels: number
 }
 
 // ── Metadata search ───────────────────────────────────────────────────────────

@@ -106,7 +106,7 @@ namespace Chronicle.API.DTOs
         string? Notes
     );
 
-    public record MediaTypeDto(int Id, string Name, string DisplayName);
+    public record MediaTypeDto(int Id, string Name, string DisplayName, int HierarchyLevels);
 
     /// <summary>Optional body for POST /api/v1/media/{id}/refresh/{pluginId}.</summary>
     public record PluginRefreshRequestDto(string? Input = null);
