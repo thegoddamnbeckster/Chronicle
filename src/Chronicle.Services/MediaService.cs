@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -149,7 +151,9 @@ namespace Chronicle.Services
             foreach (var i in items)
             {
                 i.MediaTypeId  = targetMediaTypeId;
-                i.MetadataJson = null;
+                // Preserve the fileScanner section — it describes the physical file on disk,
+                // not the content type, so it should survive a type change.
+                i.MetadataJson = PreserveFileScannerJson(i.MetadataJson);
                 i.UpdatedAt    = DateTime.UtcNow;
             }
 
@@ -160,6 +164,37 @@ namespace Chronicle.Services
             _context.MediaEnrichments.RemoveRange(enrichments);
 
             await _context.SaveChangesAsync(ct);
+        }
+
+        /// <summary>
+        /// Strips all plugin metadata from a MetadataJson blob while keeping the
+        /// <c>fileScanner</c> section intact. The file scanner entry describes the
+        /// physical file on disk and is independent of media type.
+        /// Returns <c>null</c> if there is no file scanner data to preserve.
+        /// </summary>
+        private static string? PreserveFileScannerJson(string? metadataJson)
+        {
+            if (string.IsNullOrWhiteSpace(metadataJson))
+                return null;
+
+            try
+            {
+                var root = JsonNode.Parse(metadataJson)?.AsObject();
+                if (root is null) return null;
+
+                if (!root.ContainsKey("fileScanner"))
+                    return null;
+
+                var preserved = new JsonObject
+                {
+                    ["fileScanner"] = root["fileScanner"]?.DeepClone()
+                };
+                return preserved.ToJsonString();
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
     }
 }

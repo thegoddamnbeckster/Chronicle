@@ -411,25 +411,24 @@ export default function MediaDetailPage() {
                   This will reset all metadata, enrichment status, and external IDs for this item.
                   This cannot be undone.
                 </p>
-                <select
-                  className={styles.changeTypeSelect}
-                  defaultValue=""
-                  onChange={e => {
-                    if (e.target.value) {
-                      setChangeTypeError(null)
-                      changeTypeMut.mutate(Number(e.target.value))
-                    }
-                  }}
-                  disabled={changeTypeMut.isPending}
-                >
-                  <option value="" disabled>Select new type…</option>
+                <div className={styles.changeTypeList}>
                   {mediaTypes
                     .filter(t => t.id !== item.mediaTypeId)
                     .map(t => (
-                      <option key={t.id} value={t.id}>{t.displayName}</option>
+                      <button
+                        key={t.id}
+                        className={styles.changeTypeOption}
+                        onClick={() => {
+                          setChangeTypeError(null)
+                          changeTypeMut.mutate(t.id)
+                        }}
+                        disabled={changeTypeMut.isPending}
+                      >
+                        {t.displayName}
+                      </button>
                     ))
                   }
-                </select>
+                </div>
                 {changeTypeError && (
                   <p className={styles.changeTypeError}>{changeTypeError}</p>
                 )}

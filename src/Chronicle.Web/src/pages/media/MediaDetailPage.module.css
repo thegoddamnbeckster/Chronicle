@@ -1100,7 +1100,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 .changeTypeOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1108,35 +1108,64 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 }
 
 .changeTypeModal {
-  background: var(--surface-raised, var(--surface));
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 24px 28px;
   max-width: 420px;
-  width: 100%;
+  width: 90%;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
-.changeTypeTitle { margin: 0; font-size: 1rem; font-weight: 600; }
+.changeTypeTitle { margin: 0; font-size: 1rem; font-weight: 600; color: var(--text-primary); }
 
 .changeTypeWarning {
   margin: 0;
   font-size: 0.85rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
-.changeTypeSelect {
-  padding: 7px 10px;
-  border-radius: 6px;
+/* Custom type list — replaces native <select> so hover/focus states are fully styled */
+.changeTypeList {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 0.9rem;
+  border-radius: 6px;
+  overflow: hidden;
 }
 
-.changeTypeError { color: var(--status-danger-fg, #e05555); font-size: 0.82rem; margin: 0; }
+.changeTypeOption {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  text-align: left;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.changeTypeOption:last-child {
+  border-bottom: none;
+}
+
+.changeTypeOption:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.changeTypeOption:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.changeTypeError { color: var(--status-danger-fg); font-size: 0.82rem; margin: 0; }
 
 .changeTypeActions { display: flex; justify-content: flex-end; }
