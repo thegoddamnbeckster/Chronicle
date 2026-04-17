@@ -130,7 +130,7 @@ public sealed class PluginHostService : IHostedService
                 if (await db.Plugins.AnyAsync(p => p.PluginId == manifest.PluginId, ct))
                     continue;
 
-                var dllPath = FindPluginDll(dir);
+                var dllPath = FindPluginDll(dir, manifest.EntryType);
                 if (dllPath is null)
                 {
                     _log.Warning("manifest.json found in {Dir} but no plugin DLL located — skipping", dir);
@@ -175,9 +175,9 @@ public sealed class PluginHostService : IHostedService
     /// Returns the primary plugin DLL from a plugin directory — the largest DLL
     /// that does not match any known framework prefix.
     /// </summary>
-    private static string? FindPluginDll(string dir)
+    private static string? FindPluginDll(string dir, string? entryType = null)
     {
-        return Directory
+        var candidates = Directory
             .GetFiles(dir, "*.dll")
             .Where(f =>
             {
@@ -185,6 +185,25 @@ public sealed class PluginHostService : IHostedService
                 return !_frameworkPrefixes.Any(p =>
                     name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
             })
+            .ToList();
+
+        // If entry_type is set, prefer the DLL whose name matches the namespace prefix.
+        // e.g. "Chronicle.Plugin.FanEdit.FanEditMetadataProvider" → "Chronicle.Plugin.FanEdit.dll"
+        if (!string.IsNullOrWhiteSpace(entryType))
+        {
+            // The assembly name is the longest prefix of entry_type that has a matching DLL.
+            var parts = entryType.Split('.');
+            for (var i = parts.Length - 1; i >= 1; i--)
+            {
+                var assemblyName = string.Join('.', parts[..i]) + ".dll";
+                var match = candidates.FirstOrDefault(f =>
+                    Path.GetFileName(f).Equals(assemblyName, StringComparison.OrdinalIgnoreCase));
+                if (match is not null) return match;
+            }
+        }
+
+        // Fallback: largest remaining DLL
+        return candidates
             .OrderByDescending(f => new FileInfo(f).Length)
             .FirstOrDefault();
     }
