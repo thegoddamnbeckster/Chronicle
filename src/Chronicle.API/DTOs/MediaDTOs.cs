@@ -24,6 +24,8 @@ namespace Chronicle.API.DTOs
         int? RuntimeMinutes
     );
 
+    public record ChangeMediaTypeRequest([Required] int MediaTypeId);
+
     public record ExternalIdDto(string Source, string ExternalId);
 
     /// <summary>Local file data discovered by the File Scanner plugin.</summary>

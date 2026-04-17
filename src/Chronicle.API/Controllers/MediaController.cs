@@ -306,6 +306,42 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Changes the media type of an item and all its descendants, resetting all
+        /// enrichment data, external IDs, and metadata JSON.
+        /// Admin only. Must be called on the root item — child items return 400.
+        /// </summary>
+        [HttpPost("{id:int}/change-type")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> ChangeType(
+            int id,
+            [FromBody] ChangeMediaTypeRequest body,
+            CancellationToken ct)
+        {
+            try
+            {
+                await _mediaService.ChangeTypeAsync(id, body.MediaTypeId, ct);
+                var updated = await _mediaService.GetByIdAsync(id);
+                if (updated == null)
+                    return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
+            }
+            catch (MediaNotFoundException ex)
+            {
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("root"))
+            {
+                var item = await _context.MediaItems.FindAsync([id], ct);
+                return BadRequest(new { success = false,
+                    error = new { code = "CHANGE_TYPE_USE_ROOT", message = ex.Message, parentId = item?.ParentId } });
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("incompatible"))
+            {
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("INCOMPATIBLE_TYPE", ex.Message));
+            }
+        }
+
         private async Task<List<AncestorDto>> BuildAncestorsAsync(int? parentId, CancellationToken ct)
         {
             var ancestors = new List<AncestorDto>();

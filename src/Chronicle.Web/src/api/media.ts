@@ -71,6 +71,10 @@ export async function suppressMediaMatch(id: number, source: string): Promise<vo
   await client.post(`/media/${id}/suppress/${encodeURIComponent(source)}`)
 }
 
+export async function changeMediaType(id: number, mediaTypeId: number): Promise<void> {
+  await client.post(`/media/${id}/change-type`, { mediaTypeId })
+}
+
 /**
  * Refreshes metadata for a single item from a specific plugin.
  * If `input` is provided, performs a Fix Match (overrides external ID lookup).

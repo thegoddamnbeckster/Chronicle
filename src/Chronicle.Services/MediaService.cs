@@ -104,5 +104,62 @@ namespace Chronicle.Services
             _context.MediaItems.Remove(item);
             await _context.SaveChangesAsync();
         }
+
+        public async Task ChangeTypeAsync(int id, int targetMediaTypeId, CancellationToken ct = default)
+        {
+            var item = await _context.MediaItems.FindAsync([id], ct)
+                ?? throw new MediaNotFoundException(id);
+
+            if (item.HierarchyLevel != 0)
+                throw new InvalidOperationException(
+                    $"Only root items can have their media type changed. " +
+                    $"Item {id} is a child item (parentId={item.ParentId}). " +
+                    $"Change the type of the root item instead.");
+
+            var targetType = await _context.Set<MediaType>().FindAsync([targetMediaTypeId], ct)
+                ?? throw new InvalidOperationException($"Media type {targetMediaTypeId} not found.");
+
+            // BFS collect all descendant IDs
+            var allIds = new List<int> { id };
+            var queue = new Queue<int>();
+            int maxDepth = 0;
+            queue.Enqueue(id);
+            while (queue.Count > 0)
+            {
+                var parentId = queue.Dequeue();
+                var children = await _context.MediaItems
+                    .Where(m => m.ParentId == parentId)
+                    .Select(m => new { m.Id, m.HierarchyLevel })
+                    .ToListAsync(ct);
+                foreach (var c in children)
+                {
+                    allIds.Add(c.Id);
+                    queue.Enqueue(c.Id);
+                    if (c.HierarchyLevel > maxDepth) maxDepth = c.HierarchyLevel;
+                }
+            }
+
+            var actualDepth = maxDepth + 1;
+            if (targetType.HierarchyLevels < actualDepth)
+                throw new InvalidOperationException(
+                    $"Target type '{targetType.DisplayName}' supports {targetType.HierarchyLevels} level(s), " +
+                    $"but this item tree has {actualDepth} level(s). Types are incompatible.");
+
+            var items = await _context.MediaItems.Where(m => allIds.Contains(m.Id)).ToListAsync(ct);
+            foreach (var i in items)
+            {
+                i.MediaTypeId  = targetMediaTypeId;
+                i.MetadataJson = null;
+                i.UpdatedAt    = DateTime.UtcNow;
+            }
+
+            var externalIds = await _context.MediaExternalIds.Where(e => allIds.Contains(e.MediaItemId)).ToListAsync(ct);
+            _context.MediaExternalIds.RemoveRange(externalIds);
+
+            var enrichments = await _context.MediaEnrichments.Where(e => allIds.Contains(e.MediaItemId)).ToListAsync(ct);
+            _context.MediaEnrichments.RemoveRange(enrichments);
+
+            await _context.SaveChangesAsync(ct);
+        }
     }
 }
