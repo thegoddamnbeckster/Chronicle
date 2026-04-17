@@ -1,4 +1,5 @@
 using Chronicle.Core.Models;
+using System.Threading;
 
 namespace Chronicle.Services
 {
@@ -30,5 +31,15 @@ namespace Chronicle.Services
         Task<IEnumerable<MediaItem>> GetChildrenAsync(int parentId);
         Task<MediaItem> UpdateAsync(int id, UpdateMediaRequest request);
         Task DeleteAsync(int id);
+
+        /// <summary>
+        /// Changes the media type of <paramref name="id"/> and all its descendants
+        /// (cascade), resetting all enrichment data, external IDs, and metadata JSON.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">
+        /// Thrown when <paramref name="id"/> is not a root item, or when the target
+        /// type's hierarchy depth is incompatible with the existing item tree.
+        /// </exception>
+        Task ChangeTypeAsync(int id, int targetMediaTypeId, CancellationToken ct = default);
     }
 }
