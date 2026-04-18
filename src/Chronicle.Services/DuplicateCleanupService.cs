@@ -56,7 +56,11 @@ public sealed class DuplicateCleanupService : IScheduledTask
                      && EF.Functions.Like(m.MetadataJson, "%fileScanner%"))
             .ToListAsync(ct);
 
-        // Group by canonical (lower-case) file path; keep only groups with > 1 member.
+        // Group by canonical (lower-case) individual file path; keep only groups with > 1 member.
+        // NOTE: we intentionally use the first entry from filePaths[], NOT folderPath.
+        // folderPath is the parent directory of the item's files and is shared by every
+        // item in the same folder (e.g. every episode in a season).  Using it as the key
+        // would incorrectly group all items in a folder as duplicates of each other.
         var duplicateGroups = itemsWithPaths
             .GroupBy(m => ExtractFilePath(m.MetadataJson) ?? string.Empty,
                      StringComparer.OrdinalIgnoreCase)
@@ -75,10 +79,12 @@ public sealed class DuplicateCleanupService : IScheduledTask
         {
             ct.ThrowIfCancellationRequested();
 
-            // Highest score wins; tie-break on lowest Id (oldest record).
+            // Oldest record wins (lowest Id = earliest imported).  This preserves the
+            // item the user has been tracking longest.  Metadata score breaks ties when
+            // two items share the same Id (not normally possible, but defensive).
             var ordered = group
-                .OrderByDescending(ScoreItem)
-                .ThenBy(m => m.Id)
+                .OrderBy(m => m.Id)
+                .ThenByDescending(ScoreItem)
                 .ToList();
 
             var winner = ordered[0];
@@ -185,11 +191,11 @@ public sealed class DuplicateCleanupService : IScheduledTask
             if (!doc.RootElement.TryGetProperty("fileScanner", out var scanner))
                 return null;
 
-            // Prefer the folder path (single canonical key stored since grouped import).
-            if (scanner.TryGetProperty("folderPath", out var fp) && fp.GetString() is { } folder)
-                return folder;
-
-            // Fallback: use the first entry in filePaths (legacy flat import).
+            // Use the first individual file path as the duplicate key.
+            // folderPath is explicitly NOT used — it is the parent directory of the item's
+            // files (e.g. "/TV/Show/Season 1/") and is shared by every item in that folder.
+            // Using it would incorrectly mark every episode in a season as a duplicate of
+            // every other episode in the same folder.
             if (scanner.TryGetProperty("filePaths", out var fps)
                 && fps.ValueKind == JsonValueKind.Array
                 && fps.GetArrayLength() > 0)
