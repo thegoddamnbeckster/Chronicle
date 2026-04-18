@@ -21,16 +21,37 @@ public class SettingsController : ControllerBase
     private readonly ChronicleDbContext _db;
     private readonly IPluginRegistry    _pluginRegistry;
 
+    // Keys follow the pattern "{dbTypeName}" for flat types and "{dbTypeName}.{levelIndex}" for
+    // hierarchical types.  Level indices match MediaItem.HierarchyLevel (0 = root, 1 = child, …).
+    // The compound-key BaseType() helper below extracts the DB type name for plugin matching.
     private static readonly Dictionary<string, string[]> AssignableFields = new()
     {
-        ["movies"]     = ["title", "overview", "year", "poster_url", "backdrop_url", "runtime_minutes", "rating", "genres", "cast", "directors", "tags"],
-        ["tv"]         = ["title", "overview", "year", "poster_url", "backdrop_url", "runtime_minutes", "rating", "genres", "cast", "directors", "tags"],
-        ["music"]      = ["title", "overview", "poster_url", "rating", "genres", "tags"],
-        ["albums"]     = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
-        ["tracks"]     = ["title", "year", "runtime_minutes", "tags"],
-        ["books"]      = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
-        ["audiobooks"] = ["title", "overview", "year", "poster_url", "runtime_minutes", "rating", "genres", "tags"],
+        // ── Flat types (HierarchyLevels = 1) ─────────────────────────────────────
+        ["movies"]        = ["title", "overview", "year", "poster_url", "backdrop_url", "runtime_minutes", "rating", "genres", "cast", "directors", "tags"],
+        ["fanedits"]      = ["title", "overview", "year", "poster_url", "backdrop_url", "runtime_minutes", "rating", "genres", "cast", "directors", "tags"],
+        ["books"]         = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
+        ["audiobooks"]    = ["title", "overview", "year", "poster_url", "runtime_minutes", "rating", "genres", "tags"],
+
+        // ── TV  (HierarchyLevels = 3): Show → Season → Episode ───────────────────
+        ["tv"]            = ["title", "overview", "year", "poster_url", "backdrop_url", "rating", "genres", "cast", "directors", "tags"],
+        ["tv.1"]          = ["title", "overview", "year", "poster_url", "backdrop_url", "tags"],
+        ["tv.2"]          = ["title", "overview", "year", "runtime_minutes", "tags"],
+
+        // ── Music (HierarchyLevels = 3): Artist → Album → Track ──────────────────
+        ["music"]         = ["title", "overview", "poster_url", "rating", "genres", "tags"],
+        ["music.1"]       = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
+        ["music.2"]       = ["title", "year", "runtime_minutes", "tags"],
     };
+
+    /// <summary>
+    /// Extracts the base DB type name from a compound assignment key.
+    /// "tv.1" → "tv", "music.2" → "music", "movies" → "movies".
+    /// </summary>
+    private static string BaseType(string key)
+    {
+        var dot = key.IndexOf('.');
+        return dot < 0 ? key : key[..dot];
+    }
 
     public SettingsController(ChronicleDbContext db, IPluginRegistry pluginRegistry)
     {
@@ -139,20 +160,27 @@ public class SettingsController : ControllerBase
 
         var allEntries = _pluginRegistry.GetMetadataProviderEntries().ToList();
 
-        // Build per-media-type plugin lists, filtering by each plugin's declared supported types.
-        // "movies" normalises to "movie" to match how TMDB (and similar) plugins declare support.
-        static string NormalizeForAssignment(string name) =>
-            name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
+        // Build per-media-type plugin lists.
+        // Compound keys like "tv.1" or "music.2" match plugins that declare support for the base
+        // type ("tv", "music").  "movies"/"fanedits" normalise to "movie"/"fanedit" for TMDB-style
+        // plugin declarations that use the singular form.
+        static string NormalizeForAssignment(string name) => name.ToLowerInvariant() switch
+        {
+            "movies"   => "movie",
+            "fanedits" => "fanedits",   // TMDB declares "fanedits" exactly
+            var n      => n,
+        };
 
         var availablePlugins = AssignableFields.Keys.ToDictionary(
-            mediaType => mediaType,
-            mediaType =>
+            assignmentKey => assignmentKey,
+            assignmentKey =>
             {
-                var normalised = NormalizeForAssignment(mediaType);
+                // For compound keys ("tv.1") match plugins supporting the base type ("tv").
+                var baseTypeName = NormalizeForAssignment(BaseType(assignmentKey));
                 return allEntries
                     .Where(e => e.Provider.GetSupportedMediaTypes()
                         .Any(t => string.Equals(
-                            NormalizeForAssignment(t.MediaTypeName), normalised,
+                            NormalizeForAssignment(t.MediaTypeName), baseTypeName,
                             StringComparison.OrdinalIgnoreCase)))
                     .Select(e =>
                     {
@@ -166,13 +194,35 @@ public class SettingsController : ControllerBase
                     .ToList<object>();
             });
 
-        // Build display name map from DB so the UI can show "Fan Edits" instead of "fanedits".
+        // Build display name map.
+        // Flat keys: use the DB MediaType.DisplayName ("fanedits" → "Fan Edits").
+        // Compound keys: use the DB type's HierarchyLabels to get the level name, then
+        //   format as "<TypeDisplay> <LevelLabel>s" (e.g. "tv.1" → "TV Seasons").
         var dbMediaTypes = await _db.Set<Chronicle.Core.Models.MediaType>().ToListAsync();
         var mediaTypeDisplayNames = AssignableFields.Keys.ToDictionary(
             k => k,
-            k => dbMediaTypes.FirstOrDefault(t =>
-                     string.Equals(t.Name, k, StringComparison.OrdinalIgnoreCase))?.DisplayName
-                 ?? (k.Length > 0 ? char.ToUpper(k[0]) + k[1..] : k));
+            k =>
+            {
+                var dot = k.IndexOf('.');
+                if (dot < 0)
+                {
+                    // Flat key — look up DB display name.
+                    return dbMediaTypes
+                        .FirstOrDefault(t => string.Equals(t.Name, k, StringComparison.OrdinalIgnoreCase))
+                        ?.DisplayName
+                        ?? (k.Length > 0 ? char.ToUpper(k[0]) + k[1..] : k);
+                }
+
+                // Compound key — resolve base type and level index.
+                var baseName  = k[..dot];
+                var levelIdx  = int.TryParse(k[(dot + 1)..], out var li) ? li : 0;
+                var dbType    = dbMediaTypes.FirstOrDefault(t =>
+                    string.Equals(t.Name, baseName, StringComparison.OrdinalIgnoreCase));
+                var labels    = dbType?.HierarchyLabels?.Split(',') ?? [];
+                var baseDisplay = dbType?.DisplayName ?? char.ToUpper(baseName[0]) + baseName[1..];
+                var levelLabel = levelIdx < labels.Length ? labels[levelIdx].Trim() : $"Level {levelIdx}";
+                return $"{baseDisplay} {levelLabel}s"; // e.g. "TV Seasons", "Music Albums"
+            });
 
         return Ok(new
         {
