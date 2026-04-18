@@ -18,13 +18,13 @@ const FIELD_LABELS: Record<string, string> = {
 }
 
 export default function MetadataAssignmentPage() {
-  const { user }                      = useAuth()
-  const isAdmin                       = user?.isAdmin ?? false
-  const [config, setConfig]           = useState<MetadataAssignmentConfig | null>(null)
-  const [assignments, setAssignments] = useState<Record<string, Record<string, string[]>>>({})
-  const [saving, setSaving]           = useState(false)
-  const [saved, setSaved]             = useState(false)
-  const [error, setError]             = useState<string | null>(null)
+  const { user }                        = useAuth()
+  const isAdmin                         = user?.isAdmin ?? false
+  const [config, setConfig]             = useState<MetadataAssignmentConfig | null>(null)
+  const [assignments, setAssignments]   = useState<Record<string, Record<string, string[]>>>({})
+  const [saving, setSaving]             = useState(false)
+  const [saved, setSaved]               = useState(false)
+  const [error, setError]               = useState<string | null>(null)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
@@ -46,24 +46,25 @@ export default function MetadataAssignmentPage() {
     setOpenSections(prev => ({ ...prev, [mediaType]: !prev[mediaType] }))
   }
 
-  function movePlugin(mediaType: string, field: string, pluginId: string, direction: 'up' | 'down') {
-    setAssignments(prev => {
-      const defaultOrder = config?.availablePlugins[mediaType]?.map(p => p.pluginId) ?? []
-      const list = [...(prev[mediaType]?.[field] ?? defaultOrder)]
-      const idx  = list.indexOf(pluginId)
-      if (idx === -1) return prev
-      const swapIdx = direction === 'up' ? idx - 1 : idx + 1
-      if (swapIdx < 0 || swapIdx >= list.length) return prev
-      ;[list[idx], list[swapIdx]] = [list[swapIdx], list[idx]]
-      return { ...prev, [mediaType]: { ...(prev[mediaType] ?? {}), [field]: list } }
-    })
-  }
+  async function movePlugin(mediaType: string, field: string, pluginId: string, direction: 'up' | 'down') {
+    if (!isAdmin || saving) return
 
-  async function handleSave() {
+    const defaultOrder = config?.availablePlugins[mediaType]?.map(p => p.pluginId) ?? []
+    const list = [...(assignments[mediaType]?.[field] ?? defaultOrder)]
+    const idx  = list.indexOf(pluginId)
+    if (idx === -1) return
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (swapIdx < 0 || swapIdx >= list.length) return
+    ;[list[idx], list[swapIdx]] = [list[swapIdx], list[idx]]
+
+    const next = { ...assignments, [mediaType]: { ...(assignments[mediaType] ?? {}), [field]: list } }
+    setAssignments(next)
+
+    // Auto-save immediately after each reorder
     setSaving(true)
     setError(null)
     try {
-      await putMetadataAssignment(assignments)
+      await putMetadataAssignment(next)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (e) {
@@ -89,23 +90,19 @@ export default function MetadataAssignmentPage() {
         <p className={styles.subtitle}>
           Control which plugin's data is used for each field. The first plugin in each list is the
           primary source; the rest are fallbacks in order.
+          {!isAdmin && <span className={styles.readOnlyNote}> (read-only — admin access required)</span>}
         </p>
-        <button
-          className={styles.saveBtn}
-          onClick={handleSave}
-          disabled={saving || !isAdmin}
-          title={!isAdmin ? 'Admin access required to change metadata assignment' : undefined}
-        >
-          {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save Changes'}
-        </button>
+        {/* Auto-save status indicator */}
+        {saving && <span className={styles.saveStatus}>Saving…</span>}
+        {!saving && saved && <span className={`${styles.saveStatus} ${styles.saveStatusOk}`}>Saved ✓</span>}
         {error && <p className={styles.error}>{error}</p>}
       </div>
 
       {mediaTypes.map(mediaType => {
         const plugins: PluginInfo[] = config.availablePlugins[mediaType] ?? []
-        const isOpen   = openSections[mediaType] ?? true
+        const isOpen    = openSections[mediaType] ?? true
         // Compound keys like "tv.1" are sub-levels — indent them under their parent.
-        const isChild  = mediaType.includes('.')
+        const isChild   = mediaType.includes('.')
         const displayName = config.mediaTypeDisplayNames[mediaType] ?? mediaType
 
         return (
@@ -158,14 +155,14 @@ export default function MetadataAssignmentPage() {
                                 <button
                                   className={styles.arrowBtn}
                                   onClick={() => movePlugin(mediaType, field, pluginId, 'up')}
-                                  disabled={idx === 0}
-                                  title="Move up (higher priority)"
+                                  disabled={!isAdmin || saving || idx === 0}
+                                  title={!isAdmin ? 'Admin access required' : 'Move up (higher priority)'}
                                 >↑</button>
                                 <button
                                   className={styles.arrowBtn}
                                   onClick={() => movePlugin(mediaType, field, pluginId, 'down')}
-                                  disabled={idx === currentOrder.length - 1}
-                                  title="Move down (lower priority)"
+                                  disabled={!isAdmin || saving || idx === currentOrder.length - 1}
+                                  title={!isAdmin ? 'Admin access required' : 'Move down (lower priority)'}
                                 >↓</button>
                               </div>
                             </div>
