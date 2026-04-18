@@ -6,6 +6,8 @@ using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using SkiaSharp;
+using Svg.Skia;
 
 namespace Chronicle.API.Controllers;
 
@@ -26,14 +28,16 @@ public class PluginsController : ControllerBase
     /// <summary>Maximum permitted favicon file size (100 KB).</summary>
     private const int MaxIconBytes = 100 * 1024;
 
+    /// <summary>Maximum edge length (px) when rasterising an SVG favicon.</summary>
+    private const int SvgRenderSize = 64;
+
     /// <summary>How long to cache a fetched favicon before re-fetching.</summary>
     private static readonly TimeSpan IconCacheDuration = TimeSpan.FromHours(24);
 
     /// <summary>
-    /// Allowed image Content-Type prefixes.
-    /// SVG is intentionally excluded — SVG can embed JavaScript.
+    /// Raster Content-Type prefixes that can be served directly after a magic-byte check.
     /// </summary>
-    private static readonly string[] AllowedContentTypePrefixes =
+    private static readonly string[] RasterContentTypePrefixes =
     [
         "image/x-icon",
         "image/vnd.microsoft.icon",
@@ -44,13 +48,13 @@ public class PluginsController : ControllerBase
     ];
 
     /// <summary>
-    /// Magic byte signatures for permitted image formats.
+    /// Magic byte signatures for permitted raster image formats.
     /// Used as a second validation layer after the Content-Type check.
     /// </summary>
     private static readonly (byte[] Magic, string Name)[] ImageMagicBytes =
     [
         ([ 0xFF, 0xD8, 0xFF ],              "JPEG"),
-        ([ 0x89, 0x50, 0x4E, 0x47 ],       "PNG"),   // ‌PNG
+        ([ 0x89, 0x50, 0x4E, 0x47 ],       "PNG"),   // PNG
         ([ 0x47, 0x49, 0x46, 0x38 ],       "GIF"),   // GIF8
         ([ 0x00, 0x00, 0x01, 0x00 ],       "ICO"),   // ICO
         ([ 0x52, 0x49, 0x46, 0x46 ],       "WEBP"),  // RIFF (WebP)
@@ -98,18 +102,18 @@ public class PluginsController : ControllerBase
     // ── GET /api/v1/plugins/{id}/icon ─────────────────────────────────────────
 
     /// <summary>
-    /// Secure favicon proxy: fetches, validates, caches, and serves the plugin's
-    /// icon from the URL declared in its manifest.json.
+    /// Secure favicon proxy: fetches, converts if necessary, validates, caches,
+    /// and serves the plugin's icon from the URL declared in its manifest.json.
     ///
     /// Security measures:
     ///   1. The icon URL comes ONLY from the plugin's manifest (not user input).
-    ///   2. Content-Type is validated — only raster image types are accepted;
-    ///      SVG is explicitly excluded because it can embed JavaScript.
-    ///   3. Magic bytes are inspected to verify the binary matches its claimed type.
-    ///   4. File size is capped at 100 KB.
+    ///   2. SVG is accepted but converted to PNG server-side before caching —
+    ///      the browser never receives raw SVG (which can embed JavaScript).
+    ///   3. Raster images are validated against magic bytes to confirm the binary
+    ///      matches its declared Content-Type.
+    ///   4. File size is capped at 100 KB (raw download).
     ///   5. Result is cached for 24 h — the browser never contacts the external site.
-    ///   6. HTTPS-only URLs are required (enforced via Uri.Scheme check).
-    ///   7. Only HTTPS schemes (https://) are permitted — plain http:// is rejected.
+    ///   6. Only HTTPS URLs are accepted (enforced via Uri.Scheme check).
     /// </summary>
     // Favicons are not sensitive — allow unauthenticated access so <img> tags work.
     [HttpGet("{id:int}/icon")]
@@ -137,8 +141,8 @@ public class PluginsController : ControllerBase
             return File(cached.Data, cached.ContentType);
 
         // Fetch from external site using the dedicated named HttpClient
-        byte[] bytes;
-        string contentType;
+        byte[] rawBytes;
+        string rawContentType;
         try
         {
             var http = _httpClientFactory.CreateClient("favicon");
@@ -147,23 +151,24 @@ public class PluginsController : ControllerBase
             if (!response.IsSuccessStatusCode)
                 return NotFound();
 
-            // Validate Content-Type before reading body
-            var rawContentType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant()
-                                 ?? string.Empty;
+            rawContentType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant()
+                             ?? string.Empty;
 
-            if (!AllowedContentTypePrefixes.Any(a => rawContentType.StartsWith(a, StringComparison.OrdinalIgnoreCase)))
+            // Accept SVG and all standard raster formats
+            var isSvg    = rawContentType.StartsWith("image/svg", StringComparison.OrdinalIgnoreCase);
+            var isRaster = RasterContentTypePrefixes.Any(p =>
+                rawContentType.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+
+            if (!isSvg && !isRaster)
             {
                 return StatusCode(415, ApiResponse<object>.Fail(
                     "INVALID_ICON_TYPE",
-                    $"Remote server returned unsupported content type '{rawContentType}'. " +
-                    "Only raster image formats are permitted."));
+                    $"Remote server returned unsupported content type '{rawContentType}'."));
             }
-
-            contentType = rawContentType;
 
             // Read body — limit to MaxIconBytes to prevent oversized payloads
             using var stream = await response.Content.ReadAsStreamAsync(ct);
-            var buffer = new byte[MaxIconBytes + 1];
+            var buffer    = new byte[MaxIconBytes + 1];
             var totalRead = 0;
 
             int read;
@@ -176,7 +181,7 @@ public class PluginsController : ControllerBase
                         $"Plugin icon exceeds the {MaxIconBytes / 1024} KB limit."));
             }
 
-            bytes = buffer[..totalRead];
+            rawBytes = buffer[..totalRead];
         }
         catch (TaskCanceledException)
         {
@@ -187,12 +192,37 @@ public class PluginsController : ControllerBase
             return StatusCode(502);
         }
 
-        // Validate magic bytes — rejects files that lie about their Content-Type
-        if (!HasValidImageMagic(bytes))
+        // If SVG: rasterise to PNG so the browser never receives executable markup.
+        // The converted PNG is what gets cached and returned.
+        byte[] bytes;
+        string contentType;
+
+        if (rawContentType.StartsWith("image/svg", StringComparison.OrdinalIgnoreCase))
         {
-            return StatusCode(415, ApiResponse<object>.Fail(
-                "INVALID_ICON_CONTENT",
-                "Plugin icon binary does not match any permitted image format."));
+            try
+            {
+                bytes       = RasteriseSvgToPng(rawBytes, SvgRenderSize);
+                contentType = "image/png";
+            }
+            catch (Exception)
+            {
+                return StatusCode(502, ApiResponse<object>.Fail(
+                    "ICON_CONVERT_FAILED",
+                    "SVG icon could not be rasterised to PNG."));
+            }
+        }
+        else
+        {
+            bytes       = rawBytes;
+            contentType = rawContentType;
+
+            // Validate magic bytes — rejects raster files that lie about their Content-Type
+            if (!HasValidImageMagic(bytes))
+            {
+                return StatusCode(415, ApiResponse<object>.Fail(
+                    "INVALID_ICON_CONTENT",
+                    "Plugin icon binary does not match any permitted image format."));
+            }
         }
 
         // Cache and return
@@ -200,6 +230,44 @@ public class PluginsController : ControllerBase
             new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = IconCacheDuration });
 
         return File(bytes, contentType);
+    }
+
+    /// <summary>
+    /// Rasterises an SVG document to a PNG byte array.
+    /// The output is scaled to fit within <paramref name="maxEdgePx"/> × <paramref name="maxEdgePx"/>
+    /// while preserving the aspect ratio.  Falls back to that square size when the SVG
+    /// declares zero or negative dimensions.
+    /// </summary>
+    private static byte[] RasteriseSvgToPng(byte[] svgBytes, int maxEdgePx)
+    {
+        using var stream = new MemoryStream(svgBytes);
+        using var svg    = new SKSvg();
+
+        var picture = svg.Load(stream)
+            ?? throw new InvalidOperationException("SVG could not be parsed.");
+
+        var src    = picture.CullRect;
+        var srcW   = src.Width  > 0 ? src.Width  : maxEdgePx;
+        var srcH   = src.Height > 0 ? src.Height : maxEdgePx;
+
+        // Scale down if either dimension exceeds maxEdgePx; never scale up.
+        var scale  = Math.Min(1f, maxEdgePx / Math.Max(srcW, srcH));
+        var dstW   = Math.Max(1, (int)(srcW * scale));
+        var dstH   = Math.Max(1, (int)(srcH * scale));
+
+        using var surface = SKSurface.Create(new SKImageInfo(dstW, dstH));
+        var canvas = surface.Canvas;
+        canvas.Clear(SKColors.Transparent);
+
+        if (Math.Abs(scale - 1f) > 0.0001f)
+            canvas.Scale(scale, scale);
+
+        canvas.DrawPicture(picture);
+        canvas.Flush();
+
+        using var image = surface.Snapshot();
+        using var data  = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
     }
 
     // ── POST /api/v1/plugins ──────────────────────────────────────────────────
