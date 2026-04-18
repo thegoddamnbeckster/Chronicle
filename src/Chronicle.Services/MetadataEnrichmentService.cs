@@ -334,13 +334,17 @@ public class MetadataEnrichmentService(
         // Completed or Exhausted rows where MetadataJson has no plugin data are
         // broken — either they were seeded incorrectly or data was wiped and the
         // row was never cleared. Reset them to Pending so they re-enrich on the
-        // next background pass (which will also apply the CAA release-level fallback
-        // and the Lucene operator fixes introduced alongside this change).
+        // next background pass.
+        //
+        // NotFound is intentionally EXCLUDED: it is a valid terminal state meaning
+        // "the provider was reached but returned no matching result".  Resetting
+        // NotFound rows here would create an infinite loop — the provider would
+        // return NotFound again, the startup reset would fire again, ad infinitum.
+        // Users can manually reset NotFound rows from the Enrichment drill-down page.
         var stuckRows = await db.MediaEnrichments
             .Include(me => me.MediaItem)
             .Where(me => me.Status == EnrichmentStatus.Completed ||
-                         me.Status == EnrichmentStatus.Exhausted  ||
-                         me.Status == EnrichmentStatus.NotFound)
+                         me.Status == EnrichmentStatus.Exhausted)
             .ToListAsync(ct);
 
         int resetCount = 0;
@@ -859,7 +863,8 @@ public class MetadataEnrichmentService(
                                                  filenameStem,
                                                  null),
                             ChildNames:      childNames,
-                            SubItemMetadata: subItemMetadata);
+                            SubItemMetadata: subItemMetadata,
+                            MediaTypeName:   mediaTypeName);
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
@@ -1548,7 +1553,8 @@ public class MetadataEnrichmentService(
                     AltTitles:      BuildAltTitles(
                                         item.Name,
                                         filenameStem,
-                                        null));
+                                        null),
+                    MediaTypeName:  item.MediaType?.Name);
 
                 var candidates = await provider.SearchAsync(ctx, ct);
                 var best = candidates.OrderByDescending(c => c.Score).FirstOrDefault();

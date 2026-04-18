@@ -166,6 +166,14 @@ public class SettingsController : ControllerBase
                     .ToList<object>();
             });
 
+        // Build display name map from DB so the UI can show "Fan Edits" instead of "fanedits".
+        var dbMediaTypes = await _db.Set<Chronicle.Core.Models.MediaType>().ToListAsync();
+        var mediaTypeDisplayNames = AssignableFields.Keys.ToDictionary(
+            k => k,
+            k => dbMediaTypes.FirstOrDefault(t =>
+                     string.Equals(t.Name, k, StringComparison.OrdinalIgnoreCase))?.DisplayName
+                 ?? (k.Length > 0 ? char.ToUpper(k[0]) + k[1..] : k));
+
         return Ok(new
         {
             success = true,
@@ -174,6 +182,7 @@ public class SettingsController : ControllerBase
                 assignments,
                 assignableFields = AssignableFields,
                 availablePlugins,
+                mediaTypeDisplayNames,
             },
         });
     }
