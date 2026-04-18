@@ -3,16 +3,6 @@ import { getMetadataAssignment, putMetadataAssignment, type MetadataAssignmentCo
 import { useAuth } from '@/hooks/useAuth'
 import styles from './MetadataAssignmentPage.module.css'
 
-const MEDIA_TYPE_LABELS: Record<string, string> = {
-  tv:          'TV',
-  movies:      'Movies',
-  music:       'Music',
-  albums:      'Albums',
-  tracks:      'Tracks',
-  books:       'Books',
-  audiobooks:  'Audiobooks',
-}
-
 const FIELD_LABELS: Record<string, string> = {
   title:           'Title',
   overview:        'Description',
@@ -42,10 +32,10 @@ export default function MetadataAssignmentPage() {
       .then(cfg => {
         setConfig(cfg)
         setAssignments(cfg.assignments)
-        // Default all sections with at least one plugin to open
+        // Default all sections open
         const defaults: Record<string, boolean> = {}
         for (const mt of Object.keys(cfg.assignableFields)) {
-          defaults[mt] = (cfg.availablePlugins[mt]?.length ?? 0) > 0
+          defaults[mt] = true
         }
         setOpenSections(defaults)
       })
@@ -89,9 +79,8 @@ export default function MetadataAssignmentPage() {
     </div>
   )
 
-  // Only show media types that have at least one supporting plugin
+  // Show all active media types; types with no plugin support will show an empty state
   const mediaTypes = Object.keys(config.assignableFields)
-    .filter(mt => (config.availablePlugins[mt]?.length ?? 0) > 0)
 
   return (
     <div className={styles.page}>
@@ -124,12 +113,15 @@ export default function MetadataAssignmentPage() {
               aria-expanded={isOpen}
             >
               <h2 className={styles.sectionTitle}>
-                {MEDIA_TYPE_LABELS[mediaType] ?? (mediaType.charAt(0).toUpperCase() + mediaType.slice(1))}
+                {config.mediaTypeDisplayNames[mediaType] ?? mediaType}
               </h2>
               <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`}>›</span>
             </button>
 
             {isOpen && (
+              plugins.length === 0 ? (
+                <p className={styles.noPlugins}>No installed plugins support this media type.</p>
+              ) : (
               <div className={styles.table}>
                 <div className={styles.tableHead}>
                   <div className={styles.colField}>Field</div>
@@ -180,6 +172,7 @@ export default function MetadataAssignmentPage() {
                   )
                 })}
               </div>
+              )
             )}
           </section>
         )

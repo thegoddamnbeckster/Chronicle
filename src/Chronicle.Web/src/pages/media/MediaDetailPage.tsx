@@ -211,6 +211,11 @@ export default function MediaDetailPage() {
   // ── Change Type ──────────────────────────────────────────────────────────
   const [changeTypeOpen, setChangeTypeOpen] = useState(false)
   const [changeTypeError, setChangeTypeError] = useState<string | null>(null)
+  // After a type change the item moves to a different section of the library.
+  // We capture the hash of an adjacent library entry *before* the mutation so
+  // the "↑ Library" link can scroll to a nearby item rather than jumping to the
+  // top of the page (which loses the user's place entirely).
+  const [postChangeAnchor, setPostChangeAnchor] = useState<string | null>(null)
 
   const { data: mediaTypes = [] } = useQuery({
     queryKey: ['media-types'],
@@ -221,6 +226,16 @@ export default function MediaDetailPage() {
 
   const changeTypeMut = useMutation({
     mutationFn: (targetTypeId: number) => changeMediaType(mediaId, targetTypeId),
+    onMutate: () => {
+      // Snapshot the adjacent item while the library list is still fresh.
+      const idx = library.findIndex(e => e.mediaItem.id === mediaId)
+      if (idx !== -1) {
+        const adjacent = library[idx - 1] ?? library[idx + 1]
+        setPostChangeAnchor(adjacent ? `media-${adjacent.mediaItem.id}` : null)
+      } else {
+        setPostChangeAnchor(null)
+      }
+    },
     onSuccess: () => {
       setChangeTypeOpen(false)
       setChangeTypeError(null)
@@ -318,7 +333,12 @@ export default function MediaDetailPage() {
             })()}
           </>
         ) : (
-          <Link to={`/library#media-${mediaId}`} className={styles.upBtn}>↑ Library</Link>
+          <Link
+            to={changeTypeMut.isSuccess
+                  ? (postChangeAnchor ? `/library#${postChangeAnchor}` : '/library')
+                  : `/library#media-${mediaId}`}
+            className={styles.upBtn}
+          >↑ Library</Link>
         )}
         {listIds.length > 0 && (
           <div className={styles.listNav}>
