@@ -364,6 +364,66 @@ public class MetadataEnrichmentService(
                 "SeedEnrichmentRows: reset {Count} Completed/Exhausted/NotFound rows with no plugin data to Pending",
                 resetCount);
         }
+
+        // ── Phase 3: seed missing enrichment rows for supported types ─────────────
+        // When a new plugin is installed (or a plugin adds support for a new media type),
+        // existing items of that type have no enrichment row for the plugin.
+        // This pass creates Pending rows so the background enrichment service picks them up.
+        // Critically, this also fixes fan edit items that had their enrichment rows deleted
+        // by ChangeTypeAsync before the row-seeding fix was in place.
+        var pluginRegistry = svc.ServiceProvider.GetRequiredService<Chronicle.Services.Plugins.IPluginRegistry>();
+        var pluginEntries  = pluginRegistry.GetMetadataProviderEntries().ToList();
+
+        if (pluginEntries.Count > 0)
+        {
+            // Existing enrichment rows (as a set for O(1) lookup)
+            var existingRows = (await db.MediaEnrichments
+                .Select(me => new { me.MediaItemId, me.PluginId })
+                .ToListAsync(ct))
+                .Select(r => (r.MediaItemId, r.PluginId.ToLower()))
+                .ToHashSet();
+
+            // Load items with their media type names
+            var allItems = await db.MediaItems
+                .Include(m => m.MediaType)
+                .Where(m => m.MediaType != null)
+                .Select(m => new { m.Id, TypeName = m.MediaType!.Name })
+                .ToListAsync(ct);
+
+            var phase3ToAdd = new List<MediaItemEnrichment>();
+            foreach (var (pluginId, provider, _) in pluginEntries)
+            {
+                var supportedTypes = provider.GetSupportedMediaTypes()
+                    .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var item in allItems)
+                {
+                    if (!supportedTypes.Contains(NormalizeMediaTypeName(item.TypeName)))
+                        continue;
+                    if (existingRows.Contains((item.Id, pluginId.ToLower())))
+                        continue;
+
+                    phase3ToAdd.Add(new MediaItemEnrichment
+                    {
+                        MediaItemId = item.Id,
+                        PluginId    = pluginId,
+                        Status      = EnrichmentStatus.Pending,
+                        MaxRetries  = 3,
+                    });
+                    existingRows.Add((item.Id, pluginId.ToLower())); // prevent dups within this pass
+                }
+            }
+
+            if (phase3ToAdd.Count > 0)
+            {
+                db.MediaEnrichments.AddRange(phase3ToAdd);
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation(
+                    "SeedEnrichmentRows Phase 3: created {Count} missing Pending rows for newly-supported items",
+                    phase3ToAdd.Count);
+            }
+        }
     }
 
     /// <summary>

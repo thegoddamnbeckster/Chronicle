@@ -100,3 +100,29 @@
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* ── Hierarchical sub-level sections (e.g. TV Seasons, Music Albums) ── */
+.sectionChild {
+  margin-left: 24px;
+  margin-top: -8px;      /* tight spacing with parent section */
+  border-color: var(--border);
+  border-top-color: transparent;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.sectionHeaderChild {
+  border-bottom-width: 1px;
+  border-bottom-color: var(--border);
+  background: var(--bg-card);
+}
+.sectionTitleChild {
+  font-size: 0.875rem;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.hierarchyConnector {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-right: 6px;
+  flex-shrink: 0;
+}

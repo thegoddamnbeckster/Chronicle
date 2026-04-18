@@ -103,24 +103,28 @@ export default function MetadataAssignmentPage() {
 
       {mediaTypes.map(mediaType => {
         const plugins: PluginInfo[] = config.availablePlugins[mediaType] ?? []
-        const isOpen = openSections[mediaType] ?? true
+        const isOpen   = openSections[mediaType] ?? true
+        // Compound keys like "tv.1" are sub-levels — indent them under their parent.
+        const isChild  = mediaType.includes('.')
+        const displayName = config.mediaTypeDisplayNames[mediaType] ?? mediaType
 
         return (
-          <section key={mediaType} className={styles.section}>
+          <section key={mediaType} className={`${styles.section} ${isChild ? styles.sectionChild : ''}`}>
             <button
-              className={styles.sectionHeader}
+              className={`${styles.sectionHeader} ${isChild ? styles.sectionHeaderChild : ''}`}
               onClick={() => toggleSection(mediaType)}
               aria-expanded={isOpen}
             >
-              <h2 className={styles.sectionTitle}>
-                {config.mediaTypeDisplayNames[mediaType] ?? mediaType}
+              {isChild && <span className={styles.hierarchyConnector}>└</span>}
+              <h2 className={`${styles.sectionTitle} ${isChild ? styles.sectionTitleChild : ''}`}>
+                {displayName}
               </h2>
               <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`}>›</span>
             </button>
 
             {isOpen && (
               plugins.length === 0 ? (
-                <p className={styles.noPlugins}>No installed plugins support this media type.</p>
+                <p className={styles.noPlugins}>No installed plugins support this level.</p>
               ) : (
               <div className={styles.table}>
                 <div className={styles.tableHead}>
