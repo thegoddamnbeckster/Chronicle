@@ -3,18 +3,12 @@
 .title { font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }
 .subtitle { color: var(--text-muted); margin-bottom: 16px; font-size: 0.9rem; }
 
-.saveBtn {
-  padding: 8px 20px;
-  background: var(--accent);
-  color: var(--accent-fg);
-  border: none;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
+.saveStatus {
+  font-size: 0.85rem;
+  color: var(--text-muted);
 }
-.saveBtn:hover:not(:disabled) { background: var(--accent-hover); }
-.saveBtn:disabled { opacity: 0.6; cursor: default; }
+.saveStatusOk { color: #4caf7d; }
+.readOnlyNote { color: var(--text-muted); font-style: italic; }
 .error { color: #eb5757; margin-top: 8px; font-size: 0.85rem; }
 
 .section { margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
