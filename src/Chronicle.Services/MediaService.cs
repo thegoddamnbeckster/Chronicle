@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 
 namespace Chronicle.Services
@@ -10,10 +11,12 @@ namespace Chronicle.Services
     public class MediaService : IMediaService
     {
         private readonly ChronicleDbContext _context;
+        private readonly IPluginRegistry    _pluginRegistry;
 
-        public MediaService(ChronicleDbContext context)
+        public MediaService(ChronicleDbContext context, IPluginRegistry pluginRegistry)
         {
-            _context = context;
+            _context        = context;
+            _pluginRegistry = pluginRegistry;
         }
 
         public async Task<MediaItem> CreateAsync(CreateMediaRequest request)
@@ -163,8 +166,44 @@ namespace Chronicle.Services
             var enrichments = await _context.MediaEnrichments.Where(e => allIds.Contains(e.MediaItemId)).ToListAsync(ct);
             _context.MediaEnrichments.RemoveRange(enrichments);
 
+            // Create new Pending enrichment rows for each installed metadata plugin that
+            // supports the new media type.  This ensures the enrichment stats table shows
+            // the correct pending count immediately and that background tasks pick up the
+            // items on the next run — without requiring the user to manually refresh each item.
+            var newTypeName = targetType.Name;
+            var toAdd       = new List<MediaItemEnrichment>();
+            foreach (var (pluginId, provider, _) in _pluginRegistry.GetMetadataProviderEntries())
+            {
+                var supported = provider.GetSupportedMediaTypes()
+                    .Any(t => string.Equals(
+                        NormalizeTypeName(t.MediaTypeName),
+                        NormalizeTypeName(newTypeName),
+                        StringComparison.OrdinalIgnoreCase));
+                if (!supported) continue;
+
+                foreach (var itemId in allIds)
+                {
+                    toAdd.Add(new MediaItemEnrichment
+                    {
+                        MediaItemId = itemId,
+                        PluginId    = pluginId,
+                        Status      = EnrichmentStatus.Pending,
+                        MaxRetries  = 3,
+                    });
+                }
+            }
+            if (toAdd.Count > 0)
+                _context.MediaEnrichments.AddRange(toAdd);
+
             await _context.SaveChangesAsync(ct);
         }
+
+        /// <summary>
+        /// Normalises a media-type name for plugin-compatibility matching.
+        /// Mirrors the logic in MetadataEnrichmentService: "movies" → "movie".
+        /// </summary>
+        private static string NormalizeTypeName(string name) =>
+            name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
         /// <summary>
         /// Strips all plugin metadata from a MetadataJson blob while keeping the

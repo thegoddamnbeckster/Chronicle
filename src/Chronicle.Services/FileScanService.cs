@@ -706,10 +706,13 @@ namespace Chronicle.Services
         private async Task<MediaItem?> FindItemByFilePathAsync(
             string filePath, int mediaTypeId, CancellationToken ct)
         {
-            // LIKE '%fileScanner%' narrows the result set before in-memory comparison.
+            // Search across ALL media types — a physical file is globally unique regardless of
+            // which type the item was assigned to.  This prevents the scanner from creating a
+            // duplicate "movies" item when the file is already tracked as "fanedits" (or any
+            // other type the user may have changed it to via the Change Type control).
+            // LIKE '%fileScanner%' narrows the result set before in-memory JSON comparison.
             var candidates = await _context.MediaItems
-                .Where(m => m.MediaTypeId == mediaTypeId
-                         && m.MetadataJson != null
+                .Where(m => m.MetadataJson != null
                          && EF.Functions.Like(m.MetadataJson, "%fileScanner%"))
                 .ToListAsync(ct);
 

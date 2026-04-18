@@ -67,5 +67,13 @@ public record MediaSearchContext(
     /// Used in Stage 4 sub-item metadata comparison against the provider's data.
     /// Populated in tiers: filename/path info first, then duration, then full tags.
     /// </summary>
-    IReadOnlyList<SiblingInfo>? SubItemMetadata = null
+    IReadOnlyList<SiblingInfo>? SubItemMetadata = null,
+
+    /// <summary>
+    /// The Chronicle media type name for this item (e.g. "movies", "tv", "fanedits", "music").
+    /// Plugins may use this to restrict their search to the appropriate endpoint —
+    /// e.g. TMDB searches only /search/movie for movie-type items and only /search/tv for TV items.
+    /// Null means the caller did not provide a type; plugins should search all applicable endpoints.
+    /// </summary>
+    string? MediaTypeName = null
 );

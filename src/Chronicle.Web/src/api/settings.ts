@@ -33,6 +33,8 @@ export interface MetadataAssignmentConfig {
   assignableFields: Record<string, string[]>
   /** Plugins available per media type — only includes plugins that declare support for that type. */
   availablePlugins: Record<string, PluginInfo[]>
+  /** Human-readable display names for each media type key (e.g. "fanedits" → "Fan Edits"). */
+  mediaTypeDisplayNames: Record<string, string>
 }
 
 export async function getMetadataAssignment(): Promise<MetadataAssignmentConfig> {

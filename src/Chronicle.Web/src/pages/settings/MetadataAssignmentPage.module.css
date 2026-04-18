@@ -93,3 +93,10 @@
 }
 .arrowBtn:disabled { opacity: 0.3; cursor: default; }
 .arrowBtn:not(:disabled):hover { background: var(--border); }
+
+.noPlugins {
+  padding: 14px 20px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
