@@ -118,10 +118,15 @@ foreach ($plugin in $PluginProjects) {
         Write-Host $result
         continue
     }
-    $srcDll = Join-Path (Split-Path $plugin.Project -Parent) "bin\Debug\net9.0\$($plugin.DllName)"
+    $srcDir = Join-Path (Split-Path $plugin.Project -Parent) "bin\Debug\net9.0"
+    $srcDll = Join-Path $srcDir $plugin.DllName
     if (Test-Path $srcDll) {
         New-Item -ItemType Directory -Path $plugin.OutputDir -Force | Out-Null
         Copy-Item -Path $srcDll -Destination (Join-Path $plugin.OutputDir $plugin.DllName) -Force
+        $srcManifest = Join-Path $srcDir "manifest.json"
+        if (Test-Path $srcManifest) {
+            Copy-Item -Path $srcManifest -Destination (Join-Path $plugin.OutputDir "manifest.json") -Force
+        }
         Write-Host " OK" -ForegroundColor Green
     } else {
         Write-Host " DLL not found at $srcDll" -ForegroundColor Red
