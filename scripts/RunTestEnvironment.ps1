@@ -93,6 +93,16 @@ $PluginProjects = @(
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.FanEdit\Chronicle.Plugin.FanEdit.csproj"
         DllName    = "Chronicle.Plugin.FanEdit.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.fanedit"
+    },
+    @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Simkl\Chronicle.Plugin.Simkl.csproj"
+        DllName    = "Chronicle.Plugin.Simkl.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.simkl"
+    },
+    @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Trakt\Chronicle.Plugin.Trakt.csproj"
+        DllName    = "Chronicle.Plugin.Trakt.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.trakt"
     }
 )
 
@@ -110,6 +120,7 @@ foreach ($plugin in $PluginProjects) {
     }
     $srcDll = Join-Path (Split-Path $plugin.Project -Parent) "bin\Debug\net9.0\$($plugin.DllName)"
     if (Test-Path $srcDll) {
+        New-Item -ItemType Directory -Path $plugin.OutputDir -Force | Out-Null
         Copy-Item -Path $srcDll -Destination (Join-Path $plugin.OutputDir $plugin.DllName) -Force
         Write-Host " OK" -ForegroundColor Green
     } else {
