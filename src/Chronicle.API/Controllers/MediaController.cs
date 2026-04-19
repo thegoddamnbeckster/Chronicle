@@ -91,6 +91,43 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<List<MediaItemDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }
 
+        // ── GET /api/v1/media/{id}/local-poster ──────────────────────────────────
+
+        /// <summary>
+        /// Serves the local poster image found alongside the item's media file by the
+        /// file scanner.  The path comes from the database (never from user input) and
+        /// is validated to exist on disk before the bytes are sent.
+        /// </summary>
+        [HttpGet("{id:int}/local-poster")]
+        [AllowAnonymous] // Poster images are not sensitive
+        public async Task<IActionResult> GetLocalPoster(int id, CancellationToken ct)
+        {
+            var item = await _context.MediaItems.FindAsync([id], ct);
+            if (item is null) return NotFound();
+
+            var (fs, _) = ParseMetaJson(item.MetadataJson);
+            var posterPath = fs?.LocalPosterPath;
+
+            if (string.IsNullOrEmpty(posterPath)) return NotFound();
+            if (!System.IO.File.Exists(posterPath)) return NotFound();
+
+            // Restrict to known image extensions — the path comes from our own DB
+            // but we still reject anything that isn't a recognised raster image.
+            var ext = Path.GetExtension(posterPath).ToLowerInvariant();
+            var contentType = ext switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png"            => "image/png",
+                ".webp"           => "image/webp",
+                ".gif"            => "image/gif",
+                _                 => null,
+            };
+            if (contentType is null) return NotFound();
+
+            var bytes = await System.IO.File.ReadAllBytesAsync(posterPath, ct);
+            return File(bytes, contentType);
+        }
+
         [HttpGet("{id:int}/children")]
         public async Task<IActionResult> GetChildren(int id, CancellationToken ct)
         {
@@ -445,7 +482,7 @@ namespace Chronicle.API.Controllers
                 m.Name,
                 m.Year,
                 m.Overview,
-                m.PosterUrl,
+                EffectivePosterUrl(m.Id, m.PosterUrl, fs?.LocalPosterPath),
                 m.RuntimeMinutes,
                 m.HierarchyLevel,
                 m.Number,
@@ -512,6 +549,20 @@ namespace Chronicle.API.Controllers
 
         private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
             new(System.Text.Json.JsonSerializerDefaults.Web);
+
+        /// <summary>
+        /// Returns a browser-accessible poster URL.  HTTP URLs pass through unchanged.
+        /// Local file paths stored in PosterUrl (set by the file scanner) are redirected
+        /// to the /local-poster API endpoint, which serves the bytes from disk.
+        /// </summary>
+        private static string? EffectivePosterUrl(int id, string? posterUrl, string? localPosterPath)
+        {
+            if (posterUrl?.StartsWith("http", StringComparison.OrdinalIgnoreCase) == true)
+                return posterUrl;
+            if (localPosterPath is not null)
+                return $"/api/v1/media/{id}/local-poster";
+            return null;
+        }
 
         private static (FileScannerMetaDto? fs,
                         Dictionary<string, System.Text.Json.JsonElement>? pluginMeta)
