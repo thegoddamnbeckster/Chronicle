@@ -87,6 +87,25 @@ public record ImportedWatchlistEntry(
     DateTimeOffset AddedAt
 );
 
+// ── Optional enrichment types ────────────────────────────────────────────────
+
+public record ImportedCredit(
+    string  PersonName,
+    string  Role,              // "Director" | "Writer" | "Actor" | "Composer" | "Producer" …
+    string? CharacterName,     // actors only
+    int?    BillingOrder,      // 1 = top-billed
+    string? ExternalPersonId   // source-specific person ID for future dedup
+);
+
+public record ImportedItemMetadata(
+    string  Title,
+    int?    Year,
+    string? Overview,
+    string? PosterUrl,
+    int?    RuntimeMinutes,
+    IReadOnlyDictionary<string, string> AdditionalIds
+);
+
 // ── The interface ─────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -150,4 +169,28 @@ public interface IImportProvider
     Task<List<ImportedWatchlistEntry>> GetWatchlistAsync(CancellationToken ct = default);
 
     Task<bool> HealthCheckAsync(CancellationToken ct = default);
+
+    // ── Optional enrichment hooks ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns cast and crew for a specific item the provider knows about.
+    /// Called after stub creation to populate media_credits.
+    /// Default: empty list (no credits data available from this provider).
+    /// </summary>
+    Task<List<ImportedCredit>> GetCreditsAsync(
+        string externalId,
+        string mediaType,
+        CancellationToken ct = default)
+        => Task.FromResult(new List<ImportedCredit>());
+
+    /// <summary>
+    /// Returns full item metadata used to create a stub MediaItem when Chronicle
+    /// doesn't already know about this item.
+    /// Default: null — stub will be created with title/year from the watch event only.
+    /// </summary>
+    Task<ImportedItemMetadata?> GetItemMetadataAsync(
+        string externalId,
+        string mediaType,
+        CancellationToken ct = default)
+        => Task.FromResult<ImportedItemMetadata?>(null);
 }
