@@ -992,6 +992,10 @@ public class MetadataEnrichmentService(
                 row.LastCompletedAt = DateTime.UtcNow;
                 row.ErrorMessage    = null;
                 MergeMetadata(row.MediaItem!, row.PluginId, result);
+                // Keep media_external_ids in sync with the enrichment result so that
+                // Fix Match (which calls this path with an IdOverride) actually persists
+                // the new TMDB ID — not just the enrichment tracking row.
+                await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct);
                 logger.LogInformation(
                     "Enrichment matched: plugin={Plugin} item={ItemId} \"{Name}\" (level={Level}) → {ExternalId} \"{MatchedTitle}\"",
                     provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
@@ -1810,5 +1814,46 @@ public class MetadataEnrichmentService(
         }
 
         item.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Parses a Chronicle external-ID string into (source, externalId).
+    /// "movie:550"      → ("tmdb", "movie:550")
+    /// "tv:1396"        → ("tmdb", "tv:1396")
+    /// "imdb:tt0137523" → ("imdb", "tt0137523")
+    /// </summary>
+    private static (string Source, string ExternalId) ParseExternalId(string rawId)
+    {
+        if (rawId.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
+            return ("imdb", rawId[5..]);
+        return ("tmdb", rawId);
+    }
+
+    /// <summary>
+    /// Upserts a <see cref="MediaExternalId"/> row so the <c>media_external_ids</c> table
+    /// always reflects the current enrichment match.  Unlike the insert-if-missing helper
+    /// in FileScanService, this replaces an existing row for the same source because Fix
+    /// Match can legitimately change an item from one TMDB entry to another.
+    /// </summary>
+    private async Task UpsertExternalIdForEnrichmentAsync(
+        ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct)
+    {
+        var (source, extId) = ParseExternalId(rawExternalId);
+        var existing = await db.MediaExternalIds
+            .FirstOrDefaultAsync(e => e.MediaItemId == mediaItemId && e.Source == source, ct);
+
+        if (existing is null)
+        {
+            db.MediaExternalIds.Add(new MediaExternalId
+            {
+                MediaItemId = mediaItemId,
+                Source      = source,
+                ExternalId  = extId,
+            });
+        }
+        else if (existing.ExternalId != extId)
+        {
+            existing.ExternalId = extId;
+        }
     }
 }

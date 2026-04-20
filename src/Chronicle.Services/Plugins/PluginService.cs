@@ -34,6 +34,10 @@ public class PluginService : IPluginService
         if (!File.Exists(dllPath))
             throw new FileNotFoundException($"Plugin DLL not found: {dllPath}", dllPath);
 
+        // Safety: discard any residual temp-id=0 registration left by a previous
+        // failed install attempt before we load this plugin under that sentinel ID.
+        _registry.UnloadPlugin(0);
+
         // Load the plugin first to read its manifest
         var tempSettings = new Dictionary<string, string>();
         var loaded = await _registry.LoadPluginAsync(0, dllPath, tempSettings, ct);
@@ -150,6 +154,16 @@ public class PluginService : IPluginService
 
         _registry.UnloadPlugin(id);
         _db.Plugins.Remove(plugin);
+
+        // Remove background tasks seeded by this plugin.  Enrichment rows in
+        // media_enrichment are intentionally kept — they record historical data and
+        // safe INSERT-IF-MISSING seeding on reinstall will skip them.
+        var tasks = await _db.BackgroundTasks
+            .Where(t => t.PluginId == plugin.PluginId)
+            .ToListAsync();
+        if (tasks.Count > 0)
+            _db.BackgroundTasks.RemoveRange(tasks);
+
         await _db.SaveChangesAsync();
 
         _log.Information("Uninstalled plugin {PluginId} (db id {Id})", plugin.PluginId, id);
