@@ -6,6 +6,7 @@ using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using SkiaSharp;
 using Svg.Skia;
 
@@ -16,12 +17,13 @@ namespace Chronicle.API.Controllers;
 [Authorize]
 public class PluginsController : ControllerBase
 {
-    private readonly IPluginService           _pluginService;
-    private readonly IPluginRegistry          _registry;
-    private readonly IPluginSettingsProtector _protector;
-    private readonly IHttpClientFactory       _httpClientFactory;
-    private readonly IMemoryCache             _cache;
-    private readonly IWebHostEnvironment      _environment;
+    private readonly IPluginService                _pluginService;
+    private readonly IPluginRegistry               _registry;
+    private readonly IPluginSettingsProtector      _protector;
+    private readonly IHttpClientFactory            _httpClientFactory;
+    private readonly IMemoryCache                  _cache;
+    private readonly IWebHostEnvironment           _environment;
+    private readonly ILogger<PluginsController>    _logger;
 
     // ── Icon proxy constants ───────────────────────────────────────────────────
 
@@ -66,7 +68,8 @@ public class PluginsController : ControllerBase
         IPluginSettingsProtector protector,
         IHttpClientFactory httpClientFactory,
         IMemoryCache cache,
-        IWebHostEnvironment environment)
+        IWebHostEnvironment environment,
+        ILogger<PluginsController> logger)
     {
         _pluginService     = pluginService;
         _registry          = registry;
@@ -74,6 +77,7 @@ public class PluginsController : ControllerBase
         _httpClientFactory = httpClientFactory;
         _cache             = cache;
         _environment       = environment;
+        _logger            = logger;
     }
 
     // ── GET /api/v1/plugins ───────────────────────────────────────────────────
@@ -293,6 +297,11 @@ public class PluginsController : ControllerBase
         {
             return Conflict(ApiResponse<PluginDto>.Fail("ALREADY_INSTALLED", ex.Message));
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error installing plugin from {DllPath}", request.DllPath);
+            return StatusCode(500, ApiResponse<PluginDto>.Fail("INSTALL_FAILED", ex.Message));
+        }
     }
 
     // ── GET /api/v1/plugins/{id}/settings ─────────────────────────────────────
@@ -510,7 +519,7 @@ public class PluginsController : ControllerBase
             AssetName:   "Chronicle.Plugin.TMDB.zip",
             DllName:     "Chronicle.Plugin.TMDB.dll",
             Tags:        ["movies", "tv", "metadata"],
-            Sha256:      "e4df581f9a65ed3c8184d062c7eab479a1d97327477f12720cb861c2d9cf2f31",
+            Sha256:      "",     // cleared — recalculate after each plugin release
             Version:     "1.0.0"
         ),
         new PluginCatalogEntry(
@@ -684,6 +693,11 @@ public class PluginsController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return Conflict(ApiResponse<PluginDto>.Fail("ALREADY_INSTALLED", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error installing catalog plugin {PluginId}", pluginId);
+            return StatusCode(500, ApiResponse<PluginDto>.Fail("INSTALL_FAILED", ex.Message));
         }
     }
 
