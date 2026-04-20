@@ -863,6 +863,65 @@ public class MetadataEnrichmentServiceTests : IDisposable
         return (item, row);
     }
 
+    // ── Cascade-reset when external ID changes ───────────────────────────────
+
+    [Fact]
+    public async Task EnrichPendingAsync_WhenExternalIdChanges_ResetsOtherPluginEnrichmentRows()
+    {
+        // Arrange – TMDB row is Pending with stored ExternalId "movie:550"
+        // MusicBrainz row is Completed
+        var item = await SeedRootItem("Fight Club", 1999);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb",        "movie:550", EnrichmentStatus.Pending);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.musicbrainz", null,        EnrichmentStatus.Completed);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = item.Id, Source = "tmdb", ExternalId = "movie:550" });
+        await _db.SaveChangesAsync();
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        // Provider returns a DIFFERENT external ID — triggers cascade reset for sibling rows
+        provider.Setup(p => p.GetByIdAsync("movie:550", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Fight Club", ExternalId = "movie:999" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.tmdb");
+
+        // TMDB row should be Completed with the new ID
+        var tmdbRow = await _db.MediaEnrichments
+            .FirstAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.tmdb");
+        tmdbRow.Status.Should().Be(EnrichmentStatus.Completed);
+        tmdbRow.ExternalId.Should().Be("movie:999");
+
+        // MediaExternalId should be updated
+        var extId = await _db.MediaExternalIds
+            .FirstAsync(e => e.MediaItemId == item.Id && e.Source == "tmdb");
+        extId.ExternalId.Should().Be("movie:999");
+
+        // Sibling MusicBrainz row should be reset to Pending
+        var mbRow = await _db.MediaEnrichments
+            .FirstAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.musicbrainz");
+        mbRow.Status.Should().Be(EnrichmentStatus.Pending);
+        mbRow.RetryCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_WhenExternalIdUnchanged_DoesNotResetSiblingRows()
+    {
+        var item = await SeedRootItem("Fight Club", 1999);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb",        "movie:550", EnrichmentStatus.Pending);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.musicbrainz", null,        EnrichmentStatus.Completed);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = item.Id, Source = "tmdb", ExternalId = "movie:550" });
+        await _db.SaveChangesAsync();
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        // Provider returns the SAME external ID — no cascade
+        provider.Setup(p => p.GetByIdAsync("movie:550", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Fight Club", ExternalId = "movie:550" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.tmdb");
+
+        var mbRow = await _db.MediaEnrichments
+            .FirstAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.musicbrainz");
+        mbRow.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
     private static IServiceScopeFactory BuildScopeFactory(ChronicleDbContext db, IPluginRegistry registry)
     {
         var services = new ServiceCollection();
