@@ -995,7 +995,7 @@ public class MetadataEnrichmentService(
                 // Keep media_external_ids in sync with the enrichment result so that
                 // Fix Match (which calls this path with an IdOverride) actually persists
                 // the new TMDB ID — not just the enrichment tracking row.
-                await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct);
+                await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId);
                 logger.LogInformation(
                     "Enrichment matched: plugin={Plugin} item={ItemId} \"{Name}\" (level={Level}) → {ExternalId} \"{MatchedTitle}\"",
                     provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
@@ -1836,11 +1836,14 @@ public class MetadataEnrichmentService(
     /// Match can legitimately change an item from one TMDB entry to another.
     /// </summary>
     private async Task UpsertExternalIdForEnrichmentAsync(
-        ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct)
+        ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct,
+        string? excludePluginId = null)
     {
         var (source, extId) = ParseExternalId(rawExternalId);
         var existing = await db.MediaExternalIds
             .FirstOrDefaultAsync(e => e.MediaItemId == mediaItemId && e.Source == source, ct);
+
+        bool idChanged = false;
 
         if (existing is null)
         {
@@ -1854,6 +1857,27 @@ public class MetadataEnrichmentService(
         else if (existing.ExternalId != extId)
         {
             existing.ExternalId = extId;
+            idChanged = true;
         }
+
+        // When the canonical ID changes, invalidate sibling plugins so they
+        // re-enrich against the corrected identity. Exclude the plugin that just
+        // supplied the new ID — its row is updated by the caller after this returns.
+        if (idChanged)
+        {
+            var query = db.MediaEnrichments.Where(e => e.MediaItemId == mediaItemId);
+            if (excludePluginId is not null)
+                query = query.Where(e => e.PluginId != excludePluginId);
+
+            var rows = await query.ToListAsync(ct);
+            foreach (var row in rows)
+            {
+                row.Status     = EnrichmentStatus.Pending;
+                row.RetryCount = 0;
+                row.ExternalId = null;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 }
