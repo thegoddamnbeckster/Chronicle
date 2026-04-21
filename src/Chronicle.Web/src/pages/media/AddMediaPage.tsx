@@ -6,12 +6,10 @@ import { searchMetadata, addFromSearch } from '@/api/scan'
 import type { MetadataSearchResult, MediaTypeOption } from '@/types'
 import styles from './AddMediaPage.module.css'
 
-// Map Chronicle media type names to TMDB hints
+// Map Chronicle media type names to the hint passed to the metadata provider's SearchAsync.
+// The provider uses this to restrict its search endpoint (e.g. TMDB /search/movie vs /search/tv).
 function toMediaTypeHint(mediaTypeName: string): string {
-  const n = mediaTypeName.toLowerCase()
-  if (n.includes('tv') || n.includes('show') || n.includes('series')) return 'tv'
-  if (n.includes('music') || n.includes('album') || n.includes('track')) return 'music'
-  return 'movie'
+  return mediaTypeName.toLowerCase()
 }
 
 export default function AddMediaPage() {

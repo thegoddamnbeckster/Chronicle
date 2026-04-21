@@ -424,15 +424,15 @@ public class PluginsController : ControllerBase
         if (loaded is null)
             return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_LOADED", "Plugin is not currently loaded."));
 
-        // Try metadata provider first, then file scanner plugins, then return empty schema
+        // Try provider types in priority order
         if (loaded.MetadataProviders.Count > 0)
             return Ok(ApiResponse<object>.Ok(loaded.MetadataProviders[0].GetSettingsSchema()));
 
         if (loaded.FileScannerPlugins.Count > 0)
-        {
-            var schema = loaded.FileScannerPlugins[0].GetSettingsSchema();
-            return Ok(ApiResponse<object>.Ok(schema));
-        }
+            return Ok(ApiResponse<object>.Ok(loaded.FileScannerPlugins[0].GetSettingsSchema()));
+
+        if (loaded.ImportProviders.Count > 0)
+            return Ok(ApiResponse<object>.Ok(loaded.ImportProviders[0].GetSettingsSchema()));
 
         return Ok(ApiResponse<object>.Ok(new { settings = Array.Empty<object>() }));
     }

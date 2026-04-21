@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using Chronicle.API.DTOs;
 using Chronicle.Plugins;
 using Chronicle.Services.Import;
@@ -212,23 +211,8 @@ public class ImportController : ControllerBase
     /// and persists them so the access token survives restarts and the live
     /// provider instance is reconfigured immediately.
     /// </summary>
-    private async Task MergeAndPersistSettingsAsync(
+    private Task MergeAndPersistSettingsAsync(
         string pluginId,
         IReadOnlyDictionary<string, string> newSettings)
-    {
-        var plugins = await _pluginService.GetAllPluginsAsync();
-        var plugin  = plugins.FirstOrDefault(p => p.PluginId == pluginId);
-        if (plugin is null) return;
-
-        // Deserialize existing settings and overlay the new token values.
-        var merged = string.IsNullOrWhiteSpace(plugin.SettingsJson)
-            ? new Dictionary<string, string>()
-            : JsonSerializer.Deserialize<Dictionary<string, string>>(plugin.SettingsJson)
-              ?? new Dictionary<string, string>();
-
-        foreach (var (key, value) in newSettings)
-            merged[key] = value;
-
-        await _pluginService.UpdateSettingsAsync(plugin.Id, merged);
-    }
+        => _pluginService.MergeSettingsAsync(pluginId, newSettings);
 }
