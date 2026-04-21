@@ -41,13 +41,14 @@ namespace Chronicle.Services
             if (!scanners.Any())
                 return (false, []);
 
-            var names = scanners
-                .SelectMany(s => s.GetSupportedMediaTypes())
-                .Select(m => m.MediaTypeName)
-                .Distinct()
-                .ToArray();
+            // Return all media types defined in the DB so the dropdown is never
+            // out of sync with what the user has configured.
+            var names = await _context.MediaTypes
+                .OrderBy(t => t.Name)
+                .Select(t => t.Name)
+                .ToArrayAsync();
 
-            return await Task.FromResult((true, names));
+            return (true, names);
         }
 
         public async Task<FileScanSummary> ScanAsync(FileScanRequest request, int userId, CancellationToken ct = default)
@@ -63,13 +64,16 @@ namespace Chronicle.Services
             var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
 
-            // Find a scanner that supports this media type
-            var scanner = _registry.GetFileScannerPlugins()
+            // Prefer a scanner that explicitly declares this media type; fall back to the first
+            // available scanner so user-defined types (e.g. audiobooks) still work.
+            var allScanners = _registry.GetFileScannerPlugins();
+            var scanner = allScanners
                 .FirstOrDefault(s => s.GetSupportedMediaTypes()
-                    .Any(m => string.Equals(m.MediaTypeName, mediaType.Name, StringComparison.OrdinalIgnoreCase)));
+                    .Any(m => string.Equals(m.MediaTypeName, mediaType.Name, StringComparison.OrdinalIgnoreCase)))
+                ?? allScanners.FirstOrDefault();
 
             if (scanner is null)
-                throw new InvalidOperationException($"No file scanner plugin supports media type '{mediaType.Name}'.");
+                throw new InvalidOperationException("No file scanner plugin is loaded.");
 
             var threshold = request.ConfidenceThreshold == 80
                 ? await GetConfidenceThresholdAsync(ct)
@@ -1110,7 +1114,8 @@ namespace Chronicle.Services
                 ?? throw new InvalidOperationException(
                     "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
 
-            var results = await provider.SearchAsync(new MediaSearchContext(query), ct);
+            var results = await provider.SearchAsync(
+                new MediaSearchContext(query, MediaTypeName: mediaTypeHint), ct);
 
             return results
                 .Select(c => new MetadataCandidate(c.Metadata.ExternalId, c.Metadata.Title, c.Metadata.Year, c.Metadata.PosterUrl, c.Metadata.Overview, c.Metadata.Rating, 0))

@@ -20,6 +20,13 @@ public interface IPluginService
     /// <summary>Persists settings for the plugin and reconfigures the loaded instance.</summary>
     Task UpdateSettingsAsync(int id, Dictionary<string, string> settings);
 
+    /// <summary>
+    /// Decrypts the plugin's existing settings, merges <paramref name="newSettings"/> on top,
+    /// then re-encrypts and persists the result. Used by the OAuth callback path to add tokens
+    /// without discarding the user-configured client credentials.
+    /// </summary>
+    Task MergeSettingsAsync(string pluginId, IReadOnlyDictionary<string, string> newSettings, CancellationToken ct = default);
+
     /// <summary>Enables the plugin and loads it into the registry.</summary>
     Task EnablePluginAsync(int id);
 

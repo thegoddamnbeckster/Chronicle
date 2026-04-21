@@ -114,6 +114,23 @@ public class PluginService : IPluginService
         }
     }
 
+    public async Task MergeSettingsAsync(
+        string pluginId,
+        IReadOnlyDictionary<string, string> newSettings,
+        CancellationToken ct = default)
+    {
+        var plugin = await _db.Plugins
+            .FirstOrDefaultAsync(p => p.PluginId == pluginId, ct)
+            ?? throw new InvalidOperationException($"Plugin '{pluginId}' not found.");
+
+        var existing = DeserializeSettings(plugin.SettingsJson);
+        var merged   = new Dictionary<string, string>(existing);
+        foreach (var (key, value) in newSettings)
+            merged[key] = value;
+
+        await UpdateSettingsAsync(plugin.Id, merged);
+    }
+
     public async Task EnablePluginAsync(int id)
     {
         var plugin = await _db.Plugins.FindAsync(id)

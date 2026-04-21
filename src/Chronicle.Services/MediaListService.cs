@@ -39,6 +39,7 @@ public class MediaListService : IMediaListService
     {
         return await _context.MediaLists
             .Where(l => l.UserId == userId)
+            .Include(l => l.Items)
             .OrderByDescending(l => l.UpdatedAt)
             .ToListAsync();
     }
