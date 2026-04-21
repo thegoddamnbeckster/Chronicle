@@ -25,6 +25,7 @@ namespace Chronicle.Data
         public DbSet<BackgroundTask> BackgroundTasks => Set<BackgroundTask>();
         public DbSet<ScanFolder> ScanFolders => Set<ScanFolder>();
         public DbSet<MediaItemEnrichment> MediaEnrichments { get; set; } = null!;
+        public DbSet<MediaCredit> MediaCredits { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -314,6 +315,29 @@ namespace Chronicle.Data
                  .WithMany()
                  .HasForeignKey(x => x.MediaItemId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<MediaCredit>(e =>
+            {
+                e.ToTable("media_credits");
+                e.HasKey(c => c.Id);
+                e.Property(c => c.Id).HasColumnName("id");
+                e.Property(c => c.MediaItemId).HasColumnName("media_item_id");
+                e.Property(c => c.PersonName).HasColumnName("person_name");
+                e.Property(c => c.Role).HasColumnName("role");
+                e.Property(c => c.CharacterName).HasColumnName("character_name");
+                e.Property(c => c.BillingOrder).HasColumnName("billing_order");
+                e.Property(c => c.Source).HasColumnName("source");
+                e.Property(c => c.ExternalPersonId).HasColumnName("external_person_id");
+                e.Property(c => c.CreatedAt).HasColumnName("created_at");
+
+                e.HasOne(c => c.MediaItem)
+                 .WithMany()
+                 .HasForeignKey(c => c.MediaItemId)
+                 .OnDelete(DeleteBehavior.Cascade);
+
+                e.HasIndex(c => c.MediaItemId).HasDatabaseName("idx_media_credits_item");
+                e.HasIndex(c => c.PersonName).HasDatabaseName("idx_media_credits_person");
             });
         }
     }
