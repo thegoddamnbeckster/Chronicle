@@ -67,6 +67,13 @@
   border-radius: 20px;
   padding: 3px 10px;
   white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.badge:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .description {

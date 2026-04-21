@@ -198,9 +198,18 @@ export default function ListDetailPage() {
               {list.name}
             </h1>
           )}
-          <span className={styles.badge}>
+          <button
+            className={styles.badge}
+            onClick={async () => {
+              try {
+                const updated = await updateList(listId, { isOrdered: !list.isOrdered })
+                setList(prev => prev ? { ...prev, isOrdered: updated.isOrdered } : prev)
+              } catch { /* silent */ }
+            }}
+            title="Click to toggle ordered/unordered"
+          >
             {list.isOrdered ? '🔢 Ordered' : '📋 Unordered'}
-          </span>
+          </button>
         </div>
 
         {list.description && <p className={styles.description}>{list.description}</p>}
