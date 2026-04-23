@@ -54,17 +54,25 @@ public record ImportCapabilities(
 public record ImportedWatchEvent(
     /// <summary>
     /// Source-namespaced ID, e.g. "trakt:12345", "tmdb:67890".
-    /// Used to look up or cross-reference media in Chronicle.
+    /// For tv_episode events use a synthetic key like "simkl:{show_id}:s{S}e{E}".
     /// </summary>
     string ExternalId,
     /// <summary>Additional IDs the service provides (tmdb, imdb, tvdb …).</summary>
     IReadOnlyDictionary<string, string> AdditionalIds,
-    /// <summary>"movie" | "tv_episode" | "tv_show"</summary>
+    /// <summary>"movie" | "tv_episode" | "tv"</summary>
     string MediaType,
+    /// <summary>Episode title (or "S01E05") for tv_episode; full title otherwise.</summary>
     string Title,
     int? Year,
     DateTimeOffset WatchedAt,
-    double? ProgressPercent
+    double? ProgressPercent,
+    // ── TV episode hierarchy fields (null for non-episode events) ─────────────
+    /// <summary>Source-namespaced ID of the parent show, e.g. "simkl:12345".</summary>
+    string? ShowExternalId = null,
+    /// <summary>Show title — used to find/create the parent show stub.</summary>
+    string? ShowTitle = null,
+    int? SeasonNumber = null,
+    int? EpisodeNumber = null
 );
 
 public record ImportedRating(

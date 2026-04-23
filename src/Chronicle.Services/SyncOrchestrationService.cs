@@ -70,9 +70,15 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 var (item, isNew) = await MatchOrCreateAsync(db, evt, pluginId, ct);
                 if (isNew) stubsCreated++; else itemsMatched++;
                 watchEventsAdded += await UpsertWatchEventAsync(db, item.Id, evt, ct);
-                await UpsertLibraryStatusAsync(db, item.Id, evt, ct);
 
-                if (isNew)
+                // Library status belongs on the root show, not on individual episodes.
+                var libraryItemId = item.ParentId.HasValue
+                    ? await GetRootItemIdAsync(db, item, ct)
+                    : item.Id;
+                await UpsertLibraryStatusAsync(db, libraryItemId, evt, ct);
+
+                // Credits on new root-level items only (episodes don't expose per-episode credits).
+                if (isNew && !item.ParentId.HasValue)
                     creditsAdded += await FetchAndStoreCreditsAsync(db, item.Id, evt.ExternalId, evt.MediaType, pluginId, provider, ct);
             }
             catch (Exception ex)
@@ -117,6 +123,10 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         string pluginId,
         CancellationToken ct)
     {
+        // Route TV episodes to the hierarchy builder when season/episode numbers are present.
+        if (evt.MediaType == "tv_episode" && evt.SeasonNumber.HasValue && evt.EpisodeNumber.HasValue)
+            return await MatchOrCreateEpisodeAsync(db, evt, pluginId, ct);
+
         // 1. Own provider ExternalId match
         var byOwn = await db.MediaExternalIds
             .Where(e => e.Source == SourceFromPluginId(pluginId) && e.ExternalId == evt.ExternalId)
@@ -219,6 +229,96 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         await db.SaveChangesAsync(ct);
         return item;
+    }
+
+    // ── TV episode hierarchy ──────────────────────────────────────────────────
+
+    private async Task<(MediaItem episode, bool isNew)> MatchOrCreateEpisodeAsync(
+        ChronicleDbContext db, ImportedWatchEvent evt, string pluginId, CancellationToken ct)
+    {
+        var source = SourceFromPluginId(pluginId);
+
+        // 1. Find existing episode by its synthetic ExternalId.
+        var byId = await db.MediaExternalIds
+            .Where(e => e.Source == source && e.ExternalId == evt.ExternalId)
+            .Select(e => e.MediaItemId)
+            .FirstOrDefaultAsync(ct);
+        if (byId != 0)
+            return (await db.MediaItems.FindAsync([byId], ct)!, false);
+
+        // 2. Find or create the parent show using show-level data.
+        var showEvt = evt with
+        {
+            ExternalId    = evt.ShowExternalId ?? evt.ExternalId,
+            MediaType     = "tv",
+            Title         = evt.ShowTitle ?? evt.Title,
+            SeasonNumber  = null,
+            EpisodeNumber = null,
+            ShowExternalId = null,
+            ShowTitle     = null,
+        };
+        var (show, _) = await MatchOrCreateAsync(db, showEvt, pluginId, ct);
+
+        // 3. Find or create the Season node.
+        var season = await db.MediaItems.FirstOrDefaultAsync(
+            i => i.ParentId == show.Id && i.HierarchyLevel == 1 && i.Number == evt.SeasonNumber, ct);
+        if (season is null)
+        {
+            season = new MediaItem
+            {
+                Name           = $"Season {evt.SeasonNumber}",
+                MediaTypeId    = show.MediaTypeId,
+                ParentId       = show.Id,
+                HierarchyLevel = 1,
+                Number         = evt.SeasonNumber,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(season);
+            await db.SaveChangesAsync(ct);
+        }
+
+        // 4. Find or create the Episode node.
+        var episode = await db.MediaItems.FirstOrDefaultAsync(
+            i => i.ParentId == season.Id && i.HierarchyLevel == 2 && i.Number == evt.EpisodeNumber, ct);
+        if (episode is not null)
+            return (episode, false);
+
+        episode = new MediaItem
+        {
+            Name           = evt.Title ?? $"S{evt.SeasonNumber:D2}E{evt.EpisodeNumber:D2}",
+            Year           = evt.Year,
+            MediaTypeId    = show.MediaTypeId,
+            ParentId       = season.Id,
+            HierarchyLevel = 2,
+            Number         = evt.EpisodeNumber,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(episode);
+        await db.SaveChangesAsync(ct);
+
+        db.MediaExternalIds.Add(new MediaExternalId
+        {
+            MediaItemId = episode.Id,
+            Source      = source,
+            ExternalId  = evt.ExternalId,
+        });
+        await db.SaveChangesAsync(ct);
+
+        return (episode, true);
+    }
+
+    private static async Task<int> GetRootItemIdAsync(
+        ChronicleDbContext db, MediaItem item, CancellationToken ct)
+    {
+        var current = item;
+        while (current.ParentId.HasValue)
+        {
+            current = await db.MediaItems.FindAsync([current.ParentId.Value], ct)
+                ?? throw new InvalidOperationException($"Parent {current.ParentId} not found");
+        }
+        return current.Id;
     }
 
     // ── Watch event ───────────────────────────────────────────────────────────
