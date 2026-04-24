@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
@@ -70,9 +71,15 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 var (item, isNew) = await MatchOrCreateAsync(db, evt, pluginId, ct);
                 if (isNew) stubsCreated++; else itemsMatched++;
                 watchEventsAdded += await UpsertWatchEventAsync(db, item.Id, evt, ct);
-                await UpsertLibraryStatusAsync(db, item.Id, evt, ct);
 
-                if (isNew)
+                // Library status belongs on the root show, not on individual episodes.
+                var libraryItemId = item.ParentId.HasValue
+                    ? await GetRootItemIdAsync(db, item, ct)
+                    : item.Id;
+                await UpsertLibraryStatusAsync(db, libraryItemId, evt, ct);
+
+                // Credits on new root-level items only (episodes don't expose per-episode credits).
+                if (isNew && !item.ParentId.HasValue)
                     creditsAdded += await FetchAndStoreCreditsAsync(db, item.Id, evt.ExternalId, evt.MediaType, pluginId, provider, ct);
             }
             catch (Exception ex)
@@ -117,6 +124,10 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         string pluginId,
         CancellationToken ct)
     {
+        // Route TV episodes to the hierarchy builder when season/episode numbers are present.
+        if (evt.MediaType == "tv_episode" && evt.SeasonNumber.HasValue && evt.EpisodeNumber.HasValue)
+            return await MatchOrCreateEpisodeAsync(db, evt, pluginId, ct);
+
         // 1. Own provider ExternalId match
         var byOwn = await db.MediaExternalIds
             .Where(e => e.Source == SourceFromPluginId(pluginId) && e.ExternalId == evt.ExternalId)
@@ -180,6 +191,13 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             CreatedAt      = DateTime.UtcNow,
             UpdatedAt      = DateTime.UtcNow,
         };
+
+        // Write the provider's metadata directly into metadata_json so the plugin
+        // metadata box is populated immediately after sync without waiting for a
+        // separate enrichment run.
+        if (meta is not null)
+            MergeImportedMetadata(item, pluginId, meta);
+
         db.MediaItems.Add(item);
         await db.SaveChangesAsync(ct);
 
@@ -195,7 +213,9 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         foreach (var (source, extId) in allIds)
             db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = item.Id, Source = source, ExternalId = extId });
 
-        // Seed enrichment rows for all loaded metadata plugins that support this media type
+        // Seed enrichment rows for all loaded metadata plugins that support this media type.
+        // For the syncing plugin itself: if we already have metadata from GetItemMetadataAsync,
+        // seed as Completed so the enrichment runner doesn't redundantly re-fetch it.
         foreach (var (mpPluginId, mp, _) in _registry.GetMetadataProviderEntries())
         {
             var supported = mp.GetSupportedMediaTypes()
@@ -207,18 +227,111 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             if (exists) continue;
 
             allIds.TryGetValue(SourceFromPluginId(mpPluginId), out var knownId);
+            var alreadyEnriched = meta is not null &&
+                string.Equals(mpPluginId, pluginId, StringComparison.OrdinalIgnoreCase);
             db.MediaEnrichments.Add(new MediaItemEnrichment
             {
-                MediaItemId = item.Id,
-                PluginId    = mpPluginId,
-                Status      = EnrichmentStatus.Pending,
-                MaxRetries  = 3,
-                ExternalId  = knownId,
+                MediaItemId     = item.Id,
+                PluginId        = mpPluginId,
+                Status          = alreadyEnriched ? EnrichmentStatus.Completed : EnrichmentStatus.Pending,
+                LastCompletedAt = alreadyEnriched ? DateTime.UtcNow : null,
+                MaxRetries      = 3,
+                ExternalId      = knownId,
             });
         }
 
         await db.SaveChangesAsync(ct);
         return item;
+    }
+
+    // ── TV episode hierarchy ──────────────────────────────────────────────────
+
+    private async Task<(MediaItem episode, bool isNew)> MatchOrCreateEpisodeAsync(
+        ChronicleDbContext db, ImportedWatchEvent evt, string pluginId, CancellationToken ct)
+    {
+        var source = SourceFromPluginId(pluginId);
+
+        // 1. Find existing episode by its synthetic ExternalId.
+        var byId = await db.MediaExternalIds
+            .Where(e => e.Source == source && e.ExternalId == evt.ExternalId)
+            .Select(e => e.MediaItemId)
+            .FirstOrDefaultAsync(ct);
+        if (byId != 0)
+            return (await db.MediaItems.FindAsync([byId], ct)!, false);
+
+        // 2. Find or create the parent show using show-level data.
+        var showEvt = evt with
+        {
+            ExternalId    = evt.ShowExternalId ?? evt.ExternalId,
+            MediaType     = "tv",
+            Title         = evt.ShowTitle ?? evt.Title,
+            SeasonNumber  = null,
+            EpisodeNumber = null,
+            ShowExternalId = null,
+            ShowTitle     = null,
+        };
+        var (show, _) = await MatchOrCreateAsync(db, showEvt, pluginId, ct);
+
+        // 3. Find or create the Season node.
+        var season = await db.MediaItems.FirstOrDefaultAsync(
+            i => i.ParentId == show.Id && i.HierarchyLevel == 1 && i.Number == evt.SeasonNumber, ct);
+        if (season is null)
+        {
+            season = new MediaItem
+            {
+                Name           = $"Season {evt.SeasonNumber}",
+                MediaTypeId    = show.MediaTypeId,
+                ParentId       = show.Id,
+                HierarchyLevel = 1,
+                Number         = evt.SeasonNumber,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(season);
+            await db.SaveChangesAsync(ct);
+        }
+
+        // 4. Find or create the Episode node.
+        var episode = await db.MediaItems.FirstOrDefaultAsync(
+            i => i.ParentId == season.Id && i.HierarchyLevel == 2 && i.Number == evt.EpisodeNumber, ct);
+        if (episode is not null)
+            return (episode, false);
+
+        episode = new MediaItem
+        {
+            Name           = evt.Title ?? $"S{evt.SeasonNumber:D2}E{evt.EpisodeNumber:D2}",
+            Year           = evt.Year,
+            MediaTypeId    = show.MediaTypeId,
+            ParentId       = season.Id,
+            HierarchyLevel = 2,
+            Number         = evt.EpisodeNumber,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(episode);
+        await db.SaveChangesAsync(ct);
+
+        db.MediaExternalIds.Add(new MediaExternalId
+        {
+            MediaItemId = episode.Id,
+            Source      = source,
+            ExternalId  = evt.ExternalId,
+        });
+        await db.SaveChangesAsync(ct);
+
+        return (episode, true);
+    }
+
+    private static async Task<int> GetRootItemIdAsync(
+        ChronicleDbContext db, MediaItem item, CancellationToken ct)
+    {
+        var current = item;
+        while (current.ParentId.HasValue)
+        {
+            current = await db.MediaItems.FindAsync([current.ParentId.Value], ct)
+                ?? throw new InvalidOperationException($"Parent {current.ParentId} not found");
+        }
+        return current.Id;
     }
 
     // ── Watch event ───────────────────────────────────────────────────────────
@@ -361,4 +474,26 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         "tv_episode" => "tv",
         _            => importType,
     };
+
+    private static void MergeImportedMetadata(MediaItem item, string pluginId, ImportedItemMetadata meta)
+    {
+        var existing = string.IsNullOrEmpty(item.MetadataJson)
+            ? new Dictionary<string, JsonElement>()
+            : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson) ?? [];
+
+        existing[pluginId] = JsonSerializer.SerializeToElement(new
+        {
+            title    = meta.Title,
+            year     = meta.Year,
+            overview = meta.Overview,
+            poster   = meta.PosterUrl,
+            runtime  = meta.RuntimeMinutes,
+            ids      = meta.AdditionalIds,
+        });
+
+        item.MetadataJson = JsonSerializer.Serialize(existing);
+
+        if (!string.IsNullOrEmpty(meta.PosterUrl))
+            item.PosterUrl = meta.PosterUrl;
+    }
 }
