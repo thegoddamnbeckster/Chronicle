@@ -40,12 +40,12 @@ public sealed class PluginTaskRunner : IPluginTaskRunner
 
             case ImportAll:
                 _log.Information("PluginTaskRunner: running import-all for plugin {PluginId}", pluginId);
-                await _sync.SyncAsync(pluginId, fullSync: true, ct);
+                await _sync.SyncAsync(pluginId, fullSync: true, ct: ct);
                 return;
 
             case DeltaSync:
                 _log.Information("PluginTaskRunner: running delta-sync for plugin {PluginId}", pluginId);
-                await _sync.SyncAsync(pluginId, fullSync: false, ct);
+                await _sync.SyncAsync(pluginId, fullSync: false, ct: ct);
                 return;
 
             default:
