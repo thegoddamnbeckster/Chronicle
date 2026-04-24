@@ -1,5 +1,5 @@
 import client from './client'
-import type { ApiResponse, ImportProvider, ImportAuthStart, ImportPollResult, ImportResult } from '@/types'
+import type { ApiResponse, ImportProvider, ImportAuthStart, ImportPollResult, ImportResult, SyncResult } from '@/types'
 
 export async function getImportProviders(): Promise<ImportProvider[]> {
   const { data } = await client.get<ApiResponse<ImportProvider[]>>('/import/providers')
@@ -49,5 +49,15 @@ export async function importRatings(pluginId: string): Promise<ImportResult> {
 export async function importWatchlist(pluginId: string): Promise<ImportResult> {
   const { data } = await client.post<ApiResponse<ImportResult>>(`/import/${pluginId}/watchlist`)
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Import failed')
+  return data.data
+}
+
+export async function triggerSync(pluginId: string, fullSync: boolean): Promise<SyncResult> {
+  const { data } = await client.post<ApiResponse<SyncResult>>(
+    `/sync/${pluginId}`,
+    null,
+    { params: { fullSync } },
+  )
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Sync failed')
   return data.data
 }

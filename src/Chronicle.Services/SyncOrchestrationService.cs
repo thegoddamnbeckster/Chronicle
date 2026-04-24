@@ -153,8 +153,9 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         string pluginId,
         CancellationToken ct)
     {
-        // Route TV episodes to the hierarchy builder when season/episode numbers are present.
-        if (evt.MediaType == "tv_episode" && evt.SeasonNumber.HasValue && evt.EpisodeNumber.HasValue)
+        // Route TV/anime episodes to the hierarchy builder when season/episode numbers are present.
+        if ((evt.MediaType == "tv_episode" || evt.MediaType == "anime_episode")
+            && evt.SeasonNumber.HasValue && evt.EpisodeNumber.HasValue)
             return await MatchOrCreateEpisodeAsync(db, evt, pluginId, ct);
 
         // 1. Own provider ExternalId match
@@ -292,7 +293,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         var showEvt = evt with
         {
             ExternalId    = evt.ShowExternalId ?? evt.ExternalId,
-            MediaType     = "tv",
+            MediaType     = evt.MediaType == "anime_episode" ? "anime" : "tv",
             Title         = evt.ShowTitle ?? evt.Title,
             SeasonNumber  = null,
             EpisodeNumber = null,
@@ -498,10 +499,11 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
     private static string MapMediaType(string importType) => importType switch
     {
-        "movie"      => "movies",
-        "tv_show"    => "tv",
-        "tv_episode" => "tv",
-        _            => importType,
+        "movie"         => "movies",
+        "tv_show"       => "tv",
+        "tv_episode"    => "tv",
+        "anime_episode" => "anime",
+        _               => importType,
     };
 
     private static void MergeImportedMetadata(MediaItem item, string pluginId, ImportedItemMetadata meta)
