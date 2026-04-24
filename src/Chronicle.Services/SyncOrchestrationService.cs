@@ -106,7 +106,8 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             {
                 var (item, isNew) = await MatchOrCreateAsync(db, evt, pluginId, ct);
                 if (isNew) stubsCreated++; else itemsMatched++;
-                watchEventsAdded += await UpsertWatchEventAsync(db, item.Id, evt, ct);
+                if (resolvedUserId > 0)
+                    watchEventsAdded += await UpsertWatchEventAsync(db, item.Id, resolvedUserId.Value, evt, ct);
 
                 // Library status belongs on the root show, not on individual episodes.
                 var libraryItemId = item.ParentId.HasValue
@@ -128,7 +129,11 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         foreach (var rating in ratings)
         {
-            try { await UpsertRatingAsync(db, rating, pluginId, ct); }
+            try
+            {
+                if (resolvedUserId > 0)
+                    await UpsertRatingAsync(db, rating, pluginId, resolvedUserId.Value, ct);
+            }
             catch (Exception ex) { errors.Add($"rating {rating.ExternalId}: {ex.Message}"); }
         }
 
@@ -382,19 +387,21 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     // ── Watch event ───────────────────────────────────────────────────────────
 
     private static async Task<int> UpsertWatchEventAsync(
-        ChronicleDbContext db, int mediaItemId, ImportedWatchEvent evt, CancellationToken ct)
+        ChronicleDbContext db, int mediaItemId, int userId, ImportedWatchEvent evt, CancellationToken ct)
     {
         var ts = evt.WatchedAt.UtcDateTime;
         var exists = await db.InteractionEvents
-            .AnyAsync(e => e.MediaItemId == mediaItemId && e.Timestamp == ts, ct);
+            .AnyAsync(e => e.UserId == userId && e.MediaItemId == mediaItemId && e.Timestamp == ts, ct);
         if (exists) return 0;
 
         db.InteractionEvents.Add(new InteractionEvent
         {
+            UserId          = userId,
             MediaItemId     = mediaItemId,
             Timestamp       = ts,
             ProgressPercent = evt.ProgressPercent ?? 100,
             MarkedAsWatched = true,
+            CreatedAt       = DateTime.UtcNow,
         });
         await db.SaveChangesAsync(ct);
         return 1;
@@ -460,7 +467,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     }
 
     private static async Task UpsertRatingAsync(
-        ChronicleDbContext db, ImportedRating rating, string pluginId, CancellationToken ct)
+        ChronicleDbContext db, ImportedRating rating, string pluginId, int userId, CancellationToken ct)
     {
         var source = SourceFromPluginId(pluginId);
         var mediaItemId = await db.MediaExternalIds
@@ -469,7 +476,8 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             .FirstOrDefaultAsync(ct);
         if (mediaItemId == 0) return;
 
-        var lib = await db.UserLibraries.FirstOrDefaultAsync(l => l.MediaItemId == mediaItemId, ct);
+        var lib = await db.UserLibraries
+            .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
         if (lib is null) return;
 
         lib.UserRating = rating.Rating;
