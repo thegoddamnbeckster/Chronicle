@@ -840,6 +840,18 @@
   cursor: not-allowed;
 }
 
+.importBtnSecondary {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.syncHint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0.3rem 0 0;
+  line-height: 1.4;
+}
+
 .importResult {
   font-size: 0.82rem;
   margin-top: 0.75rem;
