@@ -27,6 +27,32 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         _log          = log;
     }
 
+    // Fires EnrichPendingAsync for every registered metadata provider in the background
+    // so newly synced stubs are enriched without waiting for the next cron tick.
+    private void TriggerEnrichmentInBackground()
+    {
+        var pluginIds = _registry.GetMetadataProviderEntries()
+            .Select(e => e.PluginId)
+            .ToList();
+
+        foreach (var mpPluginId in pluginIds)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await using var scope = _scopeFactory.CreateAsyncScope();
+                    var svc = scope.ServiceProvider.GetRequiredService<IMetadataEnrichmentService>();
+                    await svc.EnrichPendingAsync(mpPluginId, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Background enrichment after sync failed for plugin {PluginId}", mpPluginId);
+                }
+            });
+        }
+    }
+
     public async Task<SyncSummary> SyncAsync(
         string pluginId, bool fullSync = false, CancellationToken ct = default)
     {
@@ -112,6 +138,9 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         _log.LogInformation(
             "Sync complete for {PluginId}: {Matched} matched, {Created} stubs, {Events} events, {Credits} credits, {Errors} errors",
             pluginId, itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, errors.Count);
+
+        if (stubsCreated > 0)
+            TriggerEnrichmentInBackground();
 
         return new SyncSummary(itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, errors);
     }
