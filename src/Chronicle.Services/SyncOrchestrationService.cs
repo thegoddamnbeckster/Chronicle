@@ -54,7 +54,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     }
 
     public async Task<SyncSummary> SyncAsync(
-        string pluginId, bool fullSync = false, CancellationToken ct = default)
+        string pluginId, bool fullSync = false, int? userId = null, CancellationToken ct = default)
     {
         var provider = _registry.GetImportProvider(pluginId)
             ?? throw new InvalidOperationException($"Plugin '{pluginId}' has no IImportProvider.");
@@ -64,6 +64,16 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+        // Resolve the user who will own the library entries.
+        // If the caller didn't supply one (e.g. background task), fall back to the first user.
+        var resolvedUserId = userId
+            ?? await db.Users.OrderBy(u => u.Id).Select(u => (int?)u.Id).FirstOrDefaultAsync(ct);
+        if (resolvedUserId is null)
+        {
+            _log.LogWarning("SyncAsync: no users in DB yet — skipping library entry updates for {PluginId}", pluginId);
+            resolvedUserId = 0;   // sentinel; library upserts will be skipped
+        }
 
         var syncKey = $"{SyncStateKeyPrefix}{pluginId}.last_synced_at";
         DateTimeOffset? since = null;
@@ -102,7 +112,8 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 var libraryItemId = item.ParentId.HasValue
                     ? await GetRootItemIdAsync(db, item, ct)
                     : item.Id;
-                await UpsertLibraryStatusAsync(db, libraryItemId, evt, ct);
+                if (resolvedUserId > 0)
+                    await UpsertLibraryStatusAsync(db, libraryItemId, resolvedUserId.Value, evt, ct);
 
                 // Credits on new root-level items only (episodes don't expose per-episode credits).
                 if (isNew && !item.ParentId.HasValue)
@@ -123,7 +134,11 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         foreach (var entry in watchlist)
         {
-            try { await UpsertWatchlistStatusAsync(db, entry, pluginId, ct); }
+            try
+            {
+                if (resolvedUserId > 0)
+                    await UpsertWatchlistStatusAsync(db, entry, pluginId, resolvedUserId.Value, ct);
+            }
             catch (Exception ex) { errors.Add($"watchlist {entry.ExternalId}: {ex.Message}"); }
         }
 
@@ -388,33 +403,38 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     // ── Library status ────────────────────────────────────────────────────────
 
     private static async Task UpsertLibraryStatusAsync(
-        ChronicleDbContext db, int mediaItemId, ImportedWatchEvent evt, CancellationToken ct)
+        ChronicleDbContext db, int mediaItemId, int userId, ImportedWatchEvent evt, CancellationToken ct)
     {
         var entry = await db.UserLibraries
-            .FirstOrDefaultAsync(l => l.MediaItemId == mediaItemId, ct);
+            .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
 
-        var newStatus = evt.MediaType == "tv_episode" ? LibraryStatus.Watching : LibraryStatus.Completed;
+        var newStatus = (evt.MediaType == "tv_episode" || evt.MediaType == "anime_episode")
+            ? LibraryStatus.Watching
+            : LibraryStatus.Completed;
 
         if (entry is null)
         {
             db.UserLibraries.Add(new UserLibrary
             {
+                UserId      = userId,
                 MediaItemId = mediaItemId,
                 Status      = newStatus,
                 AddedAt     = DateTime.UtcNow,
                 UpdatedAt   = DateTime.UtcNow,
+                CompletedAt = newStatus == LibraryStatus.Completed ? DateTime.UtcNow : null,
             });
             await db.SaveChangesAsync(ct);
         }
         else if (entry.Status is LibraryStatus.PlanToWatch or LibraryStatus.Unwatched)
         {
-            entry.Status = newStatus;
+            entry.Status      = newStatus;
+            entry.CompletedAt ??= newStatus == LibraryStatus.Completed ? DateTime.UtcNow : null;
             await db.SaveChangesAsync(ct);
         }
     }
 
     private static async Task UpsertWatchlistStatusAsync(
-        ChronicleDbContext db, ImportedWatchlistEntry entry, string pluginId, CancellationToken ct)
+        ChronicleDbContext db, ImportedWatchlistEntry entry, string pluginId, int userId, CancellationToken ct)
     {
         var source = SourceFromPluginId(pluginId);
         var mediaItemId = await db.MediaExternalIds
@@ -423,11 +443,13 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             .FirstOrDefaultAsync(ct);
         if (mediaItemId == 0) return;
 
-        var lib = await db.UserLibraries.FirstOrDefaultAsync(l => l.MediaItemId == mediaItemId, ct);
+        var lib = await db.UserLibraries
+            .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
         if (lib is null)
         {
             db.UserLibraries.Add(new UserLibrary
             {
+                UserId      = userId,
                 MediaItemId = mediaItemId,
                 Status      = LibraryStatus.PlanToWatch,
                 AddedAt     = DateTime.UtcNow,
