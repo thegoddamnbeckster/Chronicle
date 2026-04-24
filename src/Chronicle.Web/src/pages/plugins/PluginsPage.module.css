@@ -672,4 +672,196 @@
   display: flex;
   gap: 0.5rem;
   margin-top: 0.25rem;
+  align-items: center;
+}
+
+.savedMsg {
+  font-size: 0.82rem;
+  color: var(--status-success-fg);
+  margin-left: 0.25rem;
+}
+
+/* ── Inline auth / import section ────────────────────────────────────────── */
+
+.importSection {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.importSectionTitle {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.85rem;
+}
+
+.connectedRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--status-success-fg);
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.connectedDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-success-fg);
+  flex-shrink: 0;
+}
+
+.connectBtn {
+  padding: 0.45rem 1.25rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: var(--accent-fg);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.connectBtn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.connectBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pinHint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0.4rem 0 0;
+}
+
+.pinFlow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.pinInstr {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.pinLink {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.pinLink:hover {
+  text-decoration: underline;
+}
+
+.pinCode {
+  font-family: 'Consolas', monospace;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.35em;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  display: inline-block;
+  margin: 0.1rem 0;
+}
+
+.pinPolling {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0;
+}
+
+.pinError {
+  font-size: 0.82rem;
+  color: var(--status-danger-fg);
+  margin: 0;
+}
+
+.newPinBtn {
+  align-self: flex-start;
+  padding: 0.35rem 0.9rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.newPinBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.newPinBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.importButtons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.importBtn {
+  padding: 0.4rem 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.importBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.importBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.importResult {
+  font-size: 0.82rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.importResultOk {
+  background: var(--status-success-bg);
+  color: var(--status-success-fg);
+  border: 1px solid var(--status-success-border);
+}
+
+.importResultError {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+  border: 1px solid var(--status-danger-border);
+}
+
+.importErrors {
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  opacity: 0.85;
 }
