@@ -191,6 +191,12 @@ export default function MediaDetailPage() {
     },
   })
 
+  // React Router reuses this component instance across navigations — reset stale
+  // mutation state so the Refresh All button isn't stuck as "Refreshing all…"
+  // on a newly-loaded item when the previous item's mutation was still in-flight.
+  const { reset: resetRefreshMut } = refreshMut
+  useEffect(() => { resetRefreshMut() }, [mediaId, resetRefreshMut])
+
   // Fetch installed plugins to get iconUrl + fixMatchHint for each plugin box
   const { data: plugins = [] } = useQuery({
     queryKey: ['plugins'],
