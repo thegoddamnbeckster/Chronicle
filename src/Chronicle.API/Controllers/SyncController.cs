@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Chronicle.API.DTOs;
 using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -24,9 +25,11 @@ public class SyncController : ControllerBase
         [FromQuery] bool fullSync = false,
         CancellationToken ct = default)
     {
+        var userId = int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
+            ? id : (int?)null;
         try
         {
-            var summary = await _sync.SyncAsync(pluginId, fullSync, ct);
+            var summary = await _sync.SyncAsync(pluginId, fullSync, userId, ct);
             return Ok(ApiResponse<SyncSummary>.Ok(summary));
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("not authenticated"))
