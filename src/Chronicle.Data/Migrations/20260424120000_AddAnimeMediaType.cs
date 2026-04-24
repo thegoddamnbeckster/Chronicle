@@ -14,34 +14,19 @@ namespace Chronicle.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.InsertData(
-                table: "media_types",
-                columns: new[] { "Id", "CreatedAt", "Description", "DisplayName",
-                                 "HierarchyLabels", "HierarchyLevels", "InteractionVerb",
-                                 "IsActive", "IsBuiltIn", "Name", "ProgressUnit" },
-                values: new object[]
-                {
-                    5,
-                    new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                    "Anime series, seasons, and episodes",
-                    "Anime",
-                    "Show,Season,Episode",
-                    3,
-                    "watched",
-                    true,
-                    true,
-                    "anime",
-                    "episodes"
-                });
+            migrationBuilder.Sql(@"
+                INSERT INTO media_types (Id, CreatedAt, Description, DisplayName,
+                    HierarchyLabels, HierarchyLevels, InteractionVerb,
+                    IsActive, IsBuiltIn, Name, ProgressUnit)
+                VALUES (5, '2026-01-01 00:00:00', 'Anime series, seasons, and episodes',
+                    'Anime', 'Show,Season,Episode', 3, 'watched', 1, 1, 'anime', 'episodes');
+            ");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DeleteData(
-                table: "media_types",
-                keyColumn: "Id",
-                keyValue: 5);
+            migrationBuilder.Sql("DELETE FROM media_types WHERE Id = 5;");
         }
     }
 }
