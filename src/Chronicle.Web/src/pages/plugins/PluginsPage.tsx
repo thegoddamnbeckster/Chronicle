@@ -5,12 +5,10 @@ import {
   startAuth,
   pollAuth,
   getAuthStatus,
-  importHistory,
-  importRatings,
-  importWatchlist,
+  triggerSync,
 } from '@/api/import'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
-import type { ImportProvider, ImportAuthStart, ImportResult } from '@/types'
+import type { ImportProvider, ImportAuthStart, SyncResult } from '@/types'
 import {
   listPlugins,
   installPlugin,
@@ -45,8 +43,9 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
   const [polling,   setPolling]           = useState(false)
   const [pollError, setPollError]         = useState<string | null>(null)
   const [starting,  setStarting]          = useState(false)
-  const [importing, setImporting]         = useState(false)
-  const [importResult, setImportResult]   = useState<{ type: string; data: ImportResult } | null>(null)
+  const [syncing,   setSyncing]           = useState(false)
+  const [syncResult, setSyncResult]       = useState<SyncResult | null>(null)
+  const [syncError,  setSyncError]        = useState<string | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const { addJob, completeJob, failJob }  = useBackgroundActivity()
 
@@ -111,23 +110,23 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
     }, intervalSec * 1000)
   }
 
-  async function runImport(type: 'history' | 'ratings' | 'watchlist') {
-    const jobId = addJob(`Importing ${type} from ${provider.name}…`)
-    setImporting(true)
-    setImportResult(null)
+  async function runSync(fullSync: boolean) {
+    const label = fullSync ? 'Full Sync' : 'Delta Sync'
+    const jobId = addJob(`${label} from ${provider.name}…`)
+    setSyncing(true)
+    setSyncResult(null)
+    setSyncError(null)
     try {
-      let data: ImportResult
-      if (type === 'history')       data = await importHistory(provider.pluginId)
-      else if (type === 'ratings')  data = await importRatings(provider.pluginId)
-      else                          data = await importWatchlist(provider.pluginId)
-      setImportResult({ type, data })
-      completeJob(jobId, `${data.imported} imported, ${data.skipped} skipped`)
+      const data = await triggerSync(provider.pluginId, fullSync)
+      setSyncResult(data)
+      completeJob(jobId,
+        `${data.stubsCreated} created, ${data.itemsMatched} matched, ${data.watchEventsAdded} events`)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Import failed'
-      setImportResult({ type, data: { imported: 0, skipped: 0, errors: [msg] } })
+      const msg = err instanceof Error ? err.message : 'Sync failed'
+      setSyncError(msg)
       failJob(jobId, msg)
     } finally {
-      setImporting(false)
+      setSyncing(false)
     }
   }
 
@@ -145,43 +144,39 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
           </div>
 
           <div className={styles.importButtons}>
-            {provider.supportsHistory && (
-              <button type="button" className={styles.importBtn}
-                onClick={() => runImport('history')} disabled={importing}>
-                Import History
-              </button>
-            )}
-            {provider.supportsRatings && (
-              <button type="button" className={styles.importBtn}
-                onClick={() => runImport('ratings')} disabled={importing}>
-                Import Ratings
-              </button>
-            )}
-            {provider.supportsWatchlist && (
-              <button type="button" className={styles.importBtn}
-                onClick={() => runImport('watchlist')} disabled={importing}>
-                Import Watchlist
-              </button>
-            )}
-            {importing && <span className={styles.pinPolling}>Importing…</span>}
+            <button type="button" className={styles.importBtn}
+              onClick={() => runSync(true)} disabled={syncing}>
+              Full Sync
+            </button>
+            <button type="button" className={`${styles.importBtn} ${styles.importBtnSecondary}`}
+              onClick={() => runSync(false)} disabled={syncing}>
+              Delta Sync
+            </button>
+            {syncing && <span className={styles.pinPolling}>Syncing…</span>}
           </div>
+          <p className={styles.syncHint}>
+            <strong>Full Sync</strong> imports everything from scratch.{' '}
+            <strong>Delta Sync</strong> fetches only items added since your last sync.
+          </p>
 
-          {importResult && (
+          {syncResult && (
             <div className={`${styles.importResult} ${
-              importResult.data.errors.length > 0 ? styles.importResultError : styles.importResultOk
+              syncResult.errors.length > 0 ? styles.importResultError : styles.importResultOk
             }`}>
-              <strong>{importResult.type} import:</strong>{' '}
-              {importResult.data.imported} imported, {importResult.data.skipped} skipped
-              {importResult.data.errors.length > 0 && (
+              <strong>Sync complete:</strong>{' '}
+              {syncResult.stubsCreated} new items, {syncResult.itemsMatched} matched,{' '}
+              {syncResult.watchEventsAdded} watch events
+              {syncResult.errors.length > 0 && (
                 <div className={styles.importErrors}>
-                  {importResult.data.errors.slice(0, 3).map((e, i) => <div key={i}>{e}</div>)}
-                  {importResult.data.errors.length > 3 && (
-                    <div>…and {importResult.data.errors.length - 3} more</div>
+                  {syncResult.errors.slice(0, 3).map((e, i) => <div key={i}>{e}</div>)}
+                  {syncResult.errors.length > 3 && (
+                    <div>…and {syncResult.errors.length - 3} more</div>
                   )}
                 </div>
               )}
             </div>
           )}
+          {syncError && <p className={styles.pinError}>{syncError}</p>}
         </>
       ) : authFlow ? (
         <div className={styles.pinFlow}>
