@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
@@ -190,6 +191,13 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             CreatedAt      = DateTime.UtcNow,
             UpdatedAt      = DateTime.UtcNow,
         };
+
+        // Write the provider's metadata directly into metadata_json so the plugin
+        // metadata box is populated immediately after sync without waiting for a
+        // separate enrichment run.
+        if (meta is not null)
+            MergeImportedMetadata(item, pluginId, meta);
+
         db.MediaItems.Add(item);
         await db.SaveChangesAsync(ct);
 
@@ -205,7 +213,9 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         foreach (var (source, extId) in allIds)
             db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = item.Id, Source = source, ExternalId = extId });
 
-        // Seed enrichment rows for all loaded metadata plugins that support this media type
+        // Seed enrichment rows for all loaded metadata plugins that support this media type.
+        // For the syncing plugin itself: if we already have metadata from GetItemMetadataAsync,
+        // seed as Completed so the enrichment runner doesn't redundantly re-fetch it.
         foreach (var (mpPluginId, mp, _) in _registry.GetMetadataProviderEntries())
         {
             var supported = mp.GetSupportedMediaTypes()
@@ -217,13 +227,16 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             if (exists) continue;
 
             allIds.TryGetValue(SourceFromPluginId(mpPluginId), out var knownId);
+            var alreadyEnriched = meta is not null &&
+                string.Equals(mpPluginId, pluginId, StringComparison.OrdinalIgnoreCase);
             db.MediaEnrichments.Add(new MediaItemEnrichment
             {
-                MediaItemId = item.Id,
-                PluginId    = mpPluginId,
-                Status      = EnrichmentStatus.Pending,
-                MaxRetries  = 3,
-                ExternalId  = knownId,
+                MediaItemId     = item.Id,
+                PluginId        = mpPluginId,
+                Status          = alreadyEnriched ? EnrichmentStatus.Completed : EnrichmentStatus.Pending,
+                LastCompletedAt = alreadyEnriched ? DateTime.UtcNow : null,
+                MaxRetries      = 3,
+                ExternalId      = knownId,
             });
         }
 
@@ -461,4 +474,26 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         "tv_episode" => "tv",
         _            => importType,
     };
+
+    private static void MergeImportedMetadata(MediaItem item, string pluginId, ImportedItemMetadata meta)
+    {
+        var existing = string.IsNullOrEmpty(item.MetadataJson)
+            ? new Dictionary<string, JsonElement>()
+            : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson) ?? [];
+
+        existing[pluginId] = JsonSerializer.SerializeToElement(new
+        {
+            title    = meta.Title,
+            year     = meta.Year,
+            overview = meta.Overview,
+            poster   = meta.PosterUrl,
+            runtime  = meta.RuntimeMinutes,
+            ids      = meta.AdditionalIds,
+        });
+
+        item.MetadataJson = JsonSerializer.Serialize(existing);
+
+        if (!string.IsNullOrEmpty(meta.PosterUrl))
+            item.PosterUrl = meta.PosterUrl;
+    }
 }
