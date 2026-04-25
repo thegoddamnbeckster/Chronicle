@@ -12,37 +12,44 @@ namespace Chronicle.API.Controllers;
 public class SyncController : ControllerBase
 {
     private readonly ISyncOrchestrationService _sync;
+    private readonly ISyncJobTracker _jobs;
 
-    public SyncController(ISyncOrchestrationService sync)
+    public SyncController(ISyncOrchestrationService sync, ISyncJobTracker jobs)
     {
         _sync = sync;
+        _jobs = jobs;
     }
 
-    /// <summary>Manually trigger an import-all or delta-sync for a plugin.</summary>
+    /// <summary>
+    /// Starts an import-all or delta-sync for a plugin in the background.
+    /// Returns 202 Accepted immediately with a jobId.
+    /// Poll GET ./{pluginId}/job/{jobId} until status is "complete" or "failed".
+    /// </summary>
     [HttpPost("{pluginId}")]
-    public async Task<IActionResult> TriggerSync(
+    public IActionResult TriggerSync(
         string pluginId,
-        [FromQuery] bool fullSync = false,
-        CancellationToken ct = default)
+        [FromQuery] bool fullSync = false)
     {
         var userId = int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
             ? id : (int?)null;
-        try
-        {
-            var summary = await _sync.SyncAsync(pluginId, fullSync, userId, ct);
-            return Ok(ApiResponse<SyncSummary>.Ok(summary));
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not authenticated"))
-        {
-            return UnprocessableEntity(ApiResponse<object>.Fail("NOT_AUTHENTICATED", ex.Message));
-        }
-        catch (InvalidOperationException ex)
-        {
-            return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_FOUND", ex.Message));
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, ApiResponse<object>.Fail("SYNC_FAILED", ex.Message));
-        }
+
+        var jobId = _jobs.Enqueue(
+            () => _sync.SyncAsync(pluginId, fullSync, userId, CancellationToken.None));
+
+        return Accepted(ApiResponse<object>.Ok(new { jobId }));
+    }
+
+    /// <summary>
+    /// Polls the status of a background sync job started via POST.
+    /// Status is one of: "running" | "complete" | "failed".
+    /// </summary>
+    [HttpGet("{pluginId}/job/{jobId}")]
+    public IActionResult GetJobStatus(string pluginId, string jobId)
+    {
+        var snap = _jobs.GetSnapshot(jobId);
+        if (snap is null)
+            return NotFound(ApiResponse<object>.Fail("JOB_NOT_FOUND", $"Job '{jobId}' not found."));
+
+        return Ok(ApiResponse<SyncJobSnapshot>.Ok(snap));
     }
 }

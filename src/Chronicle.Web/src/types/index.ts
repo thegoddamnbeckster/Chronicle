@@ -154,6 +154,12 @@ export interface SyncResult {
   errors: string[]
 }
 
+export interface SyncJobStatus {
+  status: 'running' | 'complete' | 'failed'
+  summary?: SyncResult
+  error?: string
+}
+
 // ── File Scanner ──────────────────────────────────────────────────────────────
 export interface FileScanStatus {
   available: boolean
