@@ -852,6 +852,40 @@
   line-height: 1.4;
 }
 
+.syncProgress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.syncProgressNote {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.syncSpinner {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 .importResult {
   font-size: 0.82rem;
   margin-top: 0.75rem;

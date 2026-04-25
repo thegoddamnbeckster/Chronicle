@@ -1,5 +1,5 @@
 import client from './client'
-import type { ApiResponse, ImportProvider, ImportAuthStart, ImportPollResult, ImportResult, SyncResult } from '@/types'
+import type { ApiResponse, ImportProvider, ImportAuthStart, ImportPollResult, ImportResult, SyncResult, SyncJobStatus } from '@/types'
 
 export async function getImportProviders(): Promise<ImportProvider[]> {
   const { data } = await client.get<ApiResponse<ImportProvider[]>>('/import/providers')
@@ -52,12 +52,39 @@ export async function importWatchlist(pluginId: string): Promise<ImportResult> {
   return data.data
 }
 
+const SYNC_POLL_INTERVAL_MS = 3000
+
+/** Start a sync and poll until it completes. Resolves with the final SyncResult. */
 export async function triggerSync(pluginId: string, fullSync: boolean): Promise<SyncResult> {
-  const { data } = await client.post<ApiResponse<SyncResult>>(
+  // Fire the sync — server returns 202 Accepted with a jobId immediately.
+  const { data: startData } = await client.post<ApiResponse<{ jobId: string }>>(
     `/sync/${pluginId}`,
     null,
     { params: { fullSync } },
   )
-  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Sync failed')
-  return data.data
+  if (!startData.success || !startData.data?.jobId)
+    throw new Error(startData.error?.message ?? 'Failed to start sync')
+
+  const { jobId } = startData.data
+
+  // Poll until the job finishes.
+  for (;;) {
+    await new Promise(r => setTimeout(r, SYNC_POLL_INTERVAL_MS))
+
+    const { data: pollData } = await client.get<ApiResponse<SyncJobStatus>>(
+      `/sync/${pluginId}/job/${jobId}`,
+    )
+    if (!pollData.success || !pollData.data)
+      throw new Error(pollData.error?.message ?? 'Failed to poll sync status')
+
+    const snap = pollData.data
+    if (snap.status === 'complete') {
+      if (!snap.summary) throw new Error('Sync completed but returned no summary')
+      return snap.summary
+    }
+    if (snap.status === 'failed') {
+      throw new Error(snap.error ?? 'Sync failed')
+    }
+    // status === 'running' → keep polling
+  }
 }

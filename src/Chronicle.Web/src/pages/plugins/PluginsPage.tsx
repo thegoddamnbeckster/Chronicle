@@ -152,14 +152,25 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
               onClick={() => runSync(false)} disabled={syncing}>
               Delta Sync
             </button>
-            {syncing && <span className={styles.pinPolling}>Syncing…</span>}
           </div>
           <p className={styles.syncHint}>
             <strong>Full Sync</strong> imports everything from scratch.{' '}
             <strong>Delta Sync</strong> fetches only items added since your last sync.
           </p>
 
-          {syncResult && (
+          {syncing && (
+            <div className={styles.syncProgress}>
+              <span className={styles.syncSpinner} />
+              <div>
+                <strong>Sync in progress…</strong>
+                <div className={styles.syncProgressNote}>
+                  This may take several minutes for large libraries. Do not close this tab.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {syncResult && !syncing && (
             <div className={`${styles.importResult} ${
               syncResult.errors.length > 0 ? styles.importResultError : styles.importResultOk
             }`}>
@@ -168,15 +179,19 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
               {syncResult.watchEventsAdded} watch events
               {syncResult.errors.length > 0 && (
                 <div className={styles.importErrors}>
-                  {syncResult.errors.slice(0, 3).map((e, i) => <div key={i}>{e}</div>)}
-                  {syncResult.errors.length > 3 && (
-                    <div>…and {syncResult.errors.length - 3} more</div>
+                  {syncResult.errors.slice(0, 5).map((e, i) => <div key={i}>{e}</div>)}
+                  {syncResult.errors.length > 5 && (
+                    <div>…and {syncResult.errors.length - 5} more errors</div>
                   )}
                 </div>
               )}
             </div>
           )}
-          {syncError && <p className={styles.pinError}>{syncError}</p>}
+          {syncError && !syncing && (
+            <div className={`${styles.importResult} ${styles.importResultError}`}>
+              <strong>Sync failed:</strong> {syncError}
+            </div>
+          )}
         </>
       ) : authFlow ? (
         <div className={styles.pinFlow}>
