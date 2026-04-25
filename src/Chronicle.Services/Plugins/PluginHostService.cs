@@ -126,9 +126,73 @@ public sealed class PluginHostService : IHostedService
                 if (string.IsNullOrWhiteSpace(manifest?.PluginId))
                     continue;
 
-                // Skip if already registered (by any install path)
-                if (await db.Plugins.AnyAsync(p => p.PluginId == manifest.PluginId, ct))
+                // If already registered, sync mutable fields from the manifest so that
+                // renames (e.g. "Simkl" → "SIMKL") and task-description edits propagate
+                // automatically on restart without a reinstall.
+                var existingPlugin = await db.Plugins
+                    .FirstOrDefaultAsync(p => p.PluginId == manifest.PluginId, ct);
+
+                if (existingPlugin != null)
+                {
+                    // Update display fields — never touch IsEnabled, SettingsJson (user-controlled)
+                    var pluginChanged = false;
+                    var wantName  = manifest.Name ?? manifest.PluginId;
+                    var wantVer   = manifest.Version ?? "0.0.0";
+                    if (existingPlugin.Name            != wantName)            { existingPlugin.Name            = wantName;                  pluginChanged = true; }
+                    if (existingPlugin.Version         != wantVer)             { existingPlugin.Version         = wantVer;                   pluginChanged = true; }
+                    if (existingPlugin.IconUrl         != manifest.IconUrl)    { existingPlugin.IconUrl         = manifest.IconUrl;          pluginChanged = true; }
+                    if (existingPlugin.BrandColorLight != manifest.BrandColorLight) { existingPlugin.BrandColorLight = manifest.BrandColorLight; pluginChanged = true; }
+                    if (existingPlugin.BrandColorDark  != manifest.BrandColorDark)  { existingPlugin.BrandColorDark  = manifest.BrandColorDark;  pluginChanged = true; }
+                    if (existingPlugin.FixMatchHint    != manifest.FixMatchHint)    { existingPlugin.FixMatchHint    = manifest.FixMatchHint;    pluginChanged = true; }
+                    if (pluginChanged)
+                    {
+                        existingPlugin.UpdatedAt = DateTime.UtcNow;
+                        registered = true;
+                        _log.Information("Synced manifest metadata for plugin {PluginId}", manifest.PluginId);
+                    }
+
+                    // Sync task display names/descriptions and seed any tasks added to the manifest
+                    // since initial install. CronExpression and IsEnabled are user-controlled and left alone.
+                    if (manifest.BackgroundTasks is { Count: > 0 })
+                    {
+                        foreach (var tm in manifest.BackgroundTasks)
+                        {
+                            var namespacedId = $"{manifest.PluginId}:{tm.TaskId}";
+                            var existingTask = await db.BackgroundTasks
+                                .FirstOrDefaultAsync(t => t.TaskId == namespacedId, ct);
+
+                            if (existingTask is null)
+                            {
+                                // New task added to manifest after initial install — seed it now
+                                db.BackgroundTasks.Add(new BackgroundTask
+                                {
+                                    TaskId                 = namespacedId,
+                                    PluginId               = manifest.PluginId,
+                                    DisplayName            = tm.DisplayName ?? string.Empty,
+                                    Description            = tm.Description ?? string.Empty,
+                                    CronExpression         = tm.DefaultCron ?? string.Empty,
+                                    IsEnabled              = tm.DefaultEnabled,
+                                    Schedulable            = tm.Schedulable,
+                                    RunConfirmationTitle   = tm.RunConfirmationTitle,
+                                    RunConfirmationMessage = tm.RunConfirmationMessage,
+                                });
+                                registered = true;
+                            }
+                            else
+                            {
+                                var wantDisplay = tm.DisplayName ?? string.Empty;
+                                var wantDesc    = tm.Description ?? string.Empty;
+                                if (existingTask.DisplayName != wantDisplay || existingTask.Description != wantDesc)
+                                {
+                                    existingTask.DisplayName = wantDisplay;
+                                    existingTask.Description = wantDesc;
+                                    registered = true;
+                                }
+                            }
+                        }
+                    }
                     continue;
+                }
 
                 var dllPath = FindPluginDll(dir, manifest.EntryType);
                 if (dllPath is null)
