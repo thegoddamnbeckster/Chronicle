@@ -5,10 +5,8 @@ import {
   startAuth,
   pollAuth,
   getAuthStatus,
-  triggerSync,
 } from '@/api/import'
-import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
-import type { ImportProvider, ImportAuthStart, SyncResult } from '@/types'
+import type { ImportProvider, ImportAuthStart } from '@/types'
 import {
   listPlugins,
   installPlugin,
@@ -43,11 +41,7 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
   const [polling,   setPolling]           = useState(false)
   const [pollError, setPollError]         = useState<string | null>(null)
   const [starting,  setStarting]          = useState(false)
-  const [syncing,   setSyncing]           = useState(false)
-  const [syncResult, setSyncResult]       = useState<SyncResult | null>(null)
-  const [syncError,  setSyncError]        = useState<string | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const { addJob, completeJob, failJob }  = useBackgroundActivity()
 
   useEffect(() => {
     void checkAuth()
@@ -110,26 +104,6 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
     }, intervalSec * 1000)
   }
 
-  async function runSync(fullSync: boolean) {
-    const label = fullSync ? 'Full Sync' : 'Delta Sync'
-    const jobId = addJob(`${label} from ${provider.name}…`)
-    setSyncing(true)
-    setSyncResult(null)
-    setSyncError(null)
-    try {
-      const data = await triggerSync(provider.pluginId, fullSync)
-      setSyncResult(data)
-      completeJob(jobId,
-        `${data.stubsCreated} created, ${data.itemsMatched} matched, ${data.watchEventsAdded} events`)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Sync failed'
-      setSyncError(msg)
-      failJob(jobId, msg)
-    } finally {
-      setSyncing(false)
-    }
-  }
-
   if (authenticated === null) return null
 
   return (
@@ -142,56 +116,11 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
             <span className={styles.connectedDot} />
             Connected
           </div>
-
-          <div className={styles.importButtons}>
-            <button type="button" className={styles.importBtn}
-              onClick={() => runSync(true)} disabled={syncing}>
-              Full Sync
-            </button>
-            <button type="button" className={`${styles.importBtn} ${styles.importBtnSecondary}`}
-              onClick={() => runSync(false)} disabled={syncing}>
-              Delta Sync
-            </button>
-          </div>
           <p className={styles.syncHint}>
-            <strong>Full Sync</strong> imports everything from scratch.{' '}
-            <strong>Delta Sync</strong> fetches only items added since your last sync.
+            Sync controls are available on the{' '}
+            <a href="/settings/background-tasks" className={styles.pinLink}>Background Tasks</a>{' '}
+            page.
           </p>
-
-          {syncing && (
-            <div className={styles.syncProgress}>
-              <span className={styles.syncSpinner} />
-              <div>
-                <strong>Sync in progress…</strong>
-                <div className={styles.syncProgressNote}>
-                  This may take several minutes for large libraries. Do not close this tab.
-                </div>
-              </div>
-            </div>
-          )}
-
-          {syncResult && !syncing && (
-            <div className={`${styles.importResult} ${
-              syncResult.errors.length > 0 ? styles.importResultError : styles.importResultOk
-            }`}>
-              <strong>Sync complete:</strong>{' '}
-              {syncResult.stubsCreated} new items, {syncResult.itemsMatched} matched,{' '}
-              {syncResult.watchEventsAdded} watch events
-              {syncResult.errors.length > 0 && (
-                <div className={styles.importErrors}>
-                  {syncResult.errors.slice(0, 5).map((e, i) => <div key={i}>{e}</div>)}
-                  {syncResult.errors.length > 5 && (
-                    <div>…and {syncResult.errors.length - 5} more errors</div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {syncError && !syncing && (
-            <div className={`${styles.importResult} ${styles.importResultError}`}>
-              <strong>Sync failed:</strong> {syncError}
-            </div>
-          )}
         </>
       ) : authFlow ? (
         <div className={styles.pinFlow}>
