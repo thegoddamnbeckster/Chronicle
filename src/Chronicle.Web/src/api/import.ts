@@ -52,39 +52,46 @@ export async function importWatchlist(pluginId: string): Promise<ImportResult> {
   return data.data
 }
 
-const SYNC_POLL_INTERVAL_MS = 3000
-
-/** Start a sync and poll until it completes. Resolves with the final SyncResult. */
-export async function triggerSync(pluginId: string, fullSync: boolean): Promise<SyncResult> {
-  // Fire the sync — server returns 202 Accepted with a jobId immediately.
-  const { data: startData } = await client.post<ApiResponse<{ jobId: string }>>(
+/**
+ * Fire a sync job and return the jobId immediately.
+ * The caller is responsible for polling getSyncJobStatus() until done.
+ */
+export async function startSyncJob(pluginId: string, fullSync: boolean): Promise<string> {
+  const { data } = await client.post<ApiResponse<{ jobId: string }>>(
     `/sync/${pluginId}`,
     null,
     { params: { fullSync } },
   )
-  if (!startData.success || !startData.data?.jobId)
-    throw new Error(startData.error?.message ?? 'Failed to start sync')
+  if (!data.success || !data.data?.jobId)
+    throw new Error(data.error?.message ?? 'Failed to start sync')
+  return data.data.jobId
+}
 
-  const { jobId } = startData.data
+/** Poll a sync job for its current status. */
+export async function getSyncJobStatus(pluginId: string, jobId: string): Promise<SyncJobStatus> {
+  const { data } = await client.get<ApiResponse<SyncJobStatus>>(
+    `/sync/${pluginId}/job/${jobId}`,
+  )
+  if (!data.success || !data.data)
+    throw new Error(data.error?.message ?? 'Failed to get sync status')
+  return data.data
+}
 
-  // Poll until the job finishes.
+/**
+ * Convenience wrapper used by PluginsPage: fire-and-forget + poll loop in one call.
+ * BackgroundTasksPage uses startSyncJob + getSyncJobStatus directly instead.
+ */
+export async function triggerSync(pluginId: string, fullSync: boolean): Promise<SyncResult> {
+  const jobId = await startSyncJob(pluginId, fullSync)
+
   for (;;) {
-    await new Promise(r => setTimeout(r, SYNC_POLL_INTERVAL_MS))
-
-    const { data: pollData } = await client.get<ApiResponse<SyncJobStatus>>(
-      `/sync/${pluginId}/job/${jobId}`,
-    )
-    if (!pollData.success || !pollData.data)
-      throw new Error(pollData.error?.message ?? 'Failed to poll sync status')
-
-    const snap = pollData.data
+    await new Promise(r => setTimeout(r, 3_000))
+    const snap = await getSyncJobStatus(pluginId, jobId)
     if (snap.status === 'complete') {
       if (!snap.summary) throw new Error('Sync completed but returned no summary')
       return snap.summary
     }
-    if (snap.status === 'failed') {
-      throw new Error(snap.error ?? 'Sync failed')
-    }
-    // status === 'running' → keep polling
+    if (snap.status === 'failed') throw new Error(snap.error ?? 'Sync failed')
+    // 'running' → keep polling
   }
 }

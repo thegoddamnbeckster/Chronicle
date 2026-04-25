@@ -14,6 +14,13 @@ import {
 } from '@/api/enrichment'
 import { getImportProgress, type ImportProgressState } from '@/api/scan'
 import {
+  getImportProviders,
+  startSyncJob,
+  getSyncJobStatus,
+} from '@/api/import'
+import type { ImportProvider, SyncResult } from '@/types'
+import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
+import {
   cronToParams,
   paramsToCron,
   describeSchedule,
@@ -24,6 +31,15 @@ import {
 } from '@/utils/cronBuilder'
 import { ApiError } from '@/api/client'
 import styles from './BackgroundTasksPage.module.css'
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface SyncJobState {
+  jobId: string | null
+  running: boolean
+  result: SyncResult | null
+  error: string | null
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -117,9 +133,13 @@ interface EnrichmentSectionProps {
   onRunPlugin: (pluginId: string) => void
   /** Set of plugin IDs whose enrichment task is currently running (optimistic). */
   runningPluginIds: Set<string>
+  /** Import providers to show as sync-status rows. */
+  importProviders: ImportProvider[]
+  /** Current sync job states, keyed by pluginId. */
+  syncStates: Record<string, SyncJobState>
 }
 
-function EnrichmentSection({ enrichmentRunning, scanTask, scanIsRunning, scanProgress, onRunScan, onRunPlugin, runningPluginIds }: EnrichmentSectionProps) {
+function EnrichmentSection({ enrichmentRunning, scanTask, scanIsRunning, scanProgress, onRunScan, onRunPlugin, runningPluginIds, importProviders, syncStates }: EnrichmentSectionProps) {
   const [stats, setStats] = useState<EnrichmentStats[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -183,7 +203,7 @@ return (
       </div>
       {loading ? (
         <p className={styles.loading}>Loading enrichment stats…</p>
-      ) : stats.length === 0 ? (
+      ) : stats.length === 0 && importProviders.length === 0 ? (
         <p className={styles.enrichmentEmpty}>No metadata plugins installed. Install a plugin in Settings → Plugins to enable enrichment.</p>
       ) : (
         <div className={styles.card}>
@@ -295,6 +315,51 @@ return (
                   </td>
                 </tr>
               ))}
+              {/* ── Import provider sync rows ─────────────────────── */}
+              {importProviders.map(provider => {
+                const state = syncStates[provider.pluginId]
+                const running = state?.running ?? false
+                const result = state?.result ?? null
+                const completed = result ? (result.itemsMatched + result.stubsCreated) : null
+                const failed = result ? result.errors.length : null
+                return (
+                  <tr key={`sync-${provider.pluginId}`} className={styles.enrichRow}>
+                    <td className={styles.enrichTd}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {running && <span className={styles.progressSpinnerInline} style={{ width: 12, height: 12, borderWidth: 2 }} />}
+                        {provider.name}
+                      </span>
+                    </td>
+                    <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    </td>
+                    <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
+                      {completed !== null
+                        ? <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{completed.toLocaleString()}</span>
+                        : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                    </td>
+                    <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
+                      {failed !== null && failed > 0
+                        ? <span style={{ color: '#eb5757', fontWeight: 600 }}>{failed.toLocaleString()}</span>
+                        : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                    </td>
+                    <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    </td>
+                    <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    </td>
+                    <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    </td>
+                    <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem', fontStyle: 'italic' }}>
+                        {running ? 'Syncing…' : 'See Sync Jobs'}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
           </div>
@@ -503,6 +568,90 @@ function ScheduleEditor({ taskId, initialCron, isEnabled, onSave, onCancel }: Sc
   )
 }
 
+// ── Import sync section ───────────────────────────────────────────────────────
+
+interface ImportSyncSectionProps {
+  providers: ImportProvider[]
+  syncStates: Record<string, SyncJobState>
+  onSync: (pluginId: string, fullSync: boolean) => void
+}
+
+function ImportSyncSection({ providers, syncStates, onSync }: ImportSyncSectionProps) {
+  if (providers.length === 0) return null
+
+  return (
+    <div className={styles.importSyncSection}>
+      <h2 className={styles.sectionTitle}>Sync Jobs</h2>
+      <div className={styles.importSyncCards}>
+        {providers.map(provider => {
+          const state = syncStates[provider.pluginId]
+          const running = state?.running ?? false
+          const result = state?.result ?? null
+          const error = state?.error ?? null
+
+          return (
+            <div key={provider.pluginId} className={styles.importSyncCard}>
+              <div className={styles.importSyncHeader}>
+                <span className={styles.importSyncName}>{provider.name}</span>
+                {running && <span className={styles.progressSpinnerInline} />}
+              </div>
+
+              <div className={styles.importSyncButtons}>
+                <button
+                  className={styles.runBtn}
+                  onClick={() => onSync(provider.pluginId, true)}
+                  disabled={running}
+                >
+                  Full Sync
+                </button>
+                <button
+                  className={styles.editBtn}
+                  onClick={() => onSync(provider.pluginId, false)}
+                  disabled={running}
+                >
+                  Delta Sync
+                </button>
+              </div>
+
+              <p className={styles.importSyncHint}>
+                <strong>Full Sync</strong> imports everything from scratch.{' '}
+                <strong>Delta Sync</strong> fetches only new items since your last sync.
+              </p>
+
+              {running && (
+                <div className={styles.importSyncStatus}>
+                  Sync in progress — this may take several minutes for large libraries.
+                </div>
+              )}
+
+              {result && !running && (
+                <div className={`${styles.importSyncStatus} ${styles.importSyncOk}`}>
+                  ✓ {result.stubsCreated} new items, {result.itemsMatched} matched,{' '}
+                  {result.watchEventsAdded} watch events
+                  {result.errors.length > 0 && (
+                    <div className={styles.importSyncErrors}>
+                      {result.errors.slice(0, 3).map((e, i) => <div key={i}>{e}</div>)}
+                      {result.errors.length > 3 && (
+                        <div>…and {result.errors.length - 3} more errors</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {error && !running && (
+                <div className={`${styles.importSyncStatus} ${styles.importSyncErr}`}>
+                  ✗ {error}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── TaskCard ─────────────────────────────────────────────────────────────────
 
 interface TaskCardProps {
@@ -671,6 +820,9 @@ export default function BackgroundTasksPage() {
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set())
   const [tasksExpanded, setTasksExpanded] = useState(true)
   const [scanProgress, setScanProgress] = useState<ImportProgressState | null>(null)
+  const [importProviders, setImportProviders] = useState<ImportProvider[]>([])
+  const [syncStates, setSyncStates] = useState<Record<string, SyncJobState>>({})
+  const { addJob, completeJob, failJob } = useBackgroundActivity()
 
   const load = useCallback(async () => {
     try {
@@ -697,6 +849,11 @@ export default function BackgroundTasksPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Load import providers once on mount
+  useEffect(() => {
+    getImportProviders().then(setImportProviders).catch(() => {})
+  }, [])
 
   // Poll every 3s while any task is running
   useEffect(() => {
@@ -728,6 +885,38 @@ export default function BackgroundTasksPage() {
     await updateBackgroundTask(taskId, { cronExpression: cron, isEnabled })
     setEditingId(null)
     await load()
+  }
+
+  async function handleSyncStart(pluginId: string, fullSync: boolean) {
+    const provider = importProviders.find(p => p.pluginId === pluginId)
+    const label = `${fullSync ? 'Full' : 'Delta'} Sync — ${provider?.name ?? pluginId}`
+    const activityJobId = addJob(`${label}…`)
+    setSyncStates(prev => ({ ...prev, [pluginId]: { jobId: null, running: true, result: null, error: null } }))
+    try {
+      const jobId = await startSyncJob(pluginId, fullSync)
+      setSyncStates(prev => ({ ...prev, [pluginId]: { ...prev[pluginId], jobId } }))
+      for (;;) {
+        await new Promise(r => setTimeout(r, 3_000))
+        const snap = await getSyncJobStatus(pluginId, jobId)
+        if (snap.status === 'complete') {
+          const result = snap.summary ?? { itemsMatched: 0, stubsCreated: 0, watchEventsAdded: 0, creditsAdded: 0, errors: [] }
+          setSyncStates(prev => ({ ...prev, [pluginId]: { jobId: null, running: false, result, error: null } }))
+          completeJob(activityJobId, `${result.stubsCreated} created, ${result.itemsMatched} matched, ${result.watchEventsAdded} events`)
+          return
+        }
+        if (snap.status === 'failed') {
+          const errMsg = snap.error ?? 'Sync failed'
+          setSyncStates(prev => ({ ...prev, [pluginId]: { jobId: null, running: false, result: null, error: errMsg } }))
+          failJob(activityJobId, errMsg)
+          return
+        }
+        // 'running' → keep polling
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Sync failed'
+      setSyncStates(prev => ({ ...prev, [pluginId]: { jobId: null, running: false, result: null, error: errMsg } }))
+      failJob(activityJobId, errMsg)
+    }
   }
 
   // Derived state — computed before early returns so hooks below are always called.
@@ -783,10 +972,19 @@ export default function BackgroundTasksPage() {
         onRunScan={() => handleRunNow('scheduled_scan')}
         onRunPlugin={(pluginId) => handleRunNow(`${pluginId}:fetch-missing-metadata`)}
         runningPluginIds={runningPluginIds}
+        importProviders={importProviders}
+        syncStates={syncStates}
       />
 
       {/* ── Scan progress banner — shown while a scan is running ─────── */}
       <ScanProgressBanner progress={scanProgress} />
+
+      {/* ── Import sync cards — one per import provider ──────────────── */}
+      <ImportSyncSection
+        providers={importProviders}
+        syncStates={syncStates}
+        onSync={handleSyncStart}
+      />
 
       {/* ── Task list — collapsible ──────────────────────────────────── */}
       <div className={styles.tasksFold}>
