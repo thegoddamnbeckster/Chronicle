@@ -65,6 +65,11 @@ public class ScannedFile
     public int? AudioYear { get; set; }
     /// <summary>Genre string read from embedded audio tags.</summary>
     public string? AudioGenre { get; set; }
+    /// <summary>
+    /// Grouping / series name read from embedded tags (iTunes ©grp / ID3 TIT1).
+    /// Audiobook managers store the series name here (e.g. "The Kingkiller Chronicle").
+    /// </summary>
+    public string? AudioGrouping { get; set; }
 
     // ── Container / embedded video tags ────────────────────────────────────
     /// <summary>Title embedded in the media container's tag (distinct from ParsedTitle, which is filename-derived).</summary>
