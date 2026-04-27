@@ -682,7 +682,7 @@ function EnrichmentCard({
   ].filter(([, n]) => (n as number) > 0) as [string, number, string][]
 
   return (
-    <div className={styles.card}>
+    <div className={`${styles.card} ${styles.cardEnrichment}`}>
       <div className={styles.cardHeader}>
         <div className={styles.cardTitleGroup}>
           <div className={styles.cardTitleText}>
