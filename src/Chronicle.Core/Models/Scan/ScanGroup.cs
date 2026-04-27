@@ -36,6 +36,12 @@ namespace Chronicle.Core.Models.Scan
         /// <summary>Absolute path to the folder on disk that this group represents (root groups only).</summary>
         public string? FolderPath { get; set; }
 
+        /// <summary>Author / artist name, populated for audiobook and music groups.</summary>
+        public string? Author { get; set; }
+
+        /// <summary>Series name from the Grouping tag (iTunes ©grp / ID3 TIT1), populated for audiobooks.</summary>
+        public string? Series { get; set; }
+
         /// <summary>Total number of leaf files under this group (recursive).</summary>
         public int TotalFileCount =>
             Files.Count + Children.Sum(c => c.TotalFileCount);

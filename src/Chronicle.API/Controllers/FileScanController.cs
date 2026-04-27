@@ -417,7 +417,7 @@ public class FileScanController : ControllerBase
         g.PosterPath, (int)Math.Round(g.ConfidenceScore * 100),
         g.SignalSources, g.HasConflicts,
         g.Children.Select(ToGroupDto).ToList(),
-        g.Files, g.FolderPath);
+        g.Files, g.FolderPath, g.Author, g.Series);
 
     private static Chronicle.Services.ScanGroupImport ToGroupImport(ImportGroupDto g) =>
         new(g.Name, g.Year, g.PosterPath,
