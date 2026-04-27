@@ -885,7 +885,13 @@ export default function BackgroundTasksPage() {
                 const iconUrl = groupTasks[0].pluginIconUrl
                 const foldKey = `backgroundTasks.${pluginId ?? 'system'}`
 
-                const enrichStat = pluginId !== null
+                // Only show the enrichment card when the plugin doesn't already
+                // have a manifest-defined "fetch-missing-metadata" task — those
+                // plugins (e.g. FanEdit, MusicBrainz) already surface enrichment
+                // as a proper scheduled task card above.
+                const hasOwnFetchTask = groupTasks.some(t =>
+                  t.taskId.endsWith(':fetch-missing-metadata'))
+                const enrichStat = pluginId !== null && !hasOwnFetchTask
                   ? enrichmentStats.find(s => s.pluginId === pluginId)
                   : undefined
 
