@@ -39,13 +39,71 @@
 }
 .chevronOpen { transform: rotate(270deg); }
 
-.table { width: 100%; }
+/* ── Default priority box ─────────────────────────────────────────────────── */
+
+.defaultBox {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--bg-sidebar, var(--bg-card));
+  border-bottom: 2px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.defaultBoxLeft {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 130px;
+}
+
+.defaultBoxLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.defaultBoxHint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.applyBtn {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.applyBtn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+}
+.applyBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Table ────────────────────────────────────────────────────────────────── */
+
+.tableWrap { width: 100%; }
+
 .tableHead {
   display: grid;
-  grid-template-columns: 160px 1fr;
-  padding: 8px 16px;
+  grid-template-columns: 140px 1fr;
+  padding: 6px 16px;
   background: var(--bg-card);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -54,39 +112,53 @@
 }
 .row {
   display: grid;
-  grid-template-columns: 160px 1fr;
-  padding: 10px 16px;
+  grid-template-columns: 140px 1fr;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--border);
-  align-items: start;
+  align-items: center;
+  min-height: 48px;
 }
 .row:last-child { border-bottom: none; }
-.colField { font-weight: 500; font-size: 0.9rem; padding-top: 6px; }
-.colPlugins { display: flex; flex-direction: column; gap: 4px; }
+.colField { font-weight: 500; font-size: 0.88rem; }
+.colPlugins { display: flex; align-items: center; }
 
-.pluginRow {
+/* ── Chip row ─────────────────────────────────────────────────────────────── */
+
+.chipRow {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 4px 4px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 4px;
+  user-select: none;
+  white-space: nowrap;
 }
-.pluginIcon { width: 16px; height: 16px; object-fit: contain; }
-.pluginName { flex: 1; font-size: 0.85rem; }
-.arrows { display: flex; gap: 4px; }
-.arrowBtn {
-  width: 24px; height: 24px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 0.8rem;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--text);
+
+.gripHandle {
+  font-size: 1rem;
+  color: var(--text-muted);
+  cursor: grab;
+  padding: 0 2px;
+  line-height: 1;
+  touch-action: none;
 }
-.arrowBtn:disabled { opacity: 0.3; cursor: default; }
-.arrowBtn:not(:disabled):hover { background: var(--border); }
+.gripHandle:active { cursor: grabbing; }
+.gripDisabled {
+  cursor: default;
+  opacity: 0.3;
+}
+
+.chipIcon { width: 14px; height: 14px; object-fit: contain; }
+.chipName { font-size: 0.82rem; }
 
 .noPlugins {
   padding: 14px 20px;
@@ -95,10 +167,11 @@
   font-style: italic;
 }
 
-/* ── Hierarchical sub-level sections (e.g. TV Seasons, Music Albums) ── */
+/* ── Hierarchical sub-level sections ─────────────────────────────────────── */
+
 .sectionChild {
   margin-left: 24px;
-  margin-top: -8px;      /* tight spacing with parent section */
+  margin-top: -8px;
   border-color: var(--border);
   border-top-color: transparent;
   border-top-left-radius: 0;
