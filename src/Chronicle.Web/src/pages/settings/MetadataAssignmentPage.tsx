@@ -1,4 +1,19 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  horizontalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { getMetadataAssignment, putMetadataAssignment, type MetadataAssignmentConfig, type PluginInfo } from '@/api/settings'
 import { useAuth } from '@/hooks/useAuth'
 import styles from './MetadataAssignmentPage.module.css'
@@ -17,27 +32,113 @@ const FIELD_LABELS: Record<string, string> = {
   tags:            'Tags',
 }
 
+// ── Sortable chip ────────────────────────────────────────────────────────────
+
+interface SortableChipProps {
+  id: string
+  plugin: PluginInfo
+  disabled: boolean
+}
+
+function SortableChip({ id, plugin, disabled }: SortableChipProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id, disabled })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 9999 : undefined,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} className={styles.chip}>
+      <span
+        className={`${styles.gripHandle} ${disabled ? styles.gripDisabled : ''}`}
+        {...(disabled ? {} : { ...attributes, ...listeners })}
+        title={disabled ? 'Admin access required' : 'Drag to reorder'}
+      >
+        ⠿
+      </span>
+      {plugin.iconUrl && (
+        <img
+          src={plugin.iconUrl}
+          alt=""
+          className={styles.chipIcon}
+          onError={e => { e.currentTarget.style.display = 'none' }}
+        />
+      )}
+      <span className={styles.chipName}>{plugin.name}</span>
+    </div>
+  )
+}
+
+// ── Sortable list (used for both field rows and the default priority box) ────
+
+interface SortableListProps {
+  id: string          // unique key for DndContext (prevents cross-list interference)
+  order: string[]
+  plugins: PluginInfo[]
+  disabled: boolean
+  onReorder: (newOrder: string[]) => void
+}
+
+function SortableList({ id, order, plugins, disabled, onReorder }: SortableListProps) {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIdx = order.indexOf(String(active.id))
+    const newIdx = order.indexOf(String(over.id))
+    onReorder(arrayMove(order, oldIdx, newIdx))
+  }
+
+  const visibleOrder = order.filter(id => plugins.some(p => p.pluginId === id))
+
+  return (
+    <DndContext id={id} sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={visibleOrder} strategy={horizontalListSortingStrategy}>
+        <div className={styles.chipRow}>
+          {visibleOrder.map(pluginId => {
+            const plugin = plugins.find(p => p.pluginId === pluginId)
+            if (!plugin) return null
+            return <SortableChip key={pluginId} id={pluginId} plugin={plugin} disabled={disabled} />
+          })}
+        </div>
+      </SortableContext>
+    </DndContext>
+  )
+}
+
+// ── Main page ────────────────────────────────────────────────────────────────
+
 export default function MetadataAssignmentPage() {
-  const { user }                        = useAuth()
-  const isAdmin                         = user?.isAdmin ?? false
-  const [config, setConfig]             = useState<MetadataAssignmentConfig | null>(null)
-  const [assignments, setAssignments]   = useState<Record<string, Record<string, string[]>>>({})
-  const [saving, setSaving]             = useState(false)
-  const [saved, setSaved]               = useState(false)
-  const [error, setError]               = useState<string | null>(null)
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
+  const { user }                              = useAuth()
+  const isAdmin                               = user?.isAdmin ?? false
+  const [config, setConfig]                   = useState<MetadataAssignmentConfig | null>(null)
+  const [assignments, setAssignments]         = useState<Record<string, Record<string, string[]>>>({})
+  // Staged default orders per media type (shown in the default box, not yet applied)
+  const [defaultOrders, setDefaultOrders]     = useState<Record<string, string[]>>({})
+  const [saving, setSaving]                   = useState(false)
+  const [saved, setSaved]                     = useState(false)
+  const [error, setError]                     = useState<string | null>(null)
+  const [openSections, setOpenSections]       = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     getMetadataAssignment()
       .then(cfg => {
         setConfig(cfg)
         setAssignments(cfg.assignments)
-        // Default all sections open
         const defaults: Record<string, boolean> = {}
+        const orders: Record<string, string[]>  = {}
         for (const mt of Object.keys(cfg.assignableFields)) {
           defaults[mt] = true
+          // Initialise each media type's default order from its available plugin list
+          orders[mt] = cfg.availablePlugins[mt]?.map(p => p.pluginId) ?? []
         }
         setOpenSections(defaults)
+        setDefaultOrders(orders)
       })
       .catch(e => setError(String(e)))
   }, [])
@@ -46,21 +147,7 @@ export default function MetadataAssignmentPage() {
     setOpenSections(prev => ({ ...prev, [mediaType]: !prev[mediaType] }))
   }
 
-  async function movePlugin(mediaType: string, field: string, pluginId: string, direction: 'up' | 'down') {
-    if (!isAdmin || saving) return
-
-    const defaultOrder = config?.availablePlugins[mediaType]?.map(p => p.pluginId) ?? []
-    const list = [...(assignments[mediaType]?.[field] ?? defaultOrder)]
-    const idx  = list.indexOf(pluginId)
-    if (idx === -1) return
-    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
-    if (swapIdx < 0 || swapIdx >= list.length) return
-    ;[list[idx], list[swapIdx]] = [list[swapIdx], list[idx]]
-
-    const next = { ...assignments, [mediaType]: { ...(assignments[mediaType] ?? {}), [field]: list } }
-    setAssignments(next)
-
-    // Auto-save immediately after each reorder
+  const save = useCallback(async (next: Record<string, Record<string, string[]>>) => {
     setSaving(true)
     setError(null)
     try {
@@ -72,6 +159,28 @@ export default function MetadataAssignmentPage() {
     } finally {
       setSaving(false)
     }
+  }, [])
+
+  function handleFieldReorder(mediaType: string, field: string, newOrder: string[]) {
+    const next = { ...assignments, [mediaType]: { ...(assignments[mediaType] ?? {}), [field]: newOrder } }
+    setAssignments(next)
+    save(next)
+  }
+
+  function handleDefaultReorder(mediaType: string, newOrder: string[]) {
+    setDefaultOrders(prev => ({ ...prev, [mediaType]: newOrder }))
+  }
+
+  function applyDefaultToAll(mediaType: string) {
+    if (!config) return
+    const order = defaultOrders[mediaType] ?? []
+    const fieldAssignments: Record<string, string[]> = {}
+    for (const field of config.assignableFields[mediaType] ?? []) {
+      fieldAssignments[field] = [...order]
+    }
+    const next = { ...assignments, [mediaType]: fieldAssignments }
+    setAssignments(next)
+    save(next)
   }
 
   if (!config) return (
@@ -80,7 +189,6 @@ export default function MetadataAssignmentPage() {
     </div>
   )
 
-  // Show all active media types; types with no plugin support will show an empty state
   const mediaTypes = Object.keys(config.assignableFields)
 
   return (
@@ -88,11 +196,10 @@ export default function MetadataAssignmentPage() {
       <div className={styles.header}>
         <h1 className={styles.title}>Metadata Assignment</h1>
         <p className={styles.subtitle}>
-          Control which plugin's data is used for each field. The first plugin in each list is the
-          primary source; the rest are fallbacks in order.
+          Drag plugins to set priority order. The first plugin in each row is the primary source;
+          the rest are fallbacks.
           {!isAdmin && <span className={styles.readOnlyNote}> (read-only — admin access required)</span>}
         </p>
-        {/* Auto-save status indicator */}
         {saving && <span className={styles.saveStatus}>Saving…</span>}
         {!saving && saved && <span className={`${styles.saveStatus} ${styles.saveStatusOk}`}>Saved ✓</span>}
         {error && <p className={styles.error}>{error}</p>}
@@ -100,10 +207,10 @@ export default function MetadataAssignmentPage() {
 
       {mediaTypes.map(mediaType => {
         const plugins: PluginInfo[] = config.availablePlugins[mediaType] ?? []
-        const isOpen    = openSections[mediaType] ?? true
-        // Compound keys like "tv.1" are sub-levels — indent them under their parent.
-        const isChild   = mediaType.includes('.')
-        const displayName = config.mediaTypeDisplayNames[mediaType] ?? mediaType
+        const isOpen      = openSections[mediaType] ?? true
+        const isChild     = mediaType.includes('.')
+        const displayName = config.mediaTypeDisplayNames?.[mediaType] ?? mediaType
+        const defaultOrder = defaultOrders[mediaType] ?? plugins.map(p => p.pluginId)
 
         return (
           <section key={mediaType} className={`${styles.section} ${isChild ? styles.sectionChild : ''}`}>
@@ -123,56 +230,59 @@ export default function MetadataAssignmentPage() {
               plugins.length === 0 ? (
                 <p className={styles.noPlugins}>No installed plugins support this level.</p>
               ) : (
-              <div className={styles.table}>
-                <div className={styles.tableHead}>
-                  <div className={styles.colField}>Field</div>
-                  <div className={styles.colPlugins}>Plugin Priority</div>
-                </div>
+                <div className={styles.tableWrap}>
 
-                {config.assignableFields[mediaType].map(field => {
-                  const defaultOrder = plugins.map(p => p.pluginId)
-                  const currentOrder = assignments[mediaType]?.[field] ?? defaultOrder
-
-                  return (
-                    <div key={field} className={styles.row}>
-                      <div className={styles.colField}>{FIELD_LABELS[field] ?? field}</div>
-                      <div className={styles.colPlugins}>
-                        {currentOrder.map((pluginId, idx) => {
-                          const plugin = plugins.find(p => p.pluginId === pluginId)
-                          if (!plugin) return null
-                          return (
-                            <div key={pluginId} className={styles.pluginRow}>
-                              {plugin.iconUrl && (
-                                <img
-                                  src={plugin.iconUrl}
-                                  alt=""
-                                  className={styles.pluginIcon}
-                                  onError={e => { e.currentTarget.style.display = 'none' }}
-                                />
-                              )}
-                              <span className={styles.pluginName}>{plugin.name}</span>
-                              <div className={styles.arrows}>
-                                <button
-                                  className={styles.arrowBtn}
-                                  onClick={() => movePlugin(mediaType, field, pluginId, 'up')}
-                                  disabled={!isAdmin || saving || idx === 0}
-                                  title={!isAdmin ? 'Admin access required' : 'Move up (higher priority)'}
-                                >↑</button>
-                                <button
-                                  className={styles.arrowBtn}
-                                  onClick={() => movePlugin(mediaType, field, pluginId, 'down')}
-                                  disabled={!isAdmin || saving || idx === currentOrder.length - 1}
-                                  title={!isAdmin ? 'Admin access required' : 'Move down (lower priority)'}
-                                >↓</button>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
+                  {/* ── Default priority box ── */}
+                  <div className={styles.defaultBox}>
+                    <div className={styles.defaultBoxLeft}>
+                      <span className={styles.defaultBoxLabel}>Default Priority</span>
+                      <span className={styles.defaultBoxHint}>
+                        Drag to set, then apply to all fields below
+                      </span>
                     </div>
-                  )
-                })}
-              </div>
+                    <SortableList
+                      id={`default-${mediaType}`}
+                      order={defaultOrder}
+                      plugins={plugins}
+                      disabled={!isAdmin || saving}
+                      onReorder={order => handleDefaultReorder(mediaType, order)}
+                    />
+                    <button
+                      className={styles.applyBtn}
+                      onClick={() => applyDefaultToAll(mediaType)}
+                      disabled={!isAdmin || saving}
+                      title={!isAdmin ? 'Admin access required' : 'Apply this order to every field below'}
+                    >
+                      Apply to all fields
+                    </button>
+                  </div>
+
+                  {/* ── Per-field rows ── */}
+                  <div className={styles.tableHead}>
+                    <div className={styles.colField}>Field</div>
+                    <div className={styles.colPlugins}>Plugin Priority</div>
+                  </div>
+
+                  {config.assignableFields[mediaType].map(field => {
+                    const defaultPluginOrder = plugins.map(p => p.pluginId)
+                    const currentOrder = assignments[mediaType]?.[field] ?? defaultPluginOrder
+
+                    return (
+                      <div key={field} className={styles.row}>
+                        <div className={styles.colField}>{FIELD_LABELS[field] ?? field}</div>
+                        <div className={styles.colPlugins}>
+                          <SortableList
+                            id={`${mediaType}-${field}`}
+                            order={currentOrder}
+                            plugins={plugins}
+                            disabled={!isAdmin || saving}
+                            onReorder={order => handleFieldReorder(mediaType, field, order)}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               )
             )}
           </section>

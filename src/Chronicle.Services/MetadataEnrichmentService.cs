@@ -268,6 +268,54 @@ public class MetadataEnrichmentService(
             return shortToFull.GetValueOrDefault(suffix, source);
         }
 
+        // ── One-time cleanup: remove orphan enrichment rows for import-provider plugins ──
+        // Phase 3 (below) used to seed enrichment rows for every item of a supported media
+        // type, even for import providers (SIMKL, Trakt). Those plugins can only enrich
+        // items they already know about (have an external ID for). Rows seeded for items
+        // with no matching external ID can never be fulfilled and result in permanent
+        // Pending / NotFound counts on the Enrichment Status page.
+        //
+        // Safe to delete: an enrichment row for an import-provider plugin where the item
+        // has NO media_external_id with that plugin's source — that row came from Phase 3
+        // and will be re-created correctly by Phase 1 if the item is ever synced from that
+        // service.
+        //
+        // We resolve import-provider plugin IDs at runtime so the cleanup is self-updating
+        // as plugins are installed or removed.
+        var importProviderIds = (svc.ServiceProvider
+            .GetRequiredService<Chronicle.Services.Plugins.IPluginRegistry>()
+            .GetImportProviders()
+            .Select(p => p.PluginId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (importProviderIds.Count > 0)
+        {
+            // Collect the set of (mediaItemId, canonicalPluginId) pairs that DO have an
+            // external ID so we know which import-provider enrichment rows are legitimate.
+            var coveredByExternalId = (await db.Set<MediaExternalId>().ToListAsync(ct))
+                .Select(e => (e.MediaItemId, PluginId: CanonicalPluginId(e.Source)))
+                .Where(p => importProviderIds.Contains(p.PluginId))
+                .ToHashSet();
+
+            var orphanRows = await db.MediaEnrichments
+                .Where(me => importProviderIds.Contains(me.PluginId))
+                .ToListAsync(ct);
+
+            var toRemove = orphanRows
+                .Where(r => !coveredByExternalId.Contains((r.MediaItemId, r.PluginId)))
+                .ToList();
+
+            if (toRemove.Count > 0)
+            {
+                db.MediaEnrichments.RemoveRange(toRemove);
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation(
+                    "SeedEnrichmentRows: removed {Count} orphan import-provider enrichment rows " +
+                    "(items with no corresponding external ID)",
+                    toRemove.Count);
+            }
+        }
+
         // Load all existing enrichment rows (for deduplication)
         var enrichmentSet = (await db.MediaEnrichments
             .Select(me => new { me.MediaItemId, PluginId = me.PluginId.ToLower() })
@@ -371,8 +419,15 @@ public class MetadataEnrichmentService(
         // This pass creates Pending rows so the background enrichment service picks them up.
         // Critically, this also fixes fan edit items that had their enrichment rows deleted
         // by ChangeTypeAsync before the row-seeding fix was in place.
+        //
+        // Import-provider plugins (SIMKL, Trakt …) are also registered as IMetadataProvider
+        // but they can only enrich items they already know about (have external IDs for).
+        // They cannot discover items by title search across the full library.
+        // Phase 1 (above) already creates enrichment rows for those items from existing
+        // external IDs, so skip them here to prevent thousands of unresolvable Pending /
+        // NotFound rows being created for items that were never imported from those services.
         var pluginRegistry = svc.ServiceProvider.GetRequiredService<Chronicle.Services.Plugins.IPluginRegistry>();
-        var pluginEntries  = pluginRegistry.GetMetadataProviderEntries().ToList();
+        var pluginEntries = pluginRegistry.GetMetadataProviderEntries().ToList();
 
         if (pluginEntries.Count > 0)
         {
@@ -393,6 +448,10 @@ public class MetadataEnrichmentService(
             var phase3ToAdd = new List<MediaItemEnrichment>();
             foreach (var (pluginId, provider, _) in pluginEntries)
             {
+                // Skip plugins that are also import providers — they populate enrichment rows
+                // via Phase 1 (from known external IDs) and must not be applied to the full library.
+                if (pluginRegistry.GetImportProvider(pluginId) is not null) continue;
+
                 var supportedTypes = provider.GetSupportedMediaTypes()
                     .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);

@@ -118,7 +118,7 @@ public class SyncOrchestrationServiceMatchTests : IDisposable
         var (created, isNew) = await service.MatchOrCreateAsync(_db, evt, "chronicle.plugin.trakt", CancellationToken.None);
 
         isNew.Should().BeTrue();
-        created.Name.Should().Be("Unknown Movie");
+        created.Name.Should().Be("Unknown Movie (2020)");
         (await _db.MediaExternalIds.AnyAsync(e => e.Source == "trakt" && e.ExternalId == "trakt:99999"))
             .Should().BeTrue();
         (await _db.MediaExternalIds.AnyAsync(e => e.Source == "tmdb" && e.ExternalId == "movie:88888"))
