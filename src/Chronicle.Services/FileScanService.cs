@@ -84,6 +84,11 @@ namespace Chronicle.Services
 
             var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
 
+            // Audiobooks: each book folder is one library entry regardless of how many
+            // audio files (parts) or support files (covers, extras) it contains.
+            if (string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+                scannedFiles = CollapseAudiobooksToFolders(scannedFiles, request.Path);
+
             var added = 0;
             var alreadyInLibrary = 0;
             var skippedFiles = new List<SkippedFile>();
@@ -1214,6 +1219,116 @@ namespace Chronicle.Services
         }
 
         /// <summary>Maps a Chronicle media type name to the hint expected by metadata providers.</summary>
+        // ── Audiobook folder grouping ─────────────────────────────────────────────
+
+        /// <summary>
+        /// Collapses a flat list of audio files (as returned by the scanner) into one
+        /// representative <see cref="ScannedFile"/> per book.
+        ///
+        /// Rules:
+        ///   - Audio files sitting directly in <paramref name="scanRoot"/> each become their own entry.
+        ///   - Audio files in a sub-folder are all merged into one entry for that folder,
+        ///     identified by the shallowest ancestor of <paramref name="scanRoot"/> that contains
+        ///     audio files directly (deeper sub-folders, e.g. Extras/, are treated as supplemental
+        ///     and dropped).
+        ///
+        /// The representative entry for each folder uses:
+        ///   - <c>ParsedTitle</c> from AudioAlbum tag → NFO title → folder name
+        ///   - <c>ParsedYear</c>  from AudioYear tag → NFO year → year in folder name
+        ///   - <c>AudioArtist/AudioAlbumArtist</c> and <c>AudioGrouping</c> from the best-tagged file
+        ///   - <c>FilePath</c> set to the book folder path (for stable rescan dedup)
+        /// </summary>
+        private static List<ScannedFile> CollapseAudiobooksToFolders(
+            List<ScannedFile> files, string scanRoot)
+        {
+            if (files.Count == 0) return files;
+
+            var rootNorm = scanRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            // Group files by the directory that directly contains them.
+            var byDir = files
+                .GroupBy(f => Path.GetDirectoryName(f.FilePath) ?? string.Empty,
+                         StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+            // Identify "book folders": the shallowest directories with audio files.
+            // A directory whose ancestor is already a book folder is supplemental — skip it.
+            var bookFolders = new List<string>();
+            foreach (var dir in byDir.Keys.OrderBy(d => d.Length))
+            {
+                var covered = bookFolders.Any(bf =>
+                    dir.StartsWith(bf + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                    dir.StartsWith(bf + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+                if (!covered)
+                    bookFolders.Add(dir);
+            }
+
+            var result = new List<ScannedFile>();
+
+            foreach (var bookFolder in bookFolders)
+            {
+                var group  = byDir[bookFolder];
+                var isRoot = string.Equals(
+                    bookFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    rootNorm, StringComparison.OrdinalIgnoreCase);
+
+                if (isRoot)
+                {
+                    // Root-level audio files: each is its own standalone book.
+                    result.AddRange(group);
+                    continue;
+                }
+
+                // Subfolder: merge all parts into one representative entry.
+                // Pick the file with the richest tags (highest confidence score).
+                var rep = group.OrderByDescending(f => f.ConfidenceScore).First();
+
+                // Resolve author from tags (album artist preferred; falls back to performer).
+                var author = group
+                    .Select(f => f.AudioAlbumArtist ?? f.AudioArtist)
+                    .FirstOrDefault(a => !string.IsNullOrWhiteSpace(a));
+
+                // Resolve series from grouping tag.
+                var series = group
+                    .Select(f => f.AudioGrouping)
+                    .FirstOrDefault(g => !string.IsNullOrWhiteSpace(g));
+
+                // Propagate best author/series onto the representative.
+                if (author is not null) { rep.AudioAlbumArtist = author; rep.AudioArtist = author; }
+                if (series is not null)   rep.AudioGrouping = series;
+
+                // Resolve title: AudioAlbum tag > NFO-provided ParsedTitle (score ≥ 78)
+                //                > folder name  (strip "Author - " prefix and trailing year).
+                var folderName = Path.GetFileName(bookFolder);
+
+                if (!string.IsNullOrWhiteSpace(rep.AudioAlbum))
+                {
+                    rep.ParsedTitle = rep.AudioAlbum;
+                    rep.ParsedYear ??= rep.AudioYear ?? group.Select(f => f.AudioYear).FirstOrDefault(y => y.HasValue);
+                }
+                else if (rep.ConfidenceScore < 78) // no NFO — derive from folder name
+                {
+                    // Strip trailing "(YYYY)" → extract year
+                    var yearMatch = System.Text.RegularExpressions.Regex.Match(
+                        folderName, @"\s*\((\d{4})\)\s*$");
+                    if (yearMatch.Success && int.TryParse(yearMatch.Groups[1].Value, out var y))
+                    {
+                        rep.ParsedYear ??= y;
+                        folderName = folderName[..yearMatch.Index].TrimEnd(' ', '-', '_');
+                    }
+                    rep.ParsedTitle = folderName;
+                }
+
+                // Use the folder path as the stable file-path key so that a rescan of the
+                // same folder matches the existing stub rather than creating a duplicate.
+                rep.FilePath = bookFolder;
+
+                result.Add(rep);
+            }
+
+            return result;
+        }
+
         private static string ToMediaTypeHint(string mediaTypeName)
         {
             var n = mediaTypeName.ToLowerInvariant();
@@ -1308,7 +1423,8 @@ namespace Chronicle.Services
             List<string> Directors, string? PosterUrl, string? BackdropUrl);
 
         private sealed record FileScannerMetaJson(
-            string? FilePath, string? LocalPosterPath, string? NfoPosterUrl);
+            string? FilePath, string? LocalPosterPath, string? NfoPosterUrl,
+            string? Author = null, string? Series = null);
 
         private sealed record MediaMetaJsonRoot(TmdbMetaJson? Tmdb, FileScannerMetaJson? FileScanner);
 
@@ -1338,10 +1454,13 @@ namespace Chronicle.Services
             // Override with rich scan data if provided
             if (scannedFile is not null)
             {
+                var author = scannedFile.AudioAlbumArtist ?? scannedFile.AudioArtist;
                 fsData = new FileScannerMetaJson(
                     scannedFile.FilePath,
                     scannedFile.LocalPosterPath,
-                    scannedFile.NfoPosterUrl);
+                    scannedFile.NfoPosterUrl,
+                    Author: string.IsNullOrWhiteSpace(author) ? null : author,
+                    Series: scannedFile.AudioGrouping);
             }
 
             // Override with a plain file path (direct import without full ScannedFile)
