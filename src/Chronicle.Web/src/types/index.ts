@@ -146,6 +146,14 @@ export interface ImportResult {
   errors: string[]
 }
 
+export interface SyncResult {
+  itemsMatched: number
+  stubsCreated: number
+  watchEventsAdded: number
+  creditsAdded: number
+  errors: string[]
+}
+
 // ── File Scanner ──────────────────────────────────────────────────────────────
 export interface FileScanStatus {
   available: boolean
