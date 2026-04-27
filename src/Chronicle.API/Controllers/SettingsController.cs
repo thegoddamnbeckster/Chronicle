@@ -37,6 +37,11 @@ public class SettingsController : ControllerBase
         ["tv.1"]          = ["title", "overview", "year", "poster_url", "backdrop_url", "tags"],
         ["tv.2"]          = ["title", "overview", "year", "runtime_minutes", "tags"],
 
+        // ── Anime (HierarchyLevels = 3): Show → Season → Episode ─────────────────
+        ["anime"]         = ["title", "overview", "year", "poster_url", "backdrop_url", "rating", "genres", "cast", "directors", "tags"],
+        ["anime.1"]       = ["title", "overview", "year", "poster_url", "backdrop_url", "tags"],
+        ["anime.2"]       = ["title", "overview", "year", "runtime_minutes", "tags"],
+
         // ── Music (HierarchyLevels = 3): Artist → Album → Track ──────────────────
         ["music"]         = ["title", "overview", "poster_url", "rating", "genres", "tags"],
         ["music.1"]       = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
