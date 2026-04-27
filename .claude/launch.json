@@ -10,8 +10,9 @@
     {
       "name": "Chronicle Web",
       "runtimeExecutable": "cmd.exe",
-      "runtimeArgs": ["/c", "src\Chronicle.Web\dev.bat"],
-      "port": 8888
+      "runtimeArgs": ["/c", "src\\Chronicle.Web\\dev.bat"],
+      "port": 8888,
+      "autoPort": true
     }
   ]
 }
