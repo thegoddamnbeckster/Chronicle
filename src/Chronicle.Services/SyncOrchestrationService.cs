@@ -199,15 +199,27 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                     ?? throw new InvalidOperationException($"MediaItem {byAdditional} missing"), false);
         }
 
-        // 3. Title + year fuzzy match — check both "Title" and "Title (Year)" forms
+        // 3. Title + year fuzzy match — check both "Title" and "Title (Year)" forms,
+        //    plus colon/dash variants so file-scanner names ("A - B") match canonical
+        //    titles ("A: B") and vice versa.
         if (evt.Title is not null && evt.Year.HasValue)
         {
+            var dashTitle    = evt.Title.Replace(": ", " - ");
+            var colonTitle   = evt.Title.Replace(" - ", ": ");
             var nameWithYear = $"{evt.Title} ({evt.Year.Value})";
+            var dashWithYear = $"{dashTitle} ({evt.Year.Value})";
+            var colonWithYear = $"{colonTitle} ({evt.Year.Value})";
+
             var byTitle = await db.MediaItems
                 .FirstOrDefaultAsync(i => i.Year == evt.Year &&
-                    (i.Name == evt.Title || i.Name == nameWithYear), ct);
+                    (i.Name == evt.Title     || i.Name == nameWithYear  ||
+                     i.Name == dashTitle     || i.Name == dashWithYear  ||
+                     i.Name == colonTitle    || i.Name == colonWithYear), ct);
             if (byTitle is not null)
+            {
+                await GraftExternalIdAsync(db, byTitle.Id, pluginId, evt.ExternalId, ct);
                 return (byTitle, false);
+            }
         }
 
         // 4. Fetch richer metadata from the provider and re-check cross-refs (Stage 4a)
