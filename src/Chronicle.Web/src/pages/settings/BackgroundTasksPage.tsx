@@ -662,6 +662,58 @@ function PluginTaskGroup({ foldKey, pluginName, iconUrl, children }: PluginTaskG
   )
 }
 
+// ── Enrichment card (rendered inside each plugin task group) ─────────────────
+
+function EnrichmentCard({
+  stats,
+  isRunning,
+  onRunNow,
+}: {
+  stats: EnrichmentStats
+  isRunning: boolean
+  onRunNow: () => void
+}) {
+  const counts: [string, number, string][] = [
+    ['Pending',   stats.pending,   'var(--accent)'],
+    ['Completed', stats.completed, 'var(--text-muted)'],
+    ['Not Found', stats.notFound,  'var(--text-muted)'],
+    ['Failed',    stats.failed,    stats.failed > 0 ? 'var(--error, #f87171)' : 'var(--text-muted)'],
+    ['Skipped',   stats.skipped,   'var(--text-muted)'],
+  ].filter(([, n]) => (n as number) > 0) as [string, number, string][]
+
+  return (
+    <div className={`${styles.card} ${styles.cardPlugin}`}>
+      <div className={styles.cardHeader}>
+        <div className={styles.cardTitleGroup}>
+          <div className={styles.cardTitleText}>
+            <h2 className={styles.taskName}>Fetch Missing Metadata</h2>
+            <p className={styles.taskDesc}>
+              Fetches metadata from this provider for library items that haven't been enriched yet.
+            </p>
+          </div>
+        </div>
+        <div className={styles.cardActions}>
+          <button className={styles.runBtn} onClick={onRunNow} disabled={isRunning}>
+            {isRunning ? 'Running…' : 'Run Now'}
+          </button>
+        </div>
+      </div>
+      {counts.length > 0 && (
+        <div className={styles.metaGrid}>
+          <div className={styles.metaRow} style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+            {counts.map(([label, n, color]) => (
+              <span key={label} style={{ display: 'flex', flexDirection: 'column' }}>
+                <span className={styles.metaLabel}>{label}</span>
+                <span className={styles.metaValue} style={{ color, fontWeight: 600 }}>{n.toLocaleString()}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export default function BackgroundTasksPage() {
@@ -671,6 +723,7 @@ export default function BackgroundTasksPage() {
   const [editingId, setEditingId]   = useState<string | null>(null)
   const [runningIds, setRunningIds]                     = useState<Set<string>>(new Set())
   const [runningEnrichmentIds, setRunningEnrichmentIds] = useState<Set<string>>(new Set())
+  const [enrichmentStats, setEnrichmentStats]           = useState<EnrichmentStats[]>([])
   const [tasksExpanded, setTasksExpanded] = useState(true)
   const [scanProgress, setScanProgress] = useState<ImportProgressState | null>(null)
 
@@ -699,6 +752,7 @@ export default function BackgroundTasksPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { getEnrichmentStats().then(setEnrichmentStats).catch(() => {}) }, [])
 
   // Poll every 3s while any task is running
   useEffect(() => {
@@ -734,6 +788,7 @@ export default function BackgroundTasksPage() {
       if (err instanceof Error) alert(err.message)
     } finally {
       setRunningEnrichmentIds(prev => { const s = new Set(prev); s.delete(pluginId); return s })
+      getEnrichmentStats().then(setEnrichmentStats).catch(() => {})
     }
   }
 
@@ -830,6 +885,10 @@ export default function BackgroundTasksPage() {
                 const iconUrl = groupTasks[0].pluginIconUrl
                 const foldKey = `backgroundTasks.${pluginId ?? 'system'}`
 
+                const enrichStat = pluginId !== null
+                  ? enrichmentStats.find(s => s.pluginId === pluginId)
+                  : undefined
+
                 return (
                   <PluginTaskGroup
                     key={foldKey}
@@ -850,6 +909,13 @@ export default function BackgroundTasksPage() {
                         onToggle={() => updateBackgroundTask(task.taskId, { isEnabled: !task.isEnabled }).then(load)}
                       />
                     ))}
+                    {enrichStat && (
+                      <EnrichmentCard
+                        stats={enrichStat}
+                        isRunning={runningEnrichmentIds.has(pluginId!)}
+                        onRunNow={() => handleRunEnrichment(pluginId!)}
+                      />
+                    )}
                   </PluginTaskGroup>
                 )
               })
