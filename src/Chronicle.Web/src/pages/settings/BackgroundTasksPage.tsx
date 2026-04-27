@@ -10,6 +10,7 @@ import {
 import {
   getEnrichmentStats,
   resetEnrichment,
+  runEnrichment,
   type EnrichmentStats,
 } from '@/api/enrichment'
 import { getImportProgress, type ImportProgressState } from '@/api/scan'
@@ -668,7 +669,8 @@ export default function BackgroundTasksPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
   const [editingId, setEditingId]   = useState<string | null>(null)
-  const [runningIds, setRunningIds] = useState<Set<string>>(new Set())
+  const [runningIds, setRunningIds]                     = useState<Set<string>>(new Set())
+  const [runningEnrichmentIds, setRunningEnrichmentIds] = useState<Set<string>>(new Set())
   const [tasksExpanded, setTasksExpanded] = useState(true)
   const [scanProgress, setScanProgress] = useState<ImportProgressState | null>(null)
 
@@ -724,6 +726,17 @@ export default function BackgroundTasksPage() {
     }
   }
 
+  async function handleRunEnrichment(pluginId: string) {
+    setRunningEnrichmentIds(prev => new Set(prev).add(pluginId))
+    try {
+      await runEnrichment(pluginId)
+    } catch (err) {
+      if (err instanceof Error) alert(err.message)
+    } finally {
+      setRunningEnrichmentIds(prev => { const s = new Set(prev); s.delete(pluginId); return s })
+    }
+  }
+
   async function handleSave(taskId: string, cron: string, isEnabled: boolean) {
     await updateBackgroundTask(taskId, { cronExpression: cron, isEnabled })
     setEditingId(null)
@@ -732,21 +745,14 @@ export default function BackgroundTasksPage() {
 
   // Derived state — computed before early returns so hooks below are always called.
   const scanIsRunning = tasks.some(t => t.taskId === 'scheduled_scan' && (t.isRunning || runningIds.has(t.taskId)))
-  const enrichmentRunning = tasks.some(t =>
-    t.taskId.endsWith('fetch-missing-metadata') &&
-    (t.isRunning || runningIds.has(t.taskId))
-  )
+  // Enrichment is running if any per-plugin call is in-flight (optimistic)
+  // or the scheduled fetch-missing-metadata task is running.
+  const enrichmentRunning =
+    runningEnrichmentIds.size > 0 ||
+    tasks.some(t => t.taskId.endsWith('fetch-missing-metadata') && (t.isRunning || runningIds.has(t.taskId)))
 
-  // Plugin IDs whose enrichment task is actively running (optimistic).
-  // Task IDs are namespaced as "{pluginId}:fetch-missing-metadata".
-  const runningPluginIds = new Set(
-    tasks
-      .filter(t =>
-        t.taskId.endsWith(':fetch-missing-metadata') &&
-        (t.isRunning || runningIds.has(t.taskId))
-      )
-      .map(t => t.taskId.slice(0, t.taskId.lastIndexOf(':')))
-  )
+  // Plugin IDs whose enrichment is actively running (optimistic via direct API calls).
+  const runningPluginIds = runningEnrichmentIds
 
   // Poll scan import progress every second while a scan is running.
   // Cleared when the scan stops so counts reset to — rather than showing stale data.
@@ -781,7 +787,7 @@ export default function BackgroundTasksPage() {
         scanIsRunning={scanIsRunning}
         scanProgress={scanProgress}
         onRunScan={() => handleRunNow('scheduled_scan')}
-        onRunPlugin={(pluginId) => handleRunNow(`${pluginId}:fetch-missing-metadata`)}
+        onRunPlugin={handleRunEnrichment}
         runningPluginIds={runningPluginIds}
       />
 
