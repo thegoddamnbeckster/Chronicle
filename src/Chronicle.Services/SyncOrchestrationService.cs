@@ -178,43 +178,68 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                     ?? throw new InvalidOperationException($"MediaItem {byAdditional} missing"), false);
         }
 
-        // 3. Title + year fuzzy match
+        // 3. Title + year fuzzy match — check both "Title" and "Title (Year)" forms
         if (evt.Title is not null && evt.Year.HasValue)
         {
+            var nameWithYear = $"{evt.Title} ({evt.Year.Value})";
             var byTitle = await db.MediaItems
-                .FirstOrDefaultAsync(i => i.Year == evt.Year && i.Name == evt.Title, ct);
+                .FirstOrDefaultAsync(i => i.Year == evt.Year &&
+                    (i.Name == evt.Title || i.Name == nameWithYear), ct);
             if (byTitle is not null)
                 return (byTitle, false);
         }
 
-        // 4. Create stub
+        // 4. Fetch richer metadata from the provider and re-check cross-refs (Stage 4a)
+        //    before creating a stub — catches the case where the item exists under a
+        //    TMDB/IMDB/TVDB id that wasn't in the original watch event AdditionalIds.
         var provider = _registry.GetImportProvider(pluginId);
-        return (await CreateStubAsync(db, evt, pluginId, provider, ct), true);
+        ImportedItemMetadata? stageMeta = null;
+        if (provider is not null)
+        {
+            try { stageMeta = await provider.GetItemMetadataAsync(evt.ExternalId, evt.MediaType, ct); }
+            catch (Exception ex) { _log.LogWarning(ex, "GetItemMetadataAsync (Stage 4a) failed for {Id}", evt.ExternalId); }
+        }
+        if (stageMeta?.AdditionalIds is not null)
+        {
+            foreach (var (source, extId) in stageMeta.AdditionalIds)
+            {
+                var byMeta = await db.MediaExternalIds
+                    .Where(e => e.Source == source && e.ExternalId == extId)
+                    .Select(e => e.MediaItemId)
+                    .FirstOrDefaultAsync(ct);
+                if (byMeta != 0)
+                {
+                    var found = await db.MediaItems.FindAsync([byMeta], ct)
+                        ?? throw new InvalidOperationException($"MediaItem {byMeta} missing");
+                    await GraftExternalIdAsync(db, found.Id, pluginId, evt.ExternalId, ct);
+                    return (found, false);
+                }
+            }
+        }
+
+        // 4b. Create stub with the metadata already fetched
+        return (await CreateStubAsync(db, evt, pluginId, stageMeta, ct), true);
     }
 
     private async Task<MediaItem> CreateStubAsync(
         ChronicleDbContext db,
         ImportedWatchEvent evt,
         string pluginId,
-        IImportProvider? provider,
+        ImportedItemMetadata? meta,
         CancellationToken ct)
     {
-        ImportedItemMetadata? meta = null;
-        if (provider is not null)
-        {
-            try { meta = await provider.GetItemMetadataAsync(evt.ExternalId, evt.MediaType, ct); }
-            catch (Exception ex) { _log.LogWarning(ex, "GetItemMetadataAsync failed for {Id}", evt.ExternalId); }
-        }
-
         var mediaTypeName = MapMediaType(evt.MediaType);
         var mediaType = await db.MediaTypes
             .FirstOrDefaultAsync(t => t.Name == mediaTypeName, ct)
             ?? throw new InvalidOperationException($"Media type '{mediaTypeName}' not found in database.");
 
+        var stubTitle = meta?.Title ?? evt.Title ?? "Unknown";
+        var stubYear  = meta?.Year  ?? evt.Year;
+
         var item = new MediaItem
         {
-            Name           = meta?.Title ?? evt.Title ?? "Unknown",
-            Year           = meta?.Year ?? evt.Year,
+            Name           = stubYear.HasValue ? $"{stubTitle} ({stubYear})" : stubTitle,
+            Year           = stubYear,
             MediaTypeId    = mediaType.Id,
             HierarchyLevel = 0,
             CreatedAt      = DateTime.UtcNow,
@@ -516,6 +541,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             year     = meta.Year,
             overview = meta.Overview,
             poster   = meta.PosterUrl,
+            fanart   = meta.FanartUrl,
             runtime  = meta.RuntimeMinutes,
             ids      = meta.AdditionalIds,
         });
@@ -524,5 +550,19 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         if (!string.IsNullOrEmpty(meta.PosterUrl))
             item.PosterUrl = meta.PosterUrl;
+    }
+
+    private static async Task GraftExternalIdAsync(
+        ChronicleDbContext db, int mediaItemId, string pluginId, string externalId, CancellationToken ct)
+    {
+        var source = SourceFromPluginId(pluginId);
+        var exists = await db.MediaExternalIds
+            .AnyAsync(e => e.MediaItemId == mediaItemId && e.Source == source, ct);
+        if (!exists)
+        {
+            db.MediaExternalIds.Add(new MediaExternalId
+                { MediaItemId = mediaItemId, Source = source, ExternalId = externalId });
+            await db.SaveChangesAsync(ct);
+        }
     }
 }
