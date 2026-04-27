@@ -83,6 +83,11 @@ public sealed class PluginHostService : IHostedService
             }
         }
 
+        // Sync media types declared by loaded plugins into the media_types table.
+        // This makes the type list fully plugin-driven: installing a new plugin that
+        // declares a new type (e.g. "audiobooks") surfaces it everywhere without a migration.
+        await SyncMediaTypesFromPluginsAsync(db, cancellationToken);
+
         _log.Information("PluginHostService startup complete");
     }
 
@@ -91,6 +96,110 @@ public sealed class PluginHostService : IHostedService
         _log.Information("PluginHostService stopping — all plugin load contexts will be unloaded");
         // PluginRegistry.Dispose() handles unloading via DI container disposal
         return Task.CompletedTask;
+    }
+
+    // ── Media type sync ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Aggregates all <see cref="MediaTypeSupport"/> entries from every loaded metadata provider
+    /// and file-scanner plugin, then upserts them into the <c>media_types</c> table so that
+    /// the application's media type list is always derived from installed plugins rather than
+    /// hard-coded DB migrations.
+    ///
+    /// Only entries with a non-empty <see cref="MediaTypeSupport.DisplayName"/> are synced;
+    /// internal alias entries (e.g. the "movie" legacy alias for "movies") are skipped.
+    /// Existing rows are updated in-place (preserving their PK / FK references); new rows are
+    /// inserted with <c>IsBuiltIn = false</c>, <c>IsActive = true</c>.
+    /// </summary>
+    private async Task SyncMediaTypesFromPluginsAsync(ChronicleDbContext db, CancellationToken ct)
+    {
+        // Collect all MediaTypeSupport entries from every loaded plugin.
+        var allSupport = _registry.GetMetadataProviders()
+            .SelectMany(p => p.GetSupportedMediaTypes())
+            .Concat(_registry.GetFileScannerPlugins()
+                .SelectMany(p => p.GetSupportedMediaTypes()))
+            .Where(s => !string.IsNullOrWhiteSpace(s.DisplayName))
+            .GroupBy(s => s.MediaTypeName, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                // Merge declarations from multiple plugins for the same type.
+                // Prefer richer values: non-default InteractionVerb/ProgressUnit, most levels, etc.
+                var first = g.First();
+                return new MediaTypeSupport
+                {
+                    MediaTypeName   = g.Key,
+                    DisplayName     = g.Select(s => s.DisplayName).First(d => !string.IsNullOrWhiteSpace(d)),
+                    HierarchyLevels = g.Max(s => s.HierarchyLevels),
+                    HierarchyLabels = g.Select(s => s.HierarchyLabels).FirstOrDefault(h => h != null),
+                    InteractionVerb = g.Select(s => s.InteractionVerb)
+                                       .FirstOrDefault(v => v != "watched") ?? "watched",
+                    ProgressUnit    = g.Select(s => s.ProgressUnit)
+                                       .FirstOrDefault(u => u != "minutes") ?? "minutes",
+                };
+            })
+            .ToList();
+
+        if (allSupport.Count == 0)
+            return;
+
+        var existingTypes = await db.Set<Chronicle.Core.Models.MediaType>().ToListAsync(ct);
+
+        var synced = 0;
+        foreach (var support in allSupport)
+        {
+            var existing = existingTypes.FirstOrDefault(t =>
+                string.Equals(t.Name, support.MediaTypeName, StringComparison.OrdinalIgnoreCase));
+
+            if (existing is null)
+            {
+                db.Set<Chronicle.Core.Models.MediaType>().Add(new Chronicle.Core.Models.MediaType
+                {
+                    Name            = support.MediaTypeName,
+                    DisplayName     = support.DisplayName,
+                    HierarchyLevels = support.HierarchyLevels,
+                    HierarchyLabels = support.HierarchyLabels is { Length: > 0 }
+                                        ? string.Join(",", support.HierarchyLabels)
+                                        : null,
+                    InteractionVerb = support.InteractionVerb,
+                    ProgressUnit    = support.ProgressUnit,
+                    IsBuiltIn       = false,
+                    IsActive        = true,
+                    CreatedAt       = DateTime.UtcNow,
+                });
+                _log.Information("MediaTypeSync: added new media type '{Name}' ({Display})",
+                    support.MediaTypeName, support.DisplayName);
+                synced++;
+            }
+            else
+            {
+                // Update mutable display/hierarchy fields, but never clobber DisplayName with blank.
+                var changed = false;
+                if (!string.IsNullOrWhiteSpace(support.DisplayName) && existing.DisplayName != support.DisplayName)
+                { existing.DisplayName = support.DisplayName; changed = true; }
+                if (support.HierarchyLevels > existing.HierarchyLevels)
+                { existing.HierarchyLevels = support.HierarchyLevels; changed = true; }
+                var wantLabels = support.HierarchyLabels is { Length: > 0 }
+                    ? string.Join(",", support.HierarchyLabels) : null;
+                if (wantLabels != null && existing.HierarchyLabels != wantLabels)
+                { existing.HierarchyLabels = wantLabels; changed = true; }
+                if (support.InteractionVerb != "watched" && existing.InteractionVerb != support.InteractionVerb)
+                { existing.InteractionVerb = support.InteractionVerb; changed = true; }
+                if (support.ProgressUnit != "minutes" && existing.ProgressUnit != support.ProgressUnit)
+                { existing.ProgressUnit = support.ProgressUnit; changed = true; }
+
+                if (changed)
+                {
+                    _log.Information("MediaTypeSync: updated media type '{Name}' metadata", support.MediaTypeName);
+                    synced++;
+                }
+            }
+        }
+
+        if (synced > 0)
+            await db.SaveChangesAsync(ct);
+
+        _log.Debug("MediaTypeSync: verified {Count} media type(s) from plugins ({Synced} changed)",
+            allSupport.Count, synced);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
