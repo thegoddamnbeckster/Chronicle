@@ -49,6 +49,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
         var context     = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
         int removed = 0;
+        var alreadyRemoved = new HashSet<int>();
 
         // ── Pass 1: file-path duplicates ──────────────────────────────────────
         // Items that share the same physical file path in fileScanner.filePaths[0].
@@ -83,6 +84,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                         "DuplicateCleanup: path '{Path}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
                     await MergeAndDeleteAsync(context, winner, loser, ct);
+                    alreadyRemoved.Add(loser.Id);
                     removed++;
                 }
             }
@@ -97,9 +99,6 @@ public sealed class DuplicateCleanupService : IScheduledTask
             .Include(e => e.MediaItem).ThenInclude(m => m!.ExternalIds)
             .Where(e => e.MediaItem != null)
             .ToListAsync(ct);
-
-        // Build a set of item IDs already removed in Pass 1 so we don't process them again.
-        var alreadyRemoved = new HashSet<int>();
 
         var extIdGroups = allExternalIds
             .GroupBy(e => $"{e.Source}:{e.ExternalId}", StringComparer.OrdinalIgnoreCase)
@@ -145,6 +144,60 @@ public sealed class DuplicateCleanupService : IScheduledTask
             await context.SaveChangesAsync(ct);
         }
 
+        // ── Pass 3: title-normalisation duplicates ─────────────────────────────
+        // Catches file-scanner items like "Batman v Superman - Dawn of Justice (2016)"
+        // that duplicated SIMKL stubs like "Batman v Superman: Dawn of Justice (2016)"
+        // because Windows filenames cannot contain colons.
+        // Groups root-level items by (normalised title, year, media type).
+        var rootItems = await context.MediaItems
+            .Include(m => m.ExternalIds)
+            .Where(m => m.HierarchyLevel == 0)
+            .ToListAsync(ct);
+
+        var titleGroups = rootItems
+            .Where(m => !alreadyRemoved.Contains(m.Id))
+            .GroupBy(m => (NormalizeTitle(m.Name), m.Year, m.MediaTypeId))
+            .Where(g => g.Count() > 1)
+            // Only merge a file-scanned item with a sync stub — require one of each.
+            // This avoids false-positives when two TMDB-only items happen to share a name.
+            .Where(g =>
+                g.Any(m  => m.MetadataJson != null && m.MetadataJson.Contains("\"fileScanner\"")) &&
+                g.Any(m  => m.MetadataJson == null  || !m.MetadataJson.Contains("\"fileScanner\"")))
+            .ToList();
+
+        if (titleGroups.Count > 0)
+        {
+            _log.Information(
+                "DuplicateCleanup: found {Count} title-normalised group(s) with duplicate items",
+                titleGroups.Count);
+
+            foreach (var group in titleGroups)
+            {
+                ct.ThrowIfCancellationRequested();
+                var items = group.Where(m => !alreadyRemoved.Contains(m.Id)).ToList();
+                if (items.Count < 2) continue;
+
+                // File-scanner items preferred (they have physical files).
+                var ordered = items
+                    .OrderByDescending(m => m.MetadataJson != null && m.MetadataJson.Contains("\"fileScanner\""))
+                    .ThenByDescending(ScoreItem)
+                    .ThenBy(m => m.Id)
+                    .ToList();
+
+                var winner = ordered[0];
+                foreach (var loser in ordered.Skip(1))
+                {
+                    _log.Information(
+                        "DuplicateCleanup: title-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
+                        $"{group.Key.Item1} / {group.Key.Year}", winner.Id, winner.Name, loser.Id, loser.Name);
+                    await MergeAndDeleteAsync(context, winner, loser, ct);
+                    alreadyRemoved.Add(loser.Id);
+                    removed++;
+                }
+            }
+            await context.SaveChangesAsync(ct);
+        }
+
         if (removed > 0)
             _log.Information("DuplicateCleanup: total {Count} duplicate item(s) removed", removed);
 
@@ -166,18 +219,27 @@ public sealed class DuplicateCleanupService : IScheduledTask
     {
         // ── UserLibrary ───────────────────────────────────────────────────────────
         // For each user who has the loser in their library: if the winner is already
-        // there, drop the loser entry; otherwise re-point it to the winner.
+        // there, merge — keeping the better status (e.g. Completed > Unwatched).
         var loserLibEntries = await context.UserLibraries
             .Where(l => l.MediaItemId == loser.Id)
             .ToListAsync(ct);
 
         foreach (var lib in loserLibEntries)
         {
-            var winnerAlreadyPresent = await context.UserLibraries
-                .AnyAsync(l => l.MediaItemId == winner.Id && l.UserId == lib.UserId, ct);
+            var winnerLib = await context.UserLibraries
+                .FirstOrDefaultAsync(l => l.MediaItemId == winner.Id && l.UserId == lib.UserId, ct);
 
-            if (winnerAlreadyPresent)
+            if (winnerLib is not null)
+            {
+                if (StatusRank(lib.Status) > StatusRank(winnerLib.Status))
+                {
+                    winnerLib.Status      = lib.Status;
+                    winnerLib.CompletedAt = lib.CompletedAt ?? winnerLib.CompletedAt;
+                    winnerLib.UserRating  = lib.UserRating  ?? winnerLib.UserRating;
+                    winnerLib.UpdatedAt   = DateTime.UtcNow;
+                }
                 context.UserLibraries.Remove(lib);
+            }
             else
                 lib.MediaItemId = winner.Id;
         }
@@ -237,6 +299,25 @@ public sealed class DuplicateCleanupService : IScheduledTask
     /// Scores a media item for survivor selection.
     /// Higher is better.  Items with more metadata are preferred.
     /// </summary>
+    private static int StatusRank(Chronicle.Core.Models.LibraryStatus status) => status switch
+    {
+        Chronicle.Core.Models.LibraryStatus.Rewatching  => 7,
+        Chronicle.Core.Models.LibraryStatus.Completed   => 6,
+        Chronicle.Core.Models.LibraryStatus.Watching    => 5,
+        Chronicle.Core.Models.LibraryStatus.OnHold      => 4,
+        Chronicle.Core.Models.LibraryStatus.PlanToWatch => 3,
+        Chronicle.Core.Models.LibraryStatus.Dropped     => 2,
+        _                                                => 1,  // Unwatched
+    };
+
+    private static string NormalizeTitle(string name)
+    {
+        // Strip trailing "(YYYY)" or "[YYYY]" then normalise " - " → ": " for comparison.
+        var stripped = System.Text.RegularExpressions.Regex.Replace(
+            name, @"\s*[\(\[]\d{4}[\)\]]\s*$", "").Trim();
+        return stripped.Replace(" - ", ": ").ToLowerInvariant();
+    }
+
     private static int ScoreItem(MediaItem item)
     {
         var score = 0;
