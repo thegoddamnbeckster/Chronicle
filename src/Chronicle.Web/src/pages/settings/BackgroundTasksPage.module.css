@@ -628,6 +628,12 @@
   margin-bottom: 0;
 }
 
+/* Enrichment card inside a plugin group: same blended background as cardPlugin cards
+   but without the coloured border (no brand colour to tint with). */
+.cardEnrichment {
+  background-color: color-mix(in srgb, transparent 8%, var(--bg-card));
+}
+
 /* ── Run Now confirmation modal ─────────────────────────────────────────── */
 
 .confirmOverlay {
