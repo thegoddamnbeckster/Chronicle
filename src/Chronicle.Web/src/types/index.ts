@@ -231,6 +231,8 @@ export interface ScanGroupDto {
   children: ScanGroupDto[]
   files: string[]
   folderPath: string | null
+  author: string | null
+  series: string | null
 }
 
 export interface ScanGroupResult {
