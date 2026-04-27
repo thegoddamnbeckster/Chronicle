@@ -1497,6 +1497,11 @@ namespace Chronicle.Services
             _log.Information("Grouped preview scan of {Path} (recursive={Recursive}, mediaType={MediaType}, hierarchyLevels={Levels})",
                 request.Path, request.Recursive, mediaType.Name, mediaType.HierarchyLevels);
 
+            // Audiobooks get a scanner-backed preview: reads tags, filters to audio files only,
+            // and groups by book folder so the preview matches what the actual import will produce.
+            if (string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+                return await PreviewAudiobooksAsync(request, ct);
+
             // Collect all file paths
             var allPaths = new List<string>();
             var dirsToScan = new List<string> { request.Path };
@@ -1527,6 +1532,57 @@ namespace Chronicle.Services
                 allPaths.Count, mediaType.HierarchyLevels);
 
             return _groupingService.Group(allPaths, request.Path, mediaType.HierarchyLevels);
+        }
+
+        private async Task<ScanGroupResult> PreviewAudiobooksAsync(
+            ScanPreviewRequest request, CancellationToken ct)
+        {
+            var allScanners = _registry.GetFileScannerPlugins();
+            var scanner = allScanners
+                .FirstOrDefault(s => s.GetSupportedMediaTypes()
+                    .Any(m => string.Equals(m.MediaTypeName, "audiobooks", StringComparison.OrdinalIgnoreCase)))
+                ?? allScanners.FirstOrDefault()
+                ?? throw new InvalidOperationException("No file scanner plugin is loaded.");
+
+            _progress.Start(1);
+            _progress.UpdateFolder(request.Path, 1, 0);
+
+            var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
+            var collapsed    = CollapseAudiobooksToFolders(scannedFiles, request.Path);
+
+            _progress.Complete();
+
+            _log.Information("Audiobooks preview: {Raw} audio files collapsed to {Books} book groups",
+                scannedFiles.Count, collapsed.Count);
+
+            var groups = collapsed.Select(f =>
+            {
+                var author = f.AudioAlbumArtist ?? f.AudioArtist;
+                var score  = f.ConfidenceScore / 100.0;
+                var signals = new List<string>();
+                if (!string.IsNullOrWhiteSpace(f.AudioAlbum))   signals.Add("tags");
+                if (!string.IsNullOrWhiteSpace(f.NfoPosterUrl)) signals.Add("nfo");
+                if (signals.Count == 0)                          signals.Add("folder");
+
+                return new Chronicle.Core.Models.Scan.ScanGroup
+                {
+                    GroupKey        = f.FilePath.ToLowerInvariant(),
+                    Name            = f.ParsedTitle,
+                    Year            = f.ParsedYear ?? f.AudioYear,
+                    ConfidenceScore = score,
+                    FolderPath      = f.FilePath,
+                    Files           = [f.FilePath],
+                    SignalSources   = signals,
+                    Author          = string.IsNullOrWhiteSpace(author) ? null : author,
+                    Series          = f.AudioGrouping,
+                };
+            }).ToList();
+
+            return new Chronicle.Core.Models.Scan.ScanGroupResult
+            {
+                Groups     = groups,
+                TotalFiles = scannedFiles.Count,
+            };
         }
 
         // ── Import groups ────────────────────────────────────────────────────────

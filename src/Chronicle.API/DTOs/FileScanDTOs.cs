@@ -164,7 +164,9 @@ namespace Chronicle.API.DTOs
         bool HasConflicts,
         List<ScanGroupDto> Children,
         List<string> Files,
-        string? FolderPath = null);
+        string? FolderPath = null,
+        string? Author = null,
+        string? Series = null);
 
     public record ScanGroupResultDto(
         List<ScanGroupDto> Groups,
