@@ -1,5 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import {
+  getImportProviders,
+  startAuth,
+  pollAuth,
+  getAuthStatus,
+  triggerSync,
+} from '@/api/import'
+import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
+import type { ImportProvider, ImportAuthStart, SyncResult } from '@/types'
 import {
   listPlugins,
   installPlugin,
@@ -26,16 +35,193 @@ import styles from './PluginsPage.module.css'
 
 type HealthState = 'unknown' | 'checking' | PluginHealthResult
 
+// ── Inline import/auth section ────────────────────────────────────────────────
+
+function InlineImportSection({ provider }: { provider: ImportProvider }) {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null)
+  const [authFlow, setAuthFlow]           = useState<ImportAuthStart | null>(null)
+  const [polling,   setPolling]           = useState(false)
+  const [pollError, setPollError]         = useState<string | null>(null)
+  const [starting,  setStarting]          = useState(false)
+  const [syncing,   setSyncing]           = useState(false)
+  const [syncResult, setSyncResult]       = useState<SyncResult | null>(null)
+  const [syncError,  setSyncError]        = useState<string | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const { addJob, completeJob, failJob }  = useBackgroundActivity()
+
+  useEffect(() => {
+    void checkAuth()
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+    }
+  }, [provider.pluginId])
+
+  async function checkAuth() {
+    try {
+      setAuthenticated(await getAuthStatus(provider.pluginId))
+    } catch {
+      setAuthenticated(false)
+    }
+  }
+
+  async function handleConnect() {
+    // Cancel any in-progress polling before starting fresh
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
+    setAuthFlow(null)
+    setPolling(false)
+    setPollError(null)
+    setStarting(true)
+    try {
+      const data = await startAuth(provider.pluginId)
+      setAuthFlow(data)
+      startPollLoop(data.pollCode, data.pollingIntervalSeconds)
+    } catch (err) {
+      setPollError(err instanceof Error ? err.message : 'Failed to start auth')
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  function startPollLoop(pollCode: string, intervalSec: number) {
+    setPolling(true)
+    intervalRef.current = setInterval(async () => {
+      try {
+        const result = await pollAuth(provider.pluginId, pollCode)
+        if (result.status !== 'pending') {
+          if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
+          setPolling(false)
+          if (result.status === 'authorized') {
+            setAuthFlow(null)
+            setAuthenticated(true)
+          } else {
+            setAuthFlow(null)
+            setPollError(result.errorMessage ?? `Authorization ${result.status}. Click "Connect Account" to try again.`)
+          }
+        }
+      } catch {
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
+        setPolling(false)
+        setAuthFlow(null)
+        setPollError('Polling failed — click "Connect Account" to try again.')
+      }
+    }, intervalSec * 1000)
+  }
+
+  async function runSync(fullSync: boolean) {
+    const label = fullSync ? 'Full Sync' : 'Delta Sync'
+    const jobId = addJob(`${label} from ${provider.name}…`)
+    setSyncing(true)
+    setSyncResult(null)
+    setSyncError(null)
+    try {
+      const data = await triggerSync(provider.pluginId, fullSync)
+      setSyncResult(data)
+      completeJob(jobId,
+        `${data.stubsCreated} created, ${data.itemsMatched} matched, ${data.watchEventsAdded} events`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sync failed'
+      setSyncError(msg)
+      failJob(jobId, msg)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  if (authenticated === null) return null
+
+  return (
+    <div className={styles.importSection}>
+      <div className={styles.importSectionTitle}>Account Connection</div>
+
+      {authenticated ? (
+        <>
+          <div className={styles.connectedRow}>
+            <span className={styles.connectedDot} />
+            Connected
+          </div>
+
+          <div className={styles.importButtons}>
+            <button type="button" className={styles.importBtn}
+              onClick={() => runSync(true)} disabled={syncing}>
+              Full Sync
+            </button>
+            <button type="button" className={`${styles.importBtn} ${styles.importBtnSecondary}`}
+              onClick={() => runSync(false)} disabled={syncing}>
+              Delta Sync
+            </button>
+            {syncing && <span className={styles.pinPolling}>Syncing…</span>}
+          </div>
+          <p className={styles.syncHint}>
+            <strong>Full Sync</strong> imports everything from scratch.{' '}
+            <strong>Delta Sync</strong> fetches only items added since your last sync.
+          </p>
+
+          {syncResult && (
+            <div className={`${styles.importResult} ${
+              syncResult.errors.length > 0 ? styles.importResultError : styles.importResultOk
+            }`}>
+              <strong>Sync complete:</strong>{' '}
+              {syncResult.stubsCreated} new items, {syncResult.itemsMatched} matched,{' '}
+              {syncResult.watchEventsAdded} watch events
+              {syncResult.errors.length > 0 && (
+                <div className={styles.importErrors}>
+                  {syncResult.errors.slice(0, 3).map((e, i) => <div key={i}>{e}</div>)}
+                  {syncResult.errors.length > 3 && (
+                    <div>…and {syncResult.errors.length - 3} more</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {syncError && <p className={styles.pinError}>{syncError}</p>}
+        </>
+      ) : authFlow ? (
+        <div className={styles.pinFlow}>
+          <p className={styles.pinInstr}>
+            Go to{' '}
+            <a href={authFlow.verificationUrl} target="_blank" rel="noopener noreferrer"
+              className={styles.pinLink}>
+              {authFlow.verificationUrl}
+            </a>{' '}
+            and enter this PIN:
+          </p>
+          <div className={styles.pinCode}>{authFlow.userCode}</div>
+          {polling   && <p className={styles.pinPolling}>Waiting for authorization…</p>}
+          {pollError && <p className={styles.pinError}>{pollError}</p>}
+          <button type="button" className={styles.newPinBtn}
+            onClick={handleConnect} disabled={starting}>
+            {starting ? 'Getting new PIN…' : '↺ Get New PIN'}
+          </button>
+        </div>
+      ) : (
+        <div>
+          {pollError && <p className={styles.pinError}>{pollError}</p>}
+          <button type="button" className={styles.connectBtn}
+            onClick={handleConnect} disabled={starting}>
+            {starting ? 'Starting…' : 'Connect Account'}
+          </button>
+          <p className={styles.pinHint}>Save your Client ID above before connecting.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function PluginsPage() {
   const { user } = useAuth()
   const isAdmin = user?.isAdmin ?? false
   const { theme: activeTheme, setTheme } = useTheme()
   const queryClient = useQueryClient()
 
-  const [plugins, setPlugins] = useState<PluginDto[]>([])
-  const [loading, setLoading] = useState(true)
-  const [healthStates, setHealthStates] = useState<Record<number, HealthState>>({})
-  const [busyIds, setBusyIds] = useState<Set<number>>(new Set())
+  const [plugins, setPlugins]               = useState<PluginDto[]>([])
+  const [loading, setLoading]               = useState(true)
+  const [importProviders, setImportProviders] = useState<ImportProvider[]>([])
+  const [healthStates, setHealthStates]     = useState<Record<number, HealthState>>({})
+  const [busyIds, setBusyIds]               = useState<Set<number>>(new Set())
+  const [savedPluginId, setSavedPluginId]   = useState<number | null>(null)
 
   // Install panel
   const [showInstall, setShowInstall] = useState(false)
@@ -67,10 +253,12 @@ export default function PluginsPage() {
   async function loadPlugins() {
     setLoading(true)
     try {
-      const data = await listPlugins()
-      setPlugins(data)
-    } catch {
-      // silent — list stays empty
+      const [pluginData, importData] = await Promise.allSettled([
+        listPlugins(),
+        getImportProviders(),
+      ])
+      if (pluginData.status === 'fulfilled')  setPlugins(pluginData.value)
+      if (importData.status === 'fulfilled')  setImportProviders(importData.value)
     } finally {
       setLoading(false)
     }
@@ -229,10 +417,9 @@ export default function PluginsPage() {
     setSaveError(null)
     try {
       await updatePluginSettings(pluginId, formValues)
-      setConfigOpenId(null)
-      setSchema(null)
-      setFormValues({})
-      // Refresh health state so badge updates after settings change
+      // Keep the panel open so import providers can proceed to Connect immediately
+      setSavedPluginId(pluginId)
+      setTimeout(() => setSavedPluginId(prev => prev === pluginId ? null : prev), 3000)
       setHealthStates(prev => ({ ...prev, [pluginId]: 'unknown' }))
     } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save settings. Check the values and try again.')
@@ -679,15 +866,27 @@ export default function PluginsPage() {
                                 setSaveError(null)
                                 setSchemaError(null)
                                 setSecretVisible({})
+                                setSavedPluginId(null)
                               }}
                             >
                               Cancel
                             </button>
+                            {savedPluginId === plugin.id && (
+                              <span className={styles.savedMsg}>✓ Saved</span>
+                            )}
                           </div>
 
                           {saveError && (
                             <p className={styles.errorMsg}>{saveError}</p>
                           )}
+
+                          {/* Inline connect + import for import providers */}
+                          {(() => {
+                            const ip = importProviders.find(
+                              p => p.pluginId === plugin.pluginId && p.requiresDeviceAuth
+                            )
+                            return ip ? <InlineImportSection provider={ip} /> : null
+                          })()}
                         </div>
                       )}
                     </div>
