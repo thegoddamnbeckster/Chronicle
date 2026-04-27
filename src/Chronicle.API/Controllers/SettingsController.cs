@@ -21,42 +21,10 @@ public class SettingsController : ControllerBase
     private readonly ChronicleDbContext _db;
     private readonly IPluginRegistry    _pluginRegistry;
 
-    // Keys follow the pattern "{dbTypeName}" for flat types and "{dbTypeName}.{levelIndex}" for
-    // hierarchical types.  Level indices match MediaItem.HierarchyLevel (0 = root, 1 = child, …).
-    // The compound-key BaseType() helper below extracts the DB type name for plugin matching.
-    private static readonly Dictionary<string, string[]> AssignableFields = new()
-    {
-        // ── Flat types (HierarchyLevels = 1) ─────────────────────────────────────
-        ["movies"]        = ["title", "overview", "year", "poster_url", "backdrop_url", "runtime_minutes", "rating", "genres", "cast", "directors", "tags"],
-        ["fanedits"]      = ["title", "overview", "year", "poster_url", "backdrop_url", "runtime_minutes", "rating", "genres", "cast", "directors", "tags"],
-        ["books"]         = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
-        ["audiobooks"]    = ["title", "overview", "year", "poster_url", "runtime_minutes", "rating", "genres", "tags"],
-
-        // ── TV  (HierarchyLevels = 3): Show → Season → Episode ───────────────────
-        ["tv"]            = ["title", "overview", "year", "poster_url", "backdrop_url", "rating", "genres", "cast", "directors", "tags"],
-        ["tv.1"]          = ["title", "overview", "year", "poster_url", "backdrop_url", "tags"],
-        ["tv.2"]          = ["title", "overview", "year", "runtime_minutes", "tags"],
-
-        // ── Anime (HierarchyLevels = 3): Show → Season → Episode ─────────────────
-        ["anime"]         = ["title", "overview", "year", "poster_url", "backdrop_url", "rating", "genres", "cast", "directors", "tags"],
-        ["anime.1"]       = ["title", "overview", "year", "poster_url", "backdrop_url", "tags"],
-        ["anime.2"]       = ["title", "overview", "year", "runtime_minutes", "tags"],
-
-        // ── Music (HierarchyLevels = 3): Artist → Album → Track ──────────────────
-        ["music"]         = ["title", "overview", "poster_url", "rating", "genres", "tags"],
-        ["music.1"]       = ["title", "overview", "year", "poster_url", "rating", "genres", "tags"],
-        ["music.2"]       = ["title", "year", "runtime_minutes", "tags"],
-    };
-
-    /// <summary>
-    /// Extracts the base DB type name from a compound assignment key.
-    /// "tv.1" → "tv", "music.2" → "music", "movies" → "movies".
-    /// </summary>
-    private static string BaseType(string key)
-    {
-        var dot = key.IndexOf('.');
-        return dot < 0 ? key : key[..dot];
-    }
+    // NormalizeMediaTypeName: maps DB type names to the canonical form used by plugin declarations.
+    // "movies" (DB plural) ↔ "movie" (TMDB/enrichment canonical).
+    private static string NormalizeMediaTypeName(string name) =>
+        name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
     public SettingsController(ChronicleDbContext db, IPluginRegistry pluginRegistry)
     {
@@ -160,32 +128,25 @@ public class SettingsController : ControllerBase
         else
             assignments = new();
 
-        // Load DB plugin records to map PluginId → DB id for the proxy URL
-        var dbPlugins = await _db.Plugins.ToListAsync();
+        var assignableFields = await BuildAssignableFieldsAsync();
 
+        // Load DB plugin records to map PluginId → DB id for the proxy URL.
+        var dbPlugins  = await _db.Plugins.ToListAsync();
         var allEntries = _pluginRegistry.GetMetadataProviderEntries().ToList();
 
-        // Build per-media-type plugin lists.
-        // Compound keys like "tv.1" or "music.2" match plugins that declare support for the base
-        // type ("tv", "music").  "movies"/"fanedits" normalise to "movie"/"fanedit" for TMDB-style
-        // plugin declarations that use the singular form.
-        static string NormalizeForAssignment(string name) => name.ToLowerInvariant() switch
-        {
-            "movies"   => "movie",
-            "fanedits" => "fanedits",   // TMDB declares "fanedits" exactly
-            var n      => n,
-        };
-
-        var availablePlugins = AssignableFields.Keys.ToDictionary(
+        // Build per-type plugin lists.  Compound keys ("tv.1") match plugins that declare support
+        // for the base type ("tv").  NormalizeMediaTypeName maps "movies" ↔ "movie" so DB plural
+        // and plugin singular forms both resolve correctly.
+        var availablePlugins = assignableFields.Keys.ToDictionary(
             assignmentKey => assignmentKey,
             assignmentKey =>
             {
-                // For compound keys ("tv.1") match plugins supporting the base type ("tv").
-                var baseTypeName = NormalizeForAssignment(BaseType(assignmentKey));
+                var dot = assignmentKey.IndexOf('.');
+                var baseTypeName = NormalizeMediaTypeName(dot < 0 ? assignmentKey : assignmentKey[..dot]);
                 return allEntries
                     .Where(e => e.Provider.GetSupportedMediaTypes()
                         .Any(t => string.Equals(
-                            NormalizeForAssignment(t.MediaTypeName), baseTypeName,
+                            NormalizeMediaTypeName(t.MediaTypeName), baseTypeName,
                             StringComparison.OrdinalIgnoreCase)))
                     .Select(e =>
                     {
@@ -199,34 +160,31 @@ public class SettingsController : ControllerBase
                     .ToList<object>();
             });
 
-        // Build display name map.
-        // Flat keys: use the DB MediaType.DisplayName ("fanedits" → "Fan Edits").
-        // Compound keys: use the DB type's HierarchyLabels to get the level name, then
-        //   format as "<TypeDisplay> <LevelLabel>s" (e.g. "tv.1" → "TV Seasons").
+        // Build display name map from DB MediaType rows.
+        // Flat keys: use the DB type's DisplayName.
+        // Compound keys: "<TypeDisplay> <LevelLabel>s", e.g. "TV Seasons", "Music Albums".
         var dbMediaTypes = await _db.Set<Chronicle.Core.Models.MediaType>().ToListAsync();
-        var mediaTypeDisplayNames = AssignableFields.Keys.ToDictionary(
+        var mediaTypeDisplayNames = assignableFields.Keys.ToDictionary(
             k => k,
             k =>
             {
                 var dot = k.IndexOf('.');
                 if (dot < 0)
                 {
-                    // Flat key — look up DB display name.
                     return dbMediaTypes
                         .FirstOrDefault(t => string.Equals(t.Name, k, StringComparison.OrdinalIgnoreCase))
                         ?.DisplayName
                         ?? (k.Length > 0 ? char.ToUpper(k[0]) + k[1..] : k);
                 }
 
-                // Compound key — resolve base type and level index.
-                var baseName  = k[..dot];
-                var levelIdx  = int.TryParse(k[(dot + 1)..], out var li) ? li : 0;
-                var dbType    = dbMediaTypes.FirstOrDefault(t =>
+                var baseName    = k[..dot];
+                var levelIdx    = int.TryParse(k[(dot + 1)..], out var li) ? li : 0;
+                var dbType      = dbMediaTypes.FirstOrDefault(t =>
                     string.Equals(t.Name, baseName, StringComparison.OrdinalIgnoreCase));
-                var labels    = dbType?.HierarchyLabels?.Split(',') ?? [];
+                var labels      = dbType?.HierarchyLabels?.Split(',') ?? [];
                 var baseDisplay = dbType?.DisplayName ?? char.ToUpper(baseName[0]) + baseName[1..];
-                var levelLabel = levelIdx < labels.Length ? labels[levelIdx].Trim() : $"Level {levelIdx}";
-                return $"{baseDisplay} {levelLabel}s"; // e.g. "TV Seasons", "Music Albums"
+                var levelLabel  = levelIdx < labels.Length ? labels[levelIdx].Trim() : $"Level {levelIdx}";
+                return $"{baseDisplay} {levelLabel}s";
             });
 
         return Ok(new
@@ -235,7 +193,7 @@ public class SettingsController : ControllerBase
             data = new
             {
                 assignments,
-                assignableFields = AssignableFields,
+                assignableFields,
                 availablePlugins,
                 mediaTypeDisplayNames,
             },
@@ -250,9 +208,11 @@ public class SettingsController : ControllerBase
         if (request.Assignments is null)
             return BadRequest(new { success = false, error = new { message = "assignments required" } });
 
+        var assignableFields = await BuildAssignableFieldsAsync();
+
         foreach (var (mediaType, fields) in request.Assignments)
         {
-            if (!AssignableFields.TryGetValue(mediaType, out var allowedFields))
+            if (!assignableFields.TryGetValue(mediaType, out var allowedFields))
                 return BadRequest(new { success = false, error = new { message = $"Unknown media type: {mediaType}" } });
 
             foreach (var field in fields.Keys)
@@ -275,6 +235,80 @@ public class SettingsController : ControllerBase
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds the assignable-fields dictionary dynamically from the DB's active media types
+    /// and the fields declared by all loaded metadata providers.
+    ///
+    /// Keys follow "{dbTypeName}" for root levels and "{dbTypeName}.{levelIndex}" for
+    /// sub-levels of hierarchical types (TV seasons = "tv.1", music albums = "music.1", …).
+    /// Values are the union of <see cref="MediaTypeSupport.SupportedFields"/> /
+    /// <see cref="MediaTypeSupport.LevelFields"/> across all plugins, plus "tags" which is
+    /// always assignable.  If no plugin declares fields for a level, sensible defaults are used.
+    /// </summary>
+    private async Task<Dictionary<string, string[]>> BuildAssignableFieldsAsync()
+    {
+        var dbTypes = await _db.Set<Chronicle.Core.Models.MediaType>()
+            .Where(t => t.IsActive)
+            .OrderBy(t => t.DisplayName)
+            .ToListAsync();
+
+        var allEntries = _pluginRegistry.GetMetadataProviderEntries().ToList();
+
+        var result = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var dbType in dbTypes)
+        {
+            var dbNorm = NormalizeMediaTypeName(dbType.Name);
+
+            // Collect all MediaTypeSupport entries from plugins that match this DB type.
+            var matchingSupport = allEntries
+                .SelectMany(e => e.Provider.GetSupportedMediaTypes()
+                    .Where(s => string.Equals(
+                        NormalizeMediaTypeName(s.MediaTypeName), dbNorm,
+                        StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            // Root level (level 0) fields.
+            var rootFields = matchingSupport
+                .SelectMany(s => s.SupportedFields)
+                .Append("tags")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(f => f)
+                .ToArray();
+
+            result[dbType.Name] = rootFields.Length > 1
+                ? rootFields
+                : DefaultFieldsForLevel(0);
+
+            // Sub-level keys for hierarchical types (tv.1, tv.2, music.1, …).
+            for (var level = 1; level < dbType.HierarchyLevels; level++)
+            {
+                var levelKey = $"{dbType.Name}.{level}";
+                var capturedLevel = level;
+
+                var levelFields = matchingSupport
+                    .SelectMany(s => s.LevelFields?.GetValueOrDefault(capturedLevel) ?? [])
+                    .Append("tags")
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(f => f)
+                    .ToArray();
+
+                result[levelKey] = levelFields.Length > 1
+                    ? levelFields
+                    : DefaultFieldsForLevel(level);
+            }
+        }
+
+        return result;
+    }
+
+    private static string[] DefaultFieldsForLevel(int level) => level switch
+    {
+        0 => ["backdrop_url", "cast", "directors", "genres", "overview", "poster_url", "rating", "runtime_minutes", "tags", "title", "year"],
+        1 => ["backdrop_url", "overview", "poster_url", "tags", "title", "year"],
+        _ => ["overview", "runtime_minutes", "tags", "title", "year"],
+    };
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static string GetServiceAccount(string serviceName)
