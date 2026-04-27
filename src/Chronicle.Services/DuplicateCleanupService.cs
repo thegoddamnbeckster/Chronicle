@@ -45,63 +45,108 @@ public sealed class DuplicateCleanupService : IScheduledTask
     /// </summary>
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
-        using var scope   = _scopeFactory.CreateScope();
-        var context       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        using var scope = _scopeFactory.CreateScope();
+        var context     = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        // Load every item that has file-scanner metadata — these are the only ones that
-        // can have a physical file path to match on.
+        int removed = 0;
+
+        // ── Pass 1: file-path duplicates ──────────────────────────────────────
+        // Items that share the same physical file path in fileScanner.filePaths[0].
+        // NOTE: folderPath is NOT used here — it is the parent directory and is shared
+        // by every item in a folder, which would incorrectly flag season episodes.
         var itemsWithPaths = await context.MediaItems
             .Include(m => m.ExternalIds)
             .Where(m => m.MetadataJson != null
                      && EF.Functions.Like(m.MetadataJson, "%fileScanner%"))
             .ToListAsync(ct);
 
-        // Group by canonical (lower-case) individual file path; keep only groups with > 1 member.
-        // NOTE: we intentionally use the first entry from filePaths[], NOT folderPath.
-        // folderPath is the parent directory of the item's files and is shared by every
-        // item in the same folder (e.g. every episode in a season).  Using it as the key
-        // would incorrectly group all items in a folder as duplicates of each other.
-        var duplicateGroups = itemsWithPaths
+        var filePathGroups = itemsWithPaths
             .GroupBy(m => ExtractFilePath(m.MetadataJson) ?? string.Empty,
                      StringComparer.OrdinalIgnoreCase)
             .Where(g => !string.IsNullOrEmpty(g.Key) && g.Count() > 1)
             .ToList();
 
-        if (duplicateGroups.Count == 0)
-            return 0;
-
-        _log.Information("DuplicateCleanup: found {GroupCount} file path(s) with duplicate items",
-            duplicateGroups.Count);
-
-        int removed = 0;
-
-        foreach (var group in duplicateGroups)
+        if (filePathGroups.Count > 0)
         {
-            ct.ThrowIfCancellationRequested();
+            _log.Information("DuplicateCleanup: found {Count} file path(s) with duplicate items",
+                filePathGroups.Count);
 
-            // Oldest record wins (lowest Id = earliest imported).  This preserves the
-            // item the user has been tracking longest.  Metadata score breaks ties when
-            // two items share the same Id (not normally possible, but defensive).
-            var ordered = group
-                .OrderBy(m => m.Id)
-                .ThenByDescending(ScoreItem)
-                .ToList();
-
-            var winner = ordered[0];
-            var losers = ordered.Skip(1).ToList();
-
-            _log.Information(
-                "DuplicateCleanup: path '{Path}' — keeping item {WinnerId} ('{WinnerName}'), removing {Count} duplicate(s)",
-                group.Key, winner.Id, winner.Name, losers.Count);
-
-            foreach (var loser in losers)
+            foreach (var group in filePathGroups)
             {
-                await MergeAndDeleteAsync(context, winner, loser, ct);
-                removed++;
+                ct.ThrowIfCancellationRequested();
+                // Oldest record wins — preserves the item the user has been tracking longest.
+                var ordered = group.OrderBy(m => m.Id).ThenByDescending(ScoreItem).ToList();
+                var winner = ordered[0];
+                foreach (var loser in ordered.Skip(1))
+                {
+                    _log.Information(
+                        "DuplicateCleanup: path '{Path}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
+                        group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
+                    await MergeAndDeleteAsync(context, winner, loser, ct);
+                    removed++;
+                }
             }
+            await context.SaveChangesAsync(ct);
         }
 
-        await context.SaveChangesAsync(ct);
+        // ── Pass 2: external-ID duplicates ────────────────────────────────────
+        // Catches items imported by two different sources (e.g. file scanner + SIMKL sync)
+        // that share the same (source, externalId) entry in media_external_ids.
+        // These never share a file path, so Pass 1 misses them entirely.
+        var allExternalIds = await context.MediaExternalIds
+            .Include(e => e.MediaItem).ThenInclude(m => m!.ExternalIds)
+            .Where(e => e.MediaItem != null)
+            .ToListAsync(ct);
+
+        // Build a set of item IDs already removed in Pass 1 so we don't process them again.
+        var alreadyRemoved = new HashSet<int>();
+
+        var extIdGroups = allExternalIds
+            .GroupBy(e => $"{e.Source}:{e.ExternalId}", StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Select(e => e.MediaItemId).Distinct().Count() > 1)
+            .ToList();
+
+        if (extIdGroups.Count > 0)
+        {
+            _log.Information("DuplicateCleanup: found {Count} external ID(s) shared by multiple items",
+                extIdGroups.Count);
+
+            foreach (var group in extIdGroups)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var items = group
+                    .Select(e => e.MediaItem!)
+                    .DistinctBy(m => m.Id)
+                    .Where(m => !alreadyRemoved.Contains(m.Id))
+                    .ToList();
+
+                if (items.Count < 2) continue;
+
+                // Prefer the item with a physical file (fileScanner in MetadataJson).
+                // Among equal candidates, highest score then lowest Id wins.
+                var ordered = items
+                    .OrderByDescending(m => m.MetadataJson != null && m.MetadataJson.Contains("\"fileScanner\""))
+                    .ThenByDescending(ScoreItem)
+                    .ThenBy(m => m.Id)
+                    .ToList();
+
+                var winner = ordered[0];
+                foreach (var loser in ordered.Skip(1))
+                {
+                    _log.Information(
+                        "DuplicateCleanup: external ID '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
+                        group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
+                    await MergeAndDeleteAsync(context, winner, loser, ct);
+                    alreadyRemoved.Add(loser.Id);
+                    removed++;
+                }
+            }
+            await context.SaveChangesAsync(ct);
+        }
+
+        if (removed > 0)
+            _log.Information("DuplicateCleanup: total {Count} duplicate item(s) removed", removed);
 
         return removed;
     }
@@ -161,9 +206,28 @@ public sealed class DuplicateCleanupService : IScheduledTask
         foreach (var child in loserChildren)
             child.ParentId = winner.Id;
 
-        // ── Owned records — simply delete (not worth migrating) ──────────────────
-        context.MediaExternalIds.RemoveRange(
-            await context.MediaExternalIds.Where(e => e.MediaItemId == loser.Id).ToListAsync(ct));
+        // ── MediaExternalIds — merge into winner, don't just delete ──────────────
+        // Grafting the loser's IDs (e.g. "simkl:12345") onto the winner means
+        // future syncs resolve at Stage 1 without re-creating the stub.
+        var winnerIdSet = winner.ExternalIds
+            .Select(e => $"{e.Source}:{e.ExternalId}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var loserExternalIds = await context.MediaExternalIds
+            .Where(e => e.MediaItemId == loser.Id)
+            .ToListAsync(ct);
+
+        foreach (var ext in loserExternalIds)
+        {
+            if (winnerIdSet.Contains($"{ext.Source}:{ext.ExternalId}"))
+                context.MediaExternalIds.Remove(ext);   // winner already has it — drop duplicate row
+            else
+                ext.MediaItemId = winner.Id;            // graft onto winner
+        }
+
+        // ── MediaEnrichments — remove loser's rows (winner keeps its own) ─────────
+        context.MediaEnrichments.RemoveRange(
+            await context.MediaEnrichments.Where(e => e.MediaItemId == loser.Id).ToListAsync(ct));
 
         // ── Finally delete the loser ──────────────────────────────────────────────
         context.MediaItems.Remove(loser);
