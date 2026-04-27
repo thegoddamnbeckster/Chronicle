@@ -111,7 +111,8 @@ public record ImportedItemMetadata(
     string? Overview,
     string? PosterUrl,
     int?    RuntimeMinutes,
-    IReadOnlyDictionary<string, string> AdditionalIds
+    IReadOnlyDictionary<string, string> AdditionalIds,
+    string? FanartUrl = null
 );
 
 // ── The interface ─────────────────────────────────────────────────────────────
