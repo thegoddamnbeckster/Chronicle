@@ -426,7 +426,7 @@
 /* -- Scan import progress banner ------------------------------------------- */
 
 .scanProgressBanner {
-  background: var(--surface-raised, var(--surface));
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px 16px;
@@ -647,7 +647,7 @@
 }
 
 .confirmModal {
-  background: var(--surface-raised, var(--surface));
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 24px 28px;

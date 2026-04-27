@@ -784,11 +784,15 @@ export default function BackgroundTasksPage() {
     setRunningEnrichmentIds(prev => new Set(prev).add(pluginId))
     try {
       await runEnrichment(pluginId)
+      // Endpoint is fire-and-forget — keep "Running…" visible for 3 s so the
+      // user gets clear feedback that the task was triggered.
+      setTimeout(() => {
+        setRunningEnrichmentIds(prev => { const s = new Set(prev); s.delete(pluginId); return s })
+        getEnrichmentStats().then(setEnrichmentStats).catch(() => {})
+      }, 3_000)
     } catch (err) {
-      if (err instanceof Error) alert(err.message)
-    } finally {
       setRunningEnrichmentIds(prev => { const s = new Set(prev); s.delete(pluginId); return s })
-      getEnrichmentStats().then(setEnrichmentStats).catch(() => {})
+      if (err instanceof Error) alert(err.message)
     }
   }
 
