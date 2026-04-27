@@ -90,6 +90,8 @@ export default function ScanGroupCard({ group, checked, onToggle }: Props) {
         <div className={styles.info}>
           <span className={styles.name}>{group.name}</span>
           {group.year && <span className={styles.year}>({group.year})</span>}
+          {group.author && <span className={styles.author}>by {group.author}</span>}
+          {group.series && <span className={styles.series}>{group.series}</span>}
           <span className={styles.itemCount}>{totalItems} items</span>
           {group.hasConflicts && (
             <span className={styles.conflictBadge} title="Signal sources disagree on this group">

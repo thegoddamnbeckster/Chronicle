@@ -43,6 +43,20 @@
   color: var(--text-muted);
 }
 
+.author {
+  font-size: 0.82rem;
+  color: var(--text-secondary, var(--text-muted));
+  font-style: italic;
+}
+
+.series {
+  font-size: 0.78rem;
+  color: var(--accent);
+  background: var(--accent-subtle, rgba(var(--accent-rgb, 0 200 150) / 0.12));
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
 .itemCount {
   font-size: 0.78rem;
   color: var(--text-muted);
