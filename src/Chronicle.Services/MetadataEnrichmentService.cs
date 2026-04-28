@@ -984,7 +984,8 @@ public class MetadataEnrichmentService(
                     // For flat media types like audiobooks the item has no hierarchy parent,
                     // so ParentName would be null. Pull the stored author from MetadataJson
                     // (written by the file scanner) so plugins can use it as an artist hint.
-                    string? parentNameOverride = null;
+                    string? parentNameOverride    = null;
+                    string? folderDerivedAltTitle = null;
                     if (row.MediaItem.HierarchyLevel == 0
                         && !string.IsNullOrWhiteSpace(row.MediaItem.MetadataJson))
                     {
@@ -997,20 +998,30 @@ public class MetadataEnrichmentService(
                                 if (fs.TryGetProperty("author", out var authorEl))
                                     parentNameOverride = authorEl.GetString();
 
-                                // Fallback for audiobooks: derive author from the parent directory
-                                // of the stored book-folder path. Items imported before the scanner
-                                // wrote the author field explicitly still have the folder path, so
-                                // Path.GetFileName(Path.GetDirectoryName(bookFolder)) = author folder.
-                                if (parentNameOverride is null
-                                    && string.Equals(mediaTypeName, "audiobooks", StringComparison.OrdinalIgnoreCase)
+                                if (string.Equals(mediaTypeName, "audiobooks", StringComparison.OrdinalIgnoreCase)
                                     && fs.TryGetProperty("filePath", out var fpEl))
                                 {
                                     var bookFolder = fpEl.GetString();
                                     if (!string.IsNullOrEmpty(bookFolder))
                                     {
-                                        var parentDir = System.IO.Path.GetDirectoryName(bookFolder);
-                                        if (!string.IsNullOrEmpty(parentDir))
-                                            parentNameOverride = System.IO.Path.GetFileName(parentDir);
+                                        // Fallback author: derive from parent directory of book folder.
+                                        // Items imported before the scanner wrote the author field explicitly
+                                        // still have the folder path, so GetFileName(GetDirectoryName()) = author.
+                                        if (parentNameOverride is null)
+                                        {
+                                            var parentDir = System.IO.Path.GetDirectoryName(bookFolder);
+                                            if (!string.IsNullOrEmpty(parentDir))
+                                                parentNameOverride = System.IO.Path.GetFileName(parentDir);
+                                        }
+
+                                        // Short folder-derived title: AudioAlbum tags often contain a
+                                        // publisher subtitle ("Short Title: Series Name, Book N") that
+                                        // MusicBrainz does not index.  The folder stores just the short
+                                        // title after "(YYYY) - ", so prefer it as the primary search term.
+                                        var folderName = System.IO.Path.GetFileName(bookFolder);
+                                        var yearMatch = AudiobookFolderTitleRe.Match(folderName);
+                                        if (yearMatch.Success)
+                                            folderDerivedAltTitle = yearMatch.Groups[1].Value.Trim();
                                     }
                                 }
                             }
@@ -1031,7 +1042,7 @@ public class MetadataEnrichmentService(
                             AltTitles:       BuildAltTitles(
                                                  row.MediaItem.Name,
                                                  filenameStem,
-                                                 null),
+                                                 folderDerivedAltTitle),
                             ChildNames:      childNames,
                             SubItemMetadata: subItemMetadata,
                             MediaTypeName:   mediaTypeName);
@@ -1376,6 +1387,13 @@ public class MetadataEnrichmentService(
     private static readonly System.Text.RegularExpressions.Regex DiscFolderRe =
         new(@"\b(?:disc|disk|cd)\s*(\d+)\b",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // Audiobook folder title: captures the title segment that follows "(YYYY) - ".
+    // e.g. "Dungeon Crawler Carl - 2 - (2021) - Carl's Doomsday Scenario" → "Carl's Doomsday Scenario"
+    // Used to prefer the short folder title over an AudioAlbum tag with a publisher subtitle.
+    private static readonly System.Text.RegularExpressions.Regex AudiobookFolderTitleRe =
+        new(@"\(\d{4}\)\s*-\s*(.+)$",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
