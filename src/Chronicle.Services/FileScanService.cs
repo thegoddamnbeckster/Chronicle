@@ -1692,6 +1692,13 @@ namespace Chronicle.Services
                         var libEntry = await _context.UserLibraries
                             .FirstOrDefaultAsync(l => l.UserId == uid && l.MediaItemId == rootItem.Id, ct);
 
+                        // Also check the EF change tracker for entries that are pending
+                        // but not yet flushed to the DB — prevents a unique constraint
+                        // violation when two scan groups resolve to the same MediaItem
+                        // (e.g. two folders with the same parsed title).
+                        libEntry ??= _context.UserLibraries.Local
+                            .FirstOrDefault(l => l.UserId == uid && l.MediaItemId == rootItem.Id);
+
                         if (libEntry is null)
                         {
                             _context.UserLibraries.Add(new UserLibrary
