@@ -979,9 +979,29 @@ public class MetadataEnrichmentService(
                         try
                         {
                             using var doc = System.Text.Json.JsonDocument.Parse(row.MediaItem.MetadataJson);
-                            if (doc.RootElement.TryGetProperty("fileScanner", out var fs)
-                                && fs.TryGetProperty("author", out var authorEl))
-                                parentNameOverride = authorEl.GetString();
+                            if (doc.RootElement.TryGetProperty("fileScanner", out var fs))
+                            {
+                                // Explicit author written by the scanner (preferred)
+                                if (fs.TryGetProperty("author", out var authorEl))
+                                    parentNameOverride = authorEl.GetString();
+
+                                // Fallback for audiobooks: derive author from the parent directory
+                                // of the stored book-folder path. Items imported before the scanner
+                                // wrote the author field explicitly still have the folder path, so
+                                // Path.GetFileName(Path.GetDirectoryName(bookFolder)) = author folder.
+                                if (parentNameOverride is null
+                                    && string.Equals(mediaTypeName, "audiobooks", StringComparison.OrdinalIgnoreCase)
+                                    && fs.TryGetProperty("filePath", out var fpEl))
+                                {
+                                    var bookFolder = fpEl.GetString();
+                                    if (!string.IsNullOrEmpty(bookFolder))
+                                    {
+                                        var parentDir = System.IO.Path.GetDirectoryName(bookFolder);
+                                        if (!string.IsNullOrEmpty(parentDir))
+                                            parentNameOverride = System.IO.Path.GetFileName(parentDir);
+                                    }
+                                }
+                            }
                         }
                         catch { /* malformed JSON — leave null */ }
                     }
