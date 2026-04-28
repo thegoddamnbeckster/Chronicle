@@ -26,6 +26,15 @@ public class SettingsController : ControllerBase
     private static string NormalizeMediaTypeName(string name) =>
         name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
+    // Parent-type relationships: providers that support the parent are also offered for the sub-type.
+    // e.g. Trakt supports "tv" → it should appear for "anime" assignments too.
+    private static readonly Dictionary<string, string> TypeParentMap =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["anime"]    = "tv",
+            ["fanedits"] = "movie",
+        };
+
     public SettingsController(ChronicleDbContext db, IPluginRegistry pluginRegistry)
     {
         _db             = db;
@@ -143,11 +152,18 @@ public class SettingsController : ControllerBase
             {
                 var dot = assignmentKey.IndexOf('.');
                 var baseTypeName = NormalizeMediaTypeName(dot < 0 ? assignmentKey : assignmentKey[..dot]);
+
+                // Include providers for the parent type (e.g. "tv" providers also offered for "anime").
+                TypeParentMap.TryGetValue(baseTypeName, out var parentTypeName);
+
                 return allEntries
                     .Where(e => e.Provider.GetSupportedMediaTypes()
-                        .Any(t => string.Equals(
-                            NormalizeMediaTypeName(t.MediaTypeName), baseTypeName,
-                            StringComparison.OrdinalIgnoreCase)))
+                        .Any(t =>
+                        {
+                            var tn = NormalizeMediaTypeName(t.MediaTypeName);
+                            return string.Equals(tn, baseTypeName, StringComparison.OrdinalIgnoreCase)
+                                || (parentTypeName != null && string.Equals(tn, parentTypeName, StringComparison.OrdinalIgnoreCase));
+                        }))
                     .Select(e =>
                     {
                         var dbPlugin = dbPlugins.FirstOrDefault(p =>
