@@ -624,8 +624,20 @@ public class MetadataEnrichmentService(
             query = query.Where(x => x.Status == parsedStatus);
 
         if (!string.IsNullOrEmpty(search))
-            query = query.Where(x => x.MediaItem != null &&
-                                     x.MediaItem.Name.Contains(search));
+        {
+            var pattern = $"%{search}%";
+            query = query.Where(x =>
+                // Title
+                (x.MediaItem != null && EF.Functions.Like(x.MediaItem.Name, pattern)) ||
+                // MetadataJson blob — covers author, series, file paths stored by the scanner
+                (x.MediaItem != null && x.MediaItem.MetadataJson != null &&
+                 EF.Functions.Like(x.MediaItem.MetadataJson, pattern)) ||
+                // Stored external ID (e.g. "release-group:xxxx")
+                (x.ExternalId != null && EF.Functions.Like(x.ExternalId, pattern)) ||
+                // Parent name (artist for music, show for TV)
+                (x.MediaItem != null && x.MediaItem.Parent != null &&
+                 EF.Functions.Like(x.MediaItem.Parent.Name, pattern)));
+        }
 
         var total = await query.CountAsync(ct);
 
