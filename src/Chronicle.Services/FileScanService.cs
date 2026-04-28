@@ -1312,21 +1312,26 @@ namespace Chronicle.Services
                     ? Path.GetFileName(parentDir)
                     : null;
 
+                // Always parse the folder name for series/year — used as fallback below.
+                var (folderTitle, folderYear, folderSeries) =
+                    ParseAudiobookFolderName(folderName);
+
                 if (!string.IsNullOrWhiteSpace(rep.AudioAlbum))
                 {
                     rep.ParsedTitle = rep.AudioAlbum;
                     rep.ParsedYear ??= rep.AudioYear ?? group.Select(f => f.AudioYear).FirstOrDefault(y => y.HasValue);
-                    // Still pull author from parent folder if tags don't have it.
+                    // Author: tags > parent folder name
                     if (author is null && !string.IsNullOrWhiteSpace(parentFolderName))
                     {
                         rep.AudioAlbumArtist = parentFolderName;
                         rep.AudioArtist      = parentFolderName;
                     }
+                    // Series: AudioGrouping tag > folder name (AudioAlbum doesn't carry series info)
+                    if (series is null && !string.IsNullOrWhiteSpace(folderSeries))
+                        rep.AudioGrouping = folderSeries;
                 }
                 else if (rep.ConfidenceScore < 78) // no NFO — derive from folder names
                 {
-                    var (folderTitle, folderYear, folderSeries) =
-                        ParseAudiobookFolderName(folderName);
                     rep.ParsedTitle = folderTitle;
                     if (folderYear.HasValue) rep.ParsedYear ??= folderYear;
                     // Author: tags > parent folder name
@@ -1393,10 +1398,9 @@ namespace Chronicle.Services
                 var title = titleParts.Length > 0 ? string.Join(" - ", titleParts) : folderName.Trim();
 
                 // Series = non-placeholder, non-numeric segments before the year.
-                // (Numeric-only segments are the series number — useful for ordering but
-                //  not displayed as a series name.)
+                // Filters integers AND decimals (e.g. 1.5, 0.5) which are series numbers.
                 var preParts = raw[..yearIdx]
-                    .Where(p => !IsPlaceholder(p) && !int.TryParse(p, out _))
+                    .Where(p => !IsPlaceholder(p) && !IsSeriesNumber(p))
                     .ToArray();
                 var series = preParts.Length > 0 ? string.Join(" - ", preParts) : null;
 
@@ -1429,6 +1433,10 @@ namespace Chronicle.Services
 
         private static bool IsPlaceholder(string s) =>
             string.IsNullOrWhiteSpace(s) || s.Trim('-', '_', ' ').Length == 0;
+
+        private static bool IsSeriesNumber(string s) =>
+            double.TryParse(s, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out _);
 
         private static string ToMediaTypeHint(string mediaTypeName)
         {
