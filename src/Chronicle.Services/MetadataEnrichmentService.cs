@@ -968,10 +968,29 @@ public class MetadataEnrichmentService(
                     }
 
                     var filenameStem = ExtractFilenameStem(row.MediaItem);
+
+                    // For flat media types like audiobooks the item has no hierarchy parent,
+                    // so ParentName would be null. Pull the stored author from MetadataJson
+                    // (written by the file scanner) so plugins can use it as an artist hint.
+                    string? parentNameOverride = null;
+                    if (row.MediaItem.HierarchyLevel == 0
+                        && !string.IsNullOrWhiteSpace(row.MediaItem.MetadataJson))
+                    {
+                        try
+                        {
+                            using var doc = System.Text.Json.JsonDocument.Parse(row.MediaItem.MetadataJson);
+                            if (doc.RootElement.TryGetProperty("fileScanner", out var fs)
+                                && fs.TryGetProperty("author", out var authorEl))
+                                parentNameOverride = authorEl.GetString();
+                        }
+                        catch { /* malformed JSON — leave null */ }
+                    }
+
+                    var fileScannedParent = parentNameOverride ?? row.MediaItem.Parent?.Name;
                     var searchCtx = new MediaSearchContext(
                             Name:            row.MediaItem.Name,
                             Year:            ValidateYear(row.MediaItem.Year),
-                            ParentName:      row.MediaItem.Parent?.Name,
+                            ParentName:      fileScannedParent,
                             GrandparentName: row.MediaItem.Parent?.Parent?.Name,
                             ItemNumber:      row.MediaItem.Number,
                             HierarchyLevel:  row.MediaItem.HierarchyLevel,
