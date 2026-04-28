@@ -1298,25 +1298,42 @@ namespace Chronicle.Services
                 if (series is not null)   rep.AudioGrouping = series;
 
                 // Resolve title: AudioAlbum tag > NFO-provided ParsedTitle (score ≥ 78)
-                //                > folder name parsed as common audiobook naming conventions.
+                //                > folder name parsed as "<Series> - <Num> - (<Year>) - <Title>".
+                //
+                // Author resolution priority: embedded tags > parent folder name (user's layout
+                // is <Author>\<Series - Num - (Year) - Title>\files, so the parent of the book
+                // folder is the author folder unless it IS the scan root).
                 var folderName = Path.GetFileName(bookFolder);
+                var parentDir  = Path.GetDirectoryName(bookFolder);
+                var parentIsRoot = string.Equals(
+                    parentDir?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    rootNorm, StringComparison.OrdinalIgnoreCase);
+                var parentFolderName = (!parentIsRoot && parentDir is not null)
+                    ? Path.GetFileName(parentDir)
+                    : null;
 
                 if (!string.IsNullOrWhiteSpace(rep.AudioAlbum))
                 {
                     rep.ParsedTitle = rep.AudioAlbum;
                     rep.ParsedYear ??= rep.AudioYear ?? group.Select(f => f.AudioYear).FirstOrDefault(y => y.HasValue);
+                    // Still pull author from parent folder if tags don't have it.
+                    if (author is null && !string.IsNullOrWhiteSpace(parentFolderName))
+                    {
+                        rep.AudioAlbumArtist = parentFolderName;
+                        rep.AudioArtist      = parentFolderName;
+                    }
                 }
-                else if (rep.ConfidenceScore < 78) // no NFO — derive from folder name
+                else if (rep.ConfidenceScore < 78) // no NFO — derive from folder names
                 {
-                    var (folderTitle, folderYear, folderAuthor, folderSeries) =
+                    var (folderTitle, folderYear, folderSeries) =
                         ParseAudiobookFolderName(folderName);
                     rep.ParsedTitle = folderTitle;
                     if (folderYear.HasValue) rep.ParsedYear ??= folderYear;
-                    // Only fill author/series from folder if tags didn't supply them.
-                    if (author is null && !string.IsNullOrWhiteSpace(folderAuthor))
+                    // Author: tags > parent folder name
+                    if (author is null && !string.IsNullOrWhiteSpace(parentFolderName))
                     {
-                        rep.AudioAlbumArtist = folderAuthor;
-                        rep.AudioArtist      = folderAuthor;
+                        rep.AudioAlbumArtist = parentFolderName;
+                        rep.AudioArtist      = parentFolderName;
                     }
                     if (series is null && !string.IsNullOrWhiteSpace(folderSeries))
                         rep.AudioGrouping = folderSeries;
@@ -1333,51 +1350,85 @@ namespace Chronicle.Services
         }
 
         /// <summary>
-        /// Parses common audiobook folder naming conventions into structured fields.
+        /// Parses an audiobook book-folder name into title, year, and series.
         ///
-        /// Supported patterns (year may appear anywhere wrapped in parentheses):
-        ///   Title (Year)
-        ///   Author - Title (Year)
-        ///   Author - Series - Title (Year)
-        ///   Author - Series - (Year) - Title        ← Calibre blank-field variant
-        ///   Author - Series, Book N - Title (Year)
+        /// Primary format (user's layout):
+        ///   <c>Series - SeriesNum - (Year) - Title</c>
+        ///   e.g. "Stormlight Archive - 1 - (2010) - The Way of Kings"
+        ///        "- - (2015) - Armada"          ← dashes are placeholders for no series/num
         ///
-        /// Empty or dash-only segments (produced by tools like Calibre when a field is
-        /// blank) are discarded before role assignment.
+        /// Author is NOT extracted here — callers derive it from the parent directory
+        /// (the user's layout is <c>Author\Book\files</c>).
+        ///
+        /// Fallback for non-matching names: extract year from any <c>(YYYY)</c>, then use the
+        /// last non-placeholder segment as the title and any preceding ones as series.
         /// </summary>
-        private static (string Title, int? Year, string? Author, string? Series)
+        private static (string Title, int? Year, string? Series)
             ParseAudiobookFolderName(string folderName)
         {
-            // Extract year from anywhere in the name.
-            int? year = null;
+            // Split on " - " to get raw segments.
+            var raw = folderName.Split(new[] { " - " }, StringSplitOptions.None)
+                                .Select(p => p.Trim())
+                                .ToArray();
+
+            // Locate a segment that is purely "(YYYY)".
+            var yearPattern = new System.Text.RegularExpressions.Regex(@"^\((\d{4})\)$");
+            int yearIdx = -1;
+            int? year   = null;
+            for (int i = 0; i < raw.Length; i++)
+            {
+                var m = yearPattern.Match(raw[i]);
+                if (!m.Success) continue;
+                year   = int.Parse(m.Groups[1].Value);
+                yearIdx = i;
+                break;
+            }
+
+            if (yearIdx >= 0)
+            {
+                // Title = segments after the year segment (usually just one).
+                var titleParts = raw[(yearIdx + 1)..]
+                    .Where(p => !IsPlaceholder(p))
+                    .ToArray();
+                var title = titleParts.Length > 0 ? string.Join(" - ", titleParts) : folderName.Trim();
+
+                // Series = non-placeholder, non-numeric segments before the year.
+                // (Numeric-only segments are the series number — useful for ordering but
+                //  not displayed as a series name.)
+                var preParts = raw[..yearIdx]
+                    .Where(p => !IsPlaceholder(p) && !int.TryParse(p, out _))
+                    .ToArray();
+                var series = preParts.Length > 0 ? string.Join(" - ", preParts) : null;
+
+                return (title, year, series);
+            }
+
+            // ── Fallback: no standalone (YYYY) segment found ─────────────────────
+            // Extract year from anywhere in the string, then apply generic parsing.
+            year = null;
             var cleaned = System.Text.RegularExpressions.Regex.Replace(
-                folderName,
-                @"\s*\((\d{4})\)\s*",
+                folderName, @"\s*\((\d{4})\)\s*",
                 m =>
                 {
-                    if (year is null && int.TryParse(m.Groups[1].Value, out var y))
-                        year = y;
+                    if (year is null && int.TryParse(m.Groups[1].Value, out var y)) year = y;
                     return " ";
-                }).Trim();
+                }).Trim(' ', '-', '_').Trim();
 
-            // Remove any leading/trailing separators left after year extraction.
-            cleaned = cleaned.Trim(' ', '-', '_');
-
-            // Split on " - " and discard blank or dash-only segments (Calibre empty fields).
             var parts = cleaned
                 .Split(new[] { " - " }, StringSplitOptions.None)
                 .Select(p => p.Trim())
-                .Where(p => p.Trim('-', '_', ' ').Length > 0)
+                .Where(p => !IsPlaceholder(p))
                 .ToArray();
 
-            if (parts.Length == 0) return (folderName.Trim(), year, null, null);
-            if (parts.Length == 1) return (parts[0], year, null, null);
-            if (parts.Length == 2) return (parts[1], year, parts[0], null);
+            if (parts.Length == 0) return (folderName.Trim(), year, null);
+            if (parts.Length == 1) return (parts[0], year, null);
 
-            // 3+ parts: first = author, last = title, middle(s) = series.
-            var seriesName = string.Join(" - ", parts[1..^1]);
-            return (parts[^1], year, parts[0], seriesName);
+            // Last segment = title; everything else = series.
+            return (parts[^1], year, string.Join(" - ", parts[..^1]));
         }
+
+        private static bool IsPlaceholder(string s) =>
+            string.IsNullOrWhiteSpace(s) || s.Trim('-', '_', ' ').Length == 0;
 
         private static string ToMediaTypeHint(string mediaTypeName)
         {
