@@ -91,3 +91,12 @@ src/Chronicle.API/plugins/
 # ── Claude Code local settings (machine-specific) ─────────────────────────────
 .claude/settings.local.json
 .claude/worktrees/
+
+# Runtime plugin binaries (deployed from individual plugin repos)
+plugins/
+
+# Scratch / debugging files (not part of source)
+*.sql
+run_sql.bat
+mb_test_output*.txt
+commit_msg*.txt
