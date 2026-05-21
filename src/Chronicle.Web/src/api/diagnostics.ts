@@ -6,6 +6,7 @@ export interface DiagnosticsInfo {
   apiDir: string
   dbPath: string
   dbExists: boolean
+  dbSizeBytes: number
   logsPath: string
   branch: string
   commitHash: string

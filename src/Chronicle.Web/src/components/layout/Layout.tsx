@@ -8,6 +8,7 @@ import { useScrollRestoration } from '@/hooks/useScrollRestoration'
 import NavGroup from './NavGroup'
 import ActivityPanel from './ActivityPanel'
 import AppFooter from './AppFooter'
+import GlobalSearch from './GlobalSearch'
 import styles from './Layout.module.css'
 
 export default function Layout() {
@@ -35,6 +36,7 @@ export default function Layout() {
     <div className={styles.shell}>
       <header className={styles.header}>
         <span className={styles.logo}>Chronicle</span>
+        <GlobalSearch />
         <div className={styles.headerRight}>
           <span className={styles.username}>{user.username}</span>
           <button className={styles.logoutBtn} onClick={logout}>Logout</button>

@@ -14,7 +14,7 @@ export default function AppFooter({ showDiagnostics, version }: AppFooterProps) 
   const [error, setError] = useState<string | null>(null)
 
   async function toggle() {
-    if (!open && !diag) {
+    if (!open) {
       setLoading(true)
       setError(null)
       try {
@@ -47,7 +47,7 @@ export default function AppFooter({ showDiagnostics, version }: AppFooterProps) 
                 <span className={styles.diagVal}>
                   {diag.dbPath}
                   {diag.dbExists
-                    ? <span className={styles.exists}>[EXISTS]</span>
+                    ? <span className={styles.exists}>[EXISTS · {(diag.dbSizeBytes / 1024 / 1024).toFixed(1)} MB]</span>
                     : <span className={styles.missing}>[MISSING]</span>}
                 </span>
               </div>
