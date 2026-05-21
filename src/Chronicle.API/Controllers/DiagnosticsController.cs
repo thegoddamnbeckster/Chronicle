@@ -48,12 +48,16 @@ public class DiagnosticsController : ControllerBase
             ?.InformationalVersion ?? "0.0.0";
         if (version.Contains('+')) version = version[..version.IndexOf('+')];
 
+        bool dbExists = System.IO.File.Exists(dbPath);
+        long dbSizeBytes = dbExists ? new System.IO.FileInfo(dbPath).Length : 0;
+
         return Ok(ApiResponse<DiagnosticsDto>.Ok(new DiagnosticsDto(
             RepoRoot: repoRoot,
             ApiProjectPath: apiProjectPath,
             ApiDir: apiDir,
             DbPath: dbPath,
-            DbExists: System.IO.File.Exists(dbPath),
+            DbExists: dbExists,
+            DbSizeBytes: dbSizeBytes,
             LogsPath: logsPath,
             Branch: branch,
             CommitHash: commitHash,
@@ -129,6 +133,7 @@ public record DiagnosticsDto(
     string ApiDir,
     string DbPath,
     bool DbExists,
+    long DbSizeBytes,
     string LogsPath,
     string Branch,
     string CommitHash,

@@ -21,6 +21,8 @@ import {
   buildMonthlyActivity,
   buildStatusBreakdown,
 } from '@/api/reports'
+import { getLibraryStats } from '@/api/stats'
+import { getDiagnostics } from '@/api/diagnostics'
 import styles from './ReportsPage.module.css'
 
 // Accent palette for pie/bar charts
@@ -79,6 +81,18 @@ export default function ReportsPage() {
   const { data: library = [] } = useQuery({
     queryKey: ['library-report'],
     queryFn: () => getLibraryPage(),
+  })
+
+  const { data: libStats } = useQuery({
+    queryKey: ['library-stats'],
+    queryFn: getLibraryStats,
+    staleTime: 60_000,
+  })
+
+  const { data: diag } = useQuery({
+    queryKey: ['diagnostics-report'],
+    queryFn: getDiagnostics,
+    staleTime: 60_000,
   })
 
   const monthlyData = buildMonthlyActivity(history)
@@ -245,6 +259,54 @@ export default function ReportsPage() {
           )}
         </ChartCard>
       </div>
+
+      {/* ── Database stats ── */}
+      {(libStats || diag) && (
+        <>
+          <SectionTitle>Database</SectionTitle>
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <tbody>
+                {diag && (
+                  <>
+                    <tr>
+                      <td><strong>File</strong></td>
+                      <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{diag.dbPath}</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Size</strong></td>
+                      <td>{diag.dbExists ? `${(diag.dbSizeBytes / 1024 / 1024).toFixed(2)} MB` : 'File not found'}</td>
+                    </tr>
+                  </>
+                )}
+                {libStats && (
+                  <tr>
+                    <td><strong>Total items</strong></td>
+                    <td>{libStats.totalItems.toLocaleString()}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {libStats && libStats.byMediaType.length > 0 && (
+            <div className={styles.tableWrap} style={{ marginTop: 8 }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr><th>Media Type</th><th>Items</th></tr>
+                </thead>
+                <tbody>
+                  {libStats.byMediaType.map(r => (
+                    <tr key={r.mediaType}>
+                      <td>{r.mediaType}</td>
+                      <td>{r.count.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
 
       {/* ── Recent history table ── */}
       <SectionTitle>Recent Scrobbles</SectionTitle>
