@@ -118,6 +118,7 @@ public class PluginsController : ControllerBase
     ///   4. File size is capped at 100 KB (raw download).
     ///   5. Result is cached for 24 h — the browser never contacts the external site.
     ///   6. Only HTTPS URLs are accepted (enforced via Uri.Scheme check).
+    ///      Exception: data: URIs are allowed — they contain no external dependency.
     /// </summary>
     // Favicons are not sensitive — allow unauthenticated access so <img> tags work.
     [HttpGet("{id:int}/icon")]
@@ -130,6 +131,10 @@ public class PluginsController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(iconUrl))
             return NotFound();
+
+        // data: URIs are self-contained — decode and serve without any external fetch.
+        if (iconUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return ServeDataUri(id, iconUrl);
 
         // Require HTTPS to prevent loading resources from plain-HTTP sites
         if (!Uri.TryCreate(iconUrl, UriKind.Absolute, out var uri) ||
@@ -230,6 +235,62 @@ public class PluginsController : ControllerBase
         }
 
         // Cache and return
+        _cache.Set(cacheKey, (bytes, contentType),
+            new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = IconCacheDuration });
+
+        return File(bytes, contentType);
+    }
+
+    /// <summary>
+    /// Decodes a <c>data:</c> URI and serves the embedded bytes, rasterising SVG to PNG.
+    /// Format: <c>data:[&lt;mediatype&gt;][;base64],&lt;data&gt;</c>
+    /// </summary>
+    private IActionResult ServeDataUri(int id, string dataUri)
+    {
+        var cacheKey = $"plugin_icon:{id}:data";
+        if (_cache.TryGetValue(cacheKey, out (byte[] Data, string ContentType) cached))
+            return File(cached.Data, cached.ContentType);
+
+        var commaIdx = dataUri.IndexOf(',');
+        if (commaIdx < 0) return NotFound();
+
+        var header  = dataUri[5..commaIdx];  // everything between "data:" and ","
+        var payload = dataUri[(commaIdx + 1)..];
+
+        string mediaType;
+        byte[] rawBytes;
+
+        if (header.EndsWith(";base64", StringComparison.OrdinalIgnoreCase))
+        {
+            mediaType = header[..^7];  // strip ";base64"
+            try   { rawBytes = Convert.FromBase64String(payload); }
+            catch { return NotFound(); }
+        }
+        else
+        {
+            mediaType = header;
+            rawBytes  = System.Text.Encoding.UTF8.GetBytes(Uri.UnescapeDataString(payload));
+        }
+
+        byte[] bytes;
+        string contentType;
+
+        if (mediaType.StartsWith("image/svg", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                bytes       = RasteriseSvgToPng(rawBytes, SvgRenderSize);
+                contentType = "image/png";
+            }
+            catch { return StatusCode(502); }
+        }
+        else
+        {
+            if (!HasValidImageMagic(rawBytes)) return StatusCode(415);
+            bytes       = rawBytes;
+            contentType = mediaType;
+        }
+
         _cache.Set(cacheKey, (bytes, contentType),
             new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = IconCacheDuration });
 
