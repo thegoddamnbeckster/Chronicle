@@ -205,6 +205,14 @@ public class SettingsController : ControllerBase
                 return $"{baseDisplay} {plural}";
             });
 
+        // Load plugin display order (stored separately so it can be changed without
+        // touching field assignments).
+        var displayOrderSetting = await _db.AppSettings.FindAsync("plugin_display_order.config");
+        var displayOrder = displayOrderSetting?.Value is not null
+            ? JsonSerializer.Deserialize<Dictionary<string, string[]>>(displayOrderSetting.Value)
+              ?? new Dictionary<string, string[]>()
+            : new Dictionary<string, string[]>();
+
         return Ok(new
         {
             success = true,
@@ -214,6 +222,7 @@ public class SettingsController : ControllerBase
                 assignableFields,
                 availablePlugins,
                 mediaTypeDisplayNames,
+                displayOrder,
             },
         });
     }
@@ -250,6 +259,42 @@ public class SettingsController : ControllerBase
 
         await _db.SaveChangesAsync();
         return Ok(new { success = true });
+    }
+
+    // ── Plugin display order ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the saved plugin display order per media type.
+    /// Keys are DB media type names ("movies", "audiobooks", …); values are ordered plugin-ID arrays.
+    /// </summary>
+    [HttpGet("plugin-display-order")]
+    public async Task<IActionResult> GetPluginDisplayOrder()
+    {
+        var setting = await _db.AppSettings.FindAsync("plugin_display_order.config");
+        if (setting?.Value is null)
+            return Ok(new Dictionary<string, string[]>());
+
+        var order = JsonSerializer.Deserialize<Dictionary<string, string[]>>(setting.Value)
+                    ?? new Dictionary<string, string[]>();
+        return Ok(order);
+    }
+
+    /// <summary>Saves plugin display order per media type. Admin only.</summary>
+    [HttpPut("plugin-display-order")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> PutPluginDisplayOrder(
+        [FromBody] Dictionary<string, string[]> order)
+    {
+        var json     = JsonSerializer.Serialize(order);
+        var existing = await _db.AppSettings.FindAsync("plugin_display_order.config");
+
+        if (existing is null)
+            _db.AppSettings.Add(new AppSetting { Key = "plugin_display_order.config", Value = json });
+        else
+            existing.Value = json;
+
+        await _db.SaveChangesAsync();
+        return NoContent();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
