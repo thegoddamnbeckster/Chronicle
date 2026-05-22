@@ -1864,7 +1864,7 @@ namespace Chronicle.Services
             // Audiobooks get a scanner-backed preview: reads tags, filters to audio files only,
             // and groups by book folder so the preview matches what the actual import will produce.
             if (string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
-                return await PreviewAudiobooksAsync(request, ct);
+                return await PreviewAudiobooksAsync(request, mediaType, ct);
 
             // Collect all file paths
             var allPaths = new List<string>();
@@ -1899,7 +1899,7 @@ namespace Chronicle.Services
         }
 
         private async Task<ScanGroupResult> PreviewAudiobooksAsync(
-            ScanPreviewRequest request, CancellationToken ct)
+            ScanPreviewRequest request, MediaType mediaType, CancellationToken ct)
         {
             var allScanners = _registry.GetFileScannerPlugins();
             var scanner = allScanners
@@ -1919,6 +1919,24 @@ namespace Chronicle.Services
             _log.Information("Audiobooks preview: {Raw} audio files collapsed to {Books} book groups",
                 scannedFiles.Count, collapsed.Count);
 
+            // When the media type uses 3-level hierarchy (Author → Series? → Book),
+            // return a hierarchical ScanGroup tree so that ImportGroupsAsync (used by
+            // both the scheduled scan and the manual scan-review import) creates the
+            // correct Author L0 → Series L1 → Book L2 structure in the DB.
+            if (mediaType.HierarchyLevels >= 3)
+            {
+                var authorGroups = GroupAudiobooksByAuthorAndSeries(collapsed);
+                _log.Information("Audiobooks preview (hierarchical): {Books} books grouped into {Authors} author(s)",
+                    collapsed.Count, authorGroups.Count);
+                return new Chronicle.Core.Models.Scan.ScanGroupResult
+                {
+                    Groups     = authorGroups,
+                    TotalFiles = scannedFiles.Count,
+                };
+            }
+
+            // Flat fallback (HierarchyLevels < 3): one ScanGroup per book, author/series
+            // stored as metadata on the group rather than as parent items.
             var groups = collapsed.Select(f =>
             {
                 var author = f.AudioAlbumArtist ?? f.AudioArtist;
