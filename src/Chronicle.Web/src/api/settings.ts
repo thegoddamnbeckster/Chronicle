@@ -35,6 +35,8 @@ export interface MetadataAssignmentConfig {
   availablePlugins: Record<string, PluginInfo[]>
   /** Human-readable display names for each media type key (e.g. "fanedits" → "Fan Edits"). */
   mediaTypeDisplayNames: Record<string, string>
+  /** Saved display order per media type — controls box order on the media detail page. */
+  displayOrder: Record<string, string[]>
 }
 
 export async function getMetadataAssignment(): Promise<MetadataAssignmentConfig> {
@@ -46,6 +48,17 @@ export async function putMetadataAssignment(
   assignments: Record<string, Record<string, string[]>>
 ): Promise<void> {
   await client.put('/settings/metadata-assignment', { assignments })
+}
+
+/** Returns the saved plugin box display order per media type (keyed by DB type name). */
+export async function getPluginDisplayOrder(): Promise<Record<string, string[]>> {
+  const res = await client.get<Record<string, string[]>>('/settings/plugin-display-order')
+  return res.data
+}
+
+/** Saves the plugin box display order per media type. Admin only. */
+export async function putPluginDisplayOrder(order: Record<string, string[]>): Promise<void> {
+  await client.put('/settings/plugin-display-order', order)
 }
 
 export async function getChangeAccountCommand(

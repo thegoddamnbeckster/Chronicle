@@ -14,7 +14,7 @@ import {
   horizontalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { getMetadataAssignment, putMetadataAssignment, type MetadataAssignmentConfig, type PluginInfo } from '@/api/settings'
+import { getMetadataAssignment, putMetadataAssignment, putPluginDisplayOrder, type MetadataAssignmentConfig, type PluginInfo } from '@/api/settings'
 import { useAuth } from '@/hooks/useAuth'
 import styles from './MetadataAssignmentPage.module.css'
 
@@ -134,8 +134,17 @@ export default function MetadataAssignmentPage() {
         const orders: Record<string, string[]>  = {}
         for (const mt of Object.keys(cfg.assignableFields)) {
           defaults[mt] = true
-          // Initialise each media type's default order from its available plugin list
-          orders[mt] = cfg.availablePlugins[mt]?.map(p => p.pluginId) ?? []
+          // Use the saved display order if present; otherwise fall back to available plugins order
+          if (cfg.displayOrder?.[mt]?.length) {
+            // Merge: saved IDs first (in saved order), then any new plugins not yet in the order
+            const saved    = cfg.displayOrder[mt]
+            const available = cfg.availablePlugins[mt]?.map(p => p.pluginId) ?? []
+            const merged   = [...saved.filter(id => available.includes(id)),
+                              ...available.filter(id => !saved.includes(id))]
+            orders[mt] = merged
+          } else {
+            orders[mt] = cfg.availablePlugins[mt]?.map(p => p.pluginId) ?? []
+          }
         }
         setOpenSections(defaults)
         setDefaultOrders(orders)
@@ -168,7 +177,10 @@ export default function MetadataAssignmentPage() {
   }
 
   function handleDefaultReorder(mediaType: string, newOrder: string[]) {
-    setDefaultOrders(prev => ({ ...prev, [mediaType]: newOrder }))
+    const next = { ...defaultOrders, [mediaType]: newOrder }
+    setDefaultOrders(next)
+    // Auto-save the display order immediately (independent of field assignments)
+    putPluginDisplayOrder(next).catch(e => setError(String(e)))
   }
 
   function applyDefaultToAll(mediaType: string) {
@@ -232,12 +244,13 @@ export default function MetadataAssignmentPage() {
               ) : (
                 <div className={styles.tableWrap}>
 
-                  {/* ── Default priority box ── */}
+                  {/* ── Display order / default priority box ── */}
                   <div className={styles.defaultBox}>
                     <div className={styles.defaultBoxLeft}>
-                      <span className={styles.defaultBoxLabel}>Default Priority</span>
+                      <span className={styles.defaultBoxLabel}>Display Order</span>
                       <span className={styles.defaultBoxHint}>
-                        Drag to set, then apply to all fields below
+                        Controls the order of plugin boxes on the media detail page.
+                        Drag to reorder, then optionally apply as default field priority below.
                       </span>
                     </div>
                     <SortableList
