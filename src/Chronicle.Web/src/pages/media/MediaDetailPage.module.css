@@ -1169,3 +1169,5 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 .changeTypeError { color: var(--status-danger-fg); font-size: 0.82rem; margin: 0; }
 
 .changeTypeActions { display: flex; justify-content: flex-end; }
+
+.narratorLine { margin: 4px 0 12px; font-size: 0.95rem; color: var(--text-secondary); font-style: italic; }
