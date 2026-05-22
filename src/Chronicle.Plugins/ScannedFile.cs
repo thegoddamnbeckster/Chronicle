@@ -82,6 +82,12 @@ public class ScannedFile
     // ── Technical ───────────────────────────────────────────────────────────
     /// <summary>Duration of the media file in whole seconds, as reported by the container. Null for formats TagLib# cannot probe.</summary>
     public int? DurationSeconds { get; set; }
+    /// <summary>
+    /// Total duration in seconds across all files that were collapsed into this representative entry.
+    /// Set by <c>CollapseAudiobooksToFolders</c> when merging a multi-file audiobook.
+    /// For single-file items this equals <see cref="DurationSeconds"/>.
+    /// </summary>
+    public int? TotalDurationSeconds { get; set; }
     /// <summary>Size of the media file in bytes at the time of scanning.</summary>
     public long? FileSizeBytes { get; set; }
 }
