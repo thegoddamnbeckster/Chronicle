@@ -570,6 +570,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         "tv_show"       => "tv",
         "tv_episode"    => "tv",
         "anime_episode" => "anime",
+        "book"          => "books",
         _               => importType,
     };
 
