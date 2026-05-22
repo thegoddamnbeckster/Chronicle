@@ -5,6 +5,7 @@ import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType 
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
+import { getPluginDisplayOrder } from '@/api/settings'
 import { updateMyPreferences } from '@/api/users'
 import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus } from '@/types'
@@ -202,6 +203,13 @@ export default function MediaDetailPage() {
     queryKey: ['plugins'],
     queryFn: listPlugins,
     staleTime: 5 * 60 * 1000,
+  })
+
+  // Fetch the saved plugin display order (controls which box appears first/last)
+  const { data: pluginDisplayOrder = {} } = useQuery({
+    queryKey: ['plugin-display-order'],
+    queryFn: getPluginDisplayOrder,
+    staleTime: 60 * 1000,
   })
 
   const [deleteConfirm, setDeleteConfirm] = useState(false)
@@ -522,13 +530,22 @@ export default function MediaDetailPage() {
           </div>
 
           {/* Per-plugin metadata boxes — one box per plugin that has data OR has been attempted.
-              This ensures Fix Match is always available, even for NotFound / failed items. */}
+              This ensures Fix Match is always available, even for NotFound / failed items.
+              Boxes are sorted by the Display Order configured on the Metadata Assignment page. */}
           {(() => {
-            const pluginIds = new Set([
+            const rawPluginIds = new Set([
               ...Object.keys(item.pluginMetadata ?? {}),
               ...Object.keys(item.enrichmentStatuses ?? {}),
             ])
-            return Array.from(pluginIds).map(pluginId => {
+            // Sort by the saved display order for this media type.
+            // Plugins not in the order list appear at the end (stable insertion order).
+            const mediaTypeKey = (item.mediaTypeInternalName ?? item.mediaTypeName ?? '').toLowerCase()
+            const orderedIds   = pluginDisplayOrder[mediaTypeKey] ?? []
+            const pluginIds    = [
+              ...orderedIds.filter(id => rawPluginIds.has(id)),
+              ...Array.from(rawPluginIds).filter(id => !orderedIds.includes(id)),
+            ]
+            return pluginIds.map(pluginId => {
               const plugin = plugins.find(p => p.pluginId === pluginId)
               // Skip plugins that don't support this item's media type.
               // This prevents e.g. a TMDB "No match" box from appearing on Music items.
