@@ -89,6 +89,14 @@ namespace Chronicle.Services
             if (string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
                 scannedFiles = CollapseAudiobooksToFolders(scannedFiles, request.Path);
 
+            // Audiobooks with a 3-level hierarchy (Author → Series? → Book):
+            // group into author/series tree so the library shows Authors as root items,
+            // not individual book titles.
+            if (mediaType.HierarchyLevels >= 3 &&
+                string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+                return await ScanAudiobooksHierarchicallyAsync(
+                    scannedFiles, mediaType, userId, threshold, ct);
+
             var added = 0;
             var alreadyInLibrary = 0;
             var skippedFiles = new List<SkippedFile>();
@@ -552,6 +560,139 @@ namespace Chronicle.Services
             _log.Information("Direct import complete: {Imported} imported, {Duplicates} skipped (duplicate), {Failed} failed",
                 imported, duplicates, failed);
             return new ImportApprovedSummary(imported, failed, failures, duplicates);
+        }
+
+        // ── Audiobook hierarchical scan ───────────────────────────────────────────
+
+        /// <summary>
+        /// Variant of ScanAsync for audiobooks with HierarchyLevels ≥ 3.
+        /// Groups collapsed files into the Author → Series? → Book tree and creates
+        /// the correct hierarchy in the DB.  Library entries are attached at the
+        /// Author (L0) level, matching how Music and TV attach at Artist/Show level.
+        /// </summary>
+        private async Task<FileScanSummary> ScanAudiobooksHierarchicallyAsync(
+            List<Chronicle.Plugins.Models.ScannedFile> collapsed,
+            MediaType mediaType,
+            int userId,
+            int threshold,
+            CancellationToken ct)
+        {
+            var added          = 0;
+            var alreadyInLib   = 0;
+            var skippedFiles   = new List<SkippedFile>();
+
+            var authorGroups = GroupAudiobooksByAuthorAndSeries(collapsed);
+
+            foreach (var authorGroup in authorGroups)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                // Find or create Author (L0)
+                var author = await FindOrCreateParentAsync(
+                    authorGroup.Name, mediaType.Id, parentId: null, hierarchyLevel: 0, ct);
+
+                // Library entry lives at the Author level (one entry per author, not per book)
+                var entryExists = await _context.UserLibraries
+                    .AnyAsync(l => l.UserId == userId && l.MediaItemId == author.Id, ct);
+                if (!entryExists)
+                {
+                    _context.UserLibraries.Add(new UserLibrary
+                    {
+                        UserId      = userId,
+                        MediaItemId = author.Id,
+                        Status      = LibraryStatus.Unwatched,
+                        AddedAt     = DateTime.UtcNow,
+                        UpdatedAt   = DateTime.UtcNow,
+                    });
+                    added++;
+                }
+                else { alreadyInLib++; }
+
+                // Process children: may be Series (with Book grandchildren) or standalone Books
+                foreach (var child in authorGroup.Children)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    if (child.Children.Count > 0)
+                    {
+                        // child is a Series (L1); grandchildren are Books (L2)
+                        var series = await FindOrCreateParentAsync(
+                            child.Name, mediaType.Id, author.Id, hierarchyLevel: 1, ct);
+
+                        foreach (var book in child.Children)
+                            await ImportAudiobookBookAsync(
+                                book, mediaType.Id, series.Id, hierarchyLevel: 2,
+                                threshold, skippedFiles, ct);
+                    }
+                    else
+                    {
+                        // Standalone book (L1 directly under author)
+                        await ImportAudiobookBookAsync(
+                            child, mediaType.Id, author.Id, hierarchyLevel: 1,
+                            threshold, skippedFiles, ct);
+                    }
+                }
+            }
+
+            await _context.SaveChangesAsync(ct);
+
+            _log.Information(
+                "Audiobook scan complete: {Added} new authors, {Existing} existing, {Skipped} below threshold",
+                added, alreadyInLib, skippedFiles.Count);
+
+            return new FileScanSummary(added, skippedFiles.Count, alreadyInLib, skippedFiles);
+        }
+
+        /// <summary>
+        /// Find-or-create a single audiobook Book item under a parent (Author or Series).
+        /// Skips items below the confidence threshold and handles re-scan de-duplication
+        /// by matching on the stored folder path in MetadataJson.
+        /// </summary>
+        private async Task ImportAudiobookBookAsync(
+            Chronicle.Core.Models.Scan.ScanGroup book,
+            int mediaTypeId,
+            int parentId,
+            int hierarchyLevel,
+            int threshold,
+            List<SkippedFile> skipped,
+            CancellationToken ct)
+        {
+            var folderPath = book.FolderPath ?? book.Files.FirstOrDefault() ?? string.Empty;
+            var scoreInt   = (int)Math.Round(book.ConfidenceScore * 100);
+
+            if (scoreInt < threshold)
+            {
+                skipped.Add(new SkippedFile(folderPath, book.Name, scoreInt));
+                return;
+            }
+
+            // De-duplicate on re-scan: if a media item with this folder path already exists,
+            // update its parent/level in case the hierarchy was rebuilt (e.g. author renamed),
+            // but don't create a duplicate.
+            var existing = await FindItemByFilePathAsync(folderPath, mediaTypeId, ct);
+            if (existing is not null)
+            {
+                if (existing.ParentId != parentId || existing.HierarchyLevel != hierarchyLevel)
+                {
+                    existing.ParentId      = parentId;
+                    existing.HierarchyLevel = hierarchyLevel;
+                }
+                return;
+            }
+
+            var item = new MediaItem
+            {
+                Name           = book.Name,
+                MediaTypeId    = mediaTypeId,
+                ParentId       = parentId,
+                HierarchyLevel = hierarchyLevel,
+                Year           = book.Year,
+                MetadataJson   = SerializeMetadata(scannerFilePath: folderPath),
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync(ct);
         }
 
         private async Task<(int imported, int failed, int duplicates, List<string> failures)> ImportHierarchicalAsync(
