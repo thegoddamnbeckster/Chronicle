@@ -668,10 +668,12 @@ function EnrichmentCard({
   stats,
   isRunning,
   onRunNow,
+  brandColor,
 }: {
   stats: EnrichmentStats
   isRunning: boolean
   onRunNow: () => void
+  brandColor?: string
 }) {
   const counts: [string, number, string][] = [
     ['Pending',   stats.pending,   'var(--accent)'],
@@ -682,7 +684,10 @@ function EnrichmentCard({
   ].filter(([, n]) => (n as number) > 0) as [string, number, string][]
 
   return (
-    <div className={`${styles.card} ${styles.cardEnrichment}`}>
+    <div
+      className={`${styles.card} ${brandColor ? styles.cardPlugin : styles.cardEnrichment}`}
+      style={brandColor ? { '--plugin-brand-color': brandColor } as React.CSSProperties : undefined}
+    >
       <div className={styles.cardHeader}>
         <div className={styles.cardTitleGroup}>
           <div className={styles.cardTitleText}>
@@ -924,6 +929,7 @@ export default function BackgroundTasksPage() {
                         stats={enrichStat}
                         isRunning={runningEnrichmentIds.has(pluginId!)}
                         onRunNow={() => handleRunEnrichment(pluginId!)}
+                        brandColor={groupTasks[0]?.brandColorDark ?? undefined}
                       />
                     )}
                   </PluginTaskGroup>
