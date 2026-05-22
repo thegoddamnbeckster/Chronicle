@@ -863,16 +863,22 @@ namespace Chronicle.Services
             }
 
             // Fallback: filename-only stub
+            var runtimeMinutes = file.TotalDurationSeconds.HasValue
+                ? (int)Math.Round(file.TotalDurationSeconds.Value / 60.0)
+                : file.DurationSeconds.HasValue
+                    ? (int)Math.Round(file.DurationSeconds.Value / 60.0)
+                    : (int?)null;
             var stub = new MediaItem
             {
-                MediaTypeId  = mediaTypeId,
-                Name         = file.ParsedTitle,
-                Year         = file.ParsedYear,
-                PosterUrl    = file.NfoPosterUrl ?? file.LocalPosterPath,
-                MetadataJson = SerializeMetadata(scannedFile: file),
+                MediaTypeId    = mediaTypeId,
+                Name           = file.ParsedTitle,
+                Year           = file.ParsedYear,
+                PosterUrl      = file.NfoPosterUrl ?? file.LocalPosterPath,
+                RuntimeMinutes = runtimeMinutes,
+                MetadataJson   = SerializeMetadata(scannedFile: file),
                 HierarchyLevel = 0,
-                CreatedAt    = DateTime.UtcNow,
-                UpdatedAt    = DateTime.UtcNow,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
             };
             _context.MediaItems.Add(stub);
             await _context.SaveChangesAsync(ct);
@@ -1238,6 +1244,10 @@ namespace Chronicle.Services
         ///   - <c>AudioArtist/AudioAlbumArtist</c> and <c>AudioGrouping</c> from the best-tagged file
         ///   - <c>FilePath</c> set to the book folder path (for stable rescan dedup)
         /// </summary>
+        /// <summary>Exposed for unit testing only.</summary>
+        internal static List<ScannedFile> CollapseAudiobooksToFoldersForTest(
+            List<ScannedFile> files, string scanRoot) => CollapseAudiobooksToFolders(files, scanRoot);
+
         private static List<ScannedFile> CollapseAudiobooksToFolders(
             List<ScannedFile> files, string scanRoot)
         {
@@ -1275,6 +1285,8 @@ namespace Chronicle.Services
                 if (isRoot)
                 {
                     // Root-level audio files: each is its own standalone book.
+                    foreach (var f in group)
+                        f.TotalDurationSeconds ??= f.DurationSeconds;
                     result.AddRange(group);
                     continue;
                 }
@@ -1343,6 +1355,13 @@ namespace Chronicle.Services
                     if (series is null && !string.IsNullOrWhiteSpace(folderSeries))
                         rep.AudioGrouping = folderSeries;
                 }
+
+                // Sum durations across all parts of this multi-file audiobook.
+                var totalDuration = group
+                    .Select(f => f.DurationSeconds)
+                    .Where(d => d.HasValue)
+                    .Sum(d => d!.Value);
+                rep.TotalDurationSeconds = totalDuration > 0 ? totalDuration : rep.DurationSeconds;
 
                 // Use the folder path as the stable file-path key so that a rescan of the
                 // same folder matches the existing stub rather than creating a duplicate.
@@ -1454,6 +1473,101 @@ namespace Chronicle.Services
         /// <summary>Exposed for unit testing only.</summary>
         internal static List<ShowGroup> GroupByShowForTest(
             IEnumerable<Chronicle.Plugins.Models.ScannedFile> files) => GroupByShow(files);
+
+        /// <summary>Exposed for unit testing only.</summary>
+        internal static List<ScanGroup> GroupAudiobooksByAuthorAndSeriesForTest(
+            IEnumerable<Chronicle.Plugins.Models.ScannedFile> collapsed) =>
+            GroupAudiobooksByAuthorAndSeries(collapsed);
+
+        /// <summary>
+        /// Groups a flat list of collapsed audiobook entries (one per book folder) into a
+        /// three-level Author → Series? → Book tree for use by the audiobook import pipeline.
+        /// Author is derived from AudioAlbumArtist/AudioArtist tags; series from AudioGrouping.
+        /// Books without a series are placed directly under their author at HierarchyLevel 1.
+        /// Books without a recognisable author are placed under an "Unknown" author stub.
+        /// </summary>
+        private static List<ScanGroup> GroupAudiobooksByAuthorAndSeries(
+            IEnumerable<Chronicle.Plugins.Models.ScannedFile> collapsed)
+        {
+            var authorGroups = new Dictionary<string, ScanGroup>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var file in collapsed)
+            {
+                var authorName = !string.IsNullOrWhiteSpace(file.AudioAlbumArtist) ? file.AudioAlbumArtist.Trim()
+                               : !string.IsNullOrWhiteSpace(file.AudioArtist)      ? file.AudioArtist.Trim()
+                               : "Unknown";
+
+                var seriesName = !string.IsNullOrWhiteSpace(file.AudioGrouping)
+                    ? file.AudioGrouping.Trim()
+                    : null;
+
+                // Find or create Author node (level 0)
+                if (!authorGroups.TryGetValue(authorName, out var authorGroup))
+                {
+                    authorGroup = new ScanGroup
+                    {
+                        GroupKey        = authorName.Trim().ToLowerInvariant(),
+                        Name            = authorName,
+                        HierarchyLevel  = 0,
+                        ConfidenceScore = 0.75,
+                        SignalSources   = ["tags"],
+                    };
+                    authorGroups[authorName] = authorGroup;
+                }
+
+                // Build the leaf ScanGroup for the book itself
+                var bookName = !string.IsNullOrWhiteSpace(file.ParsedTitle)
+                    ? file.ParsedTitle.Trim()
+                    : Path.GetFileName(file.FilePath);
+
+                var book = new ScanGroup
+                {
+                    GroupKey        = NormalizeGroupKey(authorName + "/" + (seriesName ?? "") + "/" + bookName),
+                    Name            = bookName,
+                    Year            = file.ParsedYear,
+                    HierarchyLevel  = seriesName is not null ? 2 : 1,
+                    ConfidenceScore = file.ConfidenceScore / 100.0,
+                    SignalSources   = ["tags"],
+                    Files           = [file.FilePath],
+                    FolderPath      = file.FilePath,
+                    Author          = authorName,
+                    Series          = seriesName,
+                };
+
+                if (seriesName is not null)
+                {
+                    // Find or create Series node (level 1) under this author
+                    var seriesKey = NormalizeGroupKey(authorName + "/" + seriesName);
+                    var seriesGroup = authorGroup.Children
+                        .FirstOrDefault(c => c.GroupKey == seriesKey);
+
+                    if (seriesGroup is null)
+                    {
+                        seriesGroup = new ScanGroup
+                        {
+                            GroupKey        = seriesKey,
+                            Name            = seriesName,
+                            HierarchyLevel  = 1,
+                            ConfidenceScore = 0.75,
+                            SignalSources   = ["tags"],
+                            Author          = authorName,
+                        };
+                        authorGroup.Children.Add(seriesGroup);
+                    }
+                    seriesGroup.Children.Add(book);
+                }
+                else
+                {
+                    // Standalone book — attach directly under author at level 1
+                    authorGroup.Children.Add(book);
+                }
+            }
+
+            return [.. authorGroups.Values];
+        }
+
+        private static string NormalizeGroupKey(string s) =>
+            s.Trim().ToLowerInvariant().Replace("  ", " ");
 
         private static List<ShowGroup> GroupByShow(
             IEnumerable<Chronicle.Plugins.Models.ScannedFile> files)
