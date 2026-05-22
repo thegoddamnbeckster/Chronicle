@@ -420,12 +420,12 @@ public class MetadataEnrichmentService(
         // Critically, this also fixes fan edit items that had their enrichment rows deleted
         // by ChangeTypeAsync before the row-seeding fix was in place.
         //
-        // Import-provider plugins (SIMKL, Trakt …) are also registered as IMetadataProvider
-        // but they can only enrich items they already know about (have external IDs for).
-        // They cannot discover items by title search across the full library.
-        // Phase 1 (above) already creates enrichment rows for those items from existing
-        // external IDs, so skip them here to prevent thousands of unresolvable Pending /
-        // NotFound rows being created for items that were never imported from those services.
+        // Only plugins registered as IMetadataProvider (from GetMetadataProviderEntries) are
+        // included here. Import-only plugins (Trakt, SIMKL) implement IImportProvider with
+        // enrichment hooks but do NOT appear in GetMetadataProviderEntries, so they are
+        // naturally excluded. A combined plugin (e.g. Hardcover) that implements both
+        // IImportProvider and IMetadataProvider IS included — it can enrich any item by
+        // title search, just like a pure metadata provider.
         var pluginRegistry = svc.ServiceProvider.GetRequiredService<Chronicle.Services.Plugins.IPluginRegistry>();
         var pluginEntries = pluginRegistry.GetMetadataProviderEntries().ToList();
 
@@ -448,10 +448,6 @@ public class MetadataEnrichmentService(
             var phase3ToAdd = new List<MediaItemEnrichment>();
             foreach (var (pluginId, provider, _) in pluginEntries)
             {
-                // Skip plugins that are also import providers — they populate enrichment rows
-                // via Phase 1 (from known external IDs) and must not be applied to the full library.
-                if (pluginRegistry.GetImportProvider(pluginId) is not null) continue;
-
                 var supportedTypes = provider.GetSupportedMediaTypes()
                     .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
