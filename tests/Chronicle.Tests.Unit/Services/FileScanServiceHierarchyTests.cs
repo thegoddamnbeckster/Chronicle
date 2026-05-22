@@ -1,3 +1,4 @@
+using Chronicle.Plugins.Models;
 using Chronicle.Services;
 using Xunit;
 
@@ -5,6 +6,101 @@ namespace Chronicle.Tests.Unit.Services;
 
 public class FileScanServiceHierarchyTests
 {
+    // ── CollapseAudiobooksToFolders ───────────────────────────────────────────
+
+    [Fact]
+    public void CollapseAudiobooksToFolders_SumsDurationsAcrossGroup()
+    {
+        var root       = @"C:\Books\Brandon Sanderson";
+        var bookFolder = root + @"\Stormlight - 1 - (2010) - The Way of Kings";
+        var files = new List<ScannedFile>
+        {
+            new() { FilePath = bookFolder + @"\01.mp3", DurationSeconds = 1800,
+                    AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
+            new() { FilePath = bookFolder + @"\02.mp3", DurationSeconds = 2100,
+                    AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
+            new() { FilePath = bookFolder + @"\03.mp3", DurationSeconds = 900,
+                    AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
+        };
+
+        var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, root);
+
+        Assert.Single(result);
+        Assert.Equal(4800, result[0].TotalDurationSeconds); // 1800+2100+900
+    }
+
+    [Fact]
+    public void CollapseAudiobooksToFolders_SingleRootLevelFile_SetsTotal()
+    {
+        var root = @"C:\Books";
+        var files = new List<ScannedFile>
+        {
+            new() { FilePath = root + @"\Elantris.mp3", DurationSeconds = 3600 },
+        };
+
+        var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, root);
+
+        Assert.Single(result);
+        Assert.Equal(3600, result[0].TotalDurationSeconds);
+    }
+
+    // ── GroupAudiobooksByAuthorAndSeries ──────────────────────────────────────
+
+    [Fact]
+    public void GroupAudiobooksByAuthorAndSeries_CreatesAuthorSeriesBookTree()
+    {
+        var files = new List<ScannedFile>
+        {
+            new() { FilePath = @"C:\Books\B Sanderson\SA-1-(2010)-Way",
+                    ParsedTitle = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson",
+                    AudioGrouping = "Stormlight Archive", ParsedYear = 2010, TotalDurationSeconds = 3600 },
+            new() { FilePath = @"C:\Books\B Sanderson\SA-2-(2014)-Words",
+                    ParsedTitle = "Words of Radiance", AudioAlbumArtist = "Brandon Sanderson",
+                    AudioGrouping = "Stormlight Archive", ParsedYear = 2014, TotalDurationSeconds = 4200 },
+            new() { FilePath = @"C:\Books\B Sanderson\(2005)-Elantris",
+                    ParsedTitle = "Elantris", AudioAlbumArtist = "Brandon Sanderson",
+                    AudioGrouping = null, ParsedYear = 2005, TotalDurationSeconds = 1800 },
+        };
+
+        var groups = FileScanService.GroupAudiobooksByAuthorAndSeriesForTest(files);
+
+        // One author group
+        Assert.Single(groups);
+        var author = groups[0];
+        Assert.Equal("Brandon Sanderson", author.Name);
+        Assert.Equal(0, author.HierarchyLevel);
+
+        // Two children: one series, one standalone book
+        Assert.Equal(2, author.Children.Count);
+
+        var series = author.Children.First(c => c.Name == "Stormlight Archive");
+        Assert.Equal(1, series.HierarchyLevel);
+        Assert.Equal(2, series.Children.Count);
+
+        var standalone = author.Children.First(c => c.Name == "Elantris");
+        Assert.Equal(1, standalone.HierarchyLevel);
+        Assert.Empty(standalone.Children);
+        Assert.Single(standalone.Files);
+    }
+
+    [Fact]
+    public void GroupAudiobooksByAuthorAndSeries_UnknownAuthor_GroupsUnderUnknown()
+    {
+        var files = new List<ScannedFile>
+        {
+            new() { FilePath = @"C:\Books\Mystery\(2020)-Unknown Book",
+                    ParsedTitle = "Unknown Book", AudioAlbumArtist = null,
+                    AudioGrouping = null, ParsedYear = 2020 },
+        };
+
+        var groups = FileScanService.GroupAudiobooksByAuthorAndSeriesForTest(files);
+
+        Assert.Single(groups);
+        Assert.Equal("Unknown", groups[0].Name);
+        Assert.Single(groups[0].Children);
+    }
+
+
     [Fact]
     public async Task GroupFilesForHierarchyImport_TvFiles_GroupsByShow()
     {

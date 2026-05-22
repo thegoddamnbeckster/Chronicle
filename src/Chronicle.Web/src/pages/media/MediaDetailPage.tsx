@@ -305,6 +305,22 @@ export default function MediaDetailPage() {
     : undefined
   const hasBackdrop = Boolean(backdropUrl)
 
+  // Extract narrators from cast entries across all plugin metadata.
+  // Hardcover stores cast as role-prefixed strings: "Narrator:Nick Podehl"
+  const narrators: string[] = []
+  const isAudiobookType = (item.mediaTypeInternalName ?? item.mediaTypeName).toLowerCase() === 'audiobooks'
+  if (isAudiobookType) {
+    for (const meta of Object.values(item.pluginMetadata ?? {})) {
+      const cast = (meta as Record<string, unknown>)?.cast
+      if (Array.isArray(cast)) {
+        const found = cast
+          .filter((c: unknown): c is string => typeof c === 'string' && c.startsWith('Narrator:'))
+          .map((c: string) => c.replace('Narrator:', ''))
+        if (found.length > 0) { narrators.push(...found); break }
+      }
+    }
+  }
+
   return (
     <div className={styles.page}>
       <div className={`${styles.backdropSection}${hasBackdrop ? ` ${styles.backdropActive}` : ''}`}>
@@ -395,6 +411,9 @@ export default function MediaDetailPage() {
 
         <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
           <h1 className={styles.title}>{item.name}</h1>
+          {narrators.length > 0 && (
+            <p className={styles.narratorLine}>Narrated by {narrators.join(', ')}</p>
+          )}
 
           <div className={styles.deleteArea}>
             {isAdmin && item.parentId == null && (

@@ -125,6 +125,78 @@ public class SyncOrchestrationServiceMatchTests : IDisposable
             .Should().BeTrue();
     }
 
+    // ── Book hierarchy tests ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task MatchOrCreate_Book_CreatesAuthorAndBookStubs()
+    {
+        // Arrange — "books" media type
+        _mediaType = new MediaType
+        {
+            Name = "books", DisplayName = "Books", HierarchyLevels = 3,
+            HierarchyLabels = "Author|Series|Book", InteractionVerb = "read", ProgressUnit = "books"
+        };
+        _db.MediaTypes.Add(_mediaType);
+        await _db.SaveChangesAsync();
+
+        var service = BuildService();
+        var evt = new ImportedWatchEvent(
+            "hardcover:42",
+            new Dictionary<string, string>(),
+            "books", "Elantris", 2005,
+            DateTimeOffset.UtcNow, 100.0,
+            AuthorName: "Brandon Sanderson");
+
+        // Act
+        var (book, isNew) = await service.MatchOrCreateAsync(_db, evt, "chronicle.plugin.hardcover", CancellationToken.None);
+
+        // Assert — book stub created
+        isNew.Should().BeTrue();
+        book.HierarchyLevel.Should().Be(1); // standalone: directly under author
+
+        // Author stub must exist at level 0
+        var author = await _db.MediaItems.FirstOrDefaultAsync(i => i.Name == "Brandon Sanderson" && i.HierarchyLevel == 0);
+        author.Should().NotBeNull();
+        book.ParentId.Should().Be(author!.Id);
+    }
+
+    [Fact]
+    public async Task MatchOrCreate_Book_CreatesAuthorSeriesBookTree()
+    {
+        // Arrange — "books" media type
+        _mediaType = new MediaType
+        {
+            Name = "books", DisplayName = "Books", HierarchyLevels = 3,
+            HierarchyLabels = "Author|Series|Book", InteractionVerb = "read", ProgressUnit = "books"
+        };
+        _db.MediaTypes.Add(_mediaType);
+        await _db.SaveChangesAsync();
+
+        var service = BuildService();
+        var evt = new ImportedWatchEvent(
+            "hardcover:99",
+            new Dictionary<string, string>(),
+            "books", "The Way of Kings", 2010,
+            DateTimeOffset.UtcNow, 100.0,
+            AuthorName: "Brandon Sanderson",
+            SeriesName: "The Stormlight Archive");
+
+        // Act
+        var (book, isNew) = await service.MatchOrCreateAsync(_db, evt, "chronicle.plugin.hardcover", CancellationToken.None);
+
+        // Assert
+        isNew.Should().BeTrue();
+        book.HierarchyLevel.Should().Be(2); // under series
+
+        var series = await _db.MediaItems.FirstOrDefaultAsync(i => i.Name == "The Stormlight Archive" && i.HierarchyLevel == 1);
+        series.Should().NotBeNull();
+        book.ParentId.Should().Be(series!.Id);
+
+        var author = await _db.MediaItems.FirstOrDefaultAsync(i => i.Name == "Brandon Sanderson" && i.HierarchyLevel == 0);
+        author.Should().NotBeNull();
+        series.ParentId.Should().Be(author!.Id);
+    }
+
     private static IServiceScopeFactory BuildScopeFactory(ChronicleDbContext db, IPluginRegistry registry)
     {
         var services = new ServiceCollection();
