@@ -37,6 +37,14 @@ public class MediaMetadata
     public List<string> Tags { get; set; } = [];
 
     /// <summary>
+    /// Alternate names for this item — pen names, name variants, alias titles.
+    /// Populated primarily for author-level items (e.g. "K. J. Parker" → "Tom Holt").
+    /// Stored in metadata_json; the enrichment service uses these as additional search
+    /// terms when attempting to find a match for items that share this name.
+    /// </summary>
+    public List<string> AlternateNames { get; set; } = [];
+
+    /// <summary>
     /// All images returned by the provider beyond the primary PosterUrl/BackdropUrl
     /// (e.g. back cover, booklet, CD tray, episode stills).
     /// </summary>

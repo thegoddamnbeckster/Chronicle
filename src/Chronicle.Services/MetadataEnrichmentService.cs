@@ -1026,6 +1026,11 @@ public class MetadataEnrichmentService(
                     }
 
                     var fileScannedParent = parentNameOverride ?? row.MediaItem.Parent?.Name;
+                    // For root items, pull any alternate names stored by a previous enrichment
+                    // pass (e.g. Hardcover pen names) so we try all known name variants.
+                    var storedAltNames = row.MediaItem.HierarchyLevel == 0
+                        ? ExtractStoredAlternateNames(row.MediaItem.MetadataJson)
+                        : null;
                     var searchCtx = new MediaSearchContext(
                             Name:            row.MediaItem.Name,
                             Year:            ValidateYear(row.MediaItem.Year),
@@ -1038,7 +1043,8 @@ public class MetadataEnrichmentService(
                             AltTitles:       BuildAltTitles(
                                                  row.MediaItem.Name,
                                                  filenameStem,
-                                                 folderDerivedAltTitle),
+                                                 folderDerivedAltTitle,
+                                                 storedAltNames),
                             ChildNames:      childNames,
                             SubItemMetadata: subItemMetadata,
                             MediaTypeName:   mediaTypeName);
@@ -1295,10 +1301,11 @@ public class MetadataEnrichmentService(
     /// <summary>
     /// Builds an ordered, deduplicated list of title forms to try in each search stage.
     /// Order: PreciseName (if any) → year-stripped canonical name → filenameStem (if different) →
-    /// version-qualifier-stripped form (if different from already-added forms).
+    /// version-qualifier-stripped form → any stored alternate names (pen names, name variants).
     /// </summary>
     internal static IReadOnlyList<string> BuildAltTitles(
-        string name, string? filenameStem, string? preciseName)
+        string name, string? filenameStem, string? preciseName,
+        IEnumerable<string>? alternateNames = null)
     {
         var seen    = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var results = new List<string>();
@@ -1328,7 +1335,42 @@ public class MetadataEnrichmentService(
         var noQualifier = VersionQualifierEnrichRe.Replace(baseForStripping, string.Empty).Trim();
         Add(noQualifier);
 
+        // 5. Stored alternate names (pen names, name variants from previous enrichment)
+        if (alternateNames is not null)
+            foreach (var n in alternateNames)
+                Add(n);
+
         return results.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Reads all <c>alternateNames</c> arrays stored in any plugin's section of
+    /// <c>metadata_json</c>.  Used to surface pen names and name variants as additional
+    /// search terms when re-enriching author items.
+    /// </summary>
+    private static IReadOnlyList<string>? ExtractStoredAlternateNames(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson)) return null;
+        try
+        {
+            using var doc   = System.Text.Json.JsonDocument.Parse(metadataJson);
+            var       names = new List<string>();
+            foreach (var plugin in doc.RootElement.EnumerateObject())
+            {
+                if (plugin.Value.TryGetProperty("alternateNames", out var altEl)
+                    && altEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var el in altEl.EnumerateArray())
+                    {
+                        var s = el.GetString();
+                        if (!string.IsNullOrWhiteSpace(s))
+                            names.Add(s.Trim());
+                    }
+                }
+            }
+            return names.Count > 0 ? names.AsReadOnly() : null;
+        }
+        catch { return null; }
     }
 
     // Leading track-number prefix: "01 - ", "02. ", "3 ", "1-01 - " etc.
@@ -1729,8 +1771,11 @@ public class MetadataEnrichmentService(
             // Tracks/episodes (HierarchyLevel 2) are never searched; they rely on derivation only.
             if (result is null && (item.ParentId is null || (resolvedId is null && item.HierarchyLevel == 1)))
             {
-                var childCount = await db.MediaItems.CountAsync(m => m.ParentId == item.Id, ct);
+                var childCount   = await db.MediaItems.CountAsync(m => m.ParentId == item.Id, ct);
                 var filenameStem = ExtractFilenameStem(item);
+                var storedAltNames = item.HierarchyLevel == 0
+                    ? ExtractStoredAlternateNames(item.MetadataJson)
+                    : null;
                 var ctx = new Chronicle.Plugins.Models.MediaSearchContext(
                     Name:           NormalizeSearchName(item.Name),
                     Year:           ValidateYear(item.Year),
@@ -1741,7 +1786,8 @@ public class MetadataEnrichmentService(
                     AltTitles:      BuildAltTitles(
                                         item.Name,
                                         filenameStem,
-                                        null),
+                                        null,
+                                        storedAltNames),
                     MediaTypeName:  item.MediaType?.Name);
 
                 var candidates = await provider.SearchAsync(ctx, ct);
