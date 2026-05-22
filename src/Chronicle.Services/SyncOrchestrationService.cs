@@ -178,6 +178,11 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             && evt.SeasonNumber.HasValue && evt.EpisodeNumber.HasValue)
             return await MatchOrCreateEpisodeAsync(db, evt, pluginId, ct);
 
+        // Route books/audiobooks to the Author→Series→Book hierarchy builder.
+        var mappedType = MapMediaType(evt.MediaType);
+        if ((mappedType == "books" || mappedType == "audiobooks") && evt.AuthorName is not null)
+            return await MatchOrCreateBookAsync(db, evt, pluginId, ct);
+
         // 1. Own provider ExternalId match
         var byOwn = await db.MediaExternalIds
             .Where(e => e.Source == SourceFromPluginId(pluginId) && e.ExternalId == evt.ExternalId)
@@ -409,6 +414,145 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         return (episode, true);
     }
 
+    // ── Book/audiobook hierarchy ──────────────────────────────────────────────
+
+    private async Task<(MediaItem item, bool isNew)> MatchOrCreateBookAsync(
+        ChronicleDbContext db, ImportedWatchEvent evt, string pluginId, CancellationToken ct)
+    {
+        var mediaTypeName = MapMediaType(evt.MediaType);
+        var mediaType = await db.MediaTypes
+            .FirstOrDefaultAsync(t => t.Name == mediaTypeName, ct)
+            ?? throw new InvalidOperationException($"Media type '{mediaTypeName}' not found in database.");
+
+        // ── Level 0: Author ───────────────────────────────────────────────────
+        var authorName = evt.AuthorName ?? "Unknown";
+        var author = await db.MediaItems
+            .FirstOrDefaultAsync(i => i.MediaTypeId == mediaType.Id
+                && i.HierarchyLevel == 0
+                && i.Name == authorName
+                && i.ParentId == null, ct);
+        if (author is null)
+        {
+            author = new MediaItem
+            {
+                Name           = authorName,
+                MediaTypeId    = mediaType.Id,
+                HierarchyLevel = 0,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(author);
+            await db.SaveChangesAsync(ct);
+        }
+
+        // ── Level 1: Series (optional) ────────────────────────────────────────
+        MediaItem? seriesItem = null;
+        if (evt.SeriesName is not null)
+        {
+            seriesItem = await db.MediaItems
+                .FirstOrDefaultAsync(i => i.ParentId == author.Id
+                    && i.HierarchyLevel == 1
+                    && i.Name == evt.SeriesName, ct);
+            if (seriesItem is null)
+            {
+                seriesItem = new MediaItem
+                {
+                    Name           = evt.SeriesName,
+                    MediaTypeId    = mediaType.Id,
+                    HierarchyLevel = 1,
+                    ParentId       = author.Id,
+                    CreatedAt      = DateTime.UtcNow,
+                    UpdatedAt      = DateTime.UtcNow,
+                };
+                db.MediaItems.Add(seriesItem);
+                await db.SaveChangesAsync(ct);
+            }
+        }
+
+        // ── Level 2 (or 1 if standalone): Book ───────────────────────────────
+        var bookParentId = seriesItem?.Id ?? author.Id;
+        var bookLevel    = seriesItem is not null ? 2 : 1;
+
+        // Stage 1: own ExternalId
+        var source = SourceFromPluginId(pluginId);
+        var byOwn  = await db.MediaExternalIds
+            .Where(e => e.Source == source && e.ExternalId == evt.ExternalId)
+            .Select(e => e.MediaItemId)
+            .FirstOrDefaultAsync(ct);
+        if (byOwn != 0)
+            return (await db.MediaItems.FindAsync([byOwn], ct)!, false);
+
+        // Stage 2: AdditionalIds
+        foreach (var (src, extId) in evt.AdditionalIds)
+        {
+            var byAdditional = await db.MediaExternalIds
+                .Where(e => e.Source == src && e.ExternalId == extId)
+                .Select(e => e.MediaItemId)
+                .FirstOrDefaultAsync(ct);
+            if (byAdditional != 0)
+                return (await db.MediaItems.FindAsync([byAdditional], ct)!, false);
+        }
+
+        // Stage 3: title + year under the resolved parent
+        if (evt.Title is not null && evt.Year.HasValue)
+        {
+            var byTitle = await db.MediaItems
+                .FirstOrDefaultAsync(i => i.ParentId == bookParentId
+                    && i.Year == evt.Year
+                    && i.Name == evt.Title, ct);
+            if (byTitle is not null)
+            {
+                await GraftExternalIdAsync(db, byTitle.Id, pluginId, evt.ExternalId, ct);
+                return (byTitle, false);
+            }
+        }
+
+        // Stage 4: create stub
+        var stubTitle = evt.Title ?? "Unknown";
+        var stub = new MediaItem
+        {
+            Name           = evt.Year.HasValue ? $"{stubTitle} ({evt.Year})" : stubTitle,
+            Year           = evt.Year,
+            MediaTypeId    = mediaType.Id,
+            HierarchyLevel = bookLevel,
+            ParentId       = bookParentId,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(stub);
+        await db.SaveChangesAsync(ct);
+
+        db.MediaExternalIds.Add(new MediaExternalId
+        {
+            MediaItemId = stub.Id,
+            Source      = source,
+            ExternalId  = evt.ExternalId,
+        });
+        foreach (var (s, v) in evt.AdditionalIds)
+            db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = stub.Id, Source = s, ExternalId = v });
+
+        // Seed enrichment rows for all metadata plugins supporting this media type
+        foreach (var (mpPluginId, mp, _) in _registry.GetMetadataProviderEntries())
+        {
+            var supported = mp.GetSupportedMediaTypes()
+                .Any(t => string.Equals(t.MediaTypeName, mediaTypeName, StringComparison.OrdinalIgnoreCase));
+            if (!supported) continue;
+            var exists = await db.MediaEnrichments
+                .AnyAsync(e => e.MediaItemId == stub.Id && e.PluginId == mpPluginId, ct);
+            if (exists) continue;
+            db.MediaEnrichments.Add(new MediaItemEnrichment
+            {
+                MediaItemId = stub.Id,
+                PluginId    = mpPluginId,
+                Status      = EnrichmentStatus.Pending,
+                MaxRetries  = 3,
+            });
+        }
+        await db.SaveChangesAsync(ct);
+
+        return (stub, true);
+    }
+
     private static async Task<int> GetRootItemIdAsync(
         ChronicleDbContext db, MediaItem item, CancellationToken ct)
     {
@@ -570,6 +714,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         "tv_show"       => "tv",
         "tv_episode"    => "tv",
         "anime_episode" => "anime",
+        "book"          => "books",
         _               => importType,
     };
 
