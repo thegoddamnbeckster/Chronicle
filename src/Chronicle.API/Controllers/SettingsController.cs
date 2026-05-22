@@ -200,7 +200,9 @@ public class SettingsController : ControllerBase
                 var labels      = dbType?.HierarchyLabels?.Split(',') ?? [];
                 var baseDisplay = dbType?.DisplayName ?? char.ToUpper(baseName[0]) + baseName[1..];
                 var levelLabel  = levelIdx < labels.Length ? labels[levelIdx].Trim() : $"Level {levelIdx}";
-                return $"{baseDisplay} {levelLabel}s";
+                // Avoid double-s on words that are already plural (e.g. "Series" → "Series", not "Seriess")
+                var plural = levelLabel.EndsWith('s') ? levelLabel : levelLabel + "s";
+                return $"{baseDisplay} {plural}";
             });
 
         return Ok(new
