@@ -72,7 +72,14 @@ public record ImportedWatchEvent(
     /// <summary>Show title — used to find/create the parent show stub.</summary>
     string? ShowTitle = null,
     int? SeasonNumber = null,
-    int? EpisodeNumber = null
+    int? EpisodeNumber = null,
+    // ── Book/audiobook parent context ────────────────────────────────────────
+    /// <summary>Author name — used to find/create the Level-0 Author parent stub.</summary>
+    string? AuthorName     = null,
+    /// <summary>Series name — used to find/create the Level-1 Series parent stub. Null = standalone book.</summary>
+    string? SeriesName     = null,
+    /// <summary>Numeric position within the series (e.g. 1.0, 2.5).</summary>
+    double? SeriesPosition = null
 );
 
 public record ImportedRating(
@@ -83,7 +90,10 @@ public record ImportedRating(
     int? Year,
     /// <summary>Service rating on a 1–10 scale.</summary>
     int Rating,
-    DateTimeOffset RatedAt
+    DateTimeOffset RatedAt,
+    string? AuthorName     = null,
+    string? SeriesName     = null,
+    double? SeriesPosition = null
 );
 
 public record ImportedWatchlistEntry(
@@ -92,7 +102,10 @@ public record ImportedWatchlistEntry(
     string MediaType,
     string Title,
     int? Year,
-    DateTimeOffset AddedAt
+    DateTimeOffset AddedAt,
+    string? AuthorName     = null,
+    string? SeriesName     = null,
+    double? SeriesPosition = null
 );
 
 // ── Optional enrichment types ────────────────────────────────────────────────
