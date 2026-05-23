@@ -193,6 +193,9 @@ export default function MetadataAssignmentPage() {
     const next = { ...assignments, [mediaType]: fieldAssignments }
     setAssignments(next)
     save(next)
+    // Keep display order in sync — if the user says "apply this order to all fields",
+    // the detail page should also show plugins in that same order.
+    putPluginDisplayOrder({ ...defaultOrders, [mediaType]: order }).catch(e => setError(String(e)))
   }
 
   if (!config) return (
