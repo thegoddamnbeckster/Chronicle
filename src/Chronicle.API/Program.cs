@@ -320,6 +320,18 @@ using (var scope = app.Services.CreateScope())
         // introduced — restores enrichment status display for all pre-existing items.
         var enrichmentService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IMetadataEnrichmentService>();
         await enrichmentService.SeedEnrichmentRowsFromExternalIdsAsync();
+
+        // Backfill normalized_name for all existing MediaItem rows that don't have it yet.
+        var itemsToNormalize = await db.MediaItems
+            .Where(m => m.NormalizedName == null)
+            .ToListAsync();
+        foreach (var item in itemsToNormalize)
+            item.NormalizedName = Chronicle.Services.MediaItemNormalizer.NormalizeName(item.Name);
+        if (itemsToNormalize.Count > 0)
+        {
+            await db.SaveChangesAsync();
+            app.Logger.LogInformation("Backfilled normalized_name for {Count} media items", itemsToNormalize.Count);
+        }
     }
     else
         db.Database.EnsureCreated();
