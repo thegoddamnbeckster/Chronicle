@@ -118,12 +118,12 @@ public class MergeService(
         }
 
         // ── InteractionEvents ─────────────────────────────────────────────────
-        await db.InteractionEvents.Where(e => e.MediaItemId == loserId)
-            .ExecuteUpdateAsync(s => s.SetProperty(e => e.MediaItemId, winnerId), ct);
+        var loserEvents = await db.InteractionEvents.Where(e => e.MediaItemId == loserId).ToListAsync(ct);
+        foreach (var ev in loserEvents) ev.MediaItemId = winnerId;
 
         // ── MediaListItems ────────────────────────────────────────────────────
-        await db.MediaListItems.Where(li => li.MediaItemId == loserId)
-            .ExecuteUpdateAsync(s => s.SetProperty(li => li.MediaItemId, winnerId), ct);
+        var loserListItems = await db.MediaListItems.Where(li => li.MediaItemId == loserId).ToListAsync(ct);
+        foreach (var li in loserListItems) li.MediaItemId = winnerId;
 
         // ── MediaCredits — re-point; deduplicate by (person_name, role) ───────
         var loserCredits = await db.MediaCredits.Where(c => c.MediaItemId == loserId).ToListAsync(ct);
