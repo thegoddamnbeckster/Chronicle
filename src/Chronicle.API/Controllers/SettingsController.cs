@@ -1,5 +1,6 @@
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Services;
 using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,8 +19,11 @@ public class SettingsController : ControllerBase
 {
     private const string ServiceName = "Chronicle";
 
-    private readonly ChronicleDbContext _db;
-    private readonly IPluginRegistry    _pluginRegistry;
+    private readonly ChronicleDbContext          _db;
+    private readonly IPluginRegistry             _pluginRegistry;
+    private readonly AssignmentConfigCache       _assignmentCache;
+    private readonly IMetadataResolutionService  _resolutionService;
+    private readonly ILogger<SettingsController> _logger;
 
     // NormalizeMediaTypeName: maps DB type names to the canonical form used by plugin declarations.
     // "movies" (DB plural) ↔ "movie" (TMDB/enrichment canonical).
@@ -35,10 +39,18 @@ public class SettingsController : ControllerBase
             ["fanedits"] = "movie",
         };
 
-    public SettingsController(ChronicleDbContext db, IPluginRegistry pluginRegistry)
+    public SettingsController(
+        ChronicleDbContext db,
+        IPluginRegistry pluginRegistry,
+        AssignmentConfigCache assignmentCache,
+        IMetadataResolutionService resolutionService,
+        ILogger<SettingsController> logger)
     {
-        _db             = db;
-        _pluginRegistry = pluginRegistry;
+        _db                = db;
+        _pluginRegistry    = pluginRegistry;
+        _assignmentCache   = assignmentCache;
+        _resolutionService = resolutionService;
+        _logger            = logger;
     }
 
     // ── App settings (key/value store) ───────────────────────────────────────
@@ -258,6 +270,30 @@ public class SettingsController : ControllerBase
             existing.Value = json;
 
         await _db.SaveChangesAsync();
+
+        // Invalidate the in-memory cache so the next enrichment picks up the new config immediately.
+        _assignmentCache.Invalidate();
+
+        // Determine which base media types are affected and trigger a background bulk recompute.
+        // This re-walks all stored plugin data — no network calls, just a JSON re-pass.
+        var changedTypes = request.Assignments.Keys
+            .Select(k => k.Contains('.') ? k[..k.LastIndexOf('.')] : k)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _ = Task.Run(async () =>
+        {
+            foreach (var mediaType in changedTypes)
+            {
+                try   { await _resolutionService.ResolveAllForMediaTypeAsync(mediaType); }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Background _resolved recompute failed for media type '{Type}'", mediaType);
+                }
+            }
+        }, CancellationToken.None);
+
         return Ok(new { success = true });
     }
 
