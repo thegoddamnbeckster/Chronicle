@@ -50,6 +50,8 @@ namespace Chronicle.Services
             return await _context.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
+                .Include(m => m.Aliases)
+                .Include(m => m.MergesAsWinner)
                 .FirstOrDefaultAsync(m => m.Id == id);
         }
 
@@ -63,7 +65,9 @@ namespace Chronicle.Services
                 q = q.Where(m => m.HierarchyLevel == 0);
 
             if (!string.IsNullOrWhiteSpace(query))
-                q = q.Where(m => EF.Functions.Like(m.Name, $"%{query}%"));
+                q = q.Where(m =>
+                    EF.Functions.Like(m.Name, $"%{query}%") ||
+                    m.Aliases.Any(a => EF.Functions.Like(a.Alias, $"%{query}%")));
 
             if (mediaTypeId.HasValue)
                 q = q.Where(m => m.MediaTypeId == mediaTypeId.Value);
