@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -80,8 +81,41 @@ public class MetadataResolutionService(
         logger.LogDebug("Resolved {Count} fields for item {Id} ({Name})", resolved.Count, item.Id, item.Name);
     }
 
-    public Task ResolveAllForMediaTypeAsync(string mediaTypeName, CancellationToken ct = default)
-        => throw new NotImplementedException();
+    public async Task ResolveAllForMediaTypeAsync(string mediaTypeName, CancellationToken ct = default)
+    {
+        logger.LogInformation("Starting bulk _resolved recompute for media type '{Type}'", mediaTypeName);
+        int lastId = 0, totalDone = 0;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+            var batch = await db.MediaItems
+                .Include(m => m.MediaType)
+                .Where(m => m.MediaType!.Name == mediaTypeName && m.Id > lastId)
+                .OrderBy(m => m.Id)
+                .Take(BatchSize)
+                .ToListAsync(ct);
+
+            if (batch.Count == 0) break;
+
+            foreach (var item in batch)
+            {
+                try { await ResolveAsync(item, db, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                { logger.LogWarning(ex, "Bulk resolve failed for item {Id}", item.Id); }
+            }
+
+            await db.SaveChangesAsync(ct);
+            lastId     = batch[^1].Id;
+            totalDone += batch.Count;
+            logger.LogDebug("Bulk resolve: {Done} items processed for '{Type}'", totalDone, mediaTypeName);
+        }
+
+        logger.LogInformation("Bulk _resolved recompute complete: {Total} items for '{Type}'", totalDone, mediaTypeName);
+    }
 
     /// Parses metadata_json into a mutable dictionary keyed by plugin ID.
     internal static Dictionary<string, JsonElement> ParsePluginBlobs(string? metadataJson)
