@@ -262,7 +262,8 @@ namespace Chronicle.API.Controllers
                     e.MediaItem.CreatedAt, e.MediaItem.UpdatedAt,
                     e.MediaItem.ExternalIds.Select(x => new ExternalIdDto(x.Source, x.ExternalId)).ToList(),
                     HasPhysicalFile: hasPhysicalFile,
-                    HasMetadataOnly: hasMetadataOnly);
+                    HasMetadataOnly: hasMetadataOnly,
+                    ResolvedMetadata: null);
             }
 
             return new LibraryEntryDto(

@@ -92,7 +92,12 @@ namespace Chronicle.API.DTOs
         /// (2) mixed state — at least one leaf has a file and at least one does not.
         /// Both cases indicate incomplete file coverage and warrant the cloud icon.
         /// </summary>
-        bool HasMetadataOnly = false
+        bool HasMetadataOnly = false,
+        /// <summary>
+        /// Authoritative merged metadata resolved from the assignment config.
+        /// Null when no enrichment has run or no assignment config exists for this media type.
+        /// </summary>
+        ResolvedMetadataDto? ResolvedMetadata = null
     );
 
     public record AddToLibraryRequestDto(
@@ -125,4 +130,24 @@ namespace Chronicle.API.DTOs
     );
 
     public record NuclearResetRequestDto(string ConfirmationToken);
+
+    /// <summary>
+    /// Authoritative merged metadata resolved by walking each field's plugin priority list.
+    /// The first non-empty value from the highest-priority plugin wins for each field.
+    /// Fields absent here mean no plugin provided a value.
+    /// Intended for external applications consuming Chronicle as a metadata source.
+    /// </summary>
+    public record ResolvedMetadataDto(
+        string?        Title,
+        string?        Overview,
+        int?           Year,
+        string?        PosterUrl,
+        string?        BackdropUrl,
+        int?           RuntimeMinutes,
+        double?        Rating,
+        List<string>?  Genres,
+        List<string>?  Cast,
+        List<string>?  Directors,
+        List<string>?  Tags
+    );
 }
