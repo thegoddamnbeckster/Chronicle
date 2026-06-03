@@ -117,6 +117,8 @@ builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
 builder.Services.AddSingleton<ScanProgressService>();
 // ImportProgressService tracks the background import-groups task (same pattern).
 builder.Services.AddSingleton<ImportProgressService>();
+// AssignmentConfigCache caches metadata_assignment.config from DB to avoid per-write DB hits.
+builder.Services.AddSingleton<AssignmentConfigCache>();
 builder.Services.AddScoped<Chronicle.Services.Scan.FolderSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.TagSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.NfoSignalExtractor>();
