@@ -83,6 +83,9 @@ export default function Layout() {
           <NavLink to="/settings/metadata-assignment" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             Metadata Assignment
           </NavLink>
+          <NavLink to="/settings/duplicates" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+            Duplicates
+          </NavLink>
           <NavLink to="/settings/api-keys" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             API Keys
           </NavLink>
