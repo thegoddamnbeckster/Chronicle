@@ -18,14 +18,17 @@ namespace Chronicle.API.Controllers
         private readonly IFileScanService _fileScanService;
         private readonly IMetadataEnrichmentService _enrichment;
         private readonly ChronicleDbContext _context;
+        private readonly IMergeService _mergeService;
 
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
-            IMetadataEnrichmentService enrichment, ChronicleDbContext context)
+            IMetadataEnrichmentService enrichment, ChronicleDbContext context,
+            IMergeService mergeService)
         {
             _mediaService    = mediaService;
             _fileScanService = fileScanService;
             _enrichment      = enrichment;
             _context         = context;
+            _mergeService    = mergeService;
         }
 
         [HttpGet("types")]
@@ -501,6 +504,15 @@ namespace Chronicle.API.Controllers
                 catch { /* malformed JSON — leave resolvedMetadata null */ }
             }
 
+            var aliases = m.Aliases.Count > 0
+                ? m.Aliases.Select(a => a.Alias).ToList()
+                : null;
+            var mergeHistory = m.MergesAsWinner.Count > 0
+                ? m.MergesAsWinner.OrderByDescending(mr => mr.MergedAt)
+                    .Select(mr => new MergeHistoryDto(mr.Id, mr.LoserOriginalId, mr.LoserName, mr.MergedAt, mr.MergedByUserId))
+                    .ToList()
+                : null;
+
             return new MediaItemDto(
                 m.Id,
                 m.MediaTypeId,
@@ -524,7 +536,9 @@ namespace Chronicle.API.Controllers
                 MediaTypeInternalName: m.MediaType?.Name,
                 HasPhysicalFile: hasPhysicalFile,
                 HasMetadataOnly: hasMetadataOnly,
-                ResolvedMetadata: resolvedMetadata
+                ResolvedMetadata: resolvedMetadata,
+                Aliases: aliases,
+                MergeHistory: mergeHistory
             );
         }
 
@@ -770,6 +784,71 @@ namespace Chronicle.API.Controllers
             }
             catch { /* ignore malformed JSON */ }
             return null;
+        }
+
+        private int? GetCurrentUserId()
+        {
+            var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            return int.TryParse(claim, out var id) ? id : null;
+        }
+
+        /// <summary>Merges two items. winnerId must be either id or targetId.</summary>
+        [HttpPost("{id:int}/merge")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> Merge(
+            int id,
+            [FromBody] MergeRequestDto dto,
+            CancellationToken ct)
+        {
+            if (dto.WinnerId != id && dto.WinnerId != dto.TargetId)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_WINNER",
+                    "winnerId must be either the source item id or targetId."));
+
+            var loserId = dto.WinnerId == id ? dto.TargetId : id;
+            try
+            {
+                await _mergeService.MergeAsync(dto.WinnerId, loserId, GetCurrentUserId(), ct);
+                return Ok(ApiResponse<object>.Ok(new { merged = true }));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail("MERGE_ERROR", ex.Message));
+            }
+        }
+
+        /// <summary>Returns merge history for this item (as winner).</summary>
+        [HttpGet("{id:int}/merges")]
+        public async Task<IActionResult> GetMerges(int id, CancellationToken ct)
+        {
+            var merges = await _context.MediaItemMerges
+                .Where(m => m.WinnerId == id)
+                .OrderByDescending(m => m.MergedAt)
+                .ToListAsync(ct);
+
+            var dtos = merges.Select(m => new MergeHistoryDto(
+                m.Id, m.LoserOriginalId, m.LoserName, m.MergedAt, m.MergedByUserId)).ToList();
+            return Ok(ApiResponse<List<MergeHistoryDto>>.Ok(dtos));
+        }
+
+        /// <summary>Unmerges a specific merge, recreating the loser as a stub.</summary>
+        [HttpDelete("{id:int}/merges/{mergeId:int}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> Unmerge(int id, int mergeId, CancellationToken ct)
+        {
+            var merge = await _context.MediaItemMerges.FindAsync([mergeId], ct);
+            if (merge is null || merge.WinnerId != id)
+                return NotFound(ApiResponse<object>.Fail("MERGE_NOT_FOUND",
+                    $"Merge record {mergeId} not found for item {id}."));
+
+            try
+            {
+                await _mergeService.UnmergeAsync(mergeId, ct);
+                return Ok(ApiResponse<object>.Ok(new { unmerged = true }));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail("UNMERGE_ERROR", ex.Message));
+            }
         }
     }
 }
