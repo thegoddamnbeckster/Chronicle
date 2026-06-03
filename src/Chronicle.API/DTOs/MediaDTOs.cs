@@ -97,7 +97,21 @@ namespace Chronicle.API.DTOs
         /// Authoritative merged metadata resolved from the assignment config.
         /// Null when no enrichment has run or no assignment config exists for this media type.
         /// </summary>
-        ResolvedMetadataDto? ResolvedMetadata = null
+        ResolvedMetadataDto? ResolvedMetadata = null,
+        List<string>? Aliases = null,
+        List<MergeHistoryDto>? MergeHistory = null
+    );
+
+    public record MergeRequestDto(int TargetId, int WinnerId);
+
+    public record DismissDuplicateDto(int ItemAId, int ItemBId);
+
+    public record MergeHistoryDto(
+        int      MergeId,
+        int      LoserOriginalId,
+        string   LoserName,
+        DateTime MergedAt,
+        int?     MergedByUserId
     );
 
     public record AddToLibraryRequestDto(
