@@ -260,6 +260,22 @@ public sealed class DuplicateCleanupService : IScheduledTask
         foreach (var li in loserListItems)
             li.MediaItemId = winner.Id;
 
+        // ── MediaCredits — re-point; deduplicate by (person_name, role) ─────────────
+        var loserCredits = await context.MediaCredits
+            .Where(c => c.MediaItemId == loser.Id)
+            .ToListAsync(ct);
+        var winnerCreditKeys = await context.MediaCredits
+            .Where(c => c.MediaItemId == winner.Id)
+            .Select(c => new { c.PersonName, c.Role })
+            .ToListAsync(ct);
+        foreach (var credit in loserCredits)
+        {
+            if (winnerCreditKeys.Any(k => k.PersonName == credit.PersonName && k.Role == credit.Role))
+                context.MediaCredits.Remove(credit);
+            else
+                credit.MediaItemId = winner.Id;
+        }
+
         // ── Child media items — re-parent to winner ───────────────────────────────
         var loserChildren = await context.MediaItems
             .Where(m => m.ParentId == loser.Id)
@@ -290,6 +306,41 @@ public sealed class DuplicateCleanupService : IScheduledTask
         // ── MediaEnrichments — remove loser's rows (winner keeps its own) ─────────
         context.MediaEnrichments.RemoveRange(
             await context.MediaEnrichments.Where(e => e.MediaItemId == loser.Id).ToListAsync(ct));
+
+        // ── AKA ───────────────────────────────────────────────────────────────────
+        if (MergeService.NamesRequireAka(winner.Name, loser.Name))
+        {
+            context.MediaItemAliases.Add(new Chronicle.Core.Models.MediaItemAlias
+            {
+                MediaItemId = winner.Id,
+                Alias       = loser.Name,
+                Source      = "merge",
+                CreatedAt   = DateTime.UtcNow,
+            });
+        }
+
+        // ── Record merge log (enables unmerge) ───────────────────────────────────
+        var loserExtIdsForLog = await context.MediaExternalIds
+            .Where(e => e.MediaItemId == loser.Id)
+            .ToListAsync(ct);
+        var loserChildIdsForLog = await context.MediaItems
+            .Where(m => m.ParentId == loser.Id)
+            .Select(m => m.Id)
+            .ToListAsync(ct);
+        context.MediaItemMerges.Add(new Chronicle.Core.Models.MediaItemMerge
+        {
+            WinnerId            = winner.Id,
+            LoserOriginalId     = loser.Id,
+            LoserName           = loser.Name,
+            LoserMediaTypeId    = loser.MediaTypeId,
+            LoserHierarchyLevel = loser.HierarchyLevel,
+            LoserParentId       = loser.ParentId,
+            LoserExternalIdsJson = System.Text.Json.JsonSerializer.Serialize(
+                loserExtIdsForLog.Select(e => new { e.Source, e.ExternalId })),
+            LoserChildIdsJson   = System.Text.Json.JsonSerializer.Serialize(loserChildIdsForLog),
+            MergedAt            = DateTime.UtcNow,
+            MergedByUserId      = null, // automatic
+        });
 
         // ── Finally delete the loser ──────────────────────────────────────────────
         context.MediaItems.Remove(loser);
