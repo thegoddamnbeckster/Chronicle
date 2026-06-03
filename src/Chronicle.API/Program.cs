@@ -127,6 +127,7 @@ builder.Services.AddScoped<Chronicle.Services.Scan.IScanGroupingService,
 builder.Services.AddScoped<IFileScanService, FileScanService>();
 builder.Services.AddScoped<IScanFolderService, ScanFolderService>();
 builder.Services.AddScoped<IMetadataEnrichmentService, MetadataEnrichmentService>();
+builder.Services.AddScoped<IMetadataResolutionService, MetadataResolutionService>();
 builder.Services.AddScoped<ISyncOrchestrationService, SyncOrchestrationService>();
 builder.Services.AddSingleton<ISyncJobTracker, SyncJobTracker>();
 builder.Services.AddScoped<IPluginTaskRunner, PluginTaskRunner>();
