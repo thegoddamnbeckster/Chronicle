@@ -13,6 +13,8 @@ import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
+import MergeModal from '@/components/MergeModal'
+import { unmergeItem } from '@/api/duplicates'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
   'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
@@ -222,6 +224,26 @@ export default function MediaDetailPage() {
     },
   })
 
+  // ── Merge with… ──────────────────────────────────────────────────────────
+  const [mergeSearchOpen, setMergeSearchOpen] = useState(false)
+  const [mergeSearchQuery, setMergeSearchQuery] = useState('')
+  const [mergeTarget, setMergeTarget] = useState<{ id: number; name: string; posterUrl: string | null } | null>(null)
+
+  const { data: mergeSearchResults = [] } = useQuery({
+    queryKey: ['mergeSearch', mergeSearchQuery],
+    queryFn: async () => {
+      if (!mergeSearchQuery.trim()) return []
+      const { searchMedia } = await import('@/api/media')
+      return searchMedia(mergeSearchQuery)
+    },
+    enabled: mergeSearchQuery.trim().length >= 2,
+  })
+
+  const unmergeMut = useMutation({
+    mutationFn: ({ mergeId }: { mergeId: number }) => unmergeItem(Number(id), mergeId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['media', id] }),
+  })
+
   // ── Change Type ──────────────────────────────────────────────────────────
   const [changeTypeOpen, setChangeTypeOpen] = useState(false)
   const [changeTypeError, setChangeTypeError] = useState<string | null>(null)
@@ -419,6 +441,9 @@ export default function MediaDetailPage() {
 
         <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
           <h1 className={styles.title}>{item.name}</h1>
+          {item.aliases && item.aliases.length > 0 && (
+            <p className={styles.aliases}>Also known as: {item.aliases.join(', ')}</p>
+          )}
           {narrators.length > 0 && (
             <p className={styles.narratorLine}>Narrated by {narrators.join(', ')}</p>
           )}
@@ -430,6 +455,14 @@ export default function MediaDetailPage() {
                 onClick={() => { setChangeTypeOpen(true); setChangeTypeError(null) }}
               >
                 Change Type
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => setMergeSearchOpen(o => !o)}
+              >
+                {mergeSearchOpen ? 'Cancel Merge' : 'Merge with…'}
               </button>
             )}
             {!deleteConfirm ? (
@@ -498,6 +531,39 @@ export default function MediaDetailPage() {
             </div>
           )}
 
+          {mergeSearchOpen && (
+            <div className={styles.mergeSearch}>
+              <input
+                className={styles.mergeSearchInput}
+                type="text"
+                placeholder="Search for item to merge with…"
+                value={mergeSearchQuery}
+                onChange={e => setMergeSearchQuery(e.target.value)}
+                autoFocus
+              />
+              {mergeSearchResults.length > 0 && (
+                <div className={styles.mergeSearchResults}>
+                  {mergeSearchResults.slice(0, 8).map(result => (
+                    <button
+                      key={result.id}
+                      className={styles.mergeSearchResult}
+                      onClick={() => {
+                        setMergeTarget({ id: result.id, name: result.name, posterUrl: result.posterUrl })
+                        setMergeSearchOpen(false)
+                        setMergeSearchQuery('')
+                      }}
+                    >
+                      {result.posterUrl && (
+                        <img src={result.posterUrl} alt="" className={styles.mergeResultPoster} />
+                      )}
+                      <span>{result.name}{result.year ? ` (${result.year})` : ''}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className={styles.metaRow}>
             {item.year && <span className={styles.chip}>{item.year}</span>}
             <span className={styles.chip}>{item.mediaTypeName}</span>
@@ -512,6 +578,37 @@ export default function MediaDetailPage() {
           </div>
 
           {item.overview && <p className={styles.overview}>{item.overview}</p>}
+
+          {item.mergeHistory && item.mergeHistory.length > 0 && (
+            <details className={styles.mergeHistory}>
+              <summary className={styles.mergeHistorySummary}>
+                Merge History ({item.mergeHistory.length})
+              </summary>
+              {item.mergeHistory.map(merge => (
+                <div key={merge.mergeId} className={styles.mergeRow}>
+                  <span>
+                    Absorbed <strong>{merge.loserName}</strong> on{' '}
+                    {new Date(merge.mergedAt).toLocaleDateString()}
+                  </span>
+                  {isAdmin && (
+                    <button
+                      className={styles.unmergeBtn}
+                      disabled={unmergeMut.isPending}
+                      onClick={() => {
+                        if (window.confirm(
+                          `Unmerge "${merge.loserName}"? It will be recreated as a stub and queued for re-enrichment.`
+                        )) {
+                          unmergeMut.mutate({ mergeId: merge.mergeId })
+                        }
+                      }}
+                    >
+                      Unmerge
+                    </button>
+                  )}
+                </div>
+              ))}
+            </details>
+          )}
 
           {/* Global refresh strip — always shown so all media types can trigger enrichment */}
           <div className={styles.refreshStrip}>
@@ -802,6 +899,19 @@ export default function MediaDetailPage() {
             </button>
           )}
         </div>
+      )}
+
+      {mergeTarget && item && (
+        <MergeModal
+          itemA={{ id: item.id, name: item.name, posterUrl: item.posterUrl }}
+          itemB={mergeTarget}
+          onClose={() => setMergeTarget(null)}
+          onMerged={() => {
+            setMergeTarget(null)
+            qc.invalidateQueries({ queryKey: ['media', id] })
+            // Navigate to winner if this item was the loser
+          }}
+        />
       )}
     </div>
   )

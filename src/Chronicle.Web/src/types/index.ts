@@ -68,6 +68,18 @@ export interface MediaItem {
    *  Set for both the pure metadata-only case (no files anywhere in the subtree)
    *  and the mixed case (some leaves have files, some do not). */
   hasMetadataOnly?: boolean | null
+  /** Alternative names this item is known by (recorded during merges). */
+  aliases?: string[] | null
+  /** History of merges where this item is the winner. */
+  mergeHistory?: MergeHistoryEntry[] | null
+}
+
+export interface MergeHistoryEntry {
+  mergeId: number
+  loserOriginalId: number
+  loserName: string
+  mergedAt: string
+  mergedByUserId: number | null
 }
 
 // ── Library ───────────────────────────────────────────────────────────────────
