@@ -1,0 +1,134 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: min(600px, 95vw);
+  padding: 24px;
+  color: var(--text);
+}
+
+.title {
+  margin: 0 0 6px;
+  font-size: 1.2rem;
+}
+
+.subtitle {
+  margin: 0 0 20px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.items {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.itemCard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  background: var(--bg-secondary);
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s;
+  position: relative;
+}
+.itemCard:hover { border-color: var(--accent); }
+
+.selected {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.poster {
+  width: 60px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+
+.posterPlaceholder {
+  width: 60px;
+  height: 90px;
+  background: var(--bg-card);
+  border-radius: 3px;
+}
+
+.name {
+  margin: 0;
+  font-weight: 500;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.winnerBadge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.preview {
+  margin: 0 0 12px;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+.error {
+  color: #f87171;
+  font-size: 0.88rem;
+  margin: 0 0 12px;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.cancelBtn {
+  padding: 8px 18px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+}
+.cancelBtn:hover { background: var(--bg-hover); }
+
+.confirmBtn {
+  padding: 8px 18px;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.confirmBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.confirmBtn:not(:disabled):hover { opacity: 0.85; }
