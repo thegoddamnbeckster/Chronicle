@@ -474,6 +474,33 @@ namespace Chronicle.API.Controllers
             // OR when some leaves exist but not all of them have a file (mixed state).
             bool hasMetadataOnly = !hasPhysicalFile || childrenMissFile;
 
+            ResolvedMetadataDto? resolvedMetadata = null;
+            if (!string.IsNullOrEmpty(m.MetadataJson))
+            {
+                try
+                {
+                    using var resolvedDoc = System.Text.Json.JsonDocument.Parse(m.MetadataJson);
+                    if (resolvedDoc.RootElement.TryGetProperty("_resolved", out var r) &&
+                        r.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    {
+                        resolvedMetadata = new ResolvedMetadataDto(
+                            Title:          TryGetString(r, "title"),
+                            Overview:       TryGetString(r, "overview"),
+                            Year:           TryGetInt(r,    "year"),
+                            PosterUrl:      TryGetString(r, "posterUrl"),
+                            BackdropUrl:    TryGetString(r, "backdropUrl"),
+                            RuntimeMinutes: TryGetInt(r,    "runtimeMinutes"),
+                            Rating:         TryGetDouble(r, "rating"),
+                            Genres:         TryGetStringList(r, "genres"),
+                            Cast:           TryGetStringList(r, "cast"),
+                            Directors:      TryGetStringList(r, "directors"),
+                            Tags:           TryGetStringList(r, "tags")
+                        );
+                    }
+                }
+                catch { /* malformed JSON — leave resolvedMetadata null */ }
+            }
+
             return new MediaItemDto(
                 m.Id,
                 m.MediaTypeId,
@@ -496,7 +523,8 @@ namespace Chronicle.API.Controllers
                 EnrichmentStatuses: enrichmentStatuses,
                 MediaTypeInternalName: m.MediaType?.Name,
                 HasPhysicalFile: hasPhysicalFile,
-                HasMetadataOnly: hasMetadataOnly
+                HasMetadataOnly: hasMetadataOnly,
+                ResolvedMetadata: resolvedMetadata
             );
         }
 
@@ -504,6 +532,29 @@ namespace Chronicle.API.Controllers
         /// Returns true when <paramref name="metadataJson"/> contains a <c>fileScanner</c> entry
         /// with at least one non-null file path (filePaths array or filePath string).
         /// </summary>
+        private static string? TryGetString(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                ? v.GetString() : null;
+
+        private static int? TryGetInt(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
+                ? v.GetInt32() : null;
+
+        private static double? TryGetDouble(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
+                ? v.GetDouble() : null;
+
+        private static List<string>? TryGetStringList(System.Text.Json.JsonElement el, string key)
+        {
+            if (!el.TryGetProperty(key, out var v) || v.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return null;
+            var list = v.EnumerateArray()
+                .Where(x => x.ValueKind == System.Text.Json.JsonValueKind.String)
+                .Select(x => x.GetString()!)
+                .ToList();
+            return list.Count > 0 ? list : null;
+        }
+
         private static bool HasFileScannerData(string? metadataJson)
         {
             if (string.IsNullOrEmpty(metadataJson)) return false;
@@ -545,7 +596,7 @@ namespace Chronicle.API.Controllers
         // All plugin metadata (TMDB, MusicBrainz, etc.) flows through PluginMetadata
         // keyed by full plugin ID, so Chronicle never needs to know any plugin's data shape.
         private static readonly HashSet<string> _firstClassKeys =
-            new(StringComparer.OrdinalIgnoreCase) { "fileScanner" };
+            new(StringComparer.OrdinalIgnoreCase) { "fileScanner", "_resolved" };
 
         private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
             new(System.Text.Json.JsonSerializerDefaults.Web);
