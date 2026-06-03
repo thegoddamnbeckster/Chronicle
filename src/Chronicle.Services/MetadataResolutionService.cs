@@ -30,8 +30,55 @@ public class MetadataResolutionService(
             ["tags"]            = "tags",
         };
 
-    public Task ResolveAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
-        => throw new NotImplementedException();
+    public async Task ResolveAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
+    {
+        var mediaTypeName = (item.MediaType?.Name ?? string.Empty).ToLowerInvariant();
+
+        var priorityMap = await configCache.GetForTypeAsync(mediaTypeName, item.HierarchyLevel, ct);
+
+        var blobs = ParsePluginBlobs(item.MetadataJson);
+        blobs.Remove("_resolved"); // remove stale before recomputing
+
+        var resolved = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+        foreach (var (assignmentField, jsonKey) in FieldMap)
+        {
+            if (!priorityMap.TryGetValue(assignmentField, out var plugins) || plugins.Count == 0)
+                continue;
+
+            foreach (var pluginId in plugins)
+            {
+                if (!blobs.TryGetValue(pluginId, out var blob)) continue;
+                if (blob.ValueKind != JsonValueKind.Object) continue;
+                if (!blob.TryGetProperty(jsonKey, out var val)) continue;
+                if (!HasValue(val)) continue;
+                resolved[jsonKey] = val;
+                break;
+            }
+        }
+
+        blobs["_resolved"] = JsonSerializer.SerializeToElement(resolved);
+        item.MetadataJson  = JsonSerializer.Serialize(blobs);
+
+        // Promote first-class columns
+        if (resolved.TryGetValue("posterUrl", out var poster) && HasValue(poster))
+            item.PosterUrl = poster.GetString();
+        if (resolved.TryGetValue("overview", out var ov) && HasValue(ov))
+            item.Overview = ov.GetString();
+        if (resolved.TryGetValue("runtimeMinutes", out var rt) && rt.ValueKind == JsonValueKind.Number)
+            item.RuntimeMinutes = rt.GetInt32();
+
+        // title and year only promoted at level 0
+        if (item.HierarchyLevel == 0)
+        {
+            if (resolved.TryGetValue("title", out var title) && HasValue(title))
+                item.Name = title.GetString()!;
+            if (resolved.TryGetValue("year", out var yr) && yr.ValueKind == JsonValueKind.Number)
+                item.Year = yr.GetInt32();
+        }
+
+        logger.LogDebug("Resolved {Count} fields for item {Id} ({Name})", resolved.Count, item.Id, item.Name);
+    }
 
     public Task ResolveAllForMediaTypeAsync(string mediaTypeName, CancellationToken ct = default)
         => throw new NotImplementedException();
