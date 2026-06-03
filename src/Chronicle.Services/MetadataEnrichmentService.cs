@@ -13,6 +13,7 @@ namespace Chronicle.Services;
 
 public class MetadataEnrichmentService(
     IServiceScopeFactory scopeFactory,
+    IMetadataResolutionService resolutionService,
     ILogger<MetadataEnrichmentService> logger) : IMetadataEnrichmentService
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
@@ -1115,6 +1116,7 @@ public class MetadataEnrichmentService(
                 row.LastCompletedAt = DateTime.UtcNow;
                 row.ErrorMessage    = null;
                 MergeMetadata(row.MediaItem!, row.PluginId, result);
+                await resolutionService.ResolveAsync(row.MediaItem!, db, ct);
                 // Keep media_external_ids in sync with the enrichment result so that
                 // Fix Match (which calls this path with an IdOverride) actually persists
                 // the new TMDB ID — not just the enrichment tracking row.
@@ -1817,6 +1819,7 @@ public class MetadataEnrichmentService(
 
             // 6. Merge losslessly
             MergeProviderResult(item, pluginId, result);
+            await resolutionService.ResolveAsync(item, db, ct);
 
             // 7. Update row
             row.ExternalId      = resolvedId;
