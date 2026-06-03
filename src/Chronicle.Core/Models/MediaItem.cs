@@ -7,6 +7,12 @@ namespace Chronicle.Core.Models
         public int? ParentId { get; set; }
         public string Name { get; set; } = string.Empty;
         public string? SortName { get; set; }
+
+        /// <summary>
+        /// Lowercased, punctuation-stripped name used for duplicate detection.
+        /// Populated at creation/update time by MediaItemNormalizer.NormalizeName().
+        /// </summary>
+        public string? NormalizedName { get; set; }
         public int? Year { get; set; }
         public string? Overview { get; set; }
         public string? PosterUrl { get; set; }
@@ -29,5 +35,7 @@ namespace Chronicle.Core.Models
         public MediaItem? Parent { get; set; }
         public ICollection<MediaItem> Children { get; set; } = new List<MediaItem>();
         public ICollection<MediaExternalId> ExternalIds { get; set; } = new List<MediaExternalId>();
+        public ICollection<MediaItemAlias> Aliases { get; set; } = new List<MediaItemAlias>();
+        public ICollection<MediaItemMerge> MergesAsWinner { get; set; } = new List<MediaItemMerge>();
     }
 }

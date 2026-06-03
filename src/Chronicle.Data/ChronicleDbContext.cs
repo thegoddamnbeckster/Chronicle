@@ -26,6 +26,10 @@ namespace Chronicle.Data
         public DbSet<ScanFolder> ScanFolders => Set<ScanFolder>();
         public DbSet<MediaItemEnrichment> MediaEnrichments { get; set; } = null!;
         public DbSet<MediaCredit> MediaCredits { get; set; } = null!;
+        public DbSet<MediaItemAlias> MediaItemAliases { get; set; } = null!;
+        public DbSet<MediaItemMerge> MediaItemMerges { get; set; } = null!;
+        public DbSet<MediaItemDuplicateCandidate> MediaItemDuplicateCandidates { get; set; } = null!;
+        public DbSet<MediaItemDuplicateDismissal> MediaItemDuplicateDismissals { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -338,6 +342,76 @@ namespace Chronicle.Data
 
                 e.HasIndex(c => c.MediaItemId).HasDatabaseName("idx_media_credits_item");
                 e.HasIndex(c => c.PersonName).HasDatabaseName("idx_media_credits_person");
+            });
+
+            // NormalizedName on MediaItem
+            modelBuilder.Entity<MediaItem>(e =>
+            {
+                e.Property(x => x.NormalizedName).HasColumnName("normalized_name");
+                e.HasIndex(x => x.NormalizedName).HasDatabaseName("idx_media_items_normalized_name");
+            });
+
+            modelBuilder.Entity<MediaItemAlias>(e =>
+            {
+                e.ToTable("media_item_aliases");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+                e.Property(x => x.MediaItemId).HasColumnName("media_item_id").IsRequired();
+                e.Property(x => x.Alias).HasColumnName("alias").IsRequired();
+                e.Property(x => x.Source).HasColumnName("source").IsRequired();
+                e.Property(x => x.CreatedAt).HasColumnName("created_at");
+                e.HasIndex(x => x.MediaItemId).HasDatabaseName("idx_aliases_media_item_id");
+                e.HasIndex(x => x.Alias).HasDatabaseName("idx_aliases_alias");
+                e.HasOne(x => x.MediaItem).WithMany(m => m.Aliases)
+                    .HasForeignKey(x => x.MediaItemId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<MediaItemMerge>(e =>
+            {
+                e.ToTable("media_item_merges");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+                e.Property(x => x.WinnerId).HasColumnName("winner_id").IsRequired();
+                e.Property(x => x.LoserOriginalId).HasColumnName("loser_original_id").IsRequired();
+                e.Property(x => x.LoserName).HasColumnName("loser_name").IsRequired();
+                e.Property(x => x.LoserMediaTypeId).HasColumnName("loser_media_type_id").IsRequired();
+                e.Property(x => x.LoserHierarchyLevel).HasColumnName("loser_hierarchy_level").IsRequired();
+                e.Property(x => x.LoserParentId).HasColumnName("loser_parent_id");
+                e.Property(x => x.LoserExternalIdsJson).HasColumnName("loser_external_ids_json").HasDefaultValue("[]");
+                e.Property(x => x.LoserChildIdsJson).HasColumnName("loser_child_ids_json").HasDefaultValue("[]");
+                e.Property(x => x.MergedAt).HasColumnName("merged_at");
+                e.Property(x => x.MergedByUserId).HasColumnName("merged_by_user_id");
+                e.HasIndex(x => x.WinnerId).HasDatabaseName("idx_merges_winner_id");
+                e.HasOne(x => x.Winner).WithMany(m => m.MergesAsWinner)
+                    .HasForeignKey(x => x.WinnerId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<MediaItemDuplicateCandidate>(e =>
+            {
+                e.ToTable("media_item_duplicate_candidates");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+                e.Property(x => x.ItemAId).HasColumnName("item_a_id").IsRequired();
+                e.Property(x => x.ItemBId).HasColumnName("item_b_id").IsRequired();
+                e.Property(x => x.DetectedAt).HasColumnName("detected_at");
+                e.HasIndex(x => new { x.ItemAId, x.ItemBId }).IsUnique()
+                    .HasDatabaseName("idx_dup_candidates_unique");
+                e.HasOne(x => x.ItemA).WithMany().HasForeignKey(x => x.ItemAId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.ItemB).WithMany().HasForeignKey(x => x.ItemBId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<MediaItemDuplicateDismissal>(e =>
+            {
+                e.ToTable("media_item_duplicate_dismissals");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+                e.Property(x => x.ItemAId).HasColumnName("item_a_id").IsRequired();
+                e.Property(x => x.ItemBId).HasColumnName("item_b_id").IsRequired();
+                e.Property(x => x.DismissedAt).HasColumnName("dismissed_at");
+                e.HasIndex(x => new { x.ItemAId, x.ItemBId }).IsUnique()
+                    .HasDatabaseName("idx_dup_dismissals_unique");
             });
         }
     }
