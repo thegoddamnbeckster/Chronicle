@@ -45,13 +45,12 @@ public class AssignmentConfigCacheTests
     }
 
     [Fact]
-    public void Invalidate_ClearsCache()
+    public async Task Invalidate_ClearsCache()
     {
         var cache = BuildWithJson("""{"audiobooks":{"title":["hardcover"]}}""");
         cache.Invalidate();
-        // After invalidate, InjectForTest with new config and verify it takes effect
         cache.InjectForTest(AssignmentConfigCache.ParseConfig("""{"audiobooks":{"title":["mb"]}}"""));
-        var result = cache.GetForTypeAsync("audiobooks", 0).GetAwaiter().GetResult();
+        var result = await cache.GetForTypeAsync("audiobooks", 0);
         result["title"].Should().Equal("mb");
     }
 

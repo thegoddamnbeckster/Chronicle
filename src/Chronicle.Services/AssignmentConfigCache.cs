@@ -30,7 +30,7 @@ public class AssignmentConfigCache(IServiceScopeFactory scopeFactory)
             return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<string>>>>(
                 json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
         }
-        catch { return []; }
+        catch (JsonException) { return []; }
     }
 
     // For unit tests only — bypasses DB load
