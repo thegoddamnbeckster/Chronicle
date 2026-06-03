@@ -1171,3 +1171,85 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 .changeTypeActions { display: flex; justify-content: flex-end; }
 
 .narratorLine { margin: 4px 0 12px; font-size: 0.95rem; color: var(--text-secondary); font-style: italic; }
+
+.aliases { margin: 2px 0 10px; font-size: 0.88rem; color: var(--text-secondary); font-style: italic; }
+
+.mergeSearch {
+  margin: 8px 0 12px;
+  position: relative;
+}
+.mergeSearchInput {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+.mergeSearchResults {
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  z-index: 50;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.mergeSearchResult {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.88rem;
+}
+.mergeSearchResult:last-child { border-bottom: none; }
+.mergeSearchResult:hover { background: var(--bg-hover); }
+.mergeResultPoster { width: 24px; height: 36px; object-fit: cover; border-radius: 2px; flex-shrink: 0; }
+
+.mergeHistory {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.mergeHistorySummary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  user-select: none;
+}
+.mergeHistorySummary:hover { background: var(--bg-hover); }
+.mergeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  color: var(--text);
+  border-top: 1px solid var(--border);
+}
+.unmergeBtn {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+.unmergeBtn:hover { background: var(--bg-hover); }
+.unmergeBtn:disabled { opacity: 0.5; cursor: not-allowed; }
