@@ -47,14 +47,14 @@ public class SyncControllerTests : IClassFixture<ChronicleApiFactory>
     }
 
     [Fact]
-    public async Task PostSync_UnknownPlugin_Returns404OrUnprocessable()
+    public async Task PostSync_UnknownPlugin_Returns202WithJobId()
     {
-        // Plugin not loaded → InvalidOperationException from service → 404 or 422.
-        // Neither 500 nor endpoint-not-found (404 from routing) should be returned.
+        // Sync is fire-and-forget: the controller always returns 202 Accepted with a jobId.
+        // Validation (plugin existence) is deferred to the background job.
         var client = await AdminClientAsync();
         var resp = await client.PostAsync("/api/v1/sync/chronicle.plugin.nonexistent?fullSync=true", null);
-        resp.StatusCode.Should().BeOneOf(
-            HttpStatusCode.NotFound,
-            HttpStatusCode.UnprocessableEntity);
+        resp.StatusCode.Should().Be(HttpStatusCode.Accepted);
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain("jobId");
     }
 }
