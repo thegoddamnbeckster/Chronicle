@@ -224,10 +224,12 @@ public sealed class DuplicateCleanupService : IScheduledTask
             .Where(e => e.MediaItemId == loser.Id)
             .Select(e => new { e.Source, e.ExternalId })
             .ToListAsync(ct);
-        var loserChildIdsSnapshot = await context.MediaItems
+        // Load full child entities here — re-used for both the snapshot IDs and re-parenting,
+        // avoiding a second query later.
+        var loserChildrenSnapshot = await context.MediaItems
             .Where(m => m.ParentId == loser.Id)
-            .Select(m => m.Id)
             .ToListAsync(ct);
+        var loserChildIdsSnapshot = loserChildrenSnapshot.Select(m => m.Id).ToList();
 
         // ── UserLibrary ───────────────────────────────────────────────────────────
         // For each user who has the loser in their library: if the winner is already
@@ -235,10 +237,12 @@ public sealed class DuplicateCleanupService : IScheduledTask
         var loserLibEntries = await context.UserLibraries
             .Where(l => l.MediaItemId == loser.Id)
             .ToListAsync(ct);
-        var loserLibUserIds  = loserLibEntries.Select(l => l.UserId).ToList();
-        var winnerLibByUser  = await context.UserLibraries
-            .Where(l => l.MediaItemId == winner.Id && loserLibUserIds.Contains(l.UserId))
-            .ToDictionaryAsync(l => l.UserId, ct);
+        var loserLibUserIds = loserLibEntries.Select(l => l.UserId).ToList();
+        var winnerLibByUser = loserLibUserIds.Count > 0
+            ? await context.UserLibraries
+                .Where(l => l.MediaItemId == winner.Id && loserLibUserIds.Contains(l.UserId))
+                .ToDictionaryAsync(l => l.UserId, ct)
+            : new Dictionary<int, UserLibrary>();
 
         foreach (var lib in loserLibEntries)
         {
@@ -303,11 +307,8 @@ public sealed class DuplicateCleanupService : IScheduledTask
         }
 
         // ── Child media items — re-parent to winner ───────────────────────────────
-        var loserChildren = await context.MediaItems
-            .Where(m => m.ParentId == loser.Id)
-            .ToListAsync(ct);
-
-        foreach (var child in loserChildren)
+        // Use the snapshot already loaded at the top rather than querying again.
+        foreach (var child in loserChildrenSnapshot)
             child.ParentId = winner.Id;
 
         // ── MediaExternalIds — merge into winner, don't just delete ──────────────
@@ -329,9 +330,37 @@ public sealed class DuplicateCleanupService : IScheduledTask
                 ext.MediaItemId = winner.Id;            // graft onto winner
         }
 
-        // ── MediaEnrichments — remove loser's rows (winner keeps its own) ─────────
+        // ── MediaEnrichments — remove loser's rows; reset winner rows for new sources ──
         context.MediaEnrichments.RemoveRange(
             await context.MediaEnrichments.Where(e => e.MediaItemId == loser.Id).ToListAsync(ct));
+
+        // Reset winner enrichment rows for sources that were newly grafted (not deleted as
+        // duplicates) so the winner is re-enriched with the combined external IDs.
+        var newSources = loserExternalIds
+            .Where(e => !winnerIdSet.Contains($"{e.Source}:{e.ExternalId}"))
+            .Select(e => e.Source)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (newSources.Count > 0)
+        {
+            var winnerEnrichmentRows = await context.MediaEnrichments
+                .Where(e => e.MediaItemId == winner.Id)
+                .ToListAsync(ct);
+            foreach (var row in winnerEnrichmentRows)
+            {
+                var shortId = row.PluginId.Contains('.')
+                    ? row.PluginId.Split('.').Last()
+                    : row.PluginId;
+                if (newSources.Contains(shortId) &&
+                    row.Status is Chronicle.Core.Models.EnrichmentStatus.Completed
+                               or Chronicle.Core.Models.EnrichmentStatus.NotFound
+                               or Chronicle.Core.Models.EnrichmentStatus.Exhausted)
+                {
+                    row.Status     = Chronicle.Core.Models.EnrichmentStatus.Pending;
+                    row.RetryCount = 0;
+                    row.ErrorMessage = null;
+                }
+            }
+        }
 
         // ── AKA ───────────────────────────────────────────────────────────────────
         if (MergeService.NamesRequireAka(winner.Name, loser.Name))
