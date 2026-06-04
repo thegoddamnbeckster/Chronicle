@@ -1608,26 +1608,18 @@ public class MetadataEnrichmentService(
             result.TotalResults = savedTotal;
         }
 
-        if (!string.IsNullOrEmpty(result.PosterUrl))
+        // NOTE: PosterUrl is NOT set directly here — ResolveAsync() is called immediately
+        // after MergeMetadata and promotes it according to the priority assignment config.
+        // The one exception: child items (level > 0) that previously had a TMDB-hosted poster
+        // from a wrong match must have it cleared when the new enrichment returns no poster,
+        // otherwise the stale image persists. ResolveAsync won't clear it because the blob
+        // will simply have no posterUrl.
+        if (string.IsNullOrEmpty(result.PosterUrl)
+            && item.HierarchyLevel > 0
+            && item.PosterUrl?.StartsWith("https://image.tmdb.org/", StringComparison.OrdinalIgnoreCase) == true)
         {
-            // Enrichment has a poster — always apply it (overrides stale or missing values)
-            item.PosterUrl = result.PosterUrl;
-        }
-        else if (item.HierarchyLevel > 0
-              && item.PosterUrl?.StartsWith("https://image.tmdb.org/", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            // Child item (season/episode/track) has a TMDB-hosted poster but the current
-            // enrichment returned no poster.  This means the previous poster was from a
-            // wrong match (e.g. "Season 02" matched to a random show).  Clear it so the
-            // UI shows a placeholder rather than an incorrect image.
             item.PosterUrl = null;
         }
-        else if (item.HierarchyLevel == 0 && string.IsNullOrEmpty(item.PosterUrl))
-        {
-            // Root item with no poster yet — nothing to do (keep null)
-        }
-        // Root items with existing posters are left unchanged when enrichment has no poster.
-        // They may have a file-scanner local/NFO poster that should not be wiped.
     }
 
     // ── EnrichItemCoreAsync ────────────────────────────────────────────────────
@@ -1976,16 +1968,10 @@ public class MetadataEnrichmentService(
         finally { meta.Results = savedResults; meta.TotalResults = savedTotal; }
         item.MetadataJson = JsonSerializer.Serialize(existing);
 
-        if (!string.IsNullOrWhiteSpace(meta.PosterUrl))  item.PosterUrl      = meta.PosterUrl;
-        if (!string.IsNullOrWhiteSpace(meta.Overview))   item.Overview       = meta.Overview;
-        if (meta.RuntimeMinutes.HasValue)                 item.RuntimeMinutes = meta.RuntimeMinutes;
-
-        if (item.HierarchyLevel == 0)
-        {
-            if (!string.IsNullOrWhiteSpace(meta.Title)) item.Name = meta.Title;
-            if (meta.Year.HasValue)                      item.Year = meta.Year;
-        }
-
+        // NOTE: first-class column promotion (PosterUrl, Overview, Name, Year, RuntimeMinutes)
+        // is intentionally NOT done here. ResolveAsync() is always called immediately after
+        // MergeProviderResult and promotes fields according to the priority assignment config.
+        // Promoting here would let whichever plugin ran last win, ignoring priority order.
         item.UpdatedAt = DateTime.UtcNow;
     }
 

@@ -9,6 +9,7 @@ export interface DuplicateCandidateItem {
   overview: string | null
   mediaType: string
   externalIds: { source: string; externalId: string }[]
+  filePath: string | null
 }
 
 export interface DuplicateCandidate {

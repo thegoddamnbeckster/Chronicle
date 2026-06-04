@@ -188,6 +188,14 @@
   white-space: nowrap;
 }
 
+.filePath {
+  margin: 4px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: monospace;
+  word-break: break-all;
+}
+
 /* ── Pagination ── */
 .pagination {
   display: flex;
