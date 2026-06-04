@@ -124,6 +124,11 @@ function ItemCard({ item }: { item: DuplicateCandidateItem }) {
             ))}
           </div>
         )}
+        {item.filePath && (
+          <p className={styles.filePath} title={item.filePath}>
+            📁 {item.filePath}
+          </p>
+        )}
       </div>
     </div>
   )
