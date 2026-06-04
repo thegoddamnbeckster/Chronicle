@@ -23,18 +23,19 @@ namespace Chronicle.Services
         {
             var item = new MediaItem
             {
-                MediaTypeId = request.MediaTypeId,
-                ParentId = request.ParentId,
-                Name = request.Name,
-                SortName = request.Name.TrimStart('T', 't', 'h', 'H', 'e', 'E', ' '),
-                Year = request.Year,
-                Overview = request.Overview,
-                PosterUrl = request.PosterUrl,
+                MediaTypeId    = request.MediaTypeId,
+                ParentId       = request.ParentId,
+                Name           = request.Name,
+                SortName       = request.Name.TrimStart('T', 't', 'h', 'H', 'e', 'E', ' '),
+                NormalizedName = MediaItemNormalizer.NormalizeName(request.Name),
+                Year           = request.Year,
+                Overview       = request.Overview,
+                PosterUrl      = request.PosterUrl,
                 RuntimeMinutes = request.RuntimeMinutes,
                 HierarchyLevel = request.HierarchyLevel,
-                Number = request.Number,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                Number         = request.Number,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow
             };
 
             _context.MediaItems.Add(item);
