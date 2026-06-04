@@ -45,8 +45,9 @@ public sealed class DuplicateCleanupService : IScheduledTask
     /// </summary>
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var context     = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        using var scope      = _scopeFactory.CreateScope();
+        var context          = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var resolutionService = scope.ServiceProvider.GetRequiredService<IMetadataResolutionService>();
 
         int removed = 0;
         var alreadyRemoved = new HashSet<int>();
@@ -83,7 +84,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: path '{Path}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
-                    await MergeAndDeleteAsync(context, winner, loser, ct);
+                    await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
                     alreadyRemoved.Add(loser.Id);
                     removed++;
                 }
@@ -136,7 +137,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: external ID '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
-                    await MergeAndDeleteAsync(context, winner, loser, ct);
+                    await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
                     alreadyRemoved.Add(loser.Id);
                     removed++;
                 }
@@ -190,7 +191,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: title-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         $"{group.Key.Item1} / {group.Key.Year}", winner.Id, winner.Name, loser.Id, loser.Name);
-                    await MergeAndDeleteAsync(context, winner, loser, ct);
+                    await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
                     alreadyRemoved.Add(loser.Id);
                     removed++;
                 }
@@ -213,6 +214,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
     /// </summary>
     private static async Task MergeAndDeleteAsync(
         ChronicleDbContext context,
+        IMetadataResolutionService resolutionService,
         MediaItem winner,
         MediaItem loser,
         CancellationToken ct)
@@ -390,6 +392,29 @@ public sealed class DuplicateCleanupService : IScheduledTask
             MergedByUserId       = null, // automatic
         });
 
+        // ── metadata_json — merge loser blobs into winner (winner takes precedence) ──
+        // Ensures lossless ingestion: plugin data from the loser that the winner lacks
+        // is preserved rather than discarded.
+        if (!string.IsNullOrEmpty(loser.MetadataJson))
+        {
+            try
+            {
+                var winnerBlobs = ParseBlobs(winner.MetadataJson);
+                var loserBlobs  = ParseBlobs(loser.MetadataJson);
+                foreach (var (key, val) in loserBlobs)
+                    if (!winnerBlobs.ContainsKey(key) && key != "_resolved")
+                        winnerBlobs[key] = val;
+                winner.MetadataJson = System.Text.Json.JsonSerializer.Serialize(winnerBlobs);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // Malformed metadata — skip blob merge rather than aborting the cleanup.
+            }
+        }
+
+        // ── Recompute _resolved so the UI reflects the merged metadata ────────────
+        await resolutionService.ResolveAsync(winner, context, ct);
+
         // ── Stamp winner as modified ──────────────────────────────────────────────
         winner.UpdatedAt = DateTime.UtcNow;
 
@@ -450,5 +475,12 @@ public sealed class DuplicateCleanupService : IScheduledTask
         }
         catch { /* malformed JSON — treat as no path */ }
         return null;
+    }
+
+    private static Dictionary<string, System.Text.Json.JsonElement> ParseBlobs(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try { return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json) ?? []; }
+        catch (System.Text.Json.JsonException) { return []; }
     }
 }

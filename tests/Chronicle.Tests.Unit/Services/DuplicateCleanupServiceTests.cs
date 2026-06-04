@@ -237,8 +237,25 @@ file sealed class DirectScopeFactory : IServiceScopeFactory
     private sealed class DirectServiceProvider : IServiceProvider
     {
         private readonly ChronicleDbContext _ctx;
+        private static readonly IMetadataResolutionService _noopResolution = new NoopResolutionService();
         public DirectServiceProvider(ChronicleDbContext ctx) => _ctx = ctx;
         public object? GetService(Type serviceType)
-            => serviceType == typeof(ChronicleDbContext) ? _ctx : null;
+        {
+            if (serviceType == typeof(ChronicleDbContext))          return _ctx;
+            if (serviceType == typeof(IMetadataResolutionService))  return _noopResolution;
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// No-op resolution service for unit tests — ResolveAsync is a side effect we don't
+    /// need to verify in DuplicateCleanupService tests.
+    /// </summary>
+    private sealed class NoopResolutionService : IMetadataResolutionService
+    {
+        public Task ResolveAsync(Chronicle.Core.Models.MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ResolveAllForMediaTypeAsync(string mediaTypeName, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 }
