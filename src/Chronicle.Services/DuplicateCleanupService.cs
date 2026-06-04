@@ -217,6 +217,18 @@ public sealed class DuplicateCleanupService : IScheduledTask
         MediaItem loser,
         CancellationToken ct)
     {
+        // ── Snapshot loser state BEFORE any re-pointing (for merge log) ──────────
+        // These queries MUST run first — once ExternalIds and Children are re-parented
+        // to the winner, querying by loser.Id returns nothing.
+        var loserExtIdsSnapshot = await context.MediaExternalIds
+            .Where(e => e.MediaItemId == loser.Id)
+            .Select(e => new { e.Source, e.ExternalId })
+            .ToListAsync(ct);
+        var loserChildIdsSnapshot = await context.MediaItems
+            .Where(m => m.ParentId == loser.Id)
+            .Select(m => m.Id)
+            .ToListAsync(ct);
+
         // ── UserLibrary ───────────────────────────────────────────────────────────
         // For each user who has the loser in their library: if the winner is already
         // there, merge — keeping the better status (e.g. Completed > Unwatched).
@@ -231,12 +243,21 @@ public sealed class DuplicateCleanupService : IScheduledTask
 
             if (winnerLib is not null)
             {
-                if (StatusRank(lib.Status) > StatusRank(winnerLib.Status))
+                var loserRank  = StatusRank(lib.Status);
+                var winnerRank = StatusRank(winnerLib.Status);
+                if (loserRank > winnerRank)
                 {
                     winnerLib.Status      = lib.Status;
                     winnerLib.CompletedAt = lib.CompletedAt ?? winnerLib.CompletedAt;
                     winnerLib.UserRating  = lib.UserRating  ?? winnerLib.UserRating;
                     winnerLib.UpdatedAt   = DateTime.UtcNow;
+                }
+                else
+                {
+                    // Same or lower rank — keep winner's status but fill any missing data.
+                    winnerLib.CompletedAt ??= lib.CompletedAt;
+                    winnerLib.UserRating  ??= lib.UserRating;
+                    winnerLib.UpdatedAt = DateTime.UtcNow;
                 }
                 context.UserLibraries.Remove(lib);
             }
@@ -320,26 +341,19 @@ public sealed class DuplicateCleanupService : IScheduledTask
         }
 
         // ── Record merge log (enables unmerge) ───────────────────────────────────
-        var loserExtIdsForLog = await context.MediaExternalIds
-            .Where(e => e.MediaItemId == loser.Id)
-            .ToListAsync(ct);
-        var loserChildIdsForLog = await context.MediaItems
-            .Where(m => m.ParentId == loser.Id)
-            .Select(m => m.Id)
-            .ToListAsync(ct);
+        // Uses the snapshot captured at the top, before any re-pointing occurred.
         context.MediaItemMerges.Add(new Chronicle.Core.Models.MediaItemMerge
         {
-            WinnerId            = winner.Id,
-            LoserOriginalId     = loser.Id,
-            LoserName           = loser.Name,
-            LoserMediaTypeId    = loser.MediaTypeId,
-            LoserHierarchyLevel = loser.HierarchyLevel,
-            LoserParentId       = loser.ParentId,
-            LoserExternalIdsJson = System.Text.Json.JsonSerializer.Serialize(
-                loserExtIdsForLog.Select(e => new { e.Source, e.ExternalId })),
-            LoserChildIdsJson   = System.Text.Json.JsonSerializer.Serialize(loserChildIdsForLog),
-            MergedAt            = DateTime.UtcNow,
-            MergedByUserId      = null, // automatic
+            WinnerId             = winner.Id,
+            LoserOriginalId      = loser.Id,
+            LoserName            = loser.Name,
+            LoserMediaTypeId     = loser.MediaTypeId,
+            LoserHierarchyLevel  = loser.HierarchyLevel,
+            LoserParentId        = loser.ParentId,
+            LoserExternalIdsJson = System.Text.Json.JsonSerializer.Serialize(loserExtIdsSnapshot),
+            LoserChildIdsJson    = System.Text.Json.JsonSerializer.Serialize(loserChildIdsSnapshot),
+            MergedAt             = DateTime.UtcNow,
+            MergedByUserId       = null, // automatic
         });
 
         // ── Finally delete the loser ──────────────────────────────────────────────

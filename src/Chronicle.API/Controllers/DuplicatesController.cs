@@ -6,6 +6,7 @@ using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Chronicle.API.Controllers;
 
@@ -14,7 +15,8 @@ namespace Chronicle.API.Controllers;
 [Authorize(Roles = "Admin")]
 public class DuplicatesController(
     ChronicleDbContext db,
-    DuplicateCandidateScanService scanner) : ControllerBase
+    DuplicateCandidateScanService scanner,
+    ILogger<DuplicatesController> logger) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetCandidates(
@@ -96,7 +98,11 @@ public class DuplicatesController(
     [HttpPost("scan")]
     public IActionResult TriggerScan()
     {
-        _ = Task.Run(() => scanner.ExecuteAsync(CancellationToken.None));
+        _ = Task.Run(async () =>
+        {
+            try   { await scanner.ExecuteAsync(CancellationToken.None); }
+            catch (Exception ex) { logger.LogError(ex, "Duplicate candidate scan failed"); }
+        });
         return Accepted(ApiResponse<object>.Ok(new { message = "Duplicate candidate scan started." }));
     }
 

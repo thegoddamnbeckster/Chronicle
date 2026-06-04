@@ -105,12 +105,22 @@ public class MergeService(
                 .FirstOrDefaultAsync(l => l.MediaItemId == winnerId && l.UserId == lib.UserId, ct);
             if (winnerLib is not null)
             {
-                if (StatusRank(lib.Status) > StatusRank(winnerLib.Status))
+                var loserRank  = StatusRank(lib.Status);
+                var winnerRank = StatusRank(winnerLib.Status);
+                if (loserRank > winnerRank)
                 {
+                    // Loser had a better status — promote it entirely.
                     winnerLib.Status      = lib.Status;
                     winnerLib.CompletedAt = lib.CompletedAt ?? winnerLib.CompletedAt;
                     winnerLib.UserRating  = lib.UserRating  ?? winnerLib.UserRating;
                     winnerLib.UpdatedAt   = DateTime.UtcNow;
+                }
+                else
+                {
+                    // Same or lower rank — keep winner's status but fill in any missing data.
+                    winnerLib.CompletedAt ??= lib.CompletedAt;
+                    winnerLib.UserRating  ??= lib.UserRating;
+                    winnerLib.UpdatedAt = DateTime.UtcNow;
                 }
                 db.UserLibraries.Remove(lib);
             }
@@ -156,7 +166,9 @@ public class MergeService(
         await resolutionService.ResolveAsync(winner, db, ct);
 
         // ── Reset enrichment rows for plugins introduced by loser's external IDs
-        var newSources = loserExternalIds.Select(e => e.Source).Distinct().ToList();
+        var newSources = loserExternalIds
+            .Select(e => e.Source)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var enrichmentRows = await db.MediaEnrichments
             .Where(e => e.MediaItemId == winnerId)
             .ToListAsync(ct);
@@ -218,22 +230,32 @@ public class MergeService(
 
         // ── Split external IDs back ───────────────────────────────────────────
         var loserIds = JsonSerializer.Deserialize<List<LoserExternalId>>(log.LoserExternalIdsJson) ?? [];
-        foreach (var lid in loserIds)
+        if (loserIds.Count > 0)
         {
-            var eid = await db.MediaExternalIds
-                .FirstOrDefaultAsync(e => e.MediaItemId == winner.Id &&
-                                          e.Source == lid.Source &&
-                                          e.ExternalId == lid.ExternalId, ct);
-            if (eid is not null)
-                eid.MediaItemId = stub.Id;
+            // Build a set of (source, externalId) pairs to look up in one query.
+            var loserSources    = loserIds.Select(l => l.Source).ToList();
+            var loserExternalIds = loserIds.Select(l => l.ExternalId).ToList();
+            var winnerEids = await db.MediaExternalIds
+                .Where(e => e.MediaItemId == winner.Id
+                         && loserSources.Contains(e.Source)
+                         && loserExternalIds.Contains(e.ExternalId))
+                .ToListAsync(ct);
+            foreach (var eid in winnerEids)
+            {
+                // Confirm it's in the snapshot (not just any ID with matching source/externalId individually)
+                if (loserIds.Any(l => l.Source == eid.Source && l.ExternalId == eid.ExternalId))
+                    eid.MediaItemId = stub.Id;
+            }
         }
 
         // ── Re-parent children ────────────────────────────────────────────────
         var childIds = JsonSerializer.Deserialize<List<int>>(log.LoserChildIdsJson) ?? [];
-        foreach (var childId in childIds)
+        if (childIds.Count > 0)
         {
-            var child = await db.MediaItems.FindAsync([childId], ct);
-            if (child is not null)
+            var children = await db.MediaItems
+                .Where(m => childIds.Contains(m.Id))
+                .ToListAsync(ct);
+            foreach (var child in children)
                 child.ParentId = stub.Id;
         }
 
