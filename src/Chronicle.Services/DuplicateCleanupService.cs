@@ -235,11 +235,14 @@ public sealed class DuplicateCleanupService : IScheduledTask
         var loserLibEntries = await context.UserLibraries
             .Where(l => l.MediaItemId == loser.Id)
             .ToListAsync(ct);
+        var loserLibUserIds  = loserLibEntries.Select(l => l.UserId).ToList();
+        var winnerLibByUser  = await context.UserLibraries
+            .Where(l => l.MediaItemId == winner.Id && loserLibUserIds.Contains(l.UserId))
+            .ToDictionaryAsync(l => l.UserId, ct);
 
         foreach (var lib in loserLibEntries)
         {
-            var winnerLib = await context.UserLibraries
-                .FirstOrDefaultAsync(l => l.MediaItemId == winner.Id && l.UserId == lib.UserId, ct);
+            winnerLibByUser.TryGetValue(lib.UserId, out var winnerLib);
 
             if (winnerLib is not null)
             {
@@ -285,13 +288,15 @@ public sealed class DuplicateCleanupService : IScheduledTask
         var loserCredits = await context.MediaCredits
             .Where(c => c.MediaItemId == loser.Id)
             .ToListAsync(ct);
-        var winnerCreditKeys = await context.MediaCredits
+        var winnerCreditSet = (await context.MediaCredits
             .Where(c => c.MediaItemId == winner.Id)
             .Select(c => new { c.PersonName, c.Role })
-            .ToListAsync(ct);
+            .ToListAsync(ct))
+            .Select(c => $"{c.PersonName}\0{c.Role}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var credit in loserCredits)
         {
-            if (winnerCreditKeys.Any(k => k.PersonName == credit.PersonName && k.Role == credit.Role))
+            if (winnerCreditSet.Contains($"{credit.PersonName}\0{credit.Role}"))
                 context.MediaCredits.Remove(credit);
             else
                 credit.MediaItemId = winner.Id;
@@ -355,6 +360,9 @@ public sealed class DuplicateCleanupService : IScheduledTask
             MergedAt             = DateTime.UtcNow,
             MergedByUserId       = null, // automatic
         });
+
+        // ── Stamp winner as modified ──────────────────────────────────────────────
+        winner.UpdatedAt = DateTime.UtcNow;
 
         // ── Finally delete the loser ──────────────────────────────────────────────
         context.MediaItems.Remove(loser);

@@ -141,13 +141,15 @@ public class MergeService(
 
         // ── MediaCredits — re-point; deduplicate by (person_name, role) ───────
         var loserCredits = await db.MediaCredits.Where(c => c.MediaItemId == loserId).ToListAsync(ct);
-        var winnerCreditKeys = await db.MediaCredits
+        var winnerCreditSet = (await db.MediaCredits
             .Where(c => c.MediaItemId == winnerId)
             .Select(c => new { c.PersonName, c.Role })
-            .ToListAsync(ct);
+            .ToListAsync(ct))
+            .Select(c => $"{c.PersonName}\0{c.Role}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var credit in loserCredits)
         {
-            if (winnerCreditKeys.Any(k => k.PersonName == credit.PersonName && k.Role == credit.Role))
+            if (winnerCreditSet.Contains($"{credit.PersonName}\0{credit.Role}"))
                 db.MediaCredits.Remove(credit);
             else
                 credit.MediaItemId = winnerId;
@@ -175,8 +177,11 @@ public class MergeService(
         // ── Recompute _resolved ───────────────────────────────────────────────
         await resolutionService.ResolveAsync(winner, db, ct);
 
-        // ── Reset enrichment rows for plugins introduced by loser's external IDs
+        // ── Reset enrichment rows for plugins *newly introduced* by loser's IDs ─
+        // Only reset for sources that were actually grafted onto the winner, not for
+        // duplicate IDs that were deleted. Grafted = not already in winnerIdSet.
         var newSources = loserExternalIds
+            .Where(e => !winnerIdSet.Contains($"{e.Source}:{e.ExternalId}"))
             .Select(e => e.Source)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var enrichmentRows = await db.MediaEnrichments
