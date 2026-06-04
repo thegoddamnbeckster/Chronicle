@@ -42,10 +42,18 @@ public class DuplicatesController(
         var data = candidates.Select(c => new
         {
             candidateId = c.Id,
-            itemA = new { c.ItemA!.Id, c.ItemA.Name, c.ItemA.PosterUrl, c.ItemA.HierarchyLevel,
-                          mediaType = c.ItemA.MediaType?.Name },
-            itemB = new { c.ItemB!.Id, c.ItemB.Name, c.ItemB.PosterUrl, c.ItemB.HierarchyLevel,
-                          mediaType = c.ItemB.MediaType?.Name },
+            itemA = new {
+                c.ItemA!.Id, c.ItemA.Name, c.ItemA.PosterUrl, c.ItemA.HierarchyLevel,
+                c.ItemA.Year, c.ItemA.Overview,
+                mediaType   = c.ItemA.MediaType?.Name,
+                externalIds = c.ItemA.ExternalIds.Select(e => new { e.Source, e.ExternalId }).ToList(),
+            },
+            itemB = new {
+                c.ItemB!.Id, c.ItemB.Name, c.ItemB.PosterUrl, c.ItemB.HierarchyLevel,
+                c.ItemB.Year, c.ItemB.Overview,
+                mediaType   = c.ItemB.MediaType?.Name,
+                externalIds = c.ItemB.ExternalIds.Select(e => new { e.Source, e.ExternalId }).ToList(),
+            },
         }).ToList<object>();
 
         return Ok(ApiResponse<List<object>>.Ok(data,

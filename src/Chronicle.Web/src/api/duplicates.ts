@@ -1,9 +1,20 @@
 import client from './client'
 
+export interface DuplicateCandidateItem {
+  id: number
+  name: string
+  posterUrl: string | null
+  hierarchyLevel: number
+  year: number | null
+  overview: string | null
+  mediaType: string
+  externalIds: { source: string; externalId: string }[]
+}
+
 export interface DuplicateCandidate {
   candidateId: number
-  itemA: { id: number; name: string; posterUrl: string | null; hierarchyLevel: number; mediaType: string }
-  itemB: { id: number; name: string; posterUrl: string | null; hierarchyLevel: number; mediaType: string }
+  itemA: DuplicateCandidateItem
+  itemB: DuplicateCandidateItem
 }
 
 export interface MergeHistoryEntry {
