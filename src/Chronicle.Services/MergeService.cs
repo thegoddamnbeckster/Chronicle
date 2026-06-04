@@ -98,11 +98,15 @@ public class MergeService(
         }
 
         // ── UserLibrary ───────────────────────────────────────────────────────
-        var loserLibEntries = await db.UserLibraries.Where(l => l.MediaItemId == loserId).ToListAsync(ct);
+        var loserLibEntries  = await db.UserLibraries.Where(l => l.MediaItemId == loserId).ToListAsync(ct);
+        var loserUserIds     = loserLibEntries.Select(l => l.UserId).ToList();
+        var winnerLibByUser  = await db.UserLibraries
+            .Where(l => l.MediaItemId == winnerId && loserUserIds.Contains(l.UserId))
+            .ToDictionaryAsync(l => l.UserId, ct);
+
         foreach (var lib in loserLibEntries)
         {
-            var winnerLib = await db.UserLibraries
-                .FirstOrDefaultAsync(l => l.MediaItemId == winnerId && l.UserId == lib.UserId, ct);
+            winnerLibByUser.TryGetValue(lib.UserId, out var winnerLib);
             if (winnerLib is not null)
             {
                 var loserRank  = StatusRank(lib.Status);
@@ -239,7 +243,13 @@ public class MergeService(
         await db.SaveChangesAsync(ct); // flush to get stub.Id; still inside the transaction
 
         // ── Split external IDs back ───────────────────────────────────────────
-        var loserIds = JsonSerializer.Deserialize<List<LoserExternalId>>(log.LoserExternalIdsJson) ?? [];
+        List<LoserExternalId> loserIds;
+        try   { loserIds = JsonSerializer.Deserialize<List<LoserExternalId>>(log.LoserExternalIdsJson) ?? []; }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Unmerge #{MergeId}: could not parse LoserExternalIdsJson; external IDs will not be restored", mergeId);
+            loserIds = [];
+        }
         if (loserIds.Count > 0)
         {
             // Build a set of (source, externalId) pairs to look up in one query.
@@ -259,7 +269,13 @@ public class MergeService(
         }
 
         // ── Re-parent children ────────────────────────────────────────────────
-        var childIds = JsonSerializer.Deserialize<List<int>>(log.LoserChildIdsJson) ?? [];
+        List<int> childIds;
+        try   { childIds = JsonSerializer.Deserialize<List<int>>(log.LoserChildIdsJson) ?? []; }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Unmerge #{MergeId}: could not parse LoserChildIdsJson; children will not be re-parented", mergeId);
+            childIds = [];
+        }
         if (childIds.Count > 0)
         {
             var children = await db.MediaItems
@@ -294,6 +310,31 @@ public class MergeService(
             }
         }
         await resolutionService.ResolveAsync(winner, db, ct);
+
+        // ── Reset winner enrichment rows for plugins whose IDs were returned ──
+        // The winner's enrichment rows for these plugins still show Completed,
+        // but the underlying external IDs are now on the stub. Reset them so the
+        // winner is re-enriched from scratch and the UI doesn't show stale data.
+        if (loserIds.Count > 0)
+        {
+            var returnedSources = loserIds.Select(l => l.Source).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var winnerRows = await db.MediaEnrichments
+                .Where(e => e.MediaItemId == winner.Id)
+                .ToListAsync(ct);
+            foreach (var row in winnerRows)
+            {
+                var shortId = row.PluginId.Contains('.')
+                    ? row.PluginId.Split('.').Last()
+                    : row.PluginId;
+                if (returnedSources.Contains(shortId))
+                {
+                    row.Status     = EnrichmentStatus.Pending;
+                    row.RetryCount = 0;
+                    row.ErrorMessage = null;
+                    row.ExternalId = null;
+                }
+            }
+        }
 
         // ── Remove AKA created by this merge ─────────────────────────────────
         var aka = await db.MediaItemAliases
