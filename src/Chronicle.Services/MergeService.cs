@@ -31,6 +31,12 @@ public class MergeService(
         if (winner.MediaTypeId != loser.MediaTypeId || winner.HierarchyLevel != loser.HierarchyLevel)
             throw new InvalidOperationException("Items must share the same media type and hierarchy level.");
 
+        // Non-root items (seasons, episodes, tracks) must share the same parent — merging
+        // a season from one show into a season from another would corrupt the hierarchy.
+        if (winner.HierarchyLevel > 0 && winner.ParentId != loser.ParentId)
+            throw new InvalidOperationException(
+                "Non-root items must share the same parent item to be merged.");
+
         // Reject if either item is referenced as a loser_original_id (already deleted)
         var alreadyMerged = await db.MediaItemMerges
             .AnyAsync(m => m.LoserOriginalId == winnerId || m.LoserOriginalId == loserId, ct);
@@ -98,11 +104,13 @@ public class MergeService(
         }
 
         // ── UserLibrary ───────────────────────────────────────────────────────
-        var loserLibEntries  = await db.UserLibraries.Where(l => l.MediaItemId == loserId).ToListAsync(ct);
-        var loserUserIds     = loserLibEntries.Select(l => l.UserId).ToList();
-        var winnerLibByUser  = await db.UserLibraries
-            .Where(l => l.MediaItemId == winnerId && loserUserIds.Contains(l.UserId))
-            .ToDictionaryAsync(l => l.UserId, ct);
+        var loserLibEntries = await db.UserLibraries.Where(l => l.MediaItemId == loserId).ToListAsync(ct);
+        var loserUserIds    = loserLibEntries.Select(l => l.UserId).ToList();
+        var winnerLibByUser = loserUserIds.Count > 0
+            ? await db.UserLibraries
+                .Where(l => l.MediaItemId == winnerId && loserUserIds.Contains(l.UserId))
+                .ToDictionaryAsync(l => l.UserId, ct)
+            : new Dictionary<int, UserLibrary>();
 
         foreach (var lib in loserLibEntries)
         {
@@ -257,18 +265,21 @@ public class MergeService(
         }
         if (loserIds.Count > 0)
         {
-            // Build a set of (source, externalId) pairs to look up in one query.
-            var loserSources    = loserIds.Select(l => l.Source).ToList();
-            var loserExternalIds = loserIds.Select(l => l.ExternalId).ToList();
+            // Build lookup structures for the batched query and O(1) confirmation.
+            var loserSources     = loserIds.Select(l => l.Source).ToList();
+            var loserExtIds      = loserIds.Select(l => l.ExternalId).ToList();
+            var loserIdSet       = loserIds
+                .Select(l => $"{l.Source}:{l.ExternalId}")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
             var winnerEids = await db.MediaExternalIds
                 .Where(e => e.MediaItemId == winner.Id
                          && loserSources.Contains(e.Source)
-                         && loserExternalIds.Contains(e.ExternalId))
+                         && loserExtIds.Contains(e.ExternalId))
                 .ToListAsync(ct);
             foreach (var eid in winnerEids)
             {
-                // Confirm it's in the snapshot (not just any ID with matching source/externalId individually)
-                if (loserIds.Any(l => l.Source == eid.Source && l.ExternalId == eid.ExternalId))
+                if (loserIdSet.Contains($"{eid.Source}:{eid.ExternalId}"))
                     eid.MediaItemId = stub.Id;
             }
         }
@@ -403,6 +414,7 @@ public class MergeService(
     private static Dictionary<string, JsonElement> ParseMetadataBlobs(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return [];
-        return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? [];
+        try { return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? []; }
+        catch (JsonException) { return []; }
     }
 }
