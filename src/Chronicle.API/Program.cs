@@ -334,11 +334,11 @@ using (var scope = app.Services.CreateScope())
             var batch = await db.MediaItems
                 .Where(m => m.NormalizedName == null)
                 .Take(500)
-                .ToListAsync();
+                .ToListAsync(CancellationToken.None);
             if (batch.Count == 0) break;
             foreach (var item in batch)
                 item.NormalizedName = Chronicle.Services.MediaItemNormalizer.NormalizeName(item.Name);
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(CancellationToken.None);
             normalizeTotal += batch.Count;
         }
         if (normalizeTotal > 0)

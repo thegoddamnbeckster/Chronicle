@@ -69,10 +69,11 @@ public sealed class DuplicateCandidateScanService(
 
         // Replace candidates table atomically — delete old, insert new in one transaction
         // so a failure mid-insert doesn't leave an empty candidates table.
+        var distinctCandidates = newCandidates.Distinct().ToList();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var existing = await db.MediaItemDuplicateCandidates.ToListAsync(ct);
         db.MediaItemDuplicateCandidates.RemoveRange(existing);
-        foreach (var (a, b) in newCandidates.Distinct())
+        foreach (var (a, b) in distinctCandidates)
             db.MediaItemDuplicateCandidates.Add(new Core.Models.MediaItemDuplicateCandidate
             {
                 ItemAId    = a,
@@ -83,6 +84,6 @@ public sealed class DuplicateCandidateScanService(
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         logger.LogInformation(
-            "Duplicate candidate scan complete: {Count} candidates stored", newCandidates.Count);
+            "Duplicate candidate scan complete: {Count} candidates stored", distinctCandidates.Count);
     }
 }
