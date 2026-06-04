@@ -25,6 +25,9 @@ public class DuplicatesController(
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
+        page     = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
         var q = db.MediaItemDuplicateCandidates
             .Include(c => c.ItemA).ThenInclude(m => m!.MediaType)
             .Include(c => c.ItemA).ThenInclude(m => m!.ExternalIds)
