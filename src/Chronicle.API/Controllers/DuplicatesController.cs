@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Chronicle.API.DTOs;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -47,12 +48,14 @@ public class DuplicatesController(
                 c.ItemA.Year, c.ItemA.Overview,
                 mediaType   = c.ItemA.MediaType?.Name,
                 externalIds = c.ItemA.ExternalIds.Select(e => new { e.Source, e.ExternalId }).ToList(),
+                filePath    = ExtractFilePath(c.ItemA.MetadataJson),
             },
             itemB = new {
                 c.ItemB!.Id, c.ItemB.Name, c.ItemB.PosterUrl, c.ItemB.HierarchyLevel,
                 c.ItemB.Year, c.ItemB.Overview,
                 mediaType   = c.ItemB.MediaType?.Name,
                 externalIds = c.ItemB.ExternalIds.Select(e => new { e.Source, e.ExternalId }).ToList(),
+                filePath    = ExtractFilePath(c.ItemB.MetadataJson),
             },
         }).ToList<object>();
 
@@ -95,5 +98,38 @@ public class DuplicatesController(
     {
         _ = Task.Run(() => scanner.ExecuteAsync(CancellationToken.None));
         return Accepted(ApiResponse<object>.Ok(new { message = "Duplicate candidate scan started." }));
+    }
+
+    /// <summary>
+    /// Returns the most specific file path available from the fileScanner metadata blob:
+    /// first individual file path, then folder path, then null.
+    /// </summary>
+    private static string? ExtractFilePath(string? metadataJson)
+    {
+        if (metadataJson is null) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (!doc.RootElement.TryGetProperty("fileScanner", out var scanner))
+                return null;
+
+            // Prefer the first individual file path
+            if (scanner.TryGetProperty("filePaths", out var fps)
+                && fps.ValueKind == JsonValueKind.Array
+                && fps.GetArrayLength() > 0)
+            {
+                var first = fps[0].GetString();
+                if (!string.IsNullOrEmpty(first)) return first;
+            }
+
+            // Fall back to folder path (groups / parent-level items)
+            if (scanner.TryGetProperty("folderPath", out var fp))
+            {
+                var folder = fp.GetString();
+                if (!string.IsNullOrEmpty(folder)) return folder;
+            }
+        }
+        catch { /* malformed JSON */ }
+        return null;
     }
 }
