@@ -5,6 +5,7 @@ import {
   dismissDuplicate,
   triggerDuplicateScan,
   type DuplicateCandidate,
+  type DuplicateCandidateItem,
 } from '@/api/duplicates'
 import MergeModal from '@/components/MergeModal'
 import styles from './DuplicatesPage.module.css'
@@ -51,7 +52,7 @@ export default function DuplicatesPage() {
         {data?.data?.map(candidate => (
           <div key={candidate.candidateId} className={styles.row}>
             <ItemCard item={candidate.itemA} />
-            <span className={styles.vs}>vs</span>
+            <div className={styles.vs}>vs</div>
             <ItemCard item={candidate.itemB} />
             <div className={styles.actions}>
               <button className={styles.mergeBtn} onClick={() => setMergeTarget(candidate)}>
@@ -96,15 +97,33 @@ export default function DuplicatesPage() {
   )
 }
 
-function ItemCard({ item }: { item: DuplicateCandidate['itemA'] }) {
+function ItemCard({ item }: { item: DuplicateCandidateItem }) {
+  // Show only the most useful external IDs (skip internal/noisy sources)
+  const displayIds = item.externalIds.filter(e =>
+    ['tmdb', 'imdb', 'tvdb', 'musicbrainz', 'simkl', 'trakt', 'hardcover', 'igdb'].includes(e.source.toLowerCase())
+  )
+
   return (
     <div className={styles.card}>
       {item.posterUrl
         ? <img src={item.posterUrl} alt={item.name} className={styles.poster} />
-        : <div className={styles.posterPlaceholder} />}
-      <div>
+        : <div className={styles.posterPlaceholder}>No poster</div>}
+      <div className={styles.info}>
         <p className={styles.name}>{item.name}</p>
+        {item.year && <span className={styles.year}>{item.year}</span>}
         <p className={styles.meta}>{item.mediaType} · Level {item.hierarchyLevel}</p>
+        {item.overview && (
+          <p className={styles.overview}>{item.overview}</p>
+        )}
+        {displayIds.length > 0 && (
+          <div className={styles.externalIds}>
+            {displayIds.map(e => (
+              <span key={`${e.source}:${e.externalId}`} className={styles.idBadge}>
+                {e.source}: {e.externalId}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
