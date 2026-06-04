@@ -1,6 +1,6 @@
 .page {
   padding: 24px;
-  max-width: 1000px;
+  max-width: 1100px;
 }
 
 .header {
@@ -38,92 +38,157 @@
 .list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
+/* ── Each candidate row ── */
 .row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  align-items: stretch;
+  gap: 0;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px 16px;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .vs {
-  color: var(--text-muted);
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-}
-
-.poster {
-  width: 40px;
-  height: 60px;
-  object-fit: cover;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.posterPlaceholder {
-  width: 40px;
-  height: 60px;
-  background: var(--bg-secondary);
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.name {
-  margin: 0;
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.meta {
-  margin: 2px 0 0;
-  font-size: 0.8rem;
+  justify-content: center;
+  padding: 0 12px;
   color: var(--text-muted);
+  font-weight: 700;
+  font-size: 0.9rem;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
 }
 
 .actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  flex-shrink: 0;
+  justify-content: center;
+  padding: 16px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-secondary);
 }
 
 .mergeBtn {
-  padding: 6px 14px;
+  padding: 7px 18px;
   background: var(--accent);
   color: var(--accent-fg, #fff);
   border: none;
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.85rem;
+  white-space: nowrap;
 }
 .mergeBtn:hover { opacity: 0.85; }
 
 .dismissBtn {
-  padding: 6px 14px;
+  padding: 7px 18px;
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.85rem;
+  white-space: nowrap;
 }
 .dismissBtn:hover { background: var(--bg-hover); }
+.dismissBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ── Item card ── */
+.card {
+  display: flex;
+  gap: 14px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.poster {
+  width: 80px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.posterPlaceholder {
+  width: 80px;
+  height: 120px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.name {
+  margin: 0;
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.year {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.meta {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.overview {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  /* Clamp to 3 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.externalIds {
+  margin: 4px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.idBadge {
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Pagination ── */
 .pagination {
   display: flex;
   gap: 8px;

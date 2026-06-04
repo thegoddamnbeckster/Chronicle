@@ -25,10 +25,10 @@ public sealed class DuplicateCandidateScanService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        // Load all items with their grouping key
+        // Load all items with their grouping key (include Year for mismatch filtering)
         var items = await db.MediaItems
             .Where(m => m.NormalizedName != null && m.NormalizedName != string.Empty)
-            .Select(m => new { m.Id, m.NormalizedName, m.MediaTypeId, m.HierarchyLevel, m.ParentId })
+            .Select(m => new { m.Id, m.NormalizedName, m.MediaTypeId, m.HierarchyLevel, m.ParentId, m.Year })
             .ToListAsync(ct);
 
         // Load existing dismissals to exclude
@@ -52,6 +52,13 @@ public sealed class DuplicateCandidateScanService(
                 for (int i = 0; i < list.Count - 1; i++)
                 for (int j = i + 1; j < list.Count; j++)
                 {
+                    // If both items have a known year and the years differ, they are
+                    // different works (e.g. Aladdin 1992 vs Aladdin 2019) — not duplicates.
+                    var yearI = list[i].Year;
+                    var yearJ = list[j].Year;
+                    if (yearI.HasValue && yearJ.HasValue && yearI != yearJ)
+                        continue;
+
                     var a = Math.Min(list[i].Id, list[j].Id);
                     var b = Math.Max(list[i].Id, list[j].Id);
                     if (!dismissedSet.Contains((a, b)))
