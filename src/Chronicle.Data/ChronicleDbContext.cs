@@ -412,6 +412,12 @@ namespace Chronicle.Data
                 e.Property(x => x.DismissedAt).HasColumnName("dismissed_at");
                 e.HasIndex(x => new { x.ItemAId, x.ItemBId }).IsUnique()
                     .HasDatabaseName("idx_dup_dismissals_unique");
+                // Cascade-delete dismissals when either referenced item is deleted so they
+                // don't accumulate as orphaned rows indefinitely.
+                e.HasOne<MediaItem>().WithMany().HasForeignKey(x => x.ItemAId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                e.HasOne<MediaItem>().WithMany().HasForeignKey(x => x.ItemBId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

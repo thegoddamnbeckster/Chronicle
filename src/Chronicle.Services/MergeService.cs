@@ -152,14 +152,20 @@ public class MergeService(
         // ── metadata_json — merge blobs (winner blobs take precedence) ────────
         if (!string.IsNullOrEmpty(loser.MetadataJson))
         {
-            var winnerBlobs = string.IsNullOrEmpty(winner.MetadataJson)
-                ? new Dictionary<string, JsonElement>()
-                : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(winner.MetadataJson) ?? [];
-            var loserBlobs = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(loser.MetadataJson) ?? [];
-            foreach (var (key, val) in loserBlobs)
-                if (!winnerBlobs.ContainsKey(key) && key != "_resolved")
-                    winnerBlobs[key] = val;
-            winner.MetadataJson = JsonSerializer.Serialize(winnerBlobs);
+            try
+            {
+                var winnerBlobs = ParseMetadataBlobs(winner.MetadataJson);
+                var loserBlobs  = ParseMetadataBlobs(loser.MetadataJson);
+                foreach (var (key, val) in loserBlobs)
+                    if (!winnerBlobs.ContainsKey(key) && key != "_resolved")
+                        winnerBlobs[key] = val;
+                winner.MetadataJson = JsonSerializer.Serialize(winnerBlobs);
+            }
+            catch (JsonException ex)
+            {
+                logger.LogWarning(ex, "Failed to merge metadata_json blobs for winner {WinnerId} / loser {LoserId}; skipping blob merge",
+                    winnerId, loserId);
+            }
         }
 
         // ── Recompute _resolved ───────────────────────────────────────────────
@@ -214,6 +220,10 @@ public class MergeService(
 
         var winner = log.Winner!;
 
+        // Wrap entire unmerge in a transaction so a failure after stub creation
+        // doesn't leave a dangling empty stub with no external IDs or enrichment rows.
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
         // ── Create stub for the loser ─────────────────────────────────────────
         var stub = new MediaItem
         {
@@ -226,7 +236,7 @@ public class MergeService(
             UpdatedAt      = DateTime.UtcNow,
         };
         db.MediaItems.Add(stub);
-        await db.SaveChangesAsync(ct); // need stub.Id
+        await db.SaveChangesAsync(ct); // flush to get stub.Id; still inside the transaction
 
         // ── Split external IDs back ───────────────────────────────────────────
         var loserIds = JsonSerializer.Deserialize<List<LoserExternalId>>(log.LoserExternalIdsJson) ?? [];
@@ -262,18 +272,26 @@ public class MergeService(
         // ── Clean winner metadata_json of loser plugin blobs ─────────────────
         if (!string.IsNullOrEmpty(winner.MetadataJson))
         {
-            var blobs = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(winner.MetadataJson) ?? [];
-            var loserSources = loserIds.Select(l => l.Source).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var src in loserSources)
+            try
             {
-                var keysToRemove = blobs.Keys
-                    .Where(k => k != "_resolved" &&
-                                (k.EndsWith("." + src, StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(k, src, StringComparison.OrdinalIgnoreCase)))
-                    .ToList();
-                foreach (var k in keysToRemove) blobs.Remove(k);
+                var blobs = ParseMetadataBlobs(winner.MetadataJson);
+                var loserSources = loserIds.Select(l => l.Source).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var src in loserSources)
+                {
+                    var keysToRemove = blobs.Keys
+                        .Where(k => k != "_resolved" &&
+                                    (k.EndsWith("." + src, StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(k, src, StringComparison.OrdinalIgnoreCase)))
+                        .ToList();
+                    foreach (var k in keysToRemove) blobs.Remove(k);
+                }
+                winner.MetadataJson = JsonSerializer.Serialize(blobs);
             }
-            winner.MetadataJson = JsonSerializer.Serialize(blobs);
+            catch (JsonException ex)
+            {
+                logger.LogWarning(ex, "Failed to clean metadata_json blobs during unmerge #{MergeId}; skipping blob cleanup",
+                    mergeId);
+            }
         }
         await resolutionService.ResolveAsync(winner, db, ct);
 
@@ -303,6 +321,8 @@ public class MergeService(
         db.MediaItemMerges.Remove(log);
 
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
         logger.LogInformation(
             "Unmerged merge #{MergeId}: recreated stub {StubId} ({Name}) from winner {WinnerId}",
             mergeId, stub.Id, stub.Name, winner.Id);
@@ -333,4 +353,10 @@ public class MergeService(
     };
 
     private record LoserExternalId(string Source, string ExternalId);
+
+    private static Dictionary<string, JsonElement> ParseMetadataBlobs(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? [];
+    }
 }

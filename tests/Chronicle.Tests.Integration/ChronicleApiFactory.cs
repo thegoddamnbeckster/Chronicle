@@ -36,9 +36,14 @@ namespace Chronicle.Tests.Integration
                 foreach (var d in toRemove)
                     services.Remove(d);
 
-                // Register with InMemory provider
+                // Register with InMemory provider.
+                // Suppress TransactionIgnoredWarning — InMemory doesn't support real
+                // transactions but the production code uses them; tests still verify
+                // the logical behaviour correctly.
                 services.AddDbContext<ChronicleDbContext>(opts =>
-                    opts.UseInMemoryDatabase(_dbName));
+                    opts.UseInMemoryDatabase(_dbName)
+                        .ConfigureWarnings(w =>
+                            w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning)));
             });
         }
 
