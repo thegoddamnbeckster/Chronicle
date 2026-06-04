@@ -327,16 +327,22 @@ using (var scope = app.Services.CreateScope())
         await enrichmentService.SeedEnrichmentRowsFromExternalIdsAsync();
 
         // Backfill normalized_name for all existing MediaItem rows that don't have it yet.
-        var itemsToNormalize = await db.MediaItems
-            .Where(m => m.NormalizedName == null)
-            .ToListAsync();
-        foreach (var item in itemsToNormalize)
-            item.NormalizedName = Chronicle.Services.MediaItemNormalizer.NormalizeName(item.Name);
-        if (itemsToNormalize.Count > 0)
+        // Processed in batches to avoid loading the entire table into memory on first boot.
+        int normalizeTotal = 0;
+        while (true)
         {
+            var batch = await db.MediaItems
+                .Where(m => m.NormalizedName == null)
+                .Take(500)
+                .ToListAsync();
+            if (batch.Count == 0) break;
+            foreach (var item in batch)
+                item.NormalizedName = Chronicle.Services.MediaItemNormalizer.NormalizeName(item.Name);
             await db.SaveChangesAsync();
-            app.Logger.LogInformation("Backfilled normalized_name for {Count} media items", itemsToNormalize.Count);
+            normalizeTotal += batch.Count;
         }
+        if (normalizeTotal > 0)
+            app.Logger.LogInformation("Backfilled normalized_name for {Count} media items", normalizeTotal);
     }
     else
         db.Database.EnsureCreated();
