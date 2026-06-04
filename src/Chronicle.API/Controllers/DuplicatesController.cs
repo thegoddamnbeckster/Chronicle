@@ -76,6 +76,12 @@ public class DuplicatesController(
         var a = Math.Min(dto.ItemAId, dto.ItemBId);
         var b = Math.Max(dto.ItemAId, dto.ItemBId);
 
+        // Remove from candidates regardless of whether the dismissal already exists.
+        var candidate = await db.MediaItemDuplicateCandidates
+            .FirstOrDefaultAsync(c => (c.ItemAId == a && c.ItemBId == b) ||
+                                       (c.ItemAId == b && c.ItemBId == a), ct);
+        if (candidate is not null) db.MediaItemDuplicateCandidates.Remove(candidate);
+
         var exists = await db.MediaItemDuplicateDismissals
             .AnyAsync(d => d.ItemAId == a && d.ItemBId == b, ct);
         if (!exists)
@@ -88,13 +94,15 @@ public class DuplicatesController(
             });
         }
 
-        // Remove from candidates
-        var candidate = await db.MediaItemDuplicateCandidates
-            .FirstOrDefaultAsync(c => (c.ItemAId == a && c.ItemBId == b) ||
-                                       (c.ItemAId == b && c.ItemBId == a), ct);
-        if (candidate is not null) db.MediaItemDuplicateCandidates.Remove(candidate);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateException)
+        {
+            // Concurrent dismiss of the same pair hit the unique index — idempotent, treat as success.
+        }
 
-        await db.SaveChangesAsync(ct);
         return Ok(ApiResponse<object>.Ok(new { dismissed = true }));
     }
 
