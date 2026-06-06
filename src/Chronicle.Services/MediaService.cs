@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -10,6 +11,10 @@ namespace Chronicle.Services
 {
     public class MediaService : IMediaService
     {
+        // Strips leading "The ", "A ", "An " (case-insensitive) for sort-name generation.
+        private static readonly Regex _articlePrefixRe =
+            new(@"^(?:The|A|An)\s+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         private readonly ChronicleDbContext _context;
         private readonly IPluginRegistry    _pluginRegistry;
 
@@ -19,14 +24,14 @@ namespace Chronicle.Services
             _pluginRegistry = pluginRegistry;
         }
 
-        public async Task<MediaItem> CreateAsync(CreateMediaRequest request)
+        public async Task<MediaItem> CreateAsync(CreateMediaRequest request, CancellationToken ct = default)
         {
             var item = new MediaItem
             {
                 MediaTypeId    = request.MediaTypeId,
                 ParentId       = request.ParentId,
                 Name           = request.Name,
-                SortName       = request.Name.TrimStart('T', 't', 'h', 'H', 'e', 'E', ' '),
+                SortName       = _articlePrefixRe.Replace(request.Name, string.Empty),
                 NormalizedName = MediaItemNormalizer.NormalizeName(request.Name),
                 Year           = request.Year,
                 Overview       = request.Overview,
@@ -39,24 +44,24 @@ namespace Chronicle.Services
             };
 
             _context.MediaItems.Add(item);
-            await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync(ct);
 
-            await _context.Entry(item).Reference(i => i.MediaType).LoadAsync();
+            await _context.Entry(item).Reference(i => i.MediaType).LoadAsync(ct);
 
             return item;
         }
 
-        public async Task<MediaItem?> GetByIdAsync(int id)
+        public async Task<MediaItem?> GetByIdAsync(int id, CancellationToken ct = default)
         {
             return await _context.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
                 .Include(m => m.Aliases)
                 .Include(m => m.MergesAsWinner)
-                .FirstOrDefaultAsync(m => m.Id == id);
+                .FirstOrDefaultAsync(m => m.Id == id, ct);
         }
 
-        public async Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20, bool allLevels = false)
+        public async Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20, bool allLevels = false, CancellationToken ct = default)
         {
             var q = _context.MediaItems
                 .Include(m => m.MediaType)
@@ -73,25 +78,27 @@ namespace Chronicle.Services
             if (mediaTypeId.HasValue)
                 q = q.Where(m => m.MediaTypeId == mediaTypeId.Value);
 
+            if (page < 1) page = 1;
+
             return await q
                 .OrderBy(m => m.SortName)
                 .Skip((page - 1) * perPage)
                 .Take(perPage)
-                .ToListAsync();
+                .ToListAsync(ct);
         }
 
-        public async Task<IEnumerable<MediaItem>> GetChildrenAsync(int parentId)
+        public async Task<IEnumerable<MediaItem>> GetChildrenAsync(int parentId, CancellationToken ct = default)
         {
             return await _context.MediaItems
                 .Where(m => m.ParentId == parentId)
                 .OrderBy(m => m.Number)
                 .ThenBy(m => m.Name)
-                .ToListAsync();
+                .ToListAsync(ct);
         }
 
-        public async Task<MediaItem> UpdateAsync(int id, UpdateMediaRequest request)
+        public async Task<MediaItem> UpdateAsync(int id, UpdateMediaRequest request, CancellationToken ct = default)
         {
-            var item = await _context.MediaItems.FindAsync(id)
+            var item = await _context.MediaItems.FindAsync([id], ct)
                 ?? throw new MediaNotFoundException(id);
 
             if (request.Name != null) item.Name = request.Name;
@@ -101,18 +108,18 @@ namespace Chronicle.Services
             if (request.RuntimeMinutes.HasValue) item.RuntimeMinutes = request.RuntimeMinutes;
 
             item.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync(ct);
 
             return item;
         }
 
-        public async Task DeleteAsync(int id)
+        public async Task DeleteAsync(int id, CancellationToken ct = default)
         {
-            var item = await _context.MediaItems.FindAsync(id)
+            var item = await _context.MediaItems.FindAsync([id], ct)
                 ?? throw new MediaNotFoundException(id);
 
             _context.MediaItems.Remove(item);
-            await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync(ct);
         }
 
         public async Task ChangeTypeAsync(int id, int targetMediaTypeId, CancellationToken ct = default)

@@ -64,7 +64,7 @@ namespace Chronicle.API.Controllers
         [HttpGet("{id:int}")]
         public async Task<IActionResult> GetById(int id, CancellationToken ct)
         {
-            var item = await _mediaService.GetByIdAsync(id);
+            var item = await _mediaService.GetByIdAsync(id, ct);
             if (item == null)
                 return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
@@ -134,7 +134,7 @@ namespace Chronicle.API.Controllers
         [HttpGet("{id:int}/children")]
         public async Task<IActionResult> GetChildren(int id, CancellationToken ct)
         {
-            var childrenSeq = await _mediaService.GetChildrenAsync(id);
+            var childrenSeq = await _mediaService.GetChildrenAsync(id, ct);
             var children = childrenSeq.ToList();
             if (children.Count == 0)
                 return Ok(ApiResponse<List<MediaItemDto>>.Ok([]));
@@ -167,7 +167,7 @@ namespace Chronicle.API.Controllers
             try
             {
                 var item = await _mediaService.UpdateAsync(id, new Chronicle.Services.UpdateMediaRequest(
-                    request.Name, request.Year, request.Overview, request.PosterUrl, request.RuntimeMinutes));
+                    request.Name, request.Year, request.Overview, request.PosterUrl, request.RuntimeMinutes), HttpContext.RequestAborted);
                 return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
             }
             catch (MediaNotFoundException ex)
@@ -183,7 +183,7 @@ namespace Chronicle.API.Controllers
             {
                 await _enrichment.EnrichItemAsync(id,
                     new EnrichmentOptions(EnrichmentMode.Force, Cascade: true), ct);
-                var item = await _mediaService.GetByIdAsync(id);
+                var item = await _mediaService.GetByIdAsync(id, ct);
                 if (item == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
                 var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
@@ -217,7 +217,7 @@ namespace Chronicle.API.Controllers
                     IdOverride: string.IsNullOrWhiteSpace(dto?.Input) ? null : dto.Input.Trim(),
                     Cascade: false);
                 await _enrichment.EnrichItemAsync(id, pluginId, opts, ct);
-                var item = await _mediaService.GetByIdAsync(id);
+                var item = await _mediaService.GetByIdAsync(id, ct);
                 if (item == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
                 var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
@@ -337,7 +337,7 @@ namespace Chronicle.API.Controllers
         {
             try
             {
-                await _mediaService.DeleteAsync(id);
+                await _mediaService.DeleteAsync(id, HttpContext.RequestAborted);
                 return NoContent();
             }
             catch (MediaNotFoundException ex)
@@ -361,7 +361,7 @@ namespace Chronicle.API.Controllers
             try
             {
                 await _mediaService.ChangeTypeAsync(id, body.MediaTypeId, ct);
-                var updated = await _mediaService.GetByIdAsync(id);
+                var updated = await _mediaService.GetByIdAsync(id, ct);
                 if (updated == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
                 return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
