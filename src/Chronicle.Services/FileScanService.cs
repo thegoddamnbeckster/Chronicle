@@ -1143,7 +1143,7 @@ namespace Chronicle.Services
 
                 // Score each candidate by title + year accuracy, prefer exact year match
                 var best = searchResults
-                    .Select(c => new { Result = c.Metadata, Score = ScoreByNameYear(c.Metadata.Title, c.Metadata.Year, item.Name, item.Year) })
+                    .Select(c => new { Metadata = c.Metadata, Score = ScoreByNameYear(c.Metadata.Title, c.Metadata.Year, item.Name, item.Year) })
                     .OrderByDescending(x => x.Score)
                     .FirstOrDefault();
 
@@ -1152,7 +1152,7 @@ namespace Chronicle.Services
                     _log.Information("RefreshMetadata: no TMDB match found for '{Name}'", item.Name);
                     return item;
                 }
-                extId = best.Result.ExternalId;
+                extId = best.Metadata.ExternalId;
                 await UpsertExternalIdAsync(item.Id, extId, ct);
                 _log.Information("RefreshMetadata: matched '{Name}' → {ExtId} (score={Score})", item.Name, extId, best.Score);
             }
@@ -2285,10 +2285,13 @@ namespace Chronicle.Services
                 if (!supportedNames.Any(n => NormalizeMediaTypeName(n) == NormalizeMediaTypeName(mediaTypeName)))
                     continue;
 
+                // Avoid SQLite IN-clause limit: query all rows for this plugin, filter in-memory.
+                var itemIdSet = itemIds.ToHashSet();
                 var existingSet = (await _context.MediaEnrichments
-                    .Where(x => x.PluginId == manifestPluginId && itemIds.Contains(x.MediaItemId))
+                    .Where(x => x.PluginId == manifestPluginId)
                     .Select(x => x.MediaItemId)
                     .ToListAsync(ct))
+                    .Where(id => itemIdSet.Contains(id))
                     .ToHashSet();
 
                 foreach (var itemId in itemIds)

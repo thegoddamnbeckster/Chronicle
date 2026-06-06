@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
@@ -84,12 +85,14 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: path '{Path}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
+                    await using var tx = await context.Database.BeginTransactionAsync(ct);
                     await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
+                    await context.SaveChangesAsync(ct);
+                    await tx.CommitAsync(ct);
                     alreadyRemoved.Add(loser.Id);
                     removed++;
                 }
             }
-            await context.SaveChangesAsync(ct);
         }
 
         // ── Pass 2: external-ID duplicates ────────────────────────────────────
@@ -137,12 +140,14 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: external ID '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
+                    await using var tx = await context.Database.BeginTransactionAsync(ct);
                     await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
+                    await context.SaveChangesAsync(ct);
+                    await tx.CommitAsync(ct);
                     alreadyRemoved.Add(loser.Id);
                     removed++;
                 }
             }
-            await context.SaveChangesAsync(ct);
         }
 
         // ── Pass 3: title-normalisation duplicates ─────────────────────────────
@@ -150,12 +155,13 @@ public sealed class DuplicateCleanupService : IScheduledTask
         // that duplicated SIMKL stubs like "Batman v Superman: Dawn of Justice (2016)"
         // because Windows filenames cannot contain colons.
         // Groups root-level items by (normalised title, year, media type).
-        var rootItems = await context.MediaItems
-            .Include(m => m.ExternalIds)
+        // Use a projection to avoid loading full entity graph for every root item.
+        var rootProjections = await context.MediaItems
             .Where(m => m.HierarchyLevel == 0)
+            .Select(m => new { m.Id, m.Name, m.Year, m.MediaTypeId, m.MetadataJson })
             .ToListAsync(ct);
 
-        var titleGroups = rootItems
+        var titleGroups = rootProjections
             .Where(m => !alreadyRemoved.Contains(m.Id))
             .GroupBy(m => (NormalizeTitle(m.Name), m.Year, m.MediaTypeId))
             .Where(g => g.Count() > 1)
@@ -175,28 +181,37 @@ public sealed class DuplicateCleanupService : IScheduledTask
             foreach (var group in titleGroups)
             {
                 ct.ThrowIfCancellationRequested();
-                var items = group.Where(m => !alreadyRemoved.Contains(m.Id)).ToList();
-                if (items.Count < 2) continue;
+                var projections = group.Where(m => !alreadyRemoved.Contains(m.Id)).ToList();
+                if (projections.Count < 2) continue;
 
                 // File-scanner items preferred (they have physical files).
-                var ordered = items
+                var orderedProjections = projections
                     .OrderByDescending(m => m.MetadataJson != null && m.MetadataJson.Contains("\"fileScanner\""))
-                    .ThenByDescending(ScoreItem)
+                    .ThenByDescending(m => ScoreProjection(m.MetadataJson))
                     .ThenBy(m => m.Id)
                     .ToList();
 
-                var winner = ordered[0];
-                foreach (var loser in ordered.Skip(1))
+                // Load full MediaItem entities only for the small set involved in this merge.
+                var groupIds = orderedProjections.Select(m => m.Id).ToList();
+                var itemsById = await context.MediaItems
+                    .Where(m => groupIds.Contains(m.Id))
+                    .ToDictionaryAsync(m => m.Id, ct);
+
+                var winner = itemsById[orderedProjections[0].Id];
+                foreach (var loserProjection in orderedProjections.Skip(1))
                 {
+                    if (!itemsById.TryGetValue(loserProjection.Id, out var loser)) continue;
                     _log.Information(
                         "DuplicateCleanup: title-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         $"{group.Key.Item1} / {group.Key.Year}", winner.Id, winner.Name, loser.Id, loser.Name);
+                    await using var tx = await context.Database.BeginTransactionAsync(ct);
                     await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
+                    await context.SaveChangesAsync(ct);
+                    await tx.CommitAsync(ct);
                     alreadyRemoved.Add(loser.Id);
                     removed++;
                 }
             }
-            await context.SaveChangesAsync(ct);
         }
 
         if (removed > 0)
@@ -349,9 +364,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                 .ToListAsync(ct);
             foreach (var row in winnerEnrichmentRows)
             {
-                var shortId = row.PluginId.Contains('.')
-                    ? row.PluginId.Split('.').Last()
-                    : row.PluginId;
+                var shortId = PluginIdHelper.ToSource(row.PluginId);
                 if (newSources.Contains(shortId) &&
                     row.Status is Chronicle.Core.Models.EnrichmentStatus.Completed
                                or Chronicle.Core.Models.EnrichmentStatus.NotFound
@@ -451,6 +464,19 @@ public sealed class DuplicateCleanupService : IScheduledTask
         if (!string.IsNullOrEmpty(item.PosterUrl))  score += 40;
         if (!string.IsNullOrEmpty(item.Overview))   score += 30;
         if (item.ExternalIds.Any())                 score += 20;
+        return score;
+    }
+
+    /// <summary>
+    /// Lighter scoring for anonymous projections in Pass 3 where only MetadataJson is available.
+    /// Cannot check ExternalIds (no nav property), so that 20-point criterion is omitted.
+    /// </summary>
+    private static int ScoreProjection(string? metadataJson)
+    {
+        if (metadataJson is null) return 0;
+        var score = 0;
+        // A "fileScanner" block in metadata suggests the item has more real data.
+        if (metadataJson.Contains("\"fileScanner\"", StringComparison.OrdinalIgnoreCase)) score += 10;
         return score;
     }
 
