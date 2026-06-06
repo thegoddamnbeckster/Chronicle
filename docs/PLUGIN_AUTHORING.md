@@ -10,11 +10,27 @@ you need to know to build, package, and publish a plugin.
 | Interface | Purpose |
 |---|---|
 | `IMetadataProvider` | Fetch metadata (title, poster, ratings) from an external service |
+| `IImportProvider` | Import watch/read history, ratings, and watchlist from an external account |
 | `IFileScannerPlugin` | Scan local directories for media files |
 | `IWidgetPlugin` | Provide a dashboard widget |
 | `IPluginTask` | Provide a custom background task (beyond the built-in well-known types) |
 
-A single plugin assembly can implement multiple interfaces.
+A single plugin assembly can implement multiple interfaces. For example, the Trakt plugin
+implements both `IMetadataProvider` (to support Fix Match and enrichment) and `IImportProvider`
+(to sync watch history from the user's account).
+
+---
+
+## Prerequisites
+
+- **.NET 9 SDK** — [dotnet.microsoft.com](https://dotnet.microsoft.com/download)
+- **Chronicle** cloned as a sibling directory — plugins reference `Chronicle.Plugins` as a local project reference
+
+```
+<base>\
+  Chronicle\                   ← main app
+  Chronicle.Plugin.MyPlugin\   ← your plugin
+```
 
 ---
 
@@ -25,16 +41,15 @@ A single plugin assembly can implement multiple interfaces.
    dotnet new classlib -n Chronicle.Plugin.MyPlugin -f net9.0
    ```
 
-2. Add a reference to `Chronicle.Plugins.dll`. You must **not** copy it to your output — it is provided by the Chronicle host at runtime:
+2. Add a reference to `Chronicle.Plugins`. You must **not** copy it to your output —
+   it is provided by the Chronicle host at runtime:
    ```xml
-   <ItemGroup>
-     <Reference Include="Chronicle.Plugins">
-       <HintPath>path\to\Chronicle.Plugins.dll</HintPath>
-       <Private>false</Private>
-     </Reference>
-   </ItemGroup>
+   <ProjectReference Include="..\Chronicle\src\Chronicle.Plugins\Chronicle.Plugins.csproj"
+                     Private="false" ExcludeAssets="runtime" />
    ```
-   Setting `<Private>false</Private>` is critical. If `Chronicle.Plugins.dll` ends up in your ZIP, it will be loaded twice into the process, causing type identity mismatches that silently break the plugin.
+   Setting `<Private>false</Private>` (and `ExcludeAssets="runtime"`) is critical. If
+   `Chronicle.Plugins.dll` ends up in your plugin directory, it will be loaded twice into
+   the process, causing type identity mismatches that silently break the plugin.
 
 3. Add a `manifest.json` to your project root and configure it to copy on build:
    ```xml
@@ -49,7 +64,8 @@ A single plugin assembly can implement multiple interfaces.
 
 ## manifest.json Reference
 
-Every plugin must ship a `manifest.json` alongside its DLL. Chronicle reads this file at load time to register the plugin.
+Every plugin must ship a `manifest.json` alongside its DLL. Chronicle reads this file at
+load time to register the plugin.
 
 ```json
 {
@@ -90,8 +106,8 @@ Every plugin must ship a `manifest.json` alongside its DLL. Chronicle reads this
 | `iconUrl` | No | URL of an icon (the service's favicon works well). Shown on the Plugins page and Background Tasks cards. HTTPS recommended. |
 | `brandColorLight` | No | Hex colour (`#RRGGBB`) used for task card accents in light mode. |
 | `brandColorDark` | No | Hex colour used in dark mode. Should be visible against a dark background. |
+| `fixMatchHint` | No | Short hint shown to users in the Fix Match panel. If omitted, the panel shows a generic prompt. |
 | `background_tasks` | No | Array of background tasks to register on install. Omit if your plugin has no scheduled work. |
-| `fixMatchHint` | No | Short hint shown to users in the Fix Match panel (e.g. `"Enter a MusicBrainz artist, release, or recording URL, or paste an MBID"`). If omitted, the panel shows a generic prompt. |
 
 ### background_tasks fields
 
@@ -102,6 +118,8 @@ Every plugin must ship a `manifest.json` alongside its DLL. Chronicle reads this
 | `description` | No | Shown as the task subtitle. |
 | `default_cron` | Yes | 5-field cron expression in UTC. Example: `"0 4 * * *"` = every day at 4 am UTC. |
 | `default_enabled` | Yes | `true` or `false`. Users can override this after install. |
+| `schedulable` | No | `false` to hide the cron editor for one-time tasks. Defaults to `true`. |
+| `run_confirmation_title` / `run_confirmation_message` | No | Shown in the confirmation dialog before a manual run. |
 
 ### Well-known task IDs
 
@@ -109,8 +127,10 @@ Declare one of these `task_id` values to get Chronicle's built-in task execution
 
 | `task_id` | What Chronicle does |
 |---|---|
-| `fetch-missing-metadata` | Processes your plugin's enrichment queue: fetches metadata from your service for newly imported items that don't have it yet. Requires your plugin to implement `IMetadataProvider`. |
-| `resync-all-metadata` | Re-downloads metadata from your service for all library items already matched to your plugin. Useful for picking up corrections and updated artwork. Requires `IMetadataProvider`. |
+| `fetch-missing-metadata` | Processes your plugin's enrichment queue: fetches metadata for newly imported items that don't have it yet. Requires `IMetadataProvider`. |
+| `resync-all-metadata` | Re-downloads metadata for all library items already matched to your plugin. Requires `IMetadataProvider`. |
+| `import-all` | Triggers a full import of the user's external account history. Requires `IImportProvider`. |
+| `delta-sync` | Triggers an incremental sync since the last run. Requires `IImportProvider`. |
 
 ---
 
@@ -131,22 +151,48 @@ public class MyMetadataProvider : IMetadataProvider
     public PluginSettingsSchema GetSettingsSchema() => new(
         Settings:
         [
-            new SettingDefinition("apiKey", "API Key", SettingType.Password,
+            new SettingDefinition("api_key", "API Key", SettingType.Password,
                 required: true, description: "Your API key from example.com")
         ]);
 
-    public Task<MediaMetadata> SearchAsync(string query)  { ... }
-    public Task<MediaMetadata> GetByIdAsync(string id)    { ... }
-    public Task<byte[]>        GetImageAsync(string url)  { ... }
-    public Task<bool>          HealthCheckAsync()         { ... }
+    public void Configure(IReadOnlyDictionary<string, string> settings)
+    {
+        _apiKey = settings.GetValueOrDefault("api_key") ?? string.Empty;
+    }
+
+    public Task<IReadOnlyList<ScoredCandidate>> SearchAsync(MediaSearchContext context,
+        CancellationToken ct = default) { ... }
+
+    public Task<MediaMetadata?> GetByIdAsync(string externalId,
+        CancellationToken ct = default) { ... }
+
+    public Task<byte[]> GetImageAsync(string url,
+        CancellationToken ct = default) { ... }
+
+    public Task<bool> HealthCheckAsync(CancellationToken ct = default) { ... }
 }
 ```
 
-`HealthCheckAsync()` is called by Chronicle to show the **HEALTHY / UNHEALTHY** badge on the Plugins page. Fetch a known small resource from your service and return `true` if successful.
+`HealthCheckAsync()` is called by Chronicle to show the **HEALTHY / UNHEALTHY** badge on the
+Plugins page. Fetch a known small resource from your service and return `true` if successful.
+
+### Fix Match input handling
+
+Users can override the automatic match via the **Fix Match** button on the media detail page.
+Chronicle calls `POST /api/v1/media/{id}/refresh/{pluginId}` with an `input` body.
+
+Your plugin receives the user's input as the `query` in `MediaSearchContext`. In `GetByIdAsync`,
+check if the incoming `externalId` looks like a URL from your service and normalise it to your
+internal ID format before calling the API. Chronicle will also call `GetByIdAsync` directly if
+the user pastes something that resolves to a known ID.
+
+The `fixMatchHint` you declare in `manifest.json` is shown to the user in the Fix Match panel
+so they know what format to enter (e.g. `"Paste a TMDB URL or a typed ID like movie:550"`).
 
 ### How metadata is stored and displayed
 
-When `EnrichmentService` completes enrichment for an item, the `MediaMetadata` you return is serialised and stored under your plugin's full ID in the item's `metadata_json` column:
+When enrichment completes, the `MediaMetadata` you return is serialised and stored under your
+plugin's full ID in the item's `metadata_json` column:
 
 ```json
 {
@@ -155,21 +201,78 @@ When `EnrichmentService` completes enrichment for an item, the `MediaMetadata` y
 }
 ```
 
-The Chronicle frontend automatically renders a **PluginMetadataBox** for every key present — no frontend code changes are needed when a new plugin is installed. Your plugin's `iconUrl` and `name` from the manifest are used as the box header. All fields from `MediaMetadata` are rendered: images are shown as thumbnails, arrays as chips, and scalar values as a key-value grid.
+The Chronicle frontend automatically renders a **PluginMetadataBox** for every key present —
+no frontend code changes needed when a new plugin is installed. Your plugin's `iconUrl` and
+`name` from the manifest are used as the box header.
 
-The `ExternalId` you return is stored in the enrichment status row and used on subsequent enrichment runs to call `GetByIdAsync` directly rather than re-searching. Use a stable, globally unique ID string (e.g. `"movie:550"` or `"artist:65f4f0c5-ef9e-490c-aee3-909e7ae6b2ab"`).
+The `ExternalId` you return is stored in the enrichment row and used on subsequent runs to
+call `GetByIdAsync` directly rather than re-searching.
 
-The `PosterUrl` from your result is promoted to `media_items.poster_url` if the item has no poster yet.
+The `PosterUrl` from your result is promoted to `media_items.poster_url` if the item has no
+poster yet.
 
-### Fix Match flow
+---
 
-Users can override the automatic match via the **Fix Match** button on the media detail page. Chronicle calls `POST /api/v1/media/{id}/refresh/{pluginId}` with an `input` body. Your plugin receives the user's input as the `query` argument to `SearchAsync` — handle it the same way you handle any other query string. The `fixMatchHint` you declare in `manifest.json` is shown to the user in the Fix Match panel so they know what format to enter.
+## Implementing IImportProvider
+
+`IImportProvider` is for plugins that sync watch/read history from an external account.
+Implement it alongside (or instead of) `IMetadataProvider`.
+
+```csharp
+using Chronicle.Plugins;
+using Chronicle.Plugins.Models;
+
+public class MyImportProvider : IImportProvider
+{
+    public string PluginId => "com.example.myplugin";
+
+    public void Configure(IReadOnlyDictionary<string, string> settings)
+    {
+        _accessToken = settings.GetValueOrDefault("access_token") ?? string.Empty;
+    }
+
+    public Task<bool> IsAuthenticatedAsync(CancellationToken ct = default)
+    {
+        // Return true if the stored access token is valid.
+        return Task.FromResult(!string.IsNullOrEmpty(_accessToken));
+    }
+
+    // Full import — retrieve everything
+    public IAsyncEnumerable<ImportedItem> ImportAllAsync(CancellationToken ct = default)
+    { ... }
+
+    // Delta import — retrieve only activity since `since`
+    public IAsyncEnumerable<ImportedItem> ImportSinceAsync(DateTimeOffset since,
+        CancellationToken ct = default)
+    { ... }
+}
+```
+
+Each `ImportedItem` you yield represents one watch event, rating, or library status change.
+Chronicle's `SyncOrchestrationService` does the heavy lifting: it matches each item to an
+existing `MediaItem` (4-stage: ExternalId → cross-ref AdditionalIds → title+year → create
+stub) and deduplicates watch events by `(MediaItemId, Timestamp)`.
+
+### Optional enrichment hooks
+
+`IImportProvider` has two optional default-interface methods. Override them if your service
+returns richer metadata than the basic sync response:
+
+```csharp
+// Return full MediaMetadata for a specific item (avoids a separate metadata fetch)
+public Task<MediaMetadata?> GetItemMetadataAsync(string externalId, string mediaType,
+    CancellationToken ct = default) { ... }
+
+// Return cast/crew credits for a specific item
+public Task<IReadOnlyList<MediaCredit>?> GetCreditsAsync(string externalId, string mediaType,
+    CancellationToken ct = default) { ... }
+```
 
 ---
 
 ## Implementing IPluginTask (custom background tasks)
 
-Only needed if you declare a `task_id` that is **not** one of the well-known IDs above.
+Only needed if you declare a `task_id` that is **not** one of the well-known IDs listed above.
 
 ```csharp
 using Chronicle.Plugins;
@@ -186,7 +289,9 @@ public class MyCustomTask : IPluginTask
 }
 ```
 
-Chronicle discovers `IPluginTask` implementations by scanning your plugin assembly at load time. The `TaskId` property is matched against the `task_id` declared in `manifest.json`. One class per declared custom task.
+Chronicle discovers `IPluginTask` implementations by scanning your plugin assembly at load
+time. The `TaskId` property is matched against the `task_id` declared in `manifest.json`.
+One class per declared custom task.
 
 ---
 
@@ -204,19 +309,25 @@ Chronicle discovers `IPluginTask` implementations by scanning your plugin assemb
 |---|---|---|
 | TMDB | `#01B4E4` | `#0d9ec9` |
 | MusicBrainz | `#BA478F` | `#CF6BAA` |
+| Trakt | `#ed2224` | `#c01f21` |
+| SIMKL | `#00b4d8` | `#0096b4` |
+| FanEdit (IFDB) | `#8B1A1A` | `#C0392B` |
+| Hardcover | `#8b5cf6` | `#7c3aed` |
 
 ---
 
 ## Settings Schema
 
-If your plugin needs user-supplied configuration (API keys, usernames, etc.), return a `PluginSettingsSchema` from `GetSettingsSchema()`. Chronicle renders the settings form automatically in the Plugins → Configure panel.
+If your plugin needs user-supplied configuration (API keys, usernames, etc.), return a
+`PluginSettingsSchema` from `GetSettingsSchema()`. Chronicle renders the settings form
+automatically in the Plugins → Configure panel.
 
 ```csharp
 public PluginSettingsSchema GetSettingsSchema() => new(
     Settings:
     [
         new SettingDefinition(
-            key:         "apiKey",
+            key:         "api_key",
             label:       "API Key",
             type:        SettingType.Password,
             required:    true,
@@ -232,7 +343,8 @@ public PluginSettingsSchema GetSettingsSchema() => new(
     ]);
 ```
 
-Chronicle calls `GetSettingsSchema()` to build the form and encrypts the saved values in the database. Retrieve them at runtime via constructor-injected `IPluginSettingsProvider`.
+Settings values are encrypted in the database (using ASP.NET Core Data Protection).
+Retrieve them via the `Configure(settings)` method called by Chronicle after decryption.
 
 ---
 
@@ -272,7 +384,9 @@ Chronicle's plugin catalog installs plugins directly from GitHub releases.
 4. Upload the ZIP as a release asset named `Chronicle.Plugin.MyPlugin.zip`.
 5. The asset filename must match the `AssetName` field in your catalog entry.
 
-**To add your plugin to Chronicle's built-in catalog**, open a pull request to the Chronicle repository and add an entry to the `PluginCatalog` array in `src/Chronicle.API/Controllers/PluginsController.cs`:
+**To add your plugin to Chronicle's built-in catalog**, open a pull request to the Chronicle
+repository and add an entry to the `PluginCatalog` array in
+`src/Chronicle.API/Controllers/PluginsController.cs`:
 
 ```csharp
 new PluginCatalogEntry(
@@ -289,26 +403,48 @@ new PluginCatalogEntry(
 ),
 ```
 
-The `Sha256` field is a security measure — Chronicle verifies the downloaded ZIP matches this hash before installing. **Update it with every new release and update the catalog entry to match.**
+The `Sha256` field is a security measure — Chronicle verifies the downloaded ZIP matches this
+hash before installing. **Update it with every new release and update the catalog entry to match.**
 
 ---
 
 ## Plugin Lifecycle
 
-1. **Install** — Chronicle downloads the ZIP, verifies SHA-256, extracts to `plugins/{plugin_id}/`, loads the assembly with an isolated `PluginLoadContext`, then seeds any `background_tasks` declared in the manifest into the `background_tasks` table.
-2. **Load** — On startup, Chronicle loads all installed plugins, discovers their `IMetadataProvider` / `IPluginTask` implementations, and registers them.
-3. **Uninstall** — Chronicle stops and unloads the plugin assembly, removes the plugin directory, and cascades-deletes its background task rows.
+1. **Install** — Chronicle downloads the ZIP, verifies SHA-256, extracts to
+   `plugins/{plugin_id}/`, loads the assembly with an isolated `PluginLoadContext`, then seeds
+   any `background_tasks` declared in the manifest into the `background_tasks` table.
+2. **Load** — On startup, Chronicle loads all installed plugins, discovers their
+   `IMetadataProvider` / `IImportProvider` / `IPluginTask` implementations, and registers them.
+3. **Unload/Reload** — Plugins can be hot-reloaded without restarting Chronicle via
+   `POST /api/v1/plugins/{pluginId}/unload` and `/reload`.
+4. **Uninstall** — Chronicle stops and unloads the plugin assembly, removes the plugin
+   directory, and cascades-deletes its background task rows.
 
-Background tasks created from the manifest are owned by the plugin row via a foreign key (`plugin_id`). When the plugin is uninstalled, its tasks are automatically removed.
+Background tasks created from the manifest are owned by the plugin row via a foreign key
+(`plugin_id`). When the plugin is uninstalled, its tasks are automatically removed.
 
 ---
 
-## Reference Implementation
+## Coding Conventions
 
-The TMDB and MusicBrainz plugins are the canonical references:
+Follow the same conventions used in Chronicle itself:
 
-- **TMDB** — [`thegoddamnbeckster/Chronicle.Plugin.TMDB`](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TMDB)
-  Demonstrates `IMetadataProvider` for movies and TV, API key settings schema, and TMDB-flavoured branding.
+- **Async everywhere** — all I/O operations use `async`/`await`; method names end in `Async`
+- **CancellationToken** — every async method accepts `CancellationToken ct = default` and passes it through
+- **Host validation in Fix Match** — when your `GetByIdAsync` normalises URLs, always validate the host before making HTTP calls (prevents open redirect / SSRF)
+- **Lossless ingestion** — store everything your API returns; unmapped fields go into `ExtendedData`
+- **Rate limiting** — always enforce rate limits; serialize outbound HTTP calls with a `SemaphoreSlim`
+- **Null safety** — enable `<Nullable>enable</Nullable>` in your `.csproj`
 
-- **MusicBrainz** — [`thegoddamnbeckster/Chronicle.Plugin.MusicBrainz`](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz)
-  Demonstrates `IMetadataProvider` across a multi-level hierarchy (artist → album → track), no-API-key HTTP client with rate-limit handling, and cover art fetching via the Cover Art Archive.
+---
+
+## Reference Implementations
+
+| Plugin | Type | Demonstrates |
+|--------|------|-------------|
+| **TMDB** — [`thegoddamnbeckster/Chronicle.Plugin.TMDB`](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TMDB) | `IMetadataProvider` | API key settings, movie + TV hierarchy, Fix Match URL normalisation |
+| **MusicBrainz** — [`thegoddamnbeckster/Chronicle.Plugin.MusicBrainz`](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz) | `IMetadataProvider` | Multi-level hierarchy, no-API-key HTTP client, cover art, audiobook search cascade |
+| **Trakt** — [`thegoddamnbeckster/Chronicle.Plugin.Trakt`](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Trakt) | `IMetadataProvider` + `IImportProvider` | OAuth device flow, watch history sync, rate limit handling, credits import |
+| **SIMKL** — [`thegoddamnbeckster/Chronicle.Plugin.Simkl`](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl) | `IMetadataProvider` + `IImportProvider` | PIN auth, full + delta sync, Fix Match URL normalisation |
+| **FanEdit (IFDB)** — [`thegoddamnbeckster/Chronicle.Plugin.FanEdit`](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanEdit) | `IMetadataProvider` | HTML scraping, session cookie auth, strict rate limiting |
+| **Hardcover** — [`thegoddamnbeckster/Chronicle.Plugin.Hardcover`](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover) | `IMetadataProvider` + `IImportProvider` | GraphQL API client, reading history import, series hierarchy |
