@@ -42,7 +42,6 @@ public class FileScanController : ControllerBase
     /// Returns {valid: true} if the path is usable, or {valid: false, error: "..."} otherwise.
     /// </summary>
     [HttpPost("validate-path")]
-    [AllowAnonymous]
     public async Task<IActionResult> ValidatePath([FromBody] ValidatePathDto dto, CancellationToken ct)
     {
         var result = await _scanFolderService.ValidatePathAsync(dto.Path, ct);

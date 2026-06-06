@@ -6,6 +6,7 @@ using Chronicle.Services.Plugins;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -34,7 +35,9 @@ public class SyncOrchestrationServiceMatchTests : IDisposable
             .Returns(Array.Empty<(string, IMetadataProvider, string?)>());
         var scopeFactory = BuildScopeFactory(_db, _registry.Object);
         return new SyncOrchestrationService(scopeFactory, _registry.Object,
-            Mock.Of<ILogger<SyncOrchestrationService>>());
+            Mock.Of<IMetadataResolutionService>(),
+            Mock.Of<ILogger<SyncOrchestrationService>>(),
+            Mock.Of<IHostApplicationLifetime>());
     }
 
     private async Task<MediaType> EnsureMediaTypeAsync(string name = "movies")
