@@ -436,6 +436,47 @@ public class PluginsController : ControllerBase
         }
     }
 
+    // ── POST /api/v1/plugins/{pluginId}/unload ────────────────────────────────
+
+    /// <summary>
+    /// Unloads the plugin assembly from memory, releasing the file lock on its DLL.
+    /// Does NOT change the enabled/disabled state in the database.
+    /// Call this before overwriting the DLL on disk during a hot deploy, then call /reload.
+    /// </summary>
+    [HttpPost("{pluginId}/unload")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> UnloadPlugin(string pluginId)
+    {
+        var wasLoaded = await _pluginService.UnloadFromRegistryAsync(pluginId);
+        var status = wasLoaded ? "unloaded" : "already_unloaded";
+        return Ok(ApiResponse<object>.Ok(new { pluginId, status }));
+    }
+
+    // ── POST /api/v1/plugins/{pluginId}/reload ────────────────────────────────
+
+    /// <summary>
+    /// Reloads the plugin from its DLL path on disk without restarting the API.
+    /// Safe to call after /unload once the new DLL has been copied into place.
+    /// </summary>
+    [HttpPost("{pluginId}/reload")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> ReloadPlugin(string pluginId, CancellationToken ct)
+    {
+        try
+        {
+            await _pluginService.ReloadPluginAsync(pluginId, ct);
+            return Ok(ApiResponse<object>.Ok(new { pluginId, status = "reloaded" }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("RELOAD_FAILED", ex.Message));
+        }
+        catch (FileNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail("DLL_NOT_FOUND", ex.Message));
+        }
+    }
+
     // ── DELETE /api/v1/plugins/{id} ───────────────────────────────────────────
 
     /// <summary>Uninstalls a plugin (removes database record, unloads from memory).</summary>

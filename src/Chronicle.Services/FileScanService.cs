@@ -2241,7 +2241,7 @@ namespace Chronicle.Services
                 MediaTypeId    = mediaTypeId,
                 ParentId       = parentId,
                 HierarchyLevel = hierarchyLevel,
-                Name           = group.Name,
+                Name           = group.Name ?? string.Empty,
                 Year           = group.Year,
                 Number         = group.Number,
                 PosterUrl      = group.PosterPath,

@@ -186,6 +186,47 @@ public class PluginService : IPluginService
         _log.Information("Uninstalled plugin {PluginId} (db id {Id})", plugin.PluginId, id);
     }
 
+    public Task<bool> UnloadFromRegistryAsync(string pluginId)
+    {
+        var plugin = _registry.GetLoadedPlugins()
+            .FirstOrDefault(p => string.Equals(p.Manifest.PluginId, pluginId, StringComparison.OrdinalIgnoreCase));
+
+        if (plugin is not null)
+        {
+            _registry.UnloadPlugin(plugin.DbId);
+            _log.Information("Unloaded plugin {PluginId} from registry", pluginId);
+            return Task.FromResult(true);
+        }
+
+        _log.Warning("UnloadFromRegistry: plugin {PluginId} was not loaded", pluginId);
+        return Task.FromResult(false);
+    }
+
+    public async Task ReloadPluginAsync(string pluginId, CancellationToken ct = default)
+    {
+        var plugin = await _db.Plugins
+            .FirstOrDefaultAsync(p => p.PluginId == pluginId, ct)
+            ?? throw new InvalidOperationException($"Plugin '{pluginId}' not found.");
+
+        if (!plugin.IsEnabled)
+            throw new InvalidOperationException($"Plugin '{pluginId}' is disabled — enable it before reloading.");
+
+        if (!File.Exists(plugin.DllPath))
+            throw new FileNotFoundException($"Plugin DLL not found at '{plugin.DllPath}'.", plugin.DllPath);
+
+        var settings = DeserializeSettings(plugin.SettingsJson);
+        await _registry.LoadPluginAsync(plugin.Id, plugin.DllPath, settings, ct);
+
+        // Seed any enrichment rows that may be missing — harmless for existing rows.
+        // This matches the behaviour of EnablePluginAsync and ensures the plugin
+        // appears in Enrichment Status after a hot-reload.
+        var reloadedProvider = _registry.GetMetadataProvider(plugin.PluginId);
+        if (reloadedProvider is not null)
+            await SeedEnrichmentRowsForProviderAsync(plugin.PluginId, reloadedProvider, ct);
+
+        _log.Information("Reloaded plugin {PluginId} from {DllPath}", pluginId, plugin.DllPath);
+    }
+
     public async Task<PluginHealthResult?> HealthCheckAsync(int id, CancellationToken ct = default)
     {
         var plugin = await _db.Plugins.FindAsync(new object[] { id }, ct);

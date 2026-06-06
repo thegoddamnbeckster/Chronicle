@@ -121,6 +121,14 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
                   Folder: <em>{String(scanner.folderPath)}</em>
                 </span>
               )}
+              {Array.isArray(scanner?.filePaths) && (scanner!.filePaths as string[]).length > 0 && (
+                (scanner!.filePaths as string[]).map((fp, i) => (
+                  <span key={i} className={styles.signal}>
+                    <span className={styles.signalYes}>✓</span>
+                    File: <em>{fp.split(/[\\/]/).pop()}</em>
+                  </span>
+                ))
+              )}
               {diag?.scannerSignals != null && (
                 <>
                   <span className={styles.signal}>
@@ -136,12 +144,6 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
                     Local poster
                   </span>
                 </>
-              )}
-              {Array.isArray(scanner?.filePaths) && (scanner!.filePaths as string[]).length > 0 && (
-                <span className={styles.signal}>
-                  <span className={styles.signalYes}>✓</span>
-                  {(scanner!.filePaths as string[]).length} file(s)
-                </span>
               )}
             </div>
           </div>
@@ -291,8 +293,13 @@ export default function EnrichmentDrillDownPage() {
     return () => clearTimeout(debounceRef.current)
   }, [search])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  // silent=true: update data without showing the loading spinner or unmounting cards.
+  // Use this for background auto-refresh and post-action refreshes so the user's
+  // scroll position and any open Fix Match inputs are not disturbed.
+  // silent=false (default): show the spinner — use only for initial load and when
+  // the user explicitly changes page/tab/search (where a content reset is expected).
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const statusParam = activeStatus === 'All' ? undefined : activeStatus
       const res = await getEnrichmentItems(pluginId, statusParam, page, 25, debouncedSearch || undefined)
@@ -300,7 +307,7 @@ export default function EnrichmentDrillDownPage() {
       setTotal(res.total)
       setTotalPages(res.totalPages)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [pluginId, activeStatus, page, debouncedSearch])
 
@@ -314,17 +321,19 @@ export default function EnrichmentDrillDownPage() {
 
   useEffect(() => { load() }, [load])
 
+  // After a card action (reset/skip/fix-match), refresh data silently so the
+  // updated status appears without scrolling to the top or clearing open inputs.
   const refresh = useCallback(() => {
-    load()
+    load(true)
     loadStats()
   }, [load, loadStats])
 
-  // Auto-refresh every 10 s while viewing actionable statuses so items disappear
-  // from the list as enrichment processes them in the background.
+  // Auto-refresh every 10 s while viewing actionable statuses so items update
+  // as background enrichment processes them. Silent so it never disrupts typing.
   const isLive = activeStatus !== 'Completed'
   useEffect(() => {
     if (!isLive) return
-    const id = setInterval(() => { load(); loadStats() }, 10_000)
+    const id = setInterval(() => { load(true); loadStats() }, 10_000)
     return () => clearInterval(id)
   }, [isLive, load, loadStats])
 
@@ -404,7 +413,8 @@ export default function EnrichmentDrillDownPage() {
         )}
       </div>
 
-      {/* Cards */}
+      {/* Cards — show spinner only on hard loads; keep existing cards visible
+           during silent refreshes so scroll position and open inputs are preserved */}
       {loading ? (
         <p className={styles.loading}>Loading…</p>
       ) : items.length === 0 ? (
