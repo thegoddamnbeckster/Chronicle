@@ -12,9 +12,16 @@ namespace Chronicle.Services.Plugins;
 public class PluginService : IPluginService
 {
     private readonly ChronicleDbContext _db;
-    private readonly IPluginRegistry _registry;
+    private readonly IPluginRegistry   _registry;
     private readonly IPluginSettingsProtector _protector;
     private readonly ILogger _log = Log.ForContext<PluginService>();
+
+    // Per-plugin semaphore: serialises concurrent MergeSettingsAsync calls so that two
+    // OAuth token refreshes for the same plugin can't overwrite each other's tokens.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim>
+        _settingsLocks = new(StringComparer.OrdinalIgnoreCase);
+    private static SemaphoreSlim GetSettingsLock(string pluginId) =>
+        _settingsLocks.GetOrAdd(pluginId, _ => new SemaphoreSlim(1, 1));
 
     public PluginService(ChronicleDbContext db, IPluginRegistry registry, IPluginSettingsProtector protector)
     {
@@ -119,16 +126,25 @@ public class PluginService : IPluginService
         IReadOnlyDictionary<string, string> newSettings,
         CancellationToken ct = default)
     {
-        var plugin = await _db.Plugins
-            .FirstOrDefaultAsync(p => p.PluginId == pluginId, ct)
-            ?? throw new InvalidOperationException($"Plugin '{pluginId}' not found.");
+        var sem = GetSettingsLock(pluginId);
+        await sem.WaitAsync(ct);
+        try
+        {
+            var plugin = await _db.Plugins
+                .FirstOrDefaultAsync(p => p.PluginId == pluginId, ct)
+                ?? throw new InvalidOperationException($"Plugin '{pluginId}' not found.");
 
-        var existing = DeserializeSettings(plugin.SettingsJson);
-        var merged   = new Dictionary<string, string>(existing);
-        foreach (var (key, value) in newSettings)
-            merged[key] = value;
+            var existing = DeserializeSettings(plugin.SettingsJson);
+            var merged   = new Dictionary<string, string>(existing);
+            foreach (var (key, value) in newSettings)
+                merged[key] = value;
 
-        await UpdateSettingsAsync(plugin.Id, merged);
+            await UpdateSettingsAsync(plugin.Id, merged);
+        }
+        finally
+        {
+            sem.Release();
+        }
     }
 
     public async Task EnablePluginAsync(int id)
@@ -310,10 +326,15 @@ public class PluginService : IPluginService
         if (itemIds.Count == 0)
             return;
 
+        // Query all enrichment rows for this plugin without an IN clause (avoids
+        // SQLite SQLITE_LIMIT_VARIABLE_NUMBER=999 for large libraries), then filter
+        // in-memory against the already-loaded itemIds set.
+        var itemIdSet = itemIds.ToHashSet();
         var existingSet = (await _db.MediaEnrichments
-            .Where(x => x.PluginId == manifestPluginId && itemIds.Contains(x.MediaItemId))
+            .Where(x => x.PluginId == manifestPluginId)
             .Select(x => x.MediaItemId)
             .ToListAsync(ct))
+            .Where(id => itemIdSet.Contains(id))
             .ToHashSet();
 
         foreach (var itemId in itemIds)

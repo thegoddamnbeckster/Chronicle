@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
@@ -199,9 +200,7 @@ public class MergeService(
             .ToListAsync(ct);
         foreach (var row in enrichmentRows)
         {
-            var pluginShortId = row.PluginId.Contains('.')
-                ? row.PluginId.Split('.').Last()
-                : row.PluginId;
+            var pluginShortId = PluginIdHelper.ToSource(row.PluginId);
             if (newSources.Contains(pluginShortId) &&
                 row.Status is EnrichmentStatus.Completed or EnrichmentStatus.NotFound or EnrichmentStatus.Exhausted)
             {
@@ -342,9 +341,7 @@ public class MergeService(
                 .ToListAsync(ct);
             foreach (var row in winnerRows)
             {
-                var shortId = row.PluginId.Contains('.')
-                    ? row.PluginId.Split('.').Last()
-                    : row.PluginId;
+                var shortId = PluginIdHelper.ToSource(row.PluginId);
                 if (returnedSources.Contains(shortId))
                 {
                     row.Status     = EnrichmentStatus.Pending;

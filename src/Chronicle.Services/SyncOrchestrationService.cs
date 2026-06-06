@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
@@ -51,6 +52,10 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var svc = scope.ServiceProvider.GetRequiredService<IMetadataEnrichmentService>();
                     await svc.EnrichPendingAsync(mpPluginId, _lifetime.ApplicationStopping);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Normal shutdown — not an error.
                 }
                 catch (Exception ex)
                 {
@@ -728,7 +733,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static string SourceFromPluginId(string pluginId) =>
-        pluginId.Split('.').Last();
+        PluginIdHelper.ToSource(pluginId);
 
     private static string MapMediaType(string importType) => importType switch
     {
@@ -775,14 +780,22 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     private static async Task GraftExternalIdAsync(
         ChronicleDbContext db, int mediaItemId, string pluginId, string externalId, CancellationToken ct)
     {
-        var source = SourceFromPluginId(pluginId);
-        var exists = await db.MediaExternalIds
-            .AnyAsync(e => e.MediaItemId == mediaItemId && e.Source == source, ct);
-        if (!exists)
+        var source   = SourceFromPluginId(pluginId);
+        var existing = await db.MediaExternalIds
+            .FirstOrDefaultAsync(e => e.MediaItemId == mediaItemId && e.Source == source, ct);
+
+        if (existing is null)
         {
             db.MediaExternalIds.Add(new MediaExternalId
                 { MediaItemId = mediaItemId, Source = source, ExternalId = externalId });
             await db.SaveChangesAsync(ct);
         }
+        else if (existing.ExternalId != externalId)
+        {
+            // Stale ID from a previous sync run — update to the current one.
+            existing.ExternalId = externalId;
+            await db.SaveChangesAsync(ct);
+        }
+        // else: already correct — no-op
     }
 }

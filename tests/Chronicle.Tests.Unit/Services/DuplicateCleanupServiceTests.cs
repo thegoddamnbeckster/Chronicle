@@ -19,6 +19,7 @@ public class DuplicateCleanupServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options;
         _context = new ChronicleDbContext(options);
 

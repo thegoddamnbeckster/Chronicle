@@ -15,45 +15,45 @@ namespace Chronicle.Services
             _context = context;
         }
 
-        public async Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request)
+        public async Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request, CancellationToken ct = default)
         {
-            var mediaItem = await _context.MediaItems.FindAsync(request.MediaItemId)
+            var mediaItem = await _context.MediaItems.FindAsync([request.MediaItemId], ct)
                 ?? throw new MediaNotFoundException(request.MediaItemId);
 
             var markedAsWatched = request.ProgressPercent >= WatchedThreshold;
             var timestamp = request.Timestamp ?? DateTime.UtcNow;
 
-            // Idempotency: don't insert duplicate events for the same user/item/timestamp.
-            var duplicate = await _context.InteractionEvents
-                .AnyAsync(e => e.UserId == userId
-                            && e.MediaItemId == request.MediaItemId
-                            && e.Timestamp == timestamp);
-            if (duplicate)
-            {
-                var existing = await _context.InteractionEvents
-                    .FirstAsync(e => e.UserId == userId
-                                  && e.MediaItemId == request.MediaItemId
-                                  && e.Timestamp == timestamp);
-                return new ScrobbleResult(existing, markedAsWatched);
-            }
-
             var evt = new InteractionEvent
             {
-                UserId = userId,
-                MediaItemId = request.MediaItemId,
-                Timestamp = timestamp,
+                UserId          = userId,
+                MediaItemId     = request.MediaItemId,
+                Timestamp       = timestamp,
                 ProgressPercent = request.ProgressPercent,
-                DeviceName = request.DeviceName,
+                DeviceName      = request.DeviceName,
                 MarkedAsWatched = markedAsWatched,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt       = DateTime.UtcNow
             };
 
             _context.InteractionEvents.Add(evt);
 
             if (markedAsWatched)
-                await UpdateLibraryStatusAsync(userId, request.MediaItemId, mediaItem);
+                await UpdateLibraryStatusAsync(userId, request.MediaItemId, mediaItem, ct);
 
-            await _context.SaveChangesAsync();
+            try
+            {
+                await _context.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+            {
+                // Duplicate scrobble — same (user, item, timestamp) already recorded.
+                // Clear the failed insert and return the pre-existing event.
+                _context.ChangeTracker.Clear();
+                var existing = await _context.InteractionEvents
+                    .FirstAsync(e => e.UserId == userId
+                                  && e.MediaItemId == request.MediaItemId
+                                  && e.Timestamp == timestamp, ct);
+                return new ScrobbleResult(existing, markedAsWatched);
+            }
 
             return new ScrobbleResult(evt, markedAsWatched);
         }
@@ -70,30 +70,34 @@ namespace Chronicle.Services
                 .ToListAsync();
         }
 
-        private async Task UpdateLibraryStatusAsync(int userId, int mediaItemId, MediaItem mediaItem)
+        private async Task UpdateLibraryStatusAsync(int userId, int mediaItemId, MediaItem mediaItem, CancellationToken ct)
         {
             var entry = await _context.UserLibraries
-                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId);
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
 
             if (entry == null)
             {
                 entry = new UserLibrary
                 {
-                    UserId = userId,
+                    UserId      = userId,
                     MediaItemId = mediaItemId,
-                    Status = LibraryStatus.Watching,
-                    AddedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow,
-                    StartedAt = DateTime.UtcNow
+                    Status      = LibraryStatus.Watching,
+                    AddedAt     = DateTime.UtcNow,
+                    UpdatedAt   = DateTime.UtcNow,
+                    StartedAt   = DateTime.UtcNow
                 };
                 _context.UserLibraries.Add(entry);
             }
             else if (entry.Status == LibraryStatus.PlanToWatch)
             {
-                entry.Status = LibraryStatus.Watching;
+                entry.Status    = LibraryStatus.Watching;
                 entry.StartedAt ??= DateTime.UtcNow;
                 entry.UpdatedAt = DateTime.UtcNow;
             }
         }
+
+        private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>
+            ex.InnerException?.Message.Contains("UNIQUE constraint failed",
+                StringComparison.OrdinalIgnoreCase) == true;
     }
 }
