@@ -68,8 +68,9 @@ namespace Chronicle.Services.Scan
                 var folderSignal = _folder.Extract(path, scanRoot);
                 if (!isSidecar && folderSignal.FolderNames.Any(f => _sidecarFolderNames.Contains(f)))
                     isSidecar = true;
-                var tagSignal    = _tags.Extract(path); // null for sidecars / non-audio
-                var nfoPath      = _nfo.FindSidecar(path);
+                // Skip expensive tag/nfo extraction for files we've already classified as sidecars.
+                var tagSignal    = isSidecar ? null : _tags.Extract(path);
+                var nfoPath      = isSidecar ? null : _nfo.FindSidecar(path);
                 var nfoSignal    = nfoPath != null ? _nfo.Extract(nfoPath) : null;
 
                 // For flat-grouped types (movies etc.), all files in the same
