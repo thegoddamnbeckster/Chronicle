@@ -173,6 +173,8 @@ namespace Chronicle.Data
                 entity.HasIndex(e => e.MediaItemId);
                 entity.HasIndex(e => e.Timestamp);
                 entity.HasIndex(e => new { e.UserId, e.Timestamp });
+                // Idempotency guard: prevent duplicate scrobbles for the same user/item/time.
+                entity.HasIndex(e => new { e.UserId, e.MediaItemId, e.Timestamp }).IsUnique();
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 entity.HasOne(e => e.User)

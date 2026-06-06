@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
@@ -138,14 +139,26 @@ public class MetadataEnrichmentService(
         var cutoff = DateTime.UtcNow - RetryWindow;
 
         // Loop until no more eligible items remain.
-        // The correlated EXISTS subquery re-evaluates the parent-terminal check on every
-        // pass, so items unblocked by a parent completing in pass N are picked up in pass N+1
-        // without any separate ID-list fetch. Required for hierarchical content:
-        // pass 1 resolves shows, pass 2 resolves seasons, pass 3 resolves episodes.
+        // Required for hierarchical content: pass 1 resolves shows, pass 2 seasons, pass 3 episodes.
+        // The blocked-parent set is re-fetched on every pass so newly-completed parents unblock
+        // their children in the next pass without waiting for a separate ID-list query per row.
         int passNumber = 0;
         while (true)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Pre-fetch the set of item IDs whose enrichment row is non-terminal (Pending or
+            // Failed within the retry window). Child items whose parent is in this set are
+            // skipped — they'll become eligible once the parent resolves. This replaces the
+            // old correlated NOT EXISTS subquery which was O(n²) for large episode libraries.
+            var blockedParentIds = (await db.MediaEnrichments
+                .Where(e => e.PluginId == pluginId &&
+                            (e.Status == EnrichmentStatus.Pending ||
+                             (e.Status == EnrichmentStatus.Failed &&
+                              (e.LastAttemptedAt == null || e.LastAttemptedAt < cutoff))))
+                .Select(e => e.MediaItemId)
+                .ToListAsync(ct))
+                .ToHashSet();
 
             var rows = await db.MediaEnrichments
                 .Include(x => x.MediaItem)
@@ -157,32 +170,22 @@ public class MetadataEnrichmentService(
                             (x.Status == EnrichmentStatus.Pending ||
                              (x.Status == EnrichmentStatus.Failed &&
                               (x.LastAttemptedAt == null || x.LastAttemptedAt < cutoff))) &&
-                            // Restrict to supported media types in SQL; avoids loading rows
-                            // for unsupported types and filtering them in memory.
+                            // Restrict to supported media types in SQL.
                             (supportedRawTypes.Count == 0 ||
                              (x.MediaItem!.MediaType != null &&
-                              supportedRawTypes.Contains(x.MediaItem!.MediaType!.Name))) &&
-                            // Gate: only attempt a child item when its parent is not
-                            // blocking it. The correct test is NOT EXISTS (non-terminal
-                            // parent row) rather than EXISTS (terminal parent row), because:
-                            //   (a) if the parent has a terminal row  → eligible (old logic)
-                            //   (b) if the parent has NO row at all   → also eligible
-                            //       (parent doesn't need enrichment from this plugin;
-                            //        requiring a terminal row that can never exist would
-                            //        block the child permanently)
-                            //   (c) if the parent has a Pending/Failed row → not eligible
-                            // Root items (no parent) are always eligible.
-                            (x.MediaItem!.ParentId == null ||
-                             !db.MediaEnrichments.Any(p =>
-                                 p.MediaItemId == x.MediaItem!.ParentId &&
-                                 p.PluginId == pluginId &&
-                                 p.Status != EnrichmentStatus.Completed &&
-                                 p.Status != EnrichmentStatus.NotFound  &&
-                                 p.Status != EnrichmentStatus.Exhausted &&
-                                 p.Status != EnrichmentStatus.Skipped)))
+                              supportedRawTypes.Contains(x.MediaItem!.MediaType!.Name))))
                 .OrderBy(x => x.MediaItem!.HierarchyLevel)
                 .Take(500)
                 .ToListAsync(ct);
+
+            // Filter out children whose parent still has a non-terminal enrichment row.
+            // Root items (ParentId == null) are always eligible.
+            // Items whose parent has NO enrichment row at all are also eligible — the
+            // parent simply doesn't need enrichment from this plugin.
+            rows = rows
+                .Where(x => x.MediaItem!.ParentId == null ||
+                             !blockedParentIds.Contains(x.MediaItem!.ParentId.Value))
+                .ToList();
 
             if (rows.Count == 0)
                 break; // No more eligible work — all passes complete.
@@ -351,8 +354,7 @@ public class MetadataEnrichmentService(
             .ToListAsync(ct);
 
         var shortToFull = installedPluginIds
-            .GroupBy(pid => pid.Contains('.') ? pid.Split('.').Last() : pid,
-                     StringComparer.OrdinalIgnoreCase)
+            .GroupBy(pid => PluginIdHelper.ToSource(pid), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         string CanonicalPluginId(string source)
@@ -361,7 +363,7 @@ public class MetadataEnrichmentService(
             if (installedPluginIds.Contains(source, StringComparer.OrdinalIgnoreCase))
                 return source;
             // Try mapping short suffix → full ID
-            var suffix = source.Contains('.') ? source.Split('.').Last() : source;
+            var suffix = PluginIdHelper.ToSource(source);
             return shortToFull.GetValueOrDefault(suffix, source);
         }
 
@@ -390,7 +392,7 @@ public class MetadataEnrichmentService(
             // Filter to only the sources that belong to known import providers — avoids
             // loading the entire media_external_ids table into memory.
             var importSources = importProviderIds
-                .Select(pid => pid.Contains('.') ? pid.Split('.').Last() : pid)
+                .Select(pid => PluginIdHelper.ToSource(pid))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var coveredByExternalId = (await db.Set<MediaExternalId>()
@@ -442,12 +444,19 @@ public class MetadataEnrichmentService(
 
         if (candidates.Count == 0) return;
 
-        // Load MetadataJson for all affected items in one query
+        // Load MetadataJson for all affected items, chunked to stay under
+        // SQLite's SQLITE_LIMIT_VARIABLE_NUMBER=999 limit.
         var itemIds = candidates.Select(c => c.MediaItemId).Distinct().ToList();
-        var metadataByItem = await db.MediaItems
-            .Where(mi => itemIds.Contains(mi.Id))
-            .Select(mi => new { mi.Id, mi.MetadataJson })
-            .ToDictionaryAsync(mi => mi.Id, mi => mi.MetadataJson, ct);
+        var metadataByItem = new Dictionary<int, string?>(itemIds.Count);
+        foreach (var chunk in itemIds.Chunk(500))
+        {
+            var chunkData = await db.MediaItems
+                .Where(mi => chunk.Contains(mi.Id))
+                .Select(mi => new { mi.Id, mi.MetadataJson })
+                .ToListAsync(ct);
+            foreach (var row in chunkData)
+                metadataByItem[row.Id] = row.MetadataJson;
+        }
 
         // For each candidate: Completed if plugin data is intact in MetadataJson,
         // Pending if data is absent (wiped by re-scan) so it re-enriches automatically.
@@ -600,7 +609,7 @@ public class MetadataEnrichmentService(
             var root = doc.RootElement;
             if (root.TryGetProperty(pluginId, out _)) return true;
             // Also check short-form key written by older code (e.g. "musicbrainz")
-            var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+            var shortId = pluginId.Contains('.') ? PluginIdHelper.ToSource(pluginId) : null;
             if (shortId is not null && root.TryGetProperty(shortId, out _)) return true;
             return false;
         }
@@ -1709,7 +1718,7 @@ public class MetadataEnrichmentService(
             item.MetadataJson ?? "{}") ?? [];
 
         // Remove any short-ID alias key (e.g. "tmdb") that old code may have written.
-        var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+        var shortId = pluginId.Contains('.') ? PluginIdHelper.ToSource(pluginId) : null;
         if (shortId is not null) existing.Remove(shortId);
 
         // Clear the Results/TotalResults fields before serializing — they are search-result
@@ -2079,7 +2088,7 @@ public class MetadataEnrichmentService(
         var existing = JsonSerializer
             .Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson ?? "{}") ?? [];
 
-        var shortId = pluginId.Contains('.') ? pluginId.Split('.').Last() : null;
+        var shortId = pluginId.Contains('.') ? PluginIdHelper.ToSource(pluginId) : null;
         if (shortId is not null) existing.Remove(shortId);
 
         var savedResults = meta.Results;
@@ -2142,9 +2151,7 @@ public class MetadataEnrichmentService(
             //   "chronicle.plugin.tmdb"        → "tmdb"
             //   "chronicle.plugin.musicbrainz" → "musicbrainz"
             //   "hardcover"                    → "hardcover"
-            source = excludePluginId.Contains('.')
-                ? excludePluginId[(excludePluginId.LastIndexOf('.') + 1)..]
-                : excludePluginId;
+            source = PluginIdHelper.ToSource(excludePluginId);
             extId = rawExternalId;
         }
         else

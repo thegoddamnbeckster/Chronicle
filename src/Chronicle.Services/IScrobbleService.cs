@@ -16,7 +16,7 @@ namespace Chronicle.Services
 
     public interface IScrobbleService
     {
-        Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request);
+        Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request, CancellationToken ct = default);
         Task<IEnumerable<InteractionEvent>> GetHistoryAsync(int userId, int page = 1, int perPage = 20);
     }
 }

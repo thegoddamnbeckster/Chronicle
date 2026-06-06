@@ -30,7 +30,7 @@ namespace Chronicle.API.Controllers
                     request.ProgressPercent,
                     request.Timestamp,
                     request.DeviceName
-                ));
+                ), HttpContext.RequestAborted);
 
                 return Ok(ApiResponse<ScrobbleResponseDto>.Ok(new ScrobbleResponseDto(
                     result.Event.Id,

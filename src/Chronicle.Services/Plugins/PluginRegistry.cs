@@ -17,8 +17,10 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     private readonly ILogger _log = Log.ForContext<PluginRegistry>();
     private readonly Dictionary<int, LoadedPlugin> _plugins = [];
     private readonly object _lock = new();
-    // One slot per concurrent load/unload cycle — prevents two concurrent reloads of
-    // the same plugin from each loading an ALC and then one immediately disposing the other.
+    // Global load gate: serialises all LoadPluginAsync calls so that two concurrent
+    // reloads (e.g. scheduled + manual /reload) don't race on the _plugins dictionary.
+    // Intentionally global rather than per-plugin — startup loads ~7 plugins sequentially
+    // (each takes < 1 s) so the throughput cost is negligible vs. added lock complexity.
     private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     /// <inheritdoc/>

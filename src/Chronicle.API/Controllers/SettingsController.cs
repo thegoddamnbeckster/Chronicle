@@ -431,7 +431,7 @@ public class SettingsController : ControllerBase
         {
             var processes = System.Diagnostics.Process.GetProcessesByName("Chronicle.API");
             if (processes.Length == 0) return null;
-            var elapsed = DateTime.Now - processes[0].StartTime;
+            var elapsed = DateTime.UtcNow - processes[0].StartTime.ToUniversalTime();
             return FormatUptime(elapsed);
         }
         catch
