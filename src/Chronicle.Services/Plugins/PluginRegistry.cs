@@ -74,8 +74,9 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     {
         lock (_lock)
             return _plugins.Values
+                .Where(p => string.Equals(p.Manifest.PluginId, pluginId, StringComparison.OrdinalIgnoreCase))
                 .SelectMany(p => p.ImportProviders)
-                .FirstOrDefault(ip => ip.PluginId == pluginId);
+                .FirstOrDefault();
     }
 
     /// <inheritdoc/>
