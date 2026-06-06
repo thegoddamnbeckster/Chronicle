@@ -100,7 +100,9 @@ namespace Chronicle.Services
 
             result = result.OrderByDescending(e => e.UpdatedAt);
 
-            // perPage == 0 means "no limit"
+            if (page < 1) page = 1;
+
+            // perPage == 0 means "no limit"; negative values are treated as no limit too.
             if (perPage > 0)
                 result = result.Skip((page - 1) * perPage).Take(perPage);
 
