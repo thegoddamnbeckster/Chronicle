@@ -40,6 +40,20 @@ public interface IPluginService
     Task UninstallPluginAsync(int id);
 
     /// <summary>
+    /// Unloads the plugin assembly from the registry, releasing the file lock on its DLL,
+    /// without changing its enabled/disabled state in the database.
+    /// Call this before overwriting the DLL on disk, then call ReloadPluginAsync.
+    /// Returns true if the plugin was loaded and has been unloaded; false if it was not loaded.
+    /// </summary>
+    Task<bool> UnloadFromRegistryAsync(string pluginId);
+
+    /// <summary>
+    /// Reloads the plugin from its registered DLL path on disk.
+    /// The plugin must be enabled in the database. Safe to call after UnloadFromRegistryAsync.
+    /// </summary>
+    Task ReloadPluginAsync(string pluginId, CancellationToken ct = default);
+
+    /// <summary>
     /// Runs the health check for the loaded plugin matching the given database id.
     /// Returns null if the plugin is not loaded or exposes no checkable provider.
     /// The result includes an optional failure reason and a severity flag so the

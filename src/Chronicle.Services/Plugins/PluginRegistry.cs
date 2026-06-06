@@ -17,6 +17,9 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     private readonly ILogger _log = Log.ForContext<PluginRegistry>();
     private readonly Dictionary<int, LoadedPlugin> _plugins = [];
     private readonly object _lock = new();
+    // One slot per concurrent load/unload cycle — prevents two concurrent reloads of
+    // the same plugin from each loading an ALC and then one immediately disposing the other.
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     /// <inheritdoc/>
     public IReadOnlyList<IMetadataProvider> GetMetadataProviders()
@@ -101,6 +104,23 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         IReadOnlyDictionary<string, string> settings,
         CancellationToken ct = default)
     {
+        await _loadGate.WaitAsync(ct);
+        try
+        {
+            return await LoadPluginCoreAsync(dbId, dllPath, settings, ct);
+        }
+        finally
+        {
+            _loadGate.Release();
+        }
+    }
+
+    private async Task<LoadedPlugin> LoadPluginCoreAsync(
+        int dbId,
+        string dllPath,
+        IReadOnlyDictionary<string, string> settings,
+        CancellationToken ct)
+    {
         _log.Information("Loading plugin from {DllPath} (db id {DbId})", dllPath, dbId);
 
         // Read manifest.json from the same directory
@@ -126,8 +146,14 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             _log.Warning("No manifest.json found alongside {DllPath} — using defaults", dllPath);
         }
 
+        // Load the DLL bytes into memory so no file handle is held by the ALC.
+        // This allows the DLL to be overwritten on disk while the plugin is running,
+        // which is what makes hot-deploy possible on Windows without a GC wait.
         var loadContext = new PluginLoadContext(dllPath);
-        var assembly = loadContext.LoadFromAssemblyPath(dllPath);
+        var dllBytes    = await File.ReadAllBytesAsync(dllPath, ct);
+        Assembly assembly;
+        using (var ms = new MemoryStream(dllBytes))
+            assembly = loadContext.LoadFromStream(ms);
 
         var providers       = DiscoverAndInstantiate<IMetadataProvider>(assembly, _log);
         var widgets         = DiscoverAndInstantiate<IWidgetPlugin>(assembly, _log);
@@ -178,15 +204,18 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets,
             importProviders, reportPlugins, fileScanners);
 
+        LoadedPlugin? evicted;
         lock (_lock)
         {
-            // Unload any existing version before replacing
-            if (_plugins.TryGetValue(dbId, out var existing))
-            {
-                existing.Dispose();
-                _log.Information("Replaced existing loaded plugin for db id {DbId}", dbId);
-            }
+            _plugins.TryGetValue(dbId, out evicted);
             _plugins[dbId] = loaded;
+        }
+        // Dispose outside the lock: Unload() doesn't need synchronization and
+        // holding _lock would block all registry reads during teardown.
+        if (evicted is not null)
+        {
+            evicted.Dispose();
+            _log.Information("Replaced existing loaded plugin for db id {DbId}", dbId);
         }
 
         _log.Information(
@@ -200,38 +229,29 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     /// <inheritdoc/>
     public void UnloadPlugin(int dbId)
     {
-        WeakReference? contextRef = null;
-
+        LoadedPlugin? plugin;
         lock (_lock)
         {
-            if (!_plugins.Remove(dbId, out var plugin))
+            if (!_plugins.Remove(dbId, out plugin))
                 return;
-
-            // Capture a weak reference to the load context BEFORE disposing.
-            // Dispose() calls LoadContext.Unload(), but on Windows the file lock
-            // is not released until the GC actually collects the context object.
-            contextRef = new WeakReference(plugin.LoadContext);
-            plugin.Dispose();
-            _log.Information("Plugin unloaded (db id {DbId})", dbId);
         }
-
-        // Drive the GC until the context is collected and the file lock released.
-        // Up to 10 cycles; each cycle is fast (< 1 ms) for a small plugin assembly.
-        for (int i = 0; i < 10 && (contextRef?.IsAlive ?? false); i++)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-        }
+        // Dispose outside the lock: Unload() doesn't need synchronization and
+        // holding _lock would block all registry reads during teardown.
+        plugin.Dispose();
+        _log.Information("Plugin unloaded (db id {DbId})", dbId);
     }
 
     public void Dispose()
     {
+        List<LoadedPlugin> snapshot;
         lock (_lock)
         {
-            foreach (var plugin in _plugins.Values)
-                plugin.Dispose();
+            snapshot = [.._plugins.Values];
             _plugins.Clear();
         }
+        foreach (var p in snapshot)
+            p.Dispose();
+        _loadGate.Dispose();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
