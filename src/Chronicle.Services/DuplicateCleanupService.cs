@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -21,6 +22,9 @@ public sealed class DuplicateCleanupService : IScheduledTask
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger _log = Log.ForContext<DuplicateCleanupService>();
+
+    // Strips trailing "(YYYY)" / "[YYYY]" for title-normalisation comparisons in Pass 3.
+    private static readonly Regex _yearTailRe = new(@"\s*[\(\[]\d{4}[\)\]]\s*$", RegexOptions.Compiled);
 
     public DuplicateCleanupService(IServiceScopeFactory scopeFactory)
     {
@@ -453,8 +457,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
     private static string NormalizeTitle(string name)
     {
         // Strip trailing "(YYYY)" or "[YYYY]" then normalise " - " → ": " for comparison.
-        var stripped = System.Text.RegularExpressions.Regex.Replace(
-            name, @"\s*[\(\[]\d{4}[\)\]]\s*$", "").Trim();
+        var stripped = _yearTailRe.Replace(name, "").Trim();
         return stripped.Replace(" - ", ": ").ToLowerInvariant();
     }
 
@@ -499,7 +502,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                 && fps.GetArrayLength() > 0)
                 return fps[0].GetString();
         }
-        catch { /* malformed JSON — treat as no path */ }
+        catch (JsonException) { /* malformed JSON — treat as no path */ }
         return null;
     }
 

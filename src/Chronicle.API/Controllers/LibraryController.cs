@@ -60,7 +60,7 @@ namespace Chronicle.API.Controllers
             // (direct children + grandchildren) to avoid N+1 when computing physical-file flags.
             var rootIds = entries
                 .Where(e => e.MediaItem != null)
-                .Select(e => e.MediaItem.Id)
+                .Select(e => e.MediaItem!.Id)
                 .ToList();
 
             Dictionary<int, List<string?>> directChildrenByRoot = new();

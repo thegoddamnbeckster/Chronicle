@@ -146,7 +146,11 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 if (resolvedUserId > 0)
                     await UpsertRatingAsync(db, rating, pluginId, resolvedUserId.Value, ct);
             }
-            catch (Exception ex) { errors.Add($"rating {rating.ExternalId}: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Sync error processing rating {ExternalId}", rating.ExternalId);
+                errors.Add($"rating {rating.ExternalId}: {ex.Message}");
+            }
         }
 
         foreach (var entry in watchlist)
@@ -156,7 +160,11 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 if (resolvedUserId > 0)
                     await UpsertWatchlistStatusAsync(db, entry, pluginId, resolvedUserId.Value, ct);
             }
-            catch (Exception ex) { errors.Add($"watchlist {entry.ExternalId}: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Sync error processing watchlist entry {ExternalId}", entry.ExternalId);
+                errors.Add($"watchlist {entry.ExternalId}: {ex.Message}");
+            }
         }
 
         // Persist last-synced timestamp
