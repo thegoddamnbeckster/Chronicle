@@ -127,6 +127,18 @@ foreach ($plugin in $PluginProjects) {
     $srcDll = Join-Path $srcDir $plugin.DllName
     if (Test-Path $srcDll) {
         New-Item -ItemType Directory -Path $plugin.OutputDir -Force | Out-Null
+
+        # Copy extra dependency DLLs (e.g. HtmlAgilityPack for FanEdit) — any DLL in the
+        # build output that isn't a Chronicle assembly and isn't already in the output dir.
+        Get-ChildItem $srcDir -Filter "*.dll" | Where-Object {
+            $_.Name -ne $plugin.DllName -and
+            $_.Name -notlike "Chronicle.*" -and
+            $_.Name -notlike "Microsoft.*" -and
+            $_.Name -notlike "System.*"
+        } | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination (Join-Path $plugin.OutputDir $_.Name) -Force
+        }
+
         Copy-Item -Path $srcDll -Destination (Join-Path $plugin.OutputDir $plugin.DllName) -Force
         $srcManifest = Join-Path $srcDir "manifest.json"
         if (Test-Path $srcManifest) {
@@ -151,7 +163,7 @@ if (-not $WebOnly) {
     # --launch-profile is intentionally omitted — the 'Development' profile does not exist
     # in launchSettings.json, which caused the env var to never be set.
     Start-Process pwsh -ArgumentList "-NoExit", "-Command",
-        "`$env:ASPNETCORE_ENVIRONMENT='Development'; cd '$ApiDir'; dotnet run 2>&1" `
+        "`$env:ASPNETCORE_ENVIRONMENT='Development'; cd '$ApiDir'; dotnet run" `
         -WindowStyle Normal
 }
 
