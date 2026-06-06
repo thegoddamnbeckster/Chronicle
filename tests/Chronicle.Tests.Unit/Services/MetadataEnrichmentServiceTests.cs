@@ -160,7 +160,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         var mockProvider = new Mock<IMetadataProvider>();
         mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
         mockProvider.Setup(p => p.GetByIdAsync("artist:abc-123", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MediaMetadata { Title = "Unknown", ExternalId = null });
+            .ReturnsAsync(new MediaMetadata { Title = "Unknown", ExternalId = null! });
         _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
             .Returns(mockProvider.Object);
 
