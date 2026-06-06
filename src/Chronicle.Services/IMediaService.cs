@@ -25,12 +25,12 @@ namespace Chronicle.Services
 
     public interface IMediaService
     {
-        Task<MediaItem> CreateAsync(CreateMediaRequest request);
-        Task<MediaItem?> GetByIdAsync(int id);
-        Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20, bool allLevels = false);
-        Task<IEnumerable<MediaItem>> GetChildrenAsync(int parentId);
-        Task<MediaItem> UpdateAsync(int id, UpdateMediaRequest request);
-        Task DeleteAsync(int id);
+        Task<MediaItem> CreateAsync(CreateMediaRequest request, CancellationToken ct = default);
+        Task<MediaItem?> GetByIdAsync(int id, CancellationToken ct = default);
+        Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20, bool allLevels = false, CancellationToken ct = default);
+        Task<IEnumerable<MediaItem>> GetChildrenAsync(int parentId, CancellationToken ct = default);
+        Task<MediaItem> UpdateAsync(int id, UpdateMediaRequest request, CancellationToken ct = default);
+        Task DeleteAsync(int id, CancellationToken ct = default);
 
         /// <summary>
         /// Changes the media type of <paramref name="id"/> and all its descendants
