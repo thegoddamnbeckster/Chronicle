@@ -1,9 +1,15 @@
+using System.Text.RegularExpressions;
 using Chronicle.Core.Models.Scan;
 
 namespace Chronicle.Services.Scan
 {
     public class ScanGroupingService : IScanGroupingService
     {
+        // Compiled regex constants used during grouping
+        private static readonly Regex _yearSuffixRe  = new(@"\s*\((\d{4})\)\s*$",           RegexOptions.Compiled);
+        private static readonly Regex _yearPresentRe = new(@"\(\d{4}\)",                    RegexOptions.Compiled);
+        private static readonly Regex _seasonNumRe   = new(@"(?:Season|S)\s*0*(\d+)",        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         // Extensions that are metadata/sidecar — never become MediaItems themselves
         private static readonly HashSet<string> _sidecarExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -108,8 +114,7 @@ namespace Chronicle.Services.Scan
 
                 // Extract a trailing "(YYYY)" year from the resolved name, then strip it so
                 // "Home Town (2016)" and "Home Town" share the same group key.
-                var yearMatch   = System.Text.RegularExpressions.Regex
-                    .Match(level0Name, @"\s*\((\d{4})\)\s*$");
+                var yearMatch   = _yearSuffixRe.Match(level0Name);
                 var level0Clean = yearMatch.Success ? level0Name[..yearMatch.Index].TrimEnd() : level0Name;
                 var level0Key   = Normalize(level0Clean);
 
@@ -124,8 +129,7 @@ namespace Chronicle.Services.Scan
                 }
                 else
                 {
-                    var folderYearMatch = System.Text.RegularExpressions.Regex
-                        .Match(folderSignal.FolderNames[0], @"\s*\((\d{4})\)\s*$");
+                    var folderYearMatch = _yearSuffixRe.Match(folderSignal.FolderNames[0]);
                     level0Year = folderYearMatch.Success
                         ? int.Parse(folderYearMatch.Groups[1].Value)
                         : (int?)null;
@@ -316,8 +320,7 @@ namespace Chronicle.Services.Scan
         /// </summary>
         private static int? ResolveLevel1Number(string level1Name, FolderSignal folder)
         {
-            var m = System.Text.RegularExpressions.Regex.Match(
-                level1Name, @"(?:Season|S)\s*0*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var m = _seasonNumRe.Match(level1Name);
             if (m.Success)
                 return int.Parse(m.Groups[1].Value);
 
@@ -336,7 +339,7 @@ namespace Chronicle.Services.Scan
             if (nfo?.Artist is not null || nfo?.ShowTitle is not null)   score += 0.20;
             // Year in folder name is a meaningful signal even without tags/NFO
             var folderName = folder.FolderNames.FirstOrDefault() ?? "";
-            if (System.Text.RegularExpressions.Regex.IsMatch(folderName, @"\(\d{4}\)"))
+            if (_yearPresentRe.IsMatch(folderName))
                 score += 0.20;
             // Conflict: tag artist name disagrees with folder name
             var tagName = tag?.AlbumArtist ?? tag?.Artist ?? "";
@@ -361,7 +364,7 @@ namespace Chronicle.Services.Scan
             if (nfo?.Title is not null && nfo.Year.HasValue) return 0.90; // NFO title + year
             if (nfo?.Title is not null)                   return 0.78; // NFO title only
             // "(YYYY)" in folder name: reliable naming convention used by most media managers
-            if (System.Text.RegularExpressions.Regex.IsMatch(groupName, @"\(\d{4}\)"))
+            if (_yearPresentRe.IsMatch(groupName))
                 return 0.75;
             // Folder name only — title is plausible but year is unknown
             return 0.55;
