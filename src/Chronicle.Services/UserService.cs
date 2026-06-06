@@ -4,11 +4,13 @@ using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services.Security;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 
 namespace Chronicle.Services
 {
     public class UserService : IUserService
     {
+        private readonly ILogger _log = Log.ForContext<UserService>();
         private readonly ChronicleDbContext _context;
         private readonly IPasswordHasher _passwordHasher;
 
@@ -51,7 +53,15 @@ namespace Chronicle.Services
             };
 
             _context.Users.Add(user);
-            await _context.SaveChangesAsync();
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                // Unique constraint on Username was violated by a concurrent registration.
+                throw new DuplicateUsernameException(username);
+            }
 
             return user;
         }
@@ -71,7 +81,7 @@ namespace Chronicle.Services
             var user = await _context.Users.FindAsync(userId)
                 ?? throw new UserNotFoundException(userId.ToString());
             try { return JsonSerializer.Deserialize<UserPreferences>(user.PreferencesJson) ?? new(); }
-            catch { return new(); }
+            catch (JsonException ex) { _log.Warning(ex, "Failed to deserialize preferences for user {UserId} — using defaults", userId); return new(); }
         }
 
         public async Task UpdatePreferencesAsync(int userId, UserPreferences patch)
@@ -80,7 +90,7 @@ namespace Chronicle.Services
                 ?? throw new UserNotFoundException(userId.ToString());
             UserPreferences current;
             try { current = JsonSerializer.Deserialize<UserPreferences>(user.PreferencesJson) ?? new(); }
-            catch { current = new(); }
+            catch (JsonException ex) { _log.Warning(ex, "Failed to deserialize preferences for user {UserId} during update — starting fresh", userId); current = new(); }
             if (patch.ShowDiagnostics.HasValue) current.ShowDiagnostics = patch.ShowDiagnostics;
 
             if (patch.DefaultFoldsOpen.HasValue)

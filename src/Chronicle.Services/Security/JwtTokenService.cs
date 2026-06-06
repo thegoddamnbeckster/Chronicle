@@ -4,11 +4,13 @@ using System.Text;
 using Chronicle.Core.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
+using Serilog;
 
 namespace Chronicle.Services.Security
 {
     public class JwtTokenService : IJwtTokenService
     {
+        private readonly ILogger _log = Log.ForContext<JwtTokenService>();
         private readonly SymmetricSecurityKey _key;
         private readonly int _expirationHours;
 
@@ -16,8 +18,8 @@ namespace Chronicle.Services.Security
         {
             var secret = configuration["Security:JwtSecret"]
                 ?? throw new InvalidOperationException("JWT secret not configured. Set Security:JwtSecret in appsettings.");
-            if (secret.Length < 32)
-                throw new InvalidOperationException("JWT secret must be at least 32 characters.");
+            if (secret.Length < 64)
+                throw new InvalidOperationException("JWT secret must be at least 64 characters.");
 
             _key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
             _expirationHours = int.TryParse(configuration["Security:JwtExpirationHours"], out var h) ? h : 24;
@@ -34,13 +36,17 @@ namespace Chronicle.Services.Security
 
             var credentials = new SigningCredentials(_key, SecurityAlgorithms.HmacSha256);
 
+            var now = DateTime.UtcNow;
             var token = new JwtSecurityToken(
                 issuer: "Chronicle",
                 audience: "Chronicle",
                 claims: claims,
-                expires: DateTime.UtcNow.AddHours(_expirationHours),
+                notBefore: now,
+                expires: now.AddHours(_expirationHours),
                 signingCredentials: credentials
             );
+            // Stamp iat (issued-at) manually — the JwtSecurityToken ctor doesn't expose it directly.
+            token.Payload[JwtRegisteredClaimNames.Iat] = new DateTimeOffset(now).ToUnixTimeSeconds();
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
@@ -64,8 +70,20 @@ namespace Chronicle.Services.Security
             {
                 return handler.ValidateToken(token, parameters, out _);
             }
-            catch
+            catch (SecurityTokenExpiredException ex)
             {
+                _log.Debug(ex, "JWT token rejected — expired");
+                return null;
+            }
+            catch (SecurityTokenException ex)
+            {
+                // Covers invalid signature, malformed token, wrong issuer/audience, etc.
+                _log.Warning(ex, "JWT token rejected — validation failure");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "JWT token rejected — unexpected error during validation");
                 return null;
             }
         }
