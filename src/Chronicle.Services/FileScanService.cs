@@ -881,7 +881,10 @@ namespace Chronicle.Services
                     && scanner.TryGetProperty("filePath", out var fp))
                     return fp.GetString();
             }
-            catch { /* malformed JSON — treat as no path */ }
+            catch (JsonException)
+            {
+                // Malformed MetadataJson — treat as no stored path. Logged at caller if needed.
+            }
             return null;
         }
 
@@ -922,6 +925,10 @@ namespace Chronicle.Services
             new(@"\s*[\(\[]\d{4}[\)\]]$",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
 
+        // Compiled regex used by ParseAudiobookFolderName to locate a "(YYYY)" segment.
+        private static readonly System.Text.RegularExpressions.Regex _yearSegmentRegex =
+            new(@"^\((\d{4})\)$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
         /// <summary>
         /// Looks up a media item by title (and optionally year), trying several normalised
         /// variants so that file-scanner titles (e.g. <c>Movie - Subtitle (2025)</c>) and
@@ -939,12 +946,16 @@ namespace Chronicle.Services
             var colonTitle = title.Replace(" - ", ": ");
             var dashTitle  = title.Replace(": ", " - ");
 
+            // Use lower() == lower() for case-insensitive exact matching.
+            // EF.Functions.Like was previously used here but treats '%' and '_' in titles
+            // as SQL wildcards, producing incorrect matches for titles such as "100% Hotter".
             foreach (var variant in new[] { title, colonTitle, dashTitle }.Distinct(StringComparer.Ordinal))
             {
+                var variantLower = variant.ToLowerInvariant();
                 var hit = await _context.MediaItems.FirstOrDefaultAsync(
                     m => m.MediaTypeId == mediaTypeId
                       && (year == null || m.Year == year)
-                      && EF.Functions.Like(m.Name, variant), ct);
+                      && m.Name.ToLower() == variantLower, ct);
                 if (hit is not null) return hit;
             }
 
@@ -957,10 +968,11 @@ namespace Chronicle.Services
 
             foreach (var variant in new[] { stripped, strippedColon, strippedDash }.Distinct(StringComparer.Ordinal))
             {
+                var variantLower = variant.ToLowerInvariant();
                 var hit = await _context.MediaItems.FirstOrDefaultAsync(
                     m => m.MediaTypeId == mediaTypeId
                       && (year == null || m.Year == year)
-                      && EF.Functions.Like(m.Name, variant), ct);
+                      && m.Name.ToLower() == variantLower, ct);
                 if (hit is not null) return hit;
             }
 
@@ -1537,12 +1549,11 @@ namespace Chronicle.Services
                                 .ToArray();
 
             // Locate a segment that is purely "(YYYY)".
-            var yearPattern = new System.Text.RegularExpressions.Regex(@"^\((\d{4})\)$");
             int yearIdx = -1;
             int? year   = null;
             for (int i = 0; i < raw.Length; i++)
             {
-                var m = yearPattern.Match(raw[i]);
+                var m = _yearSegmentRegex.Match(raw[i]);
                 if (!m.Success) continue;
                 year   = int.Parse(m.Groups[1].Value);
                 yearIdx = i;
@@ -2161,7 +2172,10 @@ namespace Chronicle.Services
                     item.MetadataJson = root.ToJsonString();
                     updated++;
                 }
-                catch { /* skip malformed JSON */ }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "BackfillFolderPaths: skipping item {Id} — malformed MetadataJson", item.Id);
+                }
             }
 
             if (updated > 0)
@@ -2199,7 +2213,10 @@ namespace Chronicle.Services
                             return string.Equals(fp.GetString(), group.FolderPath,
                                                  StringComparison.OrdinalIgnoreCase);
                     }
-                    catch { /* malformed JSON */ }
+                    catch (JsonException)
+                    {
+                        // Malformed MetadataJson — this item cannot match by folder path.
+                    }
                     return false;
                 });
             }
@@ -2364,7 +2381,10 @@ namespace Chronicle.Services
                             return legacyParsed;
                     }
                 }
-                catch { /* ignore malformed JSON */ }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "GetConfidenceThreshold: failed to read scanner settings — using plugin/default value");
+                }
             }
             // 3. Plugin instance's per-type method / fallback default
             var scanner = _registry.GetFileScannerPlugins().FirstOrDefault();

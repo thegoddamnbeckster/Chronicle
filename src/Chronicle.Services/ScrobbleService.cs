@@ -60,6 +60,9 @@ namespace Chronicle.Services
 
         public async Task<IEnumerable<InteractionEvent>> GetHistoryAsync(int userId, int page = 1, int perPage = 20)
         {
+            if (page < 1) page = 1;
+            if (perPage < 1) perPage = 20;
+
             return await _context.InteractionEvents
                 .Include(e => e.MediaItem)
                     .ThenInclude(m => m!.MediaType)
