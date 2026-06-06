@@ -16,7 +16,7 @@ namespace Chronicle.Tests.Unit.Security
             {
                 InitialData = new Dictionary<string, string?>
                 {
-                    ["Security:JwtSecret"] = "test-secret-must-be-at-least-32-characters-long",
+                    ["Security:JwtSecret"] = "test-secret-must-be-at-least-64-characters-long-for-chronicle-unit-tests-xxxxxxxxxxx",
                     ["Security:JwtExpirationHours"] = "24"
                 }
             };

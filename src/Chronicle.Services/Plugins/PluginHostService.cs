@@ -387,8 +387,16 @@ public sealed class PluginHostService : IHostedService
             return new Dictionary<string, string>();
 
         var plainJson = _protector.Unprotect(settingsJson);
-        return JsonSerializer.Deserialize<Dictionary<string, string>>(plainJson)
-               ?? new Dictionary<string, string>();
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(plainJson)
+                   ?? new Dictionary<string, string>();
+        }
+        catch (JsonException ex)
+        {
+            _log.Error(ex, "Failed to deserialize plugin settings JSON — plugin will load with empty settings");
+            return new Dictionary<string, string>();
+        }
     }
 
 }
