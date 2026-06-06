@@ -12,6 +12,6 @@ namespace Chronicle.Services
 
     public interface IStatsService
     {
-        Task<UserStats> GetUserStatsAsync(int userId);
+        Task<UserStats> GetUserStatsAsync(int userId, CancellationToken ct = default);
     }
 }
