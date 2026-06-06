@@ -61,8 +61,8 @@ public class MediaMetadata
 
     // ── Search-mode fields (populated when returning a list of results) ────────
 
-    /// <summary>Multiple results returned from a search query.</summary>
-    public List<MediaMetadata> Results { get; set; } = [];
+    /// <summary>Multiple results returned from a search query. Null when serializing a single item to avoid circular references.</summary>
+    public List<MediaMetadata>? Results { get; set; } = [];
 
     /// <summary>Total number of results available (for pagination display).</summary>
     public int TotalResults { get; set; }
