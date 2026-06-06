@@ -37,8 +37,8 @@ namespace Chronicle.Tests.Unit.Services
 
             // Default mock: CreateTokenAsync returns a valid token + raw key
             _apiTokenMock
-                .Setup(s => s.CreateTokenAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<DateTime?>()))
-                .ReturnsAsync((int uid, string name, DateTime? exp) =>
+                .Setup(s => s.CreateTokenAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((int uid, string name, DateTime? exp, CancellationToken _) =>
                 {
                     var token = new ApiToken
                     {
@@ -160,7 +160,7 @@ namespace Chronicle.Tests.Unit.Services
             await _service.ApproveAsync(UserId, code);
 
             _apiTokenMock.Verify(s =>
-                s.CreateTokenAsync(UserId, It.IsAny<string>(), null),
+                s.CreateTokenAsync(UserId, It.IsAny<string>(), null, It.IsAny<CancellationToken>()),
                 Times.Once);
         }
 

@@ -38,7 +38,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         if (string.IsNullOrWhiteSpace(rawKey))
             return AuthenticateResult.NoResult();
 
-        var token = await _tokenService.ValidateTokenAsync(rawKey);
+        var token = await _tokenService.ValidateTokenAsync(rawKey, Context.RequestAborted);
         if (token is null)
             return AuthenticateResult.Fail("Invalid or expired API key.");
 

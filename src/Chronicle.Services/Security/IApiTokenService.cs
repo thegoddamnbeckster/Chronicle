@@ -9,7 +9,7 @@ public interface IApiTokenService
     /// Returns the persisted token (with its database Id) and the one-time-visible raw value.
     /// The raw value is NEVER stored — callers must show it to the user immediately.
     /// </summary>
-    Task<(ApiToken Token, string RawValue)> CreateTokenAsync(int userId, string name, DateTime? expiresAt);
+    Task<(ApiToken Token, string RawValue)> CreateTokenAsync(int userId, string name, DateTime? expiresAt, CancellationToken ct = default);
 
     /// <summary>
     /// Validates a raw API key supplied in the X-API-Key header.
@@ -17,14 +17,14 @@ public interface IApiTokenService
     /// <c>null</c> if the key is unknown, revoked, or expired.
     /// Also updates <see cref="ApiToken.LastUsedAt"/> on success.
     /// </summary>
-    Task<ApiToken?> ValidateTokenAsync(string rawToken);
+    Task<ApiToken?> ValidateTokenAsync(string rawToken, CancellationToken ct = default);
 
     /// <summary>Returns all active (non-revoked) tokens owned by the user.</summary>
-    Task<List<ApiToken>> GetTokensForUserAsync(int userId);
+    Task<List<ApiToken>> GetTokensForUserAsync(int userId, CancellationToken ct = default);
 
     /// <summary>
     /// Soft-deletes (revokes) the token with the given id, provided it belongs to userId.
     /// Returns <c>false</c> if the token was not found or already revoked.
     /// </summary>
-    Task<bool> RevokeTokenAsync(int tokenId, int userId);
+    Task<bool> RevokeTokenAsync(int tokenId, int userId, CancellationToken ct = default);
 }
