@@ -23,7 +23,7 @@ public class ApiTokensController : ControllerBase
     public async Task<IActionResult> GetTokens()
     {
         var userId = GetUserId();
-        var tokens = await _tokenService.GetTokensForUserAsync(userId);
+        var tokens = await _tokenService.GetTokensForUserAsync(userId, HttpContext.RequestAborted);
 
         var dtos = tokens
             .Select(t => new ApiTokenDto(t.Id, t.Name, t.CreatedAt, t.LastUsedAt, t.ExpiresAt))
@@ -41,7 +41,7 @@ public class ApiTokensController : ControllerBase
     {
         var userId = GetUserId();
         var (token, rawValue) = await _tokenService.CreateTokenAsync(
-            userId, request.Name, request.ExpiresAt);
+            userId, request.Name, request.ExpiresAt, HttpContext.RequestAborted);
 
         var dto = new CreateApiTokenResponse(
             token.Id, token.Name, rawValue, token.CreatedAt, token.ExpiresAt);
@@ -54,7 +54,7 @@ public class ApiTokensController : ControllerBase
     public async Task<IActionResult> RevokeToken(int id)
     {
         var userId = GetUserId();
-        var revoked = await _tokenService.RevokeTokenAsync(id, userId);
+        var revoked = await _tokenService.RevokeTokenAsync(id, userId, HttpContext.RequestAborted);
 
         if (!revoked)
             return NotFound(ApiResponse<object>.Fail("TOKEN_NOT_FOUND", "Token not found or already revoked."));
