@@ -16,7 +16,7 @@ public class MediaListService : IMediaListService
 
     // ── Create ────────────────────────────────────────────────────────────────
 
-    public async Task<MediaList> CreateAsync(int userId, CreateListRequest request)
+    public async Task<MediaList> CreateAsync(int userId, CreateListRequest request, CancellationToken ct = default)
     {
         var list = new MediaList
         {
@@ -29,22 +29,22 @@ public class MediaListService : IMediaListService
         };
 
         _context.MediaLists.Add(list);
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(ct);
         return list;
     }
 
     // ── Read ──────────────────────────────────────────────────────────────────
 
-    public async Task<IEnumerable<MediaList>> GetAllForUserAsync(int userId)
+    public async Task<IEnumerable<MediaList>> GetAllForUserAsync(int userId, CancellationToken ct = default)
     {
         return await _context.MediaLists
             .Where(l => l.UserId == userId)
             .Include(l => l.Items)
             .OrderByDescending(l => l.UpdatedAt)
-            .ToListAsync();
+            .ToListAsync(ct);
     }
 
-    public async Task<MediaList?> GetByIdAsync(int userId, int listId)
+    public async Task<MediaList?> GetByIdAsync(int userId, int listId, CancellationToken ct = default)
     {
         return await _context.MediaLists
             .Include(l => l.Items.OrderBy(i => i.Position))
@@ -53,43 +53,43 @@ public class MediaListService : IMediaListService
             .Include(l => l.Items)
                 .ThenInclude(i => i.MediaItem)
                     .ThenInclude(m => m!.ExternalIds)
-            .FirstOrDefaultAsync(l => l.Id == listId && l.UserId == userId);
+            .FirstOrDefaultAsync(l => l.Id == listId && l.UserId == userId, ct);
     }
 
     // ── Update ────────────────────────────────────────────────────────────────
 
-    public async Task<MediaList> UpdateAsync(int userId, int listId, UpdateListRequest request)
+    public async Task<MediaList> UpdateAsync(int userId, int listId, UpdateListRequest request, CancellationToken ct = default)
     {
-        var list = await FindOwnedAsync(userId, listId);
+        var list = await FindOwnedAsync(userId, listId, ct);
 
         if (request.Name is not null)        list.Name        = request.Name.Trim();
         if (request.Description is not null) list.Description = request.Description.Trim();
         if (request.IsOrdered.HasValue)      list.IsOrdered   = request.IsOrdered.Value;
 
         list.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(ct);
         return list;
     }
 
     // ── Delete ────────────────────────────────────────────────────────────────
 
-    public async Task DeleteAsync(int userId, int listId)
+    public async Task DeleteAsync(int userId, int listId, CancellationToken ct = default)
     {
-        var list = await FindOwnedAsync(userId, listId);
+        var list = await FindOwnedAsync(userId, listId, ct);
         _context.MediaLists.Remove(list);
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(ct);
     }
 
     // ── Items ─────────────────────────────────────────────────────────────────
 
-    public async Task<MediaListItem> AddItemAsync(int userId, int listId, AddItemToListRequest request)
+    public async Task<MediaListItem> AddItemAsync(int userId, int listId, AddItemToListRequest request, CancellationToken ct = default)
     {
         // Ensure the list belongs to this user
-        var list = await FindOwnedAsync(userId, listId);
+        var list = await FindOwnedAsync(userId, listId, ct);
 
         // Guard: duplicate
         bool exists = await _context.MediaListItems
-            .AnyAsync(i => i.ListId == listId && i.MediaItemId == request.MediaItemId);
+            .AnyAsync(i => i.ListId == listId && i.MediaItemId == request.MediaItemId, ct);
         if (exists)
             throw new DuplicateListItemException(request.MediaItemId);
 
@@ -100,7 +100,7 @@ public class MediaListService : IMediaListService
             var maxPos = await _context.MediaListItems
                 .Where(i => i.ListId == listId)
                 .Select(i => (int?)i.Position)
-                .MaxAsync();
+                .MaxAsync(ct);
             position = (maxPos ?? -1) + 1;
         }
 
@@ -116,36 +116,36 @@ public class MediaListService : IMediaListService
         _context.MediaListItems.Add(item);
 
         list.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(ct);
 
         // Return with navigation loaded
         await _context.Entry(item)
             .Reference(i => i.MediaItem)
-            .LoadAsync();
+            .LoadAsync(ct);
 
         return item;
     }
 
-    public async Task RemoveItemAsync(int userId, int listId, int itemId)
+    public async Task RemoveItemAsync(int userId, int listId, int itemId, CancellationToken ct = default)
     {
-        var list = await FindOwnedAsync(userId, listId);
+        var list = await FindOwnedAsync(userId, listId, ct);
 
         var item = await _context.MediaListItems
-            .FirstOrDefaultAsync(i => i.Id == itemId && i.ListId == listId)
+            .FirstOrDefaultAsync(i => i.Id == itemId && i.ListId == listId, ct)
             ?? throw new MediaListItemNotFoundException(itemId);
 
         _context.MediaListItems.Remove(item);
         list.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(ct);
     }
 
-    public async Task ReorderAsync(int userId, int listId, IEnumerable<ReorderItem> items)
+    public async Task ReorderAsync(int userId, int listId, IEnumerable<ReorderItem> items, CancellationToken ct = default)
     {
-        var list = await FindOwnedAsync(userId, listId);
+        var list = await FindOwnedAsync(userId, listId, ct);
 
         var dbItems = await _context.MediaListItems
             .Where(i => i.ListId == listId)
-            .ToListAsync();
+            .ToListAsync(ct);
 
         foreach (var reorder in items)
         {
@@ -155,15 +155,15 @@ public class MediaListService : IMediaListService
         }
 
         list.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(ct);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private async Task<MediaList> FindOwnedAsync(int userId, int listId)
+    private async Task<MediaList> FindOwnedAsync(int userId, int listId, CancellationToken ct)
     {
         return await _context.MediaLists
-            .FirstOrDefaultAsync(l => l.Id == listId && l.UserId == userId)
+            .FirstOrDefaultAsync(l => l.Id == listId && l.UserId == userId, ct)
             ?? throw new MediaListNotFoundException(listId);
     }
 }

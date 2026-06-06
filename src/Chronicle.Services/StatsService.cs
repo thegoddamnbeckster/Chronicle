@@ -13,7 +13,7 @@ namespace Chronicle.Services
             _context = context;
         }
 
-        public async Task<UserStats> GetUserStatsAsync(int userId)
+        public async Task<UserStats> GetUserStatsAsync(int userId, CancellationToken ct = default)
         {
             var now = DateTime.UtcNow;
             var weekStart = now.AddDays(-(int)now.DayOfWeek);
@@ -23,26 +23,26 @@ namespace Chronicle.Services
                 .Where(l => l.UserId == userId)
                 .GroupBy(l => l.Status)
                 .Select(g => new { Status = g.Key, Count = g.Count() })
-                .ToListAsync();
+                .ToListAsync(ct);
 
             var scrobbleStatsTask = _context.InteractionEvents
                 .Where(e => e.UserId == userId)
                 .GroupBy(_ => 1)
                 .Select(g => new { Total = g.LongCount() })
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(ct);
 
             var minutesTask = _context.InteractionEvents
                 .Include(e => e.MediaItem)
                 .Where(e => e.UserId == userId && e.MarkedAsWatched)
-                .SumAsync(e => (int?)e.MediaItem!.RuntimeMinutes ?? 0);
+                .SumAsync(e => (int?)e.MediaItem!.RuntimeMinutes ?? 0, ct);
 
             var weekTask = _context.InteractionEvents
                 .Where(e => e.UserId == userId && e.Timestamp >= weekStart)
-                .CountAsync();
+                .CountAsync(ct);
 
             var monthTask = _context.InteractionEvents
                 .Where(e => e.UserId == userId && e.Timestamp >= monthStart)
-                .CountAsync();
+                .CountAsync(ct);
 
             await Task.WhenAll(libraryTask, scrobbleStatsTask, minutesTask, weekTask, monthTask);
 
