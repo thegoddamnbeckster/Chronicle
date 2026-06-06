@@ -116,7 +116,17 @@ public class MediaListService : IMediaListService
         _context.MediaListItems.Add(item);
 
         list.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync(ct);
+        try
+        {
+            await _context.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (
+            ex.InnerException?.Message.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // Race condition: another request inserted the same (list, media) pair concurrently.
+            _context.ChangeTracker.Clear();
+            throw new DuplicateListItemException(request.MediaItemId);
+        }
 
         // Return with navigation loaded
         await _context.Entry(item)
