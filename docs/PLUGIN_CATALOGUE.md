@@ -1,15 +1,37 @@
 # Chronicle Plugin Catalogue
 
-**Last Updated:** 2026-03-01
+**Last Updated:** 2026-06-06
 **Author:** Michael Beck with Anthropic Claude
 
 This document indexes every planned metadata provider plugin for Chronicle.
-Each plugin lives in its own directory at the repository root
-(e.g., `Chronicle.Plugin.IGDB/`) and is intended to be published as a
-separate GitHub repository.
+Each plugin lives in its own separate GitHub repository as a sibling to the main
+Chronicle repo.
 
-Plugins that implement `IImportProvider` instead of `IMetadataProvider`
+Plugins that implement `IImportProvider` in addition to `IMetadataProvider`
 are noted accordingly.
+
+---
+
+## ✅ Already Built & Deployed
+
+These plugins are fully implemented and deployed. See their individual repositories for setup instructions.
+
+| Plugin | Repository | Type | Media Types |
+|--------|-----------|------|-------------|
+| **TMDB** | [Chronicle.Plugin.TMDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TMDB) | `IMetadataProvider` | Movies, TV, Anime, Fan Edits, Seasons, Episodes |
+| **MusicBrainz** | [Chronicle.Plugin.MusicBrainz](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz) | `IMetadataProvider` | Music, Audiobooks |
+| **Trakt** | [Chronicle.Plugin.Trakt](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Trakt) | `IMetadataProvider` + `IImportProvider` | Movies, TV |
+| **SIMKL** | [Chronicle.Plugin.Simkl](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl) | `IMetadataProvider` + `IImportProvider` | Movies, TV, Anime |
+| **FanEdit (IFDB)** | [Chronicle.Plugin.FanEdit](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanEdit) | `IMetadataProvider` | Fan Edits |
+| **Hardcover** | [Chronicle.Plugin.Hardcover](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover) | `IMetadataProvider` + `IImportProvider` | Books, Audiobooks |
+
+---
+
+## Planned Plugins
+
+The rest of this document indexes planned future plugins.
+
+---
 
 ---
 
@@ -71,7 +93,7 @@ are noted accordingly.
 | [Soundcharts](plugins/PLUGIN_SOUNDCHARTS.md) | `Chronicle.Plugin.Soundcharts` | 🎵 | API key + secret | Scaffolded |
 | [Jaxsta](plugins/PLUGIN_JAXSTA.md) | `Chronicle.Plugin.Jaxsta` | 🎵 | API key | Scaffolded |
 | [OneMusicAPI](plugins/PLUGIN_ONEMUSICAPI.md) | `Chronicle.Plugin.OneMusicAPI` | 🎵 | API key | Scaffolded |
-| [MusicBrainz](plugins/PLUGIN_MUSICBRAINZ.md) | `Chronicle.Plugin.MusicBrainz` | 🎵 | None (public) | Scaffolded |
+| [MusicBrainz](plugins/PLUGIN_MUSICBRAINZ.md) | `Chronicle.Plugin.MusicBrainz` | 🎵 | None (public) | ✅ Built (see above) |
 
 ### Comprehensive / Multi-genre
 
