@@ -2,7 +2,7 @@
 
 **Universal Media Tracking Platform**
 
-Chronicle is a self-hosted, open-source media tracking application that lets you track any type of media — movies, TV shows, music, books, podcasts, audiobooks, anime, and more. Built with privacy, extensibility, and user control as core principles.
+Chronicle is a self-hosted, open-source media tracking application that lets you track any type of media — movies, TV shows, music, books, podcasts, audiobooks, anime, fan edits, and more. Built with privacy, extensibility, and user control as core principles.
 
 ---
 
@@ -21,7 +21,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 - **User management** — Registration, login, preferences, fold state; first user auto-promoted to admin
 - **REST API** — Versioned at `/api/v1/`, full Swagger UI at `/swagger`
 - **SQLite database** — EF Core 9 with sequential migration files
-- **Plugin system** — Isolated `PluginLoadContext` per plugin; supports metadata, import, widget, and report plugin types
+- **Plugin system** — Isolated `PluginLoadContext` per plugin; supports metadata, import, widget, and report plugin types; hot-reload without API restart
 
 ### Media Management
 - **Universal media model** — No type-specific tables; `media_types`, `media_items`, and `media_groups` with JSON metadata columns
@@ -29,6 +29,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 - **Library tracking** — Per-user status (Watching/Completed/Dropped/On Hold/Plan to Watch), custom ratings, watch events
 - **Context-aware verbs** — "Plan to Listen" for music, "Plan to Read" for books, "Plan to Watch" for video
 - **Search & CRUD** — Full media search, create/update/delete, credits (cast/crew)
+- **Global search** — Header search bar with debounced results, poster thumbnails, click-to-navigate
 
 ### File Scanner
 - **Multi-signal hierarchical grouping** — Combines folder names, embedded tags (via TagLib#), and NFO sidecar files to group files into Artist→Album→Track or Show→Season→Episode trees
@@ -53,12 +54,15 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 - **Credits** — Cast and director credits synced from Trakt
 
 ### Installed Plugins
-| Plugin | Type | Media Types |
-|--------|------|-------------|
-| **TMDB** | Metadata | Movies, TV, Anime, Fan Edits, Seasons, Episodes |
-| **MusicBrainz** | Metadata | Music (albums, artists), Audiobooks |
-| **Trakt** | Import/Sync + Metadata | Movies, TV |
-| **SIMKL** | Import/Sync + Metadata | Movies, TV, Anime |
+
+| Plugin | Repo | Type | Media Types |
+|--------|------|------|-------------|
+| **TMDB** | [Chronicle.Plugin.TMDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TMDB) | Metadata | Movies, TV, Anime, Fan Edits, Seasons, Episodes |
+| **MusicBrainz** | [Chronicle.Plugin.MusicBrainz](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz) | Metadata | Music (albums, artists), Audiobooks |
+| **Trakt** | [Chronicle.Plugin.Trakt](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Trakt) | Import/Sync + Metadata | Movies, TV |
+| **SIMKL** | [Chronicle.Plugin.Simkl](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl) | Import/Sync + Metadata | Movies, TV, Anime |
+| **FanEdit (IFDB)** | [Chronicle.Plugin.FanEdit](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanEdit) | Metadata | Fan Edits (scrapes fanedit.org; requires account) |
+| **Hardcover** | [Chronicle.Plugin.Hardcover](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover) | Import/Sync + Metadata | Books, Audiobooks |
 
 ### React Frontend (20+ pages)
 - **Sonarr/Radarr aesthetic** — Dark teal/green theme
@@ -108,12 +112,12 @@ npm run dev
 
 Open `http://localhost:8888`. The first account you register is automatically admin.
 
-Create `src\Chronicle.API\appsettings.Development.json` with your `JwtSecret` and GitHub token (this file is `.gitignore`d):
+Create `src\Chronicle.API\appsettings.Development.json` with your secrets (this file is `.gitignore`d):
 
 ```json
 {
   "Security": { "JwtSecret": "your-64-char-secret" },
-  "GitHub": { "Token": "your-pat" },
+  "GitHub": { "Token": "your-github-pat" },
   "Urls": "http://localhost:7979"
 }
 ```
@@ -132,8 +136,8 @@ src/
 └── Chronicle.Web/        # React 18 + TypeScript frontend
 
 tests/
-├── Chronicle.Tests.Unit/         # 224 passing
-└── Chronicle.Tests.Integration/  # 118 passing
+├── Chronicle.Tests.Unit/         # 264 passing
+└── Chronicle.Tests.Integration/  # 123 passing
 ```
 
 ---
@@ -150,10 +154,12 @@ tests/
 - ✅ Background metadata enrichment (nightly, full hierarchy, drill-down page)
 - ✅ Metadata Assignment (per-type per-field plugin priority config)
 - ✅ Inbound sync — Trakt & SIMKL (watch history, ratings, watchlist, credits)
+- ✅ FanEdit (IFDB) plugin — scrapes fanedit.org for fan edit metadata
+- ✅ Hardcover plugin — book/audiobook metadata + reading history import
 - ✅ Physical file vs metadata-only indicators
+- ✅ Global search
 - 🔲 Fanart.tv plugin
 - 🔲 Plugin update notifications
-- 🔲 Global search
 
 ### Phase 3: Advanced Features
 - 🔲 Multi-user library sharing
@@ -188,8 +194,21 @@ Auth: `Authorization: Bearer {jwt}` for web, `X-API-Key: chr_live_...` for scrob
 
 ---
 
+## Building a Plugin
+
+Chronicle has a fully documented plugin system. See [docs/PLUGIN_AUTHORING.md](docs/PLUGIN_AUTHORING.md) for a complete guide covering:
+- Project setup and `manifest.json` reference
+- Implementing `IMetadataProvider` and `IImportProvider`
+- Fix Match URL handling
+- Settings schema and encryption
+- Build/packaging and GitHub release publishing
+
+The six existing plugins serve as reference implementations across different complexity levels — from a simple API-key metadata provider (TMDB) to a full OAuth import provider (Trakt) to an HTML-scraping provider (FanEdit).
+
+---
+
 ## Credits
 
-**Design, direction & testing:** Chronicle Contributors
-**Implementation:** Anthropic Claude (AI Assistant)
+**Design, direction & testing:** Chronicle Contributors  
+**Implementation:** Anthropic Claude (AI Assistant)  
 **License:** MIT
