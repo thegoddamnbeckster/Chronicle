@@ -95,6 +95,9 @@ src/Chronicle.API/plugins/
 # Runtime plugin binaries (deployed from individual plugin repos)
 plugins/
 
+# Scratch / temporary build output directories
+build_check/
+
 # Scratch / debugging files (not part of source)
 *.sql
 run_sql.bat
