@@ -5,6 +5,7 @@ using Chronicle.Plugins;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Chronicle.Services;
@@ -13,18 +14,24 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 {
     private const string SyncStateKeyPrefix = "sync_state.";
 
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IPluginRegistry _registry;
+    private readonly IServiceScopeFactory         _scopeFactory;
+    private readonly IPluginRegistry              _registry;
+    private readonly IMetadataResolutionService   _resolution;
     private readonly ILogger<SyncOrchestrationService> _log;
+    private readonly IHostApplicationLifetime     _lifetime;
 
     public SyncOrchestrationService(
         IServiceScopeFactory scopeFactory,
         IPluginRegistry registry,
-        ILogger<SyncOrchestrationService> log)
+        IMetadataResolutionService resolution,
+        ILogger<SyncOrchestrationService> log,
+        IHostApplicationLifetime lifetime)
     {
         _scopeFactory = scopeFactory;
         _registry     = registry;
+        _resolution   = resolution;
         _log          = log;
+        _lifetime     = lifetime;
     }
 
     // Fires EnrichPendingAsync for every registered metadata provider in the background
@@ -43,7 +50,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 {
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var svc = scope.ServiceProvider.GetRequiredService<IMetadataEnrichmentService>();
-                    await svc.EnrichPendingAsync(mpPluginId, CancellationToken.None);
+                    await svc.EnrichPendingAsync(mpPluginId, _lifetime.ApplicationStopping);
                 }
                 catch (Exception ex)
                 {
@@ -93,9 +100,9 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         var watchlistTask = provider.GetWatchlistAsync(ct);
         await Task.WhenAll(historyTask, ratingsTask, watchlistTask);
 
-        var history   = historyTask.Result;
-        var ratings   = ratingsTask.Result;
-        var watchlist = watchlistTask.Result;
+        var history   = await historyTask;
+        var ratings   = await ratingsTask;
+        var watchlist = await watchlistTask;
 
         int itemsMatched = 0, stubsCreated = 0, watchEventsAdded = 0, creditsAdded = 0;
         var errors = new List<string>();
@@ -200,8 +207,12 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 .Select(e => e.MediaItemId)
                 .FirstOrDefaultAsync(ct);
             if (byAdditional != 0)
+            {
+                // Graft the syncing plugin's own ExternalId so Stage 1 finds this item on the next sync.
+                await GraftExternalIdAsync(db, byAdditional, pluginId, evt.ExternalId, ct);
                 return (await db.MediaItems.FindAsync([byAdditional], ct)
                     ?? throw new InvalidOperationException($"MediaItem {byAdditional} missing"), false);
+            }
         }
 
         // 3. Title + year fuzzy match — check both "Title" and "Title (Year)" forms,
@@ -286,9 +297,14 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         // Write the provider's metadata directly into metadata_json so the plugin
         // metadata box is populated immediately after sync without waiting for a
-        // separate enrichment run.
+        // separate enrichment run. Set MediaType on the entity so ResolveAsync has
+        // the type context it needs to apply the priority assignment config.
+        item.MediaType = mediaType;
         if (meta is not null)
+        {
             MergeImportedMetadata(item, pluginId, meta);
+            await _resolution.ResolveAsync(item, db, ct);
+        }
 
         db.MediaItems.Add(item);
         await db.SaveChangesAsync(ct);
@@ -349,7 +365,8 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             .Select(e => e.MediaItemId)
             .FirstOrDefaultAsync(ct);
         if (byId != 0)
-            return (await db.MediaItems.FindAsync([byId], ct)!, false);
+            return (await db.MediaItems.FindAsync([byId], ct)
+                   ?? throw new InvalidOperationException($"MediaItem {byId} disappeared during sync lookup."), false);
 
         // 2. Find or create the parent show using show-level data.
         var showEvt = evt with
@@ -480,7 +497,8 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             .Select(e => e.MediaItemId)
             .FirstOrDefaultAsync(ct);
         if (byOwn != 0)
-            return (await db.MediaItems.FindAsync([byOwn], ct)!, false);
+            return (await db.MediaItems.FindAsync([byOwn], ct)
+                   ?? throw new InvalidOperationException($"MediaItem {byOwn} disappeared during sync lookup."), false);
 
         // Stage 2: AdditionalIds
         foreach (var (src, extId) in evt.AdditionalIds)
@@ -490,7 +508,11 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 .Select(e => e.MediaItemId)
                 .FirstOrDefaultAsync(ct);
             if (byAdditional != 0)
-                return (await db.MediaItems.FindAsync([byAdditional], ct)!, false);
+            {
+                await GraftExternalIdAsync(db, byAdditional, pluginId, evt.ExternalId, ct);
+                return (await db.MediaItems.FindAsync([byAdditional], ct)
+                       ?? throw new InvalidOperationException($"MediaItem {byAdditional} disappeared during sync lookup."), false);
+            }
         }
 
         // Stage 3: title + year under the resolved parent
@@ -724,19 +746,28 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             ? new Dictionary<string, JsonElement>()
             : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson) ?? [];
 
+        // Field names must match MetadataResolutionService.FieldMap so that ResolveAsync
+        // can promote values from this blob to item first-class columns (PosterUrl, Overview…).
+        // MetadataBlobOptions enforces camelCase so any future addition to this object that
+        // accidentally uses PascalCase (e.g. PosterUrl instead of posterUrl) is still correct.
         existing[pluginId] = JsonSerializer.SerializeToElement(new
         {
-            title    = meta.Title,
-            year     = meta.Year,
-            overview = meta.Overview,
-            poster   = meta.PosterUrl,
-            fanart   = meta.FanartUrl,
-            runtime  = meta.RuntimeMinutes,
-            ids      = meta.AdditionalIds,
-        });
+            title          = meta.Title,
+            year           = meta.Year,
+            overview       = meta.Overview,
+            posterUrl      = meta.PosterUrl,
+            backdropUrl    = meta.FanartUrl,
+            runtimeMinutes = meta.RuntimeMinutes,
+            ids            = meta.AdditionalIds,
+        }, MetadataEnrichmentService.MetadataBlobOptions);
 
         item.MetadataJson = JsonSerializer.Serialize(existing);
 
+        // Direct assignment as a fallback for items whose plugin is not yet configured
+        // in the metadata assignment priority map — ensures the poster is visible even
+        // before the user visits Settings → Metadata Assignment.
+        // ResolveAsync (called after this) will override with the priority-map winner
+        // if a higher-priority plugin also has a poster.
         if (!string.IsNullOrEmpty(meta.PosterUrl))
             item.PosterUrl = meta.PosterUrl;
     }

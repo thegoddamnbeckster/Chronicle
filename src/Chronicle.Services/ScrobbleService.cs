@@ -23,6 +23,20 @@ namespace Chronicle.Services
             var markedAsWatched = request.ProgressPercent >= WatchedThreshold;
             var timestamp = request.Timestamp ?? DateTime.UtcNow;
 
+            // Idempotency: don't insert duplicate events for the same user/item/timestamp.
+            var duplicate = await _context.InteractionEvents
+                .AnyAsync(e => e.UserId == userId
+                            && e.MediaItemId == request.MediaItemId
+                            && e.Timestamp == timestamp);
+            if (duplicate)
+            {
+                var existing = await _context.InteractionEvents
+                    .FirstAsync(e => e.UserId == userId
+                                  && e.MediaItemId == request.MediaItemId
+                                  && e.Timestamp == timestamp);
+                return new ScrobbleResult(existing, markedAsWatched);
+            }
+
             var evt = new InteractionEvent
             {
                 UserId = userId,

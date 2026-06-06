@@ -45,8 +45,8 @@ public sealed class DuplicateCleanupService : IScheduledTask
     /// </summary>
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
-        using var scope      = _scopeFactory.CreateScope();
-        var context          = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var context           = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
         var resolutionService = scope.ServiceProvider.GetRequiredService<IMetadataResolutionService>();
 
         int removed = 0;

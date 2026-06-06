@@ -13,6 +13,8 @@ public class MergeService(
 {
     public async Task MergeAsync(int winnerId, int loserId, int? mergedByUserId, CancellationToken ct = default)
     {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
         // ── Guard checks ──────────────────────────────────────────────────────
         if (winnerId == loserId)
             throw new InvalidOperationException("Winner and loser must be different items.");
@@ -224,6 +226,7 @@ public class MergeService(
         db.MediaItems.Remove(loser);
 
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         logger.LogInformation("Merged item {LoserId} ({LoserName}) into {WinnerId} ({WinnerName})",
             loserId, loser.Name, winnerId, winner.Name);
     }

@@ -42,19 +42,39 @@ public class MetadataResolutionService(
 
         var resolved = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 
-        foreach (var (assignmentField, jsonKey) in FieldMap)
+        if (priorityMap.Count > 0)
         {
-            if (!priorityMap.TryGetValue(assignmentField, out var plugins) || plugins.Count == 0)
-                continue;
-
-            foreach (var pluginId in plugins)
+            foreach (var (assignmentField, jsonKey) in FieldMap)
             {
-                if (!blobs.TryGetValue(pluginId, out var blob)) continue;
-                if (blob.ValueKind != JsonValueKind.Object) continue;
-                if (!blob.TryGetProperty(jsonKey, out var val)) continue;
-                if (!HasValue(val)) continue;
-                resolved[jsonKey] = val;
-                break;
+                if (!priorityMap.TryGetValue(assignmentField, out var plugins) || plugins.Count == 0)
+                    continue;
+
+                foreach (var pluginId in plugins)
+                {
+                    if (!blobs.TryGetValue(pluginId, out var blob)) continue;
+                    if (blob.ValueKind != JsonValueKind.Object) continue;
+                    if (!blob.TryGetProperty(jsonKey, out var val)) continue;
+                    if (!HasValue(val)) continue;
+                    resolved[jsonKey] = val;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            // No assignment config for this media type — auto-resolve from the first
+            // plugin blob that has each field. This ensures newly-installed plugins
+            // populate item headers without requiring manual Metadata Assignment setup.
+            foreach (var (_, jsonKey) in FieldMap)
+            {
+                foreach (var blob in blobs.Values)
+                {
+                    if (blob.ValueKind != JsonValueKind.Object) continue;
+                    if (!blob.TryGetProperty(jsonKey, out var val)) continue;
+                    if (!HasValue(val)) continue;
+                    resolved[jsonKey] = val;
+                    break;
+                }
             }
         }
 

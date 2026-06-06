@@ -19,6 +19,13 @@ public class MetadataEnrichmentService(
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
     private static readonly NfoSignalExtractor _nfoExtractor = new();
 
+    // Camelcase options used when serialising MediaMetadata objects into metadata_json plugin
+    // blobs.  MetadataResolutionService.FieldMap and MediaController._resolved reads all use
+    // camelCase keys ("posterUrl", "title", …); using default options would produce PascalCase
+    // ("PosterUrl") which TryGetProperty cannot find (case-sensitive).
+    internal static readonly JsonSerializerOptions MetadataBlobOptions =
+        new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
     // Per-plugin semaphore: prevents two concurrent batch runs for the same plugin
     // (e.g. scheduled task + manual Run Now firing simultaneously).
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim>
@@ -120,27 +127,25 @@ public class MetadataEnrichmentService(
             return;
         }
 
-        var supportedTypes = provider.GetSupportedMediaTypes()
-            .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+        // Expand declared media types to all raw DB name variants so the filter can be
+        // pushed into SQL. NormalizeMediaTypeName maps "movies"→"movie" and lowercases;
+        // we invert that here so that a plugin declaring "movie" also matches the DB value
+        // "movies" (and vice versa) without loading rows into memory to filter them.
+        var supportedRawTypes = provider.GetSupportedMediaTypes()
+            .SelectMany(t => ExpandMediaTypeName(t.MediaTypeName))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var cutoff = DateTime.UtcNow - RetryWindow;
 
         // Loop until no more eligible items remain.
-        // Each pass re-fetches completedItemIds so that items whose parents were completed
-        // in the previous pass become eligible immediately — without waiting for tomorrow's
-        // scheduled run. This is required for hierarchical content (Show→Season→Episode):
-        // pass 1 completes shows, pass 2 completes seasons, pass 3 completes episodes.
+        // The correlated EXISTS subquery re-evaluates the parent-terminal check on every
+        // pass, so items unblocked by a parent completing in pass N are picked up in pass N+1
+        // without any separate ID-list fetch. Required for hierarchical content:
+        // pass 1 resolves shows, pass 2 resolves seasons, pass 3 resolves episodes.
         int passNumber = 0;
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-
-            // Re-fetch completed IDs on every pass so newly-completed parents gate their children.
-            var completedItemIds = await db.MediaEnrichments
-                .Where(e => e.PluginId == pluginId && e.Status == EnrichmentStatus.Completed)
-                .Select(e => e.MediaItemId)
-                .ToListAsync(ct);
 
             var rows = await db.MediaEnrichments
                 .Include(x => x.MediaItem)
@@ -152,20 +157,32 @@ public class MetadataEnrichmentService(
                             (x.Status == EnrichmentStatus.Pending ||
                              (x.Status == EnrichmentStatus.Failed &&
                               (x.LastAttemptedAt == null || x.LastAttemptedAt < cutoff))) &&
-                            // Only attempt a child item once its direct parent is Completed.
+                            // Restrict to supported media types in SQL; avoids loading rows
+                            // for unsupported types and filtering them in memory.
+                            (supportedRawTypes.Count == 0 ||
+                             (x.MediaItem!.MediaType != null &&
+                              supportedRawTypes.Contains(x.MediaItem!.MediaType!.Name))) &&
+                            // Gate: only attempt a child item when its parent is not
+                            // blocking it. The correct test is NOT EXISTS (non-terminal
+                            // parent row) rather than EXISTS (terminal parent row), because:
+                            //   (a) if the parent has a terminal row  → eligible (old logic)
+                            //   (b) if the parent has NO row at all   → also eligible
+                            //       (parent doesn't need enrichment from this plugin;
+                            //        requiring a terminal row that can never exist would
+                            //        block the child permanently)
+                            //   (c) if the parent has a Pending/Failed row → not eligible
                             // Root items (no parent) are always eligible.
                             (x.MediaItem!.ParentId == null ||
-                             completedItemIds.Contains(x.MediaItem!.ParentId.Value)))
+                             !db.MediaEnrichments.Any(p =>
+                                 p.MediaItemId == x.MediaItem!.ParentId &&
+                                 p.PluginId == pluginId &&
+                                 p.Status != EnrichmentStatus.Completed &&
+                                 p.Status != EnrichmentStatus.NotFound  &&
+                                 p.Status != EnrichmentStatus.Exhausted &&
+                                 p.Status != EnrichmentStatus.Skipped)))
                 .OrderBy(x => x.MediaItem!.HierarchyLevel)
+                .Take(500)
                 .ToListAsync(ct);
-
-            // Filter out items whose media type is not supported by this plugin.
-            if (supportedTypes.Count > 0)
-                rows = rows.Where(r =>
-                {
-                    var mt = NormalizeMediaTypeName(r.MediaItem?.MediaType?.Name ?? string.Empty);
-                    return supportedTypes.Contains(mt);
-                }).ToList();
 
             if (rows.Count == 0)
                 break; // No more eligible work — all passes complete.
@@ -180,10 +197,89 @@ public class MetadataEnrichmentService(
                 ct.ThrowIfCancellationRequested();
                 await EnrichOneAsync(db, provider, row, ct);
             }
+
+            // All items in this pass have been saved. Clear the change tracker so that
+            // the next pass's ToListAsync starts with a clean slate — otherwise tracked
+            // entities accumulate across passes (and across all items in each pass),
+            // causing SaveChangesAsync to scan an ever-growing set of tracked objects.
+            // For a 38k-item music library processed in 3 passes this would otherwise
+            // hold ~114k entities in memory by the time the last pass completes.
+            db.ChangeTracker.Clear();
         }
 
-        if (passNumber == 0)
+        // ── Post-run diagnostics and cleanup ─────────────────────────────────────
+
+        // 1. Mark any remaining Pending items whose media type is not supported by
+        //    this plugin as Skipped. These rows were never eligible for the main loop
+        //    (the WHERE clause filters them out), so they would otherwise sit in
+        //    Pending forever — invisible progress that fills the counter with noise.
+        //    Skipped = "this plugin won't handle this item" — user-visible and not retried.
+        if (supportedRawTypes.Count > 0)
+        {
+            var unsupportedPending = await db.MediaEnrichments
+                .Include(x => x.MediaItem).ThenInclude(m => m!.MediaType)
+                .Where(x => x.PluginId == pluginId &&
+                            x.Status == EnrichmentStatus.Pending &&
+                            (x.MediaItem!.MediaType == null ||
+                             !supportedRawTypes.Contains(x.MediaItem!.MediaType!.Name)))
+                .ToListAsync(ct);
+
+            if (unsupportedPending.Count > 0)
+            {
+                foreach (var row in unsupportedPending)
+                {
+                    row.Status       = EnrichmentStatus.Skipped;
+                    row.ErrorMessage = $"Media type '{row.MediaItem?.MediaType?.Name ?? "unknown"}' " +
+                                       $"is not supported by plugin '{pluginId}'.";
+                }
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation(
+                    "EnrichPendingAsync: marked {Count} items as Skipped for {PluginId} — " +
+                    "media type not supported by this plugin",
+                    unsupportedPending.Count, pluginId);
+                db.ChangeTracker.Clear();
+            }
+        }
+
+        // 2. Diagnostic summary — log how many items are still Pending after the run
+        //    and break them down by reason so the cause is visible in logs.
+        var stillPending = await db.MediaEnrichments
+            .Where(x => x.PluginId == pluginId && x.Status == EnrichmentStatus.Pending)
+            .CountAsync(ct);
+
+        if (stillPending > 0)
+        {
+            // Parent still unresolved (Pending or Failed within the retry window) — expected,
+            // those items will become eligible once the parent is retried.
+            var parentBlocked = await db.MediaEnrichments
+                .Where(x => x.PluginId == pluginId &&
+                            x.Status == EnrichmentStatus.Pending &&
+                            x.MediaItem!.ParentId != null &&
+                            db.MediaEnrichments.Any(p =>
+                                p.MediaItemId == x.MediaItem!.ParentId &&
+                                p.PluginId == pluginId &&
+                                p.Status != EnrichmentStatus.Completed &&
+                                p.Status != EnrichmentStatus.NotFound  &&
+                                p.Status != EnrichmentStatus.Exhausted &&
+                                p.Status != EnrichmentStatus.Skipped))
+                .CountAsync(ct);
+
+            logger.LogInformation(
+                "EnrichPendingAsync complete for {PluginId}: {Passes} pass(es), " +
+                "{StillPending} items still Pending " +
+                "({ParentBlocked} waiting for parent to resolve, {Other} other — check enrichment drill-down)",
+                pluginId, passNumber, stillPending, parentBlocked, stillPending - parentBlocked);
+        }
+        else if (passNumber > 0)
+        {
+            logger.LogInformation(
+                "EnrichPendingAsync complete for {PluginId}: {Passes} pass(es), all items resolved",
+                pluginId, passNumber);
+        }
+        else
+        {
             logger.LogDebug("EnrichPendingAsync: no eligible items for plugin {PluginId}", pluginId);
+        }
         } // end try
         finally { sem.Release(); }
     }
@@ -291,9 +387,15 @@ public class MetadataEnrichmentService(
 
         if (importProviderIds.Count > 0)
         {
-            // Collect the set of (mediaItemId, canonicalPluginId) pairs that DO have an
-            // external ID so we know which import-provider enrichment rows are legitimate.
-            var coveredByExternalId = (await db.Set<MediaExternalId>().ToListAsync(ct))
+            // Filter to only the sources that belong to known import providers — avoids
+            // loading the entire media_external_ids table into memory.
+            var importSources = importProviderIds
+                .Select(pid => pid.Contains('.') ? pid.Split('.').Last() : pid)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var coveredByExternalId = (await db.Set<MediaExternalId>()
+                .Where(e => importSources.Contains(e.Source))
+                .ToListAsync(ct))
                 .Select(e => (e.MediaItemId, PluginId: CanonicalPluginId(e.Source)))
                 .Where(p => importProviderIds.Contains(p.PluginId))
                 .ToHashSet();
@@ -324,9 +426,11 @@ public class MetadataEnrichmentService(
             .Select(e => (e.MediaItemId, e.PluginId))
             .ToHashSet();
 
-        // Candidates: external IDs mapped to canonical plugin IDs, deduplicated
+        // Candidates: external IDs mapped to canonical plugin IDs, deduplicated.
+        // Filter to known plugin sources in SQL to avoid loading the entire table.
+        var knownSources = shortToFull.Keys.ToList();
         var candidates = (await db.Set<MediaExternalId>()
-            .Where(mei => mei.ExternalId != "__suppress__")
+            .Where(mei => mei.ExternalId != "__suppress__" && knownSources.Contains(mei.Source))
             .ToListAsync(ct))
             .Select(mei => (MediaItemId: mei.MediaItemId,
                             PluginId:    CanonicalPluginId(mei.Source),
@@ -1258,6 +1362,24 @@ public class MetadataEnrichmentService(
         name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
     /// <summary>
+    /// Returns all raw DB name variants that <see cref="NormalizeMediaTypeName"/> would map to
+    /// the same canonical form as <paramref name="name"/>. Used to build a SQL-translatable set
+    /// for <see cref="EnrichPendingAsync"/> so the media-type filter runs in SQL rather than
+    /// in memory after the rows are fetched.
+    /// </summary>
+    private static IEnumerable<string> ExpandMediaTypeName(string name)
+    {
+        var lower = name.ToLowerInvariant();
+        // "movie" and "movies" normalize to the same canonical form — include both variants.
+        // Always return lowercase so EF-generated SQL IN ('movie','movies') matches the DB's
+        // lowercase values. StringComparer.OrdinalIgnoreCase on the HashSet only helps C#
+        // lookups; SQL IN literals are compared case-sensitively in SQLite.
+        if (lower == "movie" || lower == "movies")
+            return ["movie", "movies"];
+        return [lower];
+    }
+
+    /// <summary>
     /// Strips Lucene range/special operators then wraps in double quotes for exact phrase matching.
     /// Operators like &lt;&gt;{}[]^~ break MusicBrainz SOLR if left unescaped in the query string.
     /// </summary>
@@ -1599,7 +1721,7 @@ public class MetadataEnrichmentService(
         result.TotalResults = 0;
         try
         {
-            existing[pluginId] = JsonSerializer.SerializeToElement(result);
+            existing[pluginId] = JsonSerializer.SerializeToElement(result, MetadataBlobOptions);
             item.MetadataJson  = JsonSerializer.Serialize(existing);
         }
         finally
@@ -1964,7 +2086,7 @@ public class MetadataEnrichmentService(
         var savedTotal   = meta.TotalResults;
         meta.Results      = null;
         meta.TotalResults = 0;
-        try   { existing[pluginId] = JsonSerializer.SerializeToElement(meta); }
+        try   { existing[pluginId] = JsonSerializer.SerializeToElement(meta, MetadataBlobOptions); }
         finally { meta.Results = savedResults; meta.TotalResults = savedTotal; }
         item.MetadataJson = JsonSerializer.Serialize(existing);
 
@@ -1998,7 +2120,39 @@ public class MetadataEnrichmentService(
         ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct,
         string? excludePluginId = null)
     {
-        var (source, extId) = ParseExternalId(rawExternalId);
+        // Derive the source from the calling plugin's short ID so each plugin writes to
+        // its own row in media_external_ids. The old ParseExternalId fallback mapped every
+        // non-IMDB format to "tmdb", which caused MusicBrainz, Hardcover, SIMKL, etc. to
+        // all share one "tmdb" row per item. When plugin B later processed the same item
+        // and stored a different ExternalId, it would find plugin A's value in that shared
+        // row, detect a change (idChanged = true), and cascade-reset all sibling enrichment
+        // rows — including plugin A's Completed row — back to Pending spuriously.
+        string source;
+        string extId;
+
+        if (rawExternalId.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
+        {
+            // IMDB IDs from any plugin are stored in a shared "imdb" source row.
+            source = "imdb";
+            extId  = rawExternalId[5..];
+        }
+        else if (excludePluginId is not null)
+        {
+            // Normal path: source = last segment of the calling plugin's full ID.
+            //   "chronicle.plugin.tmdb"        → "tmdb"
+            //   "chronicle.plugin.musicbrainz" → "musicbrainz"
+            //   "hardcover"                    → "hardcover"
+            source = excludePluginId.Contains('.')
+                ? excludePluginId[(excludePluginId.LastIndexOf('.') + 1)..]
+                : excludePluginId;
+            extId = rawExternalId;
+        }
+        else
+        {
+            // Fallback for callers that don't identify themselves (legacy/test paths).
+            (source, extId) = ParseExternalId(rawExternalId);
+        }
+
         var existing = await db.MediaExternalIds
             .FirstOrDefaultAsync(e => e.MediaItemId == mediaItemId && e.Source == source, ct);
 
