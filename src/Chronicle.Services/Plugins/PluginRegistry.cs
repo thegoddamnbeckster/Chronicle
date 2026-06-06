@@ -153,6 +153,8 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         // This allows the DLL to be overwritten on disk while the plugin is running,
         // which is what makes hot-deploy possible on Windows without a GC wait.
         var loadContext = new PluginLoadContext(dllPath);
+        try
+        {
         var dllBytes    = await File.ReadAllBytesAsync(dllPath, ct);
         Assembly assembly;
         using (var ms = new MemoryStream(dllBytes))
@@ -227,6 +229,14 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             importProviders.Count, reportPlugins.Count, fileScanners.Count);
 
         return loaded;
+        } // end try
+        catch
+        {
+            // If anything goes wrong after creating the PluginLoadContext, unload it
+            // so the isolated ALC is not leaked in memory.
+            loadContext.Unload();
+            throw;
+        }
     }
 
     /// <inheritdoc/>
@@ -262,8 +272,21 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     private static List<T> DiscoverAndInstantiate<T>(Assembly assembly, ILogger log)
         where T : class
     {
+        Type[] exportedTypes;
+        try
+        {
+            exportedTypes = assembly.GetExportedTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            // Surface each loader exception individually so the root cause is visible in logs.
+            foreach (var loaderEx in ex.LoaderExceptions.Where(e => e is not null))
+                log.Error(loaderEx, "Type-load failure in {Assembly}", assembly.FullName);
+            exportedTypes = ex.Types.Where(t => t is not null).ToArray()!;
+        }
+
         var results = new List<T>();
-        foreach (var type in assembly.GetExportedTypes())
+        foreach (var type in exportedTypes)
         {
             if (!typeof(T).IsAssignableFrom(type) || type.IsAbstract || type.IsInterface)
                 continue;

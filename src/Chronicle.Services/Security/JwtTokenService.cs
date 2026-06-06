@@ -22,7 +22,9 @@ namespace Chronicle.Services.Security
                 throw new InvalidOperationException("JWT secret must be at least 64 characters.");
 
             _key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
-            _expirationHours = int.TryParse(configuration["Security:JwtExpirationHours"], out var h) ? h : 24;
+            _expirationHours = int.TryParse(configuration["Security:JwtExpirationHours"], out var h) && h > 0 ? h : 24;
+            if (h <= 0 && configuration["Security:JwtExpirationHours"] is not null)
+                Log.Warning("Security:JwtExpirationHours must be a positive integer — defaulting to 24 hours");
         }
 
         public string GenerateToken(User user)
