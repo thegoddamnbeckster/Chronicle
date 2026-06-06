@@ -485,15 +485,22 @@ public class PluginsController : ControllerBase
         if (loaded is null)
             return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_LOADED", "Plugin is not currently loaded."));
 
-        // Try provider types in priority order
-        if (loaded.MetadataProviders.Count > 0)
-            return Ok(ApiResponse<object>.Ok(loaded.MetadataProviders[0].GetSettingsSchema()));
+        // Merge settings schemas from all provider types in the plugin DLL.
+        // A plugin like Trakt has both IMetadataProvider (client_id only) and
+        // IImportProvider (client_id + client_secret), so we must union them.
+        var merged = new Dictionary<string, SettingDefinition>(StringComparer.OrdinalIgnoreCase);
+        void MergeSchema(PluginSettingsSchema s)
+        {
+            foreach (var def in s.Settings)
+                merged.TryAdd(def.Key, def);
+        }
 
-        if (loaded.FileScannerPlugins.Count > 0)
-            return Ok(ApiResponse<object>.Ok(loaded.FileScannerPlugins[0].GetSettingsSchema()));
+        foreach (var p in loaded.MetadataProviders)  try { MergeSchema(p.GetSettingsSchema()); } catch { }
+        foreach (var p in loaded.FileScannerPlugins) try { MergeSchema(p.GetSettingsSchema()); } catch { }
+        foreach (var p in loaded.ImportProviders)    try { MergeSchema(p.GetSettingsSchema()); } catch { }
 
-        if (loaded.ImportProviders.Count > 0)
-            return Ok(ApiResponse<object>.Ok(loaded.ImportProviders[0].GetSettingsSchema()));
+        if (merged.Count > 0)
+            return Ok(ApiResponse<object>.Ok(new PluginSettingsSchema { Settings = [.. merged.Values] }));
 
         return Ok(ApiResponse<object>.Ok(new { settings = Array.Empty<object>() }));
     }
