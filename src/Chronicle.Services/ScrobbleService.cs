@@ -37,7 +37,7 @@ namespace Chronicle.Services
             _context.InteractionEvents.Add(evt);
 
             if (markedAsWatched)
-                await UpdateLibraryStatusAsync(userId, request.MediaItemId, mediaItem, ct);
+                await UpdateLibraryStatusAsync(userId, request.MediaItemId, ct);
 
             try
             {
@@ -73,7 +73,7 @@ namespace Chronicle.Services
                 .ToListAsync();
         }
 
-        private async Task UpdateLibraryStatusAsync(int userId, int mediaItemId, MediaItem mediaItem, CancellationToken ct)
+        private async Task UpdateLibraryStatusAsync(int userId, int mediaItemId, CancellationToken ct)
         {
             var entry = await _context.UserLibraries
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);

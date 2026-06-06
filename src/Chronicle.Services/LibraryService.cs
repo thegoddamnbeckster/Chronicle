@@ -15,10 +15,10 @@ namespace Chronicle.Services
             _context = context;
         }
 
-        public async Task<UserLibrary> AddAsync(int userId, AddToLibraryRequest request)
+        public async Task<UserLibrary> AddAsync(int userId, AddToLibraryRequest request, CancellationToken ct = default)
         {
             var existing = await _context.UserLibraries
-                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == request.MediaItemId);
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == request.MediaItemId, ct);
 
             if (existing != null)
                 return existing;
@@ -33,11 +33,11 @@ namespace Chronicle.Services
             };
 
             _context.UserLibraries.Add(entry);
-            await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync(ct);
 
-            await _context.Entry(entry).Reference(e => e.MediaItem).LoadAsync();
+            await _context.Entry(entry).Reference(e => e.MediaItem).LoadAsync(ct);
             if (entry.MediaItem != null)
-                await _context.Entry(entry.MediaItem).Reference(m => m.MediaType).LoadAsync();
+                await _context.Entry(entry.MediaItem).Reference(m => m.MediaType).LoadAsync(ct);
 
             return entry;
         }
@@ -241,10 +241,14 @@ namespace Chronicle.Services
             // Count before deletion for the return value
             var count = await _context.UserLibraries.CountAsync(ct);
 
-            // Delete in dependency order to avoid FK violations
+            // Delete in dependency order to avoid FK violations.
+            // Every table that references media_items or user_libraries must be cleared first.
             await _context.InteractionEvents.ExecuteDeleteAsync(ct);
             await _context.UserLibraries.ExecuteDeleteAsync(ct);
             await _context.MediaExternalIds.ExecuteDeleteAsync(ct);
+            await _context.MediaEnrichments.ExecuteDeleteAsync(ct);
+            await _context.MediaCredits.ExecuteDeleteAsync(ct);
+            await _context.MediaListItems.ExecuteDeleteAsync(ct);
             await _context.MediaItems.ExecuteDeleteAsync(ct);
 
             return count;
@@ -276,12 +280,24 @@ namespace Chronicle.Services
             var allDescendantIds = await GetAllDescendantIdsAsync(scannerItemIds, ct);
             var allIds = scannerItemIds.Concat(allDescendantIds).Distinct().ToList();
 
+            await _context.InteractionEvents
+                .Where(e => allIds.Contains(e.MediaItemId))
+                .ExecuteDeleteAsync(ct);
+
             await _context.UserLibraries
                 .Where(l => allIds.Contains(l.MediaItemId))
                 .ExecuteDeleteAsync(ct);
 
             await _context.MediaExternalIds
                 .Where(e => allIds.Contains(e.MediaItemId))
+                .ExecuteDeleteAsync(ct);
+
+            await _context.MediaEnrichments
+                .Where(e => allIds.Contains(e.MediaItemId))
+                .ExecuteDeleteAsync(ct);
+
+            await _context.MediaCredits
+                .Where(c => allIds.Contains(c.MediaItemId))
                 .ExecuteDeleteAsync(ct);
 
             // Deleting root items cascades to child media_items automatically.
