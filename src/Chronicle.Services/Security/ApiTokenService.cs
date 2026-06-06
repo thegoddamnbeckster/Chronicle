@@ -20,6 +20,9 @@ public class ApiTokenService : IApiTokenService
     public async Task<(ApiToken Token, string RawValue)> CreateTokenAsync(
         int userId, string name, DateTime? expiresAt, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Token name must not be empty.", nameof(name));
+
         // Format: chr_live_ + 32 lowercase hex chars (16 cryptographically random bytes)
         var rawBytes = RandomNumberGenerator.GetBytes(16);
         var rawToken = "chr_live_" + Convert.ToHexString(rawBytes).ToLowerInvariant();
@@ -59,9 +62,14 @@ public class ApiTokenService : IApiTokenService
         if (token.ExpiresAt.HasValue && token.ExpiresAt.Value < DateTime.UtcNow)
             return null;
 
-        // Update last-used timestamp
-        token.LastUsedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        // Update last-used timestamp — debounced to at most once per 5 minutes so
+        // high-frequency scrobbler requests don't generate a DB write on every call.
+        var now = DateTime.UtcNow;
+        if (token.LastUsedAt is null || (now - token.LastUsedAt.Value).TotalMinutes >= 5)
+        {
+            token.LastUsedAt = now;
+            await _db.SaveChangesAsync(ct);
+        }
 
         return token;
     }
