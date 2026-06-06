@@ -215,4 +215,13 @@ public interface IImportProvider
         string mediaType,
         CancellationToken ct = default)
         => Task.FromResult<ImportedItemMetadata?>(null);
+
+    /// <summary>
+    /// Returns updated OAuth settings (e.g. refreshed tokens) if the provider silently
+    /// refreshed its access token since the last Configure() call.
+    /// Chronicle calls this after each sync/import operation and persists any returned
+    /// settings via MergeSettingsAsync so refreshed tokens survive the next restart.
+    /// Default: null — no refresh occurred.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? GetRefreshedSettings() => null;
 }

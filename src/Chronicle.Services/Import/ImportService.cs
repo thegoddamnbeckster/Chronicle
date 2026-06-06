@@ -18,13 +18,15 @@ namespace Chronicle.Services.Import;
 public class ImportService : IImportService
 {
     private readonly ChronicleDbContext _db;
-    private readonly IPluginRegistry _registry;
+    private readonly IPluginRegistry   _registry;
+    private readonly IPluginService    _pluginService;
     private readonly ILogger _log = Log.ForContext<ImportService>();
 
-    public ImportService(ChronicleDbContext db, IPluginRegistry registry)
+    public ImportService(ChronicleDbContext db, IPluginRegistry registry, IPluginService pluginService)
     {
-        _db = db;
-        _registry = registry;
+        _db            = db;
+        _registry      = registry;
+        _pluginService = pluginService;
     }
 
     // ── Provider discovery ────────────────────────────────────────────────────
@@ -109,6 +111,7 @@ public class ImportService : IImportService
         }
 
         await _db.SaveChangesAsync(ct);
+        await PersistRefreshedTokensAsync(provider, pluginId, ct);
         _log.Information("History import done — imported {I}, skipped {S}", imported, skipped);
         return new ImportResult(imported, skipped, errors);
     }
@@ -146,6 +149,7 @@ public class ImportService : IImportService
         }
 
         await _db.SaveChangesAsync(ct);
+        await PersistRefreshedTokensAsync(provider, pluginId, ct);
         _log.Information("Ratings import done — imported {I}, skipped {S}", imported, skipped);
         return new ImportResult(imported, skipped, errors);
     }
@@ -189,11 +193,23 @@ public class ImportService : IImportService
         }
 
         await _db.SaveChangesAsync(ct);
+        await PersistRefreshedTokensAsync(provider, pluginId, ct);
         _log.Information("Watchlist import done — imported {I}, skipped {S}", imported, skipped);
         return new ImportResult(imported, skipped, errors);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private async Task PersistRefreshedTokensAsync(
+        IImportProvider provider, string pluginId, CancellationToken ct)
+    {
+        var refreshed = provider.GetRefreshedSettings();
+        if (refreshed is { Count: > 0 })
+        {
+            _log.Information("Persisting refreshed OAuth tokens for {Plugin}", pluginId);
+            await _pluginService.MergeSettingsAsync(pluginId, refreshed, ct);
+        }
+    }
 
     private IImportProvider GetProvider(string pluginId)
     {
