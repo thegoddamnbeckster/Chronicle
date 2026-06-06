@@ -20,7 +20,7 @@ namespace Chronicle.Tests.Integration
             builder.UseEnvironment("Testing");
 
             // Override config before the host builds
-            builder.UseSetting("Security:JwtSecret", "integration-test-secret-32-characters-min");
+            builder.UseSetting("Security:JwtSecret", "integration-test-secret-must-be-64-characters-long-for-chronicle-integration-tests");
             builder.UseSetting("Security:JwtExpirationHours", "1");
 
             builder.ConfigureServices(services =>
