@@ -107,18 +107,24 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       const canonical = resolveStorageKey(rawSaved, fetched)
       const match     = fetched.find(t => themeStorageKey(t.pluginId, t.key) === canonical)
 
-      if (!match) return // No theme plugins loaded at all — leave cached vars as-is.
+      // If canonical (DEFAULT_KEY) still doesn't resolve (default plugin not loaded),
+      // fall back to the very first available theme rather than leaving the UI with
+      // no active theme at all.
+      const resolved = match ?? fetched[0]
+      if (!resolved) return // Should be unreachable — we already guarded fetched.length === 0 above.
+
+      const resolvedKey = themeStorageKey(resolved.pluginId, resolved.key)
 
       // Persist the canonical key (upgrades legacy bare keys to new format).
-      if (canonical !== rawSaved) {
-        localStorage.setItem(KEY_ACTIVE, canonical)
+      if (resolvedKey !== rawSaved) {
+        localStorage.setItem(KEY_ACTIVE, resolvedKey)
       }
-      setActiveKey(canonical)
+      setActiveKey(resolvedKey)
 
       // Re-apply using fresh plugin data so variable changes in updated plugins
       // are picked up without requiring the user to manually switch themes.
-      applyVariables(match.variables)
-      localStorage.setItem(KEY_VARS_CACHE, JSON.stringify(match.variables))
+      applyVariables(resolved.variables)
+      localStorage.setItem(KEY_VARS_CACHE, JSON.stringify(resolved.variables))
     })()
     return () => { cancelled = true }
   }, [])
