@@ -155,44 +155,13 @@ public class SettingsController : ControllerBase
         var dbPlugins  = await _db.Plugins.ToListAsync();
         var allEntries = _pluginRegistry.GetMetadataProviderEntries().ToList();
 
-        // Build per-type plugin lists.  Compound keys ("tv.1") match plugins that declare support
-        // for the base type ("tv").  NormalizeMediaTypeName maps "movies" ↔ "movie" so DB plural
-        // and plugin singular forms both resolve correctly.
-        var availablePlugins = assignableFields.Keys.ToDictionary(
-            assignmentKey => assignmentKey,
-            assignmentKey =>
-            {
-                var dot = assignmentKey.IndexOf('.');
-                var baseTypeName = NormalizeMediaTypeName(dot < 0 ? assignmentKey : assignmentKey[..dot]);
-
-                // Include providers for the parent type (e.g. "tv" providers also offered for "anime").
-                TypeParentMap.TryGetValue(baseTypeName, out var parentTypeName);
-
-                return allEntries
-                    .Where(e => e.Provider.GetSupportedMediaTypes()
-                        .Any(t =>
-                        {
-                            var tn = NormalizeMediaTypeName(t.MediaTypeName);
-                            return string.Equals(tn, baseTypeName, StringComparison.OrdinalIgnoreCase)
-                                || (parentTypeName != null && string.Equals(tn, parentTypeName, StringComparison.OrdinalIgnoreCase));
-                        }))
-                    .Select(e =>
-                    {
-                        var dbPlugin = dbPlugins.FirstOrDefault(p =>
-                            string.Equals(p.PluginId, e.PluginId, StringComparison.OrdinalIgnoreCase));
-                        var iconUrl = dbPlugin != null && e.IconUrl != null
-                            ? $"/api/v1/plugins/{dbPlugin.Id}/icon"
-                            : (string?)null;
-                        return new { pluginId = e.PluginId, name = e.Provider.Name, iconUrl };
-                    })
-                    .ToList<object>();
-            });
-
-        // Build per-field plugin lists: for each (mediaTypeKey, field), which plugins actually
-        // declare that field in their SupportedFields / LevelFields?
-        // A plugin with no SupportedFields declaration for a type is treated as supporting all fields
-        // (legacy / generic providers). A plugin that explicitly lists SupportedFields is held to that
-        // list — it will only appear on fields it declared.
+        // Build per-field plugin lists first — computed before availablePlugins so we can
+        // use it to filter which plugins appear in the Display Order row.
+        //
+        // For each (mediaTypeKey, field), which plugins actually declare support for that field
+        // via their SupportedFields / LevelFields?  A plugin with no SupportedFields declaration
+        // for a type is treated as supporting every field (generic / legacy provider).  A plugin
+        // that explicitly lists SupportedFields is held to that list.
         // Shape: mediaTypeKey → fieldName → pluginId[]
         var fieldPlugins = assignableFields.Keys.ToDictionary(
             assignmentKey => assignmentKey,
@@ -206,37 +175,62 @@ public class SettingsController : ControllerBase
 
                 return assignableFields[assignmentKey].ToDictionary(
                     field => field,
-                    field =>
+                    field => allEntries
+                        .Where(e =>
+                        {
+                            // Find the matching MediaTypeSupport for this plugin + media type.
+                            var support = e.Provider.GetSupportedMediaTypes()
+                                .FirstOrDefault(s =>
+                                {
+                                    var tn = NormalizeMediaTypeName(s.MediaTypeName);
+                                    return string.Equals(tn, baseTypeName, StringComparison.OrdinalIgnoreCase)
+                                        || (parentTypeName != null && string.Equals(tn, parentTypeName, StringComparison.OrdinalIgnoreCase));
+                                });
+
+                            if (support == null) return false;
+
+                            // If the plugin declares no SupportedFields at all, treat it as
+                            // supporting every field (generic / legacy provider).
+                            var rootFields = support.SupportedFields;
+                            if (rootFields == null || rootFields.Count == 0) return true;
+
+                            // For sub-levels, prefer LevelFields if declared, fall back to root.
+                            IEnumerable<string> effectiveFields = level > 0
+                                ? (support.LevelFields?.GetValueOrDefault(level) ?? (IEnumerable<string>)rootFields)
+                                : rootFields;
+
+                            return effectiveFields.Contains(field, StringComparer.OrdinalIgnoreCase);
+                        })
+                        .Select(e => e.PluginId)
+                        .ToList());
+            });
+
+        // Build per-type plugin lists for the Display Order row.
+        // A plugin only appears here if it contributes to at least one assignable field at this
+        // specific level — this prevents artwork-only plugins (e.g. Fanart.tv) from cluttering
+        // the display order for levels where every field is text-only (e.g. TV/anime episodes).
+        var availablePlugins = assignableFields.Keys.ToDictionary(
+            assignmentKey => assignmentKey,
+            assignmentKey =>
+            {
+                // Collect the set of plugin IDs that appear in at least one field at this level.
+                var pluginsWithAnyField = fieldPlugins[assignmentKey]
+                    .Values
+                    .SelectMany(ids => ids)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                return allEntries
+                    .Where(e => pluginsWithAnyField.Contains(e.PluginId))
+                    .Select(e =>
                     {
-                        return allEntries
-                            .Where(e =>
-                            {
-                                // Find the matching MediaTypeSupport for this plugin + media type.
-                                var support = e.Provider.GetSupportedMediaTypes()
-                                    .FirstOrDefault(s =>
-                                    {
-                                        var tn = NormalizeMediaTypeName(s.MediaTypeName);
-                                        return string.Equals(tn, baseTypeName, StringComparison.OrdinalIgnoreCase)
-                                            || (parentTypeName != null && string.Equals(tn, parentTypeName, StringComparison.OrdinalIgnoreCase));
-                                    });
-
-                                if (support == null) return false;
-
-                                // If the plugin declares no SupportedFields at all, treat it as
-                                // supporting every field (generic / legacy provider).
-                                var rootFields = support.SupportedFields;
-                                if (rootFields == null || rootFields.Count == 0) return true;
-
-                                // For sub-levels, prefer LevelFields if declared, fall back to root.
-                                IEnumerable<string> effectiveFields = level > 0
-                                    ? (support.LevelFields?.GetValueOrDefault(level) ?? (IEnumerable<string>)rootFields)
-                                    : rootFields;
-
-                                return effectiveFields.Contains(field, StringComparer.OrdinalIgnoreCase);
-                            })
-                            .Select(e => e.PluginId)
-                            .ToList();
-                    });
+                        var dbPlugin = dbPlugins.FirstOrDefault(p =>
+                            string.Equals(p.PluginId, e.PluginId, StringComparison.OrdinalIgnoreCase));
+                        var iconUrl = dbPlugin != null && e.IconUrl != null
+                            ? $"/api/v1/plugins/{dbPlugin.Id}/icon"
+                            : (string?)null;
+                        return new { pluginId = e.PluginId, name = e.Provider.Name, iconUrl };
+                    })
+                    .ToList<object>();
             });
 
         // Build display name map from DB MediaType rows.
