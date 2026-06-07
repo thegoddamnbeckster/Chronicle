@@ -157,7 +157,7 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
 export default function PluginsPage() {
   const { user } = useAuth()
   const isAdmin = user?.isAdmin ?? false
-  const { themes: availableThemes, activeKey: activeTheme, setTheme } = useTheme()
+  const { themes: availableThemes, activeKey: activeTheme, setTheme, loading: themesLoading } = useTheme()
   const queryClient = useQueryClient()
 
   const [plugins, setPlugins]               = useState<PluginDto[]>([])
@@ -515,7 +515,7 @@ export default function PluginsPage() {
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>Themes</h2>
         <div className={styles.themeGrid}>
-          {availableThemes.length === 0 && (
+          {themesLoading && (
             <p className={styles.loading}>Loading themes…</p>
           )}
           {availableThemes.map((t) => {
