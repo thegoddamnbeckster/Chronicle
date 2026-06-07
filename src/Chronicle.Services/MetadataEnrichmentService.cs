@@ -1145,23 +1145,31 @@ public class MetadataEnrichmentService(
                     var storedAltNames = row.MediaItem.HierarchyLevel == 0
                         ? ExtractStoredAlternateNames(row.MediaItem.MetadataJson)
                         : null;
+
+                    // Populate KnownExternalIds so artwork-only providers (e.g. Fanart.tv) can
+                    // cross-reference TMDB / TVDB / MusicBrainz IDs without a text-search round-trip.
+                    var knownExternalIds = await db.MediaExternalIds
+                        .Where(e => e.MediaItemId == row.MediaItemId)
+                        .ToDictionaryAsync(e => e.Source.ToLowerInvariant(), e => e.ExternalId, ct);
+
                     var searchCtx = new MediaSearchContext(
-                            Name:            row.MediaItem.Name,
-                            Year:            ValidateYear(row.MediaItem.Year),
-                            ParentName:      fileScannedParent,
-                            GrandparentName: row.MediaItem.Parent?.Parent?.Name,
-                            ItemNumber:      row.MediaItem.Number,
-                            HierarchyLevel:  row.MediaItem.HierarchyLevel,
-                            FilenameStem:    filenameStem,
-                            SiblingNames:    siblingNames,
-                            AltTitles:       BuildAltTitles(
-                                                 row.MediaItem.Name,
-                                                 filenameStem,
-                                                 folderDerivedAltTitle,
-                                                 storedAltNames),
-                            ChildNames:      childNames,
-                            SubItemMetadata: subItemMetadata,
-                            MediaTypeName:   mediaTypeName);
+                            Name:             row.MediaItem.Name,
+                            Year:             ValidateYear(row.MediaItem.Year),
+                            ParentName:       fileScannedParent,
+                            GrandparentName:  row.MediaItem.Parent?.Parent?.Name,
+                            ItemNumber:       row.MediaItem.Number,
+                            HierarchyLevel:   row.MediaItem.HierarchyLevel,
+                            FilenameStem:     filenameStem,
+                            SiblingNames:     siblingNames,
+                            AltTitles:        BuildAltTitles(
+                                                  row.MediaItem.Name,
+                                                  filenameStem,
+                                                  folderDerivedAltTitle,
+                                                  storedAltNames),
+                            ChildNames:       childNames,
+                            SubItemMetadata:  subItemMetadata,
+                            MediaTypeName:    mediaTypeName,
+                            KnownExternalIds: knownExternalIds.Count > 0 ? knownExternalIds : null);
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
@@ -1901,19 +1909,23 @@ public class MetadataEnrichmentService(
                 var storedAltNames = item.HierarchyLevel == 0
                     ? ExtractStoredAlternateNames(item.MetadataJson)
                     : null;
+                var knownIds = await db.MediaExternalIds
+                    .Where(e => e.MediaItemId == item.Id)
+                    .ToDictionaryAsync(e => e.Source.ToLowerInvariant(), e => e.ExternalId, ct);
                 var ctx = new Chronicle.Plugins.Models.MediaSearchContext(
-                    Name:           NormalizeSearchName(item.Name),
-                    Year:           ValidateYear(item.Year),
-                    ParentName:     item.Parent?.Name,
-                    ChildCount:     childCount > 0 ? childCount : null,
-                    HierarchyLevel: item.HierarchyLevel,
-                    FilenameStem:   filenameStem,
-                    AltTitles:      BuildAltTitles(
-                                        item.Name,
-                                        filenameStem,
-                                        null,
-                                        storedAltNames),
-                    MediaTypeName:  item.MediaType?.Name);
+                    Name:             NormalizeSearchName(item.Name),
+                    Year:             ValidateYear(item.Year),
+                    ParentName:       item.Parent?.Name,
+                    ChildCount:       childCount > 0 ? childCount : null,
+                    HierarchyLevel:   item.HierarchyLevel,
+                    FilenameStem:     filenameStem,
+                    AltTitles:        BuildAltTitles(
+                                          item.Name,
+                                          filenameStem,
+                                          null,
+                                          storedAltNames),
+                    MediaTypeName:    item.MediaType?.Name,
+                    KnownExternalIds: knownIds.Count > 0 ? knownIds : null);
 
                 var candidates = await provider.SearchAsync(ctx, ct);
                 var best = candidates.OrderByDescending(c => c.Score).FirstOrDefault();

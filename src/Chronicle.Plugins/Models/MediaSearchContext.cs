@@ -75,5 +75,14 @@ public record MediaSearchContext(
     /// e.g. TMDB searches only /search/movie for movie-type items and only /search/tv for TV items.
     /// Null means the caller did not provide a type; plugins should search all applicable endpoints.
     /// </summary>
-    string? MediaTypeName = null
+    string? MediaTypeName = null,
+
+    /// <summary>
+    /// External IDs already known for this item, keyed by source name (e.g. "tmdb", "tvdb",
+    /// "musicbrainz", "imdb"). Populated by the enrichment service from <c>media_external_ids</c>
+    /// before the search is issued. Artwork-only providers (e.g. Fanart.tv) that have no
+    /// text-search endpoint use these to resolve the correct API lookup ID without needing a
+    /// separate search round-trip.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? KnownExternalIds = null
 );
