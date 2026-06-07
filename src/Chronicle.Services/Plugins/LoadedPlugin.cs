@@ -31,6 +31,9 @@ public sealed class LoadedPlugin : IDisposable
     /// <summary>All <see cref="IFileScannerPlugin"/> instances discovered in the assembly.</summary>
     public IReadOnlyList<IFileScannerPlugin> FileScannerPlugins { get; }
 
+    /// <summary>All <see cref="IThemePlugin"/> instances discovered in the assembly.</summary>
+    public IReadOnlyList<IThemePlugin> ThemePlugins { get; }
+
     public LoadedPlugin(
         PluginLoadContext loadContext,
         int dbId,
@@ -39,7 +42,8 @@ public sealed class LoadedPlugin : IDisposable
         IReadOnlyList<IWidgetPlugin> widgetPlugins,
         IReadOnlyList<IImportProvider>? importProviders = null,
         IReadOnlyList<IReportPlugin>? reportPlugins = null,
-        IReadOnlyList<IFileScannerPlugin>? fileScannerPlugins = null)
+        IReadOnlyList<IFileScannerPlugin>? fileScannerPlugins = null,
+        IReadOnlyList<IThemePlugin>? themePlugins = null)
     {
         LoadContext = loadContext;
         DbId = dbId;
@@ -49,6 +53,7 @@ public sealed class LoadedPlugin : IDisposable
         ImportProviders = importProviders ?? [];
         ReportPlugins = reportPlugins ?? [];
         FileScannerPlugins = fileScannerPlugins ?? [];
+        ThemePlugins = themePlugins ?? [];
     }
 
     /// <summary>Unloads the plugin's <see cref="AssemblyLoadContext"/>.</summary>
