@@ -188,7 +188,14 @@ export default function MetadataAssignmentPage() {
     const order = defaultOrders[mediaType] ?? []
     const fieldAssignments: Record<string, string[]> = {}
     for (const field of config.assignableFields[mediaType] ?? []) {
-      fieldAssignments[field] = [...order]
+      // Only include a plugin for this field if it actually declares support for it.
+      // Plugins with no entry in fieldPlugins for this field (e.g. artwork-only plugins
+      // like Fanart.tv) are excluded from text/metadata fields automatically.
+      const supportedPluginIds = config.fieldPlugins?.[mediaType]?.[field]
+      const filtered = supportedPluginIds != null
+        ? order.filter(id => supportedPluginIds.includes(id))
+        : order
+      fieldAssignments[field] = filtered
     }
     const next = { ...assignments, [mediaType]: fieldAssignments }
     setAssignments(next)
@@ -280,8 +287,16 @@ export default function MetadataAssignmentPage() {
                   </div>
 
                   {config.assignableFields[mediaType].map(field => {
-                    const defaultPluginOrder = plugins.map(p => p.pluginId)
-                    const currentOrder = assignments[mediaType]?.[field] ?? defaultPluginOrder
+                    // Restrict to plugins that declare support for this specific field.
+                    // If the server returned no fieldPlugins entry, fall back to all plugins
+                    // (handles old API responses gracefully).
+                    const supportedIds = config.fieldPlugins?.[mediaType]?.[field]
+                    const fieldPluginList = supportedIds != null
+                      ? plugins.filter(p => supportedIds.includes(p.pluginId))
+                      : plugins
+                    const defaultPluginOrder = fieldPluginList.map(p => p.pluginId)
+                    const currentOrder = (assignments[mediaType]?.[field] ?? defaultPluginOrder)
+                      .filter(id => fieldPluginList.some(p => p.pluginId === id))
 
                     return (
                       <div key={field} className={styles.row}>
@@ -290,7 +305,7 @@ export default function MetadataAssignmentPage() {
                           <SortableList
                             id={`${mediaType}-${field}`}
                             order={currentOrder}
-                            plugins={plugins}
+                            plugins={fieldPluginList}
                             disabled={!isAdmin || saving}
                             onReorder={order => handleFieldReorder(mediaType, field, order)}
                           />

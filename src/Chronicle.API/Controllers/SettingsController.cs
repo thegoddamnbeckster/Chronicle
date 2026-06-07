@@ -188,6 +188,57 @@ public class SettingsController : ControllerBase
                     .ToList<object>();
             });
 
+        // Build per-field plugin lists: for each (mediaTypeKey, field), which plugins actually
+        // declare that field in their SupportedFields / LevelFields?
+        // A plugin with no SupportedFields declaration for a type is treated as supporting all fields
+        // (legacy / generic providers). A plugin that explicitly lists SupportedFields is held to that
+        // list — it will only appear on fields it declared.
+        // Shape: mediaTypeKey → fieldName → pluginId[]
+        var fieldPlugins = assignableFields.Keys.ToDictionary(
+            assignmentKey => assignmentKey,
+            assignmentKey =>
+            {
+                var dot          = assignmentKey.IndexOf('.');
+                var baseTypeName = NormalizeMediaTypeName(dot < 0 ? assignmentKey : assignmentKey[..dot]);
+                var level        = dot < 0 ? 0 : (int.TryParse(assignmentKey[(dot + 1)..], out var li) ? li : 0);
+
+                TypeParentMap.TryGetValue(baseTypeName, out var parentTypeName);
+
+                return assignableFields[assignmentKey].ToDictionary(
+                    field => field,
+                    field =>
+                    {
+                        return allEntries
+                            .Where(e =>
+                            {
+                                // Find the matching MediaTypeSupport for this plugin + media type.
+                                var support = e.Provider.GetSupportedMediaTypes()
+                                    .FirstOrDefault(s =>
+                                    {
+                                        var tn = NormalizeMediaTypeName(s.MediaTypeName);
+                                        return string.Equals(tn, baseTypeName, StringComparison.OrdinalIgnoreCase)
+                                            || (parentTypeName != null && string.Equals(tn, parentTypeName, StringComparison.OrdinalIgnoreCase));
+                                    });
+
+                                if (support == null) return false;
+
+                                // If the plugin declares no SupportedFields at all, treat it as
+                                // supporting every field (generic / legacy provider).
+                                var rootFields = support.SupportedFields;
+                                if (rootFields == null || rootFields.Count == 0) return true;
+
+                                // For sub-levels, prefer LevelFields if declared, fall back to root.
+                                IEnumerable<string> effectiveFields = level > 0
+                                    ? (support.LevelFields?.GetValueOrDefault(level) ?? (IEnumerable<string>)rootFields)
+                                    : rootFields;
+
+                                return effectiveFields.Contains(field, StringComparer.OrdinalIgnoreCase);
+                            })
+                            .Select(e => e.PluginId)
+                            .ToList();
+                    });
+            });
+
         // Build display name map from DB MediaType rows.
         // Flat keys: use the DB type's DisplayName.
         // Compound keys: "<TypeDisplay> <LevelLabel>s", e.g. "TV Seasons", "Music Albums".
@@ -235,6 +286,7 @@ public class SettingsController : ControllerBase
                 availablePlugins,
                 mediaTypeDisplayNames,
                 displayOrder,
+                fieldPlugins,
             },
         });
     }
