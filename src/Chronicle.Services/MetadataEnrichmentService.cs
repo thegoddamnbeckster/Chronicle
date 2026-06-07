@@ -1924,9 +1924,14 @@ public class MetadataEnrichmentService(
                 var storedAltNames = item.HierarchyLevel == 0
                     ? ExtractStoredAlternateNames(item.MetadataJson)
                     : null;
-                var knownIds = await db.MediaExternalIds
+                // Use GroupBy + First to guard against duplicate Source rows — if a data anomaly
+                // has caused two external-ID rows with the same source for this item, prefer the
+                // most-recently-inserted one (highest Id) rather than crashing with ArgumentException.
+                var knownIds = (await db.MediaExternalIds
                     .Where(e => e.MediaItemId == item.Id)
-                    .ToDictionaryAsync(e => e.Source.ToLowerInvariant(), e => e.ExternalId, ct);
+                    .ToListAsync(ct))
+                    .GroupBy(e => e.Source.ToLowerInvariant())
+                    .ToDictionary(g => g.Key, g => g.OrderByDescending(e => e.Id).First().ExternalId);
                 var ctx = new Chronicle.Plugins.Models.MediaSearchContext(
                     Name:             NormalizeSearchName(item.Name),
                     Year:             ValidateYear(item.Year),

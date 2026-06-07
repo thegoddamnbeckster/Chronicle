@@ -194,10 +194,23 @@ public class SettingsController : ControllerBase
                             var rootFields = support.SupportedFields;
                             if (rootFields == null || rootFields.Count == 0) return true;
 
-                            // For sub-levels, prefer LevelFields if declared, fall back to root.
-                            IEnumerable<string> effectiveFields = level > 0
-                                ? (support.LevelFields?.GetValueOrDefault(level) ?? (IEnumerable<string>)rootFields)
-                                : rootFields;
+                            // For sub-levels: if the plugin opted into per-level declarations
+                            // (LevelFields is non-null), a missing entry means "no fields at this
+                            // level" — do NOT fall back to root fields, or artwork-only plugins
+                            // (e.g. Fanart.tv with LevelFields only for seasons) would incorrectly
+                            // appear for episode/track levels.  Only fall back to root when the
+                            // plugin has no LevelFields dict at all (legacy/generic provider).
+                            IEnumerable<string> effectiveFields;
+                            if (level > 0)
+                            {
+                                effectiveFields = support.LevelFields != null
+                                    ? (support.LevelFields.GetValueOrDefault(level) ?? (IEnumerable<string>)[])
+                                    : rootFields;
+                            }
+                            else
+                            {
+                                effectiveFields = rootFields;
+                            }
 
                             return effectiveFields.Contains(field, StringComparer.OrdinalIgnoreCase);
                         })
