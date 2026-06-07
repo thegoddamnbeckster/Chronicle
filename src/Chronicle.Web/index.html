@@ -6,11 +6,20 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chronicle</title>
-    <!-- Anti-flash: apply saved theme before React mounts -->
+    <!-- Anti-flash: apply cached CSS variables before React mounts -->
     <script>
       (function () {
-        var t = localStorage.getItem('chronicle_theme') || 'light';
-        document.documentElement.dataset.theme = t;
+        try {
+          var vars = JSON.parse(localStorage.getItem('chronicle_theme_vars') || 'null');
+          if (vars && typeof vars === 'object') {
+            var root = document.documentElement;
+            for (var name in vars) {
+              if (Object.prototype.hasOwnProperty.call(vars, name) && name.startsWith('--')) {
+                root.style.setProperty(name, vars[name]);
+              }
+            }
+          }
+        } catch (e) { /* ignore */ }
       })();
     </script>
   </head>

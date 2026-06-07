@@ -26,7 +26,7 @@ import {
   type PluginHealthResult,
 } from '@/api/plugins'
 import { useAuth } from '@/hooks/useAuth'
-import { useTheme, THEME_REGISTRY } from '@/contexts/ThemeContext'
+import { useTheme } from '@/contexts/ThemeContext'
 import styles from './PluginsPage.module.css'
 
 // ── Plugin page types ──────────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
 export default function PluginsPage() {
   const { user } = useAuth()
   const isAdmin = user?.isAdmin ?? false
-  const { theme: activeTheme, setTheme } = useTheme()
+  const { themes: availableThemes, activeKey: activeTheme, setTheme } = useTheme()
   const queryClient = useQueryClient()
 
   const [plugins, setPlugins]               = useState<PluginDto[]>([])
@@ -515,16 +515,20 @@ export default function PluginsPage() {
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>Themes</h2>
         <div className={styles.themeGrid}>
-          {THEME_REGISTRY.map(({ key, label, description, swatches }) => {
-            const isActive = activeTheme === key
+          {availableThemes.length === 0 && (
+            <p className={styles.loading}>Loading themes…</p>
+          )}
+          {availableThemes.map((t) => {
+            const storageKey = `${t.pluginId}:${t.key}`
+            const isActive = activeTheme === storageKey
             return (
               <div
-                key={key}
+                key={storageKey}
                 className={`${styles.themeCard} ${isActive ? styles.themeCardActive : ''}`}
               >
                 <div className={styles.themeCardLeft}>
                   <div className={styles.swatchRow}>
-                    {swatches.map((color, i) => (
+                    {t.swatches.map((color, i) => (
                       <span
                         key={i}
                         className={styles.swatch}
@@ -533,8 +537,8 @@ export default function PluginsPage() {
                     ))}
                   </div>
                   <div>
-                    <div className={styles.themeName}>{label}</div>
-                    <div className={styles.themeDesc}>{description}</div>
+                    <div className={styles.themeName}>{t.label}</div>
+                    <div className={styles.themeDesc}>{t.description}</div>
                   </div>
                 </div>
                 <div className={styles.themeCardRight}>
@@ -543,7 +547,7 @@ export default function PluginsPage() {
                     : (
                       <button
                         className={styles.activateBtn}
-                        onClick={() => setTheme(key)}
+                        onClick={() => setTheme(storageKey)}
                       >
                         Activate
                       </button>
@@ -563,22 +567,6 @@ export default function PluginsPage() {
           <p className={styles.loading}>Loading plugins…</p>
         ) : (
           <div className={styles.pluginList}>
-            {/* ── Built-in: Default Themes ─────────────────────────── */}
-            <div className={styles.pluginCard}>
-              <div className={styles.cardHeader}>
-                <div className={styles.cardLeft}>
-                  <span className={styles.pluginName}>Default Themes</span>
-                  <span className={styles.versionBadge}>v1.0.0</span>
-                  <span className={`${styles.badge} ${styles.builtIn}`}>Built-in</span>
-                </div>
-              </div>
-              <div className={styles.cardMeta}>by Chronicle · built-in</div>
-              <div className={styles.pluginId}>chronicle.themes.default</div>
-              <p className={styles.description}>
-                Provides the built-in themes: {THEME_REGISTRY.map(t => t.label).join(', ')}.
-              </p>
-            </div>
-
             {plugins.map(plugin => {
               const busy = busyIds.has(plugin.id)
               const health = healthStates[plugin.id] ?? 'unknown'

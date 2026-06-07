@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useTheme, THEME_REGISTRY } from '@/contexts/ThemeContext'
+import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
 import { updateMyPreferences } from '@/api/users'
 import styles from './PreferencesPage.module.css'
@@ -7,7 +7,7 @@ import styles from './PreferencesPage.module.css'
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function PreferencesPage() {
-  const { theme, setTheme } = useTheme()
+  const { themes: availableThemes, activeKey: theme, setTheme } = useTheme()
   const { user, setUser } = useAuth()
   const [diagEnabled, setDiagEnabled] = useState(user?.showDiagnostics ?? false)
   const [diagSaving, setDiagSaving] = useState(false)
@@ -34,28 +34,32 @@ export default function PreferencesPage() {
         <p className={styles.sectionDesc}>Choose the visual style for Chronicle.</p>
 
         <div className={styles.cards}>
-          {THEME_REGISTRY.map(({ key, label, swatches }) => (
-            <button
-              key={key}
-              className={`${styles.card} ${theme === key ? styles.active : ''}`}
-              onClick={() => setTheme(key)}
-              aria-pressed={theme === key}
-            >
-              <div className={styles.preview}>
-                <div className={styles.swatches}>
-                  {swatches.map((color, i) => (
-                    <span
-                      key={i}
-                      className={styles.swatch}
-                      style={{ background: color }}
-                    />
-                  ))}
+          {availableThemes.map((t) => {
+            const storageKey = `${t.pluginId}:${t.key}`
+            const isActive = theme === storageKey
+            return (
+              <button
+                key={storageKey}
+                className={`${styles.card} ${isActive ? styles.active : ''}`}
+                onClick={() => setTheme(storageKey)}
+                aria-pressed={isActive}
+              >
+                <div className={styles.preview}>
+                  <div className={styles.swatches}>
+                    {t.swatches.map((color, i) => (
+                      <span
+                        key={i}
+                        className={styles.swatch}
+                        style={{ background: color }}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <span className={styles.cardLabel}>{label}</span>
-              {theme === key && <span className={styles.activeCheck}>✓</span>}
-            </button>
-          ))}
+                <span className={styles.cardLabel}>{t.label}</span>
+                {isActive && <span className={styles.activeCheck}>✓</span>}
+              </button>
+            )
+          })}
         </div>
       </section>
 
