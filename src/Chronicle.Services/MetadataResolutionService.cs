@@ -29,6 +29,13 @@ public class MetadataResolutionService(
             ["cast"]            = "cast",
             ["directors"]       = "directors",
             ["tags"]            = "tags",
+            // Artwork fields — populated by supplementary providers such as Fanart.tv
+            ["logo_url"]        = "logoUrl",
+            ["banner_url"]      = "bannerUrl",
+            ["thumb_url"]       = "thumbUrl",
+            ["clearart_url"]    = "clearartUrl",
+            ["disc_url"]        = "discUrl",
+            ["character_art_url"] = "characterArtUrl",
         };
 
     public async Task ResolveAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
