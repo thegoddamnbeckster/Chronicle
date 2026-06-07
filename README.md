@@ -63,6 +63,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 | **[SIMKL](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl)** | Import/Sync + Metadata | Movies, TV, Anime | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Simkl?label=&color=0c9a40)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl/releases/latest) |
 | **[FanEdit (IFDB)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanEdit)** | Metadata | Fan Edits (scrapes fanedit.org; requires account) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.FanEdit?label=&color=6f42c1)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanEdit/releases/latest) |
 | **[Hardcover](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover)** | Import/Sync + Metadata | Books, Audiobooks | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Hardcover?label=&color=a0522d)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover/releases/latest) |
+| **[File Scanner](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FileScanner)** | Scanner | All (local files) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.FileScanner?label=&color=4f72c4)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FileScanner/releases/latest) |
 
 ### React Frontend (20+ pages)
 - **Sonarr/Radarr aesthetic** — Dark teal/green theme
