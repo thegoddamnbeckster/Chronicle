@@ -108,6 +108,11 @@ $PluginProjects = @(
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Hardcover\Chronicle.Plugin.Hardcover.csproj"
         DllName    = "Chronicle.Plugin.Hardcover.dll"
         OutputDir  = Join-Path $PluginsDir "hardcover"
+    },
+    @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.FanartTV\Chronicle.Plugin.FanartTV.csproj"
+        DllName    = "Chronicle.Plugin.FanartTV.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.fanarttv"
     }
 )
 
