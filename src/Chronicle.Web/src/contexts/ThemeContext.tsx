@@ -33,6 +33,26 @@ function themeStorageKey(pluginId: string, key: string) {
   return `${pluginId}:${key}`
 }
 
+/**
+ * Resolve a (possibly legacy) stored key to a valid theme storage key.
+ *
+ * Before the plugin-based theme system, Chronicle stored bare theme keys like
+ * `"dark"` or `"navy-pink"`. After the migration, keys are `"pluginId:key"`.
+ * This helper maps legacy bare keys to their canonical new form so existing
+ * user preferences survive the upgrade without any manual reset.
+ */
+function resolveStorageKey(stored: string, themes: ThemeDto[]): string {
+  // Already in the new format — find an exact match.
+  if (themes.some(t => themeStorageKey(t.pluginId, t.key) === stored)) return stored
+
+  // Legacy format — find a theme whose `key` segment matches the bare value.
+  const legacy = themes.find(t => t.key === stored)
+  if (legacy) return themeStorageKey(legacy.pluginId, legacy.key)
+
+  // Unknown / plugin removed — fall back to the default.
+  return DEFAULT_KEY
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type { ThemeDto }
@@ -80,16 +100,25 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       setThemes(fetched)
       setLoading(false)
 
-      // Re-apply the active theme using fresh data (picks up any variable changes
-      // from an updated plugin without requiring the user to switch themes).
-      const savedKey = localStorage.getItem(KEY_ACTIVE) ?? DEFAULT_KEY
-      const match = fetched.find(
-        t => themeStorageKey(t.pluginId, t.key) === savedKey
-      )
-      if (match) {
-        applyVariables(match.variables)
-        localStorage.setItem(KEY_VARS_CACHE, JSON.stringify(match.variables))
+      if (fetched.length === 0) return
+
+      // Resolve saved key — handles legacy bare keys ("dark") and missing themes.
+      const rawSaved  = localStorage.getItem(KEY_ACTIVE) ?? DEFAULT_KEY
+      const canonical = resolveStorageKey(rawSaved, fetched)
+      const match     = fetched.find(t => themeStorageKey(t.pluginId, t.key) === canonical)
+
+      if (!match) return // No theme plugins loaded at all — leave cached vars as-is.
+
+      // Persist the canonical key (upgrades legacy bare keys to new format).
+      if (canonical !== rawSaved) {
+        localStorage.setItem(KEY_ACTIVE, canonical)
       }
+      setActiveKey(canonical)
+
+      // Re-apply using fresh plugin data so variable changes in updated plugins
+      // are picked up without requiring the user to manually switch themes.
+      applyVariables(match.variables)
+      localStorage.setItem(KEY_VARS_CACHE, JSON.stringify(match.variables))
     })()
     return () => { cancelled = true }
   }, [])
