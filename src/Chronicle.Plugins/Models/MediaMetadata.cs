@@ -26,6 +26,21 @@ public class MediaMetadata
     public string? BackdropUrl { get; set; }
     public int? RuntimeMinutes { get; set; }
 
+    // ── Artwork fields (supplementary providers e.g. Fanart.tv) ──────────────
+
+    /// <summary>Transparent PNG logo (HD: ~800×310, SD: ~400×155).</summary>
+    public string? LogoUrl { get; set; }
+    /// <summary>Wide banner image (~1000×185).</summary>
+    public string? BannerUrl { get; set; }
+    /// <summary>Landscape thumb / still (~1000×562).</summary>
+    public string? ThumbUrl { get; set; }
+    /// <summary>Transparent character/person art PNG.</summary>
+    public string? ClearartUrl { get; set; }
+    /// <summary>Circular disc / CD art image (~1000×1000).</summary>
+    public string? DiscUrl { get; set; }
+    /// <summary>Character art PNG (TV shows, ~512×512).</summary>
+    public string? CharacterArtUrl { get; set; }
+
     // ── Extended fields stored in MetadataJson ────────────────────────────────
 
     public List<string> Genres { get; set; } = [];
