@@ -835,7 +835,7 @@ public class MetadataEnrichmentService(
                                 idIsValid = row.ExternalId.Contains("/season:", StringComparison.OrdinalIgnoreCase)
                                          || row.ExternalId.Contains(":s", StringComparison.OrdinalIgnoreCase);
                             else
-                                idIsValid = entityType is "release-group" or "season";
+                                idIsValid = entityType is "release-group" or "season" or "album";
                         }
                         else
                         {
