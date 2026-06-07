@@ -37,6 +37,12 @@ export interface MetadataAssignmentConfig {
   mediaTypeDisplayNames: Record<string, string>
   /** Saved display order per media type — controls box order on the media detail page. */
   displayOrder: Record<string, string[]>
+  /**
+   * Per-field plugin filter: mediaTypeKey → fieldName → pluginId[].
+   * Only plugins that explicitly declare support for a field appear in its list.
+   * Use this to restrict per-field SortableLists and "Apply to all fields" behaviour.
+   */
+  fieldPlugins: Record<string, Record<string, string[]>>
 }
 
 export async function getMetadataAssignment(): Promise<MetadataAssignmentConfig> {
