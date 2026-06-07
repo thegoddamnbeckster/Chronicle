@@ -1152,6 +1152,21 @@ public class MetadataEnrichmentService(
                         .Where(e => e.MediaItemId == row.MediaItemId)
                         .ToDictionaryAsync(e => e.Source.ToLowerInvariant(), e => e.ExternalId, ct);
 
+                    // For child items (albums, seasons), also include parent external IDs prefixed
+                    // with "parent_" so providers can cross-reference the parent's IDs.
+                    // E.g. Fanart.tv needs the artist MBID (on the parent) to fetch album art.
+                    if (row.MediaItem.ParentId is not null)
+                    {
+                        var parentIds = await db.MediaExternalIds
+                            .Where(e => e.MediaItemId == row.MediaItem.ParentId)
+                            .ToListAsync(ct);
+                        foreach (var pid in parentIds)
+                        {
+                            var key = $"parent_{pid.Source.ToLowerInvariant()}";
+                            knownExternalIds.TryAdd(key, pid.ExternalId);
+                        }
+                    }
+
                     var searchCtx = new MediaSearchContext(
                             Name:             row.MediaItem.Name,
                             Year:             ValidateYear(row.MediaItem.Year),
