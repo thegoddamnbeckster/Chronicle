@@ -52,6 +52,7 @@ interface LibraryPrefs {
   sortDir: SortDir
   statusFilter?: LibraryStatus
   pageSizePreset: PageSizePreset
+  groupMoviesIntoCollections: boolean
 }
 
 export interface LibraryPreset {
@@ -65,6 +66,7 @@ const DEFAULT_PREFS: LibraryPrefs = {
   sortDir: 'asc',
   statusFilter: undefined,
   pageSizePreset: 'medium',
+  groupMoviesIntoCollections: false,
 }
 
 function loadPrefs(): LibraryPrefs {
@@ -251,9 +253,14 @@ export default function LibraryPage() {
     setPresetName('')
   }
 
-  const { data: allEntries = [], isLoading } = useQuery({
-    queryKey: ['library', 'all', { rootOnly: true }],
-    queryFn: () => getLibrary(undefined, 1, 0, true),
+  const { data: allEntries = [], isLoading, isFetching } = useQuery({
+    queryKey: ['library', 'all', {
+      rootOnly: true,
+      includeMoviesInCollections: !prefs.groupMoviesIntoCollections,
+    }],
+    queryFn: () => getLibrary(undefined, 1, 0, true, !prefs.groupMoviesIntoCollections),
+    staleTime: 5 * 60 * 1000,          // cached data considered fresh for 5 min
+    placeholderData: (prev) => prev,    // keep showing previous data while revalidating
   })
 
   const updateMut = useMutation({
@@ -425,6 +432,18 @@ export default function LibraryPage() {
           </div>
         </div>
 
+        {/* Group movies into collections */}
+        <div className={styles.sortRow}>
+          <label className={styles.collectionGroupingLabel}>
+            <input
+              type="checkbox"
+              checked={prefs.groupMoviesIntoCollections}
+              onChange={e => setPrefs({ groupMoviesIntoCollections: e.target.checked })}
+            />
+            {' '}Group movies into collections
+          </label>
+        </div>
+
         {/* Sort + page size row */}
         <div className={styles.sortRow}>
           <div className={styles.sortGroup}>
@@ -487,6 +506,9 @@ export default function LibraryPage() {
 
       {/* ── Content ── */}
       {isLoading && <p className={styles.empty}>Loading…</p>}
+      {isFetching && !isLoading && (
+        <div className={styles.refreshBar} aria-label="Refreshing library…" />
+      )}
 
       {!isLoading && allEntries.length === 0 && (
         <p className={styles.empty}>No items in your library yet.</p>

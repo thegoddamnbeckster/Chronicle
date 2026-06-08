@@ -1,10 +1,17 @@
 import client from './client'
 import type { ApiResponse, LibraryEntry, LibraryStatus } from '@/types'
 
-export async function getLibrary(status?: LibraryStatus, page = 1, perPage = 0, rootOnly = false): Promise<LibraryEntry[]> {
-  const { data } = await client.get<ApiResponse<LibraryEntry[]>>('/library', {
-    params: { status, page, perPage, rootOnly },
-  })
+export async function getLibrary(
+  status?: LibraryStatus,
+  page = 1,
+  perPage = 0,
+  rootOnly = false,
+  includeMoviesInCollections = false,
+): Promise<LibraryEntry[]> {
+  const params: Record<string, string | number | boolean> = { page, perPage, rootOnly }
+  if (status) params.status = status
+  if (includeMoviesInCollections) params.includeMoviesInCollections = true
+  const { data } = await client.get<ApiResponse<LibraryEntry[]>>('/library', { params })
   return data.data ?? []
 }
 

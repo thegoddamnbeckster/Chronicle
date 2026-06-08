@@ -351,6 +351,30 @@
 
 .empty { color: var(--text-muted); padding: 40px 0; text-align: center; }
 
+/* Subtle animated bar shown while background-revalidating cached library data */
+@keyframes refreshSlide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.refreshBar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  z-index: 9999;
+  background: transparent;
+}
+.refreshBar::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: var(--accent);
+  animation: refreshSlide 1.4s ease-in-out infinite;
+}
+
 /* ── Select mode ── */
 
 .deleteModeBtn {
@@ -434,3 +458,19 @@
 
 .deleteConfirmOk:hover:not(:disabled) { opacity: 0.85; }
 .deleteConfirmOk:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Collection grouping ── */
+.collectionGroupingLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.collectionGroupingLabel input[type='checkbox'] {
+  cursor: pointer;
+  accent-color: var(--accent);
+}
