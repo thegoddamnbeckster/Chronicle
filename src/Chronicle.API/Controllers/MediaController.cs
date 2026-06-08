@@ -850,5 +850,77 @@ namespace Chronicle.API.Controllers
                 return BadRequest(ApiResponse<object>.Fail("UNMERGE_ERROR", ex.Message));
             }
         }
+
+        /// <summary>Returns collection membership for a movie item.</summary>
+        /// <remarks>
+        /// Works both when id is the collection itself (Level 0) and when id is a movie
+        /// within a collection (Level 1). In the latter case it resolves to the parent collection.
+        /// Returns 404 if the item has no collection.
+        /// </remarks>
+        [HttpGet("{id:int}/collection")]
+        public async Task<IActionResult> GetCollection(int id, CancellationToken ct)
+        {
+            var userId = GetCurrentUserId();
+            if (userId is null)
+                return Unauthorized();
+
+            // Load the item
+            var item = await _context.MediaItems
+                .Include(m => m.MediaType)
+                .Include(m => m.Parent)
+                    .ThenInclude(p => p!.MediaType)
+                .FirstOrDefaultAsync(m => m.Id == id, ct);
+
+            if (item is null)
+                return NotFound(ApiResponse<CollectionDto>.Fail("MEDIA_NOT_FOUND", "Media item not found."));
+
+            // Resolve collection: if item IS a collection (Level 0, movies type) use it directly;
+            // if item is a movie (Level 1 under movies collection) use its parent.
+            MediaItem? collectionItem = null;
+            bool isMoviesType = string.Equals(item.MediaType?.Name, "movies", StringComparison.OrdinalIgnoreCase);
+
+            if (isMoviesType && item.HierarchyLevel == 0)
+            {
+                collectionItem = item;
+            }
+            else if (isMoviesType && item.HierarchyLevel == 1 && item.Parent is not null)
+            {
+                collectionItem = item.Parent;
+            }
+
+            if (collectionItem is null)
+                return NotFound(ApiResponse<CollectionDto>.Fail("NO_COLLECTION", "Item does not belong to a collection."));
+
+            // Load all movies in the collection
+            var members = await _context.MediaItems
+                .Where(m => m.ParentId == collectionItem.Id)
+                .OrderBy(m => m.Year)
+                .ToListAsync(ct);
+
+            // Load library status for current user
+            var memberIds = members.Select(m => m.Id).ToList();
+            var libraryEntries = await _context.UserLibraries
+                .Where(l => l.UserId == userId.Value && memberIds.Contains(l.MediaItemId))
+                .ToDictionaryAsync(l => l.MediaItemId, ct);
+
+            var dto = new CollectionDto
+            {
+                Id        = collectionItem.Id,
+                Name      = collectionItem.Name,
+                PosterUrl = collectionItem.PosterUrl,
+                Overview  = collectionItem.Overview,
+                Movies    = members.Select(m => new CollectionMemberDto
+                {
+                    Id            = m.Id,
+                    Name          = m.Name,
+                    Year          = m.Year,
+                    PosterUrl     = m.PosterUrl,
+                    InLibrary     = libraryEntries.ContainsKey(m.Id),
+                    LibraryStatus = libraryEntries.TryGetValue(m.Id, out var le) ? le.Status.ToString() : null,
+                }).ToList(),
+            };
+
+            return Ok(ApiResponse<CollectionDto>.Ok(dto));
+        }
     }
 }
