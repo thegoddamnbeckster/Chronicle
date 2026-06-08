@@ -123,7 +123,9 @@ public sealed class DuplicateCleanupService : IScheduledTask
                 ct.ThrowIfCancellationRequested();
 
                 var items = group
-                    .Select(e => e.MediaItem!)
+                    .Select(e => e.MediaItem)
+                    .Where(m => m is not null)          // guard: Pass 1 may have deleted some items
+                    .Select(m => m!)
                     .DistinctBy(m => m.Id)
                     .Where(m => !alreadyRemoved.Contains(m.Id))
                     .ToList();
