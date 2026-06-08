@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useMutation } from '@tanstack/react-query'
 import { mergeItems } from '@/api/duplicates'
 import styles from './MergeModal.module.css'
@@ -26,7 +27,10 @@ export default function MergeModal({ itemA, itemB, onClose, onMerged }: Props) {
 
   const loser = winnerId === itemA.id ? itemB : itemA
 
-  return (
+  // Render into document.body so this modal is never a descendant of
+  // .backdropActive — that section overrides --bg-card / --bg-secondary to
+  // semi-transparent values which would make the modal unreadable.
+  return createPortal(
     <div className={styles.overlay} onClick={onClose}>
       <div className={styles.modal} onClick={e => e.stopPropagation()}>
         <h2 className={styles.title}>Select the Canonical Record</h2>
@@ -72,6 +76,7 @@ export default function MergeModal({ itemA, itemB, onClose, onMerged }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
