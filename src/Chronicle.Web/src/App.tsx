@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import Layout from '@/components/layout/Layout'
 import LoginPage from '@/pages/auth/LoginPage'
 import RegisterPage from '@/pages/auth/RegisterPage'
@@ -48,7 +49,9 @@ export default function App() {
         path="/"
         element={
           <RequireAuth>
-            <Layout />
+            <ErrorBoundary>
+              <Layout />
+            </ErrorBoundary>
           </RequireAuth>
         }
       >
@@ -56,7 +59,11 @@ export default function App() {
         <Route path="library" element={<LibraryPage />} />
         <Route path="history" element={<HistoryPage />} />
         <Route path="media/add" element={<AddMediaPage />} />
-        <Route path="media/:id" element={<MediaDetailPage />} />
+        <Route path="media/:id" element={
+          <ErrorBoundary context="Media Detail">
+            <MediaDetailPage />
+          </ErrorBoundary>
+        } />
         <Route path="import" element={<ImportPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="settings/service" element={<ServiceSettingsPage />} />

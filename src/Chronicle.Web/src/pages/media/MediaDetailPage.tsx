@@ -670,7 +670,7 @@ export default function MediaDetailPage() {
                     fixMatchHint={plugin?.fixMatchHint}
                     metadata={metadata}
                     enrichmentStatus={enrichStatus}
-                    externalIds={item.externalIds}
+                    externalIds={item.externalIds ?? []}
                     refreshLogs={item.refreshLogs}
                     onImageClick={(localIdx) => setLightboxIdx((pluginImageOffsets.get(pluginId) ?? 0) + localIdx)}
                     imageStartIndex={pluginImageOffsets.get(pluginId) ?? 0}
