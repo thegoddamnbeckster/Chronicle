@@ -86,10 +86,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
             onClick={() => window.history.back()}
             style={{
               padding: '0.5rem 1.25rem',
-              borderRadius: '6px',
-              border: '1px solid var(--border, #555)',
-              background: 'var(--surface-3, var(--surface-2, #2a2a3e))',
-              color: 'var(--text-primary, #e0e0e0)',
+              borderRadius: 'var(--radius, 6px)',
+              border: '1px solid var(--border)',
+              background: 'var(--surface-2)',
+              color: 'var(--text-primary)',
               cursor: 'pointer',
               fontSize: '0.9rem',
             }}
@@ -100,10 +100,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
             onClick={this.handleRetry}
             style={{
               padding: '0.5rem 1.25rem',
-              borderRadius: '6px',
+              borderRadius: 'var(--radius, 6px)',
               border: 'none',
-              background: 'var(--accent, #2563eb)',
-              color: '#ffffff',
+              background: 'var(--accent)',
+              color: 'var(--accent-fg)',
               cursor: 'pointer',
               fontSize: '0.9rem',
             }}
