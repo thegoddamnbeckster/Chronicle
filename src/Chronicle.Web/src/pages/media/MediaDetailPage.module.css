@@ -234,9 +234,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .fanartBanner {
   width: 100%;
-  max-height: 140px;
-  object-fit: cover;
-  object-position: center 30%;
+  height: auto;
   display: block;
 }
 

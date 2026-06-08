@@ -736,7 +736,7 @@ export default function MediaDetailPage() {
                     enrichmentStatus={enrichStatus}
                     externalIds={item.externalIds ?? []}
                     refreshLogs={item.refreshLogs}
-                    onImageClick={(localIdx) => setLightboxIdx((pluginImageOffsets.get(pluginId) ?? 0) + localIdx)}
+                    onImageClick={setLightboxIdx}
                     imageStartIndex={pluginImageOffsets.get(pluginId) ?? 0}
                   />
                 </PluginFold>
