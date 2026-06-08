@@ -134,10 +134,16 @@ export default function MediaDetailPage() {
 
   const navState = (location.state as { listIds?: number[]; listLabel?: string } | null) ?? null
 
-  // Persist navigation state so breadcrumb / up-button navigation (which carries no state) can restore it
+  // Persist navigation state so breadcrumb / up-button navigation (which carries no state) can restore it.
+  // Wrapped in try/catch: large libraries can exceed the sessionStorage quota and would otherwise crash.
   useEffect(() => {
     if (navState?.listIds?.length) {
-      sessionStorage.setItem(`chronicle.listNav.${mediaId}`, JSON.stringify(navState))
+      try {
+        sessionStorage.setItem(`chronicle.listNav.${mediaId}`, JSON.stringify(navState))
+      } catch {
+        // Quota exceeded — silently skip. Prev/Next nav won't persist across a hard refresh,
+        // but navigation within the session (where location.state is in memory) still works.
+      }
     }
   }, [mediaId, navState])
 
