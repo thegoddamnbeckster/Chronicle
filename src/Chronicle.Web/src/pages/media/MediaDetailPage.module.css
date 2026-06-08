@@ -246,7 +246,9 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   max-height: 100px;
   object-fit: contain;
   object-position: left center;
-  margin-bottom: 10px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 /* ── Description row (thumb + overview + disc) ── */
