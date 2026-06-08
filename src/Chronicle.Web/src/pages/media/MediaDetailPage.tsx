@@ -369,16 +369,6 @@ export default function MediaDetailPage() {
 
   return (
     <div className={styles.page}>
-      {fanartBanner && (
-        <div className={styles.fanartBannerWrap}>
-          <img
-            src={fanartBanner}
-            alt=""
-            className={styles.fanartBanner}
-            onError={e => { e.currentTarget.parentElement!.style.display = 'none' }}
-          />
-        </div>
-      )}
       <div className={`${styles.backdropSection}${hasBackdrop ? ` ${styles.backdropActive}` : ''}`}>
         {hasBackdrop && (
           <div
@@ -437,6 +427,17 @@ export default function MediaDetailPage() {
           </div>
         )}
       </div>
+
+      {fanartBanner && (
+        <div className={styles.fanartBannerWrap}>
+          <img
+            src={fanartBanner}
+            alt=""
+            className={styles.fanartBanner}
+            onError={e => { e.currentTarget.parentElement!.style.display = 'none' }}
+          />
+        </div>
+      )}
 
       <div className={styles.hero}>
         <div className={styles.posterWrap}>
