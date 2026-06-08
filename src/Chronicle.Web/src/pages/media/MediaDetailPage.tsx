@@ -468,12 +468,14 @@ export default function MediaDetailPage() {
 
         <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
           {fanartLogo && (
-            <img
-              src={fanartLogo}
-              alt={item.name}
-              className={styles.fanartLogo}
-              onError={e => { e.currentTarget.style.display = 'none' }}
-            />
+            <div className={styles.fanartLogoWrap}>
+              <img
+                src={fanartLogo}
+                alt={item.name}
+                className={styles.fanartLogo}
+                onError={e => { e.currentTarget.parentElement!.style.display = 'none' }}
+              />
+            </div>
           )}
           <h1 className={styles.title}>{item.name}</h1>
           {item.aliases && item.aliases.length > 0 && (
