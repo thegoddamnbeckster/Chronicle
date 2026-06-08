@@ -1960,6 +1960,25 @@ public class MetadataEnrichmentService(
                     return;
                 }
 
+                // For file-scanner-created root items, require the matched title to cover at
+                // least 60% of the item's name tokens. This prevents fan-edit stubs whose names
+                // include a subtitle (e.g. "Alien - Darksteel Cut") from being silently identified
+                // as the canonical movie ("Alien") just because the first word matches.
+                // Sync-created items are exempt — their Name is already the canonical title.
+                if (item.HierarchyLevel == 0
+                    && IsFileScannerItem(item)
+                    && !IsTitleMatchAcceptable(item.Name, best.Metadata.Title))
+                {
+                    logger.LogInformation(
+                        "Enrichment skipped for item {ItemId} '{ItemName}': matched title '{MatchedTitle}' " +
+                        "has insufficient token overlap with item name — leaving as NotFound. " +
+                        "Use Fix Match to assign the correct identity manually.",
+                        item.Id, item.Name, best.Metadata.Title);
+                    row.Status = EnrichmentStatus.NotFound;
+                    await db.SaveChangesAsync(ct);
+                    return;
+                }
+
                 resolvedId = best.Metadata.ExternalId;
                 result = await provider.GetByIdAsync(resolvedId, ct);
                 result ??= best.Metadata;
@@ -2089,6 +2108,62 @@ public class MetadataEnrichmentService(
             .Replace("  ", " ")
             .Trim()
             .ToLowerInvariant();
+
+    /// <summary>
+    /// Returns true if the item's MetadataJson indicates it was created by the file scanner
+    /// (as opposed to a sync-created or manually-added stub).
+    /// </summary>
+    private static bool IsFileScannerItem(MediaItem item) =>
+        item.MetadataJson is not null && item.MetadataJson.Contains("\"fileScanner\"");
+
+    // Compiled regex for trailing year used by IsTitleMatchAcceptable.
+    private static readonly System.Text.RegularExpressions.Regex _trailingYearRe =
+        new(@"\s*[\(\[]\d{4}[\)\]]\s*$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Returns true if <paramref name="matchedTitle"/> covers enough of <paramref name="itemName"/>
+    /// that the match is trustworthy. Uses token-level Jaccard similarity (≥ 0.60) after stripping
+    /// trailing year suffixes and normalising punctuation.
+    ///
+    /// This catches fan-edit stubs like "Alien - Darksteel Cut (2023)" being incorrectly identified
+    /// as "Alien" (1979): the item has three meaningful tokens [alien, darksteel, cut] while the
+    /// matched title has only one [alien], giving Jaccard = 1/3 ≈ 0.33 → rejected.
+    /// </summary>
+    private static bool IsTitleMatchAcceptable(string itemName, string? matchedTitle)
+    {
+        if (string.IsNullOrWhiteSpace(matchedTitle)) return false;
+
+        // Strip trailing year/bracket: "Alien - Darksteel Cut (2023)" → "Alien - Darksteel Cut"
+        var strippedItem  = _trailingYearRe.Replace(itemName, "").Trim();
+        var strippedTitle = _trailingYearRe.Replace(matchedTitle, "").Trim();
+
+        // Normalise: lower, replace common separators with space, collapse whitespace.
+        static string Norm(string s) =>
+            System.Text.RegularExpressions.Regex.Replace(
+                s.ToLowerInvariant()
+                 .Replace(":", " ")
+                 .Replace("-", " ")
+                 .Replace(",", " ")
+                 .Replace("'", "")
+                 .Replace("\"", ""),
+                @"\s+", " ").Trim();
+
+        var normItem  = Norm(strippedItem);
+        var normTitle = Norm(strippedTitle);
+
+        if (normItem == normTitle) return true;   // exact match after normalisation
+
+        // Token Jaccard similarity
+        var itemTokens  = normItem .Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        var titleTokens = normTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+
+        var intersection = itemTokens.Count(t => titleTokens.Contains(t));
+        var union        = itemTokens.Count + titleTokens.Count - intersection;
+
+        if (union == 0) return true;
+        return (double)intersection / union >= 0.60;
+    }
 
     private static void StoreDiagnosticsJson(
         MediaItemEnrichment row, string query,
