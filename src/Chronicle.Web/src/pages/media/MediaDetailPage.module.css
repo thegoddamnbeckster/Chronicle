@@ -222,6 +222,70 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   color: var(--text-secondary);
 }
 
+/* ── Fanart.tv banner (outside backdrop box) ── */
+
+.fanartBannerWrap {
+  width: 100%;
+  margin-bottom: 12px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  line-height: 0; /* remove inline-block gap below img */
+}
+
+.fanartBanner {
+  width: 100%;
+  max-height: 140px;
+  object-fit: cover;
+  object-position: center 30%;
+  display: block;
+}
+
+/* ── Fanart.tv logo (above title, inside meta box) ── */
+
+.fanartLogo {
+  display: block;
+  max-width: 300px;
+  max-height: 100px;
+  object-fit: contain;
+  object-position: left center;
+  margin-bottom: 10px;
+}
+
+/* ── Description row (thumb + overview + disc) ── */
+
+.descriptionRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.fanartThumb {
+  flex-shrink: 0;
+  width: 150px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  align-self: flex-start;
+}
+
+.fanartDisc {
+  flex-shrink: 0;
+  width: 110px;
+  object-fit: contain;
+  align-self: center;
+}
+
+/* ── Character art (below description, above Refresh All) ── */
+
+.fanartCharacter {
+  display: block;
+  max-height: 220px;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left bottom;
+  margin-bottom: 12px;
+}
+
 /* ── Hero ── */
 
 .hero {
@@ -281,9 +345,11 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 }
 
 .overview {
+  flex: 1; /* grow to fill middle of .descriptionRow */
+  min-width: 0;
   color: var(--text-secondary);
   line-height: 1.6;
-  margin-bottom: 24px;
+  margin-bottom: 0; /* spacing handled by .descriptionRow margin-bottom */
   font-size: 14px;
 }
 

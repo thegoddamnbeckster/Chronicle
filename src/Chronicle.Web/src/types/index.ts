@@ -72,6 +72,21 @@ export interface MediaItem {
   aliases?: string[] | null
   /** History of merges where this item is the winner. */
   mergeHistory?: MergeHistoryEntry[] | null
+  /** Merged metadata resolved by walking each field's plugin priority list.
+   *  The first non-empty value from the highest-priority plugin wins per field. */
+  resolvedMetadata?: {
+    title?: string | null
+    overview?: string | null
+    year?: number | null
+    posterUrl?: string | null
+    backdropUrl?: string | null
+    runtimeMinutes?: number | null
+    rating?: number | null
+    genres?: string[] | null
+    cast?: string[] | null
+    directors?: string[] | null
+    tags?: string[] | null
+  } | null
 }
 
 export interface MergeHistoryEntry {
