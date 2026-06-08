@@ -1251,6 +1251,12 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 .mergeSearch {
   margin: 8px 0 12px;
   position: relative;
+  /* Reset backdrop-transparency so the input and dropdown always have solid
+     opaque backgrounds, even when rendered inside a .backdropActive section.
+     --bg-primary is never overridden by .backdropActive, so anchoring here
+     breaks the cascade without needing a portal or hardcoded hex colours. */
+  --bg-card:      var(--bg-primary);
+  --bg-secondary: var(--bg-primary);
 }
 .mergeSearchInput {
   width: 100%;
@@ -1327,3 +1333,70 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 }
 .unmergeBtn:hover { background: var(--bg-hover); }
 .unmergeBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Unmerge inline panel (shown below action bar) ── */
+.unmergePanel {
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.unmergePanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.unmergePanelTitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.unmergeAllBtn {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.unmergeAllBtn:hover { background: var(--accent); color: var(--accent-fg); }
+.unmergeAllBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.unmergePanelRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.unmergePanelRow:first-of-type { border-top: none; }
+.unmergePanelName {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.unmergePanelDate {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.unmergePanelBtn {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.unmergePanelBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.unmergePanelBtn:disabled { opacity: 0.5; cursor: not-allowed; }
