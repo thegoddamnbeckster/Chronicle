@@ -294,12 +294,31 @@ public sealed class DuplicateCleanupService : IScheduledTask
         }
 
         // ── InteractionEvents ─────────────────────────────────────────────────────
+        // Re-point loser events to the winner, but deduplicate first: if the winner
+        // already has an event for the same (UserId, Timestamp) the UNIQUE constraint
+        // would be violated. Drop the loser's copy in that case — the data is identical.
         var loserEvents = await context.InteractionEvents
             .Where(e => e.MediaItemId == loser.Id)
             .ToListAsync(ct);
 
-        foreach (var ev in loserEvents)
-            ev.MediaItemId = winner.Id;
+        if (loserEvents.Count > 0)
+        {
+            // Build a set of (UserId, Timestamp) pairs already on the winner.
+            var winnerEventKeys = (await context.InteractionEvents
+                .Where(e => e.MediaItemId == winner.Id)
+                .Select(e => new { e.UserId, e.Timestamp })
+                .ToListAsync(ct))
+                .Select(e => new UserTimestampKey(e.UserId, e.Timestamp))
+                .ToHashSet(new UserTimestampComparer());
+
+            foreach (var ev in loserEvents)
+            {
+                if (winnerEventKeys.Contains(new UserTimestampKey(ev.UserId, ev.Timestamp)))
+                    context.InteractionEvents.Remove(ev);   // duplicate — discard
+                else
+                    ev.MediaItemId = winner.Id;             // unique — re-point
+            }
+        }
 
         // ── MediaListItems ────────────────────────────────────────────────────────
         var loserListItems = await context.MediaListItems
@@ -511,5 +530,21 @@ public sealed class DuplicateCleanupService : IScheduledTask
         if (string.IsNullOrWhiteSpace(json)) return [];
         try { return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json) ?? []; }
         catch (System.Text.Json.JsonException) { return []; }
+    }
+
+    // ── InteractionEvent deduplication helpers ────────────────────────────────
+
+    private record UserTimestampKey(int UserId, DateTime Timestamp);
+
+    private sealed class UserTimestampComparer
+        : IEqualityComparer<UserTimestampKey>
+    {
+        public bool Equals(UserTimestampKey? x, UserTimestampKey? y) =>
+            x is not null && y is not null
+            && x.UserId == y.UserId
+            && x.Timestamp == y.Timestamp;
+
+        public int GetHashCode(UserTimestampKey obj) =>
+            HashCode.Combine(obj.UserId, obj.Timestamp);
     }
 }
