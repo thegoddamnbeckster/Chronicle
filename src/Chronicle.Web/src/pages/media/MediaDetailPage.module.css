@@ -240,15 +240,18 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 /* ── Fanart.tv logo (above title, inside meta box) ── */
 
+.fanartLogoWrap {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
 .fanartLogo {
   display: block;
   max-width: 300px;
   max-height: 100px;
   object-fit: contain;
   object-position: left center;
-  padding-bottom: 16px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--border);
 }
 
 /* ── Description row (thumb + overview + disc) ── */
