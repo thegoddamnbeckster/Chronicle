@@ -15,6 +15,7 @@ namespace Chronicle.Services;
 public class MetadataEnrichmentService(
     IServiceScopeFactory scopeFactory,
     IMetadataResolutionService resolutionService,
+    IMovieCollectionService movieCollectionService,
     ILogger<MetadataEnrichmentService> logger) : IMetadataEnrichmentService
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
@@ -830,12 +831,32 @@ public class MetadataEnrichmentService(
                             .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId, ct);
                         if (parent?.ParentId == null)
                         {
-                            // Season/album level — season-specific TMDB ID must contain "/season:"
-                            if (entityType == "tv")
+                            // This could be: season/album level OR a movie under a collection.
+                            // Check if the parent is a movies-type collection (HierarchyLevel 0, same MediaType as a movie).
+                            // If so, a "movie" entity type is valid at this depth.
+                            bool parentIsMovieCollection = false;
+                            if (entityType == "movie" && parent is not null)
+                            {
+                                var parentMediaType = await db.MediaTypes
+                                    .AsNoTracking()
+                                    .FirstOrDefaultAsync(t => t.Id == parent.MediaTypeId, ct);
+                                parentIsMovieCollection = string.Equals(
+                                    parentMediaType?.Name, "movies", StringComparison.OrdinalIgnoreCase);
+                            }
+
+                            if (parentIsMovieCollection)
+                            {
+                                idIsValid = true; // movie under a collection — valid
+                            }
+                            else if (entityType == "tv")
+                            {
                                 idIsValid = row.ExternalId.Contains("/season:", StringComparison.OrdinalIgnoreCase)
                                          || row.ExternalId.Contains(":s", StringComparison.OrdinalIgnoreCase);
+                            }
                             else
+                            {
                                 idIsValid = entityType is "release-group" or "season" or "album";
+                            }
                         }
                         else
                         {
@@ -1148,9 +1169,13 @@ public class MetadataEnrichmentService(
 
                     // Populate KnownExternalIds so artwork-only providers (e.g. Fanart.tv) can
                     // cross-reference TMDB / TVDB / MusicBrainz IDs without a text-search round-trip.
-                    var knownExternalIds = await db.MediaExternalIds
+                    // Use GroupBy + First to safely handle rare duplicate-source rows that can arise
+                    // after repeated merge/unmerge cycles (e.g. two "imdb" entries on one item).
+                    var knownExternalIds = (await db.MediaExternalIds
                         .Where(e => e.MediaItemId == row.MediaItemId)
-                        .ToDictionaryAsync(e => e.Source.ToLowerInvariant(), e => e.ExternalId, ct);
+                        .ToListAsync(ct))
+                        .GroupBy(e => e.Source.ToLowerInvariant())
+                        .ToDictionary(g => g.Key, g => g.First().ExternalId);
 
                     // For child items (albums, seasons), also include parent external IDs prefixed
                     // with "parent_" so providers can cross-reference the parent's IDs.
@@ -1257,6 +1282,11 @@ public class MetadataEnrichmentService(
                 // Fix Match (which calls this path with an IdOverride) actually persists
                 // the new TMDB ID — not just the enrichment tracking row.
                 await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId);
+                // If this is a TMDB movie enrichment, ensure collection parent exists and re-parent if needed.
+                // Load MediaType navigation if not already present (needed by EnsureCollectionParentAsync).
+                if (row.MediaItem!.MediaType is null)
+                    await db.Entry(row.MediaItem).Reference(m => m.MediaType).LoadAsync(ct);
+                await movieCollectionService.EnsureCollectionParentAsync(db, row.MediaItem!, ct);
                 logger.LogInformation(
                     "Enrichment matched: plugin={Plugin} item={ItemId} \"{Name}\" (level={Level}) → {ExternalId} \"{MatchedTitle}\"",
                     provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
