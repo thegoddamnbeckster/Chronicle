@@ -42,7 +42,7 @@ namespace Chronicle.Services
             return entry;
         }
 
-        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, CancellationToken ct = default)
+        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, CancellationToken ct = default)
         {
             // The library is a shared catalog — every user sees ALL media items.
             // user_libraries rows carry per-user tracking data (status, rating, notes).
@@ -56,7 +56,32 @@ namespace Chronicle.Services
                 .AsQueryable();
 
             if (rootOnly)
-                itemsQuery = itemsQuery.Where(m => m.ParentId == null);
+            {
+                if (includeMoviesInCollections)
+                {
+                    // Include root items AND movies that are children of collection parents.
+                    // A "collection parent" is a movies-type item at HierarchyLevel 0.
+                    // We find the movies media type ID first, then include Level-1 items
+                    // whose parent is a movies-type item (to avoid EF translation issues).
+                    var moviesTypeIds = await _context.MediaTypes
+                        .Where(t => t.Name == "movies")
+                        .Select(t => t.Id)
+                        .ToListAsync(ct);
+
+                    var collectionParentIds = await _context.MediaItems
+                        .Where(m => moviesTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0 && m.ParentId == null)
+                        .Select(m => m.Id)
+                        .ToListAsync(ct);
+
+                    itemsQuery = itemsQuery.Where(m =>
+                        m.ParentId == null ||
+                        (m.HierarchyLevel == 1 && m.ParentId != null && collectionParentIds.Contains(m.ParentId.Value)));
+                }
+                else
+                {
+                    itemsQuery = itemsQuery.Where(m => m.ParentId == null);
+                }
+            }
 
             var allItems = await itemsQuery.ToListAsync(ct);
 
