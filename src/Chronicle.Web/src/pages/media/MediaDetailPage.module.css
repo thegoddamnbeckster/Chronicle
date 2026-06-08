@@ -8,7 +8,12 @@
 }
 
 .backdropActive {
-  margin: -24px -24px 0;
+  /* Stretch edge-to-edge across the content column, overriding .page's max-width.
+   * margin-left: -24px pulls to content column left edge.
+   * width: full viewport minus the fixed sidebar width fills to the right edge.
+   * overflow-x: clip on .content prevents a scrollbar if 100vw includes scrollbar gutter. */
+  margin: -24px 0 0 -24px;
+  width: calc(100vw - var(--sidebar-width));
 }
 
 .backdropImg {

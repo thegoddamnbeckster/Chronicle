@@ -93,5 +93,6 @@
 .content {
   grid-area: content;
   overflow-y: auto;
+  overflow-x: clip; /* allow backdrop to fill column width without creating a scrollbar */
   padding: 24px;
 }
