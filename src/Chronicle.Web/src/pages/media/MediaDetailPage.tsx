@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType } from '@/api/media'
@@ -10,6 +11,7 @@ import { updateMyPreferences } from '@/api/users'
 import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
+import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
@@ -247,8 +249,31 @@ export default function MediaDetailPage() {
 
   const unmergeMut = useMutation({
     mutationFn: ({ mergeId }: { mergeId: number }) => unmergeItem(Number(id), mergeId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['media', id] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
   })
+
+  // ── Unmerge panel ────────────────────────────────────────────────────────
+  const [unmergeOpen, setUnmergeOpen] = useState(false)
+  const [unmergeAllPending, setUnmergeAllPending] = useState(false)
+
+  const handleUnmergeAll = async () => {
+    if (!item?.mergeHistory?.length) return
+    if (!window.confirm(`Unmerge all ${item.mergeHistory.length} merged items? Each will be recreated as a stub.`)) return
+    setUnmergeAllPending(true)
+    try {
+      for (const merge of item.mergeHistory) {
+        await unmergeItem(mediaId, merge.mergeId)
+      }
+      await qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      await qc.invalidateQueries({ queryKey: ['library'] })
+      setUnmergeOpen(false)
+    } finally {
+      setUnmergeAllPending(false)
+    }
+  }
 
   // ── Change Type ──────────────────────────────────────────────────────────
   const [changeTypeOpen, setChangeTypeOpen] = useState(false)
@@ -502,6 +527,14 @@ export default function MediaDetailPage() {
                 {mergeSearchOpen ? 'Cancel Merge' : 'Merge with…'}
               </button>
             )}
+            {isAdmin && item.mergeHistory && item.mergeHistory.length > 0 && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => setUnmergeOpen(o => !o)}
+              >
+                {unmergeOpen ? 'Cancel' : `Unmerge… (${item.mergeHistory.length})`}
+              </button>
+            )}
             {!deleteConfirm ? (
               <button className={styles.deleteBtn} onClick={() => setDeleteConfirm(true)}>
                 Delete
@@ -525,8 +558,46 @@ export default function MediaDetailPage() {
             )}
           </div>
 
-          {/* Change Type modal */}
-          {changeTypeOpen && (
+          {/* Unmerge panel */}
+          {unmergeOpen && item.mergeHistory && item.mergeHistory.length > 0 && (
+            <div className={styles.unmergePanel}>
+              <div className={styles.unmergePanelHeader}>
+                <p className={styles.unmergePanelTitle}>Select a merge to undo:</p>
+                <button
+                  className={styles.unmergeAllBtn}
+                  disabled={unmergeAllPending || unmergeMut.isPending}
+                  onClick={handleUnmergeAll}
+                >
+                  {unmergeAllPending ? 'Unmerging…' : `Unmerge All (${item.mergeHistory.length})`}
+                </button>
+              </div>
+              {item.mergeHistory.map(merge => (
+                <div key={merge.mergeId} className={styles.unmergePanelRow}>
+                  <span className={styles.unmergePanelName}>{merge.loserName}</span>
+                  <span className={styles.unmergePanelDate}>
+                    merged {new Date(merge.mergedAt).toLocaleDateString()}
+                  </span>
+                  <button
+                    className={styles.unmergePanelBtn}
+                    disabled={unmergeMut.isPending}
+                    onClick={() => {
+                      if (window.confirm(
+                        `Unmerge "${merge.loserName}"? It will be recreated as a stub and queued for re-enrichment.`
+                      )) {
+                        unmergeMut.mutate({ mergeId: merge.mergeId })
+                        setUnmergeOpen(false)
+                      }
+                    }}
+                  >
+                    Unmerge
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Change Type modal — rendered via portal so it escapes the backdrop's CSS variable overrides */}
+          {changeTypeOpen && createPortal(
             <div className={styles.changeTypeOverlay} onClick={() => setChangeTypeOpen(false)}>
               <div className={styles.changeTypeModal} onClick={e => e.stopPropagation()}>
                 <h3 className={styles.changeTypeTitle}>Change Media Type</h3>
@@ -565,7 +636,8 @@ export default function MediaDetailPage() {
                   </button>
                 </div>
               </div>
-            </div>
+            </div>,
+            document.body
           )}
 
           {mergeSearchOpen && (
@@ -645,36 +717,6 @@ export default function MediaDetailPage() {
             />
           )}
 
-          {item.mergeHistory && item.mergeHistory.length > 0 && (
-            <details className={styles.mergeHistory}>
-              <summary className={styles.mergeHistorySummary}>
-                Merge History ({item.mergeHistory.length})
-              </summary>
-              {item.mergeHistory.map(merge => (
-                <div key={merge.mergeId} className={styles.mergeRow}>
-                  <span>
-                    Absorbed <strong>{merge.loserName}</strong> on{' '}
-                    {new Date(merge.mergedAt).toLocaleDateString()}
-                  </span>
-                  {isAdmin && (
-                    <button
-                      className={styles.unmergeBtn}
-                      disabled={unmergeMut.isPending}
-                      onClick={() => {
-                        if (window.confirm(
-                          `Unmerge "${merge.loserName}"? It will be recreated as a stub and queued for re-enrichment.`
-                        )) {
-                          unmergeMut.mutate({ mergeId: merge.mergeId })
-                        }
-                      }}
-                    >
-                      Unmerge
-                    </button>
-                  )}
-                </div>
-              ))}
-            </details>
-          )}
 
           {/* Global refresh strip — always shown so all media types can trigger enrichment */}
           <div className={styles.refreshStrip}>
@@ -691,6 +733,11 @@ export default function MediaDetailPage() {
               </span>
             )}
           </div>
+
+          {/* Collection membership box — only for movies type */}
+          {(item.mediaTypeInternalName ?? item.mediaTypeName ?? '').toLowerCase() === 'movies' && (
+            <CollectionMetadataBox mediaItemId={mediaId} />
+          )}
 
           {/* Per-plugin metadata boxes — one box per plugin that has data OR has been attempted.
               This ensures Fix Match is always available, even for NotFound / failed items.
