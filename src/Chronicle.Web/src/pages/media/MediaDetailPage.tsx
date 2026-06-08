@@ -333,12 +333,22 @@ export default function MediaDetailPage() {
     imgOffset += extractImages(meta as Record<string, unknown>, LIGHTBOX_SKIP).length
   }
 
-  // Grab backdrop URL from any plugin that provides one
-  const backdropUrl = item.pluginMetadata
-    ? Object.values(item.pluginMetadata)
-        .map(m => (m as Record<string, unknown>)?.backdropUrl)
-        .find(u => typeof u === 'string' && u) as string | undefined
-    : undefined
+  // Extract Fanart.tv-specific art fields (logo, banner, thumb, disc, character)
+  const fanartMeta = item.pluginMetadata?.['chronicle.plugin.fanarttv'] as Record<string, unknown> | undefined
+  const fanartLogo      = typeof fanartMeta?.logoUrl       === 'string' && fanartMeta.logoUrl       ? fanartMeta.logoUrl       : null
+  const fanartBanner    = typeof fanartMeta?.bannerUrl     === 'string' && fanartMeta.bannerUrl     ? fanartMeta.bannerUrl     : null
+  const fanartThumb     = typeof fanartMeta?.thumbUrl      === 'string' && fanartMeta.thumbUrl      ? fanartMeta.thumbUrl      : null
+  const fanartDisc      = typeof fanartMeta?.discUrl       === 'string' && fanartMeta.discUrl       ? fanartMeta.discUrl       : null
+  const fanartCharacter = typeof fanartMeta?.characterArtUrl === 'string' && fanartMeta.characterArtUrl ? fanartMeta.characterArtUrl : null
+
+  // Backdrop: resolved metadata respects the assignment-priority config; fall back to
+  // raw per-plugin scan for items that haven't been through MetadataResolution yet.
+  const backdropUrl = item.resolvedMetadata?.backdropUrl
+    ?? (item.pluginMetadata
+      ? (Object.values(item.pluginMetadata)
+          .map(m => (m as Record<string, unknown>)?.backdropUrl)
+          .find(u => typeof u === 'string' && u) as string | undefined)
+      : undefined)
   const hasBackdrop = Boolean(backdropUrl)
 
   // Extract narrators from cast entries across all plugin metadata.
@@ -359,6 +369,16 @@ export default function MediaDetailPage() {
 
   return (
     <div className={styles.page}>
+      {fanartBanner && (
+        <div className={styles.fanartBannerWrap}>
+          <img
+            src={fanartBanner}
+            alt=""
+            className={styles.fanartBanner}
+            onError={e => { e.currentTarget.parentElement!.style.display = 'none' }}
+          />
+        </div>
+      )}
       <div className={`${styles.backdropSection}${hasBackdrop ? ` ${styles.backdropActive}` : ''}`}>
         {hasBackdrop && (
           <div
@@ -446,6 +466,14 @@ export default function MediaDetailPage() {
         </div>
 
         <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
+          {fanartLogo && (
+            <img
+              src={fanartLogo}
+              alt={item.name}
+              className={styles.fanartLogo}
+              onError={e => { e.currentTarget.style.display = 'none' }}
+            />
+          )}
           <h1 className={styles.title}>{item.name}</h1>
           {item.aliases && item.aliases.length > 0 && (
             <p className={styles.aliases}>Also known as: {item.aliases.join(', ')}</p>
@@ -583,7 +611,36 @@ export default function MediaDetailPage() {
             )}
           </div>
 
-          {item.overview && <p className={styles.overview}>{item.overview}</p>}
+          {(item.overview || fanartThumb || fanartDisc) && (
+            <div className={styles.descriptionRow}>
+              {fanartThumb && (
+                <img
+                  src={fanartThumb}
+                  alt=""
+                  className={styles.fanartThumb}
+                  onError={e => { e.currentTarget.style.display = 'none' }}
+                />
+              )}
+              {item.overview && <p className={styles.overview}>{item.overview}</p>}
+              {fanartDisc && (
+                <img
+                  src={fanartDisc}
+                  alt=""
+                  className={styles.fanartDisc}
+                  onError={e => { e.currentTarget.style.display = 'none' }}
+                />
+              )}
+            </div>
+          )}
+
+          {fanartCharacter && (
+            <img
+              src={fanartCharacter}
+              alt=""
+              className={styles.fanartCharacter}
+              onError={e => { e.currentTarget.style.display = 'none' }}
+            />
+          )}
 
           {item.mergeHistory && item.mergeHistory.length > 0 && (
             <details className={styles.mergeHistory}>
