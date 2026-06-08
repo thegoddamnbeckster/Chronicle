@@ -42,6 +42,7 @@ namespace Chronicle.API.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int perPage = 20,
             [FromQuery] bool rootOnly = false,
+            [FromQuery] bool includeMoviesInCollections = false,
             CancellationToken ct = default)
         {
             var userId = GetUserId();
@@ -54,7 +55,7 @@ namespace Chronicle.API.Controllers
                 parsedStatus = s;
             }
 
-            var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, ct);
+            var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, includeMoviesInCollections, ct);
 
             // Batch-fetch descendant MetadataJson for all root items in two queries
             // (direct children + grandchildren) to avoid N+1 when computing physical-file flags.
