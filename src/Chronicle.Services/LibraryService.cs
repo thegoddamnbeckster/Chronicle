@@ -2,6 +2,7 @@ using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
 namespace Chronicle.Services
@@ -9,10 +10,12 @@ namespace Chronicle.Services
     public class LibraryService : ILibraryService
     {
         private readonly ChronicleDbContext _context;
+        private readonly ILogger<LibraryService> _logger;
 
-        public LibraryService(ChronicleDbContext context)
+        public LibraryService(ChronicleDbContext context, ILogger<LibraryService> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
         public async Task<UserLibrary> AddAsync(int userId, AddToLibraryRequest request, CancellationToken ct = default)
@@ -118,7 +121,24 @@ namespace Chronicle.Services
                     _context.UserLibraries.Add(entry);
                     existingEntries[item.Id] = entry;
                 }
-                await _context.SaveChangesAsync(ct);
+                try
+                {
+                    await _context.SaveChangesAsync(ct);
+                }
+                catch (DbUpdateException ex)
+                {
+                    // A collection container was deleted concurrently by the enrichment service
+                    // (e.g. RemoveOrphanedCollectionAsync) between the allItems query and this save.
+                    // Detach the failed entries and exclude those items from the result — the next
+                    // library load will no longer see the deleted items.
+                    _context.ChangeTracker.Clear();
+                    foreach (var item in toCreate) existingEntries.Remove(item.Id);
+                    _logger.LogWarning(ex,
+                        "Library auto-create skipped {Count} item(s) — items deleted concurrently",
+                        toCreate.Count);
+                }
+                // Only keep items for which we actually have a library entry.
+                allItems = allItems.Where(m => existingEntries.ContainsKey(m.Id)).ToList();
             }
 
             // 4. Attach MediaItem navigation to each tracking row, apply status filter
