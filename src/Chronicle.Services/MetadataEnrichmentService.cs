@@ -1376,15 +1376,19 @@ public class MetadataEnrichmentService(
                 // the new TMDB ID — not just the enrichment tracking row.
                 await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId);
                 // If this is a TMDB movie enrichment, ensure collection parent exists and re-parent if needed.
+                // Stubs are skipped — they're placeholders and must not trigger further collection creation.
                 // Load MediaType navigation if not already present (needed by EnsureCollectionParentAsync).
-                if (row.MediaItem!.MediaType is null)
-                    await db.Entry(row.MediaItem).Reference(m => m.MediaType).LoadAsync(ct);
-                await movieCollectionService.EnsureCollectionParentAsync(db, row.MediaItem!, row.PluginId, ct);
+                if (!row.MediaItem!.IsStub)
+                {
+                    if (row.MediaItem!.MediaType is null)
+                        await db.Entry(row.MediaItem).Reference(m => m.MediaType).LoadAsync(ct);
+                    await movieCollectionService.EnsureCollectionParentAsync(db, row.MediaItem!, row.PluginId, ct);
+                }
 
                 // After re-parenting under a collection, create stub entries for missing collection movies.
                 // Reload the collection ExternalIds (set by EnsureCollectionParentAsync) so the stub
                 // lookup can find the right collection:{id}.
-                if (row.MediaItem!.ParentId.HasValue)
+                if (!row.MediaItem!.IsStub && row.MediaItem!.ParentId.HasValue)
                 {
                     var collectionItem = await db.MediaItems
                         .Include(m => m.ExternalIds)
