@@ -8,7 +8,7 @@ namespace Chronicle.Services
     public interface ILibraryService
     {
         Task<UserLibrary> AddAsync(int userId, AddToLibraryRequest request, CancellationToken ct = default);
-        Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, CancellationToken ct = default);
+        Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, bool includeStubs = true, CancellationToken ct = default);
         Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId);
         Task<UserLibrary> UpdateAsync(int userId, int entryId, UpdateLibraryRequest request);
         Task RemoveAsync(int userId, int entryId);

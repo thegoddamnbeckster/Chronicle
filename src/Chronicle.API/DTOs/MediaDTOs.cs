@@ -99,7 +99,18 @@ namespace Chronicle.API.DTOs
         /// </summary>
         ResolvedMetadataDto? ResolvedMetadata = null,
         List<string>? Aliases = null,
-        List<MergeHistoryDto>? MergeHistory = null
+        List<MergeHistoryDto>? MergeHistory = null,
+        /// <summary>
+        /// True when this is a Level 0 movies item that acts as a collection container
+        /// (has at least one child movie). Used to distinguish collections from standalone movies.
+        /// </summary>
+        bool IsCollectionContainer = false,
+        /// <summary>
+        /// True when this movie was auto-created as a collection stub — i.e. it belongs to a
+        /// collection but the user doesn't yet own it. Stubs are visible by default but can be
+        /// hidden via the user's CreateCollectionStubs preference.
+        /// </summary>
+        bool IsStub = false
     );
 
     public record MergeRequestDto(int TargetId, int WinnerId);
@@ -136,6 +147,7 @@ namespace Chronicle.API.DTOs
         MediaItemDto MediaItem,
         string Status,
         int? UserRating,
+        string? UserRatingSource,
         string? Notes,
         DateTime AddedAt,
         DateTime UpdatedAt,

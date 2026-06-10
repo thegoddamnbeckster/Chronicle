@@ -27,6 +27,12 @@ namespace Chronicle.Core.Models
         /// <summary>Extra type-specific fields stored as JSON.</summary>
         public string? MetadataJson { get; set; }
 
+        /// <summary>
+        /// True when this item was auto-created as a collection stub (a movie belonging to a
+        /// collection the user doesn't own yet). Stubs are hidden or shown based on user preference.
+        /// </summary>
+        public bool IsStub { get; set; } = false;
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 

@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
 import { loadPresets, savePresets, type LibraryPreset } from '@/pages/library/LibraryPage'
+import { loadPrefs, savePrefs, type LibraryPrefs } from '@/utils/libraryPrefs'
+import { getMyPreferences, updateMyPreferences } from '@/api/users'
 import {
   loadSortSettings,
   saveSortSettings,
@@ -56,6 +58,29 @@ export default function LibrarySettingsPage() {
   const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
+
+  // ── Library display prefs ────────────────────────────────────────────────
+  const [libraryPrefs, setLibraryPrefsState] = useState<LibraryPrefs>(loadPrefs)
+
+  function setLibraryPref(patch: Partial<LibraryPrefs>) {
+    const next = { ...libraryPrefs, ...patch }
+    setLibraryPrefsState(next)
+    savePrefs(next)
+    // Invalidate the library cache so navigating back doesn't show stale grouped/flat results
+    qc.invalidateQueries({ queryKey: ['library'] })
+  }
+
+  // ── Server preferences (createCollectionStubs) ──────────────────────────
+  const { data: serverPrefs, refetch: refetchPrefs } = useQuery({
+    queryKey: ['userPreferences'],
+    queryFn: getMyPreferences,
+  })
+  const createCollectionStubs = serverPrefs?.createCollectionStubs ?? true
+
+  const prefMut = useMutation({
+    mutationFn: updateMyPreferences,
+    onSuccess: () => { refetchPrefs(); qc.invalidateQueries({ queryKey: ['library'] }) },
+  })
 
   // ── Sort settings ────────────────────────────────────────────────────────
   const [sortSettings, setSortSettings] = useState<SortSettings>(loadSortSettings)
@@ -169,6 +194,61 @@ export default function LibrarySettingsPage() {
       </div>
 
       <h2 className={styles.heading}>Library Settings</h2>
+
+      {/* ── Display section ─────────────────────────────────────────────── */}
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Display</h3>
+          <p className={styles.sectionDesc}>
+            Controls how media is grouped and displayed in your library.
+          </p>
+        </div>
+
+        <div className={styles.sortCard}>
+          <label className={styles.toggleRow}>
+            <span className={styles.toggleLabel}>
+              <span className={styles.toggleTitle}>Group movies into collections</span>
+              <span className={styles.toggleDesc}>
+                When <strong>on</strong>, movies that belong to a franchise are shown as a single
+                collection card (e.g. all three Dark Knight films appear under one "The Dark Knight
+                Collection" entry). When <strong>off</strong>, every movie is shown individually
+                regardless of whether it belongs to a collection. Requires TMDB enrichment to
+                populate collection data.
+              </span>
+            </span>
+            <button
+              role="switch"
+              aria-checked={libraryPrefs.groupMoviesIntoCollections}
+              className={`${styles.toggle} ${libraryPrefs.groupMoviesIntoCollections ? styles.toggleOn : ''}`}
+              onClick={() => setLibraryPref({ groupMoviesIntoCollections: !libraryPrefs.groupMoviesIntoCollections })}
+            >
+              <span className={styles.toggleThumb} />
+            </button>
+          </label>
+        </div>
+
+        <div className={styles.sortCard}>
+          <label className={styles.toggleRow}>
+            <span className={styles.toggleLabel}>
+              <span className={styles.toggleTitle}>Show missing collection movies</span>
+              <span className={styles.toggleDesc}>
+                When <strong>on</strong> (default), movies in a collection that you don't yet own
+                are added as stub entries so you can see what's still to watch. Stubs are clearly
+                marked and won't affect your watch counts. When <strong>off</strong>, only movies
+                you own appear in the collection view and stub entries are hidden.
+              </span>
+            </span>
+            <button
+              role="switch"
+              aria-checked={createCollectionStubs}
+              className={`${styles.toggle} ${createCollectionStubs ? styles.toggleOn : ''}`}
+              onClick={() => prefMut.mutate({ createCollectionStubs: !createCollectionStubs })}
+            >
+              <span className={styles.toggleThumb} />
+            </button>
+          </label>
+        </div>
+      </section>
 
       {/* ── Sorting section ─────────────────────────────────────────────── */}
       <section className={styles.section}>

@@ -42,7 +42,7 @@ namespace Chronicle.Services
             return entry;
         }
 
-        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, CancellationToken ct = default)
+        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, bool includeStubs = true, CancellationToken ct = default)
         {
             // The library is a shared catalog — every user sees ALL media items.
             // user_libraries rows carry per-user tracking data (status, rating, notes).
@@ -55,27 +55,34 @@ namespace Chronicle.Services
                 .Include(m => m.ExternalIds)
                 .AsQueryable();
 
+            if (!includeStubs)
+                itemsQuery = itemsQuery.Where(m => !m.IsStub);
+
             if (rootOnly)
             {
                 if (includeMoviesInCollections)
                 {
-                    // Include root items AND movies that are children of collection parents.
-                    // A "collection parent" is a movies-type item at HierarchyLevel 0.
-                    // We find the movies media type ID first, then include Level-1 items
-                    // whose parent is a movies-type item (to avoid EF translation issues).
+                    // Flatten movies hierarchy: treat Level 0 and Level 1 movies as peers.
+                    // - Non-movie types: root items only (ParentId == null), unchanged.
+                    // - Movies at Level 1: always included (these are films inside a collection).
+                    // - Movies at Level 0: included only if they have no children (standalone films).
+                    //   Level 0 items WITH children are collection containers — skip them so they
+                    //   don't generate spurious library rows in the flat view.
                     var moviesTypeIds = await _context.MediaTypes
                         .Where(t => t.Name == "movies")
                         .Select(t => t.Id)
                         .ToListAsync(ct);
 
-                    var collectionParentIds = await _context.MediaItems
-                        .Where(m => moviesTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0 && m.ParentId == null)
-                        .Select(m => m.Id)
-                        .ToListAsync(ct);
-
                     itemsQuery = itemsQuery.Where(m =>
-                        m.ParentId == null ||
-                        (m.HierarchyLevel == 1 && m.ParentId != null && collectionParentIds.Contains(m.ParentId.Value)));
+                        // Non-movie root items are unchanged
+                        (m.ParentId == null && !moviesTypeIds.Contains(m.MediaTypeId)) ||
+                        // Movies at Level 1 (inside a collection)
+                        (moviesTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 1) ||
+                        // Standalone movies at Level 0 (not a collection container).
+                        // The Any() translates to a single NOT EXISTS subquery in SQL — not
+                        // a per-row round-trip — so this is one efficient query total.
+                        (moviesTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0 &&
+                         !_context.MediaItems.Any(c => c.ParentId == m.Id)));
                 }
                 else
                 {

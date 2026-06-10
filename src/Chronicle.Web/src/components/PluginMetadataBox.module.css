@@ -1,8 +1,8 @@
 /* PluginMetadataBox — generic plugin metadata panel */
 
 .box {
-  background: #1e2130;
-  border: 1px solid #2e3548;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0;
   overflow: hidden;
@@ -17,7 +17,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px 10px;
-  border-bottom: 1px solid #2e3548;
+  border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
 
@@ -38,14 +38,15 @@
 .name {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #a0aab4;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .timestamp {
   font-size: 0.72rem;
-  color: #5a6a7a;
+  color: var(--text-muted);
+  opacity: 0.6;
   margin: 0;
   padding-left: 4px;
 }
@@ -62,78 +63,78 @@
 .refreshBtn {
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid #3a4a6a;
+  border: 1px solid var(--border);
   background: transparent;
-  color: #7090c0;
+  color: var(--text-muted);
   font-size: 0.78rem;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.refreshBtn:hover:not(:disabled) { background: #3a4a6a; color: #c0d4f0; }
+.refreshBtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 .refreshBtn:disabled { opacity: 0.45; cursor: default; }
 
 .fixMatchBtn {
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid #4a5a3a;
+  border: 1px solid var(--border);
   background: transparent;
-  color: #90b060;
+  color: var(--text-muted);
   font-size: 0.78rem;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-.fixMatchBtn:hover { background: #2a3a1a; }
+.fixMatchBtn:hover { background: var(--bg-hover); color: var(--text); }
 
 .clearMatchBtn {
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid #6a3a3a;
+  border: 1px solid var(--border);
   background: transparent;
-  color: #c06060;
+  color: var(--text-muted);
   font-size: 0.78rem;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-.clearMatchBtn:hover:not(:disabled) { background: #3a1a1a; }
+.clearMatchBtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 .clearMatchBtn:disabled { opacity: 0.45; cursor: default; }
 
 .suppressMatchBtn {
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid #6a5a3a;
+  border: 1px solid var(--border);
   background: transparent;
-  color: #b09050;
+  color: var(--text-muted);
   font-size: 0.78rem;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-.suppressMatchBtn:hover:not(:disabled) { background: #3a2a1a; }
+.suppressMatchBtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 .suppressMatchBtn:disabled { opacity: 0.45; cursor: default; }
 
 .resumeMatchBtn {
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid #3a5a4a;
+  border: 1px solid var(--border);
   background: transparent;
-  color: #60a880;
+  color: var(--text-muted);
   font-size: 0.78rem;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-.resumeMatchBtn:hover:not(:disabled) { background: #1a3a2a; }
+.resumeMatchBtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 .resumeMatchBtn:disabled { opacity: 0.45; cursor: default; }
 
 /* ── Fix Match panel ─────────────────────────────────────────────────────────── */
 
 .fixMatchPanel {
   padding: 12px 16px;
-  background: #181c2a;
-  border-bottom: 1px solid #2e3548;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
 }
 
 .fixMatchHint {
   font-size: 0.78rem;
-  color: #7a8a9a;
+  color: var(--text-muted);
   margin: 0 0 8px;
 }
 
@@ -147,20 +148,20 @@
   flex: 1;
   padding: 6px 10px;
   border-radius: 4px;
-  border: 1px solid #3e4a5a;
-  background: #141820;
-  color: #d0d8e8;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text);
   font-size: 0.85rem;
   outline: none;
 }
-.fixMatchInput:focus { border-color: #5080c0; }
+.fixMatchInput:focus { border-color: var(--accent); }
 
 .fixMatchApplyBtn {
   padding: 6px 14px;
   border-radius: 4px;
   border: none;
-  background: #3060a0;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
   font-size: 0.85rem;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -187,7 +188,7 @@
 
 .label {
   min-width: 100px;
-  color: #6a7a8a;
+  color: var(--text-muted);
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -196,7 +197,7 @@
 }
 
 .value {
-  color: #c0cad8;
+  color: var(--text);
   word-break: break-word;
 }
 
@@ -207,8 +208,8 @@
 }
 
 .tag {
-  background: #2a3548;
-  color: #90a0b8;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
   border-radius: 3px;
   padding: 1px 6px;
   font-size: 0.75rem;
@@ -222,8 +223,8 @@
 }
 
 .idChip {
-  background: #232d3f;
-  color: #8090a8;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
   border-radius: 3px;
   padding: 1px 8px;
   font-size: 0.78rem;
@@ -249,7 +250,7 @@
   background: none;
   border: none;
   padding: 0;
-  color: #7090c0;
+  color: var(--accent);
   transition: opacity 0.15s;
 }
 .imageLink:hover { opacity: 0.8; }
@@ -261,14 +262,14 @@
   height: auto;
   object-fit: contain;
   border-radius: 3px;
-  border: 1px solid #2e3548;
-  background: #141820;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
   display: block;
 }
 
 .thumbnailLabel {
   font-size: 0.68rem;
-  color: #5a6a7a;
+  color: var(--text-muted);
 }
 
 /* Error message */

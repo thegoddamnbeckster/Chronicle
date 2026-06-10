@@ -67,4 +67,6 @@ namespace Chronicle.Core.Exceptions
     {
         public NoProviderConfiguredException(string message) : base(message) { }
     }
+
+
 }

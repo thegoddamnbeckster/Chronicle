@@ -10,6 +10,8 @@ obj/
 publish/
 # Local dev config — may contain secrets (tokens, keys). Never commit.
 appsettings.Development.json
+# Data Protection key ring — machine-specific, must never be committed.
+src/Chronicle.API/keys/
 
 # Build results
 [Dd]ebug/

@@ -5,6 +5,7 @@ import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library
 import { deleteMedia } from '@/api/media'
 import type { LibraryEntry, LibraryStatus } from '@/types'
 import { loadSortSettings, stripLeadingArticle } from '@/utils/sortSettings'
+import { loadPrefs, savePrefs, DEFAULT_PREFS, type LibraryPrefs } from '@/utils/libraryPrefs'
 import styles from './LibraryPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 
@@ -43,42 +44,17 @@ const SORT_OPTIONS: { value: string; label: string }[] = [
 ]
 
 // ── Preferences (localStorage) ───────────────────────────────────────────────
+// LibraryPrefs, DEFAULT_PREFS, loadPrefs, savePrefs live in @/utils/libraryPrefs
+// so LibrarySettingsPage can import them without pulling in the full LibraryPage bundle.
+export type { LibraryPrefs } from '@/utils/libraryPrefs'
+export { DEFAULT_PREFS, loadPrefs, savePrefs } from '@/utils/libraryPrefs'
 
-const PREFS_KEY = 'chronicle_library_prefs'
 const PRESETS_KEY = 'chronicle_library_presets'
-
-interface LibraryPrefs {
-  sortBy: SortField
-  sortDir: SortDir
-  statusFilter?: LibraryStatus
-  pageSizePreset: PageSizePreset
-  groupMoviesIntoCollections: boolean
-}
 
 export interface LibraryPreset {
   id: string
   name: string
   prefs: LibraryPrefs
-}
-
-const DEFAULT_PREFS: LibraryPrefs = {
-  sortBy: 'name',
-  sortDir: 'asc',
-  statusFilter: undefined,
-  pageSizePreset: 'medium',
-  groupMoviesIntoCollections: false,
-}
-
-function loadPrefs(): LibraryPrefs {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY)
-    if (raw) return { ...DEFAULT_PREFS, ...JSON.parse(raw) }
-  } catch { /* ignore */ }
-  return { ...DEFAULT_PREFS }
-}
-
-function savePrefs(prefs: LibraryPrefs) {
-  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
 }
 
 export function loadPresets(): LibraryPreset[] {
@@ -432,17 +408,6 @@ export default function LibraryPage() {
           </div>
         </div>
 
-        {/* Group movies into collections */}
-        <div className={styles.sortRow}>
-          <label className={styles.collectionGroupingLabel}>
-            <input
-              type="checkbox"
-              checked={prefs.groupMoviesIntoCollections}
-              onChange={e => setPrefs({ groupMoviesIntoCollections: e.target.checked })}
-            />
-            {' '}Group movies into collections
-          </label>
-        </div>
 
         {/* Sort + page size row */}
         <div className={styles.sortRow}>
@@ -561,7 +526,12 @@ export default function LibraryPage() {
                 <div
                   key={entry.id}
                   id={`media-${entry.mediaItem.id}`}
-                  className={`${styles.card} ${selectMode && selectedIds.has(entry.mediaItem.id) ? styles.cardSelected : ''}`}
+                  className={[
+                    styles.card,
+                    entry.mediaItem.isCollectionContainer ? styles.cardCollection : '',
+                    entry.mediaItem.isStub ? styles.cardStub : '',
+                    selectMode && selectedIds.has(entry.mediaItem.id) ? styles.cardSelected : '',
+                  ].filter(Boolean).join(' ')}
                   onClick={selectMode ? () => toggleSelected(entry.mediaItem.id) : undefined}
                   style={selectMode ? { cursor: 'pointer' } : undefined}
                 >
@@ -590,6 +560,12 @@ export default function LibraryPage() {
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
                           </div>
+                        )}
+                        {entry.mediaItem.isCollectionContainer && (
+                          <div className={styles.collectionBadge}>Collection</div>
+                        )}
+                        {entry.mediaItem.isStub && (
+                          <div className={styles.stubBadge}>Missing</div>
                         )}
                       </div>
                       {selectedIds.has(entry.mediaItem.id) && (
@@ -622,6 +598,12 @@ export default function LibraryPage() {
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
                           </div>
                         )}
+                        {entry.mediaItem.isCollectionContainer && (
+                          <div className={styles.collectionBadge}>Collection</div>
+                        )}
+                        {entry.mediaItem.isStub && (
+                          <div className={styles.stubBadge}>Missing</div>
+                        )}
                       </div>
                     </Link>
                   )}
@@ -635,30 +617,28 @@ export default function LibraryPage() {
                     )}
                     <div className={styles.metaRow}>
                       {entry.mediaItem.year && <span className={styles.year}>{entry.mediaItem.year}</span>}
-                      {(() => {
-                        const pluginMeta = entry.mediaItem.pluginMetadata
-                        if (!pluginMeta) return null
-                        const rating = Object.values(pluginMeta)
-                          .map(m => (m as Record<string, unknown>)?.rating)
-                          .find(r => typeof r === 'number') as number | undefined
-                        return rating != null
-                          ? <span className={styles.rating}>★ {rating.toFixed(1)}</span>
-                          : null
-                      })()}
+                      {entry.mediaItem.resolvedMetadata?.rating != null && (
+                        <span className={styles.rating} title="Public rating">★ {entry.mediaItem.resolvedMetadata.rating.toFixed(1)}</span>
+                      )}
+                      {entry.userRating != null && (
+                        <span className={styles.userRating} title={`My Rating${entry.userRatingSource ? ` (via ${entry.userRatingSource})` : ''}`}>♥ {entry.userRating}</span>
+                      )}
                     </div>
                     {!selectMode && (
                       <>
-                        <select
-                          className={styles.statusSelect}
-                          value={entry.status}
-                          onChange={e =>
-                            updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })
-                          }
-                        >
-                          {STATUS_OPTIONS.map(s => (
-                            <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                          ))}
-                        </select>
+                        {!entry.mediaItem.isCollectionContainer && (
+                          <select
+                            className={styles.statusSelect}
+                            value={entry.status}
+                            onChange={e =>
+                              updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })
+                            }
+                          >
+                            {STATUS_OPTIONS.map(s => (
+                              <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                            ))}
+                          </select>
+                        )}
                         <button
                           className={styles.removeBtn}
                           onClick={() => {

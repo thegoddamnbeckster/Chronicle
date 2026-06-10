@@ -7,7 +7,7 @@ import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
 import { getPluginDisplayOrder } from '@/api/settings'
-import { updateMyPreferences } from '@/api/users'
+import { getMyPreferences, updateMyPreferences } from '@/api/users'
 import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
@@ -15,7 +15,7 @@ import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
-import MergeModal from '@/components/MergeModal'
+import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import { unmergeItem } from '@/api/duplicates'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
@@ -80,6 +80,9 @@ function getChildrenLabel(parentMediaType: string, ancestorCount: number): strin
     if (childLevel === 1) return 'Albums'
     if (childLevel === 2) return 'Tracks'
   }
+  if (t === 'movies') {
+    if (childLevel === 1) return 'Movies'
+  }
   return 'Items'
 }
 
@@ -87,29 +90,58 @@ const LIGHTBOX_SKIP = new Set(['title', 'externalid', 'source', 'totalresults', 
 
 // ── Plugin fold ──────────────────────────────────────────────────────────────
 
+// Module-level cache so preferences are fetched once per page session (not per component mount)
+let _foldsCache: Record<string, boolean> | null = null
+let _foldsFetch: Promise<Record<string, boolean>> | null = null
+
+function getFoldsCache(): Promise<Record<string, boolean>> {
+  if (_foldsCache !== null) return Promise.resolve(_foldsCache)
+  if (_foldsFetch) return _foldsFetch
+  _foldsFetch = getMyPreferences().then(p => {
+    _foldsCache = p.folds ?? {}
+    return _foldsCache
+  }).catch(() => {
+    _foldsCache = {}
+    return _foldsCache
+  })
+  return _foldsFetch
+}
+
 function useFold(key: string, defaultOpen: boolean) {
-  // TODO: initialise from loaded UserPreferences context when preferences are made available app-wide
   const [isOpen, setIsOpen] = useState(defaultOpen)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    getFoldsCache().then(folds => {
+      if (cancelled) return
+      if (key in folds) setIsOpen(folds[key])
+      setLoaded(true)
+    })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
 
   function toggle() {
     const next = !isOpen
     setIsOpen(next)
-    // Fire-and-forget — don't block UI on save
+    if (_foldsCache) _foldsCache[key] = next
     updateMyPreferences({ folds: { [key]: next } }).catch(() => {})
   }
 
-  return { isOpen, toggle }
+  return { isOpen, toggle, loaded }
 }
 
 interface PluginFoldProps {
   foldKey: string
   label: string
   iconUrl?: string | null
+  defaultOpen?: boolean
   children: React.ReactNode
 }
 
-function PluginFold({ foldKey, label, iconUrl, children }: PluginFoldProps) {
-  const { isOpen, toggle } = useFold(foldKey, true)
+function PluginFold({ foldKey, label, iconUrl, defaultOpen = true, children }: PluginFoldProps) {
+  const { isOpen, toggle } = useFold(foldKey, defaultOpen)
 
   return (
     <div className={styles.pluginFold}>
@@ -235,7 +267,7 @@ export default function MediaDetailPage() {
   // ── Merge with… ──────────────────────────────────────────────────────────
   const [mergeSearchOpen, setMergeSearchOpen] = useState(false)
   const [mergeSearchQuery, setMergeSearchQuery] = useState('')
-  const [mergeTarget, setMergeTarget] = useState<{ id: number; name: string; posterUrl: string | null } | null>(null)
+  const [mergeTarget, setMergeTarget] = useState<MergeItem | null>(null)
 
   const { data: mergeSearchResults = [] } = useQuery({
     queryKey: ['mergeSearch', mergeSearchQuery],
@@ -652,12 +684,21 @@ export default function MediaDetailPage() {
               />
               {mergeSearchResults.length > 0 && (
                 <div className={styles.mergeSearchResults}>
-                  {mergeSearchResults.slice(0, 8).map(result => (
+                  {mergeSearchResults.filter(r => r.id !== mediaId).slice(0, 8).map(result => (
                     <button
                       key={result.id}
                       className={styles.mergeSearchResult}
                       onClick={() => {
-                        setMergeTarget({ id: result.id, name: result.name, posterUrl: result.posterUrl })
+                        setMergeTarget({
+                          id: result.id,
+                          name: result.name,
+                          posterUrl: result.posterUrl,
+                          mediaTypeName: result.mediaTypeName,
+                          year: result.year,
+                          runtimeMinutes: result.runtimeMinutes,
+                          overview: result.overview,
+                          filePath: result.fileScannerMeta?.filePath ?? null,
+                        })
                         setMergeSearchOpen(false)
                         setMergeSearchQuery('')
                       }}
@@ -665,7 +706,10 @@ export default function MediaDetailPage() {
                       {result.posterUrl && (
                         <img src={result.posterUrl} alt="" className={styles.mergeResultPoster} />
                       )}
-                      <span>{result.name}{result.year ? ` (${result.year})` : ''}</span>
+                      <span className={styles.mergeResultText}>
+                        <span className={styles.mergeResultName}>{result.name}{result.year ? ` (${result.year})` : ''}</span>
+                        {result.mediaTypeName && <span className={styles.mergeResultType}>{result.mediaTypeName}</span>}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -734,9 +778,11 @@ export default function MediaDetailPage() {
             )}
           </div>
 
-          {/* Collection membership box — only for movies type */}
+          {/* Collection membership box — only for movies type.
+              compact=true on individual movies: just show "Part of X" header, no card grid.
+              On collection containers (Level 0) the full grid is shown. */}
           {(item.mediaTypeInternalName ?? item.mediaTypeName ?? '').toLowerCase() === 'movies' && (
-            <CollectionMetadataBox mediaItemId={mediaId} />
+            <CollectionMetadataBox mediaItemId={mediaId} compact={item.hierarchyLevel === 1} />
           )}
 
           {/* Per-plugin metadata boxes — one box per plugin that has data OR has been attempted.
@@ -774,6 +820,7 @@ export default function MediaDetailPage() {
                   foldKey={`media.${mediaId}.${pluginId}`}
                   label={plugin?.name ?? pluginId}
                   iconUrl={plugin?.iconUrl}
+                  defaultOpen={!pluginId.includes('fanarttv')}
                 >
                   <PluginMetadataBox
                     mediaId={mediaId}
@@ -900,9 +947,23 @@ export default function MediaDetailPage() {
         </div>{/* backdropContent */}
       </div>{/* backdropSection */}
 
-      {/* Children (seasons, episodes, tracks, etc.) — sorted by number, then filename */}
+      {/* Children (seasons, episodes, tracks, etc.) — sorted by number, then filename.
+          Movie collections are sorted by year ascending (oldest first).
+          For movie collections the CollectionMetadataBox already shows the children — skip. */}
       {children.length > 0 && (() => {
+        const isMovieCollection =
+          (item.mediaTypeInternalName ?? item.mediaTypeName ?? '').toLowerCase() === 'movies' &&
+          item.hierarchyLevel === 0
+
+        if (isMovieCollection) return null
+
         const sortedChildren = [...children].sort((a, b) => {
+          if (isMovieCollection) {
+            // Oldest release first; null years sort to end
+            const ya = a.year ?? 9999
+            const yb = b.year ?? 9999
+            return ya !== yb ? ya - yb : a.name.localeCompare(b.name)
+          }
           // Both have a number → numeric ascending
           if (a.number != null && b.number != null) return a.number - b.number
           // Only one has a number → numbered item comes first
@@ -1016,13 +1077,22 @@ export default function MediaDetailPage() {
 
       {mergeTarget && item && (
         <MergeModal
-          itemA={{ id: item.id, name: item.name, posterUrl: item.posterUrl }}
+          itemA={{
+            id: item.id,
+            name: item.name,
+            posterUrl: item.posterUrl,
+            mediaTypeName: item.mediaTypeName,
+            year: item.year,
+            runtimeMinutes: item.runtimeMinutes,
+            overview: item.overview,
+            filePath: item.fileScannerMeta?.filePath ?? null,
+          }}
           itemB={mergeTarget}
           onClose={() => setMergeTarget(null)}
-          onMerged={() => {
+          onMerged={(winnerId) => {
             setMergeTarget(null)
-            qc.invalidateQueries({ queryKey: ['media', id] })
-            // Navigate to winner if this item was the loser
+            qc.invalidateQueries({ queryKey: ['media', String(winnerId)] })
+            navigate(`/media/${winnerId}`, { replace: true })
           }}
         />
       )}

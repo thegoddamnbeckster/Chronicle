@@ -77,7 +77,7 @@ $PluginProjects = @(
     @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.TMDB\Chronicle.Plugin.TMDB.csproj"
         DllName    = "Chronicle.Plugin.TMDB.dll"
-        OutputDir  = Join-Path $PluginsDir "tmdb"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.tmdb"
     },
     @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.MusicBrainz\Chronicle.Plugin.MusicBrainz.csproj"

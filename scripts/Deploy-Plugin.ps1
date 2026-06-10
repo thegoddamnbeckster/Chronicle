@@ -73,6 +73,11 @@ $PluginMap = @{
         DllName = "Chronicle.Plugin.Hardcover.dll"
         OutDir  = Join-Path $PluginsDir "hardcover"
     }
+    "chronicle.plugin.fanarttv"    = @{
+        Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.FanartTV\Chronicle.Plugin.FanartTV.csproj"
+        DllName = "Chronicle.Plugin.FanartTV.dll"
+        OutDir  = Join-Path $PluginsDir "chronicle.plugin.fanarttv"
+    }
 }
 
 if (-not $PluginMap.ContainsKey($PluginId)) {

@@ -3,13 +3,18 @@ using Chronicle.Data;
 using Chronicle.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Chronicle.Tests.Unit.Services;
 
 public class MovieCollectionServiceTests
 {
+    private static MovieCollectionService CreateService() =>
+        new(Mock.Of<IServiceScopeFactory>(), NullLogger<MovieCollectionService>.Instance);
+
     private static ChronicleDbContext CreateInMemoryDb()
     {
         var options = new DbContextOptionsBuilder<ChronicleDbContext>()
@@ -40,7 +45,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, movie);
 
         movie.ParentId.Should().BeNull();
@@ -73,7 +78,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, movie);
 
         // Collection item should exist
@@ -120,7 +125,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, movie);
 
         // No duplicate collection items
@@ -151,7 +156,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(item);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, item);
 
         // Should not create any collection items
@@ -185,7 +190,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, movie);
 
         movie.ParentId.Should().BeNull();
@@ -230,7 +235,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie2);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, movie2);
 
         // Should be parented to the existing collection (not a new one)
@@ -276,7 +281,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie2);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         // Call twice — second call should not insert a duplicate ExternalId row
         await svc.EnsureCollectionParentAsync(db, movie2);
         await svc.EnsureCollectionParentAsync(db, movie2);
@@ -317,7 +322,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, movie);
 
         collection.PosterUrl.Should().Be("https://img/new.jpg");
@@ -363,7 +368,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, movie);
 
         // Movie should now be under the new collection
@@ -477,7 +482,7 @@ public class MovieCollectionServiceTests
         db.MediaItems.Add(movie);
         await db.SaveChangesAsync();
 
-        var svc = new MovieCollectionService(NullLogger<MovieCollectionService>.Instance);
+        var svc = CreateService();
         await svc.EnsureCollectionParentAsync(db, movie);
 
         var collection = await db.MediaItems.FirstOrDefaultAsync(m => m.Name == "Some Saga");
@@ -489,5 +494,163 @@ public class MovieCollectionServiceTests
         extId.Source.Should().Be("someplugin");
 
         movie.ParentId.Should().Be(collection!.Id);
+    }
+
+    // ── _resolved path: MetadataResolutionService pre-writes the winning plugin's data ──
+
+    [Fact]
+    public void ExtractCollectionData_ResolvedBlobPresent_UsesResolvedData()
+    {
+        // Simulates metadata_json after MetadataResolutionService ran and
+        // the operator configured tmdb as the priority plugin for "collection".
+        const string json = """
+        {
+          "chronicle.plugin.tmdb": {
+            "belongsToCollection": { "id": 748, "name": "Inception Collection", "posterPath": "https://img/tmdb.jpg" }
+          },
+          "chronicle.plugin.otherplugin": {
+            "belongsToCollection": { "id": "other-1", "name": "Different Collection", "posterPath": null }
+          },
+          "_resolved": {
+            "belongsToCollection": { "id": 748, "name": "Inception Collection", "posterPath": "https://img/tmdb.jpg" }
+          }
+        }
+        """;
+
+        var result = MovieCollectionService.ExtractCollectionData(json);
+
+        // Should use the _resolved blob, not the first plugin blob in doc order
+        result.Should().NotBeNull();
+        result!.Id.Should().Be("748");
+        result.Name.Should().Be("Inception Collection");
+        // Source resolved by matching the ID back to the tmdb plugin blob
+        result.Source.Should().Be("tmdb");
+    }
+
+    [Fact]
+    public void ExtractCollectionData_ResolvedBlobChoosesSecondPlugin_ReturnsSecondPluginData()
+    {
+        // Assignment config has otherplugin ranked above tmdb for "collection".
+        // MetadataResolutionService wrote otherplugin's data into _resolved.
+        const string json = """
+        {
+          "chronicle.plugin.tmdb": {
+            "belongsToCollection": { "id": 748, "name": "Inception Collection", "posterPath": "https://img/tmdb.jpg" }
+          },
+          "chronicle.plugin.otherplugin": {
+            "belongsToCollection": { "id": "other-1", "name": "Other Collection", "posterPath": "https://img/other.jpg" }
+          },
+          "_resolved": {
+            "belongsToCollection": { "id": "other-1", "name": "Other Collection", "posterPath": "https://img/other.jpg" }
+          }
+        }
+        """;
+
+        var result = MovieCollectionService.ExtractCollectionData(json);
+
+        result.Should().NotBeNull();
+        result!.Id.Should().Be("other-1");
+        result.Name.Should().Be("Other Collection");
+        result.Source.Should().Be("otherplugin");
+    }
+
+    [Fact]
+    public void ExtractCollectionData_ResolvedBlobSourceNotFoundInPlugins_FallsBackToPluginScan()
+    {
+        // _resolved.belongsToCollection has data but no plugin blob has the same ID —
+        // e.g. the plugin that wrote _resolved was uninstalled and its blobs removed.
+        // Must NOT return source = "unknown" (that would create a duplicate collection container).
+        // Must fall through to Pass 2 and use the tmdb blob directly.
+        const string json = """
+        {
+          "chronicle.plugin.tmdb": {
+            "belongsToCollection": { "id": 748, "name": "Inception Collection", "posterPath": null }
+          },
+          "_resolved": {
+            "belongsToCollection": { "id": "orphan-999", "name": "Orphan Collection", "posterPath": null }
+          }
+        }
+        """;
+
+        var result = MovieCollectionService.ExtractCollectionData(json);
+
+        // Should fall through to Pass 2 and return the tmdb blob data with correct source
+        result.Should().NotBeNull();
+        result!.Id.Should().Be("748");
+        result.Source.Should().Be("tmdb");
+        result.Source.Should().NotBe("unknown");
+    }
+
+    [Fact]
+    public void ExtractCollectionData_ResolvedBlobMissingCollection_FallsBackToPluginScan()
+    {
+        // _resolved exists but has no belongsToCollection — operator didn't configure
+        // collection field. Fall back to first plugin blob with collection data.
+        const string json = """
+        {
+          "chronicle.plugin.tmdb": {
+            "title": "Inception",
+            "belongsToCollection": { "id": 748, "name": "Inception Collection", "posterPath": null }
+          },
+          "_resolved": { "title": "Inception" }
+        }
+        """;
+
+        var result = MovieCollectionService.ExtractCollectionData(json);
+
+        result.Should().NotBeNull();
+        result!.Id.Should().Be("748");
+        result.Source.Should().Be("tmdb");
+    }
+
+    [Fact]
+    public void ExtractCollectionData_NestedInExtendedData_ReturnsCorrectData()
+    {
+        // TMDB (and potentially other plugins) store belongsToCollection inside extendedData
+        const string json = """
+        {
+          "chronicle.plugin.tmdb": {
+            "title": "22 Jump Street",
+            "extendedData": {
+              "popularity": 7.3,
+              "belongsToCollection": {
+                "id": 212562,
+                "name": "Jump Street Collection",
+                "posterPath": "https://image.tmdb.org/t/p/w500/of42.jpg"
+              }
+            }
+          }
+        }
+        """;
+
+        var result = MovieCollectionService.ExtractCollectionData(json);
+
+        result.Should().NotBeNull();
+        result!.Id.Should().Be("212562");
+        result.Name.Should().Be("Jump Street Collection");
+        result.PosterUrl.Should().Be("https://image.tmdb.org/t/p/w500/of42.jpg");
+        result.Source.Should().Be("tmdb");
+    }
+
+    [Fact]
+    public void ExtractCollectionData_TopLevelTakesPrecedenceOverExtendedData()
+    {
+        // If both top-level and extendedData have the field, top-level wins
+        const string json = """
+        {
+          "chronicle.plugin.tmdb": {
+            "belongsToCollection": { "id": "111", "name": "Top Level Collection" },
+            "extendedData": {
+              "belongsToCollection": { "id": "222", "name": "Nested Collection" }
+            }
+          }
+        }
+        """;
+
+        var result = MovieCollectionService.ExtractCollectionData(json);
+
+        result.Should().NotBeNull();
+        result!.Id.Should().Be("111");
+        result.Name.Should().Be("Top Level Collection");
     }
 }

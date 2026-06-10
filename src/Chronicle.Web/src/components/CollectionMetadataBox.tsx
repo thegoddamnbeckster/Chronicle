@@ -1,20 +1,49 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { getCollection } from '@/api/collections'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { getCollection, rebuildCollection } from '@/api/collections'
 import styles from './CollectionMetadataBox.module.css'
 
 interface Props {
   mediaItemId: number
+  /** When true, only show the collection header — no movie grid (use on movie detail pages) */
+  compact?: boolean
 }
 
-export default function CollectionMetadataBox({ mediaItemId }: Props) {
+export default function CollectionMetadataBox({ mediaItemId, compact = false }: Props) {
+  const queryClient = useQueryClient()
+  const [rebuildSummary, setRebuildSummary] = useState<string | null>(null)
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ['collection', mediaItemId],
     queryFn: () => getCollection(mediaItemId),
-    retry: false,  // 404 = no collection; don't spam retries
+    retry: false,
+  })
+
+  const rebuildMut = useMutation({
+    mutationFn: () => rebuildCollection(data!.id),
+    onSuccess: (result) => {
+      setRebuildSummary(result.summary)
+      if (result.collection) {
+        queryClient.setQueryData(['collection', mediaItemId], result.collection)
+      } else {
+        // Collection was removed — refetch to show no-collection state
+        queryClient.invalidateQueries({ queryKey: ['collection', mediaItemId] })
+      }
+    },
   })
 
   if (isLoading) return null
+
+  // After a successful rebuild that removed the collection entirely, show only the summary.
+  if ((isError || !data) && rebuildSummary) {
+    return (
+      <section className={styles.box}>
+        <p className={styles.rebuildSummary}>{rebuildSummary}</p>
+      </section>
+    )
+  }
+
   if (isError || !data) return null
 
   return (
@@ -23,27 +52,81 @@ export default function CollectionMetadataBox({ mediaItemId }: Props) {
         {data.posterUrl && (
           <img src={data.posterUrl} alt="" className={styles.collectionPoster} />
         )}
-        <span>Part of <em>{data.name}</em></span>
-      </h3>
-      {data.overview && <p className={styles.overview}>{data.overview}</p>}
-      <div className={styles.grid}>
-        {data.movies.map(movie => (
-          <Link
-            key={movie.id}
-            to={`/media/${movie.id}`}
-            className={`${styles.card} ${movie.inLibrary ? styles.inLibrary : styles.notInLibrary}`}
-            title={`${movie.name}${movie.year ? ` (${movie.year})` : ''}`}
+        <span>Part of <Link to={`/media/${data.id}`} className={styles.collectionLink}><em>{data.name}</em></Link></span>
+        {!compact && (
+          <button
+            className={styles.rebuildBtn}
+            onClick={() => { setRebuildSummary(null); rebuildMut.mutate() }}
+            disabled={rebuildMut.isPending}
+            title="Re-check this collection against TMDB — re-parents incorrectly grouped movies and adds stubs for missing members"
           >
-            {movie.posterUrl
-              ? <img src={movie.posterUrl} alt={movie.name} className={styles.poster} />
-              : <div className={styles.posterPlaceholder}>{movie.name[0]}</div>
-            }
-            <div className={styles.cardName}>{movie.name}</div>
-            {movie.year && <div className={styles.cardYear}>{movie.year}</div>}
-            {!movie.inLibrary && <div className={styles.missingBadge}>Not in library</div>}
-          </Link>
-        ))}
-      </div>
+            {rebuildMut.isPending ? 'Rebuilding…' : 'Rebuild Collection'}
+          </button>
+        )}
+      </h3>
+      {!compact && rebuildSummary && (
+        <p className={styles.rebuildSummary}>{rebuildSummary}</p>
+      )}
+      {!compact && rebuildMut.isError && (
+        <p className={styles.rebuildError}>Rebuild failed — check the API logs.</p>
+      )}
+      {!compact && data.overview && <p className={styles.overview}>{data.overview}</p>}
+      {!compact && (
+        <div className={styles.grid}>
+          {data.movies.map(movie => (
+            <div
+              key={movie.id}
+              className={[
+                styles.card,
+                !movie.inLibrary ? styles.notInLibrary : '',
+                movie.isStub ? styles.stubCard : '',
+              ].filter(Boolean).join(' ')}
+            >
+              <Link to={`/media/${movie.id}`} className={styles.posterLink}>
+                <div className={styles.poster}>
+                  {movie.posterUrl ? (
+                    <img
+                      src={movie.posterUrl}
+                      alt={movie.name}
+                      loading="lazy"
+                      onError={e => {
+                        const img = e.currentTarget
+                        img.style.display = 'none'
+                        const ph = img.nextElementSibling as HTMLElement | null
+                        if (ph) ph.style.display = 'flex'
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className={styles.posterPlaceholder}
+                    style={{ display: movie.posterUrl ? 'none' : 'flex' }}
+                  >
+                    {movie.name.charAt(0)}
+                  </div>
+                  {movie.isStub && (
+                    <div className={styles.stubBanner}>Not in Library</div>
+                  )}
+                </div>
+              </Link>
+              <div className={styles.info}>
+                <Link to={`/media/${movie.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                  <div className={styles.name} title={movie.name}>{movie.name}</div>
+                </Link>
+                <div className={styles.metaRow}>
+                  {movie.year && <span className={styles.year}>{movie.year}</span>}
+                  {movie.isStub && <span className={styles.stubLabel}>Not in your library</span>}
+                  {!movie.isStub && movie.rating != null && (
+                    <span className={styles.rating} title="Public rating">★ {movie.rating.toFixed(1)}</span>
+                  )}
+                  {movie.userRating != null && (
+                    <span className={styles.userRating} title={`My Rating${movie.userRatingSource ? ` (via ${movie.userRatingSource})` : ''}`}>♥ {movie.userRating}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   )
 }

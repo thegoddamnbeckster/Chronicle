@@ -33,21 +33,48 @@ namespace Chronicle.API.Controllers
                 prefs.ShowDiagnostics ?? user.IsAdmin)));
         }
 
+        [HttpGet("me/preferences")]
+        public async Task<IActionResult> GetMyPreferences()
+        {
+            var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var prefs = await _userService.GetPreferencesAsync(userId);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                showDiagnostics        = prefs.ShowDiagnostics,
+                defaultFoldsOpen       = prefs.DefaultFoldsOpen,
+                folds                  = prefs.Folds ?? new Dictionary<string, bool>(),
+                createCollectionStubs  = prefs.CreateCollectionStubs ?? true,
+            }));
+        }
+
         [HttpPatch("me/preferences")]
-        [Authorize]
         public async Task<IActionResult> PatchMyPreferences([FromBody] PatchPreferencesRequest req)
         {
             var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var patch = new UserPreferences { ShowDiagnostics = req.ShowDiagnostics };
+            var patch = new UserPreferences
+            {
+                ShowDiagnostics       = req.ShowDiagnostics,
+                DefaultFoldsOpen      = req.DefaultFoldsOpen,
+                Folds                 = req.Folds,
+                CreateCollectionStubs = req.CreateCollectionStubs,
+            };
             await _userService.UpdatePreferencesAsync(userId, patch);
             var prefs = await _userService.GetPreferencesAsync(userId);
             var user = await _userService.GetByIdAsync(userId);
             return Ok(ApiResponse<object>.Ok(new
             {
-                showDiagnostics = prefs.ShowDiagnostics ?? (user?.IsAdmin ?? false)
+                showDiagnostics       = prefs.ShowDiagnostics ?? (user?.IsAdmin ?? false),
+                defaultFoldsOpen      = prefs.DefaultFoldsOpen,
+                folds                 = prefs.Folds ?? new Dictionary<string, bool>(),
+                createCollectionStubs = prefs.CreateCollectionStubs ?? true,
             }));
         }
     }
 
-    public record PatchPreferencesRequest(bool? ShowDiagnostics);
+    public record PatchPreferencesRequest(
+        bool? ShowDiagnostics,
+        bool? DefaultFoldsOpen,
+        Dictionary<string, bool>? Folds,
+        bool? CreateCollectionStubs = null
+    );
 }
