@@ -73,5 +73,6 @@ public interface IMovieCollectionService
         ChronicleDbContext db,
         MediaItem collection,
         IMetadataProvider provider,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null);
 }

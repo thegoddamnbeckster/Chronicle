@@ -473,7 +473,8 @@ public class MovieCollectionService(
         ChronicleDbContext db,
         MediaItem collection,
         IMetadataProvider provider,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null)
     {
         // Only use a collection ExternalId that came from this specific provider's source,
         // matching by the last segment of the provider name (e.g. "tmdb").
@@ -493,8 +494,11 @@ public class MovieCollectionService(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex,
-                "Failed to fetch collection parts for {ExternalId} from provider {Provider}",
+                "Failed to fetch collection parts for {ExternalId} from provider {Provider} — removing bad ExternalId to prevent repeat failures",
                 collectionExtId.ExternalId, provider.Name);
+            // Remove the bad ExternalId so this collection is skipped on future runs.
+            db.MediaExternalIds.Remove(collectionExtId);
+            await db.SaveChangesAsync(ct);
             return true;
         }
 
@@ -608,6 +612,30 @@ public class MovieCollectionService(
                 Source      = collectionExtId.Source,
                 ExternalId  = part.ExternalId,
             });
+
+            // Seed enrichment rows immediately so all plugins process this stub
+            // without waiting for the next SeedEnrichmentRowsAsync cycle.
+            var mediaTypeName = collection.MediaType?.Name ?? string.Empty;
+            foreach (var (pluginId, pluginProvider) in allProviders ?? [])
+            {
+                var supported = pluginProvider.GetSupportedMediaTypes()
+                    .Any(s => string.Equals(s.MediaTypeName, mediaTypeName, StringComparison.OrdinalIgnoreCase));
+                if (!supported) continue;
+
+                var alreadyHasRow = await db.MediaEnrichments
+                    .AnyAsync(e => e.MediaItemId == stub.Id && e.PluginId == pluginId, ct);
+                if (!alreadyHasRow)
+                {
+                    db.MediaEnrichments.Add(new MediaItemEnrichment
+                    {
+                        MediaItemId = stub.Id,
+                        PluginId    = pluginId,
+                        Status      = EnrichmentStatus.Pending,
+                        MaxRetries  = 3,
+                    });
+                }
+            }
+
             await db.SaveChangesAsync(ct);
 
             existingChildExtIds.Add(part.ExternalId);
@@ -698,7 +726,7 @@ public class MovieCollectionService(
                 StringComparison.OrdinalIgnoreCase) == true);
         if (providerEntry.Provider is null) return;
 
-        var nameMatched = await EnsureCollectionStubsAsync(db, collection, providerEntry.Provider, ct);
+        var nameMatched = await EnsureCollectionStubsAsync(db, collection, providerEntry.Provider, ct, providers);
 
         if (!nameMatched)
         {
@@ -922,7 +950,7 @@ public class MovieCollectionService(
 
                 try
                 {
-                    await EnsureCollectionStubsAsync(db, collection, provider, ct);
+                    await EnsureCollectionStubsAsync(db, collection, provider, ct, providers);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
