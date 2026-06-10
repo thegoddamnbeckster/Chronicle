@@ -5,6 +5,7 @@ import { getMediaTypes } from '@/api/media'
 import { searchMetadata, addFromSearch } from '@/api/scan'
 import type { MetadataSearchResult, MediaTypeOption } from '@/types'
 import styles from './AddMediaPage.module.css'
+import { PosterImage } from '@/components/PosterImage'
 
 // Map Chronicle media type names to the hint passed to the metadata provider's SearchAsync.
 // The provider uses this to restrict its search endpoint (e.g. TMDB /search/movie vs /search/tv).
@@ -133,25 +134,7 @@ export default function AddMediaPage() {
             return (
               <div key={r.externalId} className={styles.card}>
                 <div className={styles.posterWrap}>
-                  {r.posterUrl ? (
-                    <img
-                      src={r.posterUrl}
-                      alt={r.title}
-                      className={styles.poster}
-                      onError={e => {
-                        const img = e.currentTarget
-                        img.style.display = 'none'
-                        const ph = img.nextElementSibling as HTMLElement | null
-                        if (ph) ph.style.display = 'flex'
-                      }}
-                    />
-                  ) : null}
-                  <div
-                    className={styles.posterPlaceholder}
-                    style={{ display: r.posterUrl ? 'none' : 'flex' }}
-                  >
-                    {r.title.charAt(0)}
-                  </div>
+                  <PosterImage posterUrl={r.posterUrl} name={r.title} imgClassName={styles.poster} />
                 </div>
 
                 <div className={styles.cardBody}>

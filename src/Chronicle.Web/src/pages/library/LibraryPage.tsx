@@ -8,6 +8,7 @@ import { loadSortSettings, stripLeadingArticle } from '@/utils/sortSettings'
 import { loadPrefs, savePrefs, DEFAULT_PREFS, type LibraryPrefs } from '@/utils/libraryPrefs'
 import styles from './LibraryPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
+import { PosterImage } from '@/components/PosterImage'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -538,24 +539,7 @@ export default function LibraryPage() {
                   {selectMode ? (
                     <div className={styles.posterLink} style={{ position: 'relative' }}>
                       <div className={styles.poster}>
-                        {entry.mediaItem.posterUrl ? (
-                          <img
-                            src={entry.mediaItem.posterUrl}
-                            alt={entry.mediaItem.name}
-                            onError={e => {
-                              const img = e.currentTarget
-                              img.style.display = 'none'
-                              const ph = img.nextElementSibling as HTMLElement | null
-                              if (ph) ph.style.display = 'flex'
-                            }}
-                          />
-                        ) : null}
-                        <div
-                          className={styles.posterPlaceholder}
-                          style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
-                        >
-                          {entry.mediaItem.name.charAt(0)}
-                        </div>
+                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} />
                         {entry.mediaItem.hasPhysicalFile && (
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
@@ -575,24 +559,7 @@ export default function LibraryPage() {
                   ) : (
                     <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
                       <div className={styles.poster}>
-                        {entry.mediaItem.posterUrl ? (
-                          <img
-                            src={entry.mediaItem.posterUrl}
-                            alt={entry.mediaItem.name}
-                            onError={e => {
-                              const img = e.currentTarget
-                              img.style.display = 'none'
-                              const ph = img.nextElementSibling as HTMLElement | null
-                              if (ph) ph.style.display = 'flex'
-                            }}
-                          />
-                        ) : null}
-                        <div
-                          className={styles.posterPlaceholder}
-                          style={{ display: entry.mediaItem.posterUrl ? 'none' : 'flex' }}
-                        >
-                          {entry.mediaItem.name.charAt(0)}
-                        </div>
+                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} />
                         {entry.mediaItem.hasPhysicalFile && (
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>

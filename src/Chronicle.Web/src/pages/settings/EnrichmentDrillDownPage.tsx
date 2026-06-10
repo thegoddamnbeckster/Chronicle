@@ -11,6 +11,7 @@ import {
 } from '@/api/enrichment'
 import { refreshMediaForPlugin } from '@/api/media'
 import styles from './EnrichmentDrillDownPage.module.css'
+import { PosterImage } from '@/components/PosterImage'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -81,10 +82,8 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
 
   return (
     <div className={styles.card}>
-      {item.posterUrl
-        ? <img src={item.posterUrl} alt={item.name} className={styles.poster} />
-        : <div className={styles.posterPlaceholder}>🎬</div>
-      }
+      <PosterImage posterUrl={item.posterUrl} name={item.name} imgClassName={styles.poster}
+        placeholderContent="🎬" />
 
       <div className={styles.body}>
         {/* Title + meta */}

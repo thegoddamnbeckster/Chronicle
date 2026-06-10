@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useMutation } from '@tanstack/react-query'
 import { mergeItems } from '@/api/duplicates'
 import styles from './MergeModal.module.css'
+import { PosterImage } from './PosterImage'
 
 export interface MergeItem {
   id: number
@@ -54,9 +55,7 @@ export default function MergeModal({ itemA, itemB, onClose, onMerged }: Props) {
               <div className={styles.cardInner}>
                 {/* Poster */}
                 <div className={styles.posterWrap}>
-                  {item.posterUrl
-                    ? <img src={item.posterUrl} alt={item.name} className={styles.poster} />
-                    : <div className={styles.posterPlaceholder}>{item.name.charAt(0)}</div>}
+                  <PosterImage posterUrl={item.posterUrl} name={item.name} imgClassName={styles.poster} />
                 </div>
 
                 {/* Metadata */}

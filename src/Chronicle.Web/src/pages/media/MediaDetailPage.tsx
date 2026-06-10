@@ -15,6 +15,7 @@ import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
+import { PosterImage } from '@/components/PosterImage'
 import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import { unmergeItem } from '@/api/duplicates'
 
@@ -498,29 +499,12 @@ export default function MediaDetailPage() {
 
       <div className={styles.hero}>
         <div className={styles.posterWrap}>
-          {item.posterUrl
-            ? (
-              <img
-                className={`${styles.poster} ${styles.posterClickable}`}
-                src={item.posterUrl}
-                alt={item.name}
-                onClick={() => setLightboxIdx(0)}
-                onError={e => {
-                  const img = e.currentTarget
-                  img.style.display = 'none'
-                  const placeholder = img.nextElementSibling as HTMLElement | null
-                  if (placeholder) placeholder.style.display = 'flex'
-                }}
-              />
-            )
-            : null
-          }
-          <div
-            className={styles.posterPlaceholder}
-            style={{ display: item.posterUrl ? 'none' : 'flex' }}
-          >
-            {item.name.charAt(0)}
-          </div>
+          <PosterImage
+            posterUrl={item.posterUrl}
+            name={item.name}
+            imgClassName={styles.posterClickable}
+            onClick={() => setLightboxIdx(0)}
+          />
         </div>
 
         <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
@@ -987,31 +971,18 @@ export default function MediaDetailPage() {
                 state={{ listIds: childIds, listLabel: childrenLabel }}
                 className={styles.childCard}
               >
-                {child.posterUrl
-                  ? <img
-                      className={styles.childPoster}
-                      src={child.posterUrl}
-                      alt={child.name}
-                      onError={e => {
-                        const img = e.currentTarget
-                        img.style.display = 'none'
-                        const ph = img.nextElementSibling as HTMLElement | null
-                        if (ph) ph.style.display = 'flex'
-                      }}
-                    />
-                  : null}
                 {(() => {
                   const enriched = child.enrichmentStatuses != null &&
                     Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
                   return (
-                    <div
-                      className={styles.childPosterPlaceholder}
-                      style={{ display: child.posterUrl ? 'none' : 'flex' }}
-                    >
-                      {enriched
+                    <PosterImage
+                      posterUrl={child.posterUrl}
+                      name={child.name}
+                      imgClassName={styles.childPoster}
+                      placeholderContent={enriched
                         ? <span className={styles.childNoArt}>No art</span>
                         : (child.number ?? child.name.charAt(0))}
-                    </div>
+                    />
                   )
                 })()}
                 <div className={styles.childName}>{child.name}</div>

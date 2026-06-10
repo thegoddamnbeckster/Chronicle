@@ -123,8 +123,7 @@
   position: relative;
 }
 
-.poster { background: var(--bg-card); position: relative; }
-.poster img { width: 100%; height: auto; object-fit: contain; display: block; }
+.posterWrap { position: relative; }
 
 .posterPlaceholder {
   width: 100%;
