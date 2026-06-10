@@ -45,6 +45,10 @@ public sealed class RebuildMovieCollectionsService : IScheduledTask
         // Pass 1: re-parent all movies based on stored belongsToCollection data
         await collectionService.ProcessAllExistingMovieCollectionsAsync(ct);
 
+        // Pass 1b: re-parent may have created new containers for collections whose ExternalId
+        // was previously cleared — deduplicate again to merge those with any survivors.
+        await collectionService.DeduplicateCollectionsAsync(ct);
+
         // Pass 2: create stubs for missing collection members (requires live plugin)
         var providers = registry.GetMetadataProviderEntries()
             .Select(e => (e.PluginId, e.Provider))
