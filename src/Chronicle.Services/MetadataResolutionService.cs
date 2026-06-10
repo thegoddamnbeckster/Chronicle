@@ -36,6 +36,9 @@ public class MetadataResolutionService(
             ["clearart_url"]    = "clearartUrl",
             ["disc_url"]        = "discUrl",
             ["character_art_url"] = "characterArtUrl",
+            // Collection grouping — any plugin that writes belongsToCollection in its blob
+            // may be configured here to control which plugin's collection data takes precedence.
+            ["collection"]      = "belongsToCollection",
         };
 
     public async Task ResolveAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
@@ -60,7 +63,7 @@ public class MetadataResolutionService(
                 {
                     if (!blobs.TryGetValue(pluginId, out var blob)) continue;
                     if (blob.ValueKind != JsonValueKind.Object) continue;
-                    if (!blob.TryGetProperty(jsonKey, out var val)) continue;
+                    if (!TryGetBlobProperty(blob, jsonKey, out var val)) continue;
                     if (!HasValue(val)) continue;
                     resolved[jsonKey] = val;
                     break;
@@ -77,7 +80,7 @@ public class MetadataResolutionService(
                 foreach (var blob in blobs.Values)
                 {
                     if (blob.ValueKind != JsonValueKind.Object) continue;
-                    if (!blob.TryGetProperty(jsonKey, out var val)) continue;
+                    if (!TryGetBlobProperty(blob, jsonKey, out var val)) continue;
                     if (!HasValue(val)) continue;
                     resolved[jsonKey] = val;
                     break;
@@ -164,4 +167,17 @@ public class MetadataResolutionService(
         JsonValueKind.Array     => el.GetArrayLength() > 0,
         _                       => true,
     };
+
+    /// Looks up a property in a plugin blob, falling back to the nested extendedData object.
+    /// Some plugins (e.g. TMDB) store extra fields like belongsToCollection under extendedData
+    /// rather than at the top level of their blob.
+    internal static bool TryGetBlobProperty(JsonElement blob, string key, out JsonElement value)
+    {
+        if (blob.TryGetProperty(key, out value)) return true;
+        if (blob.TryGetProperty("extendedData", out var ext) &&
+            ext.ValueKind == JsonValueKind.Object &&
+            ext.TryGetProperty(key, out value)) return true;
+        value = default;
+        return false;
+    }
 }

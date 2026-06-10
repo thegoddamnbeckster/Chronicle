@@ -961,18 +961,33 @@ namespace Chronicle.Services
 
             // Strip embedded trailing year (e.g. "Title (2026)") and retry all three variants.
             var stripped = _trailingYearInTitle.Replace(title, string.Empty).Trim();
-            if (stripped == title) return null;   // nothing to strip
-
-            var strippedColon = stripped.Replace(" - ", ": ");
-            var strippedDash  = stripped.Replace(": ", " - ");
-
-            foreach (var variant in new[] { stripped, strippedColon, strippedDash }.Distinct(StringComparer.Ordinal))
+            if (stripped != title)
             {
-                var variantLower = variant.ToLowerInvariant();
+                var strippedColon = stripped.Replace(" - ", ": ");
+                var strippedDash  = stripped.Replace(": ", " - ");
+
+                foreach (var variant in new[] { stripped, strippedColon, strippedDash }.Distinct(StringComparer.Ordinal))
+                {
+                    var variantLower = variant.ToLowerInvariant();
+                    var hit = await _context.MediaItems.FirstOrDefaultAsync(
+                        m => m.MediaTypeId == mediaTypeId
+                          && (year == null || m.Year == year)
+                          && m.Name.ToLower() == variantLower, ct);
+                    if (hit is not null) return hit;
+                }
+            }
+
+            // Final fallback: normalize both sides (strips all punctuation/separators).
+            // Catches cases where the filename has no separator where the stored title has ": "
+            // e.g. "Alien Resurrection Resurrected" matches "Alien: Resurrection Resurrected".
+            // Uses the indexed normalized_name column for efficiency.
+            var normalizedTitle = MediaItemNormalizer.NormalizeName(title);
+            if (!string.IsNullOrEmpty(normalizedTitle))
+            {
                 var hit = await _context.MediaItems.FirstOrDefaultAsync(
                     m => m.MediaTypeId == mediaTypeId
                       && (year == null || m.Year == year)
-                      && m.Name.ToLower() == variantLower, ct);
+                      && m.NormalizedName == normalizedTitle, ct);
                 if (hit is not null) return hit;
             }
 
@@ -995,6 +1010,7 @@ namespace Chronicle.Services
                         {
                             MediaTypeId    = mediaTypeId,
                             Name           = meta.Title,
+                            NormalizedName = MediaItemNormalizer.NormalizeName(meta.Title),
                             Year           = meta.Year,
                             Overview       = meta.Overview,
                             PosterUrl      = meta.PosterUrl,
@@ -1025,6 +1041,7 @@ namespace Chronicle.Services
             {
                 MediaTypeId    = mediaTypeId,
                 Name           = file.ParsedTitle,
+                NormalizedName = MediaItemNormalizer.NormalizeName(file.ParsedTitle),
                 Year           = file.ParsedYear,
                 PosterUrl      = file.NfoPosterUrl ?? file.LocalPosterPath,
                 RuntimeMinutes = runtimeMinutes,

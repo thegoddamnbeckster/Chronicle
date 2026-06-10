@@ -31,8 +31,17 @@ public class MergeService(
             .FirstOrDefaultAsync(m => m.Id == loserId, ct)
             ?? throw new InvalidOperationException($"Loser item {loserId} not found.");
 
-        if (winner.MediaTypeId != loser.MediaTypeId || winner.HierarchyLevel != loser.HierarchyLevel)
-            throw new InvalidOperationException("Items must share the same media type and hierarchy level.");
+        if (winner.HierarchyLevel != loser.HierarchyLevel)
+            throw new InvalidOperationException("Items must share the same hierarchy level to be merged.");
+
+        // If the media types differ, silently coerce the loser to the winner's type.
+        // The loser is absorbed and deleted, so its type only matters for the merge log —
+        // the resulting item will always carry the winner's type.
+        if (winner.MediaTypeId != loser.MediaTypeId)
+        {
+            loser.MediaTypeId = winner.MediaTypeId;
+            // No SaveChangesAsync here — the change is committed inside the transaction below.
+        }
 
         // Non-root items (seasons, episodes, tracks) must share the same parent — merging
         // a season from one show into a season from another would corrupt the hierarchy.
@@ -66,6 +75,7 @@ public class MergeService(
             LoserExternalIdsJson = JsonSerializer.Serialize(
                 loserExternalIds.Select(e => new { e.Source, e.ExternalId })),
             LoserChildIdsJson   = JsonSerializer.Serialize(loserChildren.Select(c => c.Id)),
+            LoserMetadataJson   = loser.MetadataJson,
             MergedAt            = DateTime.UtcNow,
             MergedByUserId      = mergedByUserId,
         };
@@ -251,6 +261,9 @@ public class MergeService(
             HierarchyLevel = log.LoserHierarchyLevel,
             ParentId       = log.LoserParentId,
             NormalizedName = MediaItemNormalizer.NormalizeName(log.LoserName),
+            // Restore the loser's metadata blob so file paths (fileScanner.filePaths)
+            // and any plugin data are available immediately after unmerge.
+            MetadataJson   = log.LoserMetadataJson,
             CreatedAt      = DateTime.UtcNow,
             UpdatedAt      = DateTime.UtcNow,
         };
@@ -279,10 +292,22 @@ public class MergeService(
                          && loserSources.Contains(e.Source)
                          && loserExtIds.Contains(e.ExternalId))
                 .ToListAsync(ct);
+            // Track which sources have already been moved to the stub to avoid
+            // creating duplicate ExternalId rows (can happen after repeated merge/unmerge cycles).
+            var movedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var eid in winnerEids)
             {
-                if (loserIdSet.Contains($"{eid.Source}:{eid.ExternalId}"))
+                if (!loserIdSet.Contains($"{eid.Source}:{eid.ExternalId}")) continue;
+                if (movedSources.Contains(eid.Source))
+                {
+                    // Duplicate source — this row is redundant; remove it rather than creating a second entry on the stub.
+                    db.MediaExternalIds.Remove(eid);
+                }
+                else
+                {
                     eid.MediaItemId = stub.Id;
+                    movedSources.Add(eid.Source);
+                }
             }
         }
 

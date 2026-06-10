@@ -13,6 +13,8 @@ public class MediaItemMerge
     public string LoserExternalIdsJson { get; set; } = "[]";
     /// <summary>JSON array of child MediaItem IDs that were re-parented to winner.</summary>
     public string LoserChildIdsJson { get; set; } = "[]";
+    /// <summary>Full MetadataJson snapshot of the loser at merge time, for restoration on unmerge.</summary>
+    public string? LoserMetadataJson { get; set; }
     public DateTime MergedAt { get; set; }
     public int? MergedByUserId { get; set; }
 

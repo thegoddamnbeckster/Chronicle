@@ -7,6 +7,10 @@ export interface CollectionMember {
   posterUrl: string | null
   inLibrary: boolean
   libraryStatus: string | null
+  rating: number | null
+  userRating: number | null
+  userRatingSource: string | null
+  isStub: boolean
 }
 
 export interface CollectionInfo {
@@ -19,5 +23,15 @@ export interface CollectionInfo {
 
 export const getCollection = async (mediaItemId: number): Promise<CollectionInfo> => {
   const { data } = await client.get(`/media/${mediaItemId}/collection`)
+  return data.data
+}
+
+export interface RebuildResult {
+  summary: string
+  collection: CollectionInfo | null
+}
+
+export const rebuildCollection = async (collectionId: number): Promise<RebuildResult> => {
+  const { data } = await client.post(`/media/${collectionId}/rebuild-collection`)
   return data.data
 }

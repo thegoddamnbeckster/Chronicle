@@ -231,16 +231,26 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         // 3. Title + year fuzzy match — check both "Title" and "Title (Year)" forms,
         //    plus colon/dash variants so file-scanner names ("A - B") match canonical
         //    titles ("A: B") and vice versa.
+        //    IMPORTANT: restrict to items of the same media type so a TV show never
+        //    matches a movie stub that happens to share the same title and year
+        //    (e.g. "Star Wars: The Clone Wars (2008)" exists as both).
         if (evt.Title is not null && evt.Year.HasValue)
         {
-            var dashTitle    = evt.Title.Replace(": ", " - ");
-            var colonTitle   = evt.Title.Replace(" - ", ": ");
-            var nameWithYear = $"{evt.Title} ({evt.Year.Value})";
-            var dashWithYear = $"{dashTitle} ({evt.Year.Value})";
+            var mappedTypeName = MapMediaType(evt.MediaType);
+            var mediaTypeId = await db.MediaTypes
+                .Where(t => t.Name == mappedTypeName)
+                .Select(t => t.Id)
+                .FirstOrDefaultAsync(ct);
+
+            var dashTitle     = evt.Title.Replace(": ", " - ");
+            var colonTitle    = evt.Title.Replace(" - ", ": ");
+            var nameWithYear  = $"{evt.Title} ({evt.Year.Value})";
+            var dashWithYear  = $"{dashTitle} ({evt.Year.Value})";
             var colonWithYear = $"{colonTitle} ({evt.Year.Value})";
 
             var byTitle = await db.MediaItems
                 .FirstOrDefaultAsync(i => i.Year == evt.Year &&
+                    i.MediaTypeId == mediaTypeId &&
                     (i.Name == evt.Title     || i.Name == nameWithYear  ||
                      i.Name == dashTitle     || i.Name == dashWithYear  ||
                      i.Name == colonTitle    || i.Name == colonWithYear), ct);
@@ -298,12 +308,35 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         var stubTitle = meta?.Title ?? evt.Title ?? "Unknown";
         var stubYear  = meta?.Year  ?? evt.Year;
 
+        // ── Race-condition guard ───────────────────────────────────────────────
+        // Multiple concurrent enrichment/sync workers can reach Stage 4b
+        // simultaneously (e.g. two watch events for the same film in one sync pass,
+        // or a sync and an enrichment background task running in parallel). Each
+        // worker passes Stages 1-3 without finding the item because the other's
+        // INSERT hasn't committed yet. Do one final title+year lookup inside this
+        // method before inserting so at most one stub is created.
+        var normalizedTitle = MediaItemNormalizer.NormalizeName(stubTitle);
+        if (!string.IsNullOrEmpty(normalizedTitle))
+        {
+            var existing = await db.MediaItems
+                .FirstOrDefaultAsync(m => m.MediaTypeId == mediaType.Id
+                                       && m.Year == stubYear
+                                       && m.NormalizedName == normalizedTitle, ct);
+            if (existing is not null)
+            {
+                // Another worker beat us to it — graft our ExternalId and return.
+                await GraftExternalIdAsync(db, existing.Id, pluginId, evt.ExternalId, ct);
+                return existing;
+            }
+        }
+
         var item = new MediaItem
         {
-            Name           = stubYear.HasValue ? $"{stubTitle} ({stubYear})" : stubTitle,
+            Name           = stubTitle,
             Year           = stubYear,
             MediaTypeId    = mediaType.Id,
             HierarchyLevel = 0,
+            NormalizedName = normalizedTitle,
             CreatedAt      = DateTime.UtcNow,
             UpdatedAt      = DateTime.UtcNow,
         };

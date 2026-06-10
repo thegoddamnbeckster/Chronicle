@@ -122,3 +122,14 @@ export async function installFromCatalog(pluginId: string): Promise<PluginDto> {
   const res = await client.post<{ data: PluginDto }>(`/plugins/catalog/${pluginId}/install`)
   return res.data.data
 }
+
+export interface PluginAuthFailure {
+  pluginId: string
+  pluginName: string
+  dbId: number | null
+}
+
+export async function getAuthFailures(): Promise<PluginAuthFailure[]> {
+  const res = await client.get<{ data: PluginAuthFailure[] }>('/plugins/auth-failures')
+  return res.data.data
+}

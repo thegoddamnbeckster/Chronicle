@@ -5,6 +5,21 @@ const client = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+// ── Plugin auth failure event bus ─────────────────────────────────────────────
+// The API client can't directly call React context, so we publish auth failures
+// here and the AuthFailureContext subscribes via subscribeToAuthFailures().
+type AuthFailureListener = (pluginId: string, pluginName: string) => void
+const authFailureListeners = new Set<AuthFailureListener>()
+
+export function subscribeToAuthFailures(fn: AuthFailureListener): () => void {
+  authFailureListeners.add(fn)
+  return () => authFailureListeners.delete(fn)
+}
+
+function emitAuthFailure(pluginId: string, pluginName: string) {
+  authFailureListeners.forEach(fn => fn(pluginId, pluginName))
+}
+
 // Attach JWT token from localStorage on every request
 client.interceptors.request.use((config) => {
   const token = localStorage.getItem('chronicle_token')
@@ -36,7 +51,14 @@ client.interceptors.response.use(
     }
     const apiMessage: string | undefined = err.response?.data?.error?.message
     const apiCode: string | undefined = err.response?.data?.error?.code
+    const apiPluginId: string | undefined = err.response?.data?.error?.pluginId
     const status: number | undefined = err.response?.status
+
+    // Notify auth-failure subscribers so the global banner can be shown
+    if (apiCode === 'PLUGIN_AUTH_FAILED' && apiPluginId) {
+      emitAuthFailure(apiPluginId, apiPluginId) // name resolved by context from plugin list
+    }
+
     if (apiMessage && status) {
       return Promise.reject(new ApiError(apiMessage, status, apiCode))
     }

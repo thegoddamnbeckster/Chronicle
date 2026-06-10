@@ -111,6 +111,9 @@ public sealed class DuplicateCleanupService : IScheduledTask
         var extIdGroups = allExternalIds
             .GroupBy(e => $"{e.Source}:{e.ExternalId}", StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Select(e => e.MediaItemId).Distinct().Count() > 1)
+            // "__suppress__" is a sentinel meaning "don't enrich from this plugin" — it is NOT
+            // a real external ID and must never be used as a duplicate-matching key.
+            .Where(g => !g.Key.EndsWith(":__suppress__", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (extIdGroups.Count > 0)
@@ -131,6 +134,11 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     .ToList();
 
                 if (items.Count < 2) continue;
+
+                // Skip groups where items span different media types — a fan edit and the
+                // source movie intentionally share the same TMDB/IMDB external ID but are
+                // distinct items that must not be merged.
+                if (items.Select(m => m.MediaTypeId).Distinct().Count() > 1) continue;
 
                 // Prefer the item with a physical file (fileScanner in MetadataJson).
                 // Among equal candidates, highest score then lowest Id wins.
@@ -426,6 +434,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
             LoserParentId        = loser.ParentId,
             LoserExternalIdsJson = System.Text.Json.JsonSerializer.Serialize(loserExtIdsSnapshot),
             LoserChildIdsJson    = System.Text.Json.JsonSerializer.Serialize(loserChildIdsSnapshot),
+            LoserMetadataJson    = loser.MetadataJson,
             MergedAt             = DateTime.UtcNow,
             MergedByUserId       = null, // automatic
         });

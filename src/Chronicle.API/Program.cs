@@ -165,11 +165,13 @@ builder.Services.AddHttpClient("github", c =>
 });
 
 // ── Data Protection (plugin settings encryption) ──────────────────────────────
-// Keys are persisted to a 'keys/' directory next to the executable so they survive
-// application restarts and database refreshes independently of the database file.
+// Keys are persisted under ContentRootPath (project root in dev, publish dir in
+// production) so they survive both restarts AND clean rebuilds. AppContext.BaseDirectory
+// points to bin/Debug/net9.0/ which is wiped on rebuild, silently invalidating all
+// encrypted plugin credentials.
 // SetApplicationName locks the key ring to this app so keys are not accidentally
 // shared with other ASP.NET Core apps on the same machine.
-var keysDir = new DirectoryInfo(Path.Combine(AppContext.BaseDirectory, "keys"));
+var keysDir = new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, "keys"));
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(keysDir)
     .SetApplicationName("Chronicle");
@@ -199,6 +201,10 @@ builder.Services.AddSingleton<IScheduledTask>(
 builder.Services.AddSingleton<ScheduledScanService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<ScheduledScanService>());
+
+builder.Services.AddSingleton<RebuildMovieCollectionsService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<RebuildMovieCollectionsService>());
 
 builder.Services.AddSingleton<TaskSchedulerService>();
 builder.Services.AddSingleton<ITaskSchedulerService>(

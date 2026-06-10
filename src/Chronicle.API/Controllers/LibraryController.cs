@@ -18,11 +18,13 @@ namespace Chronicle.API.Controllers
     {
         private readonly ILibraryService _libraryService;
         private readonly ChronicleDbContext _context;
+        private readonly IUserService _userService;
 
-        public LibraryController(ILibraryService libraryService, ChronicleDbContext context)
+        public LibraryController(ILibraryService libraryService, ChronicleDbContext context, IUserService userService)
         {
             _libraryService = libraryService;
             _context = context;
+            _userService = userService;
         }
 
         [HttpPost]
@@ -55,7 +57,10 @@ namespace Chronicle.API.Controllers
                 parsedStatus = s;
             }
 
-            var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, includeMoviesInCollections, ct);
+            var prefs = await _userService.GetPreferencesAsync(userId);
+            var includeStubs = prefs.CreateCollectionStubs ?? true;
+
+            var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, includeMoviesInCollections, includeStubs, ct);
 
             // Batch-fetch descendant MetadataJson for all root items in two queries
             // (direct children + grandchildren) to avoid N+1 when computing physical-file flags.
@@ -201,6 +206,21 @@ namespace Chronicle.API.Controllers
         /// Returns true when the given MetadataJson contains a fileScanner entry with at least
         /// one non-null file path.  Mirrors the same helper in MediaController.
         /// </summary>
+        private static double? ExtractResolvedRating(string? metadataJson)
+        {
+            if (string.IsNullOrEmpty(metadataJson)) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(metadataJson);
+                if (doc.RootElement.TryGetProperty("_resolved", out var r) &&
+                    r.TryGetProperty("rating", out var ratingEl) &&
+                    ratingEl.ValueKind == JsonValueKind.Number)
+                    return ratingEl.GetDouble();
+            }
+            catch { /* ignore */ }
+            return null;
+        }
+
         private static bool HasFileScannerData(string? metadataJson)
         {
             if (string.IsNullOrEmpty(metadataJson)) return false;
@@ -264,12 +284,24 @@ namespace Chronicle.API.Controllers
                     e.MediaItem.ExternalIds.Select(x => new ExternalIdDto(x.Source, x.ExternalId)).ToList(),
                     HasPhysicalFile: hasPhysicalFile,
                     HasMetadataOnly: hasMetadataOnly,
-                    ResolvedMetadata: null);
+                    ResolvedMetadata: new ResolvedMetadataDto(
+                        Title: null, Overview: null, Year: null,
+                        PosterUrl: null, BackdropUrl: null, RuntimeMinutes: null,
+                        Rating: ExtractResolvedRating(e.MediaItem.MetadataJson),
+                        Genres: null, Cast: null, Directors: null, Tags: null),
+                    IsCollectionContainer: e.MediaItem.HierarchyLevel == 0
+                        && (e.MediaItem.MediaType?.Name ?? string.Empty).Equals("movies", StringComparison.OrdinalIgnoreCase)
+                        && directChildrenMeta?.Count > 0,
+                    IsStub: e.MediaItem.IsStub);
             }
+
+            var userRatingSource = e.UserRating.HasValue
+                ? MediaController.ExtractUserRatingSource(e.MediaItem?.MetadataJson, e.UserRating.Value)
+                : null;
 
             return new LibraryEntryDto(
                 e.Id, e.UserId, mediaDto!, e.Status.ToString(),
-                e.UserRating, e.Notes, e.AddedAt, e.UpdatedAt,
+                e.UserRating, userRatingSource, e.Notes, e.AddedAt, e.UpdatedAt,
                 e.StartedAt, e.CompletedAt);
         }
     }

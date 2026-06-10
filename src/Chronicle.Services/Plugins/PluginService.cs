@@ -300,28 +300,51 @@ public class PluginService : IPluginService
 
     /// <summary>
     /// Inserts pending <see cref="MediaItemEnrichment"/> rows for every existing
-    /// <see cref="MediaItem"/> whose media type is supported by <paramref name="provider"/>.
+    /// <see cref="MediaItem"/> whose media type is supported by <paramref name="provider"/>
+    /// and whose hierarchy level is within the range the provider can service.
     /// Rows that already exist are skipped.
     /// </summary>
     private async Task SeedEnrichmentRowsForProviderAsync(
         string manifestPluginId, IMetadataProvider provider, CancellationToken ct = default)
     {
-        var supportedTypeNames = provider.GetSupportedMediaTypes()
-            .Select(t => t.MediaTypeName)
-            .ToList();
+        var supportedTypes = provider.GetSupportedMediaTypes();
 
-        var supportedTypeIds = await _db.MediaTypes
-            .Where(mt => supportedTypeNames.Contains(mt.Name))
-            .Select(mt => mt.Id)
+        // Build a map of DB media_type id → max hierarchy level the provider supports.
+        // HierarchyLevels = N means levels 0..N-1 are supported. A plugin that declares
+        // HierarchyLevels = 2 for music (Artist + Album) must not seed rows for level-2
+        // tracks even though those items share the same media_type_id.
+        var typeNameToMaxLevel = supportedTypes.ToDictionary(
+            t => t.MediaTypeName,
+            t => t.HierarchyLevels - 1,  // max supported level (0-based)
+            StringComparer.OrdinalIgnoreCase);
+
+        var typeNameList = typeNameToMaxLevel.Keys.ToList();
+        var dbTypes = await _db.MediaTypes
+            .Where(mt => typeNameList.Contains(mt.Name))
+            .Select(mt => new { mt.Id, mt.Name })
             .ToListAsync(ct);
 
-        if (supportedTypeIds.Count == 0)
+        if (dbTypes.Count == 0)
             return;
 
-        var itemIds = await _db.MediaItems
+        // Map DB type id → max supported level for the WHERE clause.
+        var typeIdToMaxLevel = dbTypes.ToDictionary(
+            t => t.Id,
+            t => typeNameToMaxLevel[t.Name]);
+
+        var supportedTypeIds = dbTypes.Select(t => t.Id).ToList();
+
+        // Fetch all items of the supported types, then filter in-memory by max level.
+        // Dictionary lookup can't be translated to SQL, so we materialise and filter here.
+        var allItems = await _db.MediaItems
             .Where(i => supportedTypeIds.Contains(i.MediaTypeId))
-            .Select(i => i.Id)
+            .Select(i => new { i.Id, i.MediaTypeId, i.HierarchyLevel })
             .ToListAsync(ct);
+
+        var itemIds = allItems
+            .Where(i => i.HierarchyLevel <= typeIdToMaxLevel[i.MediaTypeId])
+            .Select(i => i.Id)
+            .ToList();
 
         if (itemIds.Count == 0)
             return;

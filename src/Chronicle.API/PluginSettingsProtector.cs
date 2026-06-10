@@ -5,28 +5,29 @@ using Serilog;
 namespace Chronicle.API;
 
 /// <summary>
-/// ASP.NET Core Data Protection-backed implementation of <see cref="IPluginSettingsProtector"/>.
-/// Encrypts plugin settings JSON blobs before they are written to the database and decrypts them
-/// on read, so that API keys and other credentials are never stored in plaintext.
+/// Pass-through implementation of <see cref="IPluginSettingsProtector"/>.
+/// Plugin settings are stored as plaintext JSON in the local SQLite database.
+/// Encryption adds no meaningful security for a self-hosted single-user app — anyone
+/// with filesystem read access has the database AND any key files, so the protection
+/// is illusory while the key-rotation fragility is real (silently resets all credentials
+/// whenever key files are lost). The JWT secret uses the same plaintext approach.
+/// Legacy ENC: blobs written by the old Data Protection implementation are still
+/// decrypted transparently on read so users don't lose settings during the upgrade.
 /// </summary>
-/// <remarks>
-/// Data protection keys are persisted to disk (see Program.cs) so that settings survive
-/// application restarts and database refreshes independently of the database file itself.
-/// </remarks>
 internal sealed class PluginSettingsProtector : IPluginSettingsProtector
 {
-    private const string Prefix = "ENC:";
-    private readonly IDataProtector _protector;
+    private const string EncPrefix = "ENC:";
+    private readonly IDataProtector _legacyProtector;
 
     public PluginSettingsProtector(IDataProtectionProvider provider)
     {
-        // Purpose string is stable — changing it would invalidate all existing encrypted values.
-        _protector = provider.CreateProtector("Chronicle.PluginSettings.v1");
+        // Keep the legacy protector so we can still read ENC: blobs written before this change.
+        _legacyProtector = provider.CreateProtector("Chronicle.PluginSettings.v1");
     }
 
     /// <inheritdoc/>
-    public string Protect(string plainJson) =>
-        Prefix + _protector.Protect(plainJson);
+    /// Stores plaintext JSON — no encryption.
+    public string Protect(string plainJson) => plainJson;
 
     /// <inheritdoc/>
     public string Unprotect(string? storedValue)
@@ -34,24 +35,26 @@ internal sealed class PluginSettingsProtector : IPluginSettingsProtector
         if (string.IsNullOrWhiteSpace(storedValue))
             return "{}";
 
-        if (storedValue.StartsWith(Prefix, StringComparison.Ordinal))
+        // Transparently migrate legacy ENC: blobs written by the old Data Protection path.
+        if (storedValue.StartsWith(EncPrefix, StringComparison.Ordinal))
         {
             try
             {
-                return _protector.Unprotect(storedValue[Prefix.Length..]);
+                return _legacyProtector.Unprotect(storedValue[EncPrefix.Length..]);
             }
             catch (Exception ex)
             {
-                // Unprotect can fail if the keys were rotated / the key file was deleted.
-                // Return an empty object so the plugin loads with no settings rather than crashing.
+                // Keys were rotated / deleted. The user will need to re-enter credentials once.
+                // After that, settings are saved as plaintext and this branch is never hit again.
                 Log.ForContext<PluginSettingsProtector>()
-                   .Error(ex, "Failed to decrypt plugin settings — returning empty settings. " +
-                              "Re-enter the plugin API key in Settings → Plugins to restore access.");
+                   .Warning(ex, "Legacy encrypted plugin settings could not be decrypted — " +
+                                "returning empty settings. Re-enter the plugin API key in " +
+                                "Settings → Plugins to restore access.");
                 return "{}";
             }
         }
 
-        // Legacy plaintext — return as-is (will be encrypted on next save).
+        // Plaintext — return as-is.
         return storedValue;
     }
 }

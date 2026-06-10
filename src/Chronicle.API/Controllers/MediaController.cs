@@ -3,6 +3,7 @@ using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services;
+using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -19,15 +20,20 @@ namespace Chronicle.API.Controllers
         private readonly IMetadataEnrichmentService _enrichment;
         private readonly ChronicleDbContext _context;
         private readonly IMergeService _mergeService;
+        private readonly IMovieCollectionService _movieCollectionService;
+        private readonly IPluginRegistry _pluginRegistry;
 
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
             IMetadataEnrichmentService enrichment, ChronicleDbContext context,
-            IMergeService mergeService)
+            IMergeService mergeService, IMovieCollectionService movieCollectionService,
+            IPluginRegistry pluginRegistry)
         {
-            _mediaService    = mediaService;
-            _fileScanService = fileScanService;
-            _enrichment      = enrichment;
-            _context         = context;
+            _mediaService            = mediaService;
+            _fileScanService         = fileScanService;
+            _enrichment              = enrichment;
+            _context                 = context;
+            _movieCollectionService  = movieCollectionService;
+            _pluginRegistry          = pluginRegistry;
             _mergeService    = mergeService;
         }
 
@@ -229,6 +235,14 @@ namespace Chronicle.API.Controllers
             catch (MediaNotFoundException ex)
             {
                 return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
+            }
+            catch (Chronicle.Plugins.PluginAuthException ex)
+            {
+                return StatusCode(422, new
+                {
+                    success = false,
+                    error = new { code = "PLUGIN_AUTH_FAILED", pluginId = ex.PluginId, message = ex.Message }
+                });
             }
             catch (InvalidOperationException ex)
             {
@@ -874,14 +888,18 @@ namespace Chronicle.API.Controllers
             if (item is null)
                 return NotFound(ApiResponse<CollectionDto>.Fail("MEDIA_NOT_FOUND", "Media item not found."));
 
-            // Resolve collection: if item IS a collection (Level 0, movies type) use it directly;
-            // if item is a movie (Level 1 under movies collection) use its parent.
+            // Resolve collection: if item IS a collection container (Level 0, movies type, has children)
+            // use it directly; if item is a movie within a collection (Level 1) use its parent.
+            // A Level-0 movie with no children is a standalone film — return 404 (no collection).
             MediaItem? collectionItem = null;
             bool isMoviesType = string.Equals(item.MediaType?.Name, "movies", StringComparison.OrdinalIgnoreCase);
 
             if (isMoviesType && item.HierarchyLevel == 0)
             {
-                collectionItem = item;
+                // Only treat as a collection container if it actually has movie children.
+                bool hasChildren = await _context.MediaItems.AnyAsync(m => m.ParentId == item.Id, ct);
+                if (hasChildren)
+                    collectionItem = item;
             }
             else if (isMoviesType && item.HierarchyLevel == 1 && item.Parent is not null)
             {
@@ -891,10 +909,13 @@ namespace Chronicle.API.Controllers
             if (collectionItem is null)
                 return NotFound(ApiResponse<CollectionDto>.Fail("NO_COLLECTION", "Item does not belong to a collection."));
 
-            // Load all movies in the collection
+            // Sort by year ascending; items with no year sort to the end (unknown release date),
+            // with name as a tiebreaker within the same year.
             var members = await _context.MediaItems
                 .Where(m => m.ParentId == collectionItem.Id)
-                .OrderBy(m => m.Year)
+                .OrderBy(m => m.Year == null ? 1 : 0)
+                .ThenBy(m => m.Year)
+                .ThenBy(m => m.Name)
                 .ToListAsync(ct);
 
             // Load library status for current user
@@ -915,12 +936,137 @@ namespace Chronicle.API.Controllers
                     Name          = m.Name,
                     Year          = m.Year,
                     PosterUrl     = m.PosterUrl,
-                    InLibrary     = libraryEntries.ContainsKey(m.Id),
-                    LibraryStatus = libraryEntries.TryGetValue(m.Id, out var le) ? le.Status.ToString() : null,
+                    InLibrary        = libraryEntries.ContainsKey(m.Id),
+                    LibraryStatus    = libraryEntries.TryGetValue(m.Id, out var le) ? le.Status.ToString() : null,
+                    Rating           = ExtractRatingFromMetadata(m.MetadataJson),
+                    UserRating       = le?.UserRating,
+                    UserRatingSource = le?.UserRating.HasValue == true ? ExtractUserRatingSource(m.MetadataJson, le.UserRating.Value) : null,
+                    IsStub           = m.IsStub,
                 }).ToList(),
             };
 
             return Ok(ApiResponse<CollectionDto>.Ok(dto));
+        }
+
+        /// <summary>
+        /// Rebuilds a single collection: re-parents any children that have moved to a different
+        /// collection (based on their stored metadata) and creates stubs for missing members.
+        /// Returns a summary of what changed plus the updated collection (or null if it was removed).
+        /// </summary>
+        [HttpPost("{id:int}/rebuild-collection")]
+        public async Task<IActionResult> RebuildCollection(int id, CancellationToken ct)
+        {
+            // Snapshot before
+            var beforeChildren = await _context.MediaItems
+                .Where(m => m.ParentId == id)
+                .Select(m => new { m.IsStub })
+                .ToListAsync(ct);
+            int stubsBefore = beforeChildren.Count(c => c.IsStub);
+            int realBefore  = beforeChildren.Count(c => !c.IsStub);
+
+            var providers = _pluginRegistry.GetMetadataProviderEntries()
+                .Select(e => (e.PluginId, e.Provider))
+                .ToList();
+
+            await _movieCollectionService.RebuildSingleCollectionAsync(id, providers, ct);
+
+            // Snapshot after
+            var afterChildren = await _context.MediaItems
+                .Where(m => m.ParentId == id)
+                .Select(m => new { m.IsStub })
+                .ToListAsync(ct);
+            int stubsAfter = afterChildren.Count(c => c.IsStub);
+            int realAfter  = afterChildren.Count(c => !c.IsStub);
+            bool collectionRemoved = !await _context.MediaItems.AnyAsync(m => m.Id == id, ct);
+
+            // Build a human-readable summary
+            var lines = new List<string>();
+            int stubsRemoved = stubsBefore - stubsAfter;
+            int stubsAdded   = stubsAfter  - stubsBefore;
+            int requeued     = realBefore  - realAfter; // movies that moved out due to wrong match
+
+            if (collectionRemoved)
+                lines.Add("Collection removed — all movies were re-queued for correct matching.");
+            else if (stubsRemoved > 0 && requeued > 0)
+                lines.Add($"Removed {stubsRemoved} wrong stub(s). {requeued} movie(s) cleared and queued for re-matching.");
+            else if (stubsRemoved > 0)
+                lines.Add($"Removed {stubsRemoved} stale stub(s).");
+            else if (requeued > 0)
+                lines.Add($"{requeued} movie(s) cleared and queued for re-matching.");
+            else if (stubsAdded > 0)
+                lines.Add($"Added {stubsAdded} missing stub(s).");
+            else
+                lines.Add("Collection is up to date — no changes needed.");
+
+            var summary = string.Join(" ", lines);
+
+            // Return updated collection (null if removed)
+            CollectionDto? updatedCollection = null;
+            if (!collectionRemoved)
+            {
+                var collResult = await GetCollection(id, ct) as OkObjectResult;
+                updatedCollection = (collResult?.Value as ApiResponse<CollectionDto>)?.Data;
+            }
+
+            return Ok(ApiResponse<RebuildCollectionResultDto>.Ok(new RebuildCollectionResultDto
+            {
+                Summary    = summary,
+                Collection = updatedCollection,
+            }));
+        }
+
+        private static double? ExtractRatingFromMetadata(string? metadataJson)
+        {
+            if (string.IsNullOrEmpty(metadataJson)) return null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(metadataJson);
+                var root = doc.RootElement;
+                // Prefer the assignment-resolved value if present
+                if (root.TryGetProperty("_resolved", out var r) &&
+                    r.TryGetProperty("rating", out var rr) &&
+                    rr.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    return rr.GetDouble();
+                // Fall back to first plugin blob with a rating
+                foreach (var prop in root.EnumerateObject())
+                {
+                    if (prop.Name.StartsWith('_')) continue;
+                    if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                    if (prop.Value.TryGetProperty("rating", out var ratingEl) &&
+                        ratingEl.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        return ratingEl.GetDouble();
+                }
+            }
+            catch { /* ignore malformed json */ }
+            return null;
+        }
+
+        // Returns the display name of the source that provided the user's personal rating.
+        // Checks known plugin blobs for a userRating field matching the stored value.
+        internal static string ExtractUserRatingSource(string? metadataJson, int userRating)
+        {
+            if (!string.IsNullOrEmpty(metadataJson))
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(metadataJson);
+                    var root = doc.RootElement;
+                    foreach (var prop in root.EnumerateObject())
+                    {
+                        if (prop.Name.StartsWith('_')) continue;
+                        if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                        if (prop.Value.TryGetProperty("userRating", out var ur) &&
+                            ur.ValueKind == System.Text.Json.JsonValueKind.Number &&
+                            ur.GetInt32() == userRating)
+                        {
+                            var pluginName = prop.Name.Split('.').LastOrDefault() ?? prop.Name;
+                            return char.ToUpper(pluginName[0]) + pluginName[1..];
+                        }
+                    }
+                }
+                catch { /* ignore */ }
+            }
+            return "Chronicle";
         }
     }
 }

@@ -381,6 +381,7 @@ namespace Chronicle.Data
                 e.Property(x => x.LoserParentId).HasColumnName("loser_parent_id");
                 e.Property(x => x.LoserExternalIdsJson).HasColumnName("loser_external_ids_json").HasDefaultValue("[]");
                 e.Property(x => x.LoserChildIdsJson).HasColumnName("loser_child_ids_json").HasDefaultValue("[]");
+                e.Property(x => x.LoserMetadataJson).HasColumnName("loser_metadata_json");
                 e.Property(x => x.MergedAt).HasColumnName("merged_at");
                 e.Property(x => x.MergedByUserId).HasColumnName("merged_by_user_id");
                 e.HasIndex(x => x.WinnerId).HasDatabaseName("idx_merges_winner_id");

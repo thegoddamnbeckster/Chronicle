@@ -11,6 +11,7 @@ namespace Chronicle.API.Controllers;
 [Authorize]
 public class EnrichmentController(
     IMetadataEnrichmentService enrichmentSvc,
+    IMovieCollectionService movieCollectionSvc,
     IServiceScopeFactory scopeFactory) : ControllerBase
 {
     [HttpGet("stats")]
@@ -18,7 +19,7 @@ public class EnrichmentController(
     {
         var stats = await enrichmentSvc.GetStatsAsync(ct);
         var dtos = stats.Select(s => new EnrichmentStatsDto(
-            s.PluginId, s.PluginName, s.Pending, s.Completed, s.Failed, s.Exhausted, s.NotFound, s.Skipped));
+            s.PluginId, s.PluginName, s.Pending, s.Completed, s.Failed, s.Exhausted, s.NotFound, s.Skipped, s.AuthFailed));
         return Ok(new { success = true, data = dtos });
     }
 
@@ -46,10 +47,11 @@ public class EnrichmentController(
             case "failed":    scope = ResetScope.AllFailed; break;
             case "exhausted": scope = ResetScope.AllExhausted; break;
             case "notfound":  scope = ResetScope.AllNotFound; break;
-            case "skipped":   scope = ResetScope.AllSkipped; break;
-            case "all":       scope = ResetScope.AllForPlugin; break;
+            case "skipped":    scope = ResetScope.AllSkipped;   break;
+            case "authfailed": scope = ResetScope.AllAuthFailed; break;
+            case "all":        scope = ResetScope.AllForPlugin;  break;
             default:
-                return BadRequest(new { success = false, error = new { code = "INVALID_SCOPE", message = $"Invalid scope '{dto.Scope}'. Valid values: single, failed, exhausted, notfound, skipped, all." } });
+                return BadRequest(new { success = false, error = new { code = "INVALID_SCOPE", message = $"Invalid scope '{dto.Scope}'. Valid values: single, failed, exhausted, notfound, skipped, authfailed, all." } });
         }
         await enrichmentSvc.ResetAsync(pluginId, scope, dto.MediaItemId, ct);
         return Ok(new { success = true });
@@ -129,5 +131,17 @@ public class EnrichmentController(
                     : 1,
             }
         });
+    }
+
+    /// <summary>
+    /// Backfill: process belongsToCollection from already-stored metadata for all movies.
+    /// No plugin API calls are made — uses only what is already in the DB.
+    /// Safe to call multiple times (idempotent).
+    /// </summary>
+    [HttpPost("process-movie-collections")]
+    public IActionResult ProcessMovieCollections(CancellationToken ct)
+    {
+        _ = Task.Run(() => movieCollectionSvc.ProcessAllExistingMovieCollectionsAsync(ct), ct);
+        return Accepted(new { success = true, message = "Movie collection backfill started in background." });
     }
 }

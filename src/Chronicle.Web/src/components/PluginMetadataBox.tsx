@@ -96,10 +96,14 @@ export function PluginMetadataBox({
     onSuccess: invalidate,
   })
 
-  // Determine state of this plugin's external ID
-  const pluginExtIds = externalIds.filter(
-    e => e.source.toLowerCase() === pluginId.toLowerCase(),
-  )
+  // Determine state of this plugin's external ID.
+  // source is stored as the last segment of the plugin ID (e.g. "tmdb" for "chronicle.plugin.tmdb"),
+  // so match against both the full ID and the short suffix.
+  const pluginShortId = pluginId.split('.').pop()!.toLowerCase()
+  const pluginExtIds = externalIds.filter(e => {
+    const s = e.source.toLowerCase()
+    return s === pluginId.toLowerCase() || s === pluginShortId
+  })
   const isSuppressed = pluginExtIds.some(e => e.externalId === '__suppress__')
   const hasRealId = pluginExtIds.some(e => e.externalId !== '__suppress__')
 
@@ -305,8 +309,8 @@ export function PluginMetadataBox({
         </div>
       )}
 
-      {/* Metadata grid */}
-      <div className={styles.grid}>
+      {/* Metadata grid — only render when there is something to show */}
+      {(dataRows.length > 0 || hasRealId || imageEntries.length > 0) && <div className={styles.grid}>
         {dataRows.map(({ key, value }) => {
           const rendered = renderValue(key, value)
           if (rendered === null) return null
@@ -360,7 +364,7 @@ export function PluginMetadataBox({
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
       {refreshMut.isError && (
         <p className={styles.error}>{`Refresh failed: ${(refreshMut.error as Error).message}`}</p>

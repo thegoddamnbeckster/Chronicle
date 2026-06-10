@@ -87,6 +87,10 @@ export interface MediaItem {
     directors?: string[] | null
     tags?: string[] | null
   } | null
+  /** True when this is a Level 0 movies item that acts as a collection container. */
+  isCollectionContainer?: boolean
+  /** True when this movie was auto-created as a collection stub (not yet owned by the user). */
+  isStub?: boolean
 }
 
 export interface MergeHistoryEntry {
@@ -113,6 +117,7 @@ export interface LibraryEntry {
   mediaItem: MediaItem
   status: LibraryStatus
   userRating: number | null
+  userRatingSource: string | null
   notes: string | null
   addedAt: string
   updatedAt: string

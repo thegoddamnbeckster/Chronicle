@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Chronicle.Core.Exceptions;
+using PluginAuthException = Chronicle.Plugins.PluginAuthException;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -148,15 +150,23 @@ public class MetadataEnrichmentService(
         {
             ct.ThrowIfCancellationRequested();
 
-            // Pre-fetch the set of item IDs whose enrichment row is non-terminal (Pending or
-            // Failed within the retry window). Child items whose parent is in this set are
-            // skipped — they'll become eligible once the parent resolves. This replaces the
-            // old correlated NOT EXISTS subquery which was O(n²) for large episode libraries.
+            // Pre-fetch the set of item IDs whose enrichment row is still Pending (not yet
+            // attempted this run). Child items whose parent is in this set are deferred —
+            // the parent gets processed first, then the child on the very next pass.
+            //
+            // We deliberately only block on Pending parents, NOT on Failed ones. Once a parent
+            // has been attempted — even if it failed — its children are eligible immediately.
+            // This means the entire hierarchy drains in a single run: level-0 items are tried
+            // first (they have no parent and are always eligible), and as each level resolves
+            // (Completed, Failed, NotFound, Exhausted), the next level unlocks. Children of
+            // failed parents still get their own shot at matching via title/name search.
+            //
+            // The old behaviour (block on Failed-within-retryWindow too) caused tracks under
+            // a failed album to sit blocked for 24 h per retry cycle, taking multiple daily
+            // runs to fully drain a large music library.
             var blockedParentIds = (await db.MediaEnrichments
                 .Where(e => e.PluginId == pluginId &&
-                            (e.Status == EnrichmentStatus.Pending ||
-                             (e.Status == EnrichmentStatus.Failed &&
-                              (e.LastAttemptedAt == null || e.LastAttemptedAt < cutoff))))
+                            e.Status == EnrichmentStatus.Pending)
                 .Select(e => e.MediaItemId)
                 .ToListAsync(ct))
                 .ToHashSet();
@@ -179,17 +189,41 @@ public class MetadataEnrichmentService(
                 .Take(500)
                 .ToListAsync(ct);
 
-            // Filter out children whose parent still has a non-terminal enrichment row.
+            // Defer children whose parent hasn't been attempted yet (still Pending).
             // Root items (ParentId == null) are always eligible.
             // Items whose parent has NO enrichment row at all are also eligible — the
             // parent simply doesn't need enrichment from this plugin.
+            // Items whose parent was attempted but failed are also eligible — they get
+            // their own shot rather than waiting for multiple daily retry cycles.
             rows = rows
                 .Where(x => x.MediaItem!.ParentId == null ||
                              !blockedParentIds.Contains(x.MediaItem!.ParentId.Value))
                 .ToList();
 
             if (rows.Count == 0)
-                break; // No more eligible work — all passes complete.
+            {
+                // Re-verify there are genuinely no more Pending rows for this plugin before
+                // exiting. Guards against a concurrent operation (file scanner, inbound sync,
+                // or MovieCollectionService creating a new collection container) adding Pending
+                // rows after the last pass's query but before it finished processing.
+                // With blockedParentIds containing only Pending items and ordering by
+                // HierarchyLevel, level-0 items (no parent) are always eligible — so the only
+                // way rows.Count can be 0 here is if there truly are no Pending items left, or
+                // if new rows were added concurrently right as the last pass completed.
+                // If any Pending rows remain, do one more pass to catch them.
+                var anyRemainingPending = await db.MediaEnrichments
+                    .AnyAsync(x => x.PluginId == pluginId &&
+                                   x.Status == EnrichmentStatus.Pending, ct);
+                if (!anyRemainingPending) break; // Truly done.
+                // else: there are Pending rows — at least one more pass is warranted.
+                // Increment passNumber so log output shows we're re-entering.
+                passNumber++;
+                logger.LogDebug(
+                    "EnrichPendingAsync pass {Pass}: no eligible rows in this batch but Pending rows remain — " +
+                    "retrying for newly-added or unblocked items for plugin {PluginId}",
+                    passNumber, pluginId);
+                continue;
+            }
 
             passNumber++;
             logger.LogInformation(
@@ -366,6 +400,25 @@ public class MetadataEnrichmentService(
             // Try mapping short suffix → full ID
             var suffix = PluginIdHelper.ToSource(source);
             return shortToFull.GetValueOrDefault(suffix, source);
+        }
+
+        // ── Startup cleanup: remove Skipped rows for unsupported media types ─────────────
+        // These accumulate when enrichment runs against an item whose type the plugin doesn't
+        // support. The enrichment service writes the exact message below when it skips; we
+        // use that as a reliable discriminator so this cleanup doesn't depend on the plugin
+        // registry being fully loaded yet (plugins load asynchronously after startup seeding).
+        var staleSkipped = await db.MediaEnrichments
+            .Where(me => me.Status == EnrichmentStatus.Skipped
+                      && me.ErrorMessage != null
+                      && me.ErrorMessage.Contains("is not supported by plugin"))
+            .ToListAsync(ct);
+        if (staleSkipped.Count > 0)
+        {
+            db.MediaEnrichments.RemoveRange(staleSkipped);
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation(
+                "SeedEnrichmentRows: pruned {Count} Skipped rows for unsupported media types",
+                staleSkipped.Count);
         }
 
         // ── One-time cleanup: remove orphan enrichment rows for import-provider plugins ──
@@ -546,19 +599,56 @@ public class MetadataEnrichmentService(
 
         if (pluginEntries.Count > 0)
         {
-            // Existing enrichment rows (as a set for O(1) lookup)
-            var existingRows = (await db.MediaEnrichments
-                .Select(me => new { me.MediaItemId, me.PluginId })
-                .ToListAsync(ct))
-                .Select(r => (r.MediaItemId, r.PluginId.ToLower()))
-                .ToHashSet();
-
             // Load items with their media type names
             var allItems = await db.MediaItems
                 .Include(m => m.MediaType)
                 .Where(m => m.MediaType != null)
                 .Select(m => new { m.Id, TypeName = m.MediaType!.Name })
                 .ToListAsync(ct);
+
+            var itemTypeMap = allItems.ToDictionary(i => i.Id, i => i.TypeName);
+
+            // ── Phase 3b: prune Pending rows for unsupported type/plugin pairs ─────
+            // Pending rows for types a plugin doesn't support will always be Skipped
+            // when the enrichment service picks them up — delete them proactively now
+            // that we have the full plugin registry loaded. This catches rows seeded
+            // by old code before the type-filter was enforced.
+            int phase3bDeletedTotal = 0;
+            foreach (var (pluginId, provider, _) in pluginEntries)
+            {
+                var supportedTypes = provider.GetSupportedMediaTypes()
+                    .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                var pendingForPlugin = await db.MediaEnrichments
+                    .Where(me => me.PluginId == pluginId && me.Status == EnrichmentStatus.Pending)
+                    .ToListAsync(ct);
+
+                var toDelete = pendingForPlugin
+                    .Where(me => itemTypeMap.TryGetValue(me.MediaItemId, out var typeName)
+                                 && !supportedTypes.Contains(NormalizeMediaTypeName(typeName)))
+                    .ToList();
+
+                if (toDelete.Count > 0)
+                {
+                    db.MediaEnrichments.RemoveRange(toDelete);
+                    phase3bDeletedTotal += toDelete.Count;
+                }
+            }
+            if (phase3bDeletedTotal > 0)
+            {
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation(
+                    "SeedEnrichmentRows Phase 3b: pruned {Count} stale Pending rows for unsupported media types",
+                    phase3bDeletedTotal);
+            }
+
+            // Existing enrichment rows (as a set for O(1) lookup) — re-read after pruning
+            var existingRows = (await db.MediaEnrichments
+                .Select(me => new { me.MediaItemId, me.PluginId })
+                .ToListAsync(ct))
+                .Select(r => (r.MediaItemId, r.PluginId.ToLower()))
+                .ToHashSet();
 
             var phase3ToAdd = new List<MediaItemEnrichment>();
             foreach (var (pluginId, provider, _) in pluginEntries)
@@ -632,6 +722,7 @@ public class MetadataEnrichmentService(
             ResetScope.AllExhausted => query.Where(x => x.Status == EnrichmentStatus.Exhausted),
             ResetScope.AllNotFound  => query.Where(x => x.Status == EnrichmentStatus.NotFound),
             ResetScope.AllSkipped   => query.Where(x => x.Status == EnrichmentStatus.Skipped),
+            ResetScope.AllAuthFailed => query.Where(x => x.Status == EnrichmentStatus.AuthFailed),
             ResetScope.AllForPlugin => query.Where(x => x.Status != EnrichmentStatus.Skipped),
             _                       => query
         };
@@ -685,13 +776,14 @@ public class MetadataEnrichmentService(
             .GroupBy(x => x.PluginId)
             .Select(g => new
             {
-                PluginId  = g.Key,
-                Pending   = g.Count(x => x.Status == EnrichmentStatus.Pending),
-                Completed = g.Count(x => x.Status == EnrichmentStatus.Completed),
-                Failed    = g.Count(x => x.Status == EnrichmentStatus.Failed),
-                Exhausted = g.Count(x => x.Status == EnrichmentStatus.Exhausted),
-                NotFound  = g.Count(x => x.Status == EnrichmentStatus.NotFound),
-                Skipped   = g.Count(x => x.Status == EnrichmentStatus.Skipped),
+                PluginId   = g.Key,
+                Pending    = g.Count(x => x.Status == EnrichmentStatus.Pending),
+                Completed  = g.Count(x => x.Status == EnrichmentStatus.Completed),
+                Failed     = g.Count(x => x.Status == EnrichmentStatus.Failed),
+                Exhausted  = g.Count(x => x.Status == EnrichmentStatus.Exhausted),
+                NotFound   = g.Count(x => x.Status == EnrichmentStatus.NotFound),
+                Skipped    = g.Count(x => x.Status == EnrichmentStatus.Skipped),
+                AuthFailed = g.Count(x => x.Status == EnrichmentStatus.AuthFailed),
             })
             .ToListAsync(ct);
 
@@ -705,12 +797,13 @@ public class MetadataEnrichmentService(
                 return new EnrichmentStats(
                     p.PluginId,
                     p.Name,
-                    r?.Pending   ?? 0,
-                    r?.Completed ?? 0,
-                    r?.Failed    ?? 0,
-                    r?.Exhausted ?? 0,
-                    r?.NotFound  ?? 0,
-                    r?.Skipped   ?? 0);
+                    r?.Pending    ?? 0,
+                    r?.Completed  ?? 0,
+                    r?.Failed     ?? 0,
+                    r?.Exhausted  ?? 0,
+                    r?.NotFound   ?? 0,
+                    r?.Skipped    ?? 0,
+                    r?.AuthFailed ?? 0);
             })
             .ToList();
     }
@@ -1286,7 +1379,20 @@ public class MetadataEnrichmentService(
                 // Load MediaType navigation if not already present (needed by EnsureCollectionParentAsync).
                 if (row.MediaItem!.MediaType is null)
                     await db.Entry(row.MediaItem).Reference(m => m.MediaType).LoadAsync(ct);
-                await movieCollectionService.EnsureCollectionParentAsync(db, row.MediaItem!, ct);
+                await movieCollectionService.EnsureCollectionParentAsync(db, row.MediaItem!, row.PluginId, ct);
+
+                // After re-parenting under a collection, create stub entries for missing collection movies.
+                // Reload the collection ExternalIds (set by EnsureCollectionParentAsync) so the stub
+                // lookup can find the right collection:{id}.
+                if (row.MediaItem!.ParentId.HasValue)
+                {
+                    var collectionItem = await db.MediaItems
+                        .Include(m => m.ExternalIds)
+                        .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId!.Value, ct);
+                    if (collectionItem is not null)
+                        await movieCollectionService.EnsureCollectionStubsAsync(db, collectionItem, provider, ct);
+                }
+
                 logger.LogInformation(
                     "Enrichment matched: plugin={Plugin} item={ItemId} \"{Name}\" (level={Level}) → {ExternalId} \"{MatchedTitle}\"",
                     provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
@@ -1294,6 +1400,16 @@ public class MetadataEnrichmentService(
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (PluginAuthException ex)
+        {
+            // Authentication failure — terminal immediately, no retries.
+            // The user must fix the plugin's credentials before enrichment can proceed.
+            logger.LogWarning(
+                "Plugin auth failure for item {ItemId} plugin {PluginId}: {ErrorMessage}",
+                row.MediaItemId, row.PluginId, ex.Message);
+            row.Status       = EnrichmentStatus.AuthFailed;
+            row.ErrorMessage = ex.Message;
+        }
         catch (Exception ex)
         {
             // A 404 from the provider means "this item definitively does not exist upstream" —
@@ -2033,24 +2149,49 @@ public class MetadataEnrichmentService(
             row.RetryCount      = 0;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (PluginAuthException ex)
+        {
+            // Authentication failure — terminal immediately, no retries.
+            logger.LogWarning(
+                "Plugin auth failure for item {ItemId} plugin {PluginId}: {ErrorMessage}",
+                item.Id, pluginId, ex.Message);
+            row.Status       = EnrichmentStatus.AuthFailed;
+            row.ErrorMessage = ex.Message;
+            throw; // re-throw so the controller can return PLUGIN_AUTH_FAILED to the caller
+        }
         catch (Exception ex)
         {
-            var isExpected = ex is HttpRequestException or TaskCanceledException
-                                                         or TimeoutException
-                                                         or OperationCanceledException;
-            if (isExpected)
-                logger.LogWarning(
-                    "Enrichment transient error for item {ItemId} plugin {PluginId}: {Type}: {Msg}",
-                    item.Id, pluginId, ex.GetType().Name, ex.Message);
+            // A 404 from the provider means the stored ExternalId no longer exists upstream
+            // (e.g. TMDB removed the entry). Treat as NotFound — a permanent terminal state —
+            // so retries are not wasted burning through MaxRetries until Exhausted.
+            if (ex is HttpRequestException httpEx &&
+                httpEx.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                logger.LogInformation(
+                    "Enrichment not found (404): plugin={Plugin} item={ItemId} \"{Name}\" — stored ID no longer exists upstream",
+                    pluginId, item.Id, item.Name);
+                row.Status       = EnrichmentStatus.NotFound;
+                row.ErrorMessage = ex.Message;
+            }
             else
-                logger.LogWarning(ex, "Enrichment failed for item {ItemId} plugin {PluginId}",
-                    item.Id, pluginId);
+            {
+                var isExpected = ex is HttpRequestException or TaskCanceledException
+                                                             or TimeoutException
+                                                             or OperationCanceledException;
+                if (isExpected)
+                    logger.LogWarning(
+                        "Enrichment transient error for item {ItemId} plugin {PluginId}: {Type}: {Msg}",
+                        item.Id, pluginId, ex.GetType().Name, ex.Message);
+                else
+                    logger.LogWarning(ex, "Enrichment failed for item {ItemId} plugin {PluginId}",
+                        item.Id, pluginId);
 
-            row.RetryCount++;
-            row.ErrorMessage = ex.Message;
-            row.Status = row.RetryCount >= row.MaxRetries
-                ? EnrichmentStatus.Exhausted
-                : EnrichmentStatus.Failed;
+                row.RetryCount++;
+                row.ErrorMessage = ex.Message;
+                row.Status = row.RetryCount >= row.MaxRetries
+                    ? EnrichmentStatus.Exhausted
+                    : EnrichmentStatus.Failed;
+            }
         }
 
         await db.SaveChangesAsync(ct);

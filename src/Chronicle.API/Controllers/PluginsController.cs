@@ -1,10 +1,13 @@
 using System.IO.Compression;
 using System.Text.Json;
 using Chronicle.API.DTOs;
+using Chronicle.Core.Models;
+using Chronicle.Data;
 using Chronicle.Plugins.Models;
 using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using SkiaSharp;
@@ -62,6 +65,8 @@ public class PluginsController : ControllerBase
         ([ 0x52, 0x49, 0x46, 0x46 ],       "WEBP"),  // RIFF (WebP)
     ];
 
+    private readonly IServiceScopeFactory _scopeFactory;
+
     public PluginsController(
         IPluginService pluginService,
         IPluginRegistry registry,
@@ -69,7 +74,8 @@ public class PluginsController : ControllerBase
         IHttpClientFactory httpClientFactory,
         IMemoryCache cache,
         IWebHostEnvironment environment,
-        ILogger<PluginsController> logger)
+        ILogger<PluginsController> logger,
+        IServiceScopeFactory scopeFactory)
     {
         _pluginService     = pluginService;
         _registry          = registry;
@@ -78,6 +84,43 @@ public class PluginsController : ControllerBase
         _cache             = cache;
         _environment       = environment;
         _logger            = logger;
+        _scopeFactory      = scopeFactory;
+    }
+
+    // ── GET /api/v1/plugins/auth-failures ────────────────────────────────────
+
+    /// <summary>
+    /// Returns distinct plugins that have at least one enrichment row in the
+    /// <see cref="EnrichmentStatus.AuthFailed"/> state. Used by the frontend to
+    /// surface a "plugin needs credentials" alert with a link to Settings → Plugins.
+    /// </summary>
+    [HttpGet("auth-failures")]
+    public async Task<IActionResult> GetAuthFailures(CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        await using var db    = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+        var failedPluginIds = await db.MediaEnrichments
+            .Where(e => e.Status == EnrichmentStatus.AuthFailed)
+            .Select(e => e.PluginId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var allPlugins = await _pluginService.GetAllPluginsAsync();
+        var results = failedPluginIds
+            .Select(pluginId =>
+            {
+                var plugin = allPlugins.FirstOrDefault(p => p.PluginId == pluginId);
+                return new
+                {
+                    pluginId,
+                    pluginName = plugin?.Name ?? pluginId,
+                    dbId       = plugin?.Id,
+                };
+            })
+            .ToList();
+
+        return Ok(new { success = true, data = results });
     }
 
     // ── GET /api/v1/plugins ───────────────────────────────────────────────────
