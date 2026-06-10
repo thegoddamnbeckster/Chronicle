@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { PosterImage } from './PosterImage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCollection, rebuildCollection } from '@/api/collections'
 import styles from './CollectionMetadataBox.module.css'
@@ -83,26 +84,8 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
               ].filter(Boolean).join(' ')}
             >
               <Link to={`/media/${movie.id}`} className={styles.posterLink}>
-                <div className={styles.poster}>
-                  {movie.posterUrl ? (
-                    <img
-                      src={movie.posterUrl}
-                      alt={movie.name}
-                      loading="lazy"
-                      onError={e => {
-                        const img = e.currentTarget
-                        img.style.display = 'none'
-                        const ph = img.nextElementSibling as HTMLElement | null
-                        if (ph) ph.style.display = 'flex'
-                      }}
-                    />
-                  ) : null}
-                  <div
-                    className={styles.posterPlaceholder}
-                    style={{ display: movie.posterUrl ? 'none' : 'flex' }}
-                  >
-                    {movie.name.charAt(0)}
-                  </div>
+                <div className={styles.posterWrap}>
+                  <PosterImage posterUrl={movie.posterUrl} name={movie.name} />
                   {movie.isStub && (
                     <div className={styles.stubBanner}>Not in Library</div>
                   )}

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { searchMedia } from '@/api/media'
 import type { MediaItem } from '@/types'
 import styles from './GlobalSearch.module.css'
+import { PosterImage } from '@/components/PosterImage'
 
 export default function GlobalSearch() {
   const [query, setQuery]       = useState('')
@@ -105,10 +106,7 @@ export default function GlobalSearch() {
               onPointerDown={e => { e.preventDefault(); handleSelect(item) }}
             >
               <div className={styles.thumb}>
-                {item.posterUrl
-                  ? <img src={item.posterUrl} alt="" className={styles.poster} />
-                  : <span className={styles.posterPlaceholder}>{item.name.charAt(0)}</span>
-                }
+                <PosterImage posterUrl={item.posterUrl} name={item.name} imgClassName={styles.poster} />
               </div>
               <div className={styles.info}>
                 <span className={styles.name}>{item.name}</span>

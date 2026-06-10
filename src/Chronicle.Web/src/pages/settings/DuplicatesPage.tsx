@@ -9,6 +9,7 @@ import {
 } from '@/api/duplicates'
 import MergeModal from '@/components/MergeModal'
 import styles from './DuplicatesPage.module.css'
+import { PosterImage } from '@/components/PosterImage'
 
 export default function DuplicatesPage() {
   const qc = useQueryClient()
@@ -105,9 +106,8 @@ function ItemCard({ item }: { item: DuplicateCandidateItem }) {
 
   return (
     <div className={styles.card}>
-      {item.posterUrl
-        ? <img src={item.posterUrl} alt={item.name} className={styles.poster} />
-        : <div className={styles.posterPlaceholder}>No poster</div>}
+      <PosterImage posterUrl={item.posterUrl} name={item.name} imgClassName={styles.poster}
+        placeholderContent="No poster" />
       <div className={styles.info}>
         <p className={styles.name}>{item.name}</p>
         {item.year && <span className={styles.year}>{item.year}</span>}
