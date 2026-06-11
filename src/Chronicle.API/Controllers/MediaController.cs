@@ -268,8 +268,13 @@ namespace Chronicle.API.Controllers
             if (item is null)
                 return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
+            // Callers may pass either the short source name ("fanedit") or the full plugin ID
+            // ("chronicle.plugin.fanedit"). Normalise to the short form for ExternalIds lookup,
+            // and keep the full form for the MetadataJson key (which uses the full plugin ID).
+            var shortSource = source.Contains('.') ? source[(source.LastIndexOf('.') + 1)..] : source;
+
             var toRemove = item.ExternalIds
-                .Where(e => string.Equals(e.Source, source, StringComparison.OrdinalIgnoreCase))
+                .Where(e => string.Equals(e.Source, shortSource, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             if (toRemove.Count == 0)
@@ -278,14 +283,20 @@ namespace Chronicle.API.Controllers
             _context.MediaExternalIds.RemoveRange(toRemove);
 
             // Strip the provider's block from MetadataJson so stale data doesn't linger.
+            // MetadataJson is keyed by full plugin ID; also try the short source name for
+            // items stored under the old flat format.
             if (!string.IsNullOrWhiteSpace(item.MetadataJson))
             {
                 try
                 {
                     var root = System.Text.Json.JsonSerializer.Deserialize<
                         System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
-                    if (root is not null && root.Remove(source.ToLowerInvariant()))
+                    if (root is not null)
+                    {
+                        root.Remove(source.ToLowerInvariant());      // full plugin ID key
+                        root.Remove(shortSource.ToLowerInvariant()); // short source key
                         item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+                    }
                 }
                 catch { /* malformed JSON — leave as-is */ }
             }
@@ -312,9 +323,11 @@ namespace Chronicle.API.Controllers
             if (item is null)
                 return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
+            var shortSource = source.Contains('.') ? source[(source.LastIndexOf('.') + 1)..] : source;
+
             // Remove any existing ID for this source (real or previous suppress sentinel).
             var existing = item.ExternalIds
-                .Where(e => string.Equals(e.Source, source, StringComparison.OrdinalIgnoreCase))
+                .Where(e => string.Equals(e.Source, shortSource, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             _context.MediaExternalIds.RemoveRange(existing);
 
@@ -325,17 +338,21 @@ namespace Chronicle.API.Controllers
                 {
                     var root = System.Text.Json.JsonSerializer.Deserialize<
                         System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
-                    if (root is not null && root.Remove(source.ToLowerInvariant()))
+                    if (root is not null)
+                    {
+                        root.Remove(source.ToLowerInvariant());
+                        root.Remove(shortSource.ToLowerInvariant());
                         item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+                    }
                 }
                 catch { /* malformed JSON — leave as-is */ }
             }
 
-            // Store the suppress sentinel.
+            // Store the suppress sentinel using the short source name (matches ExternalIds convention).
             _context.MediaExternalIds.Add(new Chronicle.Core.Models.MediaExternalId
             {
                 MediaItemId = item.Id,
-                Source      = source.ToLowerInvariant(),
+                Source      = shortSource.ToLowerInvariant(),
                 ExternalId  = "__suppress__"
             });
 
