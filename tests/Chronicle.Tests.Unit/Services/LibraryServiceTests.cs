@@ -22,7 +22,7 @@ public class LibraryServiceTests
     public async Task ClearAllAsync_EmptyLibrary_ReturnsZero()
     {
         var db = MakeDb();
-        var svc = new LibraryService(db);
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
 
         var removed = await svc.ClearAllAsync(userId: 1);
 
@@ -49,7 +49,7 @@ public class LibraryServiceTests
             new UserLibrary { UserId = 1, MediaItemId = item2.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
 
-        var svc = new LibraryService(db);
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
 
         // Act
         var removed = await svc.ClearAllAsync(userId: 1);
@@ -79,7 +79,7 @@ public class LibraryServiceTests
             new UserLibrary { UserId = 2, MediaItemId = sharedItem.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
 
-        var svc = new LibraryService(db);
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
 
         // Act: user 1 clears their library
         var removed = await svc.ClearAllAsync(userId: 1);
@@ -117,7 +117,7 @@ public class LibraryServiceTests
         db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = show.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
 
-        var svc = new LibraryService(db);
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
 
         // Act
         var removed = await svc.ClearAllAsync(userId: 1);
@@ -152,7 +152,7 @@ public class LibraryServiceTests
             new UserLibrary { UserId = 1, MediaItemId = season.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
 
-        var svc = new LibraryService(db);
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
 
         // Act
         var results = (await svc.GetForUserAsync(1, rootOnly: true)).ToList();

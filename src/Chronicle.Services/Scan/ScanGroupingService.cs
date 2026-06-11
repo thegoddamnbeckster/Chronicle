@@ -83,6 +83,16 @@ namespace Chronicle.Services.Scan
 
                     if (!rootGroups.TryGetValue(key, out var group))
                     {
+                        // Set FolderPath to the containing directory so UpsertGroupItemAsync
+                        // can match this scan group against an existing DB item by folder path.
+                        // This survives enrichment renaming the item (e.g. "The Matrix Revolutions
+                        // Decoded" → "The Matrix Revolutions") because the folder on disk doesn't change.
+                        // Only set it when the file lives in a subfolder of the scan root; files
+                        // sitting directly in the root share a directory and would collide.
+                        var folderPath = folderSignal.FolderNames.Count > 0
+                            ? Path.GetDirectoryName(path)
+                            : null;
+
                         group = new ScanGroup
                         {
                             GroupKey        = key,
@@ -90,6 +100,7 @@ namespace Chronicle.Services.Scan
                             HierarchyLevel  = 0,
                             ConfidenceScore = ComputeFlatConfidence(groupName, nfoSignal),
                             SignalSources   = BuildSources(folderSignal, null, nfoSignal, 0),
+                            FolderPath      = folderPath,
                         };
                         rootGroups[key] = group;
                         result.Groups.Add(group);
