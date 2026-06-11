@@ -75,6 +75,12 @@ export async function changeMediaType(id: number, mediaTypeId: number): Promise<
   await client.post(`/media/${id}/change-type`, { mediaTypeId })
 }
 
+export async function unparentFromCollection(id: number): Promise<MediaItem> {
+  const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/unparent`)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to remove from collection')
+  return data.data
+}
+
 /**
  * Refreshes metadata for a single item from a specific plugin.
  * If `input` is provided, performs a Fix Match (overrides external ID lookup).

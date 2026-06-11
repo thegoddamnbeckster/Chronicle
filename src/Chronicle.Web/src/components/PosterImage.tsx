@@ -13,6 +13,11 @@ interface PosterImageProps {
   imgClassName?: string
   /** Custom content for the placeholder. Defaults to the first letter of name. */
   placeholderContent?: React.ReactNode
+  /**
+   * Set to true only for off-screen grid items where lazy loading is safe.
+   * Default false — eager loading ensures onLoad fires and the placeholder hides.
+   */
+  lazy?: boolean
 }
 
 /**
@@ -20,7 +25,7 @@ interface PosterImageProps {
  * until the image finishes loading. Prevents blank gaps when images load slowly
  * (e.g. from fanart.tv) and handles load errors gracefully.
  */
-export function PosterImage({ posterUrl, name, className, onClick, imgClassName, placeholderContent }: PosterImageProps) {
+export function PosterImage({ posterUrl, name, className, onClick, imgClassName, placeholderContent, lazy = false }: PosterImageProps) {
   const [loaded, setLoaded] = useState(false)
 
   return (
@@ -32,9 +37,11 @@ export function PosterImage({ posterUrl, name, className, onClick, imgClassName,
         <img
           src={posterUrl}
           alt={name}
-          loading="lazy"
+          loading={lazy ? 'lazy' : 'eager'}
           className={`${styles.img} ${imgClassName ?? ''}`}
-          style={{ display: loaded ? 'block' : 'none' }}
+          style={loaded
+            ? undefined
+            : { visibility: 'hidden', position: 'absolute', inset: 0, width: '100%', height: '100%' }}
           onClick={onClick}
           onLoad={() => setLoaded(true)}
           onError={() => setLoaded(false)}

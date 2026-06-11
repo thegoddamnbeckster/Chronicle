@@ -268,22 +268,42 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   margin-bottom: 12px;
 }
 
-.fanartThumb {
+/* Wrapper carries the sizing so it occupies the right flex slot */
+.fanartThumbWrap {
   flex-shrink: 0;
   width: 150px;
-  border-radius: var(--radius);
-  object-fit: cover;
   align-self: flex-start;
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
-.fanartDisc {
+.fanartThumb {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: cover;
+}
+
+.fanartDiscWrap {
   flex-shrink: 0;
   width: 110px;
-  object-fit: contain;
   align-self: center;
 }
 
+.fanartDisc {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+
 /* ── Character art (below description, above Refresh All) ── */
+
+.fanartCharacterWrap {
+  max-width: 100%;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
 
 .fanartCharacter {
   display: block;
@@ -291,7 +311,6 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   max-width: 100%;
   object-fit: contain;
   object-position: left bottom;
-  margin-bottom: 12px;
 }
 
 /* ── Hero ── */
@@ -306,7 +325,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   .hero { flex-direction: column; }
 }
 
-.posterWrap { flex-shrink: 0; }
+.posterWrap { flex-shrink: 0; width: 200px; }
 
 .poster {
   width: 200px;

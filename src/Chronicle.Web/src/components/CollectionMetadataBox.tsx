@@ -1,9 +1,15 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PosterImage } from './PosterImage'
+import { FanartImage } from './FanartImage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCollection, rebuildCollection } from '@/api/collections'
 import styles from './CollectionMetadataBox.module.css'
+
+function isFanartUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  try { return new URL(url).hostname.includes('fanart.tv') } catch { return false }
+}
 
 interface Props {
   mediaItemId: number
@@ -51,7 +57,9 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
     <section className={styles.box}>
       <h3 className={styles.heading}>
         {data.posterUrl && (
-          <img src={data.posterUrl} alt="" className={styles.collectionPoster} />
+          isFanartUrl(data.posterUrl)
+            ? <FanartImage src={data.posterUrl} wrapperClassName={styles.collectionPosterWrap} imgClassName={styles.collectionPosterImg} minHeight={60} />
+            : <img src={data.posterUrl} alt="" className={styles.collectionPoster} />
         )}
         <span>Part of <Link to={`/media/${data.id}`} className={styles.collectionLink}><em>{data.name}</em></Link></span>
         {!compact && (
@@ -85,7 +93,10 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
             >
               <Link to={`/media/${movie.id}`} className={styles.posterLink}>
                 <div className={styles.posterWrap}>
-                  <PosterImage posterUrl={movie.posterUrl} name={movie.name} />
+                  {isFanartUrl(movie.posterUrl)
+                    ? <FanartImage src={movie.posterUrl!} wrapperClassName={styles.moviePosterWrap} imgClassName={styles.moviePosterImg} minHeight={120} />
+                    : <PosterImage posterUrl={movie.posterUrl} name={movie.name} />
+                  }
                   {movie.isStub && (
                     <div className={styles.stubBanner}>Not in Library</div>
                   )}

@@ -131,6 +131,12 @@ public class MetadataEnrichmentService(
             return;
         }
 
+        // Build a snapshot of all providers so stub creation can seed enrichment rows for every plugin.
+        var allProviders = registry.GetMetadataProviderEntries()
+            .Select(e => (e.PluginId, (IMetadataProvider)e.Provider))
+            .ToList()
+            .AsReadOnly();
+
         // Expand declared media types to all raw DB name variants so the filter can be
         // pushed into SQL. NormalizeMediaTypeName maps "movies"→"movie" and lowercases;
         // we invert that here so that a plugin declaring "movie" also matches the DB value
@@ -233,7 +239,7 @@ public class MetadataEnrichmentService(
             foreach (var row in rows)
             {
                 ct.ThrowIfCancellationRequested();
-                await EnrichOneAsync(db, provider, row, ct);
+                await EnrichOneAsync(db, provider, row, ct, allProviders);
             }
 
             // All items in this pass have been saved. Clear the change tracker so that
@@ -435,11 +441,25 @@ public class MetadataEnrichmentService(
         //
         // We resolve import-provider plugin IDs at runtime so the cleanup is self-updating
         // as plugins are installed or removed.
-        var importProviderIds = (svc.ServiceProvider
-            .GetRequiredService<Chronicle.Services.Plugins.IPluginRegistry>()
+        var pluginRegistry = svc.ServiceProvider
+            .GetRequiredService<Chronicle.Services.Plugins.IPluginRegistry>();
+
+        var importProviderIds = pluginRegistry
             .GetImportProviders()
-            .Select(p => p.PluginId))
+            .Select(p => p.PluginId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Build plugin → supported media type names map for Phase 1 type filtering.
+        // This prevents creating enrichment rows for items whose type the plugin doesn't
+        // support (e.g. TMDB rows for music items that happen to have a stale tmdb ExternalId).
+        var pluginSupportedTypes = pluginRegistry
+            .GetMetadataProviderEntries()
+            .ToDictionary(
+                e => e.PluginId,
+                e => e.Provider.GetSupportedMediaTypes()
+                         .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+                         .ToHashSet(StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
 
         if (importProviderIds.Count > 0)
         {
@@ -491,6 +511,10 @@ public class MetadataEnrichmentService(
             .Select(mei => (MediaItemId: mei.MediaItemId,
                             PluginId:    CanonicalPluginId(mei.Source),
                             ExternalId:  mei.ExternalId))
+            // Skip collection-container ExternalIds — those are metadata about a container,
+            // not an identifier for a media item to enrich. Enriching containers as movies
+            // causes wrong title matches and bad re-parenting of real movies into unrelated containers.
+            .Where(c => !c.ExternalId.StartsWith("collection:", StringComparison.OrdinalIgnoreCase))
             .Where(c => !enrichmentSet.Contains((c.MediaItemId, c.PluginId.ToLower())))
             .GroupBy(c => (c.MediaItemId, c.PluginId))   // dedup same item+plugin
             .Select(g => g.First())
@@ -498,26 +522,39 @@ public class MetadataEnrichmentService(
 
         if (candidates.Count == 0) return;
 
-        // Load MetadataJson for all affected items, chunked to stay under
-        // SQLite's SQLITE_LIMIT_VARIABLE_NUMBER=999 limit.
+        // Load MetadataJson and media type names for all affected items, chunked to stay
+        // under SQLite's SQLITE_LIMIT_VARIABLE_NUMBER=999 limit.
         var itemIds = candidates.Select(c => c.MediaItemId).Distinct().ToList();
-        var metadataByItem = new Dictionary<int, string?>(itemIds.Count);
+        var metadataByItem  = new Dictionary<int, string?>(itemIds.Count);
+        var mediaTypeByItem = new Dictionary<int, string>(itemIds.Count);
         foreach (var chunk in itemIds.Chunk(500))
         {
             var chunkData = await db.MediaItems
+                .Include(mi => mi.MediaType)
                 .Where(mi => chunk.Contains(mi.Id))
-                .Select(mi => new { mi.Id, mi.MetadataJson })
+                .Select(mi => new { mi.Id, mi.MetadataJson, TypeName = mi.MediaType!.Name })
                 .ToListAsync(ct);
             foreach (var row in chunkData)
-                metadataByItem[row.Id] = row.MetadataJson;
+            {
+                metadataByItem[row.Id]  = row.MetadataJson;
+                mediaTypeByItem[row.Id] = row.TypeName;
+            }
         }
 
         // For each candidate: Completed if plugin data is intact in MetadataJson,
         // Pending if data is absent (wiped by re-scan) so it re-enriches automatically.
+        // Skip candidates whose item type is not supported by the plugin — this prevents
+        // stale ExternalIds (e.g. a tmdb source on a music item) from creating useless rows.
         int completedCount = 0, pendingCount = 0;
         var toAdd = new List<MediaItemEnrichment>(candidates.Count);
         foreach (var (mediaItemId, pluginId, externalId) in candidates)
         {
+            if (pluginSupportedTypes.TryGetValue(pluginId, out var supportedForPlugin)
+                && supportedForPlugin.Count > 0
+                && mediaTypeByItem.TryGetValue(mediaItemId, out var itemType)
+                && !supportedForPlugin.Contains(NormalizeMediaTypeName(itemType)))
+                continue;   // plugin doesn't support this item's type — skip
+
             var json   = metadataByItem.GetValueOrDefault(mediaItemId);
             var status = HasPluginDataInJson(json, pluginId)
                 ? EnrichmentStatus.Completed
@@ -594,7 +631,6 @@ public class MetadataEnrichmentService(
         // naturally excluded. A combined plugin (e.g. Hardcover) that implements both
         // IImportProvider and IMetadataProvider IS included — it can enrich any item by
         // title search, just like a pure metadata provider.
-        var pluginRegistry = svc.ServiceProvider.GetRequiredService<Chronicle.Services.Plugins.IPluginRegistry>();
         var pluginEntries = pluginRegistry.GetMetadataProviderEntries().ToList();
 
         if (pluginEntries.Count > 0)
@@ -891,7 +927,8 @@ public class MetadataEnrichmentService(
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private async Task EnrichOneAsync(ChronicleDbContext db, IMetadataProvider provider,
-        MediaItemEnrichment row, CancellationToken ct)
+        MediaItemEnrichment row, CancellationToken ct,
+        IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null)
     {
         row.LastAttemptedAt = DateTime.UtcNow;
         string searchQuery = string.Empty;
@@ -933,8 +970,11 @@ public class MetadataEnrichmentService(
                                 var parentMediaType = await db.MediaTypes
                                     .AsNoTracking()
                                     .FirstOrDefaultAsync(t => t.Id == parent.MediaTypeId, ct);
-                                parentIsMovieCollection = string.Equals(
-                                    parentMediaType?.Name, "movies", StringComparison.OrdinalIgnoreCase);
+                                var pName = parentMediaType?.Name;
+                                parentIsMovieCollection =
+                                    string.Equals(pName, "movies",   StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(pName, "fanedits", StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(pName, "anime",    StringComparison.OrdinalIgnoreCase);
                             }
 
                             if (parentIsMovieCollection)
@@ -1377,8 +1417,12 @@ public class MetadataEnrichmentService(
                 await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId);
                 // If this is a TMDB movie enrichment, ensure collection parent exists and re-parent if needed.
                 // Stubs are skipped — they're placeholders and must not trigger further collection creation.
+                // Items that already have children are acting as collection containers; skip them too —
+                // running EnsureCollectionParentAsync on a container would wrongly move it under another container.
                 // Load MediaType navigation if not already present (needed by EnsureCollectionParentAsync).
-                if (!row.MediaItem!.IsStub)
+                var hasChildren = !row.MediaItem!.IsStub &&
+                                  await db.MediaItems.AnyAsync(m => m.ParentId == row.MediaItemId, ct);
+                if (!row.MediaItem!.IsStub && !hasChildren)
                 {
                     if (row.MediaItem!.MediaType is null)
                         await db.Entry(row.MediaItem).Reference(m => m.MediaType).LoadAsync(ct);
@@ -1392,9 +1436,10 @@ public class MetadataEnrichmentService(
                 {
                     var collectionItem = await db.MediaItems
                         .Include(m => m.ExternalIds)
+                        .Include(m => m.MediaType)
                         .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId!.Value, ct);
                     if (collectionItem is not null)
-                        await movieCollectionService.EnsureCollectionStubsAsync(db, collectionItem, provider, ct);
+                        await movieCollectionService.EnsureCollectionStubsAsync(db, collectionItem, provider, ct, allProviders);
                 }
 
                 logger.LogInformation(

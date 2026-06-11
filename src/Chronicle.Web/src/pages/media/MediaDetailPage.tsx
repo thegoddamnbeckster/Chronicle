@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
@@ -16,6 +16,7 @@ import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 import { PosterImage } from '@/components/PosterImage'
+import { FanartImage } from '@/components/FanartImage'
 import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import { unmergeItem } from '@/api/duplicates'
 
@@ -265,6 +266,14 @@ export default function MediaDetailPage() {
     },
   })
 
+  const unparentMut = useMutation({
+    mutationFn: () => unparentFromCollection(mediaId),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+
   // ── Merge with… ──────────────────────────────────────────────────────────
   const [mergeSearchOpen, setMergeSearchOpen] = useState(false)
   const [mergeSearchQuery, setMergeSearchQuery] = useState('')
@@ -441,7 +450,7 @@ export default function MediaDetailPage() {
         {(item.ancestors && item.ancestors.length > 0) ? (
           <>
             <nav className={styles.breadcrumb}>
-              <Link to="/library" className={styles.breadcrumbLink}>Library</Link>
+              <Link to={`/library#media-${item.ancestors![0].id}`} className={styles.breadcrumbLink}>Library</Link>
               {item.ancestors.map(a => (
                 <span key={a.id} className={styles.breadcrumbItem}>
                   <span className={styles.breadcrumbSep}>›</span>
@@ -487,14 +496,12 @@ export default function MediaDetailPage() {
       </div>
 
       {fanartBanner && (
-        <div className={styles.fanartBannerWrap}>
-          <img
-            src={fanartBanner}
-            alt=""
-            className={styles.fanartBanner}
-            onError={e => { e.currentTarget.parentElement!.style.display = 'none' }}
-          />
-        </div>
+        <FanartImage
+          src={fanartBanner}
+          wrapperClassName={styles.fanartBannerWrap}
+          imgClassName={styles.fanartBanner}
+          minHeight={60}
+        />
       )}
 
       <div className={styles.hero}>
@@ -509,14 +516,13 @@ export default function MediaDetailPage() {
 
         <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
           {fanartLogo && (
-            <div className={styles.fanartLogoWrap}>
-              <img
-                src={fanartLogo}
-                alt={item.name}
-                className={styles.fanartLogo}
-                onError={e => { e.currentTarget.parentElement!.style.display = 'none' }}
-              />
-            </div>
+            <FanartImage
+              src={fanartLogo}
+              alt={item.name}
+              wrapperClassName={styles.fanartLogoWrap}
+              imgClassName={styles.fanartLogo}
+              minHeight={80}
+            />
           )}
           <h1 className={styles.title}>{item.name}</h1>
           {item.aliases && item.aliases.length > 0 && (
@@ -533,6 +539,27 @@ export default function MediaDetailPage() {
                 onClick={() => { setChangeTypeOpen(true); setChangeTypeError(null) }}
               >
                 Change Type
+              </button>
+            )}
+            {isAdmin && item.parentId != null && item.ancestors && item.ancestors.length > 0 && (
+              <Link
+                to={`/media/${item.ancestors[0].id}`}
+                className={styles.changeTypeBtn}
+                title="To change type, go to the collection root"
+                style={{ textDecoration: 'none', textAlign: 'center' }}
+              >
+                Change Type (at root)
+              </Link>
+            )}
+            {isAdmin && item.hierarchyLevel === 1 && item.parentId != null &&
+              (item.mediaTypeInternalName === 'movies' || item.mediaTypeInternalName === 'fanedits' || item.mediaTypeInternalName === 'anime') && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => unparentMut.mutate()}
+                disabled={unparentMut.isPending}
+                title="Remove this item from its collection so you can change its type or manage it independently"
+              >
+                {unparentMut.isPending ? 'Removing…' : 'Remove from Collection'}
               </button>
             )}
             {isAdmin && (
@@ -717,31 +744,31 @@ export default function MediaDetailPage() {
           {(item.overview || fanartThumb || fanartDisc) && (
             <div className={styles.descriptionRow}>
               {fanartThumb && (
-                <img
+                <FanartImage
                   src={fanartThumb}
-                  alt=""
-                  className={styles.fanartThumb}
-                  onError={e => { e.currentTarget.style.display = 'none' }}
+                  wrapperClassName={styles.fanartThumbWrap}
+                  imgClassName={styles.fanartThumb}
+                  minHeight={150}
                 />
               )}
               {item.overview && <p className={styles.overview}>{item.overview}</p>}
               {fanartDisc && (
-                <img
+                <FanartImage
                   src={fanartDisc}
-                  alt=""
-                  className={styles.fanartDisc}
-                  onError={e => { e.currentTarget.style.display = 'none' }}
+                  wrapperClassName={styles.fanartDiscWrap}
+                  imgClassName={styles.fanartDisc}
+                  minHeight={110}
                 />
               )}
             </div>
           )}
 
           {fanartCharacter && (
-            <img
+            <FanartImage
               src={fanartCharacter}
-              alt=""
-              className={styles.fanartCharacter}
-              onError={e => { e.currentTarget.style.display = 'none' }}
+              wrapperClassName={styles.fanartCharacterWrap}
+              imgClassName={styles.fanartCharacter}
+              minHeight={120}
             />
           )}
 
