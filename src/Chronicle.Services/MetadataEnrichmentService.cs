@@ -2191,7 +2191,9 @@ public class MetadataEnrichmentService(
             await resolutionService.ResolveAsync(item, db, ct);
 
             // 7. Update row
-            row.ExternalId      = resolvedId;
+            // Prefer result.ExternalId — providers normalize raw user input (e.g. Fanart.tv URLs →
+            // "artist:{mbid}") so the canonical form is what's returned in the result, not resolvedId.
+            row.ExternalId      = !string.IsNullOrEmpty(result.ExternalId) ? result.ExternalId : resolvedId;
             row.Status          = EnrichmentStatus.Completed;
             row.LastCompletedAt = DateTime.UtcNow;
             row.ErrorMessage    = null;
@@ -2243,6 +2245,13 @@ public class MetadataEnrichmentService(
             }
         }
 
+        // Keep media_external_ids in sync so sibling plugins (e.g. Fanart.tv) can find
+        // the canonical ID written by this plugin (e.g. MusicBrainz "artist:{mbid}").
+        // The batch enrichment path already calls this; the single-item (Fix Match/Refresh)
+        // path was missing it, causing KnownExternalIds to remain empty for those items.
+        if (row.Status == EnrichmentStatus.Completed && !string.IsNullOrEmpty(row.ExternalId))
+            await UpsertExternalIdForEnrichmentAsync(db, item.Id, row.ExternalId, ct, pluginId);
+
         await db.SaveChangesAsync(ct);
 
         // 8. Cascade to children
@@ -2256,7 +2265,7 @@ public class MetadataEnrichmentService(
         if (sep <= 0) return true;
         var prefix = externalId[..sep];
         if (item.ParentId is null)
-            return prefix is "artist" or "movie" or "tv";
+            return prefix is "artist" or "album" or "movie" or "tv";
         // Child-level: reject bare show-level IDs on season/episode rows
         if (prefix == "tv" && !externalId.Contains('/'))
             return false;
