@@ -301,13 +301,14 @@ export default function LibraryPage() {
       setExpanded(prev => ({ ...prev, [resolvedTypeName]: true }))
     }
 
-    // Scroll after a brief delay to allow render
+    // Scroll after images have had time to load — instant behavior avoids
+    // mid-animation layout shifts from lazy-loaded posters above the target.
     const timer = setTimeout(() => {
       document.getElementById(`media-${targetId}`)?.scrollIntoView({
-        behavior: 'smooth',
+        behavior: 'instant',
         block: 'center',
       })
-    }, 150)
+    }, 500)
     return () => clearTimeout(timer)
   }, [isLoading, location.hash, grouped, pageSize])
 
@@ -539,7 +540,7 @@ export default function LibraryPage() {
                   {selectMode ? (
                     <div className={styles.posterLink} style={{ position: 'relative' }}>
                       <div className={styles.poster}>
-                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} />
+                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy />
                         {entry.mediaItem.hasPhysicalFile && (
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
@@ -559,7 +560,7 @@ export default function LibraryPage() {
                   ) : (
                     <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
                       <div className={styles.poster}>
-                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} />
+                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy />
                         {entry.mediaItem.hasPhysicalFile && (
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>

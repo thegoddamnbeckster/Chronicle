@@ -396,6 +396,22 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Removes a movie/fanedit/anime item from its collection container.
+        /// Sets ParentId = null and HierarchyLevel = 0, resets enrichment to Pending,
+        /// and deletes the container if it becomes empty. Admin only.
+        /// </summary>
+        [HttpPost("{id:int}/unparent")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UnparentFromCollection(int id, CancellationToken ct)
+        {
+            await _movieCollectionService.UnparentFromCollectionAsync(_context, id, ct);
+            var updated = await _mediaService.GetByIdAsync(id, ct);
+            if (updated == null)
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
+        }
+
         private async Task<List<AncestorDto>> BuildAncestorsAsync(int? parentId, CancellationToken ct)
         {
             var ancestors = new List<AncestorDto>();
@@ -567,6 +583,12 @@ namespace Chronicle.API.Controllers
         private static int? TryGetInt(System.Text.Json.JsonElement el, string key) =>
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
                 ? v.GetInt32() : null;
+
+        private static bool IsMovieLikeTypeName(string? name) =>
+            name is not null &&
+            (name.Equals("movies",   StringComparison.OrdinalIgnoreCase) ||
+             name.Equals("fanedits", StringComparison.OrdinalIgnoreCase) ||
+             name.Equals("anime",    StringComparison.OrdinalIgnoreCase));
 
         private static double? TryGetDouble(System.Text.Json.JsonElement el, string key) =>
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
@@ -892,7 +914,7 @@ namespace Chronicle.API.Controllers
             // use it directly; if item is a movie within a collection (Level 1) use its parent.
             // A Level-0 movie with no children is a standalone film — return 404 (no collection).
             MediaItem? collectionItem = null;
-            bool isMoviesType = string.Equals(item.MediaType?.Name, "movies", StringComparison.OrdinalIgnoreCase);
+            bool isMoviesType = IsMovieLikeTypeName(item.MediaType?.Name);
 
             if (isMoviesType && item.HierarchyLevel == 0)
             {

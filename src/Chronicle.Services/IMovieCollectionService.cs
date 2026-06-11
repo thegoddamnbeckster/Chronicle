@@ -75,4 +75,12 @@ public interface IMovieCollectionService
         IMetadataProvider provider,
         CancellationToken ct = default,
         IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null);
+
+    /// <summary>
+    /// Removes a movie-like item from its collection container by setting ParentId = null
+    /// and HierarchyLevel = 0, then resets enrichment to Pending.
+    /// Deletes the container if it is left empty.
+    /// No-op if the item is not a Level-1 item of a movie-like type.
+    /// </summary>
+    Task UnparentFromCollectionAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default);
 }

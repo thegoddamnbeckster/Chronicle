@@ -206,6 +206,12 @@ namespace Chronicle.API.Controllers
         /// Returns true when the given MetadataJson contains a fileScanner entry with at least
         /// one non-null file path.  Mirrors the same helper in MediaController.
         /// </summary>
+        private static bool IsMovieLikeTypeName(string? name) =>
+            name is not null &&
+            (name.Equals("movies",   StringComparison.OrdinalIgnoreCase) ||
+             name.Equals("fanedits", StringComparison.OrdinalIgnoreCase) ||
+             name.Equals("anime",    StringComparison.OrdinalIgnoreCase));
+
         private static double? ExtractResolvedRating(string? metadataJson)
         {
             if (string.IsNullOrEmpty(metadataJson)) return null;
@@ -290,7 +296,7 @@ namespace Chronicle.API.Controllers
                         Rating: ExtractResolvedRating(e.MediaItem.MetadataJson),
                         Genres: null, Cast: null, Directors: null, Tags: null),
                     IsCollectionContainer: e.MediaItem.HierarchyLevel == 0
-                        && (e.MediaItem.MediaType?.Name ?? string.Empty).Equals("movies", StringComparison.OrdinalIgnoreCase)
+                        && IsMovieLikeTypeName(e.MediaItem.MediaType?.Name)
                         && directChildrenMeta?.Count > 0,
                     IsStub: e.MediaItem.IsStub);
             }

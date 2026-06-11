@@ -27,9 +27,8 @@ public class MovieCollectionService(
         if (movieItem.MediaType is null)
             await db.Entry(movieItem).Reference(m => m.MediaType).LoadAsync(ct);
 
-        // Only group "movies" type — not fanedits, not tv, not anything else
-        if (movieItem.MediaType is null ||
-            !string.Equals(movieItem.MediaType.Name, "movies", StringComparison.OrdinalIgnoreCase))
+        // Only group movie-like types (movies, fanedits, anime) — not tv, not anything else
+        if (movieItem.MediaType is null || !IsMovieLikeTypeName(movieItem.MediaType.Name))
             return;
 
         var collectionData = ExtractCollectionData(movieItem.MetadataJson);
@@ -476,9 +475,13 @@ public class MovieCollectionService(
         CancellationToken ct = default,
         IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null)
     {
-        // Only use a collection ExternalId that came from this specific provider's source,
-        // matching by the last segment of the provider name (e.g. "tmdb").
-        var providerSource = PluginIdHelper.ToSource(provider.Name);
+        // Derive the source key from the provider's full plugin ID (e.g. "chronicle.plugin.tmdb" → "tmdb").
+        // allProviders carries the canonical plugin IDs; fall back to provider.Name for callers that
+        // don't supply allProviders (comparison is OrdinalIgnoreCase so "TMDB" matches source "tmdb").
+        var callerEntry  = allProviders?.FirstOrDefault(p => ReferenceEquals(p.Provider, provider));
+        var providerSource = callerEntry.HasValue
+            ? PluginIdHelper.ToSource(callerEntry.Value.PluginId)
+            : PluginIdHelper.ToSource(provider.Name);
         var collectionExtId = collection.ExternalIds
             .FirstOrDefault(e => string.Equals(e.Source, providerSource, StringComparison.OrdinalIgnoreCase)
                               && e.ExternalId.StartsWith("collection:", StringComparison.OrdinalIgnoreCase));
@@ -530,6 +533,12 @@ public class MovieCollectionService(
 
         if (collectionMeta.Results is null || collectionMeta.Results.Count == 0)
             return true;
+
+        if (allProviders is null || allProviders.Count == 0)
+            logger.LogWarning(
+                "EnsureCollectionStubsAsync: allProviders not supplied for collection {Id} \"{Name}\" — " +
+                "enrichment rows will not be seeded for newly created stubs",
+                collection.Id, collection.Name);
 
         var mediaTypeId = collection.MediaTypeId;
 
@@ -591,6 +600,18 @@ public class MovieCollectionService(
                     m.Year == part.Year, ct))
                 continue;
 
+            // Save stub + ExternalId in one atomic write so the stub is never
+            // visible without its ExternalId. A concurrent run seeing a stub
+            // without an ExternalId would treat it as stale and delete it,
+            // then recreate it — causing the duplicates we're preventing here.
+            // Seed a minimal MetadataJson with the rating from the collection-members endpoint
+            // so the stub shows a rating in the UI without waiting for a full enrichment pass.
+            string? stubMetadataJson = null;
+            if (part.Rating.HasValue && callerEntry.HasValue)
+                stubMetadataJson = JsonSerializer.Serialize(
+                    new Dictionary<string, object>
+                        { [callerEntry.Value.PluginId] = new { rating = part.Rating.Value } });
+
             var stub = new MediaItem
             {
                 MediaTypeId    = mediaTypeId,
@@ -600,21 +621,22 @@ public class MovieCollectionService(
                 Year           = part.Year,
                 PosterUrl      = part.PosterUrl,
                 IsStub         = true,
+                MetadataJson   = stubMetadataJson,
                 CreatedAt      = now,
                 UpdatedAt      = now,
+                ExternalIds    =
+                [
+                    new MediaExternalId
+                    {
+                        Source     = collectionExtId.Source,
+                        ExternalId = part.ExternalId,
+                    }
+                ],
             };
-            db.MediaItems.Add(stub);
-            await db.SaveChangesAsync(ct);
-
-            db.MediaExternalIds.Add(new MediaExternalId
-            {
-                MediaItemId = stub.Id,
-                Source      = collectionExtId.Source,
-                ExternalId  = part.ExternalId,
-            });
-
-            // Seed enrichment rows immediately so all plugins process this stub
-            // without waiting for the next SeedEnrichmentRowsAsync cycle.
+            // Seed enrichment rows for the new stub in the same SaveChangesAsync so
+            // the stub and its rows are committed atomically. Use the MediaItem nav
+            // property instead of MediaItemId — EF Core resolves the FK after insert.
+            // The stub was just created so there are no pre-existing rows to check for.
             var mediaTypeName = collection.MediaType?.Name ?? string.Empty;
             foreach (var (pluginId, pluginProvider) in allProviders ?? [])
             {
@@ -622,20 +644,16 @@ public class MovieCollectionService(
                     .Any(s => string.Equals(s.MediaTypeName, mediaTypeName, StringComparison.OrdinalIgnoreCase));
                 if (!supported) continue;
 
-                var alreadyHasRow = await db.MediaEnrichments
-                    .AnyAsync(e => e.MediaItemId == stub.Id && e.PluginId == pluginId, ct);
-                if (!alreadyHasRow)
+                db.MediaEnrichments.Add(new MediaItemEnrichment
                 {
-                    db.MediaEnrichments.Add(new MediaItemEnrichment
-                    {
-                        MediaItemId = stub.Id,
-                        PluginId    = pluginId,
-                        Status      = EnrichmentStatus.Pending,
-                        MaxRetries  = 3,
-                    });
-                }
+                    MediaItem  = stub,
+                    PluginId   = pluginId,
+                    Status     = EnrichmentStatus.Pending,
+                    MaxRetries = 3,
+                });
             }
 
+            db.MediaItems.Add(stub);
             await db.SaveChangesAsync(ct);
 
             existingChildExtIds.Add(part.ExternalId);
@@ -666,9 +684,9 @@ public class MovieCollectionService(
             .Include(m => m.ExternalIds)
             .FirstOrDefaultAsync(m => m.Id == collectionId && m.HierarchyLevel == 0, ct);
 
-        if (collection is null || collection.MediaType?.Name != "movies")
+        if (collection is null || !IsMovieLikeTypeName(collection.MediaType?.Name))
         {
-            logger.LogWarning("RebuildSingleCollection: item {Id} not found or not a movie collection", collectionId);
+            logger.LogWarning("RebuildSingleCollection: item {Id} not found or not a movie-like collection", collectionId);
             return;
         }
 
@@ -866,7 +884,7 @@ public class MovieCollectionService(
             var batch = await db.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
-                .Where(m => m.MediaType!.Name == "movies" &&
+                .Where(m => (m.MediaType!.Name == "movies" || m.MediaType!.Name == "fanedits" || m.MediaType!.Name == "anime") &&
                             m.HierarchyLevel <= 1 &&
                             m.IsStub == false &&
                             m.Id > lastId &&
@@ -921,7 +939,7 @@ public class MovieCollectionService(
             var batch = await db.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
-                .Where(m => m.MediaType!.Name == "movies" &&
+                .Where(m => (m.MediaType!.Name == "movies" || m.MediaType!.Name == "fanedits" || m.MediaType!.Name == "anime") &&
                             m.HierarchyLevel == 0 &&
                             m.Id > lastId &&
                             m.ExternalIds.Any(e => e.ExternalId.StartsWith("collection:")))
@@ -968,6 +986,51 @@ public class MovieCollectionService(
 
         logger.LogInformation("Collection rebuild pass 2 complete: {Stubs} new stubs created", totalStubs);
     }
+
+    public async Task UnparentFromCollectionAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default)
+    {
+        var item = await db.MediaItems
+            .Include(m => m.MediaType)
+            .FirstOrDefaultAsync(m => m.Id == itemId, ct);
+
+        if (item is null || item.HierarchyLevel != 1 || item.ParentId is null)
+            return;
+        if (!IsMovieLikeTypeName(item.MediaType?.Name))
+            return;
+
+        var oldParentId = item.ParentId.Value;
+
+        item.ParentId       = null;
+        item.HierarchyLevel = 0;
+        item.UpdatedAt      = DateTime.UtcNow;
+
+        // Reset enrichment so the item re-enriches at root level (fresh name/year search)
+        var enrichmentRows = await db.MediaEnrichments
+            .Where(e => e.MediaItemId == item.Id)
+            .ToListAsync(ct);
+        foreach (var row in enrichmentRows)
+        {
+            row.Status          = EnrichmentStatus.Pending;
+            row.RetryCount      = 0;
+            row.LastAttemptedAt = null;
+            row.ErrorMessage    = null;
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        // If the old collection container is now empty, remove it
+        await RemoveOrphanedCollectionAsync(db, oldParentId, item.MediaTypeId, ct);
+    }
+
+    /// <summary>
+    /// Returns true for media type names that participate in the movie-collections hierarchy:
+    /// movies, fanedits, and anime are all grouped into Level-0 collection containers.
+    /// </summary>
+    private static bool IsMovieLikeTypeName(string? name) =>
+        name is not null &&
+        (name.Equals("movies",   StringComparison.OrdinalIgnoreCase) ||
+         name.Equals("fanedits", StringComparison.OrdinalIgnoreCase) ||
+         name.Equals("anime",    StringComparison.OrdinalIgnoreCase));
 
     /// <param name="Id">Plugin-specific collection identifier (string for portability).</param>
     /// <param name="Name">Display name of the collection.</param>
