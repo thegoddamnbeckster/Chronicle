@@ -2208,19 +2208,20 @@ namespace Chronicle.Services
         {
             MediaItem? existing = null;
 
-            // Primary: match by folder path stored in MetadataJson — survives name changes
-            // (e.g. first import stored "Enterprise", re-import resolves "Star Trek: Enterprise")
+            // Primary: match by folder path stored in MetadataJson.
+            // A physical folder path is globally unique — don't restrict by parentId or
+            // hierarchyLevel, because enrichment can reparent items into collections
+            // (e.g. a movie moves from Level 0 / no parent to Level 1 / collection parent).
+            // Dropping mediaTypeId mirrors FindItemByFilePathAsync: a user may have changed
+            // the item's type (e.g. movie → fanedit) and we must not duplicate it.
             if (!string.IsNullOrEmpty(group.FolderPath))
             {
-                var candidates = await _context.MediaItems
-                    .Where(m => m.MediaTypeId == mediaTypeId
-                             && m.ParentId   == parentId
-                             && m.HierarchyLevel == hierarchyLevel
-                             && m.MetadataJson != null
+                var fpCandidates = await _context.MediaItems
+                    .Where(m => m.MetadataJson != null
                              && EF.Functions.Like(m.MetadataJson, "%folderPath%"))
                     .ToListAsync(ct);
 
-                existing = candidates.FirstOrDefault(m =>
+                existing = fpCandidates.FirstOrDefault(m =>
                 {
                     try
                     {
@@ -2230,25 +2231,49 @@ namespace Chronicle.Services
                             return string.Equals(fp.GetString(), group.FolderPath,
                                                  StringComparison.OrdinalIgnoreCase);
                     }
-                    catch (JsonException)
-                    {
-                        // Malformed MetadataJson — this item cannot match by folder path.
-                    }
+                    catch (JsonException) { }
                     return false;
                 });
             }
 
-            // Fallback: match by name (covers items imported before folderPath was added).
-            // Strip trailing "(YYYY)" from both sides so "Show (2016)" and "Show" deduplicate
-            // correctly when year extraction now produces a clean name without the suffix.
+            // Secondary: match by any file path in the fileScanner.filePaths array.
+            // Bridges the gap for items imported before folderPath was populated — those items
+            // have "folderPath":null but do carry a filePaths array with the original file paths.
+            if (existing is null && group.Files.Count > 0)
+            {
+                var groupFileSet = group.Files.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var fpsCandidates = await _context.MediaItems
+                    .Where(m => m.MetadataJson != null
+                             && EF.Functions.Like(m.MetadataJson, "%filePaths%"))
+                    .ToListAsync(ct);
+
+                existing = fpsCandidates.FirstOrDefault(m =>
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(m.MetadataJson!);
+                        if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
+                            fs.TryGetProperty("filePaths", out var arr) &&
+                            arr.ValueKind == JsonValueKind.Array)
+                        {
+                            return arr.EnumerateArray()
+                                      .Any(el => groupFileSet.Contains(el.GetString() ?? string.Empty));
+                        }
+                    }
+                    catch (JsonException) { }
+                    return false;
+                });
+            }
+
+            // Tertiary: match by name (covers items where neither folderPath nor filePaths matched).
+            // Strip trailing "(YYYY)" from both sides so "Show (2016)" and "Show" deduplicate.
+            // No parentId/hierarchyLevel filter — same reasoning as the folderPath check above.
             var groupNameClean = System.Text.RegularExpressions.Regex
                 .Replace(group.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
-            var candidates2 = await _context.MediaItems
-                .Where(m => m.MediaTypeId   == mediaTypeId
-                         && m.ParentId      == parentId
-                         && m.HierarchyLevel == hierarchyLevel)
+            var nameCandidates = await _context.MediaItems
+                .Where(m => m.MediaTypeId == mediaTypeId)
                 .ToListAsync(ct);
-            existing ??= candidates2.FirstOrDefault(m =>
+            existing ??= nameCandidates.FirstOrDefault(m =>
             {
                 var dbNameClean = System.Text.RegularExpressions.Regex
                     .Replace(m.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
