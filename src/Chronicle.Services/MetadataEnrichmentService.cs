@@ -57,7 +57,7 @@ public class MetadataEnrichmentService(
         var allProviders = registry.GetMetadataProviderEntries()
             .Select(e => (e.PluginId, (IMetadataProvider)e.Provider))
             .ToList();
-        var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct);
+        var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct, allProviders);
         if (completedMeta is not null)
             await SeedCrossRefEnrichmentRowsAsync(db, item.Id, completedMeta, pluginId,
                 item.MediaType?.Name, allProviders, ct);
@@ -93,7 +93,7 @@ public class MetadataEnrichmentService(
 
             try
             {
-                var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct);
+                var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct, allProviders);
                 if (completedMeta is not null)
                     await SeedCrossRefEnrichmentRowsAsync(db, item.Id, completedMeta, pluginId,
                         item.MediaType?.Name, allProviders, ct);
@@ -2004,7 +2004,8 @@ public class MetadataEnrichmentService(
         string pluginId,
         MediaItem item,
         EnrichmentOptions options,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null)
     {
         MediaMetadata? completedMeta = null;
 
@@ -2024,7 +2025,7 @@ public class MetadataEnrichmentService(
             && options.IdOverride is null)
         {
             if (options.Cascade)
-                await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct);
+                await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct, allProviders);
             return null;
         }
 
@@ -2333,7 +2334,8 @@ public class MetadataEnrichmentService(
 
     private async Task CascadeToChildrenAsync(
         ChronicleDbContext db, IMetadataProvider provider, string pluginId,
-        MediaItem parent, EnrichmentOptions options, CancellationToken ct)
+        MediaItem parent, EnrichmentOptions options, CancellationToken ct,
+        IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null)
     {
         var children = await db.MediaItems
             .Include(m => m.MediaType)
@@ -2347,8 +2349,14 @@ public class MetadataEnrichmentService(
             if (ct.IsCancellationRequested) return;
             try
             {
-                await EnrichItemCoreAsync(db, provider, pluginId, child,
+                var childMeta = await EnrichItemCoreAsync(db, provider, pluginId, child,
                     options with { IdOverride = null }, ct);
+                if (childMeta is not null)
+                {
+                    await SeedCrossRefEnrichmentRowsAsync(db, child.Id, childMeta, pluginId,
+                        child.MediaType?.Name, allProviders, ct);
+                    await db.SaveChangesAsync(ct);
+                }
             }
             catch (OperationCanceledException) { return; }
             catch (Exception ex)
@@ -2518,11 +2526,17 @@ public class MetadataEnrichmentService(
             _ => null,
         };
 
+        // Track which plugins have already been seeded in this call to prevent duplicate EF
+        // Add() calls when multiple cross-ref entries (e.g. tmdb: and imdb:) both match the
+        // same candidate plugin — the AnyAsync check would pass for both before either saves.
+        var seededThisCall = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var (xSource, xId) in crossRefs)
         {
             foreach (var (candidatePluginId, candidateProvider) in allProviders)
             {
                 if (candidatePluginId == sourcePluginId) continue;
+                if (seededThisCall.Contains(candidatePluginId)) continue;
 
                 // Skip plugins that don't support this media type.
                 if (normalizedType is not null)
@@ -2556,7 +2570,8 @@ public class MetadataEnrichmentService(
                 });
                 // Also write the external ID row so KnownExternalIds and stage-2 sync matching
                 // see the seeded ID immediately, before the enrichment row is processed.
-                await UpsertExternalIdForEnrichmentAsync(db, mediaItemId, xId, ct);
+                await UpsertExternalIdForEnrichmentAsync(db, mediaItemId, xId, ct, candidatePluginId);
+                seededThisCall.Add(candidatePluginId);
 
                 logger.LogInformation(
                     "CrossRef seed: plugin={Plugin} item={ItemId} ← {Source}={ExternalId} (from {SourcePlugin})",
