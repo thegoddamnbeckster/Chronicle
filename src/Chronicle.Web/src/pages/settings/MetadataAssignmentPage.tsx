@@ -123,7 +123,10 @@ export default function MetadataAssignmentPage() {
   const [saving, setSaving]                   = useState(false)
   const [saved, setSaved]                     = useState(false)
   const [error, setError]                     = useState<string | null>(null)
-  const [openSections, setOpenSections]       = useState<Record<string, boolean>>({})
+  const FOLD_KEY = 'chronicle_metadataAssignment_folds'
+  const [openSections, setOpenSections]       = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}') } catch { return {} }
+  })
 
   useEffect(() => {
     getMetadataAssignment()
@@ -146,14 +149,23 @@ export default function MetadataAssignmentPage() {
             orders[mt] = cfg.availablePlugins[mt]?.map(p => p.pluginId) ?? []
           }
         }
-        setOpenSections(defaults)
+        // Merge: use saved fold state if present, default new sections to open
+        setOpenSections(prev => {
+          const merged = { ...defaults, ...prev }
+          localStorage.setItem(FOLD_KEY, JSON.stringify(merged))
+          return merged
+        })
         setDefaultOrders(orders)
       })
       .catch(e => setError(String(e)))
   }, [])
 
   function toggleSection(mediaType: string) {
-    setOpenSections(prev => ({ ...prev, [mediaType]: !prev[mediaType] }))
+    setOpenSections(prev => {
+      const next = { ...prev, [mediaType]: !prev[mediaType] }
+      localStorage.setItem(FOLD_KEY, JSON.stringify(next))
+      return next
+    })
   }
 
   const save = useCallback(async (next: Record<string, Record<string, string[]>>) => {
