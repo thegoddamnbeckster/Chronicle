@@ -60,7 +60,8 @@ namespace Chronicle.Services
         int MatchScore,
         string? Source = null,
         List<string>? Genres = null,
-        List<string>? Cast = null
+        List<string>? Cast = null,
+        List<string>? Sources = null
     );
 
     public record FileIdentification(

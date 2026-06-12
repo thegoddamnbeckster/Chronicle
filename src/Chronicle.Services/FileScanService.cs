@@ -1399,12 +1399,25 @@ namespace Chronicle.Services
                 if (string.IsNullOrEmpty(poster) && tk is not null)
                     titleYearToPoster.TryGetValue(tk, out poster);
 
+                // Collect all provider sources whose title+year or cross-ref IDs match this result.
+                var sources = new List<string>();
+                if (!string.IsNullOrEmpty(m.Source)) sources.Add(m.Source);
+                foreach (var (_, other) in allCandidates)
+                {
+                    if (other.Metadata.ExternalId == m.ExternalId) continue;
+                    if (string.IsNullOrEmpty(other.Metadata.Source)) continue;
+                    var otherTk = TitleYearKey(other.Metadata.Title, other.Metadata.Year);
+                    if (otherTk is not null && otherTk == tk && !sources.Contains(other.Metadata.Source))
+                        sources.Add(other.Metadata.Source);
+                }
+
                 merged.Add(new MetadataCandidate(
                     m.ExternalId, m.Title, m.Year, poster,
                     m.Overview, m.Rating, 0,
                     m.Source,
                     m.Genres.Count > 0 ? m.Genres : null,
-                    m.Cast.Count > 0   ? m.Cast   : null));
+                    m.Cast.Count > 0   ? m.Cast   : null,
+                    sources.Count > 1  ? sources  : null));
             }
 
             return merged;
