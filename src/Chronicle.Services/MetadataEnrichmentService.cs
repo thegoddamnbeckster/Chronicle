@@ -54,7 +54,14 @@ public class MetadataEnrichmentService(
         var provider = registry.GetMetadataProvider(pluginId);
         if (provider is null) return;
 
-        await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct);
+        var allProviders = registry.GetMetadataProviderEntries()
+            .Select(e => (e.PluginId, (IMetadataProvider)e.Provider))
+            .ToList();
+        var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct);
+        if (completedMeta is not null)
+            await SeedCrossRefEnrichmentRowsAsync(db, item.Id, completedMeta, pluginId,
+                item.MediaType?.Name, allProviders, ct);
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task EnrichItemAsync(
@@ -70,6 +77,9 @@ public class MetadataEnrichmentService(
             .FirstOrDefaultAsync(m => m.Id == mediaItemId, ct);
         if (item is null) return;
 
+        var allProviders = registry.GetMetadataProviderEntries()
+            .Select(e => (e.PluginId, (IMetadataProvider)e.Provider))
+            .ToList();
         var mediaTypeName = NormalizeMediaTypeName(item.MediaType?.Name ?? string.Empty);
 
         foreach (var (pluginId, provider, _) in registry.GetMetadataProviderEntries())
@@ -81,7 +91,14 @@ public class MetadataEnrichmentService(
                     StringComparison.OrdinalIgnoreCase));
             if (!supported) continue;
 
-            try { await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct); }
+            try
+            {
+                var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct);
+                if (completedMeta is not null)
+                    await SeedCrossRefEnrichmentRowsAsync(db, item.Id, completedMeta, pluginId,
+                        item.MediaType?.Name, allProviders, ct);
+                await db.SaveChangesAsync(ct);
+            }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
@@ -1981,7 +1998,7 @@ public class MetadataEnrichmentService(
 
     private const int DefaultConfidenceThreshold = 50;
 
-    private async Task EnrichItemCoreAsync(
+    private async Task<MediaMetadata?> EnrichItemCoreAsync(
         ChronicleDbContext db,
         IMetadataProvider provider,
         string pluginId,
@@ -1989,6 +2006,8 @@ public class MetadataEnrichmentService(
         EnrichmentOptions options,
         CancellationToken ct)
     {
+        MediaMetadata? completedMeta = null;
+
         // 1. Load or create enrichment row
         var row = await db.MediaEnrichments
             .FirstOrDefaultAsync(e => e.MediaItemId == item.Id && e.PluginId == pluginId, ct);
@@ -2006,7 +2025,7 @@ public class MetadataEnrichmentService(
         {
             if (options.Cascade)
                 await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct);
-            return;
+            return null;
         }
 
         row.LastAttemptedAt = DateTime.UtcNow;
@@ -2158,7 +2177,7 @@ public class MetadataEnrichmentService(
                 {
                     row.Status = EnrichmentStatus.NotFound;
                     await db.SaveChangesAsync(ct);
-                    return;
+                    return null;
                 }
 
                 // For file-scanner-created root items, require the matched title to cover at
@@ -2177,7 +2196,7 @@ public class MetadataEnrichmentService(
                         item.Id, item.Name, best.Metadata.Title);
                     row.Status = EnrichmentStatus.NotFound;
                     await db.SaveChangesAsync(ct);
-                    return;
+                    return null;
                 }
 
                 resolvedId = best.Metadata.ExternalId;
@@ -2189,7 +2208,7 @@ public class MetadataEnrichmentService(
             {
                 row.Status = EnrichmentStatus.NotFound;
                 await db.SaveChangesAsync(ct);
-                return;
+                return null;
             }
 
             // 6. Merge losslessly
@@ -2204,6 +2223,7 @@ public class MetadataEnrichmentService(
             row.LastCompletedAt = DateTime.UtcNow;
             row.ErrorMessage    = null;
             row.RetryCount      = 0;
+            completedMeta       = result;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (PluginAuthException ex)
@@ -2263,6 +2283,8 @@ public class MetadataEnrichmentService(
         // 8. Cascade to children
         if (options.Cascade)
             await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct);
+
+        return completedMeta;
     }
 
     private static bool IsIdValidForLevel(string externalId, MediaItem item)
@@ -2532,6 +2554,9 @@ public class MetadataEnrichmentService(
                     ExternalId  = xId,
                     Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
                 });
+                // Also write the external ID row so KnownExternalIds and stage-2 sync matching
+                // see the seeded ID immediately, before the enrichment row is processed.
+                await UpsertExternalIdForEnrichmentAsync(db, mediaItemId, xId, ct);
 
                 logger.LogInformation(
                     "CrossRef seed: plugin={Plugin} item={ItemId} ← {Source}={ExternalId} (from {SourcePlugin})",
