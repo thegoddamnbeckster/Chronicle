@@ -170,6 +170,9 @@ public class MyMetadataProvider : IMetadataProvider
         CancellationToken ct = default) { ... }
 
     public Task<bool> HealthCheckAsync(CancellationToken ct = default) { ... }
+
+    // Optional — override to accept foreign ID formats (see "Cross-reference authorities" below)
+    public IReadOnlyList<string> GetAcceptedCrossRefPrefixes() => [];
 }
 ```
 
@@ -215,18 +218,21 @@ call `GetByIdAsync` directly rather than re-searching.
 The `PosterUrl` from your result is promoted to `media_items.poster_url` if the item has no
 poster yet.
 
-### Cross-reference seeding via ExtendedData
+### Cross-reference seeding
 
-If your plugin knows the IDs that other plugins use for the same item, put them in `ExtendedData`
-under an `ids` key. Chronicle reads this when an item is first added via Add Media and
-**pre-seeds enrichment rows** for those other plugins with the correct external ID, so they
-skip the text-search step entirely and call `GetByIdAsync` directly with the known ID.
+Chronicle maintains a web of cross-references between plugins so each plugin can jump straight
+to the correct item instead of running a text search that could mis-match.
 
-This prevents mis-matches. For example, Trakt knows a show's TMDB ID exactly. Without
-cross-reference seeding, TMDB would text-search the show title and might match the wrong
-item. With it, TMDB goes straight to the right ID.
+There are two complementary sides to this system:
 
-The expected `ids` structure (mirrors Trakt's format, also used by SIMKL):
+- **Cross-reference authorities** — plugins that *publish* known IDs for other plugins via `ExtendedData`
+- **Cross-reference receivers** — plugins that *accept* foreign ID formats via `GetAcceptedCrossRefPrefixes()`
+
+#### Publishing cross-references (being an authority)
+
+If your plugin's API response includes the IDs used by *other* services for the same item, store
+them in `ExtendedData` under an `ids` key. Chronicle extracts these automatically and
+**pre-seeds enrichment rows** for any installed plugin that can use them.
 
 ```csharp
 ExtendedData = JsonSerializer.SerializeToElement(new
@@ -237,28 +243,112 @@ ExtendedData = JsonSerializer.SerializeToElement(new
         imdb  = "tt8009690",    // → "imdb:tt8009690"
         trakt = 129021,         // → "trakt:show:129021" or "trakt:movie:129021"
         simkl = 444456,         // → "simkl:444456"
-        tvdb  = 355534,         // → "tvdb:355534" (seeds a future TVDB plugin automatically)
+        tvdb  = 355534,         // → "tvdb:355534" (seeds any future TVDB plugin automatically)
     }
 })
 ```
 
-Chronicle iterates **every key** in `ids` and seeds an enrichment row for any source that has
-a registered plugin. If a future plugin declares support for `"tvdb"` in `SourceToPluginId`,
-items added today with a `tvdb` cross-reference will automatically get pre-seeded — no code
-change needed. The seeding is symmetric: if an IMDB plugin existed and its `ExtendedData.ids`
-contained a `trakt` or `simkl` ID, those plugins would be seeded too.
+The movie/show subtype is inferred from your plugin's own `ExternalId`. An ID that contains
+`:movie:` or starts with `movie:` is treated as a movie; everything else is treated as a show.
 
-Seeding only creates a row — it does **not** run enrichment immediately. The next scheduled
-`fetch-missing-metadata` run (or a manual Refresh) picks it up and calls `GetByIdAsync`
-directly with the known ID.
+Fields with no registered handler fall through to a generic `"{source}:{value}"` format and are
+stored so a future plugin can pick them up without re-fetching.
 
-**You only need this if your plugin is an authoritative cross-reference source** (like Trakt or
-SIMKL, which hold verified ID mappings). Pure metadata providers like TMDB itself have no
-need to seed other plugins.
+**This is the right thing to do if your service stores verified cross-references** (e.g. Trakt and
+SIMKL both carry TMDB, IMDB, and TVDB IDs for every entry). Pure metadata providers like TMDB
+do not need to do this — they *are* the authority for their own IDs.
 
-Fields without a known format mapping still fall through to a generic `"{source}:{value}"`
-format and are stored in `metadata_json`, preserving them for future use even if no plugin
-currently handles that source.
+#### Receiving cross-references (declaring accepted prefixes)
+
+By default, Chronicle only offers a cross-ref ID to the plugin that "owns" that source (e.g. a
+`tmdb` key in `ids` goes to the TMDB plugin). To also receive IDs from *other* sources that your
+`GetByIdAsync` can resolve, override `GetAcceptedCrossRefPrefixes()`:
+
+```csharp
+// SIMKL example: can look up by TMDB ID or IMDB ID
+public IReadOnlyList<string> GetAcceptedCrossRefPrefixes() =>
+    ["tv:", "movie:", "imdb:"];
+```
+
+Chronicle will then offer those IDs to your plugin whenever they appear in another plugin's
+cross-references. Your `GetByIdAsync` must handle all declared formats:
+
+```csharp
+public async Task<MediaMetadata> GetByIdAsync(string externalId, CancellationToken ct = default)
+{
+    // Native format: simkl:movie:12345
+    if (externalId.StartsWith("simkl:", StringComparison.OrdinalIgnoreCase))
+    {
+        // ... normal path
+    }
+
+    // Cross-ref: TMDB format — resolve via /search/id?tmdb=N
+    if (externalId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase) ||
+        externalId.StartsWith("movie:", StringComparison.OrdinalIgnoreCase))
+    {
+        var tmdbId   = externalId[(externalId.IndexOf(':') + 1)..];
+        var simklType = externalId.StartsWith("movie:") ? "movie" : "show";
+        var hit      = await _client.SearchByForeignIdAsync("tmdb", tmdbId, simklType, ct);
+        // ... resolve to native format and continue
+    }
+
+    // Cross-ref: IMDB format — resolve via /search/id?imdb=N
+    if (externalId.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
+    {
+        var imdbId = externalId[5..];
+        var hit    = await _client.SearchByForeignIdAsync("imdb", imdbId, null, ct);
+        // Inspect which field (Movie vs Show) is populated to determine type
+        // ... resolve to native format and continue
+    }
+
+    throw new ArgumentException($"Unrecognised external ID format: {externalId}");
+}
+```
+
+> **Type safety note:** When resolving a foreign IMDB ID, do not assume movie vs show based on
+> call order. Pass `null` as the type filter (if your API supports it) and inspect which field
+> in the response is populated. Calling the show endpoint first and only falling back to movie
+> if it returns null risks misidentifying a movie whose IMDB ID happens to also appear in the
+> show index.
+
+#### When seeding happens
+
+Seeding is triggered in two places:
+
+1. **Add Media** — when a user adds an item via the Add Media page, Chronicle seeds enrichment
+   rows for every type-compatible installed plugin based on the search result's `ExtendedData.ids`
+   and any `ContributingExternalIds` from merged provider results (e.g. TVMaze providing a poster
+   for a Trakt result).
+
+2. **After every successful enrichment** — when any plugin successfully enriches an item, Chronicle
+   extracts cross-references from the returned `MediaMetadata.ExtendedData` and seeds Pending rows
+   for any other type-compatible plugin that can accept those IDs. This means, for example, that a
+   TMDB enrichment automatically seeds SIMKL and Trakt enrichment rows with the TMDB ID — even for
+   items that were added via the file scanner, not via Add Media.
+
+Both paths also write the corresponding `media_external_ids` row immediately (not just the
+enrichment row), so the IDs are visible to sync matching and `KnownExternalIds` lookups before
+the enrichment row is processed.
+
+#### Type filtering
+
+Seeding is **only offered to plugins that support the item's media type**. A Trakt TV show
+enrichment will not seed MusicBrainz or Hardcover rows, even if those plugins happen to declare
+matching cross-ref prefixes. Chronicle checks `GetSupportedMediaTypes()` for each candidate plugin
+and also follows parent-type hints (`anime` → `tv`, `fanedits` → `movie`) so plugins that support
+the canonical type are included.
+
+#### Full cascade example
+
+1. User adds *Breaking Bad* via the Trakt tab in Add Media.
+2. Trakt search returns `ExtendedData.ids = { tmdb: 1396, imdb: "tt0903747", tvdb: 81189 }`.
+3. Chronicle seeds: TMDB ← `"tv:1396"`, SIMKL ← `"tv:1396"` (accepts `"tv:"`), any IMDB plugin ← `"imdb:tt0903747"`, any TVDB plugin ← `"tvdb:81189"`.
+4. Background enrichment runs. TMDB enriches successfully, returning its own `ExtendedData.ids`.
+5. Chronicle cascades again from the TMDB result, seeding any remaining plugins that weren't seeded in step 3.
+6. SIMKL enrichment runs. It calls `/search/id?tmdb=1396` to resolve to its own ID, then fetches full metadata.
+
+Seeding only creates rows — it never runs enrichment immediately. Each plugin's
+`fetch-missing-metadata` task processes its own queue.
 
 ---
 
