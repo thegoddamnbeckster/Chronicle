@@ -1530,18 +1530,35 @@ namespace Chronicle.Services
 
                 // Pre-seed enrichment rows for cross-referenced plugins so they use the
                 // known ID directly instead of running a text search that can mis-match.
+                // Two cases:
+                //   (a) Plugin that "owns" the source (e.g. tmdb → chronicle.plugin.tmdb)
+                //   (b) Any other plugin that declares it accepts this ID prefix
+                //       (e.g. SIMKL accepts "tv:N" so it can look up by TMDB ID)
+                var allEntries = _registry.GetMetadataProviderEntries();
                 foreach (var (xSource, xId) in crossRefs)
                 {
-                    var xPluginId = SourceToPluginId(xSource);
-                    if (xPluginId is null || xPluginId == pluginId) continue;
-                    var xExists = await _context.MediaEnrichments
-                        .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == xPluginId, ct);
-                    if (!xExists)
+                    var ownPluginId = SourceToPluginId(xSource);
+
+                    foreach (var (candidatePluginId, candidateProvider, _) in allEntries)
                     {
+                        if (candidatePluginId == pluginId) continue; // skip source plugin
+
+                        // Accept if this plugin owns the source OR declares it accepts the prefix.
+                        var isOwner    = candidatePluginId == ownPluginId;
+                        var acceptsCrossRef = !isOwner && candidateProvider
+                            .GetAcceptedCrossRefPrefixes()
+                            .Any(prefix => xId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+                        if (!isOwner && !acceptsCrossRef) continue;
+
+                        var xExists = await _context.MediaEnrichments
+                            .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == candidatePluginId, ct);
+                        if (xExists) continue;
+
                         _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
                         {
                             MediaItemId = item.Id,
-                            PluginId    = xPluginId,
+                            PluginId    = candidatePluginId,
                             ExternalId  = xId,
                             Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
                         });
