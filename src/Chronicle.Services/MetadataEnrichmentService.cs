@@ -631,7 +631,7 @@ public class MetadataEnrichmentService(
         {
             await db.SaveChangesAsync(ct);
             logger.LogInformation(
-                "SeedEnrichmentRows: reset {Count} Completed/Exhausted/NotFound rows with no plugin data to Pending",
+                "SeedEnrichmentRows: reset {Count} Completed/Exhausted rows with no plugin data to Pending",
                 resetCount);
         }
 
@@ -975,16 +975,12 @@ public class MetadataEnrichmentService(
                     bool isTmdbOrMusicBrainzFormat =
                         entityType is "movie" or "tv" or "artist" or "release-group" or "release" or "season" or "album";
 
-                    if (!isTmdbOrMusicBrainzFormat)
-                    {
-                        // Non-TMDB/MusicBrainz format — skip the hierarchy check, use the ID directly.
-                    }
-                    else if (row.MediaItem.ParentId == null)
+                    if (isTmdbOrMusicBrainzFormat && row.MediaItem.ParentId == null)
                     {
                         // Root item — TMDB/MusicBrainz format: must be artist, movie, or show-level tv:N
                         idIsValid = entityType is "artist" or "movie" or "tv";
                     }
-                    else
+                    else if (isTmdbOrMusicBrainzFormat)
                     {
                         var parent = await db.MediaItems
                             .AsNoTracking()
@@ -1039,12 +1035,22 @@ public class MetadataEnrichmentService(
                     catch (ArgumentException ex)
                     {
                         // Malformed or unsupported ExternalId format — clear it so SearchAsync
-                        // can find the correct ID on the next attempt (e.g. stale format from
-                        // an older cross-ref seeding pass before the format was corrected).
+                        // can find the correct ID on the next attempt.
                         logger.LogWarning(
                             "Clearing malformed ExternalId {ExternalId} for item {ItemId}: {Error}",
                             row.ExternalId, row.MediaItemId, ex.Message);
                         row.ExternalId = null;
+                    }
+                    catch (KeyNotFoundException ex)
+                    {
+                        // Provider definitively returned no match for this ID — mark NotFound
+                        // immediately rather than wasting retries cycling through Exhausted.
+                        logger.LogWarning(
+                            "ExternalId {ExternalId} for item {ItemId} returned no match: {Error}",
+                            row.ExternalId, row.MediaItemId, ex.Message);
+                        row.Status = EnrichmentStatus.NotFound;
+                        row.ErrorMessage = ex.Message;
+                        return;
                     }
                 }
                 else
@@ -2539,7 +2545,7 @@ public class MetadataEnrichmentService(
         if (allProviders is null || allProviders.Count == 0) return;
 
         var fromSource = PluginIdHelper.ToSource(sourcePluginId);
-        var crossRefs  = CrossRefHelper.ExtractCrossRefIds(result, fromSource);
+        var crossRefs  = CrossRefHelper.ExtractCrossRefIds(result, fromSource, mediaTypeName);
         if (crossRefs.Count == 0) return;
 
         // Only seed plugins that actually support this item's media type (or its parent hint).

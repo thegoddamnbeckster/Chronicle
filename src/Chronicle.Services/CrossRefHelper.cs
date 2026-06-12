@@ -15,7 +15,7 @@ internal static class CrossRefHelper
     /// Returns (shortSource, formattedExternalId) pairs ready for enrichment row seeding.
     /// </summary>
     internal static List<(string Source, string Id)> ExtractCrossRefIds(
-        MediaMetadata meta, string fromSource)
+        MediaMetadata meta, string fromSource, string? mediaTypeName = null)
     {
         var result = new List<(string, string)>();
         if (meta.ExtendedData is not { } ext) return result;
@@ -25,13 +25,14 @@ internal static class CrossRefHelper
 
         bool isMovie = meta.ExternalId?.Contains(":movie:", StringComparison.OrdinalIgnoreCase) == true
                     || meta.ExternalId?.StartsWith("movie:", StringComparison.OrdinalIgnoreCase) == true;
+        bool isAnime = string.Equals(mediaTypeName, "anime", StringComparison.OrdinalIgnoreCase);
 
         foreach (var prop in ids.EnumerateObject())
         {
             var key = prop.Name.ToLowerInvariant();
             if (key == fromSource) continue;
 
-            var formatted = FormatCrossRefId(key, prop.Value, isMovie);
+            var formatted = FormatCrossRefId(key, prop.Value, isMovie, isAnime);
             if (formatted is not null)
                 result.Add((key, formatted));
         }
@@ -43,7 +44,7 @@ internal static class CrossRefHelper
     /// Formats a raw ID value into the external-ID string expected by the target plugin.
     /// Returns null when the value type is wrong or the source is unrecognised.
     /// </summary>
-    internal static string? FormatCrossRefId(string source, JsonElement value, bool isMovie)
+    internal static string? FormatCrossRefId(string source, JsonElement value, bool isMovie, bool isAnime = false)
     {
         switch (source)
         {
@@ -65,7 +66,10 @@ internal static class CrossRefHelper
 
             case "simkl":
                 if (value.ValueKind == JsonValueKind.Number)
-                    return $"simkl:{(isMovie ? "movie" : "tv")}:{value.GetInt64()}";
+                {
+                    var simklType = isMovie ? "movie" : (isAnime ? "anime" : "tv");
+                    return $"simkl:{simklType}:{value.GetInt64()}";
+                }
                 break;
 
             default:
