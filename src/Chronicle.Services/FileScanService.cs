@@ -1339,20 +1339,25 @@ namespace Chronicle.Services
 
             if (allCandidates.Count == 0) return [];
 
-            // Build a lookup: TMDB external ID → best poster URL from any provider.
-            // Lets a Trakt result (no image) pick up the poster from a TMDB result.
-            var tmdbIdToPoster = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            // Build two poster lookups:
+            //   1. By external ID / cross-ref ID (e.g. Trakt result → TMDB poster via tv:87533)
+            //   2. By "title|year" key (e.g. Trakt "BONDiNG 2019" → TVMaze "Bonding 2019" poster)
+            //      because TVMaze IDs don't appear in Trakt's cross-ref ids object.
+            var idToPoster        = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            var titleYearToPoster = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
             foreach (var (_, r) in allCandidates)
             {
                 if (string.IsNullOrEmpty(r.Metadata.PosterUrl)) continue;
-                // Index by the result's own external ID so cross-ref matching can find it.
-                tmdbIdToPoster.TryAdd(r.Metadata.ExternalId, r.Metadata.PosterUrl);
+                idToPoster.TryAdd(r.Metadata.ExternalId, r.Metadata.PosterUrl);
+                var tk = TitleYearKey(r.Metadata.Title, r.Metadata.Year);
+                if (tk is not null) titleYearToPoster.TryAdd(tk, r.Metadata.PosterUrl);
             }
 
-            // Deduplicate: if two providers return the same item (matched via cross-ref IDs),
-            // keep the first occurrence but fill in missing fields from the other.
-            var seen   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var merged = new List<MetadataCandidate>();
+            // Deduplicate: same item from multiple providers → one result with best data.
+            // Match on (1) shared external/cross-ref ID, or (2) identical title+year.
+            var seenIds       = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seenTitleYear = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var merged        = new List<MetadataCandidate>();
 
             foreach (var (_, r) in allCandidates)
             {
@@ -1372,23 +1377,27 @@ namespace Chronicle.Services
                     }
                 }
 
-                // If any of this result's IDs was already emitted, skip the duplicate.
-                if (allIds.Any(id => seen.Contains(id))) continue;
-                foreach (var id in allIds) seen.Add(id);
+                var tk = TitleYearKey(m.Title, m.Year);
 
-                // Supplement missing poster from another provider's result for the same item.
+                // Skip if already emitted by cross-ref ID match or title+year match.
+                if (allIds.Any(id => seenIds.Contains(id))) continue;
+                if (tk is not null && seenTitleYear.Contains(tk)) continue;
+
+                foreach (var id in allIds) seenIds.Add(id);
+                if (tk is not null) seenTitleYear.Add(tk);
+
+                // Supplement missing poster: try cross-ref IDs first, then title+year.
                 var poster = m.PosterUrl;
                 if (string.IsNullOrEmpty(poster))
                 {
                     foreach (var id in allIds)
                     {
-                        if (tmdbIdToPoster.TryGetValue(id, out var p) && !string.IsNullOrEmpty(p))
-                        {
-                            poster = p;
-                            break;
-                        }
+                        if (idToPoster.TryGetValue(id, out var p) && !string.IsNullOrEmpty(p))
+                        { poster = p; break; }
                     }
                 }
+                if (string.IsNullOrEmpty(poster) && tk is not null)
+                    titleYearToPoster.TryGetValue(tk, out poster);
 
                 merged.Add(new MetadataCandidate(
                     m.ExternalId, m.Title, m.Year, poster,
@@ -1554,6 +1563,17 @@ namespace Chronicle.Services
 
             // "movie:*" or "tv:*" — stored verbatim with source="tmdb"
             return ("tmdb", suggested);
+        }
+
+        // Produces a normalised "title|year" deduplication key, or null if title is missing.
+        // Strips punctuation and lowercases so "BONDiNG" and "Bonding" match.
+        private static string? TitleYearKey(string? title, int? year)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return null;
+            var normalized = System.Text.RegularExpressions.Regex
+                .Replace(title.ToLowerInvariant(), @"[^\w\s]", "")
+                .Trim();
+            return $"{normalized}|{year?.ToString() ?? ""}";
         }
 
         // Maps a short source name to the full canonical plugin ID used in the registry.
