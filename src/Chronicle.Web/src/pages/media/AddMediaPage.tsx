@@ -164,7 +164,7 @@ export default function AddMediaPage() {
         />
       </div>
 
-      {searching && <p className={styles.status}>Searching…</p>}
+      {searching && <p className={styles.statusSearching}>Searching</p>}
       {!searching && searchError && <p className={styles.noResults}>{searchError}</p>}
       {addError && <p className={styles.error}>{addError}</p>}
 
