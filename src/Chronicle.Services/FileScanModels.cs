@@ -61,7 +61,8 @@ namespace Chronicle.Services
         string? Source = null,
         List<string>? Genres = null,
         List<string>? Cast = null,
-        List<string>? Sources = null
+        List<string>? Sources = null,
+        List<string>? ContributingExternalIds = null
     );
 
     public record FileIdentification(

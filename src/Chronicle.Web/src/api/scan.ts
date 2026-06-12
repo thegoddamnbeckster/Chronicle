@@ -175,8 +175,10 @@ export async function searchMetadata(
 export async function addFromSearch(
   externalId: string,
   mediaTypeId: number,
+  contributingExternalIds?: string[],
 ): Promise<MediaItem> {
-  const { data } = await client.post<ApiResponse<MediaItem>>('/scan/add', { externalId, mediaTypeId })
+  const { data } = await client.post<ApiResponse<MediaItem>>('/scan/add',
+    { externalId, mediaTypeId, contributingExternalIds })
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to add media')
   return data.data
 }

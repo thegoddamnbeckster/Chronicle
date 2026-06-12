@@ -1399,32 +1399,37 @@ namespace Chronicle.Services
                 if (string.IsNullOrEmpty(poster) && tk is not null)
                     titleYearToPoster.TryGetValue(tk, out poster);
 
-                // Collect all provider sources whose title+year or cross-ref IDs match this result.
-                var sources = new List<string>();
+                // Collect sources and external IDs from all providers that matched this result.
+                var sources              = new List<string>();
+                var contribExternalIds   = new List<string>();
                 if (!string.IsNullOrEmpty(m.Source)) sources.Add(m.Source);
                 foreach (var (_, other) in allCandidates)
                 {
                     if (other.Metadata.ExternalId == m.ExternalId) continue;
-                    if (string.IsNullOrEmpty(other.Metadata.Source)) continue;
                     var otherTk = TitleYearKey(other.Metadata.Title, other.Metadata.Year);
-                    if (otherTk is not null && otherTk == tk && !sources.Contains(other.Metadata.Source))
+                    if (otherTk is null || otherTk != tk) continue;
+                    if (!string.IsNullOrEmpty(other.Metadata.Source) && !sources.Contains(other.Metadata.Source))
                         sources.Add(other.Metadata.Source);
+                    if (!string.IsNullOrEmpty(other.Metadata.ExternalId))
+                        contribExternalIds.Add(other.Metadata.ExternalId);
                 }
 
                 merged.Add(new MetadataCandidate(
                     m.ExternalId, m.Title, m.Year, poster,
                     m.Overview, m.Rating, 0,
                     m.Source,
-                    m.Genres.Count > 0 ? m.Genres : null,
-                    m.Cast.Count > 0   ? m.Cast   : null,
-                    sources.Count > 1  ? sources  : null));
+                    m.Genres.Count > 0           ? m.Genres           : null,
+                    m.Cast.Count > 0             ? m.Cast             : null,
+                    sources.Count > 1            ? sources            : null,
+                    contribExternalIds.Count > 0 ? contribExternalIds : null));
             }
 
             return merged;
         }
 
         public async Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(
-            string externalId, int mediaTypeId, int userId, CancellationToken ct = default)
+            string externalId, int mediaTypeId, int userId, CancellationToken ct = default,
+            List<string>? contributingExternalIds = null)
         {
             var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == mediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {mediaTypeId} not found.");
@@ -1498,6 +1503,29 @@ namespace Chronicle.Services
                         ExternalId  = externalId,
                         Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
                     });
+                }
+
+                // Pre-seed enrichment rows for providers that contributed a matching result
+                // during search (e.g. TVMaze matched the same show by title+year). Their IDs
+                // aren't in the primary provider's cross-ref data so must be passed explicitly.
+                foreach (var contribId in contributingExternalIds ?? [])
+                {
+                    var (cSource, _) = ParseSuggestedExternalId(contribId);
+                    var cPluginId = SourceToPluginId(cSource);
+                    if (cPluginId is null || cPluginId == pluginId) continue;
+                    var cExists = await _context.MediaEnrichments
+                        .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == cPluginId, ct);
+                    if (!cExists)
+                    {
+                        _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
+                        {
+                            MediaItemId = item.Id,
+                            PluginId    = cPluginId,
+                            ExternalId  = contribId,
+                            Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
+                        });
+                        await UpsertExternalIdAsync(item.Id, contribId, ct);
+                    }
                 }
 
                 // Pre-seed enrichment rows for cross-referenced plugins so they use the
