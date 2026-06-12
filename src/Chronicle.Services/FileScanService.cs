@@ -1289,22 +1289,21 @@ namespace Chronicle.Services
         // ── Metadata search + direct add (for Add Media UI) ──────────────────────
 
         /// <summary>
-        /// Returns providers that declare support for the given media type, normalised via
-        /// <see cref="ToMediaTypeHint"/>.  Falls back to all providers when none match.
+        /// Returns providers that explicitly declare support for the given media type.
+        /// No parent-type broadening — if the user selected "Anime", only providers that
+        /// declare "anime" are searched (not every "tv" provider).
+        /// Parent-type hints are used for enrichment seeding only, not for search.
         /// </summary>
         private IReadOnlyList<IMetadataProvider> ProvidersForType(string mediaTypeHint)
         {
             var all = _registry.GetMetadataProviders();
             if (all.Count == 0) return all;
 
-            // Match on exact type name OR parent-type hint (e.g. "anime" → "tv").
-            // No fallback to all providers — the user explicitly chose a type.
             var normalizedType = NormalizeMediaTypeName(mediaTypeHint);
-            var hintType       = ToMediaTypeHint(mediaTypeHint);
 
             return all.Where(p => p.GetSupportedMediaTypes().Any(t =>
-                    string.Equals(NormalizeMediaTypeName(t.MediaTypeName), normalizedType, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(NormalizeMediaTypeName(t.MediaTypeName), hintType,       StringComparison.OrdinalIgnoreCase)))
+                    string.Equals(NormalizeMediaTypeName(t.MediaTypeName), normalizedType,
+                        StringComparison.OrdinalIgnoreCase)))
                 .ToList();
         }
 
@@ -1322,11 +1321,14 @@ namespace Chronicle.Services
                 throw new InvalidOperationException(
                     "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
 
-            // Run all providers in parallel; ignore failures from individual providers.
-            var context = new MediaSearchContext(query, MediaTypeName: mediaTypeHint);
-            var tasks   = providers.Select(async p =>
+            // Run all providers in parallel with a per-provider timeout so a slow or
+            // unresponsive provider doesn't block results from fast ones.
+            var context     = new MediaSearchContext(query, MediaTypeName: mediaTypeHint);
+            var tasks       = providers.Select(async p =>
             {
-                try   { return await p.SearchAsync(context, ct); }
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
+                try   { return await p.SearchAsync(context, timeoutCts.Token); }
                 catch { return (IReadOnlyList<ScoredCandidate>)[]; }
             });
             var allProviderResults = await Task.WhenAll(tasks);
