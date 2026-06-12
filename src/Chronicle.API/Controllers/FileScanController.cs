@@ -162,7 +162,7 @@ public class FileScanController : ControllerBase
                         r.File.ConfidenceScore, r.File.SuggestedExternalId, r.File.MediaTypeHint),
                     r.Candidates.Select(c => new MetadataCandidateDto(
                         c.ExternalId, c.Title, c.Year, c.PosterUrl,
-                        c.Overview, c.Rating, c.MatchScore, c.Source, c.Genres, c.Cast
+                        c.Overview, c.Rating, c.MatchScore, c.Source, c.Genres, c.Cast, c.Sources
                     )).ToList()
                 )).ToList()
             );
@@ -191,7 +191,7 @@ public class FileScanController : ControllerBase
         {
             var results = await _scanService.SearchMetadataAsync(query.Trim(), mediaTypeHint, ct);
             var dtos = results
-                .Select(r => new MetadataCandidateDto(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, r.MatchScore, r.Source, r.Genres, r.Cast))
+                .Select(r => new MetadataCandidateDto(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, r.MatchScore, r.Source, r.Genres, r.Cast, r.Sources))
                 .ToList();
             return Ok(ApiResponse<List<MetadataCandidateDto>>.Ok(dtos));
         }

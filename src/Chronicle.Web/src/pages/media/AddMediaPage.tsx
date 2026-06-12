@@ -173,7 +173,10 @@ export default function AddMediaPage() {
             const isAdded = addedIds.has(r.externalId)
             const isAdding = addingId === r.externalId
             const displayCast = r.cast?.slice(0, 4) ?? []
-            const source = resolveSource(r)
+            // Use multi-source list when present, otherwise fall back to single source
+            const allSources: string[] = r.sources && r.sources.length > 1
+              ? r.sources
+              : (resolveSource(r) ? [resolveSource(r)!] : [])
 
             return (
               <div key={r.externalId} className={styles.card}>
@@ -190,9 +193,9 @@ export default function AddMediaPage() {
                         {r.rating != null && (
                           <span className={styles.rating}>★ {r.rating.toFixed(1)}</span>
                         )}
-                        {source && (
-                          <span className={styles.sourcePill}>{source}</span>
-                        )}
+                        {allSources.map(s => (
+                          <span key={s} className={styles.sourcePill}>{s.toUpperCase()}</span>
+                        ))}
                       </div>
                     </div>
                     <button
