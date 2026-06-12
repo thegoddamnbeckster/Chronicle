@@ -551,9 +551,15 @@ namespace Chronicle.API.Controllers
                 catch { /* malformed JSON — leave resolvedMetadata null */ }
             }
 
+            // Exclude episode-title aliases (e.g. "Show S01E03 - Title") — these are never
+            // real alternate names for a show; they appear when merge absorbs episode stubs.
             var aliases = m.Aliases.Count > 0
-                ? m.Aliases.Select(a => a.Alias).ToList()
+                ? m.Aliases
+                    .Select(a => a.Alias)
+                    .Where(a => !System.Text.RegularExpressions.Regex.IsMatch(a, @"S\d{1,2}E\d{1,2}", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    .ToList()
                 : null;
+            if (aliases?.Count == 0) aliases = null;
             var mergeHistory = m.MergesAsWinner.Count > 0
                 ? m.MergesAsWinner.OrderByDescending(mr => mr.MergedAt)
                     .Select(mr => new MergeHistoryDto(mr.Id, mr.LoserOriginalId, mr.LoserName, mr.MergedAt, mr.MergedByUserId))
@@ -1106,6 +1112,35 @@ namespace Chronicle.API.Controllers
                 catch { /* ignore */ }
             }
             return "Chronicle";
+        }
+
+        /// <summary>
+        /// Server-side image proxy — fetches an external image URL and streams it back,
+        /// bypassing browser CORS restrictions on third-party CDNs (Trakt, Fanart.tv, etc.).
+        /// </summary>
+        [HttpGet("poster-proxy")]
+        [AllowAnonymous]
+        public async Task<IActionResult> PosterProxy([FromQuery] string url, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || (uri.Scheme != "https" && uri.Scheme != "http"))
+                return BadRequest("Invalid URL.");
+
+            using var http = new System.Net.Http.HttpClient();
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("Chronicle/1.0");
+            http.Timeout = TimeSpan.FromSeconds(10);
+            try
+            {
+                var resp = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
+                if (!resp.IsSuccessStatusCode) return NotFound();
+                var contentType = resp.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+                var stream = await resp.Content.ReadAsStreamAsync(ct);
+                return File(stream, contentType);
+            }
+            catch
+            {
+                return NotFound();
+            }
         }
     }
 }

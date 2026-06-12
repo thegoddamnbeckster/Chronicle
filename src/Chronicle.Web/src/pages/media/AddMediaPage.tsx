@@ -5,12 +5,58 @@ import { getMediaTypes } from '@/api/media'
 import { searchMetadata, addFromSearch } from '@/api/scan'
 import type { MetadataSearchResult, MediaTypeOption } from '@/types'
 import styles from './AddMediaPage.module.css'
-import { PosterImage } from '@/components/PosterImage'
 
-// Map Chronicle media type names to the hint passed to the metadata provider's SearchAsync.
-// The provider uses this to restrict its search endpoint (e.g. TMDB /search/movie vs /search/tv).
 function toMediaTypeHint(mediaTypeName: string): string {
   return mediaTypeName.toLowerCase()
+}
+
+function titleScore(title: string, q: string): number {
+  const t = title.toLowerCase()
+  const s = q.toLowerCase()
+  if (t === s) return 0
+  if (t.startsWith(s)) return 1
+  if (t.includes(s)) return 2
+  // word boundary match (e.g. query="amazing" matches "The Amazing Race")
+  if (t.split(/\s+/).some(w => w.startsWith(s))) return 3
+  return 4
+}
+
+function rankResults(results: MetadataSearchResult[], query: string): MetadataSearchResult[] {
+  return [...results].sort((a, b) => titleScore(a.title, query) - titleScore(b.title, query))
+}
+
+function resolveSource(result: MetadataSearchResult): string | null {
+  // Prefer the server-populated field; fall back to deriving from externalId format.
+  if (result.source) return result.source
+  const id = result.externalId.toLowerCase()
+  if (id.startsWith('movie:') || id.startsWith('tv:')) return 'tmdb'
+  if (id.startsWith('simkl:')) return 'simkl'
+  if (id.startsWith('trakt:')) return 'trakt'
+  if (id.startsWith('release:') || id.startsWith('release-group:')) return 'musicbrainz'
+  if (id.startsWith('hardcover:')) return 'hardcover'
+  return null
+}
+
+function ResultPoster({ result }: { result: MetadataSearchResult }) {
+  const [errored, setErrored] = useState(false)
+  const proxied = result.posterUrl
+    ? `/api/v1/media/poster-proxy?url=${encodeURIComponent(result.posterUrl)}`
+    : null
+  if (proxied && !errored) {
+    return (
+      <img
+        src={proxied}
+        alt={result.title}
+        className={styles.poster}
+        onError={() => setErrored(true)}
+      />
+    )
+  }
+  return (
+    <div className={styles.posterPlaceholder}>
+      {result.title.charAt(0).toUpperCase()}
+    </div>
+  )
 }
 
 export default function AddMediaPage() {
@@ -33,20 +79,20 @@ export default function AddMediaPage() {
     staleTime: 60_000,
   })
 
-  // Auto-select first type when list loads
   useEffect(() => {
     if (mediaTypes.length > 0 && selectedType === null) {
       setSelectedType(mediaTypes[0])
     }
   }, [mediaTypes, selectedType])
 
-  // Debounced search when query or type changes
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
+    // Clear immediately so stale results don't linger while debounce is pending
+    setResults([])
+    setSearchError(null)
+
     if (!query.trim() || !selectedType) {
-      setResults([])
-      setSearchError(null)
       return
     }
 
@@ -56,7 +102,7 @@ export default function AddMediaPage() {
       try {
         const hint = toMediaTypeHint(selectedType.name)
         const res = await searchMetadata(query.trim(), hint)
-        setResults(res)
+        setResults(rankResults(res, query.trim()))
         if (res.length === 0) setSearchError('No results found.')
       } catch (err) {
         setSearchError(err instanceof Error ? err.message : 'Search failed.')
@@ -78,7 +124,6 @@ export default function AddMediaPage() {
     try {
       const item = await addFromSearch(result.externalId, selectedType.id)
       setAddedIds(prev => new Set(prev).add(result.externalId))
-      // Navigate to the new item's detail page
       navigate(`/media/${item.id}`)
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Failed to add.')
@@ -90,7 +135,6 @@ export default function AddMediaPage() {
     <div className={styles.page}>
       <h2 className={styles.heading}>Add Media</h2>
 
-      {/* Type + search bar */}
       <div className={styles.searchBar}>
         <div className={styles.typeGroup}>
           {mediaTypes.map(t => (
@@ -119,32 +163,35 @@ export default function AddMediaPage() {
         />
       </div>
 
-      {/* Status line */}
       {searching && <p className={styles.status}>Searching…</p>}
       {!searching && searchError && <p className={styles.noResults}>{searchError}</p>}
       {addError && <p className={styles.error}>{addError}</p>}
 
-      {/* Results grid */}
       {results.length > 0 && (
         <div className={styles.results}>
           {results.map(r => {
             const isAdded = addedIds.has(r.externalId)
             const isAdding = addingId === r.externalId
+            const displayCast = r.cast?.slice(0, 4) ?? []
+            const source = resolveSource(r)
 
             return (
               <div key={r.externalId} className={styles.card}>
                 <div className={styles.posterWrap}>
-                  <PosterImage posterUrl={r.posterUrl} name={r.title} imgClassName={styles.poster} />
+                  <ResultPoster result={r} />
                 </div>
 
                 <div className={styles.cardBody}>
                   <div className={styles.cardTop}>
-                    <div>
+                    <div style={{ minWidth: 0 }}>
                       <div className={styles.title}>{r.title}</div>
                       <div className={styles.meta}>
                         {r.year && <span>{r.year}</span>}
                         {r.rating != null && (
                           <span className={styles.rating}>★ {r.rating.toFixed(1)}</span>
+                        )}
+                        {source && (
+                          <span className={styles.sourcePill}>{source}</span>
                         )}
                       </div>
                     </div>
@@ -157,8 +204,22 @@ export default function AddMediaPage() {
                     </button>
                   </div>
 
+                  {r.genres && r.genres.length > 0 && (
+                    <div className={styles.genres}>
+                      {r.genres.slice(0, 5).map(g => (
+                        <span key={g} className={styles.genre}>{g}</span>
+                      ))}
+                    </div>
+                  )}
+
                   {r.overview && (
                     <p className={styles.overview}>{r.overview}</p>
+                  )}
+
+                  {displayCast.length > 0 && (
+                    <div className={styles.cast}>
+                      {displayCast.join(' · ')}
+                    </div>
                   )}
                 </div>
               </div>
@@ -167,7 +228,6 @@ export default function AddMediaPage() {
         </div>
       )}
 
-      {/* Empty state before searching */}
       {!query.trim() && !searching && (
         <div className={styles.emptyState}>
           <p>Search above to find {selectedType?.displayName.toLowerCase() ?? 'media'} from the metadata scraper.</p>

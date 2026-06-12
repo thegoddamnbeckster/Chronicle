@@ -512,6 +512,14 @@ export default function MediaDetailPage() {
             imgClassName={styles.posterClickable}
             onClick={() => setLightboxIdx(0)}
           />
+          {fanartCharacter && (
+            <FanartImage
+              src={fanartCharacter}
+              wrapperClassName={styles.fanartCharacterWrap}
+              imgClassName={styles.fanartCharacter}
+              minHeight={120}
+            />
+          )}
         </div>
 
         <div className={`${styles.meta}${hasBackdrop ? ` ${styles.metaBoxed}` : ''}`}>
@@ -762,16 +770,6 @@ export default function MediaDetailPage() {
               )}
             </div>
           )}
-
-          {fanartCharacter && (
-            <FanartImage
-              src={fanartCharacter}
-              wrapperClassName={styles.fanartCharacterWrap}
-              imgClassName={styles.fanartCharacter}
-              minHeight={120}
-            />
-          )}
-
 
           {/* Global refresh strip — always shown so all media types can trigger enrichment */}
           <div className={styles.refreshStrip}>

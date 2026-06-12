@@ -62,7 +62,10 @@ namespace Chronicle.API.DTOs
         string? PosterUrl,
         string? Overview,
         double? Rating,
-        int MatchScore
+        int MatchScore,
+        string? Source = null,
+        List<string>? Genres = null,
+        List<string>? Cast = null
     );
 
     public record FileIdentificationDto(

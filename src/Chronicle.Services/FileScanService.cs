@@ -1288,32 +1288,90 @@ namespace Chronicle.Services
 
         // ── Metadata search + direct add (for Add Media UI) ──────────────────────
 
+        /// <summary>
+        /// Returns providers that declare support for the given media type, normalised via
+        /// <see cref="ToMediaTypeHint"/>.  Falls back to all providers when none match.
+        /// </summary>
+        private IReadOnlyList<IMetadataProvider> ProvidersForType(string mediaTypeHint)
+        {
+            var all = _registry.GetMetadataProviders();
+            if (all.Count == 0) return all;
+
+            var hint = ToMediaTypeHint(mediaTypeHint);
+
+            var matching = all.Where(p =>
+                p.GetSupportedMediaTypes().Any(t =>
+                    string.Equals(t.MediaTypeName, hint, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            return matching.Count > 0 ? matching : all;
+        }
+
+        /// <summary>
+        /// Returns the first provider for <paramref name="mediaTypeHint"/> whose
+        /// <see cref="IMetadataProvider.SearchAsync"/> returns at least one result, trying
+        /// each type-compatible provider in load order.  Providers that throw (e.g.
+        /// SIMKL/Trakt which require IDs, not text) are skipped automatically.
+        /// </summary>
         public async Task<List<MetadataCandidate>> SearchMetadataAsync(
             string query, string mediaTypeHint, CancellationToken ct = default)
         {
-            var provider = _registry.GetMetadataProviders().FirstOrDefault()
-                ?? throw new InvalidOperationException(
+            var candidates = ProvidersForType(mediaTypeHint);
+            if (candidates.Count == 0)
+                throw new InvalidOperationException(
                     "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
 
-            var results = await provider.SearchAsync(
-                new MediaSearchContext(query, MediaTypeName: mediaTypeHint), ct);
+            List<Exception> errors = [];
+            foreach (var provider in candidates)
+            {
+                try
+                {
+                    var results = await provider.SearchAsync(
+                        new MediaSearchContext(query, MediaTypeName: mediaTypeHint), ct);
 
-            return results
-                .Select(c => new MetadataCandidate(c.Metadata.ExternalId, c.Metadata.Title, c.Metadata.Year, c.Metadata.PosterUrl, c.Metadata.Overview, c.Metadata.Rating, 0))
-                .ToList();
+                    if (results.Count > 0)
+                        return results
+                            .Select(c => new MetadataCandidate(
+                                c.Metadata.ExternalId, c.Metadata.Title, c.Metadata.Year,
+                                c.Metadata.PosterUrl, c.Metadata.Overview, c.Metadata.Rating, 0,
+                                c.Metadata.Source,
+                                c.Metadata.Genres.Count > 0 ? c.Metadata.Genres : null,
+                                c.Metadata.Cast.Count > 0 ? c.Metadata.Cast : null))
+                            .ToList();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    errors.Add(ex);
+                }
+            }
+
+            // All providers returned empty or failed — return empty (not an error).
+            return [];
         }
 
         public async Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(
             string externalId, int mediaTypeId, int userId, CancellationToken ct = default)
         {
-            var provider = _registry.GetMetadataProviders().FirstOrDefault()
-                ?? throw new InvalidOperationException("No metadata provider is loaded.");
-
-            _ = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == mediaTypeId, ct)
+            var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == mediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {mediaTypeId} not found.");
+
+            // Derive which plugin should handle this externalId.
+            var (idSource, _) = ParseSuggestedExternalId(externalId);
+            var pluginId = SourceToPluginId(idSource);
+            var provider = (pluginId is not null ? _registry.GetMetadataProvider(pluginId) : null)
+                ?? ProvidersForType(mediaType.Name).FirstOrDefault()
+                ?? throw new InvalidOperationException("No metadata provider is loaded.");
 
             var meta = await provider.GetByIdAsync(externalId, ct);
             var (source, extId) = ParseSuggestedExternalId(externalId);
+
+            // Extract cross-reference IDs from the provider's ExtendedData (e.g. Trakt → TMDB/IMDB IDs).
+            // These are used to pre-seed enrichment rows so other plugins don't text-search and mis-match.
+            var crossRefs = ExtractCrossRefIds(meta, source);
+
+            // Build initial metadata JSON under the correct plugin blob key.
+            var providerBlobKey = SourceToPluginId(source) ?? source;
+            var initialMetaJson = BuildProviderMetaJson(providerBlobKey, meta);
 
             // Re-use existing item if already imported
             var existing = await _context.MediaExternalIds
@@ -1331,7 +1389,7 @@ namespace Chronicle.Services
                 item.Overview       = meta.Overview;
                 item.PosterUrl      = meta.PosterUrl;
                 item.RuntimeMinutes = meta.RuntimeMinutes;
-                item.MetadataJson   = SerializeMetadata(tmdbMeta: meta, existingJson: item.MetadataJson);
+                item.MetadataJson   = MergeProviderBlob(item.MetadataJson, providerBlobKey, meta);
                 item.UpdatedAt      = DateTime.UtcNow;
             }
             else
@@ -1344,7 +1402,7 @@ namespace Chronicle.Services
                     Overview       = meta.Overview,
                     PosterUrl      = meta.PosterUrl,
                     RuntimeMinutes = meta.RuntimeMinutes,
-                    MetadataJson   = SerializeMetadata(tmdbMeta: meta),
+                    MetadataJson   = initialMetaJson,
                     HierarchyLevel = 0,
                     CreatedAt      = DateTime.UtcNow,
                     UpdatedAt      = DateTime.UtcNow,
@@ -1352,6 +1410,27 @@ namespace Chronicle.Services
                 _context.MediaItems.Add(item);
                 await _context.SaveChangesAsync(ct);
                 await UpsertExternalIdAsync(item.Id, externalId, ct);
+
+                // Pre-seed enrichment rows for cross-referenced plugins so they use the
+                // known ID directly instead of running a text search that can mis-match.
+                foreach (var (xSource, xId) in crossRefs)
+                {
+                    var xPluginId = SourceToPluginId(xSource);
+                    if (xPluginId is null) continue;
+                    var xExists = await _context.MediaEnrichments
+                        .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == xPluginId, ct);
+                    if (!xExists)
+                    {
+                        _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
+                        {
+                            MediaItemId = item.Id,
+                            PluginId    = xPluginId,
+                            ExternalId  = xId,
+                            Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
+                        });
+                        await UpsertExternalIdAsync(item.Id, xId, ct);
+                    }
+                }
             }
 
             // Ensure library entry exists (default to PlanToWatch)
@@ -1390,8 +1469,117 @@ namespace Chronicle.Services
             if (suggested.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
                 return ("imdb", suggested[5..]);
 
+            // Trakt: "trakt:movie:NNN", "trakt:show:NNN", "trakt:episode:NNN"
+            if (suggested.StartsWith("trakt:", StringComparison.OrdinalIgnoreCase))
+                return ("trakt", suggested);
+
+            // SIMKL: "simkl:NNN"
+            if (suggested.StartsWith("simkl:", StringComparison.OrdinalIgnoreCase))
+                return ("simkl", suggested);
+
+            // Hardcover: "hardcover:NNN"
+            if (suggested.StartsWith("hardcover:", StringComparison.OrdinalIgnoreCase))
+                return ("hardcover", suggested);
+
             // "movie:*" or "tv:*" — stored verbatim with source="tmdb"
             return ("tmdb", suggested);
+        }
+
+        // Maps a short source name to the full canonical plugin ID used in the registry.
+        private static string? SourceToPluginId(string source) => source switch
+        {
+            "tmdb"       => "chronicle.plugin.tmdb",
+            "trakt"      => "chronicle.plugin.trakt",
+            "simkl"      => "chronicle.plugin.simkl",
+            "hardcover"  => "chronicle.plugin.hardcover",
+            "musicbrainz"=> "chronicle.plugin.musicbrainz",
+            _            => null,
+        };
+
+        // Extracts cross-reference IDs from provider ExtendedData so other plugins can be
+        // pre-seeded with the correct external ID instead of doing a blind text search.
+        // Returns a list of (shortSource, formattedExternalId) pairs.
+        private static List<(string source, string id)> ExtractCrossRefIds(
+            Chronicle.Plugins.Models.MediaMetadata meta, string fromSource)
+        {
+            var result = new List<(string, string)>();
+            if (meta.ExtendedData is not { } ext) return result;
+            if (ext.ValueKind != System.Text.Json.JsonValueKind.Object) return result;
+            if (!ext.TryGetProperty("ids", out var ids)) return result;
+
+            // Determine whether this is a movie or TV show for TMDB ID formatting.
+            // Trakt externalId format: "trakt:movie:N" or "trakt:show:N"
+            var tmdbPrefix = fromSource == "trakt" && meta.ExternalId?.Contains(":movie:") == true
+                ? "movie" : "tv";
+
+            if (ids.TryGetProperty("tmdb", out var tmdbEl) &&
+                tmdbEl.ValueKind == System.Text.Json.JsonValueKind.Number)
+            {
+                result.Add(("tmdb", $"{tmdbPrefix}:{tmdbEl.GetInt64()}"));
+            }
+            if (ids.TryGetProperty("imdb", out var imdbEl) &&
+                imdbEl.ValueKind == System.Text.Json.JsonValueKind.String &&
+                imdbEl.GetString() is { Length: > 0 } imdb)
+            {
+                result.Add(("imdb", $"imdb:{imdb}"));
+            }
+
+            return result;
+        }
+
+        // Builds a new metadata_json string containing the provider blob under its plugin ID key.
+        // FileScanner blob (if any) in existingJson is preserved.
+        private static string BuildProviderMetaJson(
+            string pluginBlobKey, Chronicle.Plugins.Models.MediaMetadata meta)
+        {
+            return MergeProviderBlob(null, pluginBlobKey, meta);
+        }
+
+        // Merges a provider blob into existing metadata_json.
+        // Existing blobs from other plugins are preserved.
+        // The blob stored under pluginBlobKey contains poster, backdrop, genres, cast, rating, etc.
+        private static string MergeProviderBlob(
+            string? existingJson,
+            string pluginBlobKey,
+            Chronicle.Plugins.Models.MediaMetadata meta)
+        {
+            Dictionary<string, System.Text.Json.JsonElement> blobs = [];
+            if (!string.IsNullOrWhiteSpace(existingJson))
+            {
+                try
+                {
+                    blobs = System.Text.Json.JsonSerializer
+                        .Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(existingJson)
+                        ?? [];
+                }
+                catch { /* corrupt json — start fresh */ }
+            }
+
+            // Remove stale resolved cache — it will be recomputed by MetadataResolutionService.
+            blobs.Remove("_resolved");
+
+            var providerObj = new Dictionary<string, object?>
+            {
+                ["title"]          = meta.Title,
+                ["year"]           = meta.Year,
+                ["overview"]       = meta.Overview,
+                ["posterUrl"]      = meta.PosterUrl,
+                ["backdropUrl"]    = meta.BackdropUrl,
+                ["runtimeMinutes"] = meta.RuntimeMinutes,
+                ["rating"]         = meta.Rating,
+                ["genres"]         = meta.Genres,
+                ["cast"]           = meta.Cast,
+                ["directors"]      = meta.Directors,
+            };
+
+            // Preserve extendedData (cross-ref IDs etc.) if the provider supplied it.
+            if (meta.ExtendedData.HasValue)
+                providerObj["extendedData"] = meta.ExtendedData.Value;
+
+            blobs[pluginBlobKey] = System.Text.Json.JsonSerializer
+                .SerializeToElement(providerObj);
+
+            return System.Text.Json.JsonSerializer.Serialize(blobs);
         }
 
         /// <summary>Maps a Chronicle media type name to the hint expected by metadata providers.</summary>

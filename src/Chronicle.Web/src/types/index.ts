@@ -300,6 +300,9 @@ export interface MetadataSearchResult {
   overview: string | null
   rating: number | null
   matchScore: number
+  source: string | null
+  genres: string[] | null
+  cast: string[] | null
 }
 
 // ── Scan Folders ──────────────────────────────────────────────────────────────
