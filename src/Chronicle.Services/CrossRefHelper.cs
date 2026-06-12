@@ -25,6 +25,9 @@ internal static class CrossRefHelper
 
         bool isMovie = meta.ExternalId?.Contains(":movie:", StringComparison.OrdinalIgnoreCase) == true
                     || meta.ExternalId?.StartsWith("movie:", StringComparison.OrdinalIgnoreCase) == true;
+        // isAnime is derived from Chronicle's media type name, not SIMKL's own classification.
+        // Items stored under Chronicle's "tv" type that SIMKL classifies as anime will still
+        // receive simkl:tv:{id} here. Only items with an explicit "anime" media type benefit.
         bool isAnime = string.Equals(mediaTypeName, "anime", StringComparison.OrdinalIgnoreCase);
 
         foreach (var prop in ids.EnumerateObject())
