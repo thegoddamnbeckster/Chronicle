@@ -206,11 +206,14 @@ public class FileScanController : ControllerBase
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                // media_external_ids joined with user_libraries for this user
-                libraryByExternalId = await _context.MediaExternalIds
+                // media_external_ids joined with user_libraries for this user.
+                // Use GroupBy+First to avoid ArgumentException when two items share the same ExternalId string.
+                libraryByExternalId = (await _context.MediaExternalIds
                     .Where(x => allExternalIds.Contains(x.ExternalId)
                              && _context.UserLibraries.Any(l => l.MediaItemId == x.MediaItemId && l.UserId == userId))
-                    .ToDictionaryAsync(x => x.ExternalId, x => x.MediaItemId, StringComparer.OrdinalIgnoreCase, ct);
+                    .ToListAsync(ct))
+                    .GroupBy(x => x.ExternalId, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First().MediaItemId, StringComparer.OrdinalIgnoreCase);
             }
 
             int? ResolveLibraryItemId(string primaryId, List<string>? contributing)

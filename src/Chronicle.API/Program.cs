@@ -358,8 +358,10 @@ using (var scope = app.Services.CreateScope())
 // ── Middleware pipeline ───────────────────────────────────────────────────────
 
 // Catch TaskCanceledException / OperationCanceledException caused by the client
-// disconnecting mid-request. Return 499 (client closed request) silently rather
-// than letting ASP.NET log a full stack trace and return 500.
+// disconnecting mid-request. Return 499 (client closed request) silently.
+// Only suppress when the request token was actually cancelled — other
+// OperationCanceledExceptions (DB timeout, HttpClient timeout) must propagate
+// so Serilog logs them and the caller gets a proper 500.
 app.Use(async (ctx, next) =>
 {
     try
@@ -368,9 +370,13 @@ app.Use(async (ctx, next) =>
     }
     catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
     {
-        if (!ctx.Response.HasStarted)
+        if (ctx.RequestAborted.IsCancellationRequested && !ctx.Response.HasStarted)
         {
             ctx.Response.StatusCode = 499; // Client Closed Request
+        }
+        else
+        {
+            throw;
         }
     }
 });

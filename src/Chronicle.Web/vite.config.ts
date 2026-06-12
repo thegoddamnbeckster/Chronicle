@@ -28,11 +28,18 @@ const ports = loadPorts()
 const webPort = process.env.PORT ? parseInt(process.env.PORT, 10) : ports.web
 
 // Suppress ECONNREFUSED proxy noise when the API is stopped or starting up.
-// Vite's default handler logs these at error level producing large stack traces.
+// On dual-stack localhost, Node throws AggregateError whose .code lives on
+// errors[0] — not on the top-level object — so we recurse to find it.
+const isConnRefused = (e: unknown): boolean => {
+  if (!e || typeof e !== 'object') return false
+  if ((e as NodeJS.ErrnoException).code === 'ECONNREFUSED') return true
+  const agg = e as AggregateError
+  return Array.isArray(agg.errors) && agg.errors.some(isConnRefused)
+}
 const logger = createLogger()
 const originalError = logger.error.bind(logger)
 logger.error = (msg, options) => {
-  if ((options?.error as NodeJS.ErrnoException | undefined)?.code === 'ECONNREFUSED') return
+  if (isConnRefused(options?.error)) return
   originalError(msg, options)
 }
 

@@ -1448,7 +1448,7 @@ namespace Chronicle.Services
 
             // Extract cross-reference IDs from the provider's ExtendedData (e.g. Trakt → TMDB/IMDB IDs).
             // These are used to pre-seed enrichment rows so other plugins don't text-search and mis-match.
-            var crossRefs = ExtractCrossRefIds(meta, source);
+            var crossRefs = ExtractCrossRefIds(meta, source, mediaType.Name);
 
             // Build initial metadata JSON under the correct plugin blob key.
             var providerBlobKey = SourceToPluginId(source) ?? source;
@@ -1666,8 +1666,8 @@ namespace Chronicle.Services
         };
 
         private static List<(string source, string id)> ExtractCrossRefIds(
-            Chronicle.Plugins.Models.MediaMetadata meta, string fromSource) =>
-            CrossRefHelper.ExtractCrossRefIds(meta, fromSource)
+            Chronicle.Plugins.Models.MediaMetadata meta, string fromSource, string? mediaTypeName = null) =>
+            CrossRefHelper.ExtractCrossRefIds(meta, fromSource, mediaTypeName)
                 .Select(t => (t.Source, t.Id))
                 .ToList();
 

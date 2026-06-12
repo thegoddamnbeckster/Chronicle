@@ -203,10 +203,12 @@ export default function AddMediaPage() {
                     {isInLibrary ? (
                       <button
                         className={styles.inLibraryBtn}
-                        onClick={() => libraryItemId && navigate(`/media/${libraryItemId}`)}
-                        title={libraryItemId ? 'Go to item' : undefined}
+                        onClick={() => libraryItemId != null && navigate(`/media/${libraryItemId}`)}
+                        disabled={libraryItemId == null}
+                        title={libraryItemId != null ? 'Go to item' : 'Item was just added — find it in your library'}
+                        aria-label="In Library"
                       >
-                        ✓ In Library
+                        <span aria-hidden="true">✓</span> In Library
                       </button>
                     ) : (
                     <button
