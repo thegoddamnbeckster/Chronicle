@@ -233,23 +233,32 @@ ExtendedData = JsonSerializer.SerializeToElement(new
 {
     ids = new
     {
-        tmdb = 87533,           // TMDB numeric ID (Chronicle formats as "tv:87533" or "movie:87533")
-        imdb = "tt8009690",     // IMDB ID string
-        tvdb = 355534,          // TVDB numeric ID (reserved; not yet consumed by a built-in plugin)
+        tmdb  = 87533,          // → "tv:87533" or "movie:87533"
+        imdb  = "tt8009690",    // → "imdb:tt8009690"
+        trakt = 129021,         // → "trakt:show:129021" or "trakt:movie:129021"
+        simkl = 444456,         // → "simkl:444456"
+        tvdb  = 355534,         // → "tvdb:355534" (seeds a future TVDB plugin automatically)
     }
 })
 ```
 
-Chronicle extracts `ids.tmdb` and `ids.imdb` and looks up whether a plugin is registered for
-each source. If found, it creates a pre-seeded `MediaItemEnrichment` row with `Status = Pending`
-and the known `ExternalId`, so the next enrichment run calls `GetByIdAsync` directly.
+Chronicle iterates **every key** in `ids` and seeds an enrichment row for any source that has
+a registered plugin. If a future plugin declares support for `"tvdb"` in `SourceToPluginId`,
+items added today with a `tvdb` cross-reference will automatically get pre-seeded — no code
+change needed. The seeding is symmetric: if an IMDB plugin existed and its `ExtendedData.ids`
+contained a `trakt` or `simkl` ID, those plugins would be seeded too.
+
+Seeding only creates a row — it does **not** run enrichment immediately. The next scheduled
+`fetch-missing-metadata` run (or a manual Refresh) picks it up and calls `GetByIdAsync`
+directly with the known ID.
 
 **You only need this if your plugin is an authoritative cross-reference source** (like Trakt or
-SIMKL, which hold verified mappings to TMDB/IMDB). Pure metadata providers like TMDB itself
-have no need to seed other plugins.
+SIMKL, which hold verified ID mappings). Pure metadata providers like TMDB itself have no
+need to seed other plugins.
 
-Fields not consumed by Chronicle as cross-references (e.g. `tvdb`, `trakt`, custom IDs) are
-still preserved in `ExtendedData` and stored in `metadata_json` for display and future use.
+Fields without a known format mapping still fall through to a generic `"{source}:{value}"`
+format and are stored in `metadata_json`, preserving them for future use even if no plugin
+currently handles that source.
 
 ---
 
