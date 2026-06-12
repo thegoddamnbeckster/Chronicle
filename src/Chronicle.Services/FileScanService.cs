@@ -1543,6 +1543,16 @@ namespace Chronicle.Services
                     {
                         if (candidatePluginId == pluginId) continue; // skip source plugin
 
+                        // Only seed plugins that support this media type (or its parent hint).
+                        var typeSupported = candidateProvider.GetSupportedMediaTypes()
+                            .Any(t =>
+                            {
+                                var n = NormalizeMediaTypeName(t.MediaTypeName);
+                                return n == NormalizeMediaTypeName(mediaType.Name)
+                                    || n == ToMediaTypeHint(mediaType.Name);
+                            });
+                        if (!typeSupported) continue;
+
                         // Accept if this plugin owns the source OR declares it accepts the prefix.
                         var isOwner    = candidatePluginId == ownPluginId;
                         var acceptsCrossRef = !isOwner && candidateProvider
