@@ -1492,12 +1492,18 @@ namespace Chronicle.Services
                 await _context.SaveChangesAsync(ct);
                 await UpsertExternalIdAsync(item.Id, externalId, ct);
 
+                // Track which plugin IDs have already had an enrichment row added in this call.
+                // AnyAsync only queries the DB, not in-memory tracked entities, so without this
+                // guard multiple cross-ref paths targeting the same plugin produce a duplicate-key error.
+                var seededPluginIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                 // Always seed an enrichment row for the source plugin itself with the known ID.
                 // This guarantees the source plugin appears on the detail page even if its
                 // declared media types don't exactly match the item's type (e.g. Trakt added
                 // under an "anime" tab that Trakt doesn't explicitly declare support for).
                 if (pluginId is not null)
                 {
+                    seededPluginIds.Add(pluginId);
                     _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
                     {
                         MediaItemId = item.Id,
@@ -1515,6 +1521,7 @@ namespace Chronicle.Services
                     var (cSource, _) = ParseSuggestedExternalId(contribId);
                     var cPluginId = SourceToPluginId(cSource);
                     if (cPluginId is null || cPluginId == pluginId) continue;
+                    if (!seededPluginIds.Add(cPluginId)) continue; // already queued
                     var cExists = await _context.MediaEnrichments
                         .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == cPluginId, ct);
                     if (!cExists)
@@ -1563,6 +1570,7 @@ namespace Chronicle.Services
 
                         if (!isOwner && !acceptsCrossRef) continue;
 
+                        if (!seededPluginIds.Add(candidatePluginId)) continue; // already queued this call
                         var xExists = await _context.MediaEnrichments
                             .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == candidatePluginId, ct);
                         if (xExists) continue;
