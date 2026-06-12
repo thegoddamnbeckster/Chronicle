@@ -305,6 +305,7 @@ export interface MetadataSearchResult {
   cast: string[] | null
   sources: string[] | null
   contributingExternalIds: string[] | null
+  libraryItemId: number | null
 }
 
 // ── Scan Folders ──────────────────────────────────────────────────────────────

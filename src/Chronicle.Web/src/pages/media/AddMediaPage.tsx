@@ -171,7 +171,8 @@ export default function AddMediaPage() {
       {results.length > 0 && (
         <div className={styles.results}>
           {results.map(r => {
-            const isAdded = addedIds.has(r.externalId)
+            const libraryItemId = r.libraryItemId ?? null
+            const isInLibrary = libraryItemId !== null || addedIds.has(r.externalId)
             const isAdding = addingId === r.externalId
             const displayCast = r.cast?.slice(0, 4) ?? []
             // Use multi-source list when present, otherwise fall back to single source
@@ -199,13 +200,23 @@ export default function AddMediaPage() {
                         ))}
                       </div>
                     </div>
+                    {isInLibrary ? (
+                      <button
+                        className={styles.inLibraryBtn}
+                        onClick={() => libraryItemId && navigate(`/media/${libraryItemId}`)}
+                        title={libraryItemId ? 'Go to item' : undefined}
+                      >
+                        ✓ In Library
+                      </button>
+                    ) : (
                     <button
-                      className={isAdded ? styles.addedBtn : styles.addBtn}
-                      onClick={() => !isAdded && !isAdding && handleAdd(r)}
-                      disabled={isAdded || isAdding || !!addingId}
+                      className={isAdding ? styles.addedBtn : styles.addBtn}
+                      onClick={() => !isAdding && handleAdd(r)}
+                      disabled={isAdding || !!addingId}
                     >
-                      {isAdding ? '…' : isAdded ? 'Added' : '+ Add to Library'}
+                      {isAdding ? '…' : '+ Add to Library'}
                     </button>
+                    )}
                   </div>
 
                   {r.genres && r.genres.length > 0 && (

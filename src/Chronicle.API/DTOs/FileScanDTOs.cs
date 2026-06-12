@@ -67,7 +67,8 @@ namespace Chronicle.API.DTOs
         List<string>? Genres = null,
         List<string>? Cast = null,
         List<string>? Sources = null,
-        List<string>? ContributingExternalIds = null
+        List<string>? ContributingExternalIds = null,
+        int? LibraryItemId = null
     );
 
     public record FileIdentificationDto(
