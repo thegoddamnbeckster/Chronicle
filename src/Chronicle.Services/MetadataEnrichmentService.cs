@@ -1415,6 +1415,11 @@ public class MetadataEnrichmentService(
                 // Fix Match (which calls this path with an IdOverride) actually persists
                 // the new TMDB ID — not just the enrichment tracking row.
                 await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId);
+                // Cascade cross-ref IDs from this enrichment result to any other installed plugin
+                // that declares it can accept that ID format. This ensures, for example, that a
+                // successful TMDB enrichment seeds SIMKL and Trakt rows with the TMDB ID so they
+                // can look up directly rather than falling back to a text search.
+                await SeedCrossRefEnrichmentRowsAsync(db, row.MediaItemId, result, row.PluginId, allProviders, ct);
                 // If this is a TMDB movie enrichment, ensure collection parent exists and re-parent if needed.
                 // Stubs are skipped — they're placeholders and must not trigger further collection creation.
                 // Items that already have children are acting as collection containers; skip them too —
@@ -2453,6 +2458,62 @@ public class MetadataEnrichmentService(
         if (rawId.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
             return ("imdb", rawId[5..]);
         return ("tmdb", rawId);
+    }
+
+    /// <summary>
+    /// Seeds enrichment rows for any installed plugin that declares it accepts a cross-ref
+    /// ID present in <paramref name="result"/>.ExtendedData. Called after every successful
+    /// enrichment so that, e.g., a TMDB result automatically seeds SIMKL and Trakt rows
+    /// with the known TMDB ID — allowing those plugins to look up directly rather than
+    /// falling back to a text search.
+    ///
+    /// Only inserts rows where none already exist (Pending/Completed/etc.) — never resets
+    /// an already-started row.
+    /// </summary>
+    private async Task SeedCrossRefEnrichmentRowsAsync(
+        ChronicleDbContext db,
+        int mediaItemId,
+        Chronicle.Plugins.Models.MediaMetadata result,
+        string sourcePluginId,
+        IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders,
+        CancellationToken ct)
+    {
+        if (allProviders is null || allProviders.Count == 0) return;
+
+        var fromSource = PluginIdHelper.ToSource(sourcePluginId);
+        var crossRefs  = CrossRefHelper.ExtractCrossRefIds(result, fromSource);
+        if (crossRefs.Count == 0) return;
+
+        foreach (var (xSource, xId) in crossRefs)
+        {
+            foreach (var (candidatePluginId, candidateProvider) in allProviders)
+            {
+                if (candidatePluginId == sourcePluginId) continue;
+
+                var isOwner        = string.Equals(PluginIdHelper.ToSource(candidatePluginId), xSource, StringComparison.OrdinalIgnoreCase);
+                var acceptsCrossRef = !isOwner && candidateProvider
+                    .GetAcceptedCrossRefPrefixes()
+                    .Any(prefix => xId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+                if (!isOwner && !acceptsCrossRef) continue;
+
+                var alreadyExists = await db.MediaEnrichments
+                    .AnyAsync(r => r.MediaItemId == mediaItemId && r.PluginId == candidatePluginId, ct);
+                if (alreadyExists) continue;
+
+                db.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
+                {
+                    MediaItemId = mediaItemId,
+                    PluginId    = candidatePluginId,
+                    ExternalId  = xId,
+                    Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
+                });
+
+                logger.LogInformation(
+                    "CrossRef seed: plugin={Plugin} item={ItemId} ← {Source}={ExternalId} (from {SourcePlugin})",
+                    candidatePluginId, mediaItemId, xSource, xId, sourcePluginId);
+            }
+        }
     }
 
     /// <summary>
