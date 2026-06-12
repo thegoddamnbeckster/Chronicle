@@ -1498,6 +1498,8 @@ namespace Chronicle.Services
 
         // Extracts cross-reference IDs from provider ExtendedData so other plugins can be
         // pre-seeded with the correct external ID instead of doing a blind text search.
+        // Iterates every key in ExtendedData.ids and seeds any source that has a registered
+        // plugin — so adding via Trakt can seed TMDB, SIMKL, and any future plugin equally.
         // Returns a list of (shortSource, formattedExternalId) pairs.
         private static List<(string source, string id)> ExtractCrossRefIds(
             Chronicle.Plugins.Models.MediaMetadata meta, string fromSource)
@@ -1506,25 +1508,64 @@ namespace Chronicle.Services
             if (meta.ExtendedData is not { } ext) return result;
             if (ext.ValueKind != System.Text.Json.JsonValueKind.Object) return result;
             if (!ext.TryGetProperty("ids", out var ids)) return result;
+            if (ids.ValueKind != System.Text.Json.JsonValueKind.Object) return result;
 
-            // Determine whether this is a movie or TV show for TMDB ID formatting.
-            // Trakt externalId format: "trakt:movie:N" or "trakt:show:N"
-            var tmdbPrefix = fromSource == "trakt" && meta.ExternalId?.Contains(":movie:") == true
-                ? "movie" : "tv";
+            // Infer media subtype for sources that need a prefix in their external ID format.
+            // Trakt externalId: "trakt:movie:N" or "trakt:show:N"; SIMKL: "simkl:movie:N" etc.
+            bool isMovie = meta.ExternalId?.Contains(":movie:") == true;
 
-            if (ids.TryGetProperty("tmdb", out var tmdbEl) &&
-                tmdbEl.ValueKind == System.Text.Json.JsonValueKind.Number)
+            foreach (var prop in ids.EnumerateObject())
             {
-                result.Add(("tmdb", $"{tmdbPrefix}:{tmdbEl.GetInt64()}"));
-            }
-            if (ids.TryGetProperty("imdb", out var imdbEl) &&
-                imdbEl.ValueKind == System.Text.Json.JsonValueKind.String &&
-                imdbEl.GetString() is { Length: > 0 } imdb)
-            {
-                result.Add(("imdb", $"imdb:{imdb}"));
+                var key = prop.Name.ToLowerInvariant();
+                if (key == fromSource) continue; // don't seed ourselves
+
+                var formatted = FormatCrossRefId(key, prop.Value, isMovie);
+                if (formatted is not null)
+                    result.Add((key, formatted));
             }
 
             return result;
+        }
+
+        // Formats a raw ID value from ExtendedData.ids into the external ID string format
+        // used by that source's plugin (e.g. tmdb → "movie:550", imdb → "imdb:tt0137523").
+        // Returns null if the value type is wrong or the source format is unknown.
+        private static string? FormatCrossRefId(string source, System.Text.Json.JsonElement value, bool isMovie)
+        {
+            switch (source)
+            {
+                case "tmdb":
+                    if (value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        return $"{(isMovie ? "movie" : "tv")}:{value.GetInt64()}";
+                    break;
+
+                case "imdb":
+                    if (value.ValueKind == System.Text.Json.JsonValueKind.String &&
+                        value.GetString() is { Length: > 0 } imdb)
+                        return $"imdb:{imdb}";
+                    break;
+
+                case "trakt":
+                    if (value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        return $"trakt:{(isMovie ? "movie" : "show")}:{value.GetInt64()}";
+                    break;
+
+                case "simkl":
+                    if (value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        return $"simkl:{value.GetInt64()}";
+                    break;
+
+                // tvdb and other numeric IDs: use bare numeric format; a future plugin can
+                // declare support for "tvdb" in SourceToPluginId to activate seeding.
+                default:
+                    if (value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        return $"{source}:{value.GetInt64()}";
+                    if (value.ValueKind == System.Text.Json.JsonValueKind.String &&
+                        value.GetString() is { Length: > 0 } s)
+                        return $"{source}:{s}";
+                    break;
+            }
+            return null;
         }
 
         // Builds a new metadata_json string containing the provider blob under its plugin ID key.
