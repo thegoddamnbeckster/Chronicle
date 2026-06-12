@@ -122,7 +122,8 @@ export default function AddMediaPage() {
     setAddingId(result.externalId)
     setAddError(null)
     try {
-      const item = await addFromSearch(result.externalId, selectedType.id)
+      const item = await addFromSearch(result.externalId, selectedType.id,
+        result.contributingExternalIds ?? undefined)
       setAddedIds(prev => new Set(prev).add(result.externalId))
       navigate(`/media/${item.id}`)
     } catch (err) {

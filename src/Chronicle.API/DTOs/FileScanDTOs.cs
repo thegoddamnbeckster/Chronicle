@@ -66,7 +66,8 @@ namespace Chronicle.API.DTOs
         string? Source = null,
         List<string>? Genres = null,
         List<string>? Cast = null,
-        List<string>? Sources = null
+        List<string>? Sources = null,
+        List<string>? ContributingExternalIds = null
     );
 
     public record FileIdentificationDto(
@@ -120,7 +121,14 @@ namespace Chronicle.API.DTOs
 
     public record AddFromSearchDto(
         [Required] string ExternalId,
-        [Required] int MediaTypeId
+        [Required] int MediaTypeId,
+        /// <summary>
+        /// External IDs from other providers that matched the same item during search
+        /// (e.g. TVMaze's ID when Trakt and TVMaze both returned the same show).
+        /// Each will be pre-seeded as an enrichment row so the provider uses the known
+        /// ID directly instead of running a text search.
+        /// </summary>
+        List<string>? ContributingExternalIds = null
     );
 
     // ── Scan progress ──────────────────────────────────────────────────────────
