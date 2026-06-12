@@ -1042,12 +1042,12 @@ public class MetadataEnrichmentService(
                             row.ExternalId, row.MediaItemId, ex.Message);
                         row.ExternalId = null;
                     }
-                    catch (KeyNotFoundException)
+                    catch (KeyNotFoundException ex)
                     {
-                        // Provider definitively returned no match for this ID — re-throw so
-                        // the outer catch handles it alongside HTTP 404, sets NotFound status,
-                        // captures diagnostics, and calls SaveChangesAsync before returning.
-                        throw;
+                        // Wrap in a private sentinel so the outer catch can distinguish
+                        // "provider returned no match" from unrelated KeyNotFoundExceptions
+                        // thrown by dictionary access or LINQ elsewhere in this method.
+                        throw new ProviderNotFoundException(ex.Message);
                     }
                 }
                 else
@@ -1516,14 +1516,14 @@ public class MetadataEnrichmentService(
             // A 404 from the provider means "this item definitively does not exist upstream" —
             // treat as NotFound rather than a transient error so retries are not wasted.
             // Example: TMDB seasons/episodes that are not yet in TMDB's database return 404.
-            if (ex is KeyNotFoundException ||
+            if (ex is ProviderNotFoundException ||
                 (ex is HttpRequestException httpEx &&
                  httpEx.StatusCode == System.Net.HttpStatusCode.NotFound))
             {
                 logger.LogInformation(
                     "Enrichment not found: plugin={Plugin} item={ItemId} \"{Name}\" — {Reason}",
                     row.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
-                    ex is KeyNotFoundException ? "provider returned no match for stored ID" : "provider returned 404");
+                    ex is ProviderNotFoundException ? "provider returned no match for stored ID" : "provider returned 404");
                 row.Status       = EnrichmentStatus.NotFound;
                 row.ErrorMessage = ex.Message;
             }
@@ -1590,6 +1590,12 @@ public class MetadataEnrichmentService(
 
         await db.SaveChangesAsync(ct);
     }
+
+    /// Thrown only by the inner GetByIdAsync catch to signal "provider returned no match for
+    /// this specific ID". Caught exclusively by the outer EnrichOneAsync handler so that
+    /// unrelated KeyNotFoundExceptions from dictionary access or LINQ elsewhere in the method
+    /// do NOT get silently marked as NotFound.
+    private sealed class ProviderNotFoundException(string message) : Exception(message) { }
 
     /// <summary>
     /// Scores a search candidate against a query name and optional year.

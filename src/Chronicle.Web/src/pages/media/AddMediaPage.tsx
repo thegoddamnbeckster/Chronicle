@@ -201,7 +201,10 @@ export default function AddMediaPage() {
                       </div>
                     </div>
                     {isInLibrary ? (
-                      <span title={libraryItemId == null ? 'Item was just added — find it in your library' : undefined}>
+                      <span
+                        title={libraryItemId == null ? 'Item was just added — find it in your library' : undefined}
+                        style={{ display: 'contents' }}
+                      >
                         <button
                           className={styles.inLibraryBtn}
                           onClick={() => libraryItemId != null && navigate(`/media/${libraryItemId}`)}
