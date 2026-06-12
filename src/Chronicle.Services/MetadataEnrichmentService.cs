@@ -966,9 +966,22 @@ public class MetadataEnrichmentService(
                 if (sep > 0)
                 {
                     var entityType = row.ExternalId[..sep];
-                    if (row.MediaItem.ParentId == null)
+
+                    // The hierarchy validity check only applies to TMDB-format IDs
+                    // ("movie:N", "tv:N", "tv:N/season:M", etc.) and MusicBrainz artist IDs.
+                    // Plugin-specific IDs (simkl:*, trakt:*, tvdb:*, hardcover:*, etc.) are
+                    // trusted as-is — they were seeded by the plugin's own logic and don't
+                    // need a level/type consistency check.
+                    bool isTmdbOrMusicBrainzFormat =
+                        entityType is "movie" or "tv" or "artist" or "release-group" or "release" or "season" or "album";
+
+                    if (!isTmdbOrMusicBrainzFormat)
                     {
-                        // Root item — must be artist (MusicBrainz) or movie/show (TMDB)
+                        // Non-TMDB/MusicBrainz format — skip the hierarchy check, use the ID directly.
+                    }
+                    else if (row.MediaItem.ParentId == null)
+                    {
+                        // Root item — TMDB/MusicBrainz format: must be artist, movie, or show-level tv:N
                         idIsValid = entityType is "artist" or "movie" or "tv";
                     }
                     else
@@ -1019,7 +1032,20 @@ public class MetadataEnrichmentService(
 
                 if (idIsValid)
                 {
-                    result = await provider.GetByIdAsync(row.ExternalId, ct);
+                    try
+                    {
+                        result = await provider.GetByIdAsync(row.ExternalId, ct);
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        // Malformed or unsupported ExternalId format — clear it so SearchAsync
+                        // can find the correct ID on the next attempt (e.g. stale format from
+                        // an older cross-ref seeding pass before the format was corrected).
+                        logger.LogWarning(
+                            "Clearing malformed ExternalId {ExternalId} for item {ItemId}: {Error}",
+                            row.ExternalId, row.MediaItemId, ex.Message);
+                        row.ExternalId = null;
+                    }
                 }
                 else
                 {
