@@ -1451,6 +1451,10 @@ namespace Chronicle.Services
 
             await _context.SaveChangesAsync(ct);
 
+            // Seed enrichment rows for every registered provider that supports this media type.
+            // Cross-ref rows pre-seeded above are skipped (existingSet check inside the method).
+            await SeedEnrichmentRowsForNewItemsAsync([item.Id], mediaType.Name, ct);
+
             // Return with navigation properties populated for DTO conversion
             return await _context.MediaItems
                 .Include(m => m.MediaType)
