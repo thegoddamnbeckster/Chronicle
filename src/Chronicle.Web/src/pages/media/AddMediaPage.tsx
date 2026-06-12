@@ -203,7 +203,7 @@ export default function AddMediaPage() {
                     {isInLibrary ? (
                       <span
                         title={libraryItemId == null ? 'Item was just added — find it in your library' : undefined}
-                        style={{ display: 'contents' }}
+                        style={{ flexShrink: 0 }}
                       >
                         <button
                           className={styles.inLibraryBtn}

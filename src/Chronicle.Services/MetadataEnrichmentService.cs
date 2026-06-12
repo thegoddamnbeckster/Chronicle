@@ -1047,7 +1047,7 @@ public class MetadataEnrichmentService(
                         // Wrap in a private sentinel so the outer catch can distinguish
                         // "provider returned no match" from unrelated KeyNotFoundExceptions
                         // thrown by dictionary access or LINQ elsewhere in this method.
-                        throw new ProviderNotFoundException(ex.Message);
+                        throw new ProviderNotFoundException(ex.Message, ex);
                     }
                 }
                 else
@@ -1591,11 +1591,16 @@ public class MetadataEnrichmentService(
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>
     /// Thrown only by the inner GetByIdAsync catch to signal "provider returned no match for
     /// this specific ID". Caught exclusively by the outer EnrichOneAsync handler so that
     /// unrelated KeyNotFoundExceptions from dictionary access or LINQ elsewhere in the method
     /// do NOT get silently marked as NotFound.
-    private sealed class ProviderNotFoundException(string message) : Exception(message) { }
+    /// </summary>
+    private sealed class ProviderNotFoundException : Exception
+    {
+        public ProviderNotFoundException(string message, Exception inner) : base(message, inner) { }
+    }
 
     /// <summary>
     /// Scores a search candidate against a query name and optional year.
