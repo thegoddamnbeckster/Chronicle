@@ -52,13 +52,11 @@ public class MetadataResolutionService(
 
         var resolved = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 
-        if (priorityMap.Count > 0)
+        foreach (var (assignmentField, jsonKey) in FieldMap)
         {
-            foreach (var (assignmentField, jsonKey) in FieldMap)
+            if (priorityMap.TryGetValue(assignmentField, out var plugins) && plugins.Count > 0)
             {
-                if (!priorityMap.TryGetValue(assignmentField, out var plugins) || plugins.Count == 0)
-                    continue;
-
+                // Use the configured priority order for this field.
                 foreach (var pluginId in plugins)
                 {
                     if (!blobs.TryGetValue(pluginId, out var blob)) continue;
@@ -69,14 +67,9 @@ public class MetadataResolutionService(
                     break;
                 }
             }
-        }
-        else
-        {
-            // No assignment config for this media type — auto-resolve from the first
-            // plugin blob that has each field. This ensures newly-installed plugins
-            // populate item headers without requiring manual Metadata Assignment setup.
-            foreach (var (_, jsonKey) in FieldMap)
+            else
             {
+                // Field not explicitly configured — fall back to first blob that has a value.
                 foreach (var blob in blobs.Values)
                 {
                     if (blob.ValueKind != JsonValueKind.Object) continue;

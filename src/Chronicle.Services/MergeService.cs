@@ -82,7 +82,10 @@ public class MergeService(
         db.MediaItemMerges.Add(mergeLog);
 
         // ── AKA ───────────────────────────────────────────────────────────────
-        if (NamesRequireAka(winner.Name, loser.Name))
+        // Skip episode-pattern names (e.g. "Show S01E03 - Title") — they are child items,
+        // not real alternate titles, and would pollute the AKA line on the parent.
+        if (NamesRequireAka(winner.Name, loser.Name)
+            && !System.Text.RegularExpressions.Regex.IsMatch(loser.Name, @"S\d{1,2}E\d{1,2}", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
         {
             db.MediaItemAliases.Add(new MediaItemAlias
             {

@@ -201,6 +201,10 @@ plugin's full ID in the item's `metadata_json` column:
 }
 ```
 
+This also applies when a user adds an item via **Add Media** using your plugin's search results —
+the initial metadata blob is stored under your plugin's ID from the moment the item is created,
+not under a generic key.
+
 The Chronicle frontend automatically renders a **PluginMetadataBox** for every key present —
 no frontend code changes needed when a new plugin is installed. Your plugin's `iconUrl` and
 `name` from the manifest are used as the box header.
@@ -210,6 +214,42 @@ call `GetByIdAsync` directly rather than re-searching.
 
 The `PosterUrl` from your result is promoted to `media_items.poster_url` if the item has no
 poster yet.
+
+### Cross-reference seeding via ExtendedData
+
+If your plugin knows the IDs that other plugins use for the same item, put them in `ExtendedData`
+under an `ids` key. Chronicle reads this when an item is first added via Add Media and
+**pre-seeds enrichment rows** for those other plugins with the correct external ID, so they
+skip the text-search step entirely and call `GetByIdAsync` directly with the known ID.
+
+This prevents mis-matches. For example, Trakt knows a show's TMDB ID exactly. Without
+cross-reference seeding, TMDB would text-search the show title and might match the wrong
+item. With it, TMDB goes straight to the right ID.
+
+The expected `ids` structure (mirrors Trakt's format, also used by SIMKL):
+
+```csharp
+ExtendedData = JsonSerializer.SerializeToElement(new
+{
+    ids = new
+    {
+        tmdb = 87533,           // TMDB numeric ID (Chronicle formats as "tv:87533" or "movie:87533")
+        imdb = "tt8009690",     // IMDB ID string
+        tvdb = 355534,          // TVDB numeric ID (reserved; not yet consumed by a built-in plugin)
+    }
+})
+```
+
+Chronicle extracts `ids.tmdb` and `ids.imdb` and looks up whether a plugin is registered for
+each source. If found, it creates a pre-seeded `MediaItemEnrichment` row with `Status = Pending`
+and the known `ExternalId`, so the next enrichment run calls `GetByIdAsync` directly.
+
+**You only need this if your plugin is an authoritative cross-reference source** (like Trakt or
+SIMKL, which hold verified mappings to TMDB/IMDB). Pure metadata providers like TMDB itself
+have no need to seed other plugins.
+
+Fields not consumed by Chronicle as cross-references (e.g. `tvdb`, `trakt`, custom IDs) are
+still preserved in `ExtendedData` and stored in `metadata_json` for display and future use.
 
 ---
 
