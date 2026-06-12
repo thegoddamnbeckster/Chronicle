@@ -215,12 +215,15 @@ public class FileScanController : ControllerBase
                              && _context.UserLibraries.Any(l => l.MediaItemId == x.MediaItemId && l.UserId == userId))
                     .ToListAsync(ct);
 
-                foreach (var dup in libraryRows.GroupBy(x => x.ExternalId, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
+                var grouped = libraryRows
+                    .GroupBy(x => x.ExternalId, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                foreach (var dup in grouped.Where(g => g.Count() > 1))
                     _logger.LogWarning("Duplicate library entries for ExternalId {ExternalId}: item IDs [{ItemIds}]",
                         dup.Key, string.Join(", ", dup.Select(x => x.MediaItemId)));
 
-                libraryByExternalId = libraryRows
-                    .GroupBy(x => x.ExternalId, StringComparer.OrdinalIgnoreCase)
+                libraryByExternalId = grouped
                     .ToDictionary(g => g.Key, g => g.First().MediaItemId, StringComparer.OrdinalIgnoreCase);
             }
 
