@@ -1297,14 +1297,15 @@ namespace Chronicle.Services
             var all = _registry.GetMetadataProviders();
             if (all.Count == 0) return all;
 
-            var hint = ToMediaTypeHint(mediaTypeHint);
+            // Match on exact type name OR parent-type hint (e.g. "anime" → "tv").
+            // No fallback to all providers — the user explicitly chose a type.
+            var normalizedType = NormalizeMediaTypeName(mediaTypeHint);
+            var hintType       = ToMediaTypeHint(mediaTypeHint);
 
-            var matching = all.Where(p =>
-                p.GetSupportedMediaTypes().Any(t =>
-                    string.Equals(t.MediaTypeName, hint, StringComparison.OrdinalIgnoreCase)))
+            return all.Where(p => p.GetSupportedMediaTypes().Any(t =>
+                    string.Equals(NormalizeMediaTypeName(t.MediaTypeName), normalizedType, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(NormalizeMediaTypeName(t.MediaTypeName), hintType,       StringComparison.OrdinalIgnoreCase)))
                 .ToList();
-
-            return matching.Count > 0 ? matching : all;
         }
 
         /// <summary>
