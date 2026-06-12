@@ -335,7 +335,7 @@ public class MovieCollectionService(
                     existing.UpdatedAt = DateTime.UtcNow;
                     await db.SaveChangesAsync(ct);
                 }
-                return (existing, wasReparented: false);
+                return (existing, WasReparented: false);
             }
         }
 
@@ -373,7 +373,7 @@ public class MovieCollectionService(
                 });
                 await db.SaveChangesAsync(ct);
             }
-            return (byName, wasReparented: false);
+            return (byName, WasReparented: false);
         }
 
         // ── Race-condition guard: final re-check before insert ───────────────────
@@ -394,7 +394,7 @@ public class MovieCollectionService(
                 if (raceItem is not null)
                 {
                     await tx.RollbackAsync(ct);
-                    return (raceItem, wasReparented: false);
+                    return (raceItem, WasReparented: false);
                 }
             }
 
@@ -422,7 +422,7 @@ public class MovieCollectionService(
                     await db.SaveChangesAsync(ct);
                 }
                 await tx.RollbackAsync(ct);
-                return (raceByName, wasReparented: false);
+                return (raceByName, WasReparented: false);
             }
 
             var now = DateTime.UtcNow;
@@ -459,7 +459,7 @@ public class MovieCollectionService(
                 "Created collection MediaItem {Id} \"{Name}\" (source={Source}, ExternalId={ExternalId})",
                 collection.Id, collection.Name, data.Source, externalIdValue);
 
-            return (collection, wasReparented: true);
+            return (collection, WasReparented: true);
         }
         catch
         {
