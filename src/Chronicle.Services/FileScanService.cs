@@ -1928,7 +1928,8 @@ namespace Chronicle.Services
         private static string ToMediaTypeHint(string mediaTypeName)
         {
             var n = mediaTypeName.ToLowerInvariant();
-            if (n.Contains("tv") || n.Contains("show") || n.Contains("series")) return "tv";
+            if (n.Contains("tv") || n.Contains("show") || n.Contains("series")
+                || n.Contains("anime")) return "tv";
             if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";
             return "movie";
         }
@@ -2640,7 +2641,13 @@ namespace Chronicle.Services
                     .Select(t => t.MediaTypeName)
                     .ToList();
 
-                if (!supportedNames.Any(n => NormalizeMediaTypeName(n) == NormalizeMediaTypeName(mediaTypeName)))
+                // Match on normalized name OR on the parent type hint (anime→tv, etc.) so that
+                // providers declaring "tv" are seeded for items with media type "anime".
+                var normalizedItem = NormalizeMediaTypeName(mediaTypeName);
+                var hintItem       = ToMediaTypeHint(mediaTypeName);
+                if (!supportedNames.Any(n =>
+                        NormalizeMediaTypeName(n) == normalizedItem ||
+                        NormalizeMediaTypeName(n) == hintItem))
                     continue;
 
                 // Avoid SQLite IN-clause limit: query all rows for this plugin, filter in-memory.
