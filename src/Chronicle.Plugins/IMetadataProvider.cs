@@ -23,6 +23,16 @@ public interface IMetadataProvider
     /// <summary>Returns all media types this provider can supply metadata for.</summary>
     MediaTypeSupport[] GetSupportedMediaTypes();
 
+    /// <summary>
+    /// Returns the external ID prefixes this provider's <see cref="GetByIdAsync"/> can accept
+    /// beyond its own native format — for example, a plugin whose native IDs are "simkl:N" may
+    /// also accept "tv:N" (TMDB) and "imdb:ttN" so that cross-reference IDs from Trakt can be
+    /// used to seed its enrichment row directly instead of falling back to a text search.
+    ///
+    /// Return an empty list (the default) if the provider only accepts its own ID format.
+    /// </summary>
+    IReadOnlyList<string> GetAcceptedCrossRefPrefixes() => [];
+
     /// <summary>Returns the settings schema used to generate the configuration UI.</summary>
     PluginSettingsSchema GetSettingsSchema();
 
