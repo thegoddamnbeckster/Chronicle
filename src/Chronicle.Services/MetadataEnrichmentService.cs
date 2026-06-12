@@ -973,7 +973,8 @@ public class MetadataEnrichmentService(
                     // trusted as-is — they were seeded by the plugin's own logic and don't
                     // need a level/type consistency check.
                     bool isTmdbOrMusicBrainzFormat =
-                        entityType is "movie" or "tv" or "artist" or "release-group" or "release" or "season" or "album";
+                        entityType is "movie" or "tv" or "artist" or "release-group" or "release"
+                                    or "season" or "album" or "recording" or "episode";
 
                     if (isTmdbOrMusicBrainzFormat && row.MediaItem.ParentId == null)
                     {
@@ -1041,16 +1042,12 @@ public class MetadataEnrichmentService(
                             row.ExternalId, row.MediaItemId, ex.Message);
                         row.ExternalId = null;
                     }
-                    catch (KeyNotFoundException ex)
+                    catch (KeyNotFoundException)
                     {
-                        // Provider definitively returned no match for this ID — mark NotFound
-                        // immediately rather than wasting retries cycling through Exhausted.
-                        logger.LogWarning(
-                            "ExternalId {ExternalId} for item {ItemId} returned no match: {Error}",
-                            row.ExternalId, row.MediaItemId, ex.Message);
-                        row.Status = EnrichmentStatus.NotFound;
-                        row.ErrorMessage = ex.Message;
-                        return;
+                        // Provider definitively returned no match for this ID — re-throw so
+                        // the outer catch handles it alongside HTTP 404, sets NotFound status,
+                        // captures diagnostics, and calls SaveChangesAsync before returning.
+                        throw;
                     }
                 }
                 else
@@ -1519,12 +1516,14 @@ public class MetadataEnrichmentService(
             // A 404 from the provider means "this item definitively does not exist upstream" —
             // treat as NotFound rather than a transient error so retries are not wasted.
             // Example: TMDB seasons/episodes that are not yet in TMDB's database return 404.
-            if (ex is HttpRequestException httpEx &&
-                httpEx.StatusCode == System.Net.HttpStatusCode.NotFound)
+            if (ex is KeyNotFoundException ||
+                (ex is HttpRequestException httpEx &&
+                 httpEx.StatusCode == System.Net.HttpStatusCode.NotFound))
             {
                 logger.LogInformation(
-                    "Enrichment not found (404): plugin={Plugin} item={ItemId} \"{Name}\" — provider returned 404",
-                    row.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?");
+                    "Enrichment not found: plugin={Plugin} item={ItemId} \"{Name}\" — {Reason}",
+                    row.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
+                    ex is KeyNotFoundException ? "provider returned no match for stored ID" : "provider returned 404");
                 row.Status       = EnrichmentStatus.NotFound;
                 row.ErrorMessage = ex.Message;
             }

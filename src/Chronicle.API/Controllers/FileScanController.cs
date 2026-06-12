@@ -18,16 +18,18 @@ public class FileScanController : ControllerBase
     private readonly ImportProgressService _importProgress;
     private readonly IScanFolderService _scanFolderService;
     private readonly ChronicleDbContext _context;
+    private readonly ILogger<FileScanController> _logger;
 
     public FileScanController(IFileScanService scanService, ScanProgressService progress,
         ImportProgressService importProgress, IScanFolderService scanFolderService,
-        ChronicleDbContext context)
+        ChronicleDbContext context, ILogger<FileScanController> logger)
     {
         _scanService = scanService;
         _progress = progress;
         _importProgress = importProgress;
         _scanFolderService = scanFolderService;
         _context = context;
+        _logger = logger;
     }
 
     /// <summary>
@@ -208,10 +210,16 @@ public class FileScanController : ControllerBase
 
                 // media_external_ids joined with user_libraries for this user.
                 // Use GroupBy+First to avoid ArgumentException when two items share the same ExternalId string.
-                libraryByExternalId = (await _context.MediaExternalIds
+                var libraryRows = await _context.MediaExternalIds
                     .Where(x => allExternalIds.Contains(x.ExternalId)
                              && _context.UserLibraries.Any(l => l.MediaItemId == x.MediaItemId && l.UserId == userId))
-                    .ToListAsync(ct))
+                    .ToListAsync(ct);
+
+                foreach (var dup in libraryRows.GroupBy(x => x.ExternalId, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
+                    _logger.LogWarning("Duplicate library entries for ExternalId {ExternalId}: item IDs [{ItemIds}]",
+                        dup.Key, string.Join(", ", dup.Select(x => x.MediaItemId)));
+
+                libraryByExternalId = libraryRows
                     .GroupBy(x => x.ExternalId, StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(g => g.Key, g => g.First().MediaItemId, StringComparer.OrdinalIgnoreCase);
             }
