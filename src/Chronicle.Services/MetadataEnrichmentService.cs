@@ -1419,7 +1419,8 @@ public class MetadataEnrichmentService(
                 // that declares it can accept that ID format. This ensures, for example, that a
                 // successful TMDB enrichment seeds SIMKL and Trakt rows with the TMDB ID so they
                 // can look up directly rather than falling back to a text search.
-                await SeedCrossRefEnrichmentRowsAsync(db, row.MediaItemId, result, row.PluginId, allProviders, ct);
+                await SeedCrossRefEnrichmentRowsAsync(db, row.MediaItemId, result, row.PluginId,
+                    row.MediaItem!.MediaType?.Name, allProviders, ct);
                 // If this is a TMDB movie enrichment, ensure collection parent exists and re-parent if needed.
                 // Stubs are skipped — they're placeholders and must not trigger further collection creation.
                 // Items that already have children are acting as collection containers; skip them too —
@@ -2475,6 +2476,7 @@ public class MetadataEnrichmentService(
         int mediaItemId,
         Chronicle.Plugins.Models.MediaMetadata result,
         string sourcePluginId,
+        string? mediaTypeName,
         IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders,
         CancellationToken ct)
     {
@@ -2484,11 +2486,33 @@ public class MetadataEnrichmentService(
         var crossRefs  = CrossRefHelper.ExtractCrossRefIds(result, fromSource);
         if (crossRefs.Count == 0) return;
 
+        // Only seed plugins that actually support this item's media type (or its parent hint).
+        var normalizedType = mediaTypeName is not null ? NormalizeMediaTypeName(mediaTypeName) : null;
+        // Parent-type hint: anime → tv, fanedits → movie (mirrors FileScanService.ToMediaTypeHint)
+        var typeHint = mediaTypeName?.ToLowerInvariant() switch
+        {
+            var n when n is not null && n.Contains("anime")    => "tv",
+            var n when n is not null && n.Contains("fanedits") => "movie",
+            _ => null,
+        };
+
         foreach (var (xSource, xId) in crossRefs)
         {
             foreach (var (candidatePluginId, candidateProvider) in allProviders)
             {
                 if (candidatePluginId == sourcePluginId) continue;
+
+                // Skip plugins that don't support this media type.
+                if (normalizedType is not null)
+                {
+                    var supported = candidateProvider.GetSupportedMediaTypes()
+                        .Any(t =>
+                        {
+                            var n = NormalizeMediaTypeName(t.MediaTypeName);
+                            return n == normalizedType || n == typeHint;
+                        });
+                    if (!supported) continue;
+                }
 
                 var isOwner        = string.Equals(PluginIdHelper.ToSource(candidatePluginId), xSource, StringComparison.OrdinalIgnoreCase);
                 var acceptsCrossRef = !isOwner && candidateProvider
