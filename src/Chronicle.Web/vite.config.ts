@@ -55,6 +55,19 @@ export default defineConfig({
         // on large libraries.
         timeout: 120_000,
         proxyTimeout: 120_000,
+        configure(proxy) {
+          // Suppress ECONNREFUSED noise printed while the API is starting up or stopped.
+          proxy.on('error', (err, _req, res) => {
+            if ((err as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
+              if (res && 'writeHead' in res) {
+                res.writeHead(503, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ success: false, error: { code: 'API_UNAVAILABLE', message: 'API is not running.' } }))
+              }
+              return
+            }
+            // Let other errors through (logged by Vite default handler)
+          })
+        },
       },
     },
   },
