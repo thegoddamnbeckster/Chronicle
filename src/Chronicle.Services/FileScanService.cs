@@ -1308,45 +1308,96 @@ namespace Chronicle.Services
         }
 
         /// <summary>
-        /// Returns the first provider for <paramref name="mediaTypeHint"/> whose
-        /// <see cref="IMetadataProvider.SearchAsync"/> returns at least one result, trying
-        /// each type-compatible provider in load order.  Providers that throw (e.g.
-        /// SIMKL/Trakt which require IDs, not text) are skipped automatically.
+        /// Queries all type-compatible providers in parallel, then merges results so that
+        /// a provider that knows the identity (e.g. Trakt) and a provider that has images
+        /// (e.g. TMDB) each contribute their best data to the same result card.
+        /// Providers that throw (e.g. SIMKL/Trakt text-search not supported) are skipped.
         /// </summary>
         public async Task<List<MetadataCandidate>> SearchMetadataAsync(
             string query, string mediaTypeHint, CancellationToken ct = default)
         {
-            var candidates = ProvidersForType(mediaTypeHint);
-            if (candidates.Count == 0)
+            var providers = ProvidersForType(mediaTypeHint);
+            if (providers.Count == 0)
                 throw new InvalidOperationException(
                     "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
 
-            List<Exception> errors = [];
-            foreach (var provider in candidates)
+            // Run all providers in parallel; ignore failures from individual providers.
+            var context = new MediaSearchContext(query, MediaTypeName: mediaTypeHint);
+            var tasks   = providers.Select(async p =>
             {
-                try
-                {
-                    var results = await provider.SearchAsync(
-                        new MediaSearchContext(query, MediaTypeName: mediaTypeHint), ct);
+                try   { return await p.SearchAsync(context, ct); }
+                catch { return (IReadOnlyList<ScoredCandidate>)[]; }
+            });
+            var allProviderResults = await Task.WhenAll(tasks);
 
-                    if (results.Count > 0)
-                        return results
-                            .Select(c => new MetadataCandidate(
-                                c.Metadata.ExternalId, c.Metadata.Title, c.Metadata.Year,
-                                c.Metadata.PosterUrl, c.Metadata.Overview, c.Metadata.Rating, 0,
-                                c.Metadata.Source,
-                                c.Metadata.Genres.Count > 0 ? c.Metadata.Genres : null,
-                                c.Metadata.Cast.Count > 0 ? c.Metadata.Cast : null))
-                            .ToList();
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    errors.Add(ex);
-                }
+            // Flatten into candidates grouped by provider.
+            var allCandidates = providers
+                .Zip(allProviderResults, (p, results) => (provider: p, results))
+                .SelectMany(x => x.results.Select(r => (x.provider, r)))
+                .ToList();
+
+            if (allCandidates.Count == 0) return [];
+
+            // Build a lookup: TMDB external ID → best poster URL from any provider.
+            // Lets a Trakt result (no image) pick up the poster from a TMDB result.
+            var tmdbIdToPoster = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (_, r) in allCandidates)
+            {
+                if (string.IsNullOrEmpty(r.Metadata.PosterUrl)) continue;
+                // Index by the result's own external ID so cross-ref matching can find it.
+                tmdbIdToPoster.TryAdd(r.Metadata.ExternalId, r.Metadata.PosterUrl);
             }
 
-            // All providers returned empty or failed — return empty (not an error).
-            return [];
+            // Deduplicate: if two providers return the same item (matched via cross-ref IDs),
+            // keep the first occurrence but fill in missing fields from the other.
+            var seen   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var merged = new List<MetadataCandidate>();
+
+            foreach (var (_, r) in allCandidates)
+            {
+                var m = r.Metadata;
+
+                // Collect all known external IDs for this result (own ID + cross-refs in ExtendedData).
+                var allIds = new List<string> { m.ExternalId };
+                if (m.ExtendedData is { } ext && ext.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && ext.TryGetProperty("ids", out var ids))
+                {
+                    bool isMovie = m.ExternalId?.Contains(":movie:") == true
+                                || m.ExternalId?.StartsWith("movie:") == true;
+                    foreach (var prop in ids.EnumerateObject())
+                    {
+                        var formatted = FormatCrossRefId(prop.Name.ToLowerInvariant(), prop.Value, isMovie);
+                        if (formatted is not null) allIds.Add(formatted);
+                    }
+                }
+
+                // If any of this result's IDs was already emitted, skip the duplicate.
+                if (allIds.Any(id => seen.Contains(id))) continue;
+                foreach (var id in allIds) seen.Add(id);
+
+                // Supplement missing poster from another provider's result for the same item.
+                var poster = m.PosterUrl;
+                if (string.IsNullOrEmpty(poster))
+                {
+                    foreach (var id in allIds)
+                    {
+                        if (tmdbIdToPoster.TryGetValue(id, out var p) && !string.IsNullOrEmpty(p))
+                        {
+                            poster = p;
+                            break;
+                        }
+                    }
+                }
+
+                merged.Add(new MetadataCandidate(
+                    m.ExternalId, m.Title, m.Year, poster,
+                    m.Overview, m.Rating, 0,
+                    m.Source,
+                    m.Genres.Count > 0 ? m.Genres : null,
+                    m.Cast.Count > 0   ? m.Cast   : null));
+            }
+
+            return merged;
         }
 
         public async Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(
