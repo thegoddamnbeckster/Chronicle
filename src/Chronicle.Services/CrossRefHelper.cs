@@ -65,7 +65,7 @@ internal static class CrossRefHelper
 
             case "simkl":
                 if (value.ValueKind == JsonValueKind.Number)
-                    return $"simkl:{value.GetInt64()}";
+                    return $"simkl:{(isMovie ? "movie" : "tv")}:{value.GetInt64()}";
                 break;
 
             default:
