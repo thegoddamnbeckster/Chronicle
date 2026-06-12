@@ -1417,7 +1417,7 @@ namespace Chronicle.Services
                 }
 
                 merged.Add(new MetadataCandidate(
-                    m.ExternalId, m.Title, m.Year, poster,
+                    m.ExternalId!, m.Title, m.Year, poster,
                     m.Overview, m.Rating, 0,
                     m.Source,
                     m.Genres.Count > 0           ? m.Genres           : null,
