@@ -251,6 +251,22 @@
   white-space: nowrap;
 }
 
+.inLibraryBtn {
+  flex-shrink: 0;
+  padding: 6px 16px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.inLibraryBtn:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+
 /* ── Empty state ─────────────────────────────────────────────────────────── */
 
 .emptyState {

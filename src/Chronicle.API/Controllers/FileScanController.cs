@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using Chronicle.API.DTOs;
+using Chronicle.Data;
 using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Chronicle.API.Controllers;
 
@@ -15,14 +17,17 @@ public class FileScanController : ControllerBase
     private readonly ScanProgressService _progress;
     private readonly ImportProgressService _importProgress;
     private readonly IScanFolderService _scanFolderService;
+    private readonly ChronicleDbContext _context;
 
     public FileScanController(IFileScanService scanService, ScanProgressService progress,
-        ImportProgressService importProgress, IScanFolderService scanFolderService)
+        ImportProgressService importProgress, IScanFolderService scanFolderService,
+        ChronicleDbContext context)
     {
         _scanService = scanService;
         _progress = progress;
         _importProgress = importProgress;
         _scanFolderService = scanFolderService;
+        _context = context;
     }
 
     /// <summary>
@@ -190,8 +195,35 @@ public class FileScanController : ControllerBase
         try
         {
             var results = await _scanService.SearchMetadataAsync(query.Trim(), mediaTypeHint, ct);
+
+            // Check which results are already in the current user's library by matching external IDs.
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            Dictionary<string, int> libraryByExternalId = [];
+            if (int.TryParse(userIdStr, out var userId) && results.Count > 0)
+            {
+                var allExternalIds = results
+                    .SelectMany(r => (r.ContributingExternalIds ?? []).Prepend(r.ExternalId))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                // media_external_ids joined with user_libraries for this user
+                libraryByExternalId = await _context.MediaExternalIds
+                    .Where(x => allExternalIds.Contains(x.ExternalId)
+                             && _context.UserLibraries.Any(l => l.MediaItemId == x.MediaItemId && l.UserId == userId))
+                    .ToDictionaryAsync(x => x.ExternalId, x => x.MediaItemId, StringComparer.OrdinalIgnoreCase, ct);
+            }
+
+            int? ResolveLibraryItemId(string primaryId, List<string>? contributing)
+            {
+                if (libraryByExternalId.TryGetValue(primaryId, out var id)) return id;
+                foreach (var c in contributing ?? [])
+                    if (libraryByExternalId.TryGetValue(c, out var cid)) return cid;
+                return null;
+            }
+
             var dtos = results
-                .Select(r => new MetadataCandidateDto(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, r.MatchScore, r.Source, r.Genres, r.Cast, r.Sources, r.ContributingExternalIds))
+                .Select(r => new MetadataCandidateDto(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, r.MatchScore, r.Source, r.Genres, r.Cast, r.Sources, r.ContributingExternalIds,
+                    LibraryItemId: ResolveLibraryItemId(r.ExternalId, r.ContributingExternalIds)))
                 .ToList();
             return Ok(ApiResponse<List<MetadataCandidateDto>>.Ok(dtos));
         }
