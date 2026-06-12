@@ -356,6 +356,25 @@ using (var scope = app.Services.CreateScope())
 }
 
 // ── Middleware pipeline ───────────────────────────────────────────────────────
+
+// Catch TaskCanceledException / OperationCanceledException caused by the client
+// disconnecting mid-request. Return 499 (client closed request) silently rather
+// than letting ASP.NET log a full stack trace and return 500.
+app.Use(async (ctx, next) =>
+{
+    try
+    {
+        await next(ctx);
+    }
+    catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
+    {
+        if (!ctx.Response.HasStarted)
+        {
+            ctx.Response.StatusCode = 499; // Client Closed Request
+        }
+    }
+});
+
 // Request logging must come before routing so it captures all requests.
 app.UseSerilogRequestLogging(options =>
 {

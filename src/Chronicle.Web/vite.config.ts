@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, createLogger } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { readFileSync, existsSync } from 'fs'
@@ -27,7 +27,17 @@ function loadPorts(): { api: number; web: number } {
 const ports = loadPorts()
 const webPort = process.env.PORT ? parseInt(process.env.PORT, 10) : ports.web
 
+// Suppress ECONNREFUSED proxy noise when the API is stopped or starting up.
+// Vite's default handler logs these at error level producing large stack traces.
+const logger = createLogger()
+const originalError = logger.error.bind(logger)
+logger.error = (msg, options) => {
+  if ((options?.error as NodeJS.ErrnoException | undefined)?.code === 'ECONNREFUSED') return
+  originalError(msg, options)
+}
+
 export default defineConfig({
+  customLogger: logger,
   plugins: [react()],
   resolve: {
     alias: {
@@ -55,19 +65,6 @@ export default defineConfig({
         // on large libraries.
         timeout: 120_000,
         proxyTimeout: 120_000,
-        configure(proxy) {
-          // Suppress ECONNREFUSED noise printed while the API is starting up or stopped.
-          proxy.on('error', (err, _req, res) => {
-            if ((err as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
-              if (res && 'writeHead' in res) {
-                res.writeHead(503, { 'Content-Type': 'application/json' })
-                res.end(JSON.stringify({ success: false, error: { code: 'API_UNAVAILABLE', message: 'API is not running.' } }))
-              }
-              return
-            }
-            // Let other errors through (logged by Vite default handler)
-          })
-        },
       },
     },
   },
