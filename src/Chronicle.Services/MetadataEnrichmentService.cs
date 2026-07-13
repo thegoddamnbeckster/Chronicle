@@ -57,11 +57,8 @@ public class MetadataEnrichmentService(
         var allProviders = registry.GetMetadataProviderEntries()
             .Select(e => (e.PluginId, (IMetadataProvider)e.Provider))
             .ToList();
-        var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct, allProviders);
-        if (completedMeta is not null)
-            await SeedCrossRefEnrichmentRowsAsync(db, item.Id, completedMeta, pluginId,
-                item.MediaType?.Name, allProviders, ct);
-        await db.SaveChangesAsync(ct);
+        // Cross-ref seeding and SaveChangesAsync already happen inside EnrichItemCoreAsync.
+        await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct, allProviders);
     }
 
     public async Task EnrichItemAsync(
@@ -93,11 +90,8 @@ public class MetadataEnrichmentService(
 
             try
             {
-                var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct, allProviders);
-                if (completedMeta is not null)
-                    await SeedCrossRefEnrichmentRowsAsync(db, item.Id, completedMeta, pluginId,
-                        item.MediaType?.Name, allProviders, ct);
-                await db.SaveChangesAsync(ct);
+                // Cross-ref seeding and SaveChangesAsync already happen inside EnrichItemCoreAsync.
+                await EnrichItemCoreAsync(db, provider, pluginId, item, options, ct, allProviders);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -256,7 +250,11 @@ public class MetadataEnrichmentService(
             foreach (var row in rows)
             {
                 ct.ThrowIfCancellationRequested();
-                await EnrichOneAsync(db, provider, row, ct, allProviders);
+                // Cascade: false — this loop already walks the full hierarchy itself via its
+                // own parent-then-child ordered passes, so recursing into cascade too would
+                // process every child twice.
+                await EnrichItemCoreAsync(db, provider, pluginId, row,
+                    new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
             }
 
             // All items in this pass have been saved. Clear the change tracker so that
@@ -943,23 +941,136 @@ public class MetadataEnrichmentService(
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private async Task EnrichOneAsync(ChronicleDbContext db, IMetadataProvider provider,
-        MediaItemEnrichment row, CancellationToken ct,
+    // Per-(item, plugin) lock: prevents a batch pass and a single-item refresh/Fix-Match
+    // from racing on the exact same enrichment row. The per-plugin semaphore above only
+    // stops two batch runs from overlapping; it does nothing for a single-item call that
+    // happens to touch an item the batch pass is also mid-way through. Whichever finished
+    // last used to silently win the DB write with no coordination at all — this serializes
+    // any two callers touching the same (item, plugin) pair instead of letting them race.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int MediaItemId, string PluginId), SemaphoreSlim>
+        _itemPluginLocks = new();
+
+    private const int DefaultConfidenceThreshold = 50;
+
+    /// <summary>
+    /// Enriches a single (item, plugin) enrichment row. This is the one canonical
+    /// implementation used by every caller — the batch pass (<see cref="EnrichPendingAsync"/>),
+    /// single-item refresh/Fix-Match (<see cref="EnrichItemAsync(int,string,EnrichmentOptions,CancellationToken)"/>),
+    /// and cascade-to-children (<see cref="CascadeToChildrenAsync"/>) all funnel through here.
+    /// <paramref name="row"/>.MediaItem must already be populated by the caller.
+    /// </summary>
+    private async Task<MediaMetadata?> EnrichItemCoreAsync(
+        ChronicleDbContext db, IMetadataProvider provider, string pluginId,
+        MediaItemEnrichment row, EnrichmentOptions options, CancellationToken ct,
         IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null)
     {
+        var lockKey = (row.MediaItemId, pluginId);
+        var itemSem = _itemPluginLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
+        await itemSem.WaitAsync(ct);
+        try
+        {
+            return await EnrichItemCoreLockedAsync(db, provider, pluginId, row, options, ct, allProviders);
+        }
+        finally
+        {
+            itemSem.Release();
+        }
+    }
+
+    private async Task<MediaMetadata?> EnrichItemCoreLockedAsync(
+        ChronicleDbContext db, IMetadataProvider provider, string pluginId,
+        MediaItemEnrichment row, EnrichmentOptions options, CancellationToken ct,
+        IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders)
+    {
+        var item = row.MediaItem!;
+        MediaMetadata? completedMeta = null;
+
+        // FillGaps skip — background/batch behaviour. Single-item callers pass Force to
+        // always re-fetch (Refresh button); Fix Match always supplies an IdOverride, which
+        // bypasses this regardless of mode. The batch pass's own row-selection query already
+        // excludes Completed rows, so this is a no-op from that caller — kept here so the
+        // check applies uniformly no matter which caller reaches this method.
+        if (options.Mode == EnrichmentMode.FillGaps
+            && row.Status == EnrichmentStatus.Completed
+            && options.IdOverride is null)
+        {
+            if (options.Cascade)
+                await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct, allProviders);
+            return null;
+        }
+
         row.LastAttemptedAt = DateTime.UtcNow;
         string searchQuery = string.Empty;
         List<MediaMetadata> rawCandidates = [];
         try
         {
             MediaMetadata? result = null;
+            string? resolvedId = null;
+
+            // ── Step 0: Fix Match override ─────────────────────────────────────────
+            // User-supplied external ID bypasses scoring entirely. A bare show-level ID
+            // (e.g. "tv:63197") entered for a season/episode item must be promoted to a
+            // compound ID using the item's position in the hierarchy — otherwise
+            // GetByIdAsync returns show-level data applied to a season/episode.
+            if (options.IdOverride is not null)
+            {
+                resolvedId = options.IdOverride.Trim();
+
+                if (item.ParentId is not null
+                    && resolvedId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase)
+                    && !resolvedId.Contains('/'))
+                {
+                    var showTmdbId = resolvedId.Split(':', 2)[1];
+                    if (item.HierarchyLevel >= 2 && item.Parent is not null)
+                    {
+                        int? seasonNum = item.Parent.Number;
+                        if (seasonNum is null && item.Parent.Name is { } pn)
+                        {
+                            var m2 = System.Text.RegularExpressions.Regex.Match(pn, @"\d+");
+                            if (m2.Success) seasonNum = int.Parse(m2.Value);
+                        }
+                        int? epNum = item.Number;
+                        if (epNum is null && item.Name is { } en)
+                        {
+                            var m3 = System.Text.RegularExpressions.Regex.Match(en, @"\d+");
+                            if (m3.Success) epNum = int.Parse(m3.Value);
+                        }
+                        if (seasonNum.HasValue && epNum.HasValue)
+                        {
+                            resolvedId = $"tv:{showTmdbId}/season:{seasonNum}/episode:{epNum}";
+                            logger.LogInformation(
+                                "Fix Match: promoted bare show ID to episode compound ID {Id} for item {ItemId}",
+                                resolvedId, item.Id);
+                        }
+                    }
+                    else if (item.HierarchyLevel == 1)
+                    {
+                        int? seasonNum = item.Number;
+                        if (seasonNum is null && item.Name is { } sn)
+                        {
+                            var m2 = System.Text.RegularExpressions.Regex.Match(sn, @"\d+");
+                            if (m2.Success) seasonNum = int.Parse(m2.Value);
+                        }
+                        if (seasonNum.HasValue)
+                        {
+                            resolvedId = $"tv:{showTmdbId}/season:{seasonNum}";
+                            logger.LogInformation(
+                                "Fix Match: promoted bare show ID to season compound ID {Id} for item {ItemId}",
+                                resolvedId, item.Id);
+                        }
+                    }
+                }
+
+                result = await provider.GetByIdAsync(resolvedId, ct);
+            }
 
             // ── Step 1: Validate any stored ExternalId ────────────────────────────
             // Clear IDs whose entity type doesn't match the item's hierarchy level.
             // This handles previously-wrong enrichments (e.g. a bare "tv:63197" stored
             // on an episode item from an earlier name-search that matched the wrong show).
             // After clearing, Step 2 will derive the correct ID from the show hierarchy.
-            if (!string.IsNullOrEmpty(row.ExternalId) && row.MediaItem is not null)
+            // Skipped when Step 0 already resolved an explicit Fix Match override.
+            if (options.IdOverride is null && !string.IsNullOrEmpty(row.ExternalId) && row.MediaItem is not null)
             {
                 bool idIsValid = true;
                 var sep = row.ExternalId.IndexOf(':');
@@ -1023,6 +1134,27 @@ public class MetadataEnrichmentService(
                             // Episode/track level — MusicBrainz "recording:" or TMDB "tv:N/season:N/episode:N"
                             idIsValid = entityType is "recording" or "episode"
                                 || (entityType == "tv" && row.ExternalId.Contains("/episode:", StringComparison.OrdinalIgnoreCase));
+                        }
+                    }
+                }
+
+                // For hierarchical items, verify the stored ID's show portion matches the
+                // parent's show ID. Catches a child enriched against the wrong show (e.g.
+                // episodes matched to tv:157239 while the parent season is tv:243129/season:1).
+                if (idIsValid && row.MediaItem.HierarchyLevel > 0 && row.MediaItem.ParentId is not null)
+                {
+                    var parentRow = await db.MediaEnrichments
+                        .FirstOrDefaultAsync(e => e.MediaItemId == row.MediaItem.ParentId && e.PluginId == pluginId, ct);
+                    if (parentRow?.ExternalId is not null)
+                    {
+                        var storedBase = row.ExternalId.Split('/')[0];
+                        var parentBase = parentRow.ExternalId.Split('/')[0];
+                        if (!string.Equals(storedBase, parentBase, StringComparison.OrdinalIgnoreCase))
+                        {
+                            logger.LogInformation(
+                                "Stored ExternalId {StoredId} for item {ItemId} is inconsistent with parent ({ParentId}); re-deriving",
+                                row.ExternalId, row.MediaItemId, parentRow.ExternalId);
+                            idIsValid = false;
                         }
                     }
                 }
@@ -1414,6 +1546,36 @@ public class MetadataEnrichmentService(
                             "Search returned 0 candidates for item {ItemId} \"{Name}\" (plugin={Plugin})",
                             row.MediaItemId, row.MediaItem.Name, provider.PluginId);
 
+                    // Confidence gate: reject low-scoring matches outright rather than accepting
+                    // whatever scored highest — a near-zero-score candidate is not a real match.
+                    if (topCandidate is not null && topCandidate.Score < DefaultConfidenceThreshold)
+                    {
+                        logger.LogInformation(
+                            "Enrichment rejected for item {ItemId} '{ItemName}': top candidate '{Title}' " +
+                            "scored {Score} (below threshold {Threshold}) — leaving as NotFound.",
+                            row.MediaItemId, row.MediaItem.Name, topCandidate.Metadata.Title,
+                            topCandidate.Score, DefaultConfidenceThreshold);
+                        topCandidate = null;
+                    }
+
+                    // For file-scanner-created root items, require the matched title to cover at
+                    // least 60% of the item's name tokens. Prevents fan-edit stubs whose names
+                    // include a subtitle (e.g. "Alien - Darksteel Cut") from being silently
+                    // identified as the canonical movie ("Alien") just because the first word
+                    // matches. Sync-created items are exempt — their Name is already canonical.
+                    if (topCandidate is not null
+                        && row.MediaItem.HierarchyLevel == 0
+                        && IsFileScannerItem(row.MediaItem)
+                        && !IsTitleMatchAcceptable(row.MediaItem.Name, topCandidate.Metadata.Title))
+                    {
+                        logger.LogInformation(
+                            "Enrichment skipped for item {ItemId} '{ItemName}': matched title '{MatchedTitle}' " +
+                            "has insufficient token overlap with item name — leaving as NotFound. " +
+                            "Use Fix Match to assign the correct identity manually.",
+                            row.MediaItemId, row.MediaItem.Name, topCandidate.Metadata.Title);
+                        topCandidate = null;
+                    }
+
                     result = topCandidate?.Metadata;
 
                     // SearchAsync returns only search-index fields (no cover art).
@@ -1455,6 +1617,7 @@ public class MetadataEnrichmentService(
                 row.Status          = EnrichmentStatus.Completed;
                 row.LastCompletedAt = DateTime.UtcNow;
                 row.ErrorMessage    = null;
+                row.RetryCount      = 0;
                 MergeMetadata(row.MediaItem!, row.PluginId, result);
                 await resolutionService.ResolveAsync(row.MediaItem!, db, ct);
                 // Keep media_external_ids in sync with the enrichment result so that
@@ -1498,6 +1661,8 @@ public class MetadataEnrichmentService(
                     "Enrichment matched: plugin={Plugin} item={ItemId} \"{Name}\" (level={Level}) → {ExternalId} \"{MatchedTitle}\"",
                     provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
                     row.MediaItem?.HierarchyLevel ?? -1, result.ExternalId, result.Title);
+
+                completedMeta = result;
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -1599,13 +1764,22 @@ public class MetadataEnrichmentService(
         }
 
         await db.SaveChangesAsync(ct);
+
+        // Single-item callers (Refresh, Fix Match, Resync All) default Cascade to true.
+        // The batch pass (EnrichPendingAsync) passes Cascade: false — it already walks the
+        // full hierarchy itself via its own parent-then-child ordered loop, so recursing here
+        // too would process every child twice.
+        if (options.Cascade)
+            await CascadeToChildrenAsync(db, provider, pluginId, row.MediaItem!, options, ct, allProviders);
+
+        return completedMeta;
     }
 
     /// <summary>
     /// Thrown only by the inner GetByIdAsync catch to signal "provider returned no match for
-    /// this specific ID". Caught exclusively by the outer EnrichOneAsync handler so that
-    /// unrelated KeyNotFoundExceptions from dictionary access or LINQ elsewhere in the method
-    /// do NOT get silently marked as NotFound.
+    /// this specific ID". Caught exclusively by the outer EnrichItemCoreLockedAsync handler so
+    /// that unrelated KeyNotFoundExceptions from dictionary access or LINQ elsewhere in the
+    /// method do NOT get silently marked as NotFound.
     /// </summary>
     private sealed class ProviderNotFoundException : Exception
     {
@@ -2044,12 +2218,19 @@ public class MetadataEnrichmentService(
         {
             item.PosterUrl = null;
         }
+
+        item.UpdatedAt = DateTime.UtcNow;
     }
 
-    // ── EnrichItemCoreAsync ────────────────────────────────────────────────────
-
-    private const int DefaultConfidenceThreshold = 50;
-
+    // ── EnrichItemCoreAsync (item overload — thin wrapper) ─────────────────────
+    //
+    // Loads or creates the row for (item, pluginId), then delegates to the canonical
+    // row-based EnrichItemCoreAsync above, which every caller (batch, single-item,
+    // cascade) ultimately funnels through. PluginAuthException is deliberately NOT
+    // rethrown by the row-based overload (a batch pass must keep processing the rest
+    // of its items after one auth failure) — this wrapper re-derives it from the row's
+    // final status instead, so the single-item callers below still get to propagate
+    // PLUGIN_AUTH_FAILED to their controller the same way they did before.
     private async Task<MediaMetadata?> EnrichItemCoreAsync(
         ChronicleDbContext db,
         IMetadataProvider provider,
@@ -2059,9 +2240,6 @@ public class MetadataEnrichmentService(
         CancellationToken ct,
         IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null)
     {
-        MediaMetadata? completedMeta = null;
-
-        // 1. Load or create enrichment row
         var row = await db.MediaEnrichments
             .FirstOrDefaultAsync(e => e.MediaItemId == item.Id && e.PluginId == pluginId, ct);
         if (row is null)
@@ -2070,318 +2248,14 @@ public class MetadataEnrichmentService(
                 { MediaItemId = item.Id, PluginId = pluginId, MaxRetries = 3 };
             db.MediaEnrichments.Add(row);
         }
+        row.MediaItem = item;
 
-        // 2. FillGaps skip
-        if (options.Mode == EnrichmentMode.FillGaps
-            && row.Status == EnrichmentStatus.Completed
-            && options.IdOverride is null)
-        {
-            if (options.Cascade)
-                await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct, allProviders);
-            return null;
-        }
+        var completedMeta = await EnrichItemCoreAsync(db, provider, pluginId, row, options, ct, allProviders);
 
-        row.LastAttemptedAt = DateTime.UtcNow;
-        MediaMetadata? result   = null;
-        string?        resolvedId = null;
-
-        try
-        {
-            // 3a. IdOverride
-            if (options.IdOverride is not null)
-            {
-                resolvedId = options.IdOverride.Trim();
-
-                // For TV season/episode items, a bare show-level ID (e.g. "tv:63197") entered in
-                // Fix Match must be promoted to a compound ID using the item's position in the
-                // hierarchy — otherwise GetByIdAsync returns show-level data applied to an episode.
-                //   Season  → tv:{showId}/season:{N}
-                //   Episode → tv:{showId}/season:{S}/episode:{E}
-                if (item.ParentId is not null
-                    && resolvedId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase)
-                    && !resolvedId.Contains('/'))
-                {
-                    var showTmdbId = resolvedId.Split(':', 2)[1];
-                    if (item.HierarchyLevel >= 2 && item.Parent is not null)
-                    {
-                        // Episode: parent is the season — use parent.Number for the season number
-                        int? seasonNum = item.Parent.Number;
-                        if (seasonNum is null && item.Parent.Name is { } pn)
-                        {
-                            var m2 = System.Text.RegularExpressions.Regex.Match(pn, @"\d+");
-                            if (m2.Success) seasonNum = int.Parse(m2.Value);
-                        }
-                        int? epNum = item.Number;
-                        if (epNum is null && item.Name is { } en)
-                        {
-                            var m3 = System.Text.RegularExpressions.Regex.Match(en, @"\d+");
-                            if (m3.Success) epNum = int.Parse(m3.Value);
-                        }
-                        if (seasonNum.HasValue && epNum.HasValue)
-                        {
-                            resolvedId = $"tv:{showTmdbId}/season:{seasonNum}/episode:{epNum}";
-                            logger.LogInformation(
-                                "Fix Match: promoted bare show ID to episode compound ID {Id} for item {ItemId}",
-                                resolvedId, item.Id);
-                        }
-                    }
-                    else if (item.HierarchyLevel == 1)
-                    {
-                        // Season: item.Number is the season number
-                        int? seasonNum = item.Number;
-                        if (seasonNum is null && item.Name is { } sn)
-                        {
-                            var m2 = System.Text.RegularExpressions.Regex.Match(sn, @"\d+");
-                            if (m2.Success) seasonNum = int.Parse(m2.Value);
-                        }
-                        if (seasonNum.HasValue)
-                        {
-                            resolvedId = $"tv:{showTmdbId}/season:{seasonNum}";
-                            logger.LogInformation(
-                                "Fix Match: promoted bare show ID to season compound ID {Id} for item {ItemId}",
-                                resolvedId, item.Id);
-                        }
-                    }
-                }
-            }
-            // 3b. Stored ID — validate hierarchy level and parent consistency
-            else if (!string.IsNullOrEmpty(row.ExternalId) && IsIdValidForLevel(row.ExternalId, item))
-            {
-                // For hierarchical items, verify the stored ID's show portion matches the parent's
-                // show ID. This catches cases where a child was enriched against the wrong show
-                // (e.g. episodes matched to tv:157239 while the parent season is tv:243129/season:1).
-                var storedIdConsistent = true;
-                if (item.HierarchyLevel > 0 && item.ParentId is not null)
-                {
-                    var parentRow = await db.MediaEnrichments
-                        .FirstOrDefaultAsync(e => e.MediaItemId == item.ParentId && e.PluginId == pluginId, ct);
-                    if (parentRow?.ExternalId is not null)
-                    {
-                        var storedBase  = row.ExternalId.Split('/')[0]; // e.g. "tv:157239"
-                        var parentBase  = parentRow.ExternalId.Split('/')[0]; // e.g. "tv:243129"
-                        storedIdConsistent = string.Equals(storedBase, parentBase, StringComparison.OrdinalIgnoreCase);
-                        if (!storedIdConsistent)
-                            logger.LogInformation(
-                                "Stored ExternalId {StoredId} for item {ItemId} is inconsistent with parent ({ParentId}); re-deriving",
-                                row.ExternalId, item.Id, parentRow.ExternalId);
-                    }
-                }
-
-                if (storedIdConsistent)
-                    resolvedId = row.ExternalId;
-            }
-            // 3c. Parent-derived ID (also runs when 3b discards an inconsistent stored ID)
-            if (resolvedId is null && item.ParentId is not null)
-            {
-                resolvedId = await TryDeriveFromParentAsync(db, pluginId, item, ct);
-            }
-
-            // Fetch if we have a resolved ID from 3a/3b/3c
-            if (resolvedId is not null)
-            {
-                result = await provider.GetByIdAsync(resolvedId, ct);
-                if (result is null) resolvedId = null; // provider returned nothing — fall through to search
-            }
-
-            // 3d. Search
-            // Always runs for root items (no parent).
-            // Also runs for HierarchyLevel-1 items (albums/seasons) when derivation returned null —
-            // music albums have no derivable ID from the artist MBID, so search is the only path.
-            // TV seasons always get a derived ID (show MBID + season number), so derivation
-            // succeeds there and this branch is skipped.
-            // Tracks/episodes (HierarchyLevel 2) are never searched; they rely on derivation only.
-            if (result is null && (item.ParentId is null || (resolvedId is null && item.HierarchyLevel == 1)))
-            {
-                var childCount   = await db.MediaItems.CountAsync(m => m.ParentId == item.Id, ct);
-                var filenameStem = ExtractFilenameStem(item);
-                var storedAltNames = item.HierarchyLevel == 0
-                    ? ExtractStoredAlternateNames(item.MetadataJson)
-                    : null;
-                // Use GroupBy + First to guard against duplicate Source rows — if a data anomaly
-                // has caused two external-ID rows with the same source for this item, prefer the
-                // most-recently-inserted one (highest Id) rather than crashing with ArgumentException.
-                var knownIds = (await db.MediaExternalIds
-                    .Where(e => e.MediaItemId == item.Id)
-                    .ToListAsync(ct))
-                    .GroupBy(e => e.Source.ToLowerInvariant())
-                    .ToDictionary(g => g.Key, g => g.OrderByDescending(e => e.Id).First().ExternalId);
-                var ctx = new Chronicle.Plugins.Models.MediaSearchContext(
-                    Name:             NormalizeSearchName(item.Name),
-                    Year:             ValidateYear(item.Year),
-                    ParentName:       item.Parent?.Name,
-                    ChildCount:       childCount > 0 ? childCount : null,
-                    HierarchyLevel:   item.HierarchyLevel,
-                    FilenameStem:     filenameStem,
-                    AltTitles:        BuildAltTitles(
-                                          item.Name,
-                                          filenameStem,
-                                          null,
-                                          storedAltNames),
-                    MediaTypeName:    item.MediaType?.Name,
-                    KnownExternalIds: knownIds.Count > 0 ? knownIds : null);
-
-                var candidates = await provider.SearchAsync(ctx, ct);
-                var best = candidates.OrderByDescending(c => c.Score).FirstOrDefault();
-
-                StoreDiagnosticsJson(row, ctx.Name, candidates);
-
-                if (best is null || best.Score < DefaultConfidenceThreshold
-                    || string.IsNullOrEmpty(best.Metadata.ExternalId))
-                {
-                    row.Status = EnrichmentStatus.NotFound;
-                    await db.SaveChangesAsync(ct);
-                    return null;
-                }
-
-                // For file-scanner-created root items, require the matched title to cover at
-                // least 60% of the item's name tokens. This prevents fan-edit stubs whose names
-                // include a subtitle (e.g. "Alien - Darksteel Cut") from being silently identified
-                // as the canonical movie ("Alien") just because the first word matches.
-                // Sync-created items are exempt — their Name is already the canonical title.
-                if (item.HierarchyLevel == 0
-                    && IsFileScannerItem(item)
-                    && !IsTitleMatchAcceptable(item.Name, best.Metadata.Title))
-                {
-                    logger.LogInformation(
-                        "Enrichment skipped for item {ItemId} '{ItemName}': matched title '{MatchedTitle}' " +
-                        "has insufficient token overlap with item name — leaving as NotFound. " +
-                        "Use Fix Match to assign the correct identity manually.",
-                        item.Id, item.Name, best.Metadata.Title);
-                    row.Status = EnrichmentStatus.NotFound;
-                    await db.SaveChangesAsync(ct);
-                    return null;
-                }
-
-                resolvedId = best.Metadata.ExternalId;
-                result = await provider.GetByIdAsync(resolvedId, ct);
-                result ??= best.Metadata;
-            }
-
-            if (result is null || string.IsNullOrEmpty(resolvedId))
-            {
-                row.Status = EnrichmentStatus.NotFound;
-                await db.SaveChangesAsync(ct);
-                return null;
-            }
-
-            // 6. Merge losslessly
-            MergeProviderResult(item, pluginId, result);
-            await resolutionService.ResolveAsync(item, db, ct);
-
-            // 7. Update row
-            // Prefer result.ExternalId — providers normalize raw user input (e.g. Fanart.tv URLs →
-            // "artist:{mbid}") so the canonical form is what's returned in the result, not resolvedId.
-            row.ExternalId      = !string.IsNullOrEmpty(result.ExternalId) ? result.ExternalId : resolvedId;
-            row.Status          = EnrichmentStatus.Completed;
-            row.LastCompletedAt = DateTime.UtcNow;
-            row.ErrorMessage    = null;
-            row.RetryCount      = 0;
-            completedMeta       = result;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (PluginAuthException ex)
-        {
-            // Authentication failure — terminal immediately, no retries.
-            logger.LogWarning(
-                "Plugin auth failure for item {ItemId} plugin {PluginId}: {ErrorMessage}",
-                item.Id, pluginId, ex.Message);
-            row.Status       = EnrichmentStatus.AuthFailed;
-            row.ErrorMessage = ex.Message;
-            throw; // re-throw so the controller can return PLUGIN_AUTH_FAILED to the caller
-        }
-        catch (Exception ex)
-        {
-            // A 404 from the provider means the stored ExternalId no longer exists upstream
-            // (e.g. TMDB removed the entry). Treat as NotFound — a permanent terminal state —
-            // so retries are not wasted burning through MaxRetries until Exhausted.
-            if (ex is HttpRequestException httpEx &&
-                httpEx.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                logger.LogInformation(
-                    "Enrichment not found (404): plugin={Plugin} item={ItemId} \"{Name}\" — stored ID no longer exists upstream",
-                    pluginId, item.Id, item.Name);
-                row.Status       = EnrichmentStatus.NotFound;
-                row.ErrorMessage = ex.Message;
-            }
-            else
-            {
-                var isExpected = ex is HttpRequestException or TaskCanceledException
-                                                             or TimeoutException
-                                                             or OperationCanceledException;
-                if (isExpected)
-                    logger.LogWarning(
-                        "Enrichment transient error for item {ItemId} plugin {PluginId}: {Type}: {Msg}",
-                        item.Id, pluginId, ex.GetType().Name, ex.Message);
-                else
-                    logger.LogWarning(ex, "Enrichment failed for item {ItemId} plugin {PluginId}",
-                        item.Id, pluginId);
-
-                row.RetryCount++;
-                row.ErrorMessage = ex.Message;
-                row.Status = row.RetryCount >= row.MaxRetries
-                    ? EnrichmentStatus.Exhausted
-                    : EnrichmentStatus.Failed;
-            }
-        }
-
-        // Keep media_external_ids in sync so sibling plugins (e.g. Fanart.tv) can find
-        // the canonical ID written by this plugin (e.g. MusicBrainz "artist:{mbid}").
-        // The batch enrichment path already calls this; the single-item (Fix Match/Refresh)
-        // path was missing it, causing KnownExternalIds to remain empty for those items.
-        if (row.Status == EnrichmentStatus.Completed && !string.IsNullOrEmpty(row.ExternalId))
-            await UpsertExternalIdForEnrichmentAsync(db, item.Id, row.ExternalId, ct, pluginId);
-
-        await db.SaveChangesAsync(ct);
-
-        // 8. Cascade to children
-        if (options.Cascade)
-            await CascadeToChildrenAsync(db, provider, pluginId, item, options, ct);
+        if (row.Status == EnrichmentStatus.AuthFailed)
+            throw new PluginAuthException(pluginId, row.ErrorMessage ?? "Plugin authentication failed.");
 
         return completedMeta;
-    }
-
-    private static bool IsIdValidForLevel(string externalId, MediaItem item)
-    {
-        var sep = externalId.IndexOf(':');
-        if (sep <= 0) return true;
-        var prefix = externalId[..sep];
-        if (item.ParentId is null)
-            return prefix is "artist" or "album" or "movie" or "tv";
-        // Child-level: reject bare show-level IDs on season/episode rows
-        if (prefix == "tv" && !externalId.Contains('/'))
-            return false;
-        return true;
-    }
-
-    private async Task<string?> TryDeriveFromParentAsync(
-        ChronicleDbContext db, string pluginId, MediaItem item, CancellationToken ct)
-    {
-        var parentRow = await db.MediaEnrichments
-            .FirstOrDefaultAsync(e => e.MediaItemId == item.ParentId && e.PluginId == pluginId, ct);
-
-        if (parentRow?.ExternalId is null || parentRow.Status != EnrichmentStatus.Completed)
-            return null;
-
-        if (item.Number is null) return null;
-
-        var parentId = parentRow.ExternalId;
-
-        if (item.HierarchyLevel == 1)
-            return $"{parentId}/season:{item.Number}";
-
-        if (item.HierarchyLevel == 2)
-        {
-            var grandparentRow = await db.MediaEnrichments
-                .Include(e => e.MediaItem)
-                .FirstOrDefaultAsync(e => e.MediaItem!.Id == item.Parent!.ParentId
-                                       && e.PluginId == pluginId, ct);
-            if (grandparentRow?.ExternalId is null) return null;
-            var seasonNum = item.Parent?.Number;
-            if (seasonNum is null) return null;
-            return $"{grandparentRow.ExternalId}/season:{seasonNum}/episode:{item.Number}";
-        }
-
-        return null;
     }
 
     private async Task CascadeToChildrenAsync(
@@ -2401,16 +2275,17 @@ public class MetadataEnrichmentService(
             if (ct.IsCancellationRequested) return;
             try
             {
-                var childMeta = await EnrichItemCoreAsync(db, provider, pluginId, child,
-                    options with { IdOverride = null }, ct);
-                if (childMeta is not null)
-                {
-                    await SeedCrossRefEnrichmentRowsAsync(db, child.Id, childMeta, pluginId,
-                        child.MediaType?.Name, allProviders, ct);
-                    await db.SaveChangesAsync(ct);
-                }
+                // Cross-ref seeding and SaveChangesAsync already happen inside
+                // EnrichItemCoreAsync itself — nothing further needed here.
+                await EnrichItemCoreAsync(db, provider, pluginId, child,
+                    options with { IdOverride = null }, ct, allProviders);
             }
             catch (OperationCanceledException) { return; }
+            catch (PluginAuthException ex)
+            {
+                logger.LogWarning(ex, "Cascade: auth failure enriching child {Id} '{Name}'",
+                    child.Id, child.Name);
+            }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Cascade: failed enriching child {Id} '{Name}'",
@@ -2480,54 +2355,6 @@ public class MetadataEnrichmentService(
 
         if (union == 0) return true;
         return (double)intersection / union >= 0.60;
-    }
-
-    private static void StoreDiagnosticsJson(
-        MediaItemEnrichment row, string query,
-        IReadOnlyList<Chronicle.Plugins.Models.ScoredCandidate> candidates)
-    {
-        // Use camelCase property names in anonymous type literals so the JSON matches
-        // the field names the frontend's EnrichmentDiagnostics / EnrichmentCandidate
-        // TypeScript interfaces expect (searchQuery, totalScore, scoreReason, etc.).
-        row.DiagnosticsJson = JsonSerializer.Serialize(new
-        {
-            searchQuery        = query,
-            threshold          = DefaultConfidenceThreshold,
-            candidatesReturned = candidates.Count,
-            topCandidates      = candidates.OrderByDescending(c => c.Score).Take(5)
-                .Select(c => new
-                {
-                    title       = c.Metadata.Title,
-                    year        = c.Metadata.Year,
-                    externalId  = c.Metadata.ExternalId,
-                    totalScore  = c.Score,
-                    scoreReason = c.ScoreReason,
-                })
-                .ToList(),
-        });
-    }
-
-    private static void MergeProviderResult(MediaItem item, string pluginId, MediaMetadata meta)
-    {
-        var existing = JsonSerializer
-            .Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson ?? "{}") ?? [];
-
-        var shortId = pluginId.Contains('.') ? PluginIdHelper.ToSource(pluginId) : null;
-        if (shortId is not null) existing.Remove(shortId);
-
-        var savedResults = meta.Results;
-        var savedTotal   = meta.TotalResults;
-        meta.Results      = null;
-        meta.TotalResults = 0;
-        try   { existing[pluginId] = JsonSerializer.SerializeToElement(meta, MetadataBlobOptions); }
-        finally { meta.Results = savedResults; meta.TotalResults = savedTotal; }
-        item.MetadataJson = JsonSerializer.Serialize(existing);
-
-        // NOTE: first-class column promotion (PosterUrl, Overview, Name, Year, RuntimeMinutes)
-        // is intentionally NOT done here. ResolveAsync() is always called immediately after
-        // MergeProviderResult and promotes fields according to the priority assignment config.
-        // Promoting here would let whichever plugin ran last win, ignoring priority order.
-        item.UpdatedAt = DateTime.UtcNow;
     }
 
     /// <summary>

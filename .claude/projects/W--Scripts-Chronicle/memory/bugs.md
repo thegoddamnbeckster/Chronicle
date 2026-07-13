@@ -2,6 +2,38 @@
 
 ## Open Bugs
 
+### BUG-039: MetadataEnrichmentService had two independently-implemented enrichment engines (EnrichOneAsync / EnrichItemCoreAsync)
+**Status:** Fixed *(2026-07-13)*
+**Symptom:** Discovered while investigating why the Hardcover enrichment for "Endymion" (item 274316) flipped from `Completed` (real cover art, overview, rating) to `Status=NotFound` within ~20 minutes, with a self-contradictory `DiagnosticsJson` (`failureReason: "Matched successfully."` alongside `Status: NotFound`).
+**Root cause:** Two ~1,100-line methods independently reimplemented the same conceptual operation — `EnrichOneAsync` (used only by the batch/scheduled path, `EnrichPendingAsync`) and `EnrichItemCoreAsync` (used only by the single-item path — Refresh button, Fix Match, Resync All, and all cascaded children). Neither called the other, and they had drifted:
+  - **No coordination lock** — a batch pass and a single-item refresh touching the same `(item, plugin)` row raced with zero synchronization (the only lock, `_pluginLocks`, stops two *batch* runs from overlapping — it does nothing for a single-item call hitting an item a batch pass is also mid-way through). Whichever `SaveChangesAsync` landed last silently won.
+  - **Diagnostics captured from a stale `row.Status`** in one path, `failureReason` computed before the final status was set on a later run — exactly the contradictory diagnostics that surfaced this whole investigation.
+  - **The batch path had no confidence-threshold or fan-edit title-match guard at all.** `EnrichItemCoreAsync` rejected any search candidate scoring below 50, and separately rejected file-scanner-created root items whose matched title didn't cover ≥60% of the item's own name tokens (the guard that stops "Alien - Darksteel Cut" from being silently identified as "Alien") — but `EnrichOneAsync` (the scheduled/unattended background pass — what actually runs automatically) had **neither check**, and would accept whatever scored highest regardless of confidence. This is the same bug class the very first investigation of this whole session (fan edits merging into official movies) was about, still unguarded on the path that runs unattended.
+  - Two separate merge functions (`MergeMetadata` vs `MergeProviderResult`) — only `MergeMetadata` cleared a stale TMDB poster on a child item when a fresh match returned none; the single-item path never did. Only `MergeProviderResult` bumped `item.UpdatedAt`; the batch path never did.
+  - Two separate diagnostics JSON shapes — the frontend's `EnrichmentDiagnostics` TypeScript interface (`searchQuery/candidatesReturned/failureReason/topCandidates/scannerSignals`) matched the batch path's shape; the single-item path wrote a different anonymous-type shape missing `failureReason`/`scannerSignals` entirely, and skipped writing diagnostics at all on any ID-reuse success path.
+  - Movie-collection re-parenting (`EnsureCollectionParentAsync`/`EnsureCollectionStubsAsync`) only ran from the batch path — a Fix Match or manual Refresh on a movie never triggered collection organization.
+  - `CascadeToChildrenAsync`'s recursive call never passed `allProviders` through, so cascaded children never got cross-ref ID seeding.
+**Fix:** Consolidated into one canonical `EnrichItemCoreAsync(row, options, ...)` implementation (taking the superset of both paths' capabilities), wrapped in a new per-`(MediaItemId, PluginId)` `SemaphoreSlim` lock so any two callers touching the same row now serialize instead of racing. Every caller (`EnrichPendingAsync`'s batch loop, both `EnrichItemAsync` overloads, `CascadeToChildrenAsync`) now funnels through it; a thin `MediaItem`-taking overload handles load-or-create-row for single-item callers and re-derives `PluginAuthException` from the final row status (since the locked core method itself must never throw — a batch pass has to keep processing the rest of its items after one auth failure). Net effect: `−264` lines despite gaining capability. 4 new unit tests cover the previously-batch-only-missing confidence/title-match guards and a positive-path sanity check; full suite is 327/328 (the 1 failure is the pre-existing unrelated `SyncOrchestrationServiceMatchTests` issue).
+**How this was found:** Not a user bug report — surfaced while investigating why a Hardcover match for "Endymion" reverted after the user manually corrected the book's data on hardcover.app, which led to "why did two enrichment runs race" → "why is there no lock" → "why are there two implementations to lock in the first place."
+
+---
+
+### BUG-038: Hardcover plugin's candidate scoring had no data-completeness tiebreaker
+**Status:** Fixed *(2026-07-13, Chronicle.Plugin.Hardcover)*
+**Symptom:** User reported Hardcover matched "Endymion" to a sparse/incomplete book record (no cover art) despite hardcover.app having a properly-populated entry for the same title; user fixed the data on Hardcover's own site.
+**Root cause:** `ScoreBookCandidateDirect`/`ScoreBookCandidate` in `HardcoverMetadataProvider.cs` scored candidates purely on title/year/author text match — no signal for whether a candidate actually has cover art or community ratings. Hardcover can have multiple book rows for the same real-world title (duplicate/sparse community entries); with no completeness tiebreaker, a well-curated entry could lose a tie to an empty duplicate purely on API result order.
+**Fix:** Added a small tiebreaker (+5 for cover art present, +2 for ratings present) to both scoring functions — small relative to the title/year/author signals (60+/20/15/20) so it only ever breaks near-ties, never overrides a genuinely better match. Rebuilt and redeployed the plugin DLL.
+
+---
+
+### BUG-037: ABS metadata-provider bridge didn't validate ABS's own mediaType request parameter
+**Status:** Fixed *(2026-07-13, Chronicle.Service.MetadataProvider.Audiobookshelf)*
+**Symptom:** User asked for confirmation that a single bridge instance could never mix media types across requests. Investigation found the bridge ignored the `mediaType=` query param ABS sends on every `/search` request, always searching whatever Chronicle media type was in its static config regardless of what ABS actually asked for.
+**Root cause:** `provider_server.py`'s `do_GET` read `query`/`author` from the querystring but never read `mediaType`. Not an active bug today (the user's single ABS library only ever sends `mediaType=book`, matching the bridge's only configured type), but a real latent risk if the same bridge instance were ever wired up as the Custom Metadata Provider for more than one ABS library (e.g. adding a Podcast library later).
+**Fix:** Added `abs_media_type` config setting (default `book`). The bridge now rejects (clean empty-matches response, no Chronicle call at all) any request whose `mediaType` disagrees with the configured value, instead of silently answering for the wrong content type.
+
+---
+
 ### BUG-034: Hardcover `book_mappings` schema change — `isbn_13`/`isbn_10` fields removed
 **Status:** Fixed *(already resolved before 2026-07-13, tracker was stale — commit 819efc1, "remove broken book_mappings fields")*
 **Symptom:** `System.InvalidOperationException: Hardcover GraphQL error: field 'isbn_13' not found in type: 'book_mappings'` thrown during `FetchBookAsync` → `GetByIdAsync`. Affects all queries that request `book_mappings { isbn_13 isbn_10 }`: `GetBookByIdAsync`, `GetBooksByTitleExactAsync`, `GetBooksByTitleAndAuthorAsync`, `GetBookBySlugFullAsync`.

@@ -93,6 +93,130 @@ public class MetadataEnrichmentServiceTests : IDisposable
         updated.RetryCount.Should().Be(3);
     }
 
+    // ── Consolidation regression tests: the batch path (EnrichPendingAsync) and the
+    // single-item path (EnrichItemAsync/Fix Match) now share one implementation. These
+    // guard the safety checks that previously existed only on the single-item path and
+    // were silently absent from the batch/scheduled path.
+
+    [Fact]
+    public async Task EnrichPendingAsync_RejectsLowConfidenceCandidate_LeavesNotFound()
+    {
+        // Prior to consolidation, the batch path applied NO confidence threshold at all —
+        // it accepted whatever scored highest, even a near-zero-score garbage candidate.
+        var (item, status) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Some Obscure Thing");
+
+        var provider = SetupProvider("chronicle.plugin.musicbrainz", "music");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new ScoredCandidate(
+                    new MediaMetadata { Title = "Unrelated Result", ExternalId = "artist:zzz" },
+                    Score: 10, ScoreReason: "barely matches")
+            ]);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.NotFound);
+        provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_RejectsFanEditTitleMismatch_LeavesNotFound()
+    {
+        // The original bug this whole project started from: a fan-edit stub whose name
+        // includes a subtitle ("Alien - Darksteel Cut") getting silently identified as the
+        // canonical movie ("Alien") because the title search matched on the first word.
+        // This guard existed only on the single-item path before consolidation — the
+        // scheduled/batch pass (what actually runs unattended) had no such protection.
+        var mt = new MediaType
+        {
+            Name = "fanedits", DisplayName = "Fan Edits", HierarchyLevels = 1,
+            HierarchyLabels = "Edit", InteractionVerb = "watched", ProgressUnit = "edits"
+        };
+        _db.MediaTypes.Add(mt);
+        await _db.SaveChangesAsync();
+
+        var item = new MediaItem
+        {
+            Name = "Alien - Darksteel Cut (2023)",
+            MediaTypeId = mt.Id,
+            HierarchyLevel = 0,
+            MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"E:\\\\Movies\\\\Alien - Darksteel Cut (2023)\\\\file.mkv\"]}}",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = item.Id, PluginId = "chronicle.plugin.tmdb",
+            Status = EnrichmentStatus.Pending, MaxRetries = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "fanedits");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new ScoredCandidate(
+                    new MediaMetadata { Title = "Alien", Year = 1979, ExternalId = "movie:348" },
+                    Score: 90, ScoreReason: "title contains, high confidence")
+            ]);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.tmdb");
+
+        var updated = await _db.MediaEnrichments.FindAsync(row.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.NotFound);
+        provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AcceptsHighConfidenceRealTitleMatch()
+    {
+        // Sanity counterpart to the two rejection tests above — a genuine match with a
+        // real title (no fan-edit subtitle) and a high score must still go through.
+        var mt = new MediaType
+        {
+            Name = "fanedits", DisplayName = "Fan Edits", HierarchyLevels = 1,
+            HierarchyLabels = "Edit", InteractionVerb = "watched", ProgressUnit = "edits"
+        };
+        _db.MediaTypes.Add(mt);
+        await _db.SaveChangesAsync();
+
+        var item = new MediaItem
+        {
+            Name = "Alien (1979)",
+            MediaTypeId = mt.Id,
+            HierarchyLevel = 0,
+            MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"E:\\\\Movies\\\\Alien (1979)\\\\file.mkv\"]}}",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = item.Id, PluginId = "chronicle.plugin.tmdb",
+            Status = EnrichmentStatus.Pending, MaxRetries = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "fanedits");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new ScoredCandidate(
+                    new MediaMetadata { Title = "Alien", Year = 1979, ExternalId = "movie:348" },
+                    Score: 90, ScoreReason: "title exact, year exact")
+            ]);
+        provider.Setup(p => p.GetByIdAsync("movie:348", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Alien", Year = 1979, ExternalId = "movie:348" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.tmdb");
+
+        var updated = await _db.MediaEnrichments.FindAsync(row.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.Completed);
+        updated.ExternalId.Should().Be("movie:348");
+    }
+
     [Fact]
     public async Task ResetAsync_Single_ResetsToPending()
     {
