@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
     <ProjectReference Include="..\Chronicle.Services\Chronicle.Services.csproj" />
@@ -25,6 +25,7 @@
     <!-- Chronicle application icon — not user-configurable -->
     <ApplicationIcon>chronicle.ico</ApplicationIcon>
     <Win32Resource></Win32Resource>
+    <UserSecretsId>c969fa09-cee3-4e32-80f7-a8406e2b99ee</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

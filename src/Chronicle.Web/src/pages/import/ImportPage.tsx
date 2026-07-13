@@ -52,6 +52,10 @@ function ProviderCard({ provider }: { provider: ImportProvider }) {
             setAuthFlow(null)
             recheckAuth()
           } else {
+            // Poll code is spent once the provider returns a terminal (non-pending) status —
+            // clear authFlow so the "Try Again" button below starts a fresh code instead of
+            // leaving the user staring at a dead one.
+            setAuthFlow(null)
             setPollError(
               result.errorMessage ??
                 `Auth ${result.status}. Please try again.`,
@@ -61,9 +65,15 @@ function ProviderCard({ provider }: { provider: ImportProvider }) {
       } catch {
         clearInterval(interval)
         setPolling(false)
+        setAuthFlow(null)
         setPollError('Polling failed — please try again.')
       }
     }, intervalSec * 1000)
+  }
+
+  function retryAuth() {
+    setPollError(null)
+    startMut.mutate()
   }
 
   // ── Import triggers ─────────────────────────────────────────────────────────
@@ -132,7 +142,17 @@ function ProviderCard({ provider }: { provider: ImportProvider }) {
               {polling && (
                 <p className={styles.polling}>Waiting for authorization…</p>
               )}
-              {pollError && <p className={styles.errorMsg}>{pollError}</p>}
+            </div>
+          ) : pollError ? (
+            <div className={styles.deviceFlow}>
+              <p className={styles.errorMsg}>{pollError}</p>
+              <button
+                className={styles.authBtn}
+                onClick={retryAuth}
+                disabled={startMut.isPending}
+              >
+                {startMut.isPending ? 'Starting…' : '↻ Try Again'}
+              </button>
             </div>
           ) : (
             <button
@@ -142,9 +162,6 @@ function ProviderCard({ provider }: { provider: ImportProvider }) {
             >
               {startMut.isPending ? 'Starting…' : 'Connect Account'}
             </button>
-          )}
-          {pollError && !authFlow && (
-            <p className={styles.errorMsg}>{pollError}</p>
           )}
         </div>
       )}

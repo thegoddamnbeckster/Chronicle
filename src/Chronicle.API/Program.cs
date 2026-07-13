@@ -157,7 +157,9 @@ builder.Services.AddHttpClient("github", c =>
 
     // Optional: authenticate with a GitHub token to raise the rate limit (5 000/hr vs 60/hr)
     // and allow access to repos that require authentication.
-    // Configure via GitHub:Token in appsettings.Development.json (never commit that file).
+    // Configure via `dotnet user-secrets set "GitHub:Token" "<token>"` in Chronicle.API —
+    // NOT appsettings.*.json. User secrets live outside the repo entirely (unlike a gitignored
+    // file, there's no risk of a future `git add -f` or config restructure re-exposing it).
     var githubToken = builder.Configuration["GitHub:Token"];
     if (!string.IsNullOrWhiteSpace(githubToken))
         c.DefaultRequestHeaders.Authorization =
