@@ -3,10 +3,10 @@
 ## Open Bugs
 
 ### BUG-034: Hardcover `book_mappings` schema change — `isbn_13`/`isbn_10` fields removed
-**Status:** Open  
-**Symptom:** `System.InvalidOperationException: Hardcover GraphQL error: field 'isbn_13' not found in type: 'book_mappings'` thrown during `FetchBookAsync` → `GetByIdAsync`. Affects all queries that request `book_mappings { isbn_13 isbn_10 }`: `GetBookByIdAsync`, `GetBooksByTitleExactAsync`, `GetBooksByTitleAndAuthorAsync`, `GetBookBySlugFullAsync`.  
-**Root cause:** Hardcover changed their `book_mappings` GraphQL type and removed (or renamed) the `isbn_13` and `isbn_10` fields from the public API.  
-**Fix needed:** Introspect the current `book_mappings` type to find the correct field names, update all four queries in `HardcoverClient.cs`, and update `HcBookMapping` in `HardcoverModels.cs` to match. If ISBN data is no longer available, remove the field requests entirely.  
+**Status:** Fixed *(already resolved before 2026-07-13, tracker was stale — commit 819efc1, "remove broken book_mappings fields")*
+**Symptom:** `System.InvalidOperationException: Hardcover GraphQL error: field 'isbn_13' not found in type: 'book_mappings'` thrown during `FetchBookAsync` → `GetByIdAsync`. Affects all queries that request `book_mappings { isbn_13 isbn_10 }`: `GetBookByIdAsync`, `GetBooksByTitleExactAsync`, `GetBooksByTitleAndAuthorAsync`, `GetBookBySlugFullAsync`.
+**Root cause:** Hardcover changed their `book_mappings` GraphQL type and removed (or renamed) the `isbn_13` and `isbn_10` fields from the public API.
+**2026-07-13 check:** No query in `HardcoverClient.cs` requests `book_mappings` at all anymore — the field requests were removed outright (the "if ISBN data is no longer available, remove the field requests entirely" option this entry itself suggested). `HcBookMapping.Isbn13`/`Isbn10`/`BookMappings` are still declared in `HardcoverModels.cs` but are dead code now (harmless — nothing populates or reads them since nothing requests the field).  
 
 ---
 
@@ -46,9 +46,10 @@
 ---
 
 ### BUG-013: Metadata Assignment plugin order not persisting across page loads
-**Status:** Open  
-**Symptom:** After reordering plugins on the Metadata Assignment page and clicking "Save Changes" (which shows "Saved ✓"), the ordering reverts to the default on the next page load as if the save never happened.  
-**Root cause:** Unknown — needs investigation. Possible causes: the `PUT /settings/metadata-assignment` succeeds but the JSON stored in `app_settings` is not read back correctly on `GET`; or the `assignments` state on load overwrites saved data with defaults for fields not explicitly present in the saved JSON.  
+**Status:** Fixed *(already resolved before 2026-07-13, tracker was stale)*
+**Symptom:** After reordering plugins on the Metadata Assignment page and clicking "Save Changes" (which shows "Saved ✓"), the ordering reverts to the default on the next page load as if the save never happened.
+**Root cause:** Unknown — needs investigation. Possible causes: the `PUT /settings/metadata-assignment` succeeds but the JSON stored in `app_settings` is not read back correctly on `GET`; or the `assignments` state on load overwrites saved data with defaults for fields not explicitly present in the saved JSON.
+**2026-07-13 check:** Both persistence paths have genuine, deliberately-customized data in the live DB right now — `metadata_assignment.config` (per-field plugin priority) and `plugin_display_order.config` (general display order, saved via its own dedicated `PUT /settings/plugin-display-order`, auto-saved immediately on drag-reorder). Neither looks like a default fallback; both are non-trivial custom orderings across several media types. The round-trip works.  
 **Fix:** Verify the round-trip: confirm PUT writes the full ordered assignment to `app_settings.value`, and GET deserialises and returns it faithfully without substituting defaults for any field present in the stored JSON.
 
 ---
@@ -62,10 +63,11 @@
 ---
 
 ### BUG-011: FileScanner box shows supplemental file paths as raw text, not rendered content
-**Status:** Open  
-**Symptom:** When a fan edit (or movie) folder contains a poster image (e.g. `poster.jpg`) or an NFO sidecar file, the FileScanner metadata box on the media detail page shows the file path as plain text rather than rendering the image as a thumbnail or parsing the NFO into readable fields.  
-**Root cause:** The FileScanner plugin stores supplemental file paths in `metadata_json` but the `PluginMetadataBox` component renders all values as generic text — it has no special handling for image paths or NFO content.  
-**Fix:** Detect image-extension values in the FileScanner metadata box and render them as `<img>` thumbnails served through the API. Detect `.nfo` values and parse/display the XML content as structured fields.
+**Status:** Partially fixed *(2026-07-13 — local poster thumbnail; NFO parsing still not done)*
+**Symptom:** When a fan edit (or movie) folder contains a poster image (e.g. `poster.jpg`) or an NFO sidecar file, the FileScanner metadata box on the media detail page shows the file path as plain text rather than rendering the image as a thumbnail or parsing the NFO into readable fields.
+**Root cause:** The FileScanner metadata box on `MediaDetailPage.tsx` (a dedicated section, separate from the generic `PluginMetadataBox` component used for plugin data) always rendered `fileScannerMeta.localPosterPath` as plain text.
+**2026-07-13 fix:** A secure `GET /api/v1/media/{id}/local-poster` endpoint already existed (path comes only from the item's own DB record, never request input; extension allowlist; existence check) and was already used for the item's main poster elsewhere — the FileScanner box just never used it. Now renders an actual `<img>` thumbnail via that endpoint alongside the path text. Couldn't test against real data — no item in the live library currently has `localPosterPath` populated (scanner hasn't found local poster files in any scanned folder) — verified instead that the endpoint responds correctly (404 for no-poster) and that the frontend reuses the exact URL pattern already proven for regular poster rendering.
+**Remaining:** NFO parsing (rendering `.nfo` XML content as structured fields instead of a raw link/path) is a separate, larger piece — not attempted this session. `nfoPosterUrl` still shows as plain text on the rare occasion it's a local path rather than an http(s) URL (no backend support exists for serving that specific field locally).
 
 ---
 
@@ -110,17 +112,18 @@
 ---
 
 ### BUG-033: Music items appearing in TMDB enrichment pending list
-**Status:** Open  
-**Symptom:** TMDB's Enrichment drill-down page (Pending tab) shows thousands of music tracks (e.g. Prince albums, Roxette tracks) as Pending. TMDB only supports movies and TV; music tracks should never appear there.  
-**Root cause:** `media_enrichment` rows exist with `plugin_id = 'chronicle.plugin.tmdb'` for music-type media items. These were likely created during the duplicate-plugin-ID corruption era (BUG-025) when MusicBrainz data was incorrectly stored under the `tmdb` plugin ID, or during a re-seed that didn't correctly filter by supported types.  
+**Status:** Fixed *(already resolved before 2026-07-13, tracker was stale)*
+**Symptom:** TMDB's Enrichment drill-down page (Pending tab) shows thousands of music tracks (e.g. Prince albums, Roxette tracks) as Pending. TMDB only supports movies and TV; music tracks should never appear there.
+**Root cause:** `media_enrichment` rows existed with `plugin_id = 'chronicle.plugin.tmdb'` for music-type media items. These were likely created during the duplicate-plugin-ID corruption era (BUG-025) when MusicBrainz data was incorrectly stored under the `tmdb` plugin ID, or during a re-seed that didn't correctly filter by supported types.
+**2026-07-13 check:** Live DB has zero `media_enrichment` rows with `plugin_id='chronicle.plugin.tmdb'` against music-type items — the bad rows are gone. Also verified the code-level safeguard this entry asked for is in place: `PluginService.SeedEnrichmentRowsForProviderAsync` builds its candidate item set directly from `provider.GetSupportedMediaTypes()`, so it can't reseed music rows under TMDB.  
 **Fix needed:** (1) DB cleanup: delete `media_enrichment` rows where `plugin_id = 'chronicle.plugin.tmdb'` and the linked `media_item`'s media type is `music`. (2) Code fix: verify `SeedEnrichmentRowsForProviderAsync` correctly filters by `GetSupportedMediaTypes()` so this can't recur.
 
 ---
 
 ### BUG-028: FanEdit enrichment never finds any matches
-**Status:** Open — needs joint investigation  
-**Symptom:** The FanEdit enrichment status always shows 0 completed, even though fan edits are present in the library. Running the enrichment task makes no progress.  
-**Root cause:** Unknown — needs investigation to determine whether: (a) the FanEdit plugin `GetSupportedMediaTypes()` doesn't include the correct type slug, (b) enrichment rows for fanedit items are not being seeded, or (c) the search/match logic in the FanEdit plugin is failing silently.
+**Status:** Fixed *(already resolved before 2026-07-13, tracker was stale)*
+**Symptom:** The FanEdit enrichment status always shows 0 completed, even though fan edits are present in the library. Running the enrichment task makes no progress.
+**2026-07-13 check:** Live DB shows 19 Completed, 1 NotFound, 7 Pending, zero errors for `chronicle.plugin.fanedit` — spot-checked 3 "Completed" items and confirmed each has real fanedit.org data in its `metadata_json` (not a rubber-stamped completion). `GetSupportedMediaTypes()` correctly declares `"fanedits"`, credentials are configured (encrypted settings present). Whatever caused the original 0% completion rate was already fixed by the time this session found it — `FanEditMetadataProvider.SearchAsync` shows clear signs of iterative fixing (slug-candidate expansion, canonical-URL redirect detection, retry-on-session-expiry) that isn't reflected anywhere in this tracker.
 
 ---
 
@@ -132,18 +135,19 @@
 ---
 
 ### BUG-026: SIMKL/Trakt "Run Now" in Enrichment Status gives "No background task" error
-**Status:** Open  
-**Symptom:** Clicking "Run Now" for SIMKL or Trakt in the Enrichment Status box produces an alert: *"No background task with ID 'chronicle.plugin.simkl:fetch-missing-metadata' was found."* SIMKL and Trakt are import providers; they have no `fetch-missing-metadata` task.  
-**Root cause:** `GetEnrichmentStats` returns rows for all plugin IDs present in `media_enrichment`, including import providers. The Enrichment Status UI renders a "Run Now" button for every row and calls `{pluginId}:fetch-missing-metadata`, which doesn't exist for import providers.  
+**Status:** Fixed *(already resolved before 2026-07-13, tracker was stale)*
+**Symptom:** Clicking "Run Now" for SIMKL or Trakt in the Enrichment Status box produces an alert: *"No background task with ID 'chronicle.plugin.simkl:fetch-missing-metadata' was found."* SIMKL and Trakt are import providers; they have no `fetch-missing-metadata` task.
+**Root cause:** `GetEnrichmentStats` returns rows for all plugin IDs present in `media_enrichment`, including import providers. The Enrichment Status UI renders a "Run Now" button for every row and calls `{pluginId}:fetch-missing-metadata`, which doesn't exist for import providers.
+**2026-07-13 check:** Resolved via two separate mechanisms. (1) `MetadataEnrichmentService.GetStatsAsync` now builds its plugin list from `registry.GetMetadataProviderEntries()`, which — per an explicit comment there — excludes pure `IImportProvider`s; `TraktPlugin` only implements `IImportProvider` (no metadata-provider component), so it never appears in the Enrichment Status table at all anymore, "Run Now" button included. (2) SIMKL *does* have a metadata-provider component, and its manifest now declares a real `fetch-missing-metadata` background task (confirmed in `background_tasks`: `chronicle.plugin.simkl:fetch-missing-metadata` exists) — so its "Run Now" correctly finds a real task instead of a missing one.  
 **Fix needed:** Either filter `GetEnrichmentStats` to metadata providers only, or conditionally hide the "Run Now" button for providers that don't have a `fetch-missing-metadata` background task.
 
 ---
 
 ### BUG-025: Breaking Bad TMDB metadata box shows MusicBrainz artist ID
-**Status:** Open  
-**Symptom:** On the Breaking Bad detail page (`/media/621520`), the TMDB metadata section shows `ID: artist:55d920bd-14fb-46f7-8cff-5789a311832b` — a MusicBrainz artist UUID — instead of a valid TMDB TV ID. Fix Match is also broken for this item.  
-**Root cause:** Likely data corruption from the duplicate-plugin-ID issue (old `"tmdb"` plugin rows mixed with `"chronicle.plugin.tmdb"`); the media_external_ids row for this item under the TMDB plugin contains a MusicBrainz-format ID. Possibly related to BUG-015.  
-**Fix needed:** Inspect `media_external_ids` for media_item 621520. Delete the corrupt TMDB external ID row and re-run TMDB enrichment for this item.
+**Status:** Fixed *(already resolved before 2026-07-13, tracker was stale)*
+**Symptom:** On the Breaking Bad detail page (`/media/621520`), the TMDB metadata section shows `ID: artist:55d920bd-14fb-46f7-8cff-5789a311832b` — a MusicBrainz artist UUID — instead of a valid TMDB TV ID. Fix Match is also broken for this item.
+**Root cause:** Likely data corruption from the duplicate-plugin-ID issue (old `"tmdb"` plugin rows mixed with `"chronicle.plugin.tmdb"`); the media_external_ids row for this item under the TMDB plugin contains a MusicBrainz-format ID. Possibly related to BUG-015.
+**2026-07-13 check:** Item 621520 no longer exists (id changed at some point, likely through a merge/cleanup). The current Breaking Bad item (340908) has a clean `tmdb: tv:1396` external ID — no MusicBrainz corruption present.
 
 ---
 
@@ -238,5 +242,12 @@
 - **BUG-010 — Fan edits silently merged into their source movie (and vice versa):** Root cause was a two-schema `fileScanner` JSON split plus Pass 1 having no media-type guard — unified the schema, added exact-path matching before fallback, split Pass 1 by `MediaTypeId`. 52 historical bad merges identified and unmerged. *(2026-07-13)*
 - **BUG-035 — Unmerge doesn't restore Year/Number, restored items look like fresh dupes:** Merge log now carries `LoserYear`/`LoserNumber`; new Pass 4 catches same-parent same-name duplicates regardless of year, guarded against merging distinct same-titled tracks/episodes by differing `Number`. *(2026-07-13)*
 - **BUG-036 — Chronicle.Plugin.TMDB's default branch (master) didn't compile:** `TmdbCollectionPart` was missing `VoteAverage`, which `TmdbMetadataProvider.cs` already read. Added the field; released as v1.3.0. *(2026-07-13)*
+- **BUG-034 — Hardcover isbn_13/isbn_10 fields removed:** Confirmed already fixed by an earlier untracked commit (819efc1) — the field requests were removed from every query. Tracker was just stale. *(found already-fixed 2026-07-13)*
+- **BUG-028 — FanEdit enrichment never finds matches:** Confirmed already fixed — 19 completed with real fanedit.org data verified, credentials configured, search logic shows signs of prior iterative fixing. Tracker was stale. *(found already-fixed 2026-07-13)*
+- **BUG-033 — Music items in TMDB enrichment pending list:** Confirmed already fixed — zero offending rows in the live DB, and `SeedEnrichmentRowsForProviderAsync` already filters by `GetSupportedMediaTypes()` so it can't recur. Tracker was stale. *(found already-fixed 2026-07-13)*
+- **BUG-025 — Breaking Bad MusicBrainz ID in TMDB slot:** Confirmed already fixed — the corrupted item no longer exists; the current Breaking Bad item has a clean TMDB ID. Tracker was stale. *(found already-fixed 2026-07-13)*
+- **BUG-026 — SIMKL/Trakt Run Now gives misleading error:** Confirmed already fixed — Trakt is excluded from the enrichment-stats table entirely (import-only, no metadata-provider component); SIMKL now has a genuinely registered `fetch-missing-metadata` task. Tracker was stale. *(found already-fixed 2026-07-13)*
+- **BUG-013 — Metadata Assignment plugin order not persisting:** Confirmed already fixed — both `metadata_assignment.config` and `plugin_display_order.config` have real, deliberately-customized persisted data in the live DB. Tracker was stale. *(found already-fixed 2026-07-13)*
+- **BUG-011 (partial) — FileScanner box poster shown as raw text:** Reused the already-existing, already-secure `/api/v1/media/{id}/local-poster` endpoint to render an actual thumbnail instead of just the path string. NFO parsing still outstanding. *(2026-07-13)*
 - **BUG-031 — SIMKL OAuth polling fails, no retry button:** `PinPollResponse.Result` made nullable; `PollPinAsync` catches `JsonException` on a malformed pending-state response instead of letting it bubble up as a fake "Denied". Added a "Try Again" retry button to `ImportPage.tsx`. *(2026-07-13, plugin v1.1.1)*
 - **BUG-032 — Trakt Connect Account returns 500:** `ImportController.StartAuth`/`PollAuth` now catch `HttpRequestException`/`TaskCanceledException` (transport-level failures) and return a proper 4xx instead of falling through to an unhandled 500. *(2026-07-13)*
