@@ -561,6 +561,10 @@ namespace Chronicle.Data.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("loser_name");
 
+                    b.Property<int?>("LoserNumber")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("loser_number");
+
                     b.Property<int>("LoserOriginalId")
                         .HasColumnType("INTEGER")
                         .HasColumnName("loser_original_id");
@@ -568,6 +572,10 @@ namespace Chronicle.Data.Migrations
                     b.Property<int?>("LoserParentId")
                         .HasColumnType("INTEGER")
                         .HasColumnName("loser_parent_id");
+
+                    b.Property<int?>("LoserYear")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("loser_year");
 
                     b.Property<DateTime>("MergedAt")
                         .HasColumnType("TEXT")

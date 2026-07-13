@@ -490,7 +490,7 @@ namespace Chronicle.Services
                     ct.ThrowIfCancellationRequested();
 
                     // Skip files whose path is already registered in the database.
-                    var existingItem = await FindItemByFilePathAsync(file.FilePath, mediaType.Id, ct);
+                    var existingItem = await FindItemByFilePathAsync(file.FilePath, ct);
                     if (existingItem is not null)
                     {
                         _log.Information("Duplicate file '{Path}' already imported as '{Title}' (id={Id}) — skipping",
@@ -669,7 +669,7 @@ namespace Chronicle.Services
             // De-duplicate on re-scan: if a media item with this folder path already exists,
             // update its parent/level in case the hierarchy was rebuilt (e.g. author renamed),
             // but don't create a duplicate.
-            var existing = await FindItemByFilePathAsync(folderPath, mediaTypeId, ct);
+            var existing = await FindItemByFilePathAsync(folderPath, ct);
             if (existing is not null)
             {
                 if (existing.ParentId != parentId || existing.HierarchyLevel != hierarchyLevel)
@@ -786,7 +786,7 @@ namespace Chronicle.Services
             CancellationToken ct)
         {
             // Skip if a media item with the same file path already exists.
-            var existing = await FindItemByFilePathAsync(file.FilePath, mediaTypeId, ct);
+            var existing = await FindItemByFilePathAsync(file.FilePath, ct);
             if (existing is not null)
             {
                 _log.Information("Duplicate file '{Path}' already imported as '{Title}' (id={Id}) — skipping",
@@ -849,17 +849,21 @@ namespace Chronicle.Services
         // ── Helpers ───────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Returns the first <see cref="MediaItem"/> whose <c>fileScanner.filePath</c>
-        /// in <c>MetadataJson</c> matches <paramref name="filePath"/> (case-insensitive).
-        /// Used to prevent duplicate imports of the same physical file.
+        /// Returns the <see cref="MediaItem"/> whose <c>fileScanner.filePaths</c> array
+        /// (see <see cref="FileIdentityJson"/>) contains <paramref name="filePath"/>
+        /// (case-insensitive exact match). Used to guarantee only one MediaItem is ever
+        /// created for a given physical file.
+        ///
+        /// Searches across ALL media types — a physical file's identity does not depend on
+        /// how it's currently classified. This lets a user's manual "Change Type" survive a
+        /// rescan without creating a duplicate. Cross-type identity confusion is NOT prevented
+        /// here (a real file only ever has one path, so an exact match is always the same
+        /// physical file) — the guard against accidental cross-type MERGING of two genuinely
+        /// different items lives in DuplicateCleanupService, which never crosses types even
+        /// when it observes a filePaths collision.
         /// </summary>
-        private async Task<MediaItem?> FindItemByFilePathAsync(
-            string filePath, int mediaTypeId, CancellationToken ct)
+        private async Task<MediaItem?> FindItemByFilePathAsync(string filePath, CancellationToken ct)
         {
-            // Search across ALL media types — a physical file is globally unique regardless of
-            // which type the item was assigned to.  This prevents the scanner from creating a
-            // duplicate "movies" item when the file is already tracked as "fanedits" (or any
-            // other type the user may have changed it to via the Change Type control).
             // LIKE '%fileScanner%' narrows the result set before in-memory JSON comparison.
             var candidates = await _context.MediaItems
                 .Where(m => m.MetadataJson != null
@@ -867,31 +871,18 @@ namespace Chronicle.Services
                 .ToListAsync(ct);
 
             return candidates.FirstOrDefault(m =>
-                string.Equals(ExtractFilePath(m.MetadataJson), filePath, StringComparison.OrdinalIgnoreCase));
-        }
-
-        /// <summary>Extracts <c>fileScanner.filePath</c> from a <c>MetadataJson</c> blob.</summary>
-        private static string? ExtractFilePath(string? metadataJson)
-        {
-            if (metadataJson is null) return null;
-            try
-            {
-                using var doc = JsonDocument.Parse(metadataJson);
-                if (doc.RootElement.TryGetProperty("fileScanner", out var scanner)
-                    && scanner.TryGetProperty("filePath", out var fp))
-                    return fp.GetString();
-            }
-            catch (JsonException)
-            {
-                // Malformed MetadataJson — treat as no stored path. Logged at caller if needed.
-            }
-            return null;
+                Chronicle.Services.Scan.FileIdentityJson.ContainsFilePath(m.MetadataJson, filePath));
         }
 
         private async Task<MediaItem?> FindExistingItemAsync(
             Chronicle.Plugins.Models.ScannedFile file, int mediaTypeId, CancellationToken ct)
         {
-            // 1. Match by external ID (highest confidence)
+            // 1. Match by exact physical file path (highest confidence — this IS the file).
+            //    Global across types, same as FindItemByFilePathAsync everywhere else.
+            var byPath = await FindItemByFilePathAsync(file.FilePath, ct);
+            if (byPath is not null) return byPath;
+
+            // 2. Match by external ID
             if (file.SuggestedExternalId is not null)
             {
                 var (source, extId) = ParseSuggestedExternalId(file.SuggestedExternalId);
@@ -903,14 +894,14 @@ namespace Chronicle.Services
                     return byExtId.MediaItem;
             }
 
-            // 2. Match by title + year
+            // 3. Match by title + year
             if (file.ParsedYear.HasValue)
             {
                 var hit = await FindByTitleAsync(file.ParsedTitle, mediaTypeId, file.ParsedYear, ct);
                 if (hit is not null) return hit;
             }
 
-            // 3. Title-only match (lower confidence — only when year is unknown)
+            // 4. Title-only match (lower confidence — only when year is unknown)
             if (!file.ParsedYear.HasValue)
             {
                 var hit = await FindByTitleAsync(file.ParsedTitle, mediaTypeId, year: null, ct);
@@ -2147,9 +2138,12 @@ namespace Chronicle.Services
             double? Rating, List<string> Genres, List<string> Cast,
             List<string> Directors, string? PosterUrl, string? BackdropUrl);
 
+        // FilePaths is always an array — even for single-file items — so every writer
+        // (flat scan, direct import, hierarchical group scan) agrees on one schema and
+        // FileIdentityJson's matching helpers work regardless of which path created the item.
         private sealed record FileScannerMetaJson(
-            string? FilePath, string? LocalPosterPath, string? NfoPosterUrl,
-            string? Author = null, string? Series = null);
+            List<string>? FilePaths, string? LocalPosterPath, string? NfoPosterUrl,
+            string? Author = null, string? Series = null, string? FolderPath = null);
 
         private sealed record MediaMetaJsonRoot(TmdbMetaJson? Tmdb, FileScannerMetaJson? FileScanner);
 
@@ -2181,16 +2175,20 @@ namespace Chronicle.Services
             {
                 var author = scannedFile.AudioAlbumArtist ?? scannedFile.AudioArtist;
                 fsData = new FileScannerMetaJson(
-                    scannedFile.FilePath,
+                    [scannedFile.FilePath],
                     scannedFile.LocalPosterPath,
                     scannedFile.NfoPosterUrl,
                     Author: string.IsNullOrWhiteSpace(author) ? null : author,
-                    Series: scannedFile.AudioGrouping);
+                    Series: scannedFile.AudioGrouping,
+                    FolderPath: Path.GetDirectoryName(scannedFile.FilePath));
             }
 
-            // Override with a plain file path (direct import without full ScannedFile)
+            // Override with a plain file path (direct import without full ScannedFile).
+            // Callers may pass either a file path or (audiobooks) a folder path as the
+            // identifying path — don't derive FolderPath here, it would be wrong for the
+            // folder case.
             if (scannerFilePath is not null)
-                fsData = new FileScannerMetaJson(scannerFilePath, null, null);
+                fsData = new FileScannerMetaJson([scannerFilePath], null, null);
 
             var tmdbData = tmdbMeta is null ? null : new TmdbMetaJson(
                 tmdbMeta.Rating,
@@ -2541,13 +2539,34 @@ namespace Chronicle.Services
         {
             MediaItem? existing = null;
 
-            // Primary: match by folder path stored in MetadataJson.
-            // A physical folder path is globally unique — don't restrict by parentId or
-            // hierarchyLevel, because enrichment can reparent items into collections
-            // (e.g. a movie moves from Level 0 / no parent to Level 1 / collection parent).
-            // Dropping mediaTypeId mirrors FindItemByFilePathAsync: a user may have changed
-            // the item's type (e.g. movie → fanedit) and we must not duplicate it.
-            if (!string.IsNullOrEmpty(group.FolderPath))
+            // Primary: match by exact physical file path — the strongest possible signal,
+            // since two items can only legitimately share an exact file path if they ARE the
+            // same physical file. Global across types (don't restrict by mediaTypeId): this is
+            // what lets a user's manual "Change Type" survive a rescan without creating a
+            // duplicate. Also don't restrict by parentId/hierarchyLevel — enrichment can
+            // reparent items into collections (e.g. a movie moves from Level 0 to Level 1
+            // under a collection parent).
+            //
+            // Deliberately NOT matched by folderPath alone: a folder path is weaker evidence
+            // than an exact file (reorganizations, trailing-slash/case differences, or two
+            // distinct releases landing under similarly-computed paths can collide) and using
+            // it as the primary signal is what let unrelated items (e.g. a movie and an
+            // unrelated fan edit) get silently attached to the wrong DB row in the past.
+            if (group.Files.Count > 0)
+            {
+                var fpsCandidates = await _context.MediaItems
+                    .Where(m => m.MetadataJson != null
+                             && EF.Functions.Like(m.MetadataJson, "%filePaths%"))
+                    .ToListAsync(ct);
+
+                existing = fpsCandidates.FirstOrDefault(m =>
+                    Chronicle.Services.Scan.FileIdentityJson.ContainsAnyFilePath(m.MetadataJson, group.Files));
+            }
+
+            // Secondary: exact folder path match — only reached for groups with no files of
+            // their own (pure hierarchy containers: a Show or Season/Author folder). There is
+            // no file-level signal available for those, so the folder path is the best we have.
+            if (existing is null && group.Files.Count == 0 && !string.IsNullOrEmpty(group.FolderPath))
             {
                 var fpCandidates = await _context.MediaItems
                     .Where(m => m.MetadataJson != null
@@ -2569,36 +2588,7 @@ namespace Chronicle.Services
                 });
             }
 
-            // Secondary: match by any file path in the fileScanner.filePaths array.
-            // Bridges the gap for items imported before folderPath was populated — those items
-            // have "folderPath":null but do carry a filePaths array with the original file paths.
-            if (existing is null && group.Files.Count > 0)
-            {
-                var groupFileSet = group.Files.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var fpsCandidates = await _context.MediaItems
-                    .Where(m => m.MetadataJson != null
-                             && EF.Functions.Like(m.MetadataJson, "%filePaths%"))
-                    .ToListAsync(ct);
-
-                existing = fpsCandidates.FirstOrDefault(m =>
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(m.MetadataJson!);
-                        if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
-                            fs.TryGetProperty("filePaths", out var arr) &&
-                            arr.ValueKind == JsonValueKind.Array)
-                        {
-                            return arr.EnumerateArray()
-                                      .Any(el => groupFileSet.Contains(el.GetString() ?? string.Empty));
-                        }
-                    }
-                    catch (JsonException) { }
-                    return false;
-                });
-            }
-
-            // Tertiary: match by name (covers items where neither folderPath nor filePaths matched).
+            // Tertiary: match by name (covers items where neither filePaths nor folderPath matched).
             // Strip trailing "(YYYY)" from both sides so "Show (2016)" and "Show" deduplicate.
             // No parentId/hierarchyLevel filter — same reasoning as the folderPath check above.
             var groupNameClean = System.Text.RegularExpressions.Regex
