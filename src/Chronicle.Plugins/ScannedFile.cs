@@ -31,6 +31,14 @@ public class ScannedFile
     /// <summary>Poster/thumb URL from the NFO's &lt;thumb&gt; element, if present.</summary>
     public string? NfoPosterUrl { get; set; }
 
+    /// <summary>
+    /// Absolute path to the .nfo sidecar file, if one was found alongside the media file.
+    /// Only the handful of matching-relevant fields (title/year/season/episode/external id/
+    /// poster) are parsed at scan time — this path lets the richer fields (plot, cast, genres,
+    /// rating, etc.) be parsed on demand for display without re-scanning.
+    /// </summary>
+    public string? NfoPath { get; set; }
+
     /// <summary>Absolute path to a local poster/folder image found alongside the media file.</summary>
     public string? LocalPosterPath { get; set; }
 

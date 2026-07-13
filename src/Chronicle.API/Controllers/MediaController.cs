@@ -23,12 +23,13 @@ namespace Chronicle.API.Controllers
         private readonly IMergeService _mergeService;
         private readonly IMovieCollectionService _movieCollectionService;
         private readonly IPluginRegistry _pluginRegistry;
+        private readonly Chronicle.Services.Scan.NfoDetailParser _nfoDetailParser;
 
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
             IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
             ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
-            IPluginRegistry pluginRegistry)
+            IPluginRegistry pluginRegistry, Chronicle.Services.Scan.NfoDetailParser nfoDetailParser)
         {
             _mediaService            = mediaService;
             _fileScanService         = fileScanService;
@@ -38,6 +39,7 @@ namespace Chronicle.API.Controllers
             _movieCollectionService  = movieCollectionService;
             _pluginRegistry          = pluginRegistry;
             _mergeService    = mergeService;
+            _nfoDetailParser = nfoDetailParser;
         }
 
         [HttpGet("types")]
@@ -138,6 +140,34 @@ namespace Chronicle.API.Controllers
 
             var bytes = await System.IO.File.ReadAllBytesAsync(posterPath, ct);
             return File(bytes, contentType);
+        }
+
+        // ── GET /api/v1/media/{id}/nfo ────────────────────────────────────────────
+
+        /// <summary>
+        /// Parses the rich display fields (plot, cast, genres, rating, etc.) from the
+        /// .nfo sidecar found alongside the item's media file by the file scanner.
+        /// The path comes from the database (never from user input) and is validated
+        /// to exist on disk and end in .nfo before being parsed.
+        /// </summary>
+        [HttpGet("{id:int}/nfo")]
+        public async Task<IActionResult> GetNfoDetail(int id, CancellationToken ct)
+        {
+            var item = await _context.MediaItems.FindAsync([id], ct);
+            if (item is null) return NotFound();
+
+            var (fs, _) = ParseMetaJson(item.MetadataJson);
+            var nfoPath = fs?.NfoPath;
+
+            if (string.IsNullOrEmpty(nfoPath)) return NotFound();
+            if (!string.Equals(Path.GetExtension(nfoPath), ".nfo", StringComparison.OrdinalIgnoreCase))
+                return NotFound();
+            if (!System.IO.File.Exists(nfoPath)) return NotFound();
+
+            var detail = _nfoDetailParser.Parse(nfoPath);
+            if (detail is null) return NotFound();
+
+            return Ok(ApiResponse<Chronicle.Services.Scan.NfoDetail>.Ok(detail));
         }
 
         [HttpGet("{id:int}/children")]
@@ -856,6 +886,10 @@ namespace Chronicle.API.Controllers
                         iat.TryGetDateTime(out var dt))
                         importedAt = dt;
 
+                    string? nfoPath = null;
+                    if (sect.TryGetProperty("nfoPath", out var np))
+                        nfoPath = np.GetString();
+
                     // Leaf items (episodes/tracks): first entry in filePaths array
                     if (sect.TryGetProperty("filePaths", out var arr) &&
                         arr.ValueKind == System.Text.Json.JsonValueKind.Array)
@@ -864,7 +898,7 @@ namespace Chronicle.API.Controllers
                         {
                             var path = el.GetString();
                             if (!string.IsNullOrEmpty(path))
-                                return new FileScannerMetaDto(path, null, null, importedAt);
+                                return new FileScannerMetaDto(path, null, null, importedAt, NfoPath: nfoPath);
                         }
                     }
 
@@ -874,13 +908,13 @@ namespace Chronicle.API.Controllers
                     {
                         var folderPath = fp.GetString();
                         if (!string.IsNullOrEmpty(folderPath))
-                            return new FileScannerMetaDto(folderPath, null, null, importedAt);
+                            return new FileScannerMetaDto(folderPath, null, null, importedAt, NfoPath: nfoPath);
                     }
 
                     // fileScanner section exists but no path recorded yet (older import).
                     // Still return a non-null DTO so the File Scanner card is shown.
-                    if (importedAt.HasValue)
-                        return new FileScannerMetaDto(null, null, null, importedAt);
+                    if (importedAt.HasValue || nfoPath is not null)
+                        return new FileScannerMetaDto(null, null, null, importedAt, NfoPath: nfoPath);
                 }
             }
             catch { /* ignore malformed JSON */ }

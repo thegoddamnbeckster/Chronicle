@@ -1,5 +1,6 @@
+import axios from 'axios'
 import client, { ApiError } from './client'
-import type { ApiResponse, MediaItem, MediaTypeOption } from '@/types'
+import type { ApiResponse, MediaItem, MediaTypeOption, NfoDetail } from '@/types'
 
 export async function getMediaTypes(): Promise<MediaTypeOption[]> {
   const { data } = await client.get<ApiResponse<MediaTypeOption[]>>('/media/types')
@@ -22,6 +23,18 @@ export async function getMedia(id: number): Promise<MediaItem> {
 export async function getMediaChildren(id: number): Promise<MediaItem[]> {
   const { data } = await client.get<ApiResponse<MediaItem[]>>(`/media/${id}/children`)
   return data.data ?? []
+}
+
+/** Parses the rich display fields from the item's .nfo sidecar, if one was found. */
+export async function getNfoDetail(id: number): Promise<NfoDetail | null> {
+  try {
+    const { data } = await client.get<ApiResponse<NfoDetail>>(`/media/${id}/nfo`)
+    return data.data ?? null
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.statusCode === 404) return null
+    if (axios.isAxiosError(err) && err.response?.status === 404) return null
+    throw err
+  }
 }
 
 export async function createMedia(payload: {

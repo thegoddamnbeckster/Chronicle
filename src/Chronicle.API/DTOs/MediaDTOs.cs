@@ -67,7 +67,8 @@ namespace Chronicle.API.DTOs
         int? BitrateKbps = null,
         int? SampleRateHz = null,
         int? DurationSeconds = null,
-        string? FileType = null
+        string? FileType = null,
+        string? NfoPath = null
     );
 
     public record RefreshLogDto(

@@ -101,6 +101,7 @@ namespace Chronicle.Services.Scan
                             ConfidenceScore = ComputeFlatConfidence(groupName, nfoSignal),
                             SignalSources   = BuildSources(folderSignal, null, nfoSignal, 0),
                             FolderPath      = folderPath,
+                            NfoPath         = nfoPath,
                         };
                         rootGroups[key] = group;
                         result.Groups.Add(group);

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, getNfoDetail } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
@@ -207,6 +207,12 @@ export default function MediaDetailPage() {
     queryKey: ['media', mediaId, 'children'],
     queryFn: () => getMediaChildren(mediaId),
     enabled: !isNaN(mediaId),
+  })
+
+  const { data: nfoDetail } = useQuery({
+    queryKey: ['media', mediaId, 'nfo'],
+    queryFn: () => getNfoDetail(mediaId),
+    enabled: !isNaN(mediaId) && !!item?.fileScannerMeta?.nfoPath,
   })
 
   // Get the user's library entry for this item (if any)
@@ -904,6 +910,74 @@ export default function MediaDetailPage() {
                     ) : (
                       <span className={styles.scannerPath}>{item.fileScannerMeta.nfoPosterUrl}</span>
                     )}
+                  </div>
+                )}
+                {nfoDetail?.plot && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Plot</span>
+                    <span className={styles.tmdbValue}>{nfoDetail.plot}</span>
+                  </div>
+                )}
+                {nfoDetail && nfoDetail.genres.length > 0 && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Genres</span>
+                    <div className={styles.tmdbTags}>
+                      {nfoDetail.genres.map(g => (
+                        <span key={g} className={styles.tmdbTag}>{g}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {nfoDetail?.rating != null && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Rating</span>
+                    <span className={styles.tmdbValue}>{nfoDetail.rating.toFixed(1)}</span>
+                  </div>
+                )}
+                {(nfoDetail?.runtimeMinutes || nfoDetail?.mpaa || nfoDetail?.premiered) && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Details</span>
+                    <span className={styles.tmdbValue}>
+                      {[
+                        nfoDetail?.runtimeMinutes ? `${nfoDetail.runtimeMinutes} min` : null,
+                        nfoDetail?.mpaa,
+                        nfoDetail?.premiered,
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                  </div>
+                )}
+                {nfoDetail?.studio && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Studio</span>
+                    <span className={styles.tmdbValue}>{nfoDetail.studio}</span>
+                  </div>
+                )}
+                {nfoDetail?.director && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Director</span>
+                    <span className={styles.tmdbValue}>{nfoDetail.director}</span>
+                  </div>
+                )}
+                {nfoDetail && nfoDetail.writers.length > 0 && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Writers</span>
+                    <span className={styles.tmdbValue}>{nfoDetail.writers.join(', ')}</span>
+                  </div>
+                )}
+                {nfoDetail?.collectionName && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Collection</span>
+                    <span className={styles.tmdbValue}>{nfoDetail.collectionName}</span>
+                  </div>
+                )}
+                {nfoDetail && nfoDetail.actors.length > 0 && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Cast</span>
+                    <span className={styles.tmdbValue}>
+                      {nfoDetail.actors
+                        .map(a => a.role ? `${a.name} (${a.role})` : a.name)
+                        .join(', ')}
+                    </span>
                   </div>
                 )}
               </div>

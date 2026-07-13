@@ -2143,7 +2143,8 @@ namespace Chronicle.Services
         // FileIdentityJson's matching helpers work regardless of which path created the item.
         private sealed record FileScannerMetaJson(
             List<string>? FilePaths, string? LocalPosterPath, string? NfoPosterUrl,
-            string? Author = null, string? Series = null, string? FolderPath = null);
+            string? Author = null, string? Series = null, string? FolderPath = null,
+            string? NfoPath = null);
 
         private sealed record MediaMetaJsonRoot(TmdbMetaJson? Tmdb, FileScannerMetaJson? FileScanner);
 
@@ -2180,7 +2181,8 @@ namespace Chronicle.Services
                     scannedFile.NfoPosterUrl,
                     Author: string.IsNullOrWhiteSpace(author) ? null : author,
                     Series: scannedFile.AudioGrouping,
-                    FolderPath: Path.GetDirectoryName(scannedFile.FilePath));
+                    FolderPath: Path.GetDirectoryName(scannedFile.FilePath),
+                    NfoPath: scannedFile.NfoPath);
             }
 
             // Override with a plain file path (direct import without full ScannedFile).
@@ -2613,7 +2615,7 @@ namespace Chronicle.Services
                 var existingNode = System.Text.Json.Nodes.JsonNode.Parse(existing.MetadataJson ?? "{}")
                     as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
                 existingNode["fileScanner"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(
-                    new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }));
+                    new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath, nfoPath = group.NfoPath }));
                 existing.MetadataJson = existingNode.ToJsonString();
                 return (existing, false);
             }
@@ -2629,7 +2631,7 @@ namespace Chronicle.Services
                 PosterUrl      = group.PosterPath,
                 MetadataJson   = JsonSerializer.Serialize(new
                 {
-                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath }
+                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath, nfoPath = group.NfoPath }
                 }),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,

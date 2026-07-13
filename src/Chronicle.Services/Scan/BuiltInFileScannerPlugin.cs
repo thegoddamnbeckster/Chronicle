@@ -308,6 +308,7 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
         // Poster URLs
         scanned.NfoPosterUrl    = nfoSig?.PosterUrl;
         scanned.LocalPosterPath = FindLocalPoster(filePath);
+        scanned.NfoPath         = nfoPath;
 
         // TV fields
         scanned.ShowTitle     = nfoSig?.ShowTitle;

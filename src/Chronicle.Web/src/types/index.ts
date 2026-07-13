@@ -24,6 +24,28 @@ export interface FileScannerMeta {
   localPosterPath: string | null
   nfoPosterUrl: string | null
   importedAt: string | null
+  nfoPath: string | null
+}
+
+export interface NfoActor {
+  name: string | null
+  role: string | null
+}
+
+export interface NfoDetail {
+  title: string | null
+  originalTitle: string | null
+  plot: string | null
+  genres: string[]
+  rating: number | null
+  mpaa: string | null
+  studio: string | null
+  runtimeMinutes: number | null
+  premiered: string | null
+  director: string | null
+  writers: string[]
+  actors: NfoActor[]
+  collectionName: string | null
 }
 
 export interface RefreshLog {
@@ -265,6 +287,7 @@ export interface ScanGroupDto {
   folderPath: string | null
   author: string | null
   series: string | null
+  nfoPath: string | null
 }
 
 export interface ScanGroupResult {
@@ -282,6 +305,7 @@ export interface ImportGroupPayload {
   children: ImportGroupPayload[]
   files: string[]
   folderPath: string | null
+  nfoPath: string | null
 }
 
 export interface MediaTypeOption {
