@@ -36,6 +36,15 @@
 
 ---
 
+### BUG-036: Chronicle.Plugin.TMDB's default branch didn't compile
+**Status:** Fixed *(2026-07-13, Chronicle.Plugin.TMDB commit 534a02b, released as v1.3.0)*
+**Symptom:** Not user-visible directly — found while auditing this and sibling repos for uncommitted/unpushed work. `dotnet build` on `Chronicle.Plugin.TMDB`'s `master` branch (its actual GitHub default — a stale non-default `main` ref was masking this, see the repo-audit note below) failed with `CS1061: 'TmdbCollectionPart' does not contain a definition for 'VoteAverage'`.
+**Root cause:** `TmdbMetadataProvider.cs` read `p.VoteAverage` off `TmdbCollectionPart` (to populate a collection member's `Rating`) but the property was never added to `TmdbModels.cs` — every other `Tmdb*` model already had it, this one was missed. The commit that added the read (925e0d8, `feat(tmdb): capture belongs_to_collection in movie ExtendedData`) landed without the corresponding model change, so `master` has not compiled since.
+**Fix:** Added `vote_average` to `TmdbCollectionPart`, matching every other model. Also surfaced two more stale-repo issues while investigating: `Chronicle.Plugin.TMDB` and `Chronicle.Plugin.MusicBrainz` both had a duplicate non-default `main` ref sitting ahead of the real default `master` branch (commits landed on `main` but `master` — what CI/clones/releases actually see — never got them); and no GitHub release had been cut since v1.2.0 despite 16 commits landing (see BUG-018, now fixed with v1.3.0).
+**How this class of bug slips through:** No CI on this repo (or any sibling plugin repo) runs a build on push — a broken commit only gets caught by someone building locally, which apparently hadn't happened since 925e0d8 landed.
+
+---
+
 ### BUG-013: Metadata Assignment plugin order not persisting across page loads
 **Status:** Open  
 **Symptom:** After reordering plugins on the Metadata Assignment page and clicking "Save Changes" (which shows "Saved ✓"), the ordering reverts to the default on the next page load as if the save never happened.  
@@ -228,5 +237,6 @@
 - **BUG-009 — Duplicate cleanup false positives at scale (folderPath used as dup key):** Grouping switched to `filePaths[0]`; `folderPath` never used as a dup key. *(2026-07-13)*
 - **BUG-010 — Fan edits silently merged into their source movie (and vice versa):** Root cause was a two-schema `fileScanner` JSON split plus Pass 1 having no media-type guard — unified the schema, added exact-path matching before fallback, split Pass 1 by `MediaTypeId`. 52 historical bad merges identified and unmerged. *(2026-07-13)*
 - **BUG-035 — Unmerge doesn't restore Year/Number, restored items look like fresh dupes:** Merge log now carries `LoserYear`/`LoserNumber`; new Pass 4 catches same-parent same-name duplicates regardless of year, guarded against merging distinct same-titled tracks/episodes by differing `Number`. *(2026-07-13)*
+- **BUG-036 — Chronicle.Plugin.TMDB's default branch (master) didn't compile:** `TmdbCollectionPart` was missing `VoteAverage`, which `TmdbMetadataProvider.cs` already read. Added the field; released as v1.3.0. *(2026-07-13)*
 - **BUG-031 — SIMKL OAuth polling fails, no retry button:** `PinPollResponse.Result` made nullable; `PollPinAsync` catches `JsonException` on a malformed pending-state response instead of letting it bubble up as a fake "Denied". Added a "Try Again" retry button to `ImportPage.tsx`. *(2026-07-13, plugin v1.1.1)*
 - **BUG-032 — Trakt Connect Account returns 500:** `ImportController.StartAuth`/`PollAuth` now catch `HttpRequestException`/`TaskCanceledException` (transport-level failures) and return a proper 4xx instead of falling through to an unhandled 500. *(2026-07-13)*
