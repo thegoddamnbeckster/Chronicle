@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
@@ -68,7 +69,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
             .ToListAsync(ct);
 
         var filePathGroups = itemsWithPaths
-            .GroupBy(m => ExtractFilePath(m.MetadataJson) ?? string.Empty,
+            .GroupBy(m => FileIdentityJson.PrimaryFilePathKey(m.MetadataJson) ?? string.Empty,
                      StringComparer.OrdinalIgnoreCase)
             .Where(g => !string.IsNullOrEmpty(g.Key) && g.Count() > 1)
             .ToList();
@@ -81,20 +82,40 @@ public sealed class DuplicateCleanupService : IScheduledTask
             foreach (var group in filePathGroups)
             {
                 ct.ThrowIfCancellationRequested();
-                // Oldest record wins — preserves the item the user has been tracking longest.
-                var ordered = group.OrderBy(m => m.Id).ThenByDescending(ScoreItem).ToList();
-                var winner = ordered[0];
-                foreach (var loser in ordered.Skip(1))
+
+                // Never auto-merge across media types. Two items can end up resolving to the
+                // same file-path key across types either from stale/legacy data or from an
+                // upstream scan-matching bug — either way, silently collapsing a Fan Edit into
+                // its source Movie (or vice versa) destroys real user data (the item's own type,
+                // its own identity). Split by type and only dedupe within a type; anything left
+                // spanning multiple types is surfaced in the log for manual review/unmerge.
+                var byType = group.GroupBy(m => m.MediaTypeId).ToList();
+                if (byType.Count > 1)
                 {
-                    _log.Information(
-                        "DuplicateCleanup: path '{Path}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
-                        group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
-                    await using var tx = await context.Database.BeginTransactionAsync(ct);
-                    await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
-                    await context.SaveChangesAsync(ct);
-                    await tx.CommitAsync(ct);
-                    alreadyRemoved.Add(loser.Id);
-                    removed++;
+                    _log.Warning(
+                        "DuplicateCleanup: path '{Path}' resolves to items of {TypeCount} different media " +
+                        "types ({Items}) — skipping auto-merge across types; review manually.",
+                        group.Key, byType.Count,
+                        string.Join(", ", group.Select(m => $"{m.Id}:{m.Name}(type={m.MediaTypeId})")));
+                }
+
+                foreach (var typeGroup in byType.Where(t => t.Count() > 1))
+                {
+                    // Oldest record wins — preserves the item the user has been tracking longest.
+                    var ordered = typeGroup.OrderBy(m => m.Id).ThenByDescending(ScoreItem).ToList();
+                    var winner = ordered[0];
+                    foreach (var loser in ordered.Skip(1))
+                    {
+                        _log.Information(
+                            "DuplicateCleanup: path '{Path}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
+                            group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
+                        await using var tx = await context.Database.BeginTransactionAsync(ct);
+                        await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
+                        await context.SaveChangesAsync(ct);
+                        await tx.CommitAsync(ct);
+                        alreadyRemoved.Add(loser.Id);
+                        removed++;
+                    }
                 }
             }
         }
@@ -218,6 +239,73 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: title-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         $"{group.Key.Item1} / {group.Key.Year}", winner.Id, winner.Name, loser.Id, loser.Name);
+                    await using var tx = await context.Database.BeginTransactionAsync(ct);
+                    await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
+                    await context.SaveChangesAsync(ct);
+                    await tx.CommitAsync(ct);
+                    alreadyRemoved.Add(loser.Id);
+                    removed++;
+                }
+            }
+        }
+
+        // ── Pass 4: same-parent, same-name duplicates ──────────────────────────
+        // Catches duplicates that Passes 1-3 all miss: items restored via Unmerge (see
+        // MergeService.UnmergeAsync) never get their Year or Number back — the merge log
+        // never captured them in the first place — so a restored duplicate has Year=null
+        // while its sibling has the real year, and Pass 3's exact-year grouping key never
+        // matches them. Two children of the SAME parent sharing an identical name are safe
+        // to treat as duplicates without needing Year/fileScanner/externalId agreement: a
+        // collection's member list is deduped by external ID upstream, so it would never
+        // legitimately contain two distinct entries under one parent with an identical title.
+        var parentedProjections = await context.MediaItems
+            .Where(m => m.ParentId != null)
+            .Select(m => new { m.Id, m.Name, m.ParentId, m.MediaTypeId, m.Number, m.MetadataJson })
+            .ToListAsync(ct);
+
+        var nameGroups = parentedProjections
+            .Where(m => !alreadyRemoved.Contains(m.Id))
+            .GroupBy(m => (m.ParentId, NormalizeTitle(m.Name), m.MediaTypeId))
+            .Where(g => g.Count() > 1)
+            .ToList();
+
+        if (nameGroups.Count > 0)
+        {
+            _log.Information(
+                "DuplicateCleanup: found {Count} same-parent name-matched group(s) with duplicate items",
+                nameGroups.Count);
+
+            foreach (var group in nameGroups)
+            {
+                ct.ThrowIfCancellationRequested();
+                var projections = group.Where(m => !alreadyRemoved.Contains(m.Id)).ToList();
+                if (projections.Count < 2) continue;
+
+                var orderedProjections = projections
+                    .OrderByDescending(m => m.MetadataJson != null && m.MetadataJson.Contains("\"fileScanner\""))
+                    .ThenByDescending(m => ScoreProjection(m.MetadataJson))
+                    .ThenBy(m => m.Id)
+                    .ToList();
+
+                var groupIds = orderedProjections.Select(m => m.Id).ToList();
+                var itemsById = await context.MediaItems
+                    .Where(m => groupIds.Contains(m.Id))
+                    .ToDictionaryAsync(m => m.Id, ct);
+
+                var winner = itemsById[orderedProjections[0].Id];
+                foreach (var loserProjection in orderedProjections.Skip(1))
+                {
+                    if (!itemsById.TryGetValue(loserProjection.Id, out var loser)) continue;
+
+                    // Guard: two DIFFERENT numbered siblings under the same parent (e.g. two
+                    // distinct tracks/episodes that happen to share a generic title) are not
+                    // duplicates. Only treat as a dup when at least one side's Number is unset.
+                    if (winner.Number.HasValue && loser.Number.HasValue && winner.Number != loser.Number)
+                        continue;
+
+                    _log.Information(
+                        "DuplicateCleanup: same-parent name-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
+                        $"{group.Key.Item2} / parent {group.Key.ParentId}", winner.Id, winner.Name, loser.Id, loser.Name);
                     await using var tx = await context.Database.BeginTransactionAsync(ct);
                     await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
                     await context.SaveChangesAsync(ct);
@@ -432,6 +520,8 @@ public sealed class DuplicateCleanupService : IScheduledTask
             LoserMediaTypeId     = loser.MediaTypeId,
             LoserHierarchyLevel  = loser.HierarchyLevel,
             LoserParentId        = loser.ParentId,
+            LoserYear            = loser.Year,
+            LoserNumber          = loser.Number,
             LoserExternalIdsJson = System.Text.Json.JsonSerializer.Serialize(loserExtIdsSnapshot),
             LoserChildIdsJson    = System.Text.Json.JsonSerializer.Serialize(loserChildIdsSnapshot),
             LoserMetadataJson    = loser.MetadataJson,
@@ -511,29 +601,6 @@ public sealed class DuplicateCleanupService : IScheduledTask
         // A "fileScanner" block in metadata suggests the item has more real data.
         if (metadataJson.Contains("\"fileScanner\"", StringComparison.OrdinalIgnoreCase)) score += 10;
         return score;
-    }
-
-    private static string? ExtractFilePath(string? metadataJson)
-    {
-        if (metadataJson is null) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(metadataJson);
-            if (!doc.RootElement.TryGetProperty("fileScanner", out var scanner))
-                return null;
-
-            // Use the first individual file path as the duplicate key.
-            // folderPath is explicitly NOT used — it is the parent directory of the item's
-            // files (e.g. "/TV/Show/Season 1/") and is shared by every item in that folder.
-            // Using it would incorrectly mark every episode in a season as a duplicate of
-            // every other episode in the same folder.
-            if (scanner.TryGetProperty("filePaths", out var fps)
-                && fps.ValueKind == JsonValueKind.Array
-                && fps.GetArrayLength() > 0)
-                return fps[0].GetString();
-        }
-        catch (JsonException) { /* malformed JSON — treat as no path */ }
-        return null;
     }
 
     private static Dictionary<string, System.Text.Json.JsonElement> ParseBlobs(string? json)

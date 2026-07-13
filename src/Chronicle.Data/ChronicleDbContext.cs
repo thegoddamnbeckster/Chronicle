@@ -379,6 +379,8 @@ namespace Chronicle.Data
                 e.Property(x => x.LoserMediaTypeId).HasColumnName("loser_media_type_id").IsRequired();
                 e.Property(x => x.LoserHierarchyLevel).HasColumnName("loser_hierarchy_level").IsRequired();
                 e.Property(x => x.LoserParentId).HasColumnName("loser_parent_id");
+                e.Property(x => x.LoserYear).HasColumnName("loser_year");
+                e.Property(x => x.LoserNumber).HasColumnName("loser_number");
                 e.Property(x => x.LoserExternalIdsJson).HasColumnName("loser_external_ids_json").HasDefaultValue("[]");
                 e.Property(x => x.LoserChildIdsJson).HasColumnName("loser_child_ids_json").HasDefaultValue("[]");
                 e.Property(x => x.LoserMetadataJson).HasColumnName("loser_metadata_json");

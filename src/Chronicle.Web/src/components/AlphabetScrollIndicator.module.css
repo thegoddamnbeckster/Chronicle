@@ -1,0 +1,43 @@
+.badge {
+  position: fixed;
+  top: 50%;
+  right: 28px;
+  transform: translateY(-50%) scale(0.85);
+  z-index: 500;
+  pointer-events: none;
+
+  width: 96px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 46px;
+  font-weight: 700;
+  color: #ffffff;
+
+  background: #14181c;
+  border: 3px solid #ffffff;
+  border-radius: 16px;
+  /* Black ring just outside the white border (via spread, not blur) so the badge stays
+     legible on light-theme backgrounds too, plus a soft shadow to lift it off the page. */
+  box-shadow: 0 0 0 2px #000000, 0 4px 24px rgba(0, 0, 0, 0.6);
+
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.badge.visible {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+@media (max-width: 640px) {
+  .badge {
+    right: 14px;
+    width: 72px;
+    height: 72px;
+    font-size: 34px;
+    border-width: 2px;
+  }
+}

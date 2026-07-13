@@ -9,6 +9,10 @@ public class MediaItemMerge
     public int LoserMediaTypeId { get; set; }
     public int LoserHierarchyLevel { get; set; }
     public int? LoserParentId { get; set; }
+    /// <summary>Loser's Year at merge time, restored onto the stub created by Unmerge.</summary>
+    public int? LoserYear { get; set; }
+    /// <summary>Loser's Number (episode/track ordinal) at merge time, restored onto the stub created by Unmerge.</summary>
+    public int? LoserNumber { get; set; }
     /// <summary>JSON array of {Source, ExternalId} objects.</summary>
     public string LoserExternalIdsJson { get; set; } = "[]";
     /// <summary>JSON array of child MediaItem IDs that were re-parented to winner.</summary>

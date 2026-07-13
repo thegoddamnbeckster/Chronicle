@@ -271,6 +271,10 @@ export default function MediaDetailPage() {
     onSuccess: (updated) => {
       qc.setQueryData(['media', mediaId], updated)
       qc.invalidateQueries({ queryKey: ['library'] })
+      // Refetch every collection grid (this item's old parent, and this item's own page
+      // in compact mode) so the removed item disappears immediately instead of only after
+      // a manual reload — matches ['collection', <id>] for whichever collection is mounted.
+      qc.invalidateQueries({ queryKey: ['collection'] })
     },
   })
 

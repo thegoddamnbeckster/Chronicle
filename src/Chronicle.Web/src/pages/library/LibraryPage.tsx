@@ -4,11 +4,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library'
 import { deleteMedia } from '@/api/media'
 import type { LibraryEntry, LibraryStatus } from '@/types'
-import { loadSortSettings, stripLeadingArticle } from '@/utils/sortSettings'
+import { loadSortSettings, stripLeadingArticle, getIndexLetter } from '@/utils/sortSettings'
 import { loadPrefs, savePrefs, DEFAULT_PREFS, type LibraryPrefs } from '@/utils/libraryPrefs'
 import styles from './LibraryPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 import { PosterImage } from '@/components/PosterImage'
+import { AlphabetScrollIndicator } from '@/components/AlphabetScrollIndicator'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -261,6 +262,7 @@ export default function LibraryPage() {
     [filtered, prefs.sortBy, prefs.sortDir],
   )
 
+  const sortSettings = useMemo(() => loadSortSettings(), [])
   const grouped = useMemo(() => groupByType(sorted), [sorted])
   const mediaTypeNames = useMemo(() => Array.from(grouped.keys()).sort(), [grouped])
   const pageSize = PAGE_SIZES[prefs.pageSizePreset]
@@ -314,6 +316,7 @@ export default function LibraryPage() {
 
   return (
     <div className={styles.page}>
+      <AlphabetScrollIndicator selector="[data-letter]" enabled={prefs.sortBy === 'name'} />
 
       {/* ── Controls ── */}
       <div className={styles.controls}>
@@ -528,6 +531,7 @@ export default function LibraryPage() {
                 <div
                   key={entry.id}
                   id={`media-${entry.mediaItem.id}`}
+                  data-letter={prefs.sortBy === 'name' ? getIndexLetter(entry.mediaItem.name, sortSettings) : undefined}
                   className={[
                     styles.card,
                     entry.mediaItem.isCollectionContainer ? styles.cardCollection : '',

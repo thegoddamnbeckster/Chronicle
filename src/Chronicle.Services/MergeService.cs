@@ -72,6 +72,8 @@ public class MergeService(
             LoserMediaTypeId    = loser.MediaTypeId,
             LoserHierarchyLevel = loser.HierarchyLevel,
             LoserParentId       = loser.ParentId,
+            LoserYear           = loser.Year,
+            LoserNumber         = loser.Number,
             LoserExternalIdsJson = JsonSerializer.Serialize(
                 loserExternalIds.Select(e => new { e.Source, e.ExternalId })),
             LoserChildIdsJson   = JsonSerializer.Serialize(loserChildren.Select(c => c.Id)),
@@ -263,6 +265,8 @@ public class MergeService(
             Name           = log.LoserName,
             HierarchyLevel = log.LoserHierarchyLevel,
             ParentId       = log.LoserParentId,
+            Year           = log.LoserYear,
+            Number         = log.LoserNumber,
             NormalizedName = MediaItemNormalizer.NormalizeName(log.LoserName),
             // Restore the loser's metadata blob so file paths (fileScanner.filePaths)
             // and any plugin data are available immediately after unmerge.
