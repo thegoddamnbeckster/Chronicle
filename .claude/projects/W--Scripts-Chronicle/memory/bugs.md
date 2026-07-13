@@ -18,11 +18,13 @@
 
 ---
 
-### BUG-038: Hardcover plugin's candidate scoring had no data-completeness tiebreaker
+### BUG-038: Hardcover plugin's candidate scoring had no data-completeness tiebreaker, and slug lookup never ran once title search found anything
 **Status:** Fixed *(2026-07-13, Chronicle.Plugin.Hardcover)*
-**Symptom:** User reported Hardcover matched "Endymion" to a sparse/incomplete book record (no cover art) despite hardcover.app having a properly-populated entry for the same title; user fixed the data on Hardcover's own site.
-**Root cause:** `ScoreBookCandidateDirect`/`ScoreBookCandidate` in `HardcoverMetadataProvider.cs` scored candidates purely on title/year/author text match — no signal for whether a candidate actually has cover art or community ratings. Hardcover can have multiple book rows for the same real-world title (duplicate/sparse community entries); with no completeness tiebreaker, a well-curated entry could lose a tie to an empty duplicate purely on API result order.
-**Fix:** Added a small tiebreaker (+5 for cover art present, +2 for ratings present) to both scoring functions — small relative to the title/year/author signals (60+/20/15/20) so it only ever breaks near-ties, never overrides a genuinely better match. Rebuilt and redeployed the plugin DLL.
+**Symptom:** User reported Hardcover matched "Endymion" to a sparse/incomplete book record (no cover art, 0 ratings) despite hardcover.app having a properly-populated entry (507 ratings, 4.1 avg, real cover) for the same title/slug. User fixed nothing on Hardcover's side — the site already had good data; Chronicle just never found it. After the first fix below (completeness tiebreaker) shipped, a fresh automatic re-match still returned the same sparse record — `DiagnosticsJson` showed `candidatesReturned: 1`, i.e. the tiebreaker had nothing to break a tie between.
+**Root cause (two parts):**
+  1. `ScoreBookCandidateDirect`/`ScoreBookCandidate` scored purely on title/year/author text match — no signal for cover art or ratings, so a well-curated candidate could lose a tie to an empty duplicate purely on API result order. *(Fixed first — insufficient alone, see below.)*
+  2. **The real cause:** `SearchBooksInternalAsync`'s Strategy 1 (exact `_eq` title/author lookup) called `goto done;` the moment any candidate scored ≥55 — "Endymion" scored exactly 60 on title match alone. Strategy 2 (slug-based lookup, e.g. `endymion` → the exact page the user was looking at) was *also* separately gated on `if (allCandidates.Count == 0)`. Both gates meant slug lookup never ran at all once the title index returned anything — so the completeness tiebreaker from fix #1 never got a second candidate to compare against. Hardcover's title-search index and its slug resolution can point at different underlying book rows for the same real-world title (likely a stale/orphaned duplicate vs. the maintained one) — the plugin was only ever trying the one that happened to be less complete.
+**Fix:** Removed both early-exit gates. Strategy 1 (title `_eq`) and Strategy 2 (slug) now both always run and merge into the same candidate pool; every candidate — regardless of which strategy found it — still goes through the same scoring and author hard-reject, so widening the pool can only ever surface a better-populated match for the same title/author, never accept a wrong book. The completeness tiebreaker (+5 cover art, +2 ratings) now has something to actually decide between. Rebuilt and redeployed the plugin DLL; needs Chronicle restarted to load it.
 
 ---
 
