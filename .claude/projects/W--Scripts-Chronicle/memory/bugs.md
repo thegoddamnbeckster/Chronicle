@@ -77,9 +77,8 @@
 ---
 
 ### BUG-030: Add Media search returns MusicBrainz person results for TV/Movie queries
-**Status:** Open  
-**Symptom:** Searching "Better Call Saul" on the Add Media page with "TV Shows" selected returns "Peter Gould (Person · Better Call Saul)" — a MusicBrainz artist result — instead of the TV show. All type tabs return the same MusicBrainz-sourced results.  
 **Status:** Fixed *(already resolved before 2026-07-13, tracker was stale)*
+**Symptom:** Searching "Better Call Saul" on the Add Media page with "TV Shows" selected returns "Peter Gould (Person · Better Call Saul)" — a MusicBrainz artist result — instead of the TV show. All type tabs return the same MusicBrainz-sourced results.
 **Root cause (as originally described):** When TMDB is not installed or unhealthy, `SearchMetadataAsync` falls back to the first available metadata provider (MusicBrainz). MusicBrainz doesn't filter by `MediaTypeName` for non-music types, so it returns person/artist results for any query.
 **2026-07-13 check:** Neither half of this reproduces anymore. `FileScanService.SearchMetadataAsync` calls `ProvidersForType(mediaTypeHint)`, which filters `_registry.GetMetadataProviders()` down to only providers whose `GetSupportedMediaTypes()` includes the requested type — there's no "fall back to first available provider" path left at all. And `Chronicle.Plugin.MusicBrainz`'s `GetSupportedMediaTypes()` only declares `"music"` — it was never going to be selected for a movie/TV search in the first place. Both sides check out; presumably fixed as part of BUG-027's work (the entry already marked fixed) without the tracker being updated for this one.
 
@@ -140,7 +139,6 @@
 ---
 
 ### BUG-024: Library page shows "no physical file" icon — should be removed
-**Status:** Open  
 **Status:** Fixed *(2026-07-13)*
 **Symptom:** Library cards show both a "has physical file" (HDD) icon and a "no physical file" (cloud) icon. The cloud icon for items without a local file is noise — the user only wants to see the HDD icon for items that *do* have files.
 **Fix:** All three callers (`LibraryPage.tsx` x2, `MediaDetailPage.tsx`) already only rendered `IconHdd` behind `hasPhysicalFile && (...)` — the cloud icon had no remaining callers. Removed the now-dead `IconCloud` export from `FileStatusIcons.tsx`.
@@ -162,11 +160,12 @@
 ---
 
 ### BUG-021: TMDB plugin missing icon, unconfigurable, wrong version in UI
-**Status:** Partially fixed *(2026-04-20)*  
-**Symptom:** On the Plugins page the TMDB entry has no icon. Clicking "Configure" shows "Failed to load plugin settings. Please try again." The version shows `1.0.0` but the GitHub release is `1.0.1`.  
-**Root cause:** `GetSettingsSchema` endpoint returned 404 if the plugin wasn't loaded AND it never checked `ImportProviders` — so Trakt/SIMKL settings also errored.  
-**Fix (code):** `PluginsController.GetSettingsSchema` now checks `ImportProviders` after `MetadataProviders` and `FileScannerPlugins`.  
-**Remaining (user action):** (1) Re-enter TMDB API key in Configure (was wiped during duplicate-ID cleanup). (2) Rebuild/redeploy TMDB plugin DLL from latest source to get `1.0.1`.
+**Status:** Partially fixed *(2026-04-20; version mismatch resolved 2026-07-13)*
+**Symptom:** On the Plugins page the TMDB entry has no icon. Clicking "Configure" shows "Failed to load plugin settings. Please try again." The version shows `1.0.0` but the GitHub release is `1.0.1`.
+**Root cause:** `GetSettingsSchema` endpoint returned 404 if the plugin wasn't loaded AND it never checked `ImportProviders` — so Trakt/SIMKL settings also errored.
+**Fix (code):** `PluginsController.GetSettingsSchema` now checks `ImportProviders` after `MetadataProviders` and `FileScannerPlugins`.
+**2026-07-13:** Manifest version was still `1.0.0` despite three later tagged releases having shipped — bumped to `1.3.0` (matching the new release, see BUG-018) and redeployed the DLL to `plugins/chronicle.plugin.tmdb/`.
+**Remaining (user action):** Re-enter TMDB API key in Configure if it's still wiped from the duplicate-ID cleanup (icon still needs checking — untouched this session).
 
 ---
 
@@ -187,9 +186,8 @@
 ---
 
 ### BUG-018: TMDB GitHub repo has no release since 2026-03-21
-**Status:** Open  
-**Symptom:** The GitHub repo `thegoddamnbeckster/Chronicle.Plugin.TMDB` shows no release newer than 2026-03-21, despite code changes (PluginId fix, etc.) having been deployed since then.  
-**Fix needed:** Tag and publish a new GitHub release (at minimum `v1.0.1`) from the current state of the TMDB plugin after the PluginId fix is committed.
+**Status:** Fixed *(stale by the time this session found it — v1.2.0 already existed from 2026-04-28; cut v1.3.0 on 2026-07-13 covering the 16 commits since, including the PluginId fix this bug names and a build-breaking bug found the same day)*
+**Symptom:** The GitHub repo `thegoddamnbeckster/Chronicle.Plugin.TMDB` shows no release newer than 2026-03-21, despite code changes (PluginId fix, etc.) having been deployed since then.
 
 ---
 
