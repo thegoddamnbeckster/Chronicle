@@ -1,0 +1,92 @@
+.page { padding: 24px; max-width: 900px; }
+.header { margin-bottom: 24px; }
+.title { font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }
+.subtitle { color: var(--text-muted); margin-bottom: 16px; font-size: 0.9rem; }
+
+.saveStatus { font-size: 0.85rem; color: var(--text-muted); }
+.saveStatusOk { color: #4caf7d; }
+.readOnlyNote { color: var(--text-muted); font-style: italic; }
+.error { color: #eb5757; margin-top: 8px; font-size: 0.85rem; }
+
+.tableWrap {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tableHead {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  padding: 6px 16px;
+  background: var(--bg-card);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+  min-height: 44px;
+}
+.row:last-child { border-bottom: none; }
+.colField { font-weight: 500; font-size: 0.88rem; }
+.colAliases { display: flex; align-items: center; }
+
+.chipRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+.chipName { line-height: 1; }
+
+.chipRemove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 50%;
+}
+.chipRemove:hover { color: #eb5757; }
+.chipRemove:disabled { opacity: 0.35; cursor: default; }
+
+.addInput {
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.82rem;
+  padding: 4px 10px;
+  min-width: 110px;
+}
+.addInput:focus { outline: none; border-color: var(--accent); }
+.addInput:disabled { opacity: 0.5; }
+
+.noAliases {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
+}

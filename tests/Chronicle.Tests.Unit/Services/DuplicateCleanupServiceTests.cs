@@ -359,5 +359,6 @@ file sealed class DirectScopeFactory : IServiceScopeFactory
             => Task.CompletedTask;
         public Task ResolveAllForMediaTypeAsync(string mediaTypeName, CancellationToken ct = default)
             => Task.CompletedTask;
+        public IReadOnlyCollection<string> GetCanonicalFields() => Array.Empty<string>();
     }
 }

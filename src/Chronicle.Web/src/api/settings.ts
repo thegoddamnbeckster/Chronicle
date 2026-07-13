@@ -67,6 +67,23 @@ export async function putPluginDisplayOrder(order: Record<string, string[]>): Pr
   await client.put('/settings/plugin-display-order', order)
 }
 
+export interface FieldAliasConfig {
+  /** Canonical field name -> extra alias JSON key names an admin has configured for it. */
+  aliases: Record<string, string[]>
+  /** The full set of canonical fields these aliases can apply to (fixed at compile time). */
+  canonicalFields: string[]
+}
+
+export async function getFieldAliases(): Promise<FieldAliasConfig> {
+  const res = await client.get<{ success: true; data: FieldAliasConfig }>('/settings/field-aliases')
+  return res.data.data
+}
+
+/** Saves the extra-alias config. Admin only. */
+export async function putFieldAliases(aliases: Record<string, string[]>): Promise<void> {
+  await client.put('/settings/field-aliases', { aliases })
+}
+
 export async function getChangeAccountCommand(
   accountType: string,
   username?: string,
