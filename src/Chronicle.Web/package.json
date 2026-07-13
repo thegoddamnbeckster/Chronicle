@@ -14,15 +14,20 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@tanstack/react-query": "^5.51.1",
-    "axios": "^1.15.0",
+    "axios": "^1.16.0",
     "clsx": "^2.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.24.0",
+    "react-router-dom": "^6.30.4",
     "recharts": "^3.7.0"
   },
   "overrides": {
-    "flatted": "3.4.2"
+    "flatted": "3.4.2",
+    "@babel/core": "^7.29.6",
+    "esbuild": "^0.28.1",
+    "form-data": "^4.0.6",
+    "js-yaml": "^4.2.0",
+    "postcss": "^8.5.10"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
@@ -34,6 +39,6 @@
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.7",
     "typescript": "^5.2.2",
-    "vite": "^7.3.1"
+    "vite": "^7.3.5"
   }
 }

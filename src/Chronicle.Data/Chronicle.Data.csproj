@@ -11,6 +11,12 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.*" />
+    <!-- Microsoft.EntityFrameworkCore.Sqlite 9.0.17 still transitively pulls
+         SQLitePCLRaw.bundle_e_sqlite3 2.1.10, which bundles a SQLite build vulnerable to
+         CVE-2025-6965 (GHSA-2m69-gcr7-jv3q). Force the fixed 3.x line directly — a direct
+         top-level PackageReference wins NuGet's "nearest wins" resolution over the
+         transitive one regardless of version. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.*" />
   </ItemGroup>
 
