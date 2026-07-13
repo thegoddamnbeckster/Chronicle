@@ -149,7 +149,7 @@ public class MetadataEnrichmentService(
         }
 
         // Build a snapshot of all providers so stub creation can seed enrichment rows for every plugin.
-        var allProviders = registry.GetMetadataProviderEntries()
+        var allProviders = (registry.GetMetadataProviderEntries() ?? [])
             .Select(e => (e.PluginId, (IMetadataProvider)e.Provider))
             .ToList()
             .AsReadOnly();
@@ -1525,6 +1525,16 @@ public class MetadataEnrichmentService(
                     row.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
                     ex is ProviderNotFoundException ? "provider returned no match for stored ID" : "provider returned 404");
                 row.Status       = EnrichmentStatus.NotFound;
+                row.ErrorMessage = ex.Message;
+            }
+            else if (ex is InvalidOperationException)
+            {
+                // Plugin threw "not configured" or similar setup failure — retrying won't help.
+                // Mark as Skipped so the batch doesn't keep retrying a misconfigured plugin.
+                logger.LogInformation(
+                    "Enrichment skipped for item {ItemId} plugin {PluginId}: {ErrorMessage}",
+                    row.MediaItemId, row.PluginId, ex.Message);
+                row.Status       = EnrichmentStatus.Skipped;
                 row.ErrorMessage = ex.Message;
             }
             else

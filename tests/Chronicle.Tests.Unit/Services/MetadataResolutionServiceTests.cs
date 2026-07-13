@@ -118,6 +118,58 @@ public class MetadataResolutionServiceTests
         item.Year.Should().BeNull();
     }
 
+    // ── ResolveAsync — field-name aliasing (music sources naming the same concept differently) ──
+
+    [Fact]
+    public async Task ResolveAsync_DifferentAliasKeyNames_ResolveToOneCanonicalValue()
+    {
+        // MusicBrainz-style blob uses "label"; Discogs-style blob uses "recordLabel" — both are
+        // aliases of the same canonical "label" field once an admin has configured "recordLabel"
+        // as an extra alias via FieldAliasCache (metadata_field_aliases.config).
+        var item = BuildItem("music", 0,
+            """{"chronicle.plugin.musicbrainz":{"label":"Silva Screen"},"chronicle.plugin.discogs":{"recordLabel":"Varese Sarabande"}}""");
+
+        await ResolveWithConfig(item, "music", 0, new(), new()
+        {
+            ["label"] = ["recordLabel"],
+        });
+
+        // No priority configured — first blob in dictionary order wins (musicbrainz).
+        GetResolved(item)["label"].GetString().Should().Be("Silva Screen");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PriorityConfiguredPluginUsesDifferentAlias_StillWins()
+    {
+        // The higher-priority plugin (discogs) uses the configured "recordLabel" alias, not the
+        // canonical "label" key — TryGetBlobPropertyAny must still find it.
+        var item = BuildItem("music", 0,
+            """{"chronicle.plugin.musicbrainz":{"label":"Silva Screen"},"chronicle.plugin.discogs":{"recordLabel":"Varese Sarabande"}}""");
+
+        await ResolveWithConfig(item, "music", 0, new()
+        {
+            ["label"] = ["chronicle.plugin.discogs", "chronicle.plugin.musicbrainz"],
+        }, new()
+        {
+            ["label"] = ["recordLabel"],
+        });
+
+        GetResolved(item)["label"].GetString().Should().Be("Varese Sarabande");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_NoAliasConfigured_DifferentKeyNameDoesNotMatch()
+    {
+        // Without an admin-configured alias, "recordLabel" is just an unrelated key — confirms
+        // the aliasing behaviour above is genuinely coming from FieldAliasCache, not FieldMap.
+        var item = BuildItem("music", 0,
+            """{"chronicle.plugin.discogs":{"recordLabel":"Varese Sarabande"}}""");
+
+        await ResolveWithConfig(item, "music", 0, new());
+
+        GetResolved(item).Should().NotContainKey("label");
+    }
+
     [Fact]
     public async Task ResolveAsync_WritesResolvedKeyToMetadataJson()
     {
@@ -157,14 +209,19 @@ public class MetadataResolutionServiceTests
         MediaItem item,
         string mediaTypeName,
         int hierarchyLevel,
-        Dictionary<string, List<string>> fieldPriorityMap)
+        Dictionary<string, List<string>> fieldPriorityMap,
+        Dictionary<string, List<string>>? fieldAliases = null)
     {
         var cache = new AssignmentConfigCache(null!);
         cache.InjectForTest(new Dictionary<string, Dictionary<string, List<string>>>
         {
             [$"{mediaTypeName}{(hierarchyLevel > 0 ? $".{hierarchyLevel}" : "")}"] = fieldPriorityMap
         });
-        var svc = new MetadataResolutionService(cache, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<MetadataResolutionService>.Instance);
+        var aliasCache = new FieldAliasCache(null!);
+        // Empty, not FieldAliasCache.Defaults — tests should be deterministic and not
+        // accidentally depend on the shipped-defaults seed unless a test explicitly injects one.
+        aliasCache.InjectForTest(fieldAliases ?? new(StringComparer.OrdinalIgnoreCase));
+        var svc = new MetadataResolutionService(cache, aliasCache, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<MetadataResolutionService>.Instance);
         await svc.ResolveAsync(item, null!, CancellationToken.None);
     }
 }

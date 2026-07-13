@@ -83,6 +83,9 @@ export default function Layout() {
           <NavLink to="/settings/metadata-assignment" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             Metadata Assignment
           </NavLink>
+          <NavLink to="/settings/field-aliases" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+            Field Aliases
+          </NavLink>
           <NavLink to="/settings/duplicates" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             Duplicates
           </NavLink>

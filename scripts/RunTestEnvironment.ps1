@@ -4,11 +4,12 @@
 
 .DESCRIPTION
     Kills any running Chronicle dev processes, then launches:
-      - Chronicle.API   on http://localhost:7979
-      - Chronicle.Web   on http://localhost:8888
+      - Chronicle.API                            on http://localhost:7979
+      - Chronicle.Web                             on http://localhost:8888
+      - Chronicle.Service.MetadataProvider.Audiobookshelf (ABS bridge) on port 9877
 
-    Both processes run in separate console windows so you can see their logs.
-    Close either window or press Ctrl+C in it to stop that process.
+    All processes run in separate console windows so you can see their logs.
+    Close a window or press Ctrl+C in it to stop that process.
 
     Run this script from anywhere — it locates the repo root automatically.
 
@@ -17,14 +18,18 @@
     drives will be missing from the folder picker if run as Administrator.
 
 .PARAMETER ApiOnly
-    Start only the API, not the frontend.
+    Start only the API, not the frontend or the ABS bridge.
 
 .PARAMETER WebOnly
-    Start only the frontend, not the API.
+    Start only the frontend, not the API or the ABS bridge.
+
+.PARAMETER NoAbsBridge
+    Skip starting the AudiobookShelf metadata-provider bridge.
 #>
 param(
     [switch]$ApiOnly,
-    [switch]$WebOnly
+    [switch]$WebOnly,
+    [switch]$NoAbsBridge
 )
 
 $RepoRoot   = Split-Path $PSScriptRoot -Parent
@@ -33,6 +38,7 @@ $ApiDir     = Split-Path $ApiProject -Parent
 $WebDir     = Join-Path $RepoRoot "src\Chronicle.Web"
 $DbPath     = Join-Path $ApiDir "chronicle-dev.db"
 $LogDir     = Join-Path $ApiDir "logs"
+$AbsBridgeDir = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Service.MetadataProvider.Audiobookshelf"
 $Branch     = (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null); if (-not $Branch) { $Branch = "unknown" }
 $Commit     = (git -C $RepoRoot rev-parse --short HEAD 2>$null); if (-not $Commit) { $Commit = "unknown" }
 
@@ -45,6 +51,7 @@ Write-Host "  API dir     : $ApiDir"
 Write-Host "  Database    : $DbPath  $(if (Test-Path $DbPath) { '[EXISTS]' } else { '[MISSING - will be created]' })"
 Write-Host "  Logs        : $LogDir"
 Write-Host "  Branch      : $Branch  ($Commit)"
+Write-Host "  ABS bridge  : $AbsBridgeDir  $(if (Test-Path (Join-Path $AbsBridgeDir 'config.ini')) { '[config.ini found]' } else { '[config.ini MISSING - copy config.ini.example and fill it in]' })"
 Write-Host ""
 
 # ── Kill existing dev processes ───────────────────────────────────────────────
@@ -65,6 +72,11 @@ Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyC
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match "Chronicle\.Web" } |
     ForEach-Object { Write-Host "  Stopping node PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
+# Kill the ABS metadata-provider bridge (python service.py)
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "Chronicle\.Service\.MetadataProvider\.Audiobookshelf" } |
+    ForEach-Object { Write-Host "  Stopping ABS bridge PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 Start-Sleep -Milliseconds 500
 
@@ -107,7 +119,7 @@ $PluginProjects = @(
     @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Hardcover\Chronicle.Plugin.Hardcover.csproj"
         DllName    = "Chronicle.Plugin.Hardcover.dll"
-        OutputDir  = Join-Path $PluginsDir "hardcover"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.hardcover"
     },
     @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.FanartTV\Chronicle.Plugin.FanartTV.csproj"
@@ -136,14 +148,27 @@ foreach ($plugin in $PluginProjects) {
         Write-Host "  [SKIP] Plugin project not found: $($plugin.Project)" -ForegroundColor DarkYellow
         continue
     }
-    Write-Host "  Building $($plugin.DllName)..." -ForegroundColor DarkCyan -NoNewline
+    $projDir = Split-Path $plugin.Project -Parent
+
+    # Restore first so stale or newly-added NuGet packages are resolved.
+    # This is fast when nothing has changed (no-op if packages are current).
+    Write-Host "  Restoring $($plugin.DllName)..." -ForegroundColor DarkGray -NoNewline
+    $restore = dotnet restore $plugin.Project -v quiet 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host " RESTORE FAILED" -ForegroundColor Red
+        Write-Host $restore
+        continue
+    }
+    Write-Host " done" -ForegroundColor DarkGray
+
+    Write-Host "  Building  $($plugin.DllName)..." -ForegroundColor DarkCyan -NoNewline
     $result = dotnet build $plugin.Project -c Debug --no-restore -v quiet 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host " FAILED" -ForegroundColor Red
         Write-Host $result
         continue
     }
-    $srcDir = Join-Path (Split-Path $plugin.Project -Parent) "bin\Debug\net9.0"
+    $srcDir = Join-Path $projDir "bin\Debug\net9.0"
     $srcDll = Join-Path $srcDir $plugin.DllName
     if (Test-Path $srcDll) {
         New-Item -ItemType Directory -Path $plugin.OutputDir -Force | Out-Null
@@ -160,7 +185,10 @@ foreach ($plugin in $PluginProjects) {
         }
 
         Copy-Item -Path $srcDll -Destination (Join-Path $plugin.OutputDir $plugin.DllName) -Force
-        $srcManifest = Join-Path $srcDir "manifest.json"
+        $srcManifest = Join-Path $projDir "manifest.json"
+        if (-not (Test-Path $srcManifest)) {
+            $srcManifest = Join-Path $srcDir "manifest.json"
+        }
         if (Test-Path $srcManifest) {
             Copy-Item -Path $srcManifest -Destination (Join-Path $plugin.OutputDir "manifest.json") -Force
         }
@@ -199,11 +227,28 @@ if (-not $ApiOnly) {
         -WindowStyle Normal
 }
 
+# ── Start ABS metadata-provider bridge ────────────────────────────────────────
+# Standalone sibling process (Python, stdlib only) — not a Chronicle.Plugin.* DLL,
+# doesn't load into the API. Starts fine even without config.ini configured yet
+# (it warns and keeps running); real use needs a Chronicle API key and shared
+# secret filled in there. See its own README for details.
+if (-not $ApiOnly -and -not $WebOnly -and -not $NoAbsBridge) {
+    if (-not (Test-Path $AbsBridgeDir)) {
+        Write-Host "  [SKIP] ABS bridge directory not found: $AbsBridgeDir" -ForegroundColor DarkYellow
+    } else {
+        Write-Host "Starting ABS metadata-provider bridge (port 9877)..." -ForegroundColor Cyan
+        Start-Process pwsh -ArgumentList "-NoExit", "-Command",
+            "cd '$AbsBridgeDir'; python service.py" `
+            -WindowStyle Normal
+    }
+}
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "Chronicle dev environment starting up." -ForegroundColor Green
-Write-Host "  API  : http://localhost:7979"
-Write-Host "  Web  : http://localhost:8888"
+Write-Host "  API        : http://localhost:7979"
+Write-Host "  Web        : http://localhost:8888"
+Write-Host "  ABS bridge : http://localhost:9877"
 Write-Host "  Logs : src\Chronicle.API\logs\"
 Write-Host ""
 Write-Host "Tip: For a stable background service, run .\scripts\install-service.ps1"

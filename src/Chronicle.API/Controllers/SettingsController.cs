@@ -22,6 +22,7 @@ public class SettingsController : ControllerBase
     private readonly ChronicleDbContext          _db;
     private readonly IPluginRegistry             _pluginRegistry;
     private readonly AssignmentConfigCache       _assignmentCache;
+    private readonly FieldAliasCache             _fieldAliasCache;
     private readonly IMetadataResolutionService  _resolutionService;
     private readonly ILogger<SettingsController> _logger;
 
@@ -43,12 +44,14 @@ public class SettingsController : ControllerBase
         ChronicleDbContext db,
         IPluginRegistry pluginRegistry,
         AssignmentConfigCache assignmentCache,
+        FieldAliasCache fieldAliasCache,
         IMetadataResolutionService resolutionService,
         ILogger<SettingsController> logger)
     {
         _db                = db;
         _pluginRegistry    = pluginRegistry;
         _assignmentCache   = assignmentCache;
+        _fieldAliasCache   = fieldAliasCache;
         _resolutionService = resolutionService;
         _logger            = logger;
     }
@@ -356,6 +359,95 @@ public class SettingsController : ControllerBase
         return Ok(new { success = true });
     }
 
+    // ── Field-name aliasing ─────────────────────────────────────────────────
+    // Extra alias JSON key names per canonical resolution field (e.g. "label" also
+    // matching "recordLabel"/"publisher" in some plugin's blob) — admin-configurable so
+    // plugin-naming differences can be corrected without a code change. The canonical field
+    // SET itself (MetadataResolutionService.FieldMap.Keys) stays code-defined; this only
+    // supplies additional alias names layered on top at resolve time.
+
+    /// <summary>Returns the current extra-alias config plus the full set of canonical fields it can apply to.</summary>
+    [HttpGet("field-aliases")]
+    public async Task<IActionResult> GetFieldAliases(CancellationToken ct)
+    {
+        var aliases = await _fieldAliasCache.GetAllAsync(ct);
+        var canonicalFields = _resolutionService.GetCanonicalFields().ToList();
+
+        return Ok(new
+        {
+            success = true,
+            data = new { aliases, canonicalFields },
+        });
+    }
+
+    /// <summary>Saves the extra-alias config. Admin only.</summary>
+    [HttpPut("field-aliases")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> PutFieldAliases([FromBody] FieldAliasesRequest request)
+    {
+        if (request.Aliases is null)
+            return BadRequest(new { success = false, error = new { message = "aliases required" } });
+
+        var canonicalFields = _resolutionService.GetCanonicalFields();
+        var cleaned = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (field, values) in request.Aliases)
+        {
+            if (!canonicalFields.Contains(field))
+                return BadRequest(new { success = false, error = new { message = $"Unknown canonical field: {field}" } });
+
+            var deduped = (values ?? [])
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (deduped.Count > 0)
+                cleaned[field] = deduped;
+        }
+
+        var json = JsonSerializer.Serialize(cleaned);
+        var existing = await _db.AppSettings.FindAsync("metadata_field_aliases.config");
+
+        if (existing is null)
+            _db.AppSettings.Add(new AppSetting { Key = "metadata_field_aliases.config", Value = json });
+        else
+            existing.Value = json;
+
+        await _db.SaveChangesAsync();
+
+        // Invalidate so the next resolve picks up the new config immediately.
+        _fieldAliasCache.Invalidate();
+
+        // Fetch the active type list now, while the request's DbContext is still guaranteed
+        // alive — the background loop below only calls ResolveAllForMediaTypeAsync, which
+        // re-scopes its own DbContext internally, so it stays safe to run after this request
+        // has already responded (see PutMetadataAssignment above for the same pattern). The
+        // controller's own _db must not be touched inside that Task.Run, though — its scope
+        // is disposed as soon as the response is sent.
+        var activeTypeNames = await _db.MediaTypes
+            .Where(t => t.IsActive)
+            .Select(t => t.Name)
+            .ToListAsync();
+
+        // Aliases are global (not per media type) — an alias change can affect any type, so
+        // recompute _resolved across every active type in the background.
+        _ = Task.Run(async () =>
+        {
+            foreach (var mediaType in activeTypeNames)
+            {
+                try   { await _resolutionService.ResolveAllForMediaTypeAsync(mediaType); }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Background _resolved recompute failed for media type '{Type}' after field-alias change", mediaType);
+                }
+            }
+        }, CancellationToken.None);
+
+        return Ok(new { success = true });
+    }
+
     // ── Plugin display order ──────────────────────────────────────────────────
 
     /// <summary>
@@ -513,6 +605,10 @@ public record AppSettingUpdateRequest([Required] string Value);
 
 public record MetadataAssignmentRequest(
     [Required] Dictionary<string, Dictionary<string, string[]>>? Assignments
+);
+
+public record FieldAliasesRequest(
+    [Required] Dictionary<string, List<string>>? Aliases
 );
 
 public record ServiceStatusDto(

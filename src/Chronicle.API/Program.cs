@@ -121,6 +121,8 @@ builder.Services.AddSingleton<ScanProgressService>();
 builder.Services.AddSingleton<ImportProgressService>();
 // AssignmentConfigCache caches metadata_assignment.config from DB to avoid per-write DB hits.
 builder.Services.AddSingleton<AssignmentConfigCache>();
+// FieldAliasCache caches metadata_field_aliases.config the same way.
+builder.Services.AddSingleton<FieldAliasCache>();
 builder.Services.AddScoped<Chronicle.Services.Scan.FolderSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.TagSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.NfoSignalExtractor>();
@@ -130,6 +132,8 @@ builder.Services.AddScoped<IFileScanService, FileScanService>();
 builder.Services.AddScoped<IScanFolderService, ScanFolderService>();
 builder.Services.AddScoped<IMetadataEnrichmentService, MetadataEnrichmentService>();
 builder.Services.AddScoped<IMetadataResolutionService, MetadataResolutionService>();
+builder.Services.AddScoped<IMetadataContributionService, MetadataContributionService>();
+builder.Services.AddSingleton<TagMismatchRematchQueue>();
 builder.Services.AddScoped<ISyncOrchestrationService, SyncOrchestrationService>();
 builder.Services.AddSingleton<ISyncJobTracker, SyncJobTracker>();
 builder.Services.AddScoped<IPluginTaskRunner, PluginTaskRunner>();
@@ -207,6 +211,10 @@ builder.Services.AddSingleton<IScheduledTask>(
 builder.Services.AddSingleton<RebuildMovieCollectionsService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<RebuildMovieCollectionsService>());
+
+builder.Services.AddSingleton<TagMismatchRematchTask>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<TagMismatchRematchTask>());
 
 builder.Services.AddSingleton<TaskSchedulerService>();
 builder.Services.AddSingleton<ITaskSchedulerService>(

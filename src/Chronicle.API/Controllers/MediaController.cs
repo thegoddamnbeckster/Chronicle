@@ -18,19 +18,22 @@ namespace Chronicle.API.Controllers
         private readonly IMediaService _mediaService;
         private readonly IFileScanService _fileScanService;
         private readonly IMetadataEnrichmentService _enrichment;
+        private readonly IMetadataContributionService _contributionService;
         private readonly ChronicleDbContext _context;
         private readonly IMergeService _mergeService;
         private readonly IMovieCollectionService _movieCollectionService;
         private readonly IPluginRegistry _pluginRegistry;
 
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
-            IMetadataEnrichmentService enrichment, ChronicleDbContext context,
+            IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
+            ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
             IPluginRegistry pluginRegistry)
         {
             _mediaService            = mediaService;
             _fileScanService         = fileScanService;
             _enrichment              = enrichment;
+            _contributionService     = contributionService;
             _context                 = context;
             _movieCollectionService  = movieCollectionService;
             _pluginRegistry          = pluginRegistry;
@@ -252,6 +255,36 @@ namespace Chronicle.API.Controllers
             {
                 return StatusCode(502, ApiResponse<MediaItemDto>.Fail("REFRESH_FAILED", ex.Message));
             }
+        }
+
+        /// <summary>
+        /// Lets an authenticated external caller contribute metadata fields for an item —
+        /// not tied to any specific integration, following Chronicle's lossless-ingestion
+        /// principle. The contribution lands in its own metadata_json partition keyed by
+        /// <paramref name="source"/>; every other source's data is left untouched.
+        /// </summary>
+        [HttpPost("{id:int}/metadata/{source}")]
+        public async Task<IActionResult> ContributeMetadata(
+            int id, string source, [FromBody] ContributeMetadataRequest request, CancellationToken ct)
+        {
+            var item = await _context.MediaItems
+                .Include(m => m.MediaType)
+                .FirstOrDefaultAsync(m => m.Id == id, ct);
+            if (item is null)
+                return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+            var fileSnapshot = request.File is null ? null : new Chronicle.Services.Scan.FileIdentitySnapshot(
+                request.File.SizeBytes, request.File.ModifiedUtc, request.File.BitrateKbps,
+                request.File.SampleRateHz, request.File.DurationSeconds, request.File.FileType);
+
+            var outcome = await _contributionService.ContributeAsync(
+                item, _context, source, request.Metadata, fileSnapshot, ct);
+
+            if (!outcome.Success)
+                return BadRequest(ApiResponse<object>.Fail(outcome.ErrorCode!, outcome.ErrorMessage!));
+
+            return Ok(ApiResponse<ContributeMetadataResponseDto>.Ok(new ContributeMetadataResponseDto(
+                outcome.FingerprintChanged, outcome.TagMismatchDetected, outcome.RematchQueued)));
         }
 
         /// <summary>
@@ -544,7 +577,13 @@ namespace Chronicle.API.Controllers
                             Genres:         TryGetStringList(r, "genres"),
                             Cast:           TryGetStringList(r, "cast"),
                             Directors:      TryGetStringList(r, "directors"),
-                            Tags:           TryGetStringList(r, "tags")
+                            Tags:           TryGetStringList(r, "tags"),
+                            Composer:       TryGetString(r, "composer"),
+                            Label:          TryGetString(r, "label"),
+                            Bpm:            TryGetDouble(r, "bpm"),
+                            Mood:           TryGetString(r, "mood"),
+                            Language:       TryGetString(r, "language"),
+                            Isrc:           TryGetString(r, "isrc")
                         );
                     }
                 }
@@ -712,9 +751,12 @@ namespace Chronicle.API.Controllers
                     fs = TryExtractFilePathFromNewFormat(json) ?? fs;
 
                 // Suppress a completely empty FileScannerMetaDto — but keep it when ImportedAt
-                // is set (scanner-imported items that haven't re-recorded the path yet).
+                // is set (scanner-imported items that haven't re-recorded the path yet), or when
+                // it carries technical/identity data only (e.g. a contribution with no file path,
+                // such as a MusicBee push that reported size/bitrate/duration but no local path).
                 var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
-                             fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null)
+                             fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null ||
+                             fs?.Fingerprint is not null)
                     ? fs : null;
 
                 // All non-fileScanner keys are plugin metadata — pass raw JsonElements so

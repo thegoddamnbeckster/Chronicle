@@ -26,6 +26,32 @@ namespace Chronicle.API.DTOs
 
     public record ChangeMediaTypeRequest([Required] int MediaTypeId);
 
+    /// <summary>
+    /// Body for POST /api/v1/media/{id}/metadata/{source} — lets an authenticated external
+    /// caller (any app, not just a specific integration) contribute metadata fields Chronicle
+    /// doesn't already have for an item, following Chronicle's lossless-ingestion principle.
+    /// </summary>
+    public record ContributeMetadataRequest(
+        [Required] JsonElement Metadata,
+        FileIdentityDto? File = null
+    );
+
+    /// <summary>Technical/identity snapshot of the file backing a media item, if any.</summary>
+    public record FileIdentityDto(
+        long? SizeBytes,
+        DateTime? ModifiedUtc,
+        int? BitrateKbps,
+        int? SampleRateHz,
+        int? DurationSeconds,
+        string? FileType
+    );
+
+    public record ContributeMetadataResponseDto(
+        bool FingerprintChanged,
+        bool TagMismatchDetected,
+        bool RematchQueued
+    );
+
     public record ExternalIdDto(string Source, string ExternalId);
 
     /// <summary>Local file data discovered by the File Scanner plugin.</summary>
@@ -33,7 +59,15 @@ namespace Chronicle.API.DTOs
         string? FilePath,
         string? LocalPosterPath,
         string? NfoPosterUrl,
-        DateTime? ImportedAt = null
+        DateTime? ImportedAt = null,
+        /// <summary>Size+modified-time fingerprint (see FileIdentityJson) — changes when the underlying file changes.</summary>
+        string? Fingerprint = null,
+        long? FileSizeBytes = null,
+        DateTime? FileModifiedUtc = null,
+        int? BitrateKbps = null,
+        int? SampleRateHz = null,
+        int? DurationSeconds = null,
+        string? FileType = null
     );
 
     public record RefreshLogDto(
@@ -174,6 +208,13 @@ namespace Chronicle.API.DTOs
         List<string>?  Genres,
         List<string>?  Cast,
         List<string>?  Directors,
-        List<string>?  Tags
+        List<string>?  Tags,
+        // Music-relevant fields — see MetadataResolutionService.FieldMap's aliased entries.
+        string?        Composer = null,
+        string?        Label = null,
+        double?        Bpm = null,
+        string?        Mood = null,
+        string?        Language = null,
+        string?        Isrc = null
     );
 }
