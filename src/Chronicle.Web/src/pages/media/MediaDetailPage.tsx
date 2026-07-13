@@ -879,7 +879,14 @@ export default function MediaDetailPage() {
                 {item.fileScannerMeta.localPosterPath && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Poster</span>
-                    <span className={styles.scannerPath}>{item.fileScannerMeta.localPosterPath}</span>
+                    <div className={styles.scannerPosterWrap}>
+                      <img
+                        src={`/api/v1/media/${item.id}/local-poster`}
+                        alt="Local poster"
+                        className={styles.scannerPosterThumb}
+                      />
+                      <span className={styles.scannerPath}>{item.fileScannerMeta.localPosterPath}</span>
+                    </div>
                   </div>
                 )}
                 {item.fileScannerMeta.nfoPosterUrl && (

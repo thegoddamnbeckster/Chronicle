@@ -797,6 +797,22 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   line-height: 1.4;
 }
 
+.scannerPosterWrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.scannerPosterThumb {
+  width: 44px;
+  height: 66px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-card);
+}
+
 /* ── External IDs ── */
 
 .externalIds {
