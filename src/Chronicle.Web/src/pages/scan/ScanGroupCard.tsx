@@ -33,6 +33,7 @@ export function groupToPayload(g: ScanGroupDto): ImportGroupPayload {
     children: g.children.map(groupToPayload),
     files: g.files,
     folderPath: g.folderPath,
+    nfoPath: g.nfoPath,
   }
 }
 

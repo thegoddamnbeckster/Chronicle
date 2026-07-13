@@ -179,7 +179,8 @@ namespace Chronicle.API.DTOs
         List<string> Files,
         string? FolderPath = null,
         string? Author = null,
-        string? Series = null);
+        string? Series = null,
+        string? NfoPath = null);
 
     public record ScanGroupResultDto(
         List<ScanGroupDto> Groups,
@@ -197,5 +198,6 @@ namespace Chronicle.API.DTOs
         string? PosterPath,
         List<ImportGroupDto> Children,
         List<string> Files,
-        string? FolderPath = null);
+        string? FolderPath = null,
+        string? NfoPath = null);
 }

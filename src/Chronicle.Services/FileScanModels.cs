@@ -132,7 +132,8 @@ namespace Chronicle.Services
         List<ScanGroupImport> Children,
         List<string> Files,
         string? FolderPath = null,
-        int? Number = null)
+        int? Number = null,
+        string? NfoPath = null)
     {
         /// <summary>Total file count across this group and all descendants.</summary>
         public int TotalFileCount => Files.Count + Children.Sum(c => c.TotalFileCount);

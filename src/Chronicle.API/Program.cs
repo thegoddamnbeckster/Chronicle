@@ -126,6 +126,7 @@ builder.Services.AddSingleton<FieldAliasCache>();
 builder.Services.AddScoped<Chronicle.Services.Scan.FolderSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.TagSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.NfoSignalExtractor>();
+builder.Services.AddScoped<Chronicle.Services.Scan.NfoDetailParser>();
 builder.Services.AddScoped<Chronicle.Services.Scan.IScanGroupingService,
                             Chronicle.Services.Scan.ScanGroupingService>();
 builder.Services.AddScoped<IFileScanService, FileScanService>();
