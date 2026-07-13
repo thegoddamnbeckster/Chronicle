@@ -91,6 +91,15 @@ public class ImportController : ControllerBase
         {
             return BadRequest(ApiResponse<StartAuthResponse>.Fail("PROVIDER_NOT_FOUND", ex.Message));
         }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // The provider's own HTTP call failed at the transport level (DNS, connection
+            // refused, TLS, timeout) rather than returning a non-success status the plugin
+            // itself turns into an InvalidOperationException — this previously fell through
+            // to an unhandled 500 with no useful message for the user.
+            return BadRequest(ApiResponse<StartAuthResponse>.Fail("AUTH_START_FAILED",
+                $"Could not reach the provider to start authorization: {ex.Message}"));
+        }
     }
 
     /// <summary>
@@ -122,6 +131,14 @@ public class ImportController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResponse<PollAuthResponse>.Fail("PROVIDER_NOT_FOUND", ex.Message));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // Same transport-level failure class as StartAuth above — surface a clear message
+            // instead of an unhandled 500 so the frontend's "Polling failed" path (which already
+            // treats any failed poll call as non-fatal and offers a retry) shows something useful.
+            return BadRequest(ApiResponse<PollAuthResponse>.Fail("AUTH_POLL_FAILED",
+                $"Could not reach the provider while polling: {ex.Message}"));
         }
     }
 

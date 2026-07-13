@@ -11,7 +11,7 @@
 ---
 
 ### BUG-009: Duplicate cleanup removes valid items (false positives at scale)
-**Status:** Fixed — pending commit  
+**Status:** Fixed *(2026-07-13, commit 981af7f)*
 **Symptom:** Running the duplicate cleanup operation eliminates upwards of 30,000 media items from the library. The library does not contain 30,000 duplicates — the vast majority of items being removed are valid, unique entries.  
 **Root cause:** `DuplicateCleanupService.ExtractFilePath` preferred `fileScanner.folderPath` over `fileScanner.filePaths[0]` as the duplicate detection key. `folderPath` is the **parent directory** of an item's files (e.g. `/TV/Show/Season 1/`) and is shared by every item in that folder. Every TV episode in a season, every music track in an album, etc. all had the same `folderPath`, so the cleanup grouped them all as duplicates and deleted all but the highest-scored one per folder.  
 **Fix:** `ExtractFilePath` now uses `filePaths[0]` only. Individual file paths are globally unique per item; folder paths are not. `folderPath` is explicitly never used as a duplicate key.
@@ -19,10 +19,20 @@
 ---
 
 ### BUG-010: Duplicate cleanup misses fanedit/movie cross-type duplicates
-**Status:** Fixed by BUG-009 fix — pending commit  
-**Symptom:** Items that exist as both a Movie and a Fan Edit (same file path, same title) are not detected as duplicates by the cleanup operation.  
-**Root cause:** The cleanup was grouping by `folderPath` (see BUG-009). A fanedit and a movie in different folders but sharing the same individual file would have different `folderPath` values, so they'd never match.  
-**Fix:** Now that grouping uses `filePaths[0]`, two items sharing the exact same physical file path are detected as duplicates regardless of their assigned media type. The DB query already searches across all types — no type filter exists.
+**Status:** Fixed *(2026-07-13, commit 981af7f)* — **correction: the original "fix" below was itself the bug**
+**Symptom:** Fan edits kept getting silently absorbed into their source movie (or vice versa) by the automated cleanup — reported by the owner across several collections (Alien, Terminator, Star Wars, Waterworld, and more) before this was traced.
+**Original (wrong) diagnosis:** Grouping by `filePaths[0]` regardless of media type was described as the *fix* for cross-type duplicate detection ("the DB query already searches across all types — no type filter exists"). This was backwards — it's what let Pass 1 silently merge a Fan Edit into a Movie (or any two differently-typed items) whenever they resolved to the same file-path key, exactly matching Pass 2's own guard comment about why that must never happen.
+**Real root cause (found 2026-07-13):** Two incompatible `fileScanner` JSON schemas existed across `FileScanService`'s write paths (a dead singular `"filePath"` key vs. the array `"filePaths"` actually used everywhere) — so file-path matching silently missed existing items and re-created duplicates on rescan, and the flat scan path (`ScanAsync`/`FindExistingItemAsync`) never checked file-path identity at all before falling back to title/external-ID matching. Those upstream matching gaps are what produced the coincidental cross-type filePaths collisions Pass 1 then merged.
+**Fix:** Unified the schema via `FileIdentityJson` helpers; `FindExistingItemAsync` now checks exact file-path identity first; `UpsertGroupItemAsync` matches by exact file path before falling back to folder path. Pass 1 now splits file-path groups by `MediaTypeId` and never merges across types (mirrors Pass 2), logging a warning instead when a path collision spans types. 52 historical bad cross-type merges were identified and unmerged; the resulting duplicate stubs (see BUG-035) were then cleaned up.
+**Known remaining gap:** `UpsertGroupItemAsync`'s exact-file-path matching *is* type-independent by design (needed so a manual "Change Type" survives a rescan without duplicating) — a scan-matching bug could in theory still mis-attach a rescanned folder to the wrong existing item (this is how item 352711 ended up with a different fan edit's file path on it at one point). The auto-merge consequence is now blocked, but the underlying mis-attachment mechanism itself hasn't been fully root-caused — worth a dedicated look if it recurs.
+
+---
+
+### BUG-035: Unmerge doesn't restore Year/Number, so restored items look like fresh duplicates
+**Status:** Fixed *(2026-07-13, commit 981af7f)*
+**Symptom:** After unmerging any historical merge, the restored item shows up as a visible duplicate in its collection (blank poster, no year) instead of collapsing back with its sibling — required a second manual cleanup pass every time, e.g. after unmerging the 52 BUG-010 merges, and again after the owner unmerged more in the Terminator collection.
+**Root cause:** `MediaItemMerge` (the merge log) never captured `Year`/`Number` at merge time, so `MergeService.UnmergeAsync`'s restored stub always has `Year = null`. Pass 3's duplicate grouping key requires an *exact* year match, so a restored item (`Year = null`) never re-groups with its real sibling (`Year = 1991`, etc.).
+**Fix:** Added `LoserYear`/`LoserNumber` to the merge log (migration `20260713082500_AddLoserYearNumberToMergeLog`), captured at merge time, restored on unmerge. Added **Pass 4** to `DuplicateCleanupService`: same parent + same normalized name + same media type is treated as a duplicate regardless of year (safe — a collection's members are already deduped by external ID upstream), with a guard that skips merging when both sides have differing non-null `Number` (protects genuinely distinct same-titled tracks/episodes, e.g. a live + studio version of the same song under one album).
 
 ---
 
@@ -51,9 +61,10 @@
 ---
 
 ### BUG-012: Diagnostic footer shows [MISSING] for database path
-**Status:** Open  
-**Symptom:** The diagnostic/status footer in the UI shows `[MISSING]` for the database path field instead of the actual path to `chronicle-dev.db` (or the production database).  
+**Status:** Not reproducing *(checked 2026-07-13)* — leaving open, downgraded from "needs a fix" to "watch for recurrence"
+**Symptom:** The diagnostic/status footer in the UI shows `[MISSING]` for the database path field instead of the actual path to `chronicle-dev.db` (or the production database).
 **Root cause:** Unknown — the value is likely not being passed through to the frontend correctly, or the endpoint that supplies it is returning null/empty for the DB path field.
+**2026-07-13 check:** Hit `GET /api/v1/diagnostics` directly against the live (post-restart) server — `dbExists: true`, `dbPath` resolved correctly to the real `chronicle-dev.db`, size matched. `DiagnosticsController.GetDbPath()` already correctly resolves relative `Data Source=` paths against `Environment.CurrentDirectory` (there's an explicit comment there about why, suggesting this was already fixed once). Whatever produced `[MISSING]` isn't happening under the current launch method — may have been specific to a different launcher/working-directory combination (e.g. a script that `cd`s somewhere unexpected before starting the API) that isn't in play right now. If this resurfaces, check `Environment.CurrentDirectory` at the moment `GetDbPath()` runs vs. whatever process/script actually launched the API that time.
 
 ---
 
@@ -68,24 +79,25 @@
 ### BUG-030: Add Media search returns MusicBrainz person results for TV/Movie queries
 **Status:** Open  
 **Symptom:** Searching "Better Call Saul" on the Add Media page with "TV Shows" selected returns "Peter Gould (Person · Better Call Saul)" — a MusicBrainz artist result — instead of the TV show. All type tabs return the same MusicBrainz-sourced results.  
-**Root cause:** When TMDB is not installed or unhealthy, `SearchMetadataAsync` falls back to the first available metadata provider (MusicBrainz). MusicBrainz doesn't filter by `MediaTypeName` for non-music types, so it returns person/artist results for any query. BUG-027 fixed the type hint being passed; the remaining gap is that a non-music provider should be preferred for movie/TV searches and the result should be filtered/labelled to exclude person/artist entries.  
-**Fix needed:** Either (a) require TMDB to be installed for movie/TV searches and show an error if absent, or (b) skip providers that don't declare support for the requested media type in `SearchMetadataAsync`.
+**Status:** Fixed *(already resolved before 2026-07-13, tracker was stale)*
+**Root cause (as originally described):** When TMDB is not installed or unhealthy, `SearchMetadataAsync` falls back to the first available metadata provider (MusicBrainz). MusicBrainz doesn't filter by `MediaTypeName` for non-music types, so it returns person/artist results for any query.
+**2026-07-13 check:** Neither half of this reproduces anymore. `FileScanService.SearchMetadataAsync` calls `ProvidersForType(mediaTypeHint)`, which filters `_registry.GetMetadataProviders()` down to only providers whose `GetSupportedMediaTypes()` includes the requested type — there's no "fall back to first available provider" path left at all. And `Chronicle.Plugin.MusicBrainz`'s `GetSupportedMediaTypes()` only declares `"music"` — it was never going to be selected for a movie/TV search in the first place. Both sides check out; presumably fixed as part of BUG-027's work (the entry already marked fixed) without the tracker being updated for this one.
 
 ---
 
 ### BUG-031: SIMKL OAuth polling fails after user authorizes; no retry button
-**Status:** Open — being investigated  
-**Symptom:** After clicking the SIMKL PIN link, visiting simkl.com/pin, and authorizing the app, the polling returns "Polling failed — please try again." The poll code is then expired/consumed and there is no "Try Again" / "Get New Code" button to restart the flow.  
-**Root cause:** Unknown — needs investigation. Likely either: (a) the SIMKL API's token exchange in `PollAuthAsync` throws an unhandled exception after authorization, (b) the poll code expires before the frontend polls (interval timing issue), or (c) the token response is not being handled correctly in the plugin.  
-**Fix needed:** (1) Investigate why polling fails after successful authorization. (2) Add a "Try Again" button that calls `startAuth` again to get a fresh PIN.
+**Status:** Fixed *(2026-07-13, Chronicle.Plugin.Simkl v1.1.1)*
+**Symptom:** After clicking the SIMKL PIN link, visiting simkl.com/pin, and authorizing the app, the polling returns "Polling failed — please try again." The poll code is then expired/consumed and there is no "Try Again" / "Get New Code" button to restart the flow.
+**Root cause:** `PinPollResponse.Result` was a non-nullable required `string`. Simkl's pending-state poll response doesn't reliably include every field on every call, so a response missing `result` threw a `JsonException` inside `PollPinAsync` that wasn't caught there — it bubbled up into `SimklImportProvider.PollAuthAsync`'s generic `catch (Exception ex)`, which reported it as `Denied` with the raw parse-error message, matching the exact "Polling failed" symptom (and firing even on legitimate pending polls, not just genuine failures).
+**Fix:** Made `PinPollResponse.Result` nullable; `PollPinAsync` now catches `JsonException` specifically and treats it as still-pending rather than propagating. Also added the requested "Try Again" button — `ImportPage.tsx`'s auth section now has a distinct error state (separate from the in-progress device-flow state) with a retry button that calls `startAuth` again for a fresh code, for both Simkl and Trakt (shared component).
 
 ---
 
 ### BUG-032: Trakt Connect Account returns 500 error
-**Status:** Open  
-**Symptom:** Clicking "Connect Account" on the Trakt card in the Import page immediately returns "Request failed with status code 500."  
-**Root cause:** Unknown — the `StartAuthAsync` endpoint only catches `NotSupportedException` and `InvalidOperationException`; any other exception from the Trakt plugin propagates as 500. Likely the Trakt plugin's `StartAuthAsync` throws when the client credentials (client_id, client_secret) are not configured or when the Trakt API call fails.  
-**Fix needed:** Investigate what the Trakt plugin throws on `StartAuthAsync`. Catch the specific exception and return a meaningful 4xx error. Ensure the user gets a clear "configure your client credentials first" message if that's the root cause.
+**Status:** Fixed *(2026-07-13)*
+**Symptom:** Clicking "Connect Account" on the Trakt card in the Import page immediately returns "Request failed with status code 500."
+**Root cause:** Confirmed — `TraktPlugin.EnsureConfigured()` and `TraktClient.InitiateDeviceAuthAsync` both correctly throw `InvalidOperationException` (already caught → 400), but a transport-level failure calling Trakt's `/oauth/device/code` (DNS, connection refused, TLS, timeout) throws `HttpRequestException`/`TaskCanceledException` instead, which `ImportController.StartAuth`'s narrow catch block didn't handle — fell through to ASP.NET's default unhandled-exception 500.
+**Fix:** Added a `catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)` to both `StartAuth` and `PollAuth` in `ImportController.cs`, returning a proper 4xx with a clear message instead. Same class of bug affects Simkl's poll path too, so `PollAuth` got the same guard.
 
 ---
 
@@ -129,8 +141,9 @@
 
 ### BUG-024: Library page shows "no physical file" icon — should be removed
 **Status:** Open  
-**Symptom:** Library cards show both a "has physical file" (HDD) icon and a "no physical file" (cloud) icon. The cloud icon for items without a local file is noise — the user only wants to see the HDD icon for items that *do* have files.  
-**Fix needed:** Remove the cloud/metadata-only icon from `FileStatusIcons.tsx` and all callers. Show only the HDD icon, only when `hasPhysicalFile` is true.
+**Status:** Fixed *(2026-07-13)*
+**Symptom:** Library cards show both a "has physical file" (HDD) icon and a "no physical file" (cloud) icon. The cloud icon for items without a local file is noise — the user only wants to see the HDD icon for items that *do* have files.
+**Fix:** All three callers (`LibraryPage.tsx` x2, `MediaDetailPage.tsx`) already only rendered `IconHdd` behind `hasPhysicalFile && (...)` — the cloud icon had no remaining callers. Removed the now-dead `IconCloud` export from `FileStatusIcons.tsx`.
 
 ---
 
@@ -214,3 +227,8 @@
 - **Scanner performance:** Fixed v1.2.0. *(resolved)*
 - **FanEdit icon not rendering (SVG rejection):** Icon proxy now accepts SVG and rasterises it to PNG server-side via Svg.Skia before caching. *(2026-04-18)*
 - **RunTestEnvironment.ps1 DLL locking:** Kill block moved before build/copy loop so API releases file locks before plugin DLLs are overwritten. *(2026-04-18)*
+- **BUG-009 — Duplicate cleanup false positives at scale (folderPath used as dup key):** Grouping switched to `filePaths[0]`; `folderPath` never used as a dup key. *(2026-07-13)*
+- **BUG-010 — Fan edits silently merged into their source movie (and vice versa):** Root cause was a two-schema `fileScanner` JSON split plus Pass 1 having no media-type guard — unified the schema, added exact-path matching before fallback, split Pass 1 by `MediaTypeId`. 52 historical bad merges identified and unmerged. *(2026-07-13)*
+- **BUG-035 — Unmerge doesn't restore Year/Number, restored items look like fresh dupes:** Merge log now carries `LoserYear`/`LoserNumber`; new Pass 4 catches same-parent same-name duplicates regardless of year, guarded against merging distinct same-titled tracks/episodes by differing `Number`. *(2026-07-13)*
+- **BUG-031 — SIMKL OAuth polling fails, no retry button:** `PinPollResponse.Result` made nullable; `PollPinAsync` catches `JsonException` on a malformed pending-state response instead of letting it bubble up as a fake "Denied". Added a "Try Again" retry button to `ImportPage.tsx`. *(2026-07-13, plugin v1.1.1)*
+- **BUG-032 — Trakt Connect Account returns 500:** `ImportController.StartAuth`/`PollAuth` now catch `HttpRequestException`/`TaskCanceledException` (transport-level failures) and return a proper 4xx instead of falling through to an unhandled 500. *(2026-07-13)*
