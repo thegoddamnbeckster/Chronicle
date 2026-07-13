@@ -1141,7 +1141,21 @@ public class MetadataEnrichmentService(
                 // For hierarchical items, verify the stored ID's show portion matches the
                 // parent's show ID. Catches a child enriched against the wrong show (e.g.
                 // episodes matched to tv:157239 while the parent season is tv:243129/season:1).
-                if (idIsValid && row.MediaItem.HierarchyLevel > 0 && row.MediaItem.ParentId is not null)
+                //
+                // Only meaningful for TMDB/MusicBrainz-style IDs, where a child's ID is built
+                // by literally appending to the parent's ID string (e.g. "tv:157239/season:1").
+                // Plugins with flat, independent ID namespaces per entity type (e.g. Hardcover:
+                // book IDs and series IDs are unrelated integer sequences) would have this
+                // comparison fail unconditionally for every valid ID — confirmed real bug: a
+                // correctly-matched Hardcover book was discarded and re-derived on every single
+                // refresh because its ID naturally shares no prefix with its series' ID.
+                var storedEntityType = row.ExternalId!.IndexOf(':') is var sep2 && sep2 > 0
+                    ? row.ExternalId[..sep2] : null;
+                var isHierarchicalIdFormat = storedEntityType is "movie" or "tv" or "artist"
+                    or "release-group" or "release" or "season" or "album" or "recording" or "episode";
+
+                if (idIsValid && isHierarchicalIdFormat
+                    && row.MediaItem.HierarchyLevel > 0 && row.MediaItem.ParentId is not null)
                 {
                     var parentRow = await db.MediaEnrichments
                         .FirstOrDefaultAsync(e => e.MediaItemId == row.MediaItem.ParentId && e.PluginId == pluginId, ct);
