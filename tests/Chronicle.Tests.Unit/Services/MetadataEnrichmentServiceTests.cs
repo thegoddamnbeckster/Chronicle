@@ -664,19 +664,51 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task EnrichItemAsync_Force_UsesStoredExternalId()
+    public async Task EnrichItemAsync_Force_IgnoresStoredIdAndReSearches()
     {
+        // Force mode (Refresh/Refresh All) must not just re-confirm the previously
+        // stored ID — it should run a genuine fresh search so a stale/wrong match
+        // (from a since-fixed scoring bug, for example) can self-correct.
         var item = await SeedRootItem("Blade Runner", 1982);
         await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", "movie:78", EnrichmentStatus.Completed);
 
         var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:78" }, Score: 80)
+            });
         provider.Setup(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:78" });
 
         var opts = new EnrichmentOptions(EnrichmentMode.Force, Cascade: false);
         await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
 
-        provider.Verify(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()), Times.Once);
+        provider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        var row = await _db.MediaEnrichments.FirstAsync(e => e.MediaItemId == item.Id);
+        row.ExternalId.Should().Be("movie:78");
+        row.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
+    public async Task EnrichItemAsync_Force_SearchFindsNothing_KeepsExistingMatch()
+    {
+        // If the forced fresh search comes up empty (transient provider issue, rate
+        // limit, etc.), a previously-working match must not be destroyed/downgraded
+        // to NotFound — the original ID and Completed status should be preserved.
+        var item = await SeedRootItem("Blade Runner", 1982);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", "movie:78", EnrichmentStatus.Completed);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>());
+
+        var opts = new EnrichmentOptions(EnrichmentMode.Force, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        var row = await _db.MediaEnrichments.FirstAsync(e => e.MediaItemId == item.Id);
+        row.ExternalId.Should().Be("movie:78");
+        row.Status.Should().Be(EnrichmentStatus.Completed);
     }
 
     [Fact]

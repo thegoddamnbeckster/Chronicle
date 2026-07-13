@@ -1064,12 +1064,28 @@ public class MetadataEnrichmentService(
                 result = await provider.GetByIdAsync(resolvedId, ct);
             }
 
+            // Force mode (user-triggered Refresh / Refresh All): don't trust a previously
+            // stored ID at face value — clear it so Steps 2-5 below run a genuine fresh
+            // derivation/search instead of just re-confirming the same ID. This lets a
+            // stale or wrong match (e.g. from a scoring bug that has since been fixed)
+            // self-correct on refresh instead of being reused forever. If the fresh
+            // attempt below finds nothing, the original ID/Completed status is restored
+            // in the not-found branch rather than downgrading a working match to NotFound.
+            var forceRefreshOriginalId = options.Mode == EnrichmentMode.Force ? row.ExternalId : null;
+            var forceRefreshHadMatch = options.Mode == EnrichmentMode.Force
+                && options.IdOverride is null
+                && row.Status == EnrichmentStatus.Completed
+                && !string.IsNullOrEmpty(row.ExternalId);
+            if (forceRefreshHadMatch)
+                row.ExternalId = null;
+
             // ── Step 1: Validate any stored ExternalId ────────────────────────────
             // Clear IDs whose entity type doesn't match the item's hierarchy level.
             // This handles previously-wrong enrichments (e.g. a bare "tv:63197" stored
             // on an episode item from an earlier name-search that matched the wrong show).
             // After clearing, Step 2 will derive the correct ID from the show hierarchy.
-            // Skipped when Step 0 already resolved an explicit Fix Match override.
+            // Skipped when Step 0 already resolved an explicit Fix Match override, or
+            // when Force mode just cleared the ID above to force a fresh derivation/search.
             if (options.IdOverride is null && !string.IsNullOrEmpty(row.ExternalId) && row.MediaItem is not null)
             {
                 bool idIsValid = true;
@@ -1619,11 +1635,23 @@ public class MetadataEnrichmentService(
 
             if (result is null || string.IsNullOrEmpty(result.ExternalId))
             {
-                logger.LogInformation(
-                    "Enrichment not found: plugin={Plugin} item={ItemId} name={Name} query={Query} totalResults={Total}",
-                    provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
-                    searchQuery, result?.TotalResults ?? 0);
-                row.Status = EnrichmentStatus.NotFound;
+                if (forceRefreshHadMatch && !string.IsNullOrEmpty(forceRefreshOriginalId))
+                {
+                    // Fresh re-derivation/re-search found nothing better — keep the
+                    // previously-working match rather than downgrading it to NotFound.
+                    logger.LogInformation(
+                        "Force refresh found no new match for item {ItemId} (plugin={Plugin}); keeping existing match {ExternalId}",
+                        row.MediaItemId, provider.PluginId, forceRefreshOriginalId);
+                    row.ExternalId = forceRefreshOriginalId;
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "Enrichment not found: plugin={Plugin} item={ItemId} name={Name} query={Query} totalResults={Total}",
+                        provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
+                        searchQuery, result?.TotalResults ?? 0);
+                    row.Status = EnrichmentStatus.NotFound;
+                }
             }
             else
             {
