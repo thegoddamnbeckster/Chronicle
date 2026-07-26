@@ -24,12 +24,14 @@ namespace Chronicle.API.Controllers
         private readonly IMovieCollectionService _movieCollectionService;
         private readonly IPluginRegistry _pluginRegistry;
         private readonly Chronicle.Services.Scan.NfoDetailParser _nfoDetailParser;
+        private readonly IMetadataResolutionService _resolutionService;
 
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
             IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
             ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
-            IPluginRegistry pluginRegistry, Chronicle.Services.Scan.NfoDetailParser nfoDetailParser)
+            IPluginRegistry pluginRegistry, Chronicle.Services.Scan.NfoDetailParser nfoDetailParser,
+            IMetadataResolutionService resolutionService)
         {
             _mediaService            = mediaService;
             _fileScanService         = fileScanService;
@@ -40,6 +42,7 @@ namespace Chronicle.API.Controllers
             _pluginRegistry          = pluginRegistry;
             _mergeService    = mergeService;
             _nfoDetailParser = nfoDetailParser;
+            _resolutionService = resolutionService;
         }
 
         [HttpGet("types")]
@@ -326,6 +329,7 @@ namespace Chronicle.API.Controllers
         {
             var item = await _context.MediaItems
                 .Include(m => m.ExternalIds)
+                .Include(m => m.MediaType)
                 .FirstOrDefaultAsync(m => m.Id == id, ct);
 
             if (item is null)
@@ -364,8 +368,17 @@ namespace Chronicle.API.Controllers
                 catch { /* malformed JSON — leave as-is */ }
             }
 
+            // The external ID that just disappeared may be the only thing an "artwork-only"
+            // provider (e.g. Fanart.tv) had to cross-reference — its own blob/enrichment row
+            // never gets cleared by the block above since it's keyed under a DIFFERENT plugin
+            // ID. Without this, stale poster/backdrop/disc/logo art from a since-corrected bad
+            // match keeps displaying indefinitely. See ClearArtworkOnlyProviderDataAsync.
+            await RemoveExternalIdsForUnsupportedTypeAsync(item, ct);
+            await ClearArtworkOnlyProviderDataAsync(item, ct);
+
             ClearProviderMetadata(item);
             item.UpdatedAt = DateTime.UtcNow;
+            await _resolutionService.ResolveAsync(item, _context, ct);
             await _context.SaveChangesAsync(ct);
 
             return NoContent();
@@ -381,6 +394,7 @@ namespace Chronicle.API.Controllers
         {
             var item = await _context.MediaItems
                 .Include(m => m.ExternalIds)
+                .Include(m => m.MediaType)
                 .FirstOrDefaultAsync(m => m.Id == id, ct);
 
             if (item is null)
@@ -419,8 +433,13 @@ namespace Chronicle.API.Controllers
                 ExternalId  = "__suppress__"
             });
 
+            // See ClearExternalId — same cross-referenced artwork-only-provider staleness risk.
+            await RemoveExternalIdsForUnsupportedTypeAsync(item, ct);
+            await ClearArtworkOnlyProviderDataAsync(item, ct);
+
             ClearProviderMetadata(item);
             item.UpdatedAt = DateTime.UtcNow;
+            await _resolutionService.ResolveAsync(item, _context, ct);
             await _context.SaveChangesAsync(ct);
 
             return NoContent();
@@ -716,6 +735,136 @@ namespace Chronicle.API.Controllers
                 return false;
             }
             catch { return false; }
+        }
+
+        /// <summary>
+        /// Removes external-ID rows (and their MetadataJson blob key) whose owning plugin
+        /// does not declare support for this item's CURRENT media type — e.g. a leftover
+        /// "tmdb" ID on an item that is now "Fan Edits" (TMDB never declares "fanedits" as a
+        /// supported type). These become orphaned after a type change or a corrected bad
+        /// match: the owning plugin no longer runs against this item at all, so nothing in
+        /// the normal enrichment cycle will ever touch or clear them — but they keep feeding
+        /// OTHER providers' cross-reference lookups (see ClearArtworkOnlyProviderDataAsync)
+        /// with stale IDs from the item's previous identity, indefinitely.
+        /// </summary>
+        private async Task RemoveExternalIdsForUnsupportedTypeAsync(Chronicle.Core.Models.MediaItem item, CancellationToken ct)
+        {
+            var mediaTypeName = item.MediaType?.Name;
+            if (string.IsNullOrWhiteSpace(mediaTypeName) || item.ExternalIds.Count == 0) return;
+
+            var installedProviders = _pluginRegistry.GetMetadataProviderEntries();
+            var supportedSources = installedProviders
+                .Where(e => e.Provider.GetSupportedMediaTypes()
+                    .Any(s => string.Equals(s.MediaTypeName, mediaTypeName, StringComparison.OrdinalIgnoreCase)))
+                .Select(e => Chronicle.Core.Helpers.PluginIdHelper.ToSource(e.PluginId))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Leave suppress sentinels alone — they're deliberate user configuration, not
+            // provider-fetched data, and harmless even when the underlying plugin no longer
+            // applies to this type.
+            var orphaned = item.ExternalIds
+                .Where(e => e.ExternalId != "__suppress__" && !supportedSources.Contains(e.Source))
+                .ToList();
+            if (orphaned.Count == 0) return;
+
+            _context.MediaExternalIds.RemoveRange(orphaned);
+
+            if (string.IsNullOrWhiteSpace(item.MetadataJson)) return;
+            try
+            {
+                var root = System.Text.Json.JsonSerializer.Deserialize<
+                    System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
+                if (root is null) return;
+
+                var changed = false;
+                foreach (var e in orphaned)
+                {
+                    changed |= root.Remove(e.Source);
+                    var fullId = installedProviders.FirstOrDefault(p =>
+                        string.Equals(Chronicle.Core.Helpers.PluginIdHelper.ToSource(p.PluginId), e.Source,
+                            StringComparison.OrdinalIgnoreCase)).PluginId;
+                    if (fullId is not null)
+                        changed |= root.Remove(fullId);
+                }
+                if (changed)
+                    item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+            }
+            catch { /* malformed JSON — leave as-is */ }
+        }
+
+        /// <summary>
+        /// Deletes the enrichment row and MetadataJson blob for every installed metadata
+        /// provider that is "artwork-only" for this item's media type/level — i.e. its
+        /// declared <c>SupportedFields</c> supply image fields (poster/backdrop/logo/banner/
+        /// disc/clearart/thumb) but no core identity field (title/overview). Fanart.tv is the
+        /// only current example, detected structurally rather than by plugin ID so any future
+        /// artwork-only plugin is covered automatically.
+        ///
+        /// Such providers (per <c>MediaSearchContext.KnownExternalIds</c>) have no independent
+        /// text-search of their own — their art is entirely derived from cross-referencing
+        /// OTHER providers' external IDs (e.g. Fanart.tv fetches via a TMDB/TVDB id). That means
+        /// their correctness is coupled to every external ID on the item, not just their own —
+        /// clearing or suppressing any one match can silently invalidate their art without ever
+        /// touching their own enrichment row or blob. Without this cascade, a corrected match
+        /// leaves the old provider's stale poster/backdrop/disc/logo on screen indefinitely.
+        /// </summary>
+        private async Task ClearArtworkOnlyProviderDataAsync(Chronicle.Core.Models.MediaItem item, CancellationToken ct)
+        {
+            var mediaTypeName = item.MediaType?.Name;
+            if (string.IsNullOrWhiteSpace(mediaTypeName)) return;
+
+            var artworkPluginIds = _pluginRegistry.GetMetadataProviderEntries()
+                .Where(e =>
+                {
+                    var support = e.Provider.GetSupportedMediaTypes()
+                        .FirstOrDefault(s => string.Equals(s.MediaTypeName, mediaTypeName, StringComparison.OrdinalIgnoreCase));
+                    if (support is null) return false;
+                    var fields = support.LevelFields is not null &&
+                                 support.LevelFields.TryGetValue(item.HierarchyLevel, out var levelFields)
+                        ? levelFields
+                        : support.SupportedFields;
+                    return fields.Count > 0
+                        && !fields.Contains("title", StringComparer.OrdinalIgnoreCase)
+                        && !fields.Contains("overview", StringComparer.OrdinalIgnoreCase);
+                })
+                .Select(e => e.PluginId)
+                .ToList();
+
+            if (artworkPluginIds.Count == 0) return;
+
+            await _context.MediaEnrichments
+                .Where(en => en.MediaItemId == item.Id && artworkPluginIds.Contains(en.PluginId))
+                .ExecuteDeleteAsync(ct);
+
+            // The provider's own external-ID row (e.g. fanarttv: "movie:8077") is now orphaned
+            // too — it was fetched via the same stale cross-reference and nothing will re-seed
+            // it (that only happens when the SOURCE plugin it cross-references re-matches this
+            // item, which won't occur for a type it doesn't support). Leaving it behind is
+            // inert but confusing; remove it for the same reason as the blob/enrichment row.
+            var artworkSources = artworkPluginIds
+                .Select(Chronicle.Core.Helpers.PluginIdHelper.ToSource)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var artworkExternalIds = item.ExternalIds
+                .Where(e => artworkSources.Contains(e.Source))
+                .ToList();
+            if (artworkExternalIds.Count > 0)
+                _context.MediaExternalIds.RemoveRange(artworkExternalIds);
+
+            if (string.IsNullOrWhiteSpace(item.MetadataJson)) return;
+            try
+            {
+                var root = System.Text.Json.JsonSerializer.Deserialize<
+                    System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
+                if (root is null) return;
+
+                var changed = false;
+                foreach (var pluginId in artworkPluginIds)
+                    changed |= root.Remove(pluginId);
+
+                if (changed)
+                    item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+            }
+            catch { /* malformed JSON — leave as-is */ }
         }
 
         /// <summary>
