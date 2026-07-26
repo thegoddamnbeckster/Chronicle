@@ -14,6 +14,7 @@ $plugins = @(
     @{ Name = "chronicle.plugin.tmdb";        Src = "W:\Scripts\Chronicle.Plugin.TMDB\bin\Release\net9.0\Chronicle.Plugin.TMDB.dll" }
     @{ Name = "chronicle.plugin.musicbrainz"; Src = "W:\Scripts\Chronicle.Plugin.MusicBrainz\bin\Release\net9.0\Chronicle.Plugin.MusicBrainz.dll" }
     @{ Name = "chronicle.plugin.fanedit";     Src = "W:\Scripts\Chronicle.Plugin.FanEdit\bin\Release\net9.0\Chronicle.Plugin.FanEdit.dll" }
+    @{ Name = "chronicle.plugin.moviesremastered"; Src = "W:\Scripts\Chronicle.Plugin.MoviesRemastered\bin\Release\net9.0\Chronicle.Plugin.MoviesRemastered.dll" }
     @{ Name = "chronicle.plugin.filescanner"; Src = "W:\Scripts\Chronicle.Plugin.FileScanner\bin\Release\net9.0\Chronicle.Plugin.FileScanner.dll" }
 )
 

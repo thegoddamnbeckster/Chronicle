@@ -48,6 +48,11 @@ $PluginMap = @{
         DllName = "Chronicle.Plugin.FanEdit.dll"
         OutDir  = Join-Path $PluginsDir "chronicle.plugin.fanedit"
     }
+    "chronicle.plugin.moviesremastered" = @{
+        Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.MoviesRemastered\Chronicle.Plugin.MoviesRemastered.csproj"
+        DllName = "Chronicle.Plugin.MoviesRemastered.dll"
+        OutDir  = Join-Path $PluginsDir "chronicle.plugin.moviesremastered"
+    }
     "chronicle.plugin.trakt"       = @{
         Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Trakt\Chronicle.Plugin.Trakt.csproj"
         DllName = "Chronicle.Plugin.Trakt.dll"
