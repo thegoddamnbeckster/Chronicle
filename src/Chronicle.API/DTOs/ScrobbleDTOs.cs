@@ -3,10 +3,16 @@ using System.ComponentModel.DataAnnotations;
 namespace Chronicle.API.DTOs
 {
     public record ScrobbleRequestDto(
-        [Required] int MediaItemId,
+        /// <summary>Already-resolved Chronicle media item ID. Omit and supply
+        /// Title/ExternalIds instead when the caller doesn't have one yet.</summary>
+        int? MediaItemId,
         [Range(0, 100)] double? ProgressPercent,
         DateTime? Timestamp,
-        string? DeviceName
+        string? DeviceName,
+        Dictionary<string, string>? ExternalIds = null,
+        string? Title = null,
+        int? Year = null,
+        string? MediaType = null
     );
 
     public record ScrobbleResponseDto(
@@ -16,6 +22,11 @@ namespace Chronicle.API.DTOs
         DateTime Timestamp,
         bool MarkedAsWatched,
         string? DeviceName
+    );
+
+    public record WatchSummaryDto(
+        DateTime? LastWatchedAt,
+        int WatchedCount
     );
 
     public record HistoryItemDto(

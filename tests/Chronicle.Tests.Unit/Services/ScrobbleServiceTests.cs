@@ -103,6 +103,79 @@ namespace Chronicle.Tests.Unit.Services
             history[0].Timestamp.Should().BeAfter(history[1].Timestamp);
         }
 
+        [Fact]
+        public async Task ScrobbleAsync_NoMediaItemId_MatchesExistingItemByExternalId()
+        {
+            _context.MediaExternalIds.Add(new MediaExternalId
+            {
+                MediaItemId = 1, Source = "imdb", ExternalId = "tt1234567"
+            });
+            await _context.SaveChangesAsync();
+
+            var request = new ScrobbleRequest(
+                MediaItemId: null, ProgressPercent: 50.0, Timestamp: null, DeviceName: "Kodi",
+                ExternalIds: new Dictionary<string, string> { ["imdb"] = "tt1234567" });
+
+            var result = await _service.ScrobbleAsync(1, request);
+
+            result.Event.MediaItemId.Should().Be(1);
+            _context.MediaItems.Count().Should().Be(1); // no stub created — matched existing
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_NoMediaItemId_NoMatch_CreatesStubItem()
+        {
+            var request = new ScrobbleRequest(
+                MediaItemId: null, ProgressPercent: 10.0, Timestamp: null, DeviceName: "Kodi",
+                ExternalIds: new Dictionary<string, string> { ["imdb"] = "tt9999999" },
+                Title: "Brand New Movie", Year: 2026, MediaType: "movie");
+
+            var result = await _service.ScrobbleAsync(1, request);
+
+            result.Event.MediaItemId.Should().NotBe(1); // a new stub, not the seeded item
+            var stub = await _context.MediaItems.FindAsync(result.Event.MediaItemId);
+            stub!.Name.Should().Be("Brand New Movie");
+            stub.Year.Should().Be(2026);
+
+            var storedId = await _context.MediaExternalIds.FirstOrDefaultAsync(
+                x => x.MediaItemId == stub.Id && x.Source == "imdb");
+            storedId.Should().NotBeNull();
+            storedId!.ExternalId.Should().Be("tt9999999");
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_NoMediaItemId_NoTitleNoMatch_ThrowsArgumentException()
+        {
+            var request = new ScrobbleRequest(
+                MediaItemId: null, ProgressPercent: 10.0, Timestamp: null, DeviceName: "Kodi");
+
+            await FluentActions.Invoking(() => _service.ScrobbleAsync(1, request))
+                .Should().ThrowAsync<ArgumentException>();
+        }
+
+        [Fact]
+        public async Task GetWatchSummaryAsync_NoEvents_ReturnsZeroCountAndNullTimestamp()
+        {
+            var (lastWatchedAt, count) = await _service.GetWatchSummaryAsync(1, 1);
+
+            count.Should().Be(0);
+            lastWatchedAt.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task GetWatchSummaryAsync_CountsOnlyMarkedAsWatchedEvents_ForThatItem()
+        {
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 90.0, DateTime.UtcNow.AddDays(-2), null)); // watched
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 30.0, DateTime.UtcNow.AddDays(-1), null)); // not watched
+            var latest = DateTime.UtcNow;
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 95.0, latest, null));                      // watched
+
+            var (lastWatchedAt, count) = await _service.GetWatchSummaryAsync(1, 1);
+
+            count.Should().Be(2);
+            lastWatchedAt.Should().BeCloseTo(latest, TimeSpan.FromSeconds(1));
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }
