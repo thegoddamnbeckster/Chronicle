@@ -216,6 +216,14 @@ namespace Chronicle.API.DTOs
         double?        Bpm = null,
         string?        Mood = null,
         string?        Language = null,
-        string?        Isrc = null
+        string?        Isrc = null,
+        // Supplementary artwork fields (e.g. from Fanart.tv) — already computed by
+        // MetadataResolutionService.FieldMap but not previously exposed here. Added
+        // for external art-sync consumers (e.g. Chronicle_Scrobbler's Chronicle -> Kodi
+        // art push) that want more than just poster/backdrop.
+        string?        LogoUrl = null,
+        string?        BannerUrl = null,
+        string?        ClearartUrl = null,
+        string?        DiscUrl = null
     );
 }

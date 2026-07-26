@@ -632,7 +632,11 @@ namespace Chronicle.API.Controllers
                             Bpm:            TryGetDouble(r, "bpm"),
                             Mood:           TryGetString(r, "mood"),
                             Language:       TryGetString(r, "language"),
-                            Isrc:           TryGetString(r, "isrc")
+                            Isrc:           TryGetString(r, "isrc"),
+                            LogoUrl:        TryGetString(r, "logoUrl"),
+                            BannerUrl:      TryGetString(r, "bannerUrl"),
+                            ClearartUrl:    TryGetString(r, "clearartUrl"),
+                            DiscUrl:        TryGetString(r, "discUrl")
                         );
                     }
                 }
