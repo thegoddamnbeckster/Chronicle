@@ -88,15 +88,24 @@ sends `title`/`year`/`externalIds` directly rather than a resolved `mediaItemId`
 This is the actual "provide any data... watch counts, ratings... anything" ask, and the
 piece neither stub repo attempted. New module: `lib/sync_engine.py`.
 
-**Chronicle is the explicit source of truth (user decision, 2026-07-26).** This is a
-one-directional *bulk* push, Chronicle → Kodi, and it is an **unconditional overwrite**
-— whatever Chronicle has for a field, Kodi's local value is replaced with it, no
-gap-filling, no timestamp comparison, no "don't clobber Kodi's own value" caution. The
-reverse direction (Kodi's existing ratings/playcount edits flowing back up to
-Chronicle in bulk) is **not built** — it would contradict Chronicle being authoritative.
-Kodi still feeds Chronicle, but only through live scrobble *events* (already covered by
-`monitor.py` — new watches are additive facts, not a field Chronicle already owns and
-Kodi would be overwriting).
+**Two different reconciliation rules, by field type (both user decisions, 2026-07-26):**
+
+- **Rating and art:** Chronicle is the explicit source of truth. Unconditional
+  overwrite — whatever Chronicle has for a field, Kodi's local value is replaced with
+  it, no gap-filling, no timestamp comparison. There's no meaningful "which side is
+  more current" question for a single rating value.
+- **Playcount / last-played:** genuine two-way reconciliation, since either side can
+  legitimately have a watch the other doesn't know about (a watch on a different
+  Chronicle-tracked source Kodi never saw, or vice versa — a Kodi watch before this
+  addon existed / while offline). For each matched item, compare Kodi's `lastplayed`
+  against Chronicle's most recent watch timestamp for that item (derived from
+  `GET /api/v1/scrobble/history`, max `MarkedAsWatched=true` event timestamp):
+  - **Kodi's `lastplayed` is newer** → Chronicle is missing watch(es) → submit enough
+    synthetic scrobble events (`progressPercent: 100`) to Chronicle to bring its
+    derived count up to match Kodi's `playcount`.
+  - **Chronicle's last watch is newer** → Kodi is missing watch(es) → push Kodi's
+    `playcount`/`lastplayed` up to match Chronicle's derived count.
+  - **Equal / no data on one side** → no-op for that item.
 
 ```
 GET /api/v1/library?status=Completed&page=N&perPage=100   (paginate through all)
