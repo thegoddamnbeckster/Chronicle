@@ -1,4 +1,4 @@
-.page { padding: 24px; max-width: 900px; }
+.page { padding: 24px; }
 .header { margin-bottom: 24px; }
 .title { font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }
 .subtitle { color: var(--text-muted); margin-bottom: 16px; font-size: 0.9rem; }
