@@ -83,49 +83,59 @@ exactly (`ScrobbleRequestDto`: `mediaItemId`, `progressPercent`, `timestamp`,
 sends `title`/`year`/`externalIds` directly rather than a resolved `mediaItemId` — see
 "API gaps to close" below).
 
-### 3. Bidirectional watch-history + rating sync (NEW — the core of Phase 1)
+### 3. Chronicle → Kodi sync: ratings, watch counts, last-played, art (NEW — the core of Phase 1)
 
 This is the actual "provide any data... watch counts, ratings... anything" ask, and the
 piece neither stub repo attempted. New module: `lib/sync_engine.py`.
 
-**Chronicle → Kodi** (import):
+**Chronicle is the explicit source of truth (user decision, 2026-07-26).** This is a
+one-directional *bulk* push, Chronicle → Kodi, and it is an **unconditional overwrite**
+— whatever Chronicle has for a field, Kodi's local value is replaced with it, no
+gap-filling, no timestamp comparison, no "don't clobber Kodi's own value" caution. The
+reverse direction (Kodi's existing ratings/playcount edits flowing back up to
+Chronicle in bulk) is **not built** — it would contradict Chronicle being authoritative.
+Kodi still feeds Chronicle, but only through live scrobble *events* (already covered by
+`monitor.py` — new watches are additive facts, not a field Chronicle already owns and
+Kodi would be overwriting).
+
 ```
 GET /api/v1/library?status=Completed&page=N&perPage=100   (paginate through all)
 GET /api/v1/library?status=Watching&page=N&perPage=100
+GET /api/v1/library?status=Dropped&page=N&perPage=100
+GET /api/v1/library?status=PlanToWatch&page=N&perPage=100
 ```
-For each `LibraryEntryDto`, match against Kodi's library (same ID-priority chain
-`playlist_sync.py` already uses: IMDB → TMDB/uniqueid → title+year), then:
+For each `LibraryEntryDto`, match against Kodi's library (ID-priority chain: IMDB →
+TMDB/TVDB uniqueid → title+year — factored into `lib/kodi_matcher.py`, shared with
+`playlist_sync.py`), then unconditionally push:
 ```
 VideoLibrary.SetMovieDetails / SetEpisodeDetails
-  { movieid, userrating: <UserRating>, playcount: <derived>, lastplayed: <derived> }
-```
-
-**Kodi → Chronicle** (export):
-```
-VideoLibrary.GetMovies / GetEpisodes  (properties: userrating, playcount, lastplayed, uniqueid)
-```
-For each Kodi item with `playcount > 0` or `userrating > 0`:
-```
-PATCH /api/v1/library/{id}   { userRating, status }       — for rating/status changes
-POST  /api/v1/scrobble       { mediaItemId, progressPercent: 100, ... }  — for a "new watch" (playcount increment)
+  {
+    movieid,
+    userrating: <UserRating>,               // whenever Chronicle has one
+    playcount:  <derived watch count>,       // see below
+    lastplayed: <derived from scrobble history>,
+    art: { poster, fanart, banner, clearlogo, clearart, discart, ... }  // whenever Chronicle has a value for that slot
+  }
 ```
 
 **Watch counts specifically:** Chronicle has no dedicated per-item playcount field —
 `LibraryEntryDto` tracks status/rating/notes/timestamps, not a numeric watch count.
 "Times watched" is derived by counting `MarkedAsWatched=true` events for that
-`mediaItemId` from `GET /api/v1/scrobble/history` (paginated). This is sufficient for
-Phase 1 (matches how Kodi itself derives `playcount` — an event count, not a stored
-counter) and requires no new Chronicle server API.
+`mediaItemId` from `GET /api/v1/scrobble/history` (paginated). This matches how Kodi
+itself derives `playcount` — an event count, not a stored counter — and requires no new
+Chronicle server API.
+
+**Images specifically:** Chronicle's resolved `MediaMetadata` fields (`PosterUrl`,
+`BackdropUrl`→`fanart`, `LogoUrl`→`clearlogo`, `BannerUrl`→`banner`, `ClearartUrl`,
+`DiscUrl`) map onto Kodi's `art` dict almost 1:1. Pushed unconditionally like every
+other field, per the source-of-truth decision above — confirmed live against the
+user's real Kodi 21+ library that `SetMovieDetails`/`SetEpisodeDetails` accept an
+`art` object directly.
 
 **Matching:** identical ID-priority chain to `playlist_sync.py`'s existing
 `_find_movie_path`/`_find_episode_path` (IMDB → TMDB/TVDB uniqueid → title+year),
 factored out into a shared `lib/kodi_matcher.py` so both `playlist_sync.py` and the
 new `sync_engine.py` use one matching implementation instead of two.
-
-**Conflict resolution (Phase 1 rule, simple and explicit):** last-write-wins by
-timestamp. Chronicle's `UpdatedAt` on the library entry vs. Kodi's `lastplayed` —
-whichever is more recent wins for rating; playcount is monotonic (take the max of
-the two derived counts, never decrease either side).
 
 ### 4. API gaps to close (Chronicle server-side, small additions)
 
