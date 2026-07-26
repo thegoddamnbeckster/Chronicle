@@ -1,6 +1,15 @@
 # Feature Design: Kodi Sync Plugin (`Chronicle.Plugin.Kodi`)
 
-**Status:** Design/Planning
+> **Superseded (2026-07-26):** `Chronicle_Scrobbler` (a Kodi-side addon modeled on
+> SIMKL_Scrobbler, see `W:\Scripts\Chronicle_Scrobbler`) covers everything this
+> document describes — ratings, play counts, last-played — plus live scrobbling
+> and full bidirectional sync, without requiring Chronicle's server to reach into
+> Kodi's network. This document is kept as a historical record of the alternative
+> (server-push, `IMediaSyncPlugin`) architecture; it was never built. Revisit only
+> if a use case emerges that specifically needs push-from-server rather than an
+> installed Kodi addon (e.g. a user who can't or won't install Kodi addons).
+
+**Status:** Design/Planning — superseded, not built
 **Target:** Phase 3
 **Goal:** Synchronise Chronicle's rich metadata (ratings, watch status, play counts, last-played dates) into a local Kodi instance via the Kodi JSON-RPC API. All Chronicle data — regardless of where it originated (Trakt import, manual scrobble, Letterboxd import, etc.) — is propagated to Kodi's library.
 
