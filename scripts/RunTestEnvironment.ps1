@@ -107,6 +107,11 @@ $PluginProjects = @(
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.fanedit"
     },
     @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.MoviesRemastered\Chronicle.Plugin.MoviesRemastered.csproj"
+        DllName    = "Chronicle.Plugin.MoviesRemastered.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.moviesremastered"
+    },
+    @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Simkl\Chronicle.Plugin.Simkl.csproj"
         DllName    = "Chronicle.Plugin.Simkl.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.simkl"
