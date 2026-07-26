@@ -215,8 +215,12 @@ if (-not $WebOnly) {
     # is loaded (and appsettings.Production.json with its Docker PostgreSQL string is NOT).
     # --launch-profile is intentionally omitted — the 'Development' profile does not exist
     # in launchSettings.json, which caused the env var to never be set.
+    # $env:NO_COLOR is explicitly cleared — if this script itself is launched from a
+    # context that has it set (e.g. a tool/CI wrapper capturing plain-text output), it
+    # would otherwise silently disable Serilog's AnsiConsoleTheme in the spawned window,
+    # even though that window is a normal interactive console perfectly capable of color.
     Start-Process pwsh -ArgumentList "-NoExit", "-Command",
-        "`$env:ASPNETCORE_ENVIRONMENT='Development'; cd '$ApiDir'; dotnet run" `
+        "`$env:NO_COLOR=''; `$env:ASPNETCORE_ENVIRONMENT='Development'; cd '$ApiDir'; dotnet run" `
         -WindowStyle Normal
 }
 
@@ -228,7 +232,7 @@ if (-not $ApiOnly) {
     }
     Write-Host "Starting Chronicle Web (port 8888)..." -ForegroundColor Cyan
     Start-Process pwsh -ArgumentList "-NoExit", "-Command",
-        "cd '$WebDir'; npm run dev 2>&1" `
+        "`$env:NO_COLOR=''; cd '$WebDir'; npm run dev 2>&1" `
         -WindowStyle Normal
 }
 
