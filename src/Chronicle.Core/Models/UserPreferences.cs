@@ -15,4 +15,11 @@ public class UserPreferences
     /// Values: true = open, false = closed.
     /// </summary>
     public Dictionary<string, bool>? Folds { get; set; }
+    /// <summary>
+    /// Active theme storage key ("{pluginId}:{themeKey}"), synced across every device the
+    /// user signs into. The browser also caches the resolved value in localStorage for
+    /// instant zero-flash rendering and as the fallback on pages with no signed-in user
+    /// (login, device-auth) -- this is the source of truth once a user IS signed in.
+    /// </summary>
+    public string? Theme { get; set; }
 }

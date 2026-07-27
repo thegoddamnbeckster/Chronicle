@@ -44,6 +44,7 @@ namespace Chronicle.API.Controllers
                 defaultFoldsOpen       = prefs.DefaultFoldsOpen,
                 folds                  = prefs.Folds ?? new Dictionary<string, bool>(),
                 createCollectionStubs  = prefs.CreateCollectionStubs ?? true,
+                theme                  = prefs.Theme,
             }));
         }
 
@@ -57,6 +58,7 @@ namespace Chronicle.API.Controllers
                 DefaultFoldsOpen      = req.DefaultFoldsOpen,
                 Folds                 = req.Folds,
                 CreateCollectionStubs = req.CreateCollectionStubs,
+                Theme                 = req.Theme,
             };
             await _userService.UpdatePreferencesAsync(userId, patch);
             var prefs = await _userService.GetPreferencesAsync(userId);
@@ -67,6 +69,7 @@ namespace Chronicle.API.Controllers
                 defaultFoldsOpen      = prefs.DefaultFoldsOpen,
                 folds                 = prefs.Folds ?? new Dictionary<string, bool>(),
                 createCollectionStubs = prefs.CreateCollectionStubs ?? true,
+                theme                 = prefs.Theme,
             }));
         }
     }
@@ -75,6 +78,7 @@ namespace Chronicle.API.Controllers
         bool? ShowDiagnostics,
         bool? DefaultFoldsOpen,
         Dictionary<string, bool>? Folds,
-        bool? CreateCollectionStubs = null
+        bool? CreateCollectionStubs = null,
+        string? Theme = null
     );
 }

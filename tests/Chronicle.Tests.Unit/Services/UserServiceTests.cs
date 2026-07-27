@@ -143,6 +143,20 @@ namespace Chronicle.Tests.Unit.Services
             prefs.DefaultFoldsOpen.Should().BeTrue();
         }
 
+        [Fact]
+        public async Task UpdatePreferencesAsync_CreateCollectionStubs_Persists()
+        {
+            // Arrange
+            var user = await _service.RegisterAsync("carol", "correct", null);
+
+            // Act
+            await _service.UpdatePreferencesAsync(user.Id, new UserPreferences { CreateCollectionStubs = false });
+
+            // Assert
+            var prefs = await _service.GetPreferencesAsync(user.Id);
+            prefs.CreateCollectionStubs.Should().BeFalse();
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

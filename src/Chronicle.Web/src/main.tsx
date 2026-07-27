@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './contexts/AuthContext'
 import { BackgroundActivityProvider } from './contexts/BackgroundActivityContext'
 import { ThemeProvider } from './contexts/ThemeContext'
+import { ThemeAccountSync } from './components/ThemeAccountSync'
 import App from './App'
 import './index.css'
 
@@ -21,6 +22,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
       <AuthProvider>
+        {/* Needs both ThemeContext and AuthContext, which ThemeAccountSync itself can't
+            reach directly since ThemeProvider sits above (outside) AuthProvider here. */}
+        <ThemeAccountSync />
         <BackgroundActivityProvider>
           <QueryClientProvider client={queryClient}>
             <BrowserRouter>
