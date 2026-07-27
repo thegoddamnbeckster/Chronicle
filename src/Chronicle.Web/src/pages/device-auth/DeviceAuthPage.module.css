@@ -113,6 +113,17 @@
   cursor: not-allowed;
 }
 
+.goToBtn {
+  color: var(--accent, #6366f1);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.goToBtn:hover {
+  text-decoration: underline;
+}
+
 .denyBtn {
   flex: 1;
   background: transparent;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { getDeviceAuthInfo, approveDevice, denyDevice, type DeviceAuthInfoDto } from '@/api/deviceAuth'
 import { ApiError } from '@/api/client'
 import styles from './DeviceAuthPage.module.css'
@@ -165,6 +165,7 @@ export default function DeviceAuthPage() {
               The device has been granted access to your Chronicle account.
               You can safely close this tab.
             </p>
+            <Link to="/" className={styles.goToBtn}>Go to Chronicle →</Link>
           </>
         )}
 
