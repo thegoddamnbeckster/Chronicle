@@ -55,6 +55,12 @@ export default defineConfig({
     port: webPort,
     host: true,
     strictPort: false,
+    // Vite's DNS-rebinding protection rejects any Host header it doesn't recognize --
+    // fine for a bare dev server, but breaks the moment a reverse proxy (nginx, NPM)
+    // sits in front of it with its own domain name, since that's exactly the request
+    // shape the protection is designed to block. Add every hostname Chronicle's dev
+    // server is actually meant to be reachable as here.
+    allowedHosts: ['localhost', 'chronicle.internal'],
     proxy: {
       // Scan endpoints are long-running: enumerating a large movie folder
       // (500+ subdirectories) can easily exceed 2 minutes.  This rule must
