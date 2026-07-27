@@ -10,7 +10,7 @@ namespace Chronicle.Services;
 
 public class DeviceAuthService : IDeviceAuthService
 {
-    private const int ExpirySeconds = 300;   // 5-minute window
+    private const int ExpirySeconds = 900;   // 15-minute window, matching SIMKL's own device-auth codes
 
     private readonly ChronicleDbContext _db;
     private readonly IApiTokenService   _apiTokenService;
