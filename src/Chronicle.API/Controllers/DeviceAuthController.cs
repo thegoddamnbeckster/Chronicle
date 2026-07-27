@@ -81,12 +81,19 @@ public class DeviceAuthController : ControllerBase
         // QRCoder's PngByteQRCode writes a 1-bit-per-pixel monochrome PNG via its own
         // minimal hand-rolled encoder. That's valid PNG (general viewers decode it fine),
         // but Kodi's texture loader renders it as nothing — no error, just a blank control.
-        // Round-tripping through SkiaSharp (already pulled in transitively via Svg.Skia,
-        // no new dependency) re-encodes it as a standard 32-bit RGBA PNG every client can
-        // actually display.
-        using var bitmap = SKBitmap.Decode(rawPng);
-        using var image  = SKImage.FromBitmap(bitmap);
-        using var data2  = image.Encode(SKEncodedImageFormat.Png, 100);
+        // A first pass just round-tripped through SkiaSharp's default decode/encode, but
+        // SKBitmap.Decode preserves the source's grayscale color type by default -- it came
+        // out as an 8-bit grayscale PNG, still not what Kodi wants. Drawing onto an explicit
+        // Rgba8888 canvas forces a real color-type conversion, not just a bit-depth bump.
+        using var source = SKBitmap.Decode(rawPng);
+        using var rgba   = new SKBitmap(new SKImageInfo(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Opaque));
+        using (var canvas = new SKCanvas(rgba))
+        {
+            canvas.Clear(SKColors.White);
+            canvas.DrawBitmap(source, 0, 0);
+        }
+        using var image = SKImage.FromBitmap(rgba);
+        using var data2 = image.Encode(SKEncodedImageFormat.Png, 100);
         var png = data2.ToArray();
 
         return File(png, "image/png");
