@@ -78,6 +78,27 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyC
     Where-Object { $_.CommandLine -match "Chronicle\.Service\.MetadataProvider\.Audiobookshelf" } |
     ForEach-Object { Write-Host "  Stopping ABS bridge PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
+# Close the OUTER console windows a previous run of this script left behind. Each was
+# launched via `Start-Process pwsh -ArgumentList "-NoExit", "-Command", "...dotnet run"` —
+# killing the inner dotnet/node/python process above does NOT close that window, because
+# -NoExit keeps the pwsh shell alive after the command inside it dies. Without this, every
+# rerun orphans one more empty, idle pwsh window instead of replacing the one it made obsolete.
+#
+# Only close a window for a service THIS run will actually touch — same gating as the
+# "Start API/Web/ABS" sections below. -NoAbsBridge (or -ApiOnly/-WebOnly) means "leave that
+# one alone", so a previously-started window for it should survive, not get swept up here.
+$SpawnedWindowMarkers = @()
+if (-not $WebOnly) { $SpawnedWindowMarkers += $ApiDir }
+if (-not $ApiOnly) { $SpawnedWindowMarkers += $WebDir }
+if (-not $ApiOnly -and -not $WebOnly -and -not $NoAbsBridge) { $SpawnedWindowMarkers += $AbsBridgeDir }
+
+if ($SpawnedWindowMarkers.Count -gt 0) {
+    $SpawnedWindowPattern = ($SpawnedWindowMarkers | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -match $SpawnedWindowPattern } |
+        ForEach-Object { Write-Host "  Closing previous console window (pwsh PID $($_.ProcessId))"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
 Start-Sleep -Milliseconds 500
 
 # ── Build & deploy plugins ────────────────────────────────────────────────────
