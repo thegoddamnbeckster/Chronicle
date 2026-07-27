@@ -25,19 +25,20 @@ public class DeviceAuthService : IDeviceAuthService
 
     public async Task<InitiateDeviceAuthResult> InitiateAsync(string? deviceName, string baseUrl)
     {
-        // Generate cryptographically random 32-char hex code
-        var rawBytes = RandomNumberGenerator.GetBytes(16);
-        var code     = Convert.ToHexString(rawBytes).ToLowerInvariant();
-
-        // Human-readable 8-char display code (first 8 hex chars, split A1B2-C3D4)
-        var display = code[..4].ToUpperInvariant() + '-' + code[4..8].ToUpperInvariant();
+        // This is a LAN pairing code for a handful of devices (Kodi installs, typically),
+        // not a secret protecting an internet-facing service -- there's no need for the
+        // 128-bit code this used to be, and a long opaque string in the verification URL
+        // just makes it something nobody can type or read aloud. The short human code
+        // (previously only a truncated *display* of a separate long code) is now the
+        // one and only identifier, used everywhere: URL, QR payload, and DB lookup.
+        var code = await GenerateUniqueCodeAsync();
 
         var expiry  = DateTime.UtcNow.AddSeconds(ExpirySeconds);
 
         var record = new DeviceAuthCode
         {
             Code        = code,
-            DisplayCode = display,
+            DisplayCode = code,
             DeviceName  = deviceName?.Trim(),
             Status      = DeviceAuthStatus.Pending,
             ExpiresAt   = expiry,
@@ -47,10 +48,42 @@ public class DeviceAuthService : IDeviceAuthService
         _db.DeviceAuthCodes.Add(record);
         await _db.SaveChangesAsync();
 
-        var verificationUrl = $"{baseUrl.TrimEnd('/')}/device-auth/{code}";
+        var verificationUrl = $"{baseUrl.TrimEnd('/')}/a/{code}";
 
         return new InitiateDeviceAuthResult(
-            code, display, verificationUrl, expiry, ExpirySeconds);
+            code, code, verificationUrl, expiry, ExpirySeconds);
+    }
+
+    // Excludes 0/O, 1/I/L and similar look-alikes -- this gets read off a screen and
+    // typed on a phone or TV remote, so avoiding ambiguous characters matters more than
+    // maximizing entropy. 32 symbols ^ 6 chars ~= 1.07 billion combinations, still far
+    // more than enough headroom for a handful of concurrently pending codes.
+    private const string CodeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    private const int CodeLength = 6;
+
+    /// <summary>
+    /// 6-char unambiguous-alphabet code, e.g. "7HKQ2M" -- no dashes, short enough to read
+    /// aloud or type in one go (matches the brevity of SIMKL's own pairing codes). Checked
+    /// against currently pending codes and regenerated on the rare collision rather than
+    /// assumed unique.
+    /// </summary>
+    private async Task<string> GenerateUniqueCodeAsync()
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var rawBytes = RandomNumberGenerator.GetBytes(CodeLength);
+            var chars    = new char[CodeLength];
+            for (var i = 0; i < CodeLength; i++)
+                chars[i] = CodeAlphabet[rawBytes[i] % CodeAlphabet.Length];
+            var code = new string(chars);
+
+            var collision = await _db.DeviceAuthCodes.AnyAsync(c =>
+                c.Code == code && c.Status == DeviceAuthStatus.Pending);
+            if (!collision)
+                return code;
+        }
+
+        throw new InvalidOperationException("Could not generate a unique device-auth code.");
     }
 
     // ── Info (for the approval page) ─────────────────────────────────────────
@@ -159,7 +192,7 @@ public class DeviceAuthService : IDeviceAuthService
             .AnyAsync(c => c.Code == code);
 
         return exists
-            ? $"{baseUrl.TrimEnd('/')}/device-auth/{code}"
+            ? $"{baseUrl.TrimEnd('/')}/a/{code}"
             : null;
     }
 
