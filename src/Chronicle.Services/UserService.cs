@@ -93,6 +93,8 @@ namespace Chronicle.Services
             catch (JsonException ex) { _log.Warning(ex, "Failed to deserialize preferences for user {UserId} during update — starting fresh", userId); current = new(); }
             if (patch.ShowDiagnostics.HasValue) current.ShowDiagnostics = patch.ShowDiagnostics;
 
+            if (patch.CreateCollectionStubs.HasValue) current.CreateCollectionStubs = patch.CreateCollectionStubs;
+
             if (patch.DefaultFoldsOpen.HasValue)
                 current.DefaultFoldsOpen = patch.DefaultFoldsOpen;
 
@@ -102,6 +104,8 @@ namespace Chronicle.Services
                 foreach (var (key, value) in patch.Folds)
                     current.Folds[key] = value;
             }
+
+            if (!string.IsNullOrEmpty(patch.Theme)) current.Theme = patch.Theme;
 
             user.PreferencesJson = JsonSerializer.Serialize(current);
             user.UpdatedAt = DateTime.UtcNow;

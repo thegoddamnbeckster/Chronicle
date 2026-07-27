@@ -5,6 +5,8 @@ export interface UserPreferences {
   defaultFoldsOpen?: boolean
   folds?: Record<string, boolean>
   createCollectionStubs?: boolean
+  /** Active theme storage key ("{pluginId}:{themeKey}"), synced across devices. */
+  theme?: string
 }
 
 export async function getMyPreferences(): Promise<UserPreferences> {
