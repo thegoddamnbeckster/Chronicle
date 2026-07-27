@@ -5,6 +5,7 @@ using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QRCoder;
+using SkiaSharp;
 
 namespace Chronicle.API.Controllers;
 
@@ -75,7 +76,18 @@ public class DeviceAuthController : ControllerBase
         using var generator = new QRCodeGenerator();
         var data   = generator.CreateQrCode(url, QRCodeGenerator.ECCLevel.M);
         var qrCode = new PngByteQRCode(data);
-        var png    = qrCode.GetGraphic(10);   // 10 px per module → ~310px for a typical QR
+        var rawPng = qrCode.GetGraphic(10);   // 10 px per module → ~310px for a typical QR
+
+        // QRCoder's PngByteQRCode writes a 1-bit-per-pixel monochrome PNG via its own
+        // minimal hand-rolled encoder. That's valid PNG (general viewers decode it fine),
+        // but Kodi's texture loader renders it as nothing — no error, just a blank control.
+        // Round-tripping through SkiaSharp (already pulled in transitively via Svg.Skia,
+        // no new dependency) re-encodes it as a standard 32-bit RGBA PNG every client can
+        // actually display.
+        using var bitmap = SKBitmap.Decode(rawPng);
+        using var image  = SKImage.FromBitmap(bitmap);
+        using var data2  = image.Encode(SKEncodedImageFormat.Png, 100);
+        var png = data2.ToArray();
 
         return File(png, "image/png");
     }
