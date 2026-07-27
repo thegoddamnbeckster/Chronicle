@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getDeviceAuthInfo, approveDevice, denyDevice, type DeviceAuthInfoDto } from '@/api/deviceAuth'
+import { ApiError } from '@/api/client'
 import styles from './DeviceAuthPage.module.css'
 
 type PageState = 'loading' | 'login-required' | 'ready' | 'approving' | 'approved' | 'denied' | 'expired' | 'error'
@@ -51,12 +52,23 @@ export default function DeviceAuthPage() {
     }
   }
 
+  // A stale tab, a double-click, or someone else acting on the same link between
+  // this page loading and the button being pressed can all make approve/deny land
+  // on a code that's no longer pending. Rather than show a generic failure and
+  // leave the Allow/Deny buttons sitting there invitingly, re-fetch so the page
+  // reflects whatever the code's *actual* current state is (already approved,
+  // denied, or expired) -- the existing render branches below already handle all
+  // of those correctly, this just makes sure a stale "ready" screen isn't left up.
   async function handleApprove() {
     setState('approving')
     try {
       await approveDevice(code!)
       setState('approved')
-    } catch {
+    } catch (err) {
+      if (err instanceof ApiError && (err.errorCode === 'CODE_USED' || err.errorCode === 'CODE_EXPIRED' || err.errorCode === 'CODE_NOT_FOUND')) {
+        await loadInfo()
+        return
+      }
       setError('Failed to approve. Please try again.')
       setState('ready')
     }
@@ -65,10 +77,15 @@ export default function DeviceAuthPage() {
   async function handleDeny() {
     try {
       await denyDevice(code!)
-    } catch {
-      // Best-effort
+      setState('denied')
+    } catch (err) {
+      if (err instanceof ApiError && (err.errorCode === 'CODE_USED' || err.errorCode === 'CODE_EXPIRED' || err.errorCode === 'CODE_NOT_FOUND')) {
+        await loadInfo()
+        return
+      }
+      // Best-effort otherwise
+      setState('denied')
     }
-    setState('denied')
   }
 
   function handleLoginRedirect() {
@@ -166,7 +183,7 @@ export default function DeviceAuthPage() {
           <>
             <h1 className={styles.heading}>Link expired</h1>
             <p className={styles.sub}>
-              This authorisation link has expired (codes are valid for 5 minutes).
+              This authorisation link has expired (codes are valid for 15 minutes).
               Please start a new connection from your device.
             </p>
           </>
