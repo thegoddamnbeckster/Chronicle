@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { login } from '@/api/auth'
 import { useAuth } from '@/hooks/useAuth'
 import { useServerReady } from '@/hooks/useServerReady'
@@ -7,6 +7,7 @@ import styles from './Auth.module.css'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { setUser } = useAuth()
   const serverReady = useServerReady()
   const [username, setUsername] = useState('')
@@ -22,7 +23,15 @@ export default function LoginPage() {
       const { token, user } = await login(username, password)
       localStorage.setItem('chronicle_token', token)
       setUser(user)
-      navigate('/')
+      // Device-auth (QR/PIN pairing) sends people here with ?return=/a/<code>
+      // so they land back on the approval question instead of the dashboard.
+      // sessionStorage is a defensive fallback for the same value in case the
+      // query string gets dropped somewhere between redirects.
+      const returnTo = searchParams.get('return')
+        || sessionStorage.getItem('chronicle_device_auth_return')
+        || '/'
+      sessionStorage.removeItem('chronicle_device_auth_return')
+      navigate(returnTo)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {
