@@ -118,18 +118,17 @@ export default function DeviceAuthPage() {
 
         {(state === 'ready' || state === 'approving') && info && (
           <>
-            <h1 className={styles.heading}>Authorise device?</h1>
+            <h1 className={styles.heading}>Connect to Chronicle?</h1>
+
+            <p className={styles.sub}>
+              Do you wish to connect <strong>{info.deviceName || 'this device'}</strong> to
+              Chronicle at <strong>{window.location.origin}</strong>?
+            </p>
 
             <div className={styles.codeBox}>
               <span className={styles.codeLabel}>Your code</span>
               <span className={styles.displayCode}>{info.displayCode}</span>
             </div>
-
-            {info.deviceName && (
-              <p className={styles.deviceName}>
-                Device: <strong>{info.deviceName}</strong>
-              </p>
-            )}
 
             <p className={styles.sub}>
               This will create a permanent API key allowing the device to scrobble
