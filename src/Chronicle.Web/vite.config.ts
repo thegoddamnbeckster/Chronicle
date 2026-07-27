@@ -62,12 +62,20 @@ export default defineConfig({
       '/api/v1/scan': {
         target: `http://localhost:${ports.api}`,
         changeOrigin: true,
+        // Sends X-Forwarded-For/-Proto/-Host so the backend's own
+        // ForwardedHeadersMiddleware sees this dev proxy the same way it'd see a
+        // real reverse proxy -- without it, Request.Host on the backend reflects
+        // its own bind address (the API's port) rather than what the browser/Kodi
+        // actually connected to (the Vite port), which broke Chronicle_Scrobbler's
+        // QR/verification URL.
+        xfwd: true,
         timeout: 600_000,      // 10 minutes
         proxyTimeout: 600_000,
       },
       '/api': {
         target: `http://localhost:${ports.api}`,
         changeOrigin: true,
+        xfwd: true,
         // Long-running requests (bulk import, metadata refresh) can take >30 s
         // on large libraries.
         timeout: 120_000,

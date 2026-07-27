@@ -1,6 +1,7 @@
 using System.Text;
 using Chronicle.API;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Chronicle.API.Authentication;
 using Chronicle.Data;
 using Chronicle.Services;
@@ -367,6 +368,22 @@ using (var scope = app.Services.CreateScope())
 }
 
 // ── Middleware pipeline ───────────────────────────────────────────────────────
+
+// Must run before anything reads Request.Scheme/Request.Host (e.g.
+// DeviceAuthController.GetBaseUrl(), used to build the QR/verification URL) --
+// otherwise those reflect whatever host:port the backend itself is bound to,
+// not the address a reverse proxy (or the Vite dev server) actually fronted it
+// with. KnownNetworks/KnownProxies are cleared because Chronicle is self-hosted
+// behind whatever the user puts in front of it (nginx, Caddy, a router on a
+// different device) -- there's no fixed proxy address to allowlist, same
+// tradeoff self-hosted apps like Jellyfin/Sonarr make for this exact scenario.
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
+};
+forwardedHeadersOptions.KnownNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
 
 // Catch TaskCanceledException / OperationCanceledException caused by the client
 // disconnecting mid-request. Return 499 (client closed request) silently.
