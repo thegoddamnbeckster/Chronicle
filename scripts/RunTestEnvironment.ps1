@@ -59,24 +59,33 @@ Write-Host ""
 # locks on the DLLs in the plugins/ folder, causing Copy-Item to fail.
 Write-Host "Stopping any running Chronicle dev processes..." -ForegroundColor Yellow
 
-# Kill Chronicle.API.exe (published build running as a standalone process)
-Get-Process -Name "Chronicle.API" -ErrorAction SilentlyContinue |
-    ForEach-Object { Write-Host "  Stopping Chronicle.API PID $($_.Id)"; Stop-Process $_ -Force }
+# Only stop what this run will actually restart -- same gating as the window-closing
+# and "Start API/Web/ABS" sections below. Ungated, an -ApiOnly (or -WebOnly) run would
+# kill the other services too and then never bring them back, leaving them down.
+if (-not $WebOnly) {
+    # Kill Chronicle.API.exe (published build running as a standalone process)
+    Get-Process -Name "Chronicle.API" -ErrorAction SilentlyContinue |
+        ForEach-Object { Write-Host "  Stopping Chronicle.API PID $($_.Id)"; Stop-Process $_ -Force }
 
-# Kill dotnet run processes for Chronicle.API (dev build)
-Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match "Chronicle\.API" } |
-    ForEach-Object { Write-Host "  Stopping dotnet PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    # Kill dotnet run processes for Chronicle.API (dev build)
+    Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match "Chronicle\.API" } |
+        ForEach-Object { Write-Host "  Stopping dotnet PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 
-# Kill node/vite dev server
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match "Chronicle\.Web" } |
-    ForEach-Object { Write-Host "  Stopping node PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+if (-not $ApiOnly) {
+    # Kill node/vite dev server
+    Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match "Chronicle\.Web" } |
+        ForEach-Object { Write-Host "  Stopping node PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 
-# Kill the ABS metadata-provider bridge (python service.py)
-Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match "Chronicle\.Service\.MetadataProvider\.Audiobookshelf" } |
-    ForEach-Object { Write-Host "  Stopping ABS bridge PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+if (-not $ApiOnly -and -not $WebOnly -and -not $NoAbsBridge) {
+    # Kill the ABS metadata-provider bridge (python service.py)
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match "Chronicle\.Service\.MetadataProvider\.Audiobookshelf" } |
+        ForEach-Object { Write-Host "  Stopping ABS bridge PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 
 # Close the OUTER console windows a previous run of this script left behind. Each was
 # launched via `Start-Process pwsh -ArgumentList "-NoExit", "-Command", "...dotnet run"` —
