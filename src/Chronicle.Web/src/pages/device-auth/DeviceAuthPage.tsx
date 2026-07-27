@@ -22,7 +22,7 @@ export default function DeviceAuthPage() {
 
     if (!isLoggedIn()) {
       // Store return URL and redirect to login
-      sessionStorage.setItem('chronicle_device_auth_return', `/device-auth/${code}`)
+      sessionStorage.setItem('chronicle_device_auth_return', `/a/${code}`)
       setState('login-required')
       return
     }
@@ -72,7 +72,7 @@ export default function DeviceAuthPage() {
   }
 
   function handleLoginRedirect() {
-    navigate(`/login?return=${encodeURIComponent(`/device-auth/${code}`)}`)
+    navigate(`/login?return=${encodeURIComponent(`/a/${code}`)}`)
   }
 
   // ── Render ────────────────────────────────────────────────────────────────

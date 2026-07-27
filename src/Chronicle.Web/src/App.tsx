@@ -48,8 +48,10 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      {/* Device-auth approval page — accessible without being logged in (page handles auth check) */}
-      <Route path="/device-auth/:code" element={<DeviceAuthPage />} />
+      {/* Device-auth approval page — accessible without being logged in (page handles auth check).
+          Short path on purpose: the code itself is now the whole point of brevity (a LAN
+          pairing code someone might type by hand), so the route around it stays minimal too. */}
+      <Route path="/a/:code" element={<DeviceAuthPage />} />
       <Route
         path="/"
         element={
