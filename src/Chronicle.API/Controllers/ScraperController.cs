@@ -111,6 +111,21 @@ public class ScraperController : ControllerBase
             {
                 var parentResolved = ParseResolvedCore(parent.MetadataJson);
                 var collectionPoster = parentResolved?.PosterUrl ?? parent.PosterUrl;
+                var usedFallback = false;
+
+                if (string.IsNullOrEmpty(collectionPoster))
+                {
+                    // Confirmed directly (2026-07-30): 35 collections in this library have no
+                    // dedicated set-level art from ANY configured provider at all (not a stale
+                    // registration like the earlier Video3/Video7 bug -- Chronicle genuinely has
+                    // nothing for the collection itself), most with several real member movies,
+                    // not just one-off single-movie groupings. Rather than leave Kodi's set card
+                    // permanently blank, fall back to any member movie's own poster -- better
+                    // than nothing, and a common convention other media managers already use.
+                    collectionPoster = await FindFallbackCollectionPosterAsync(parent.Id, ct);
+                    usedFallback = collectionPoster is not null;
+                }
+
                 collection = new ScraperCollectionDto(
                     parent.Id,
                     parentResolved?.Title ?? parent.Name,
@@ -121,8 +136,12 @@ public class ScraperController : ControllerBase
                 if (string.IsNullOrEmpty(collectionPoster))
                     _logger.LogWarning(
                         "scraper/movies/details: item {ItemId} \"{Title}\" belongs to collection {CollectionId} \"{CollectionName}\" " +
-                        "which has NO posterUrl in Chronicle -- Kodi's set poster will stay blank until this is fixed",
+                        "which has NO posterUrl in Chronicle (and no member movie has one either) -- Kodi's set poster will stay blank",
                         id, item.Name, parent.Id, collection.Name);
+                else if (usedFallback)
+                    _logger.LogInformation(
+                        "scraper/movies/details: collection {CollectionId} \"{CollectionName}\" has no poster of its own -- " +
+                        "using a member movie's poster instead", parent.Id, collection.Name);
             }
             else
             {
@@ -278,6 +297,23 @@ public class ScraperController : ControllerBase
             item = await _context.MediaItems.FindAsync([item.Id], ct);
         }
         return item;
+    }
+
+    /// <summary>Any member movie's own poster, resolved metadata first, for use only when the
+    /// collection itself has none. Returns the first one found, not necessarily the "best".</summary>
+    private async Task<string?> FindFallbackCollectionPosterAsync(int collectionId, CancellationToken ct)
+    {
+        var children = await _context.MediaItems
+            .Where(m => m.ParentId == collectionId)
+            .ToListAsync(ct);
+
+        foreach (var child in children)
+        {
+            var poster = ParseResolvedCore(child.MetadataJson)?.PosterUrl ?? child.PosterUrl;
+            if (!string.IsNullOrEmpty(poster))
+                return poster;
+        }
+        return null;
     }
 
     private async Task<int> GetMediaTypeIdAsync(string name, CancellationToken ct) =>
