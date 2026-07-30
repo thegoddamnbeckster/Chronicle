@@ -58,9 +58,14 @@ export default function Layout() {
             <NavLink to="/library" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
               Library
             </NavLink>
-            <NavLink to="/media/add" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-              Add Media
-            </NavLink>
+            <NavGroup label="Add" storageKey="nav_group_add" defaultOpen={false}>
+              <NavLink to="/media/add" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+                Media
+              </NavLink>
+              <NavLink to="/media/add-collection" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+                Movie Collection
+              </NavLink>
+            </NavGroup>
             {scanStatus?.available && (
               <NavLink to="/scan" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
                 File Scan

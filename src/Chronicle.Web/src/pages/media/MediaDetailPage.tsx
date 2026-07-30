@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, getNfoDetail } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
@@ -281,6 +281,45 @@ export default function MediaDetailPage() {
       // in compact mode) so the removed item disappears immediately instead of only after
       // a manual reload — matches ['collection', <id>] for whichever collection is mounted.
       qc.invalidateQueries({ queryKey: ['collection'] })
+    },
+  })
+
+  // ── Add to Collection / Remove from Collection (this item AS the collection root) ──
+  // Lives here (not inside CollectionMetadataBox) because a brand-new, still-empty
+  // collection has no children yet, and GetCollection 404s until it has at least one --
+  // these controls have to work before that's true, so they're driven by getMediaChildren
+  // (already fetched above as `children`) rather than the collection endpoint.
+  const [addToCollectionOpen, setAddToCollectionOpen] = useState(false)
+  const [addToCollectionQuery, setAddToCollectionQuery] = useState('')
+  const [removeFromCollectionOpen, setRemoveFromCollectionOpen] = useState(false)
+
+  const { data: addToCollectionResults = [] } = useQuery({
+    queryKey: ['addToCollectionSearch', addToCollectionQuery],
+    queryFn: async () => {
+      if (!addToCollectionQuery.trim()) return []
+      const { searchMedia } = await import('@/api/media')
+      return searchMedia(addToCollectionQuery)
+    },
+    enabled: addToCollectionQuery.trim().length >= 2,
+  })
+
+  const reparentMut = useMutation({
+    mutationFn: (movieId: number) => reparentToCollection(movieId, mediaId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId, 'children'] })
+      qc.invalidateQueries({ queryKey: ['collection', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+      setAddToCollectionOpen(false)
+      setAddToCollectionQuery('')
+    },
+  })
+
+  const removeChildMut = useMutation({
+    mutationFn: (childId: number) => unparentFromCollection(childId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId, 'children'] })
+      qc.invalidateQueries({ queryKey: ['collection', mediaId] })
+      qc.invalidateQueries({ queryKey: ['library'] })
     },
   })
 
@@ -580,6 +619,25 @@ export default function MediaDetailPage() {
                 {unparentMut.isPending ? 'Removing…' : 'Remove from Collection'}
               </button>
             )}
+            {isAdmin && item.hierarchyLevel === 0 && item.parentId == null &&
+              (item.mediaTypeInternalName === 'movies' || item.mediaTypeInternalName === 'fanedits' || item.mediaTypeInternalName === 'anime') && (
+              <>
+                <button
+                  className={styles.changeTypeBtn}
+                  onClick={() => { setAddToCollectionOpen(o => !o); setRemoveFromCollectionOpen(false) }}
+                  title="Add an existing standalone movie into this collection"
+                >
+                  {addToCollectionOpen ? 'Cancel' : 'Add to Collection'}
+                </button>
+                <button
+                  className={styles.changeTypeBtn}
+                  onClick={() => { setRemoveFromCollectionOpen(o => !o); setAddToCollectionOpen(false) }}
+                  title="Remove one of this collection's current movies"
+                >
+                  {removeFromCollectionOpen ? 'Cancel' : 'Remove from Collection'}
+                </button>
+              </>
+            )}
             {isAdmin && (
               <button
                 className={styles.changeTypeBtn}
@@ -742,6 +800,72 @@ export default function MediaDetailPage() {
                     </button>
                   ))}
                 </div>
+              )}
+            </div>
+          )}
+
+          {addToCollectionOpen && (
+            <div className={styles.mergeSearch}>
+              <input
+                className={styles.mergeSearchInput}
+                type="text"
+                placeholder="Search standalone movies to add…"
+                value={addToCollectionQuery}
+                onChange={e => setAddToCollectionQuery(e.target.value)}
+                autoFocus
+              />
+              {reparentMut.isError && (
+                <p className={styles.changeTypeError}>
+                  {reparentMut.error instanceof Error ? reparentMut.error.message : 'Failed to add to collection.'}
+                </p>
+              )}
+              {addToCollectionResults.length > 0 && (
+                <div className={styles.mergeSearchResults}>
+                  {addToCollectionResults
+                    .filter(r => r.id !== mediaId && r.parentId == null && r.mediaTypeId === item.mediaTypeId)
+                    .slice(0, 8)
+                    .map(result => (
+                      <button
+                        key={result.id}
+                        className={styles.mergeSearchResult}
+                        onClick={() => reparentMut.mutate(result.id)}
+                        disabled={reparentMut.isPending}
+                      >
+                        {result.posterUrl && (
+                          <img src={result.posterUrl} alt="" className={styles.mergeResultPoster} />
+                        )}
+                        <span className={styles.mergeResultText}>
+                          <span className={styles.mergeResultName}>{result.name}{result.year ? ` (${result.year})` : ''}</span>
+                        </span>
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {removeFromCollectionOpen && (
+            <div className={styles.removeFromCollectionPanel}>
+              {children.length === 0 ? (
+                <p className={styles.removeFromCollectionEmpty}>This collection has no movies yet.</p>
+              ) : (
+                children.map(child => (
+                  <div key={child.id} className={styles.removeFromCollectionRow}>
+                    {child.posterUrl && (
+                      <img src={child.posterUrl} alt="" className={styles.mergeResultPoster} />
+                    )}
+                    <span className={styles.mergeResultText}>
+                      <span className={styles.mergeResultName}>{child.name}{child.year ? ` (${child.year})` : ''}</span>
+                    </span>
+                    <button
+                      className={styles.changeTypeBtn}
+                      onClick={() => removeChildMut.mutate(child.id)}
+                      disabled={removeChildMut.isPending}
+                    >
+                      {removeChildMut.isPending ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                ))
               )}
             </div>
           )}

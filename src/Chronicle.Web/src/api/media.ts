@@ -94,6 +94,24 @@ export async function unparentFromCollection(id: number): Promise<MediaItem> {
   return data.data
 }
 
+export async function reparentToCollection(id: number, collectionId: number): Promise<MediaItem> {
+  const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/reparent`, { collectionId })
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to add to collection')
+  return data.data
+}
+
+export interface CollectionSummary {
+  id: number
+  name: string
+  posterUrl: string | null
+  movieCount: number
+}
+
+export async function getCollections(): Promise<CollectionSummary[]> {
+  const { data } = await client.get<ApiResponse<CollectionSummary[]>>('/media/collections')
+  return data.data ?? []
+}
+
 /**
  * Refreshes metadata for a single item from a specific plugin.
  * If `input` is provided, performs a Fix Match (overrides external ID lookup).

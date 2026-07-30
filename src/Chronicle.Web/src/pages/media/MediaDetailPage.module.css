@@ -1333,9 +1333,35 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 .mergeSearchResult:last-child { border-bottom: none; }
 .mergeSearchResult:hover { background: var(--bg-hover); }
 .mergeResultPoster { width: 28px; height: 42px; object-fit: cover; border-radius: 2px; flex-shrink: 0; }
-.mergeResultText { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mergeResultText { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .mergeResultName { font-size: 0.9rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mergeResultType { font-size: 0.73rem; color: var(--accent, #5c9eff); font-weight: 500; }
+
+/* ── Remove from Collection panel — static list, not an input-dropdown like
+   .mergeSearch/.mergeSearchResults, so it's its own set of classes. ── */
+.removeFromCollectionPanel {
+  margin: 8px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.removeFromCollectionEmpty {
+  padding: 10px 12px;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.removeFromCollectionRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.removeFromCollectionRow:last-child { border-bottom: none; }
 
 .mergeHistory {
   margin: 12px 0;
