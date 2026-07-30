@@ -296,15 +296,20 @@ namespace Chronicle.Services
                     // High-confidence NFO match — fetch by external ID directly
                     if (file.SuggestedExternalId is not null && file.ConfidenceScore >= 85)
                     {
-                        var meta = await provider.GetByIdAsync(file.SuggestedExternalId, ct);
-                        candidates.Add(new MetadataCandidate(
-                            meta.ExternalId,
-                            meta.Title,
-                            meta.Year,
-                            meta.PosterUrl,
-                            meta.Overview,
-                            meta.Rating,
-                            95));
+                        var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                            t => provider.GetByIdAsync(file.SuggestedExternalId, t), provider.PluginId, "GetByIdAsync",
+                            null, msg => _log.Warning(msg), msg => _log.Error(msg), ct);
+                        if (meta is not null)
+                        {
+                            candidates.Add(new MetadataCandidate(
+                                meta.ExternalId,
+                                meta.Title,
+                                meta.Year,
+                                meta.PosterUrl,
+                                meta.Overview,
+                                meta.Rating,
+                                95));
+                        }
                     }
                     else
                     {
@@ -314,8 +319,10 @@ namespace Chronicle.Services
                         // already handles year matching on the returned candidates.
                         var query = file.ParsedTitle;
 
-                        var searchResults = await provider.SearchAsync(
-                            new MediaSearchContext(query, file.ParsedYear), ct);
+                        var searchResults = await ProviderCallGuard.CallAsync(
+                            t => provider.SearchAsync(new MediaSearchContext(query, file.ParsedYear), t),
+                            provider.PluginId, "SearchAsync", (IReadOnlyList<ScoredCandidate>)[],
+                            msg => _log.Warning(msg), msg => _log.Error(msg), ct);
 
                         foreach (var c in searchResults.Take(5))
                         {
@@ -364,7 +371,11 @@ namespace Chronicle.Services
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    var meta = await provider.GetByIdAsync(approval.ExternalId, ct);
+                    var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                        t => provider.GetByIdAsync(approval.ExternalId, t), provider.PluginId, "GetByIdAsync",
+                        null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
+                        ?? throw new InvalidOperationException(
+                            $"Provider {provider.PluginId} did not return metadata for {approval.ExternalId}");
                     var (source, extId) = ParseSuggestedExternalId(approval.ExternalId);
 
                     // Check if an item with this external ID already exists
@@ -996,7 +1007,11 @@ namespace Chronicle.Services
                 {
                     try
                     {
-                        var meta = await provider.GetByIdAsync(file.SuggestedExternalId, ct);
+                        var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                            t => provider.GetByIdAsync(file.SuggestedExternalId, t), provider.PluginId, "GetByIdAsync",
+                            null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
+                            ?? throw new InvalidOperationException(
+                                $"Provider {provider.PluginId} did not return metadata for {file.SuggestedExternalId}");
                         var enriched = new MediaItem
                         {
                             MediaTypeId    = mediaTypeId,
@@ -1158,8 +1173,10 @@ namespace Chronicle.Services
                     .Trim();
                 _log.Information("RefreshMetadata: item {Id} has no TMDB external ID, searching by '{Query}'", mediaItemId, query);
                 var hint = ToMediaTypeHint(item.MediaType?.Name ?? string.Empty);
-                var searchResults = await provider.SearchAsync(
-                    new MediaSearchContext(query, item.Year), ct);
+                var searchResults = await ProviderCallGuard.CallAsync(
+                    t => provider.SearchAsync(new MediaSearchContext(query, item.Year), t),
+                    provider.PluginId, "SearchAsync", (IReadOnlyList<ScoredCandidate>)[],
+                    msg => _log.Warning(msg), msg => _log.Error(msg), ct);
 
                 // Score each candidate by title + year accuracy, prefer exact year match
                 var best = searchResults
@@ -1179,7 +1196,11 @@ namespace Chronicle.Services
 
             try
             {
-                var meta = await provider.GetByIdAsync(extId, ct);
+                var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                    t => provider.GetByIdAsync(extId, t), provider.PluginId, "GetByIdAsync",
+                    null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
+                    ?? throw new InvalidOperationException(
+                        $"Provider {provider.PluginId} did not return metadata for {extId}");
                 item.Name           = meta.Title;
                 item.Year           = meta.Year;
                 item.Overview       = meta.Overview;
@@ -1251,7 +1272,11 @@ namespace Chronicle.Services
 
             try
             {
-                var meta = await provider.GetByIdAsync(rootExtId, ct);
+                var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                    t => provider.GetByIdAsync(rootExtId, t), provider.PluginId, "GetByIdAsync",
+                    null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
+                    ?? throw new InvalidOperationException(
+                        $"Provider {provider.PluginId} did not return metadata for {rootExtId}");
 
                 // Inherit the parent show's poster if this child has none
                 if (string.IsNullOrEmpty(item.PosterUrl) && !string.IsNullOrEmpty(meta.PosterUrl))
@@ -1313,14 +1338,28 @@ namespace Chronicle.Services
                     "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
 
             // Run all providers in parallel with a per-provider timeout so a slow or
-            // unresponsive provider doesn't block results from fast ones.
+            // unresponsive provider doesn't block results from fast ones. Shorter than
+            // ProviderCallGuard's own 25s default -- this backs an interactive user-facing
+            // search, so a provider that's merely slow (not fully stuck) should still drop
+            // out quickly rather than making the whole search feel unresponsive. A provider
+            // throwing for a reason unrelated to timeout (e.g. SIMKL/Trakt not supporting
+            // text search) is expected here and must not fail the whole multi-provider
+            // search -- ProviderCallGuard logs and re-throws non-timeout exceptions by
+            // design (right default for most call sites), so this one still needs its own
+            // catch to preserve "skip the provider that failed, keep the others' results".
             var context     = new MediaSearchContext(query, MediaTypeName: mediaTypeHint);
             var tasks       = providers.Select(async p =>
             {
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
-                try   { return await p.SearchAsync(context, timeoutCts.Token); }
-                catch { return (IReadOnlyList<ScoredCandidate>)[]; }
+                try
+                {
+                    return await ProviderCallGuard.CallAsync(
+                        t => p.SearchAsync(context, t), p.PluginId, "SearchAsync", (IReadOnlyList<ScoredCandidate>)[],
+                        msg => _log.Warning(msg), msg => _log.Error(msg), ct, TimeSpan.FromSeconds(4));
+                }
+                catch
+                {
+                    return (IReadOnlyList<ScoredCandidate>)[];
+                }
             });
             var allProviderResults = await Task.WhenAll(tasks);
 
@@ -1434,7 +1473,11 @@ namespace Chronicle.Services
                 ?? ProvidersForType(mediaType.Name).FirstOrDefault()
                 ?? throw new InvalidOperationException("No metadata provider is loaded.");
 
-            var meta = await provider.GetByIdAsync(externalId, ct);
+            var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                t => provider.GetByIdAsync(externalId, t), provider.PluginId, "GetByIdAsync",
+                null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
+                ?? throw new InvalidOperationException(
+                    $"Provider {provider.PluginId} did not return metadata for {externalId}");
             var (source, extId) = ParseSuggestedExternalId(externalId);
 
             // Extract cross-reference IDs from the provider's ExtendedData (e.g. Trakt → TMDB/IMDB IDs).
@@ -1512,6 +1555,21 @@ namespace Chronicle.Services
                     var (cSource, _) = ParseSuggestedExternalId(contribId);
                     var cPluginId = SourceToPluginId(cSource);
                     if (cPluginId is null || cPluginId == pluginId) continue;
+
+                    // Only seed if this contributing plugin actually supports the item's media
+                    // type — a multi-provider search can return a same-titled false-positive
+                    // match from a plugin that has nothing to do with this item's real type
+                    // (e.g. SIMKL text-matching a music track's title to an unrelated movie).
+                    var cProvider = _registry.GetMetadataProvider(cPluginId);
+                    if (cProvider is null) continue;
+                    var cTypeSupported = cProvider.GetSupportedMediaTypes().Any(t =>
+                    {
+                        var n = NormalizeMediaTypeName(t.MediaTypeName);
+                        return n == NormalizeMediaTypeName(mediaType.Name)
+                            || n == ToMediaTypeHint(mediaType.Name);
+                    });
+                    if (!cTypeSupported) continue;
+
                     if (!seededPluginIds.Add(cPluginId)) continue; // already queued
                     var cExists = await _context.MediaEnrichments
                         .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == cPluginId, ct);
@@ -1949,13 +2007,24 @@ namespace Chronicle.Services
             double.TryParse(s, System.Globalization.NumberStyles.Number,
                 System.Globalization.CultureInfo.InvariantCulture, out _);
 
-        private static string ToMediaTypeHint(string mediaTypeName)
+        /// <summary>
+        /// Broadens a media type name to a related type a provider might declare instead
+        /// (anime→tv, fanedits→movie) so that, e.g., a provider declaring only "tv" support
+        /// still gets seeded for an "anime" item. Returns null — no broadening — for anything
+        /// not in this explicit allowlist. This must stay an allowlist, not a catch-all default:
+        /// it previously defaulted to "movie" for any unrecognized name, which silently matched
+        /// every movie-supporting provider (TMDB, FanartTV, SIMKL) against "audiobooks" items
+        /// (and would do the same for "books" or any future custom type), seeding hundreds of
+        /// enrichment rows those plugins can never resolve.
+        /// </summary>
+        private static string? ToMediaTypeHint(string mediaTypeName)
         {
             var n = mediaTypeName.ToLowerInvariant();
             if (n.Contains("tv") || n.Contains("show") || n.Contains("series")
                 || n.Contains("anime")) return "tv";
             if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";
-            return "movie";
+            if (n.Contains("fanedit")) return "movie";
+            return null;
         }
 
         // ── Hierarchy grouping ────────────────────────────────────────────────────

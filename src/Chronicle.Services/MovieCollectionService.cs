@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Chronicle.Core.Exceptions;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -489,10 +490,13 @@ public class MovieCollectionService(
         if (collectionExtId is null)
             return true;
 
-        MediaMetadata collectionMeta;
+        var collectionPluginId = callerEntry.HasValue ? callerEntry.Value.PluginId : provider.Name;
+        MediaMetadata? collectionMeta;
         try
         {
-            collectionMeta = await provider.GetByIdAsync(collectionExtId.ExternalId, ct).ConfigureAwait(false);
+            collectionMeta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                t => provider.GetByIdAsync(collectionExtId.ExternalId, t), collectionPluginId, "GetByIdAsync", null,
+                msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -502,6 +506,13 @@ public class MovieCollectionService(
             // Remove the bad ExternalId so this collection is skipped on future runs.
             db.MediaExternalIds.Remove(collectionExtId);
             await db.SaveChangesAsync(ct);
+            return true;
+        }
+
+        if (collectionMeta is null)
+        {
+            // Timed out inside ProviderCallGuard -- treat like any other transient failure,
+            // but don't remove the ExternalId since the data itself was never proven bad.
             return true;
         }
 
@@ -1020,6 +1031,50 @@ public class MovieCollectionService(
 
         // If the old collection container is now empty, remove it
         await RemoveOrphanedCollectionAsync(db, oldParentId, item.MediaTypeId, ct);
+    }
+
+    public async Task ReparentIntoCollectionAsync(
+        ChronicleDbContext db, int movieId, int collectionId, CancellationToken ct = default)
+    {
+        var movie = await db.MediaItems
+            .Include(m => m.MediaType)
+            .FirstOrDefaultAsync(m => m.Id == movieId, ct)
+            ?? throw new MediaNotFoundException(movieId);
+
+        var collection = await db.MediaItems
+            .Include(m => m.MediaType)
+            .FirstOrDefaultAsync(m => m.Id == collectionId, ct)
+            ?? throw new MediaNotFoundException(collectionId);
+
+        if (!IsMovieLikeTypeName(movie.MediaType?.Name) || !IsMovieLikeTypeName(collection.MediaType?.Name))
+            throw new InvalidOperationException("Both items must be a movie-like type (movies, fanedits, or anime).");
+        if (movie.MediaTypeId != collection.MediaTypeId)
+            throw new InvalidOperationException("The movie and the collection must be the same media type.");
+        if (movie.ParentId is not null)
+            throw new InvalidOperationException("This item already belongs to a collection — remove it from that one first.");
+        if (collection.HierarchyLevel != 0 || collection.ParentId is not null)
+            throw new InvalidOperationException("The target is not a collection root.");
+        if (movie.Id == collection.Id)
+            throw new InvalidOperationException("An item can't be its own collection.");
+
+        movie.ParentId       = collection.Id;
+        movie.HierarchyLevel = 1;
+        movie.UpdatedAt      = DateTime.UtcNow;
+
+        // Reset enrichment so the item re-enriches in its new context, mirroring
+        // UnparentFromCollectionAsync's reset on the way out.
+        var enrichmentRows = await db.MediaEnrichments
+            .Where(e => e.MediaItemId == movie.Id)
+            .ToListAsync(ct);
+        foreach (var row in enrichmentRows)
+        {
+            row.Status          = EnrichmentStatus.Pending;
+            row.RetryCount      = 0;
+            row.LastAttemptedAt = null;
+            row.ErrorMessage    = null;
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>

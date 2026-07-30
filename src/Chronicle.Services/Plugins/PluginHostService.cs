@@ -88,6 +88,14 @@ public sealed class PluginHostService : IHostedService
         // declares a new type (e.g. "audiobooks") surfaces it everywhere without a migration.
         await SyncMediaTypesFromPluginsAsync(db, cancellationToken);
 
+        // Seed media_enrichment rows for items enriched before the unified table was
+        // introduced — restores enrichment status display for all pre-existing items.
+        // Runs here (rather than in Program.cs's earlier migration block) specifically
+        // because its per-plugin media-type filter needs the registry populated — every
+        // plugin is now loaded and enabledPlugins/_registry both reflect that.
+        var enrichmentService = scope.ServiceProvider.GetRequiredService<IMetadataEnrichmentService>();
+        await enrichmentService.SeedEnrichmentRowsFromExternalIdsAsync(cancellationToken);
+
         _log.Information("PluginHostService startup complete");
     }
 

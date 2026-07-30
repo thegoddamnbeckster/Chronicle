@@ -102,21 +102,43 @@ public class PluginService : IPluginService
         plugin.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        // Reconfigure live providers (metadata + import) if the plugin is loaded
+        // Reconfigure live providers (metadata + import) if the plugin is loaded. The settings
+        // are already durably saved above at this point — a Configure() call throwing here (e.g.
+        // a provider validating a required field, or a bad value it can't use to build a client)
+        // must not turn into a 500 for what the user experiences as a successful save. Log and
+        // move on; the next enable/reload picks up the saved settings correctly regardless.
         if (plugin.IsEnabled)
         {
             var metaProvider = _registry.GetMetadataProvider(plugin.PluginId);
             if (metaProvider != null)
             {
-                metaProvider.Configure(settings);
-                _log.Information("Reconfigured live metadata provider {PluginId}", plugin.PluginId);
+                try
+                {
+                    metaProvider.Configure(settings);
+                    _log.Information("Reconfigured live metadata provider {PluginId}", plugin.PluginId);
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex,
+                        "Settings saved for {PluginId}, but reconfiguring the live metadata provider failed",
+                        plugin.PluginId);
+                }
             }
 
             var importProvider = _registry.GetImportProvider(plugin.PluginId);
             if (importProvider != null)
             {
-                importProvider.Configure(settings);
-                _log.Information("Reconfigured live import provider {PluginId}", plugin.PluginId);
+                try
+                {
+                    importProvider.Configure(settings);
+                    _log.Information("Reconfigured live import provider {PluginId}", plugin.PluginId);
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex,
+                        "Settings saved for {PluginId}, but reconfiguring the live import provider failed",
+                        plugin.PluginId);
+                }
             }
         }
     }
@@ -270,11 +292,17 @@ public class PluginService : IPluginService
         {
             bool result;
             if (loaded.MetadataProviders.Count > 0)
-                result = await loaded.MetadataProviders[0].HealthCheckAsync(ct);
+                result = await ProviderCallGuard.CallAsync(
+                    t => loaded.MetadataProviders[0].HealthCheckAsync(t), plugin.PluginId, "HealthCheckAsync", false,
+                    msg => _log.Warning(msg), msg => _log.Error(msg), ct);
             else if (loaded.FileScannerPlugins.Count > 0)
-                result = await loaded.FileScannerPlugins[0].HealthCheckAsync(ct);
+                result = await ProviderCallGuard.CallAsync(
+                    t => loaded.FileScannerPlugins[0].HealthCheckAsync(t), plugin.PluginId, "HealthCheckAsync", false,
+                    msg => _log.Warning(msg), msg => _log.Error(msg), ct);
             else if (loaded.ImportProviders.Count > 0)
-                result = await loaded.ImportProviders[0].HealthCheckAsync(ct);
+                result = await ProviderCallGuard.CallAsync(
+                    t => loaded.ImportProviders[0].HealthCheckAsync(t), plugin.PluginId, "HealthCheckAsync", false,
+                    msg => _log.Warning(msg), msg => _log.Error(msg), ct);
             else
                 return null;
 

@@ -132,6 +132,7 @@ builder.Services.AddScoped<Chronicle.Services.Scan.IScanGroupingService,
                             Chronicle.Services.Scan.ScanGroupingService>();
 builder.Services.AddScoped<IFileScanService, FileScanService>();
 builder.Services.AddScoped<IScanFolderService, ScanFolderService>();
+builder.Services.AddScoped<IMetadataUrlValidator, MetadataUrlValidator>();
 builder.Services.AddScoped<IMetadataEnrichmentService, MetadataEnrichmentService>();
 builder.Services.AddScoped<IMetadataResolutionService, MetadataResolutionService>();
 builder.Services.AddScoped<IMetadataContributionService, MetadataContributionService>();
@@ -148,6 +149,16 @@ builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient("favicon", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(10);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
+});
+
+// ── Named HttpClient for validating metadata-provider image URLs before persisting them ───────
+// Short timeout: this runs inline on every enrichment, once per URL field (see
+// MetadataUrlValidator), and must not let one slow/dead host stall a whole enrichment batch.
+builder.Services.AddHttpClient("url-validation", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(8);
     c.DefaultRequestHeaders.UserAgent.ParseAdd(
         "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
 });
@@ -340,10 +351,16 @@ using (var scope = app.Services.CreateScope())
         var fileScanService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IFileScanService>();
         await fileScanService.BackfillFolderPathsAsync();
 
-        // Seed media_enrichment rows for items enriched before the unified table was
-        // introduced — restores enrichment status display for all pre-existing items.
-        var enrichmentService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IMetadataEnrichmentService>();
-        await enrichmentService.SeedEnrichmentRowsFromExternalIdsAsync();
+        // NOTE: media_enrichment seeding from external IDs (SeedEnrichmentRowsFromExternalIdsAsync)
+        // deliberately does NOT run here. Its per-plugin media-type filter depends on
+        // IPluginRegistry.GetMetadataProviderEntries(), but PluginHostService (an IHostedService)
+        // hasn't loaded any plugins yet at this point in startup — hosted services only start
+        // once app.Run() is reached, further down this file. Calling it here found the registry
+        // empty every time, so the "does this plugin support this item's type?" check silently
+        // passed everything through (no entry found → filter no-ops), which is exactly how
+        // mismatched-type rows (e.g. audiobook items resurrected against SIMKL/TMDB from old
+        // stray media_external_ids rows) kept coming back on every restart. It now runs at the
+        // end of PluginHostService.StartAsync instead, once the registry is actually populated.
 
         // Backfill normalized_name for all existing MediaItem rows that don't have it yet.
         // Processed in batches to avoid loading the entire table into memory on first boot.
@@ -386,10 +403,21 @@ forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
 // Catch TaskCanceledException / OperationCanceledException caused by the client
-// disconnecting mid-request. Return 499 (client closed request) silently.
-// Only suppress when the request token was actually cancelled — other
-// OperationCanceledExceptions (DB timeout, HttpClient timeout) must propagate
-// so Serilog logs them and the caller gets a proper 500.
+// disconnecting mid-request (e.g. navigating away, or a newer request superseding
+// an in-flight one) and return 499 (client closed request) instead of letting it
+// surface as an alarming unhandled-exception 500 with a full stack trace.
+//
+// Originally this only suppressed when ctx.RequestAborted.IsCancellationRequested
+// was already true at catch time, on the theory that a "real" cancellation
+// (DB/HttpClient timeout) should still propagate as a genuine 500. In practice
+// that flag isn't reliably set synchronously by the time the exception unwinds
+// here (observed: a plain client-side request cancellation on /api/v1/library,
+// taking ~400ms -- far under the 5s SQLite busy_timeout, so not a DB timeout --
+// still hit the `throw` branch and got logged as a full ERROR). Nothing else in
+// this codebase sets up sub-request-level cancellation, so any
+// OperationCanceledException/TaskCanceledException caught before a response has
+// started is safe to treat as a benign client-side cancellation; a warning-level
+// log line keeps it visible without the alarming stack trace.
 app.Use(async (ctx, next) =>
 {
     try
@@ -398,8 +426,9 @@ app.Use(async (ctx, next) =>
     }
     catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
     {
-        if (ctx.RequestAborted.IsCancellationRequested && !ctx.Response.HasStarted)
+        if (!ctx.Response.HasStarted)
         {
+            Log.Warning(ex, "Request to {Path} was canceled (client disconnected or superseded it)", ctx.Request.Path);
             ctx.Response.StatusCode = 499; // Client Closed Request
         }
         else

@@ -10,6 +10,7 @@ import RegisterPage from '@/pages/auth/RegisterPage'
 import DashboardPage from '@/pages/dashboard/DashboardPage'
 import LibraryPage from '@/pages/library/LibraryPage'
 import AddMediaPage from '@/pages/media/AddMediaPage'
+import AddCollectionPage from '@/pages/media/AddCollectionPage'
 import MediaDetailPage from '@/pages/media/MediaDetailPage'
 import HistoryPage from '@/pages/media/HistoryPage'
 import ImportPage from '@/pages/import/ImportPage'
@@ -66,6 +67,7 @@ export default function App() {
         <Route path="library" element={<LibraryPage />} />
         <Route path="history" element={<HistoryPage />} />
         <Route path="media/add" element={<AddMediaPage />} />
+        <Route path="media/add-collection" element={<AddCollectionPage />} />
         <Route path="media/:id" element={
           <ErrorBoundary context="Media Detail">
             <MediaDetailPage />

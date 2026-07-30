@@ -26,6 +26,11 @@ namespace Chronicle.API.DTOs
 
     public record ChangeMediaTypeRequest([Required] int MediaTypeId);
 
+    public record ReparentRequest([Required] int CollectionId);
+
+    /// <summary>Lightweight listing row for the "Add Movie Collection" management page.</summary>
+    public record CollectionSummaryDto(int Id, string Name, string? PosterUrl, int MovieCount);
+
     /// <summary>
     /// Body for POST /api/v1/media/{id}/metadata/{source} — lets an authenticated external
     /// caller (any app, not just a specific integration) contribute metadata fields Chronicle

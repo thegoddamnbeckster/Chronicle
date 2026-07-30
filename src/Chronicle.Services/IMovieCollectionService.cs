@@ -83,4 +83,20 @@ public interface IMovieCollectionService
     /// No-op if the item is not a Level-1 item of a movie-like type.
     /// </summary>
     Task UnparentFromCollectionAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Manually places a standalone movie-like item into an existing collection container,
+    /// setting ParentId = collectionId and HierarchyLevel = 1, then resets enrichment to
+    /// Pending (mirrors <see cref="UnparentFromCollectionAsync"/>'s reset on the way out).
+    /// Unlike <see cref="EnsureCollectionParentAsync"/>, this does not inspect the movie's own
+    /// plugin metadata for a <c>belongsToCollection</c> match -- the caller (an admin, via the
+    /// UI) has already decided the target collection explicitly.
+    /// </summary>
+    /// <exception cref="MediaNotFoundException">Either id doesn't exist.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The movie is already parented somewhere, the target isn't a Level-0 item, either item's
+    /// media type isn't movie-like, or the two items don't share the same media type.
+    /// </exception>
+    Task ReparentIntoCollectionAsync(
+        ChronicleDbContext db, int movieId, int collectionId, CancellationToken ct = default);
 }

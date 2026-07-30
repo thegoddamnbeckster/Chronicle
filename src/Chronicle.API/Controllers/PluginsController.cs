@@ -4,6 +4,7 @@ using Chronicle.API.DTOs;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins.Models;
+using Chronicle.Services;
 using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -614,7 +615,10 @@ public class PluginsController : ControllerBase
 
         try
         {
-            var result = await loaded.MetadataProviders[0].SearchAsync(new MediaSearchContext(query), ct);
+            var result = await ProviderCallGuard.CallAsync(
+                t => loaded.MetadataProviders[0].SearchAsync(new MediaSearchContext(query), t),
+                loaded.Manifest.PluginId, "SearchAsync", (IReadOnlyList<ScoredCandidate>)[],
+                msg => _logger.LogWarning("{Msg}", msg), msg => _logger.LogError("{Msg}", msg), ct);
             return Ok(ApiResponse<object>.Ok(result));
         }
         catch (InvalidOperationException ex)
@@ -644,7 +648,12 @@ public class PluginsController : ControllerBase
 
         try
         {
-            var result = await loaded.MetadataProviders[0].GetByIdAsync(externalId, ct);
+            var result = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                t => loaded.MetadataProviders[0].GetByIdAsync(externalId, t),
+                loaded.Manifest.PluginId, "GetByIdAsync", null,
+                msg => _logger.LogWarning("{Msg}", msg), msg => _logger.LogError("{Msg}", msg), ct);
+            if (result is null)
+                return StatusCode(504, ApiResponse<object>.Fail("UPSTREAM_TIMEOUT", "The plugin did not respond in time."));
             return Ok(ApiResponse<object>.Ok(result));
         }
         catch (InvalidOperationException ex)

@@ -511,10 +511,67 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
         }
 
+        /// <summary>
+        /// Manually places a standalone movie/fanedit/anime item into an existing collection
+        /// container. Admin only. The caller picks the target explicitly (via the collection's
+        /// own page) rather than this being auto-detected from plugin metadata.
+        /// </summary>
+        [HttpPost("{id:int}/reparent")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> Reparent(int id, [FromBody] ReparentRequest body, CancellationToken ct)
+        {
+            try
+            {
+                await _movieCollectionService.ReparentIntoCollectionAsync(_context, id, body.CollectionId, ct);
+                var updated = await _mediaService.GetByIdAsync(id, ct);
+                if (updated == null)
+                    return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
+            }
+            catch (MediaNotFoundException ex)
+            {
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("REPARENT_INVALID", ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Every Level-0 movie-like item that already has at least one child — i.e. every
+        /// real collection container, for the "Add Movie Collection" management page.
+        /// </summary>
+        [HttpGet("collections")]
+        public async Task<IActionResult> GetCollections(CancellationToken ct)
+        {
+            var movieLikeTypeIds = await _context.MediaTypes
+                .Where(t => t.Name == "movies" || t.Name == "fanedits" || t.Name == "anime")
+                .Select(t => t.Id)
+                .ToListAsync(ct);
+
+            var collections = await _context.MediaItems
+                .Where(m => m.HierarchyLevel == 0 && movieLikeTypeIds.Contains(m.MediaTypeId)
+                    && _context.MediaItems.Any(c => c.ParentId == m.Id))
+                .OrderBy(m => m.Name)
+                .Select(m => new CollectionSummaryDto(
+                    m.Id, m.Name, m.PosterUrl,
+                    _context.MediaItems.Count(c => c.ParentId == m.Id)))
+                .ToListAsync(ct);
+
+            return Ok(ApiResponse<List<CollectionSummaryDto>>.Ok(collections));
+        }
+
         private async Task<List<AncestorDto>> BuildAncestorsAsync(int? parentId, CancellationToken ct)
         {
             var ancestors = new List<AncestorDto>();
-            while (parentId != null)
+            // Chronicle's deepest real hierarchy is 3 levels (Show→Season→Episode or
+            // Artist→Album→Track); 10 is a generous ceiling. Also tracks visited IDs so a
+            // corrupt ParentId chain (e.g. an item whose ParentId points back to itself, or to
+            // one of its own ancestors) can never hang this request forever — it previously did
+            // exactly that, spinning on the same row indefinitely with no request timeout.
+            var visited = new HashSet<int>();
+            while (parentId != null && ancestors.Count < 10 && visited.Add(parentId.Value))
             {
                 var ancestor = await _context.MediaItems
                     .Where(m => m.Id == parentId)
