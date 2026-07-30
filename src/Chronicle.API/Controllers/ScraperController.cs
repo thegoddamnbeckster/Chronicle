@@ -293,12 +293,24 @@ public class ScraperController : ControllerBase
     /// movie_art_sync.py `_normalize()` helper (strip everything but letters/digits, lowercase)
     /// so both sides of this exact same problem -- matching a folder-safe title back to
     /// Chronicle's own punctuated one -- use the same rule.
+    ///
+    /// When MULTIPLE candidates normalize to the same title -- confirmed directly for
+    /// "Titan A.E." (a real, fully-enriched item from months ago) vs "Titan A.E" (a blank
+    /// stub created during the 2026-07-30 timeout storm, before this normalization fix
+    /// existed) -- prefers whichever one actually has data. Without this, the plain
+    /// `FirstOrDefault` below picked whichever row the database happened to return first,
+    /// which is unspecified without an explicit ORDER BY and was intermittently landing on
+    /// the empty stub, dropping the overview/cast/etc. for titles that already had every bit
+    /// of that data on a different, older row.
     /// </summary>
     private static MediaItem? FindByNormalizedTitle(List<MediaItem> candidates, string title)
     {
         var target = NormalizeTitle(title);
         if (target.Length == 0) return null;
-        return candidates.FirstOrDefault(m => NormalizeTitle(m.Name) == target);
+        return candidates
+            .Where(m => NormalizeTitle(m.Name) == target)
+            .OrderByDescending(m => m.MetadataJson?.Length ?? 0)
+            .FirstOrDefault();
     }
 
     private static string NormalizeTitle(string? text) =>
