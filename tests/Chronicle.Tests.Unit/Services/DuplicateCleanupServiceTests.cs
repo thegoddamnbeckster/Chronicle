@@ -110,6 +110,32 @@ public class DuplicateCleanupServiceTests : IDisposable
         _context.MediaItems.Count().Should().Be(2);
     }
 
+    // ── Pass 2: external-ID sentinel exclusions ─────────────────────────────
+
+    [Fact]
+    public async Task RunAsync_DoesNotMergeItems_SharingAHardcoverSeriesFallbackId()
+    {
+        // Regression test for a confirmed live incident (2026-08-05): Chronicle.Plugin.Hardcover
+        // falls back to a series-level "hardcover:series:{id}" ExternalId whenever an individual
+        // book/edition can't be individually disambiguated. Every sibling volume that hits this
+        // fallback gets the IDENTICAL string, so it is not unique-per-item and must never be used
+        // as a Pass 2 merge signal — confirmed live: 20+ such shared IDs existed across the DB,
+        // each spanning 2-3 otherwise-unrelated items.
+        var itemA = MakeItem("bookA.epub", "/media/Books/Series", "Alice in Borderland Vol A");
+        var itemB = MakeItem("bookB.epub", "/media/Books/Series", "Alice in Borderland Vol B");
+        _context.MediaItems.AddRange(itemA, itemB);
+        await _context.SaveChangesAsync();
+
+        _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = itemA.Id, Source = "hardcover", ExternalId = "hardcover:series:445749" });
+        _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = itemB.Id, Source = "hardcover", ExternalId = "hardcover:series:445749" });
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(0, "a shared series-level fallback ID is bookkeeping, not proof these are the same item");
+        _context.MediaItems.Count().Should().Be(2);
+    }
+
     [Fact]
     public async Task RunAsync_DetectsRealDuplicate_SameFilePath_SameType_AmongThreeTypes()
     {
@@ -285,6 +311,139 @@ public class DuplicateCleanupServiceTests : IDisposable
         _context.MediaItems.Count(m => m.Name == "Interlude").Should().Be(2);
     }
 
+    [Fact]
+    public async Task RunAsync_DoesNotMergeSameParentSameName_WhenYearsDifferAndBothAreSet()
+    {
+        // Regression test for the "Alice in Borderland" bug (2026-08-05): distinct volumes/
+        // editions sharing a parent and title, each with its own genuine Year, were merged
+        // because Pass 4 had no Year check at all (unlike Pass 3). Number is null on both sides
+        // here (no natural "Number" field distinguishes manga volumes), so the pre-existing
+        // Number guard alone could not have caught this.
+        var series = new MediaItem
+        {
+            Name = "Alice in Borderland Series", MediaTypeId = _moviesType.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.Add(series);
+        await _context.SaveChangesAsync();
+
+        var vol2012 = new MediaItem
+        {
+            Name = "Alice in Borderland", Year = 2012, MediaTypeId = _moviesType.Id,
+            ParentId = series.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var vol2014 = new MediaItem
+        {
+            Name = "Alice in Borderland", Year = 2014, MediaTypeId = _moviesType.Id,
+            ParentId = series.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.AddRange(vol2012, vol2014);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(0, "two different, genuinely-dated editions must not be collapsed just because they share a parent and title");
+        _context.MediaItems.Count(m => m.Name == "Alice in Borderland").Should().Be(2);
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotMergeSameParentSameName_WhenYearsDifferAcrossALargeGroup()
+    {
+        // Reproduces the exact production shape (2026-08-05): 10 same-parent, same-normalized-
+        // title items spanning three different years, each with its own distinct external ID,
+        // none with a Number set. If the guard only checks pairwise (winner vs each loser) and
+        // something causes it to not fire across a large group the way it does for a 2-item
+        // group, this should catch it.
+        var series = new MediaItem
+        {
+            Name = "Alice in Borderland Series", MediaTypeId = _moviesType.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.Add(series);
+        await _context.SaveChangesAsync();
+
+        var names = new[]
+        {
+            ("Alice in Borderland (2012)", 2012, "427841"),
+            ("Alice in Borderland (2012)", 2012, "427845"),
+            ("Alice in Borderland (2012)", 2012, "427849"),
+            ("Alice in Borderland (2013)", 2013, "427850"),
+            ("Alice in Borderland (2013)", 2013, "427852"),
+            ("Alice in Borderland (2013)", 2013, "427858"),
+            ("Alice in Borderland (2013)", 2013, "427859"),
+            ("Alice In Borderland (2012)", 2012, "427860"),
+            ("Alice in Borderland (2014)", 2014, "427865"),
+            ("Alice in Borderland (2014)", 2014, "427866"),
+        };
+
+        var items = new List<MediaItem>();
+        foreach (var (name, year, extId) in names)
+        {
+            var item = new MediaItem
+            {
+                Name = name, Year = year, MediaTypeId = _moviesType.Id,
+                ParentId = series.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            items.Add(item);
+        }
+        await _context.SaveChangesAsync();
+
+        foreach (var (item, (_, _, extId)) in items.Zip(names))
+        {
+            _context.MediaExternalIds.Add(new MediaExternalId
+            {
+                MediaItemId = item.Id, Source = "hardcover", ExternalId = extId,
+            });
+        }
+        await _context.SaveChangesAsync();
+
+        await _service.RunAsync();
+
+        // Whatever survives, every survivor's Year must be internally consistent — no merge
+        // should ever have crossed a Year boundary between two non-null, disagreeing values.
+        var survivors = await _context.MediaItems
+            .Where(m => m.Id != series.Id)
+            .Select(m => new { m.Id, m.Year })
+            .ToListAsync();
+        var distinctYears = survivors.Select(s => s.Year).Where(y => y.HasValue).Distinct().Count();
+        distinctYears.Should().Be(3, "three genuinely different years must never collapse into fewer than three surviving Year values");
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotMergeSameParentSameName_WhenExternalIdsConflict()
+    {
+        var series = new MediaItem
+        {
+            Name = "Conflicting Ids Series", MediaTypeId = _moviesType.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.Add(series);
+        await _context.SaveChangesAsync();
+
+        var itemA = new MediaItem
+        {
+            Name = "Same Title", MediaTypeId = _moviesType.Id,
+            ParentId = series.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var itemB = new MediaItem
+        {
+            Name = "Same Title", MediaTypeId = _moviesType.Id,
+            ParentId = series.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.AddRange(itemA, itemB);
+        await _context.SaveChangesAsync();
+
+        _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = itemA.Id, Source = "hardcover", ExternalId = "111" });
+        _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = itemB.Id, Source = "hardcover", ExternalId = "222" });
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(0, "differing external IDs from the same source are direct evidence of distinct real items");
+        _context.MediaItems.Count(m => m.Name == "Same Title").Should().Be(2);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private MediaItem MakeItem(
@@ -360,5 +519,16 @@ file sealed class DirectScopeFactory : IServiceScopeFactory
         public Task ResolveAllForMediaTypeAsync(string mediaTypeName, CancellationToken ct = default)
             => Task.CompletedTask;
         public IReadOnlyCollection<string> GetCanonicalFields() => Array.Empty<string>();
+        public Task SetOverrideAsync(Chronicle.Core.Models.MediaItem item, ChronicleDbContext db, string field, string url,
+            string? sourcePluginId, string? sourceType, int? userId, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ClearOverrideAsync(Chronicle.Core.Models.MediaItem item, ChronicleDbContext db, string field, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ClearItemOverridesAsync(Chronicle.Core.Models.MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task<int> ClearOverridesForMediaTypeAsync(string mediaTypeName, Action<int, int>? onBatch = null, CancellationToken ct = default)
+            => Task.FromResult(0);
+        public Task<int> ClearAllOverridesLibraryWideAsync(Action<int, int>? onBatch = null, CancellationToken ct = default)
+            => Task.FromResult(0);
     }
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Core.Models.Scan;
 using Chronicle.Data;
@@ -280,9 +281,18 @@ namespace Chronicle.Services
 
         public async Task<IdentifyResult> IdentifyAsync(IdentifyRequest request, CancellationToken ct = default)
         {
-            var provider = _registry.GetMetadataProviders().FirstOrDefault()
+            // Was previously _registry.GetMetadataProviders().FirstOrDefault() -- whichever
+            // provider happened to be first in registration order, with NO regard for whether
+            // it declares support for request.MediaTypeId at all. That meant a music/book/etc.
+            // identify call could silently be handed to (say) a movie-only provider, which would
+            // then either return nothing useful or waste a full timeout per file. Scoped to
+            // type-supporting providers only, same as SearchMetadataAsync already does.
+            var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
+                ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
+            var provider = ProvidersForType(mediaType.Name).FirstOrDefault()
                 ?? throw new InvalidOperationException(
-                    "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
+                    $"No metadata provider supports media type \"{mediaType.Name}\". " +
+                    "Install and configure a matching metadata plugin (e.g. TMDB for movies/TV).");
 
             var identifications = new List<FileIdentification>();
 
@@ -956,6 +966,7 @@ namespace Chronicle.Services
                 var variantLower = variant.ToLowerInvariant();
                 var hit = await _context.MediaItems.FirstOrDefaultAsync(
                     m => m.MediaTypeId == mediaTypeId
+                      && m.HierarchyLevel == 0
                       && (year == null || m.Year == year)
                       && m.Name.ToLower() == variantLower, ct);
                 if (hit is not null) return hit;
@@ -973,6 +984,7 @@ namespace Chronicle.Services
                     var variantLower = variant.ToLowerInvariant();
                     var hit = await _context.MediaItems.FirstOrDefaultAsync(
                         m => m.MediaTypeId == mediaTypeId
+                          && m.HierarchyLevel == 0
                           && (year == null || m.Year == year)
                           && m.Name.ToLower() == variantLower, ct);
                     if (hit is not null) return hit;
@@ -988,6 +1000,7 @@ namespace Chronicle.Services
             {
                 var hit = await _context.MediaItems.FirstOrDefaultAsync(
                     m => m.MediaTypeId == mediaTypeId
+                      && m.HierarchyLevel == 0
                       && (year == null || m.Year == year)
                       && m.NormalizedName == normalizedTitle, ct);
                 if (hit is not null) return hit;
@@ -1451,7 +1464,7 @@ namespace Chronicle.Services
                     m.Overview, m.Rating, 0,
                     m.Source,
                     m.Genres.Count > 0           ? m.Genres           : null,
-                    m.Cast.Count > 0             ? m.Cast             : null,
+                    m.Cast.Count > 0             ? m.Cast.Select(c => c.Name).ToList() : null,
                     sources.Count > 1            ? sources            : null,
                     contribExternalIds.Count > 0 ? contribExternalIds : null));
             }
@@ -1478,6 +1491,20 @@ namespace Chronicle.Services
                 null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
                 ?? throw new InvalidOperationException(
                     $"Provider {provider.PluginId} did not return metadata for {externalId}");
+
+            // DELIBERATELY PERMANENT — added 2026-08-03 after several "Add Media" items (all
+            // sourced from a currently-flaky provider) ended up with Name set but MetadataJson
+            // and every media_external_ids row completely empty, with no exception/error logged
+            // anywhere and the request still returning 200. Static code review couldn't pin the
+            // exact mechanism -- every branch below unconditionally sets MetadataJson and calls
+            // UpsertExternalIdAsync, so this should be structurally impossible. Do not remove or
+            // downgrade this without confirming the failure mode first; the whole point is to
+            // stop guessing next time it happens.
+            _log.Information(
+                "AddFromSearchAsync: provider={Provider} externalId={ExternalId} -> meta.Title={Title} " +
+                "meta.ExternalId={MetaExternalId} meta.Year={Year}",
+                provider.PluginId, externalId, meta.Title, meta.ExternalId, meta.Year);
+
             var (source, extId) = ParseSuggestedExternalId(externalId);
 
             // Extract cross-reference IDs from the provider's ExtendedData (e.g. Trakt → TMDB/IMDB IDs).
@@ -1509,129 +1536,175 @@ namespace Chronicle.Services
             }
             else
             {
-                item = new Chronicle.Core.Models.MediaItem
+                // Fall back to a same-media-type title+year match so a pre-existing item
+                // (e.g. a file-scanner stub, or a previous partial add) is reused instead of
+                // duplicated — mirrors ImportApprovedAsync's equivalent fallback. This never
+                // matches across media types: a Fan Edit and its source Movie are intentionally
+                // distinct catalog entries even when they share a title/year, so mediaTypeId is
+                // passed through unchanged to FindByTitleAsync's type-scoped lookup.
+                var existingByTitle = await FindByTitleAsync(meta.Title, mediaTypeId, meta.Year, ct);
+                if (existingByTitle is not null)
                 {
-                    MediaTypeId    = mediaTypeId,
-                    Name           = meta.Title,
-                    Year           = meta.Year,
-                    Overview       = meta.Overview,
-                    PosterUrl      = meta.PosterUrl,
-                    RuntimeMinutes = meta.RuntimeMinutes,
-                    MetadataJson   = initialMetaJson,
-                    HierarchyLevel = 0,
-                    CreatedAt      = DateTime.UtcNow,
-                    UpdatedAt      = DateTime.UtcNow,
-                };
-                _context.MediaItems.Add(item);
-                await _context.SaveChangesAsync(ct);
-                await UpsertExternalIdAsync(item.Id, externalId, ct);
-
-                // Track which plugin IDs have already had an enrichment row added in this call.
-                // AnyAsync only queries the DB, not in-memory tracked entities, so without this
-                // guard multiple cross-ref paths targeting the same plugin produce a duplicate-key error.
-                var seededPluginIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                // Always seed an enrichment row for the source plugin itself with the known ID.
-                // This guarantees the source plugin appears on the detail page even if its
-                // declared media types don't exactly match the item's type (e.g. Trakt added
-                // under an "anime" tab that Trakt doesn't explicitly declare support for).
-                if (pluginId is not null)
-                {
-                    seededPluginIds.Add(pluginId);
-                    _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
-                    {
-                        MediaItemId = item.Id,
-                        PluginId    = pluginId,
-                        ExternalId  = externalId,
-                        Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
-                    });
+                    item                = existingByTitle;
+                    item.Name           = meta.Title;
+                    item.Year           = meta.Year;
+                    item.Overview       = meta.Overview;
+                    item.PosterUrl      = meta.PosterUrl;
+                    item.RuntimeMinutes = meta.RuntimeMinutes;
+                    item.MetadataJson   = MergeProviderBlob(item.MetadataJson, providerBlobKey, meta);
+                    item.UpdatedAt      = DateTime.UtcNow;
+                    await _context.SaveChangesAsync(ct);
+                    await UpsertExternalIdAsync(item.Id, externalId, ct);
                 }
-
-                // Pre-seed enrichment rows for providers that contributed a matching result
-                // during search (e.g. TVMaze matched the same show by title+year). Their IDs
-                // aren't in the primary provider's cross-ref data so must be passed explicitly.
-                foreach (var contribId in contributingExternalIds ?? [])
+                else
                 {
-                    var (cSource, _) = ParseSuggestedExternalId(contribId);
-                    var cPluginId = SourceToPluginId(cSource);
-                    if (cPluginId is null || cPluginId == pluginId) continue;
-
-                    // Only seed if this contributing plugin actually supports the item's media
-                    // type — a multi-provider search can return a same-titled false-positive
-                    // match from a plugin that has nothing to do with this item's real type
-                    // (e.g. SIMKL text-matching a music track's title to an unrelated movie).
-                    var cProvider = _registry.GetMetadataProvider(cPluginId);
-                    if (cProvider is null) continue;
-                    var cTypeSupported = cProvider.GetSupportedMediaTypes().Any(t =>
+                    item = new Chronicle.Core.Models.MediaItem
                     {
-                        var n = NormalizeMediaTypeName(t.MediaTypeName);
-                        return n == NormalizeMediaTypeName(mediaType.Name)
-                            || n == ToMediaTypeHint(mediaType.Name);
-                    });
-                    if (!cTypeSupported) continue;
+                        MediaTypeId    = mediaTypeId,
+                        Name           = meta.Title,
+                        Year           = meta.Year,
+                        Overview       = meta.Overview,
+                        PosterUrl      = meta.PosterUrl,
+                        RuntimeMinutes = meta.RuntimeMinutes,
+                        MetadataJson   = initialMetaJson,
+                        HierarchyLevel = 0,
+                        CreatedAt      = DateTime.UtcNow,
+                        UpdatedAt      = DateTime.UtcNow,
+                    };
+                    _context.MediaItems.Add(item);
+                    await _context.SaveChangesAsync(ct);
+                    await UpsertExternalIdAsync(item.Id, externalId, ct);
 
-                    if (!seededPluginIds.Add(cPluginId)) continue; // already queued
-                    var cExists = await _context.MediaEnrichments
-                        .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == cPluginId, ct);
-                    if (!cExists)
+                    // Track which plugin IDs have already had an enrichment row added in this call.
+                    // AnyAsync only queries the DB, not in-memory tracked entities, so without this
+                    // guard multiple cross-ref paths targeting the same plugin produce a duplicate-key error.
+                    var seededPluginIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    // Always seed an enrichment row for the source plugin itself with the known ID.
+                    // This guarantees the source plugin appears on the detail page even if its
+                    // declared media types don't exactly match the item's type (e.g. Trakt added
+                    // under an "anime" tab that Trakt doesn't explicitly declare support for).
+                    if (pluginId is not null)
                     {
+                        seededPluginIds.Add(pluginId);
                         _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
                         {
                             MediaItemId = item.Id,
-                            PluginId    = cPluginId,
-                            ExternalId  = contribId,
+                            PluginId    = pluginId,
+                            ExternalId  = externalId,
                             Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
                         });
-                        await UpsertExternalIdAsync(item.Id, contribId, ct);
+
+                        // This seed is unconditional by design (see comment above) -- but that
+                        // means a genuinely mismatched (item, plugin) pair reaching here is
+                        // silent otherwise. Log it so "why is plugin X enriching a type it
+                        // doesn't declare" is traceable instead of requiring speculation.
+                        //
+                        // DELIBERATELY PERMANENT — added 2026-08-02 alongside the matching log in
+                        // MetadataEnrichmentService.EnrichPendingAsync, same investigation, same
+                        // reasoning. Do not remove or quiet this down without the user's explicit
+                        // go-ahead; the whole point is to never have to guess about provider
+                        // dispatch again.
+                        var sourceProvider = _registry.GetMetadataProvider(pluginId);
+                        var sourceDeclaresType = sourceProvider?.GetSupportedMediaTypes().Any(t =>
+                            NormalizeMediaTypeName(t.MediaTypeName) == NormalizeMediaTypeName(mediaType.Name)) ?? false;
+                        if (!sourceDeclaresType)
+                            _log.Warning(
+                                "AddFromSearchAsync: seeded unconditional enrichment row for item {ItemId} " +
+                                "\"{Name}\" (type={Type}) -> source plugin {Plugin}, which does NOT declare " +
+                                "support for this type (declares: {SupportedTypes}) -- intentional per design, " +
+                                "not a bug, but logged so it's visible rather than assumed",
+                                item.Id, item.Name, mediaType.Name, pluginId,
+                                sourceProvider is null ? "(plugin not found)" : string.Join(", ",
+                                    sourceProvider.GetSupportedMediaTypes().Select(t => t.MediaTypeName)));
                     }
-                }
 
-                // Pre-seed enrichment rows for cross-referenced plugins so they use the
-                // known ID directly instead of running a text search that can mis-match.
-                // Two cases:
-                //   (a) Plugin that "owns" the source (e.g. tmdb → chronicle.plugin.tmdb)
-                //   (b) Any other plugin that declares it accepts this ID prefix
-                //       (e.g. SIMKL accepts "tv:N" so it can look up by TMDB ID)
-                var allEntries = _registry.GetMetadataProviderEntries();
-                foreach (var (xSource, xId) in crossRefs)
-                {
-                    var ownPluginId = SourceToPluginId(xSource);
-
-                    foreach (var (candidatePluginId, candidateProvider, _) in allEntries)
+                    // Pre-seed enrichment rows for providers that contributed a matching result
+                    // during search (e.g. TVMaze matched the same show by title+year). Their IDs
+                    // aren't in the primary provider's cross-ref data so must be passed explicitly.
+                    foreach (var contribId in contributingExternalIds ?? [])
                     {
-                        if (candidatePluginId == pluginId) continue; // skip source plugin
+                        var (cSource, _) = ParseSuggestedExternalId(contribId);
+                        var cPluginId = SourceToPluginId(cSource);
+                        if (cPluginId is null || cPluginId == pluginId) continue;
 
-                        // Only seed plugins that support this media type (or its parent hint).
-                        var typeSupported = candidateProvider.GetSupportedMediaTypes()
-                            .Any(t =>
-                            {
-                                var n = NormalizeMediaTypeName(t.MediaTypeName);
-                                return n == NormalizeMediaTypeName(mediaType.Name)
-                                    || n == ToMediaTypeHint(mediaType.Name);
-                            });
-                        if (!typeSupported) continue;
-
-                        // Accept if this plugin owns the source OR declares it accepts the prefix.
-                        var isOwner    = candidatePluginId == ownPluginId;
-                        var acceptsCrossRef = !isOwner && candidateProvider
-                            .GetAcceptedCrossRefPrefixes()
-                            .Any(prefix => xId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-
-                        if (!isOwner && !acceptsCrossRef) continue;
-
-                        if (!seededPluginIds.Add(candidatePluginId)) continue; // already queued this call
-                        var xExists = await _context.MediaEnrichments
-                            .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == candidatePluginId, ct);
-                        if (xExists) continue;
-
-                        _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
+                        // Only seed if this contributing plugin actually supports the item's media
+                        // type — a multi-provider search can return a same-titled false-positive
+                        // match from a plugin that has nothing to do with this item's real type
+                        // (e.g. SIMKL text-matching a music track's title to an unrelated movie).
+                        var cProvider = _registry.GetMetadataProvider(cPluginId);
+                        if (cProvider is null) continue;
+                        var cTypeSupported = cProvider.GetSupportedMediaTypes().Any(t =>
                         {
-                            MediaItemId = item.Id,
-                            PluginId    = candidatePluginId,
-                            ExternalId  = xId,
-                            Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
+                            var n = NormalizeMediaTypeName(t.MediaTypeName);
+                            return n == NormalizeMediaTypeName(mediaType.Name)
+                                || n == ToMediaTypeHint(mediaType.Name);
                         });
-                        await UpsertExternalIdAsync(item.Id, xId, ct);
+                        if (!cTypeSupported) continue;
+
+                        if (!seededPluginIds.Add(cPluginId)) continue; // already queued
+                        var cExists = await _context.MediaEnrichments
+                            .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == cPluginId, ct);
+                        if (!cExists)
+                        {
+                            _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
+                            {
+                                MediaItemId = item.Id,
+                                PluginId    = cPluginId,
+                                ExternalId  = contribId,
+                                Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
+                            });
+                            await UpsertExternalIdAsync(item.Id, contribId, ct);
+                        }
+                    }
+
+                    // Pre-seed enrichment rows for cross-referenced plugins so they use the
+                    // known ID directly instead of running a text search that can mis-match.
+                    // Two cases:
+                    //   (a) Plugin that "owns" the source (e.g. tmdb → chronicle.plugin.tmdb)
+                    //   (b) Any other plugin that declares it accepts this ID prefix
+                    //       (e.g. SIMKL accepts "tv:N" so it can look up by TMDB ID)
+                    var allEntries = _registry.GetMetadataProviderEntries();
+                    foreach (var (xSource, xId) in crossRefs)
+                    {
+                        var ownPluginId = SourceToPluginId(xSource);
+
+                        foreach (var (candidatePluginId, candidateProvider, _) in allEntries)
+                        {
+                            if (candidatePluginId == pluginId) continue; // skip source plugin
+
+                            // Only seed plugins that support this media type (or its parent hint).
+                            var typeSupported = candidateProvider.GetSupportedMediaTypes()
+                                .Any(t =>
+                                {
+                                    var n = NormalizeMediaTypeName(t.MediaTypeName);
+                                    return n == NormalizeMediaTypeName(mediaType.Name)
+                                        || n == ToMediaTypeHint(mediaType.Name);
+                                });
+                            if (!typeSupported) continue;
+
+                            // Accept if this plugin owns the source OR declares it accepts the prefix.
+                            var isOwner    = candidatePluginId == ownPluginId;
+                            var acceptsCrossRef = !isOwner && candidateProvider
+                                .GetAcceptedCrossRefPrefixes()
+                                .Any(prefix => xId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+                            if (!isOwner && !acceptsCrossRef) continue;
+
+                            if (!seededPluginIds.Add(candidatePluginId)) continue; // already queued this call
+                            var xExists = await _context.MediaEnrichments
+                                .AnyAsync(r => r.MediaItemId == item.Id && r.PluginId == candidatePluginId, ct);
+                            if (xExists) continue;
+
+                            _context.MediaEnrichments.Add(new Chronicle.Core.Models.MediaItemEnrichment
+                            {
+                                MediaItemId = item.Id,
+                                PluginId    = candidatePluginId,
+                                ExternalId  = xId,
+                                Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
+                            });
+                            await UpsertExternalIdAsync(item.Id, xId, ct);
+                        }
                     }
                 }
             }
@@ -1653,6 +1726,17 @@ namespace Chronicle.Services
             }
 
             await _context.SaveChangesAsync(ct);
+
+            // Part of the same permanent diagnostic above — confirms whether MetadataJson and
+            // the external-id row actually made it to the database for this item, right before
+            // the request returns 200. If this ever logs HasMetadata=False/ExternalIdCount=0
+            // again, that's the exact moment/item to chase down.
+            var persistedExtIdCount = await _context.MediaExternalIds
+                .CountAsync(e => e.MediaItemId == item.Id, ct);
+            _log.Information(
+                "AddFromSearchAsync: persisted item {ItemId} \"{Name}\" (type={MediaTypeId}) -- " +
+                "HasMetadata={HasMetadata} ExternalIdCount={ExternalIdCount}",
+                item.Id, item.Name, mediaTypeId, !string.IsNullOrEmpty(item.MetadataJson), persistedExtIdCount);
 
             // Seed enrichment rows for every registered provider that supports this media type.
             // Cross-ref rows pre-seeded above are skipped (existingSet check inside the method).
@@ -1762,7 +1846,7 @@ namespace Chronicle.Services
                 ["rating"]         = meta.Rating,
                 ["genres"]         = meta.Genres,
                 ["cast"]           = meta.Cast,
-                ["directors"]      = meta.Directors,
+                ["crew"]           = meta.Crew,
             };
 
             // Preserve extendedData (cross-ref IDs etc.) if the provider supplied it.
@@ -2020,6 +2104,9 @@ namespace Chronicle.Services
         private static string? ToMediaTypeHint(string mediaTypeName)
         {
             var n = mediaTypeName.ToLowerInvariant();
+            // Must be checked before the generic "anime" → tv fallback below — "anime_movies"
+            // contains "anime" as a substring but is flat (like movies), not TV-hierarchical.
+            if (n.Contains("anime") && n.Contains("movie")) return "movie";
             if (n.Contains("tv") || n.Contains("show") || n.Contains("series")
                 || n.Contains("anime")) return "tv";
             if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";
@@ -2204,8 +2291,8 @@ namespace Chronicle.Services
 
         // Internal model types matching the namespaced MetadataJson structure
         private sealed record TmdbMetaJson(
-            double? Rating, List<string> Genres, List<string> Cast,
-            List<string> Directors, string? PosterUrl, string? BackdropUrl);
+            double? Rating, List<string> Genres, List<Chronicle.Plugins.Models.CastMember> Cast,
+            List<Chronicle.Plugins.Models.CrewMember> Crew, string? PosterUrl, string? BackdropUrl);
 
         // FilePaths is always an array — even for single-file items — so every writer
         // (flat scan, direct import, hierarchical group scan) agrees on one schema and
@@ -2265,7 +2352,7 @@ namespace Chronicle.Services
                 tmdbMeta.Rating,
                 tmdbMeta.Genres,
                 tmdbMeta.Cast,
-                tmdbMeta.Directors,
+                tmdbMeta.Crew,
                 tmdbMeta.PosterUrl,
                 tmdbMeta.BackdropUrl);
 
@@ -2661,11 +2748,28 @@ namespace Chronicle.Services
 
             // Tertiary: match by name (covers items where neither filePaths nor folderPath matched).
             // Strip trailing "(YYYY)" from both sides so "Show (2016)" and "Show" deduplicate.
-            // No parentId/hierarchyLevel filter — same reasoning as the folderPath check above.
+            //
+            // Root items (hierarchyLevel == 0) stay unscoped by parentId — same reasoning as the
+            // folderPath check above: a movie can legitimately be reparented into/out of a
+            // collection and must still match itself afterward.
+            //
+            // Every non-root level (season, episode, album, track, ...) MUST additionally require
+            // ParentId/HierarchyLevel to match. Confirmed root cause (2026-08-05): a container node
+            // synthesized purely from a parsed filename (e.g. a Season built from
+            // "Show.S04E02.mkv" with no real season subfolder — see ScanGroupingService's
+            // filename-only branch, which never sets FolderPath) skips both the file-path and
+            // folder-path tiers above and falls straight through to this one. Without a ParentId
+            // filter, "Season 04" from a brand-new show scan matched "Season 04" already sitting
+            // under a COMPLETELY UNRELATED show, silently re-parenting an entire season's worth of
+            // new episodes under the wrong show — which then inherited that wrong show's own
+            // external IDs during enrichment (MetadataEnrichmentService derives an episode's ID
+            // from its grandparent's stored ExternalId). A whole Star Trek: TNG season was
+            // misfiled under Rick and Morty's Season 04 this way, in one real run.
             var groupNameClean = System.Text.RegularExpressions.Regex
                 .Replace(group.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
             var nameCandidates = await _context.MediaItems
-                .Where(m => m.MediaTypeId == mediaTypeId)
+                .Where(m => m.MediaTypeId == mediaTypeId &&
+                            (hierarchyLevel == 0 || (m.ParentId == parentId && m.HierarchyLevel == hierarchyLevel)))
                 .ToListAsync(ct);
             existing ??= nameCandidates.FirstOrDefault(m =>
             {

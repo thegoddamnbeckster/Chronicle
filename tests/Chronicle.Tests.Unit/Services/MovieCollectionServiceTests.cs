@@ -653,4 +653,143 @@ public class MovieCollectionServiceTests
         result!.Id.Should().Be("111");
         result.Name.Should().Be("Top Level Collection");
     }
+
+    // ── DeduplicateCollectionsAsync ─────────────────────────────────────────────
+    // Regression coverage for the 2026-08-05 finding: this method used to group ALL
+    // root-level items library-wide by (MediaTypeId, Name) with no check that they were
+    // actually collection containers, so two unrelated items sharing an exact title were
+    // merged and one permanently deleted with no audit trail. It now requires a
+    // "collection:{id}" external ID before treating a name match as a real duplicate, and
+    // delegates the actual merge to IMergeService so it's audited and reversible.
+
+    private static (MovieCollectionService svc, ChronicleDbContext db) CreateServiceWithRealMerge(string dbName)
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<ChronicleDbContext>(o => o
+            .UseInMemoryDatabase(dbName)
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning)));
+        services.AddScoped<IMetadataResolutionService, NoopResolutionService>();
+        services.AddScoped<IMergeService, MergeService>();
+        services.AddLogging();
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var svc = new MovieCollectionService(scopeFactory, NullLogger<MovieCollectionService>.Instance);
+        // A live db instance for arranging/asserting, sharing the same named in-memory database
+        // as the one the service's own scopes will resolve.
+        var db = provider.GetRequiredService<ChronicleDbContext>();
+        return (svc, db);
+    }
+
+    [Fact]
+    public async Task DeduplicateCollectionsAsync_TwoUnrelatedItemsSharingATitle_AreNotMerged()
+    {
+        var (svc, db) = CreateServiceWithRealMerge(Guid.NewGuid().ToString());
+        var mt = MoviesType();
+        db.MediaTypes.Add(mt);
+
+        // Two entirely unrelated root-level movies that happen to share an exact title
+        // (e.g. two different films both called "The Gift") — neither is a collection.
+        var itemA = new MediaItem
+        {
+            Name = "The Gift", MediaTypeId = mt.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var itemB = new MediaItem
+        {
+            Name = "The Gift", MediaTypeId = mt.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.AddRange(itemA, itemB);
+        await db.SaveChangesAsync();
+
+        await svc.DeduplicateCollectionsAsync();
+
+        // The merge (if it wrongly ran) happens through a different scope's ChronicleDbContext
+        // instance than `db` — clear the local identity map so subsequent queries hit the
+        // underlying in-memory store fresh instead of returning stale tracked entities.
+        db.ChangeTracker.Clear();
+
+        db.MediaItems.Count(m => m.Name == "The Gift").Should().Be(2,
+            "neither item is a real collection container, so a shared title alone must not merge them");
+    }
+
+    [Fact]
+    public async Task DeduplicateCollectionsAsync_TwoRealCollectionContainers_AreMergedViaMergeService()
+    {
+        var (svc, db) = CreateServiceWithRealMerge(Guid.NewGuid().ToString());
+        var mt = MoviesType();
+        db.MediaTypes.Add(mt);
+
+        var keeper = new MediaItem
+        {
+            Name = "Duplicated Collection", MediaTypeId = mt.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var dupe = new MediaItem
+        {
+            Name = "Duplicated Collection", MediaTypeId = mt.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.AddRange(keeper, dupe);
+        await db.SaveChangesAsync();
+
+        // Both are marked as genuine collection containers via the "collection:{id}" external ID
+        // convention (EnsureCollectionParentAsync/FindOrCreateCollectionAsync), each with a child.
+        var childOfKeeper = new MediaItem
+        {
+            Name = "Member One", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = keeper.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var childOfDupe = new MediaItem
+        {
+            Name = "Member Two", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = dupe.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.AddRange(childOfKeeper, childOfDupe);
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = keeper.Id, Source = "tmdb", ExternalId = "collection:1" });
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = dupe.Id,   Source = "tmdb", ExternalId = "collection:1" });
+        await db.SaveChangesAsync();
+        var ids = new[] { keeper.Id, dupe.Id };
+
+        await svc.DeduplicateCollectionsAsync();
+        db.ChangeTracker.Clear(); // see comment in the sibling test above
+
+        // Which of the two physically survives isn't the point of this test (that's an Id-
+        // ordering detail internal to DeduplicateCollectionsAsync) — what matters is that
+        // exactly one of the pair now exists, the merge was audited, and both children ended
+        // up under whichever one survived.
+        var survivor = db.MediaItems.SingleOrDefault(m => m.Name == "Duplicated Collection" && ids.Contains(m.Id));
+        survivor.Should().NotBeNull("two genuine collection containers with the same name should still be merged into one");
+        var removedId = ids.Single(id => id != survivor!.Id);
+
+        db.MediaItems.Find(removedId).Should().BeNull();
+
+        // Delegating to MergeService means this is audited and reversible, unlike the old
+        // hand-rolled delete.
+        db.MediaItemMerges.Any(m => m.WinnerId == survivor!.Id && m.LoserOriginalId == removedId).Should().BeTrue();
+
+        // Both children end up under the surviving container.
+        db.MediaItems.Count(m => m.ParentId == survivor!.Id).Should().Be(2);
+    }
+
+    /// <summary>No-op resolution service — ResolveAsync's side effect isn't under test here.</summary>
+    private sealed class NoopResolutionService : IMetadataResolutionService
+    {
+        public Task ResolveAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ResolveAllForMediaTypeAsync(string mediaTypeName, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public IReadOnlyCollection<string> GetCanonicalFields() => Array.Empty<string>();
+        public Task SetOverrideAsync(MediaItem item, ChronicleDbContext db, string field, string url,
+            string? sourcePluginId, string? sourceType, int? userId, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ClearOverrideAsync(MediaItem item, ChronicleDbContext db, string field, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ClearItemOverridesAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task<int> ClearOverridesForMediaTypeAsync(string mediaTypeName, Action<int, int>? onBatch = null, CancellationToken ct = default)
+            => Task.FromResult(0);
+        public Task<int> ClearAllOverridesLibraryWideAsync(Action<int, int>? onBatch = null, CancellationToken ct = default)
+            => Task.FromResult(0);
+    }
 }

@@ -121,7 +121,10 @@ public class SyncOrchestrationServiceMatchTests : IDisposable
         var (created, isNew) = await service.MatchOrCreateAsync(_db, evt, "chronicle.plugin.trakt", CancellationToken.None);
 
         isNew.Should().BeTrue();
-        created.Name.Should().Be("Unknown Movie (2020)");
+        // Year is its own first-class MediaItem column (used throughout matching/dedup logic
+        // elsewhere in the codebase) — CreateStubAsync stores it there, not embedded in Name.
+        created.Name.Should().Be("Unknown Movie");
+        created.Year.Should().Be(2020);
         (await _db.MediaExternalIds.AnyAsync(e => e.Source == "trakt" && e.ExternalId == "trakt:99999"))
             .Should().BeTrue();
         (await _db.MediaExternalIds.AnyAsync(e => e.Source == "tmdb" && e.ExternalId == "movie:88888"))

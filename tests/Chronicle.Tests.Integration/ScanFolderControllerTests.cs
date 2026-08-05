@@ -50,7 +50,12 @@ namespace Chronicle.Tests.Integration
         [Fact]
         public async Task ValidatePath_WithTempPath_ReturnsValid()
         {
-            var client = _factory.CreateClient();
+            // FileScanController is [Authorize] at the class level with no [AllowAnonymous]
+            // override on this action (unlike GetStatus, which is deliberately anonymous so
+            // the frontend can decide nav visibility pre-login) — validate-path is only ever
+            // called from the authenticated Scan Folders admin UI, so an anonymous client
+            // correctly gets 401 here.
+            var client = await AuthClientAsync();
             var tempPath = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
             var response = await client.PostAsJsonAsync("/api/v1/scan/validate-path",

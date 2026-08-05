@@ -64,6 +64,19 @@ public class MergeService(
             .Where(m => m.ParentId == loserId)
             .ToListAsync(ct);
 
+        // Computed early (rather than in the "Consolidate external IDs" section below) so the
+        // merge log can record, per loser external ID, whether the winner already owned an
+        // identical (Source, ExternalId) row. That distinction is essential for Unmerge: a
+        // "duplicate" ID's row on the winner predates this merge and is the WINNER's own
+        // identity, not the loser's — Unmerge must recreate a fresh copy for the restored stub
+        // rather than stealing the winner's row (which was the original, unrecoverable bug).
+        var winnerIdSetForLog = (await db.MediaExternalIds
+            .Where(e => e.MediaItemId == winnerId)
+            .Select(e => new { e.Source, e.ExternalId })
+            .ToListAsync(ct))
+            .Select(e => $"{e.Source}:{e.ExternalId}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var mergeLog = new MediaItemMerge
         {
             WinnerId            = winnerId,
@@ -75,13 +88,26 @@ public class MergeService(
             LoserYear           = loser.Year,
             LoserNumber         = loser.Number,
             LoserExternalIdsJson = JsonSerializer.Serialize(
-                loserExternalIds.Select(e => new { e.Source, e.ExternalId })),
+                loserExternalIds.Select(e => new LoserExternalId(
+                    e.Source, e.ExternalId, winnerIdSetForLog.Contains($"{e.Source}:{e.ExternalId}")))),
             LoserChildIdsJson   = JsonSerializer.Serialize(loserChildren.Select(c => c.Id)),
             LoserMetadataJson   = loser.MetadataJson,
             MergedAt            = DateTime.UtcNow,
             MergedByUserId      = mergedByUserId,
         };
         db.MediaItemMerges.Add(mergeLog);
+
+        // Repoint merge-log rows where the loser was itself a previous merge's winner.
+        // Otherwise deleting the loser below cascades (MediaItemMerges.WinnerId is a cascading
+        // FK) and permanently destroys that earlier merge's audit trail, making it impossible to
+        // ever unmerge — even though all of the earlier loser's data is still fully intact, now
+        // living inside the current winner. Retargeting keeps every merge in the chain
+        // independently reversible.
+        var priorMergesWonByLoser = await db.MediaItemMerges
+            .Where(m => m.WinnerId == loserId)
+            .ToListAsync(ct);
+        foreach (var priorMerge in priorMergesWonByLoser)
+            priorMerge.WinnerId = winnerId;
 
         // ── AKA ───────────────────────────────────────────────────────────────
         // Skip episode-pattern names (e.g. "Show S01E03 - Title") — they are child items,
@@ -99,12 +125,7 @@ public class MergeService(
         }
 
         // ── Consolidate external IDs onto winner ──────────────────────────────
-        var winnerIdSet = (await db.MediaExternalIds
-            .Where(e => e.MediaItemId == winnerId)
-            .Select(e => new { e.Source, e.ExternalId })
-            .ToListAsync(ct))
-            .Select(e => $"{e.Source}:{e.ExternalId}")
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var winnerIdSet = winnerIdSetForLog;
 
         foreach (var eid in loserExternalIds)
         {
@@ -287,18 +308,39 @@ public class MergeService(
         }
         if (loserIds.Count > 0)
         {
+            // IDs the loser owned uniquely (grafted onto the winner during merge) vs. IDs the
+            // loser shared with a winner that already had its own identical row (that row was
+            // deleted, not moved, during merge). These need opposite restoration strategies:
+            // a grafted row can safely be moved BACK from the winner to the stub, but a
+            // duplicate row must never be taken from the winner — that row is the winner's own
+            // pre-merge identity, not the loser's. It must be recreated fresh on the stub instead.
+            var duplicateIds = loserIds.Where(l => l.WasDuplicate).ToList();
+            var movedIds     = loserIds.Where(l => !l.WasDuplicate).ToList();
+
+            foreach (var dup in duplicateIds)
+            {
+                db.MediaExternalIds.Add(new MediaExternalId
+                {
+                    MediaItemId = stub.Id,
+                    Source      = dup.Source,
+                    ExternalId  = dup.ExternalId,
+                });
+            }
+
             // Build lookup structures for the batched query and O(1) confirmation.
-            var loserSources     = loserIds.Select(l => l.Source).ToList();
-            var loserExtIds      = loserIds.Select(l => l.ExternalId).ToList();
-            var loserIdSet       = loserIds
+            var loserSources     = movedIds.Select(l => l.Source).ToList();
+            var loserExtIds      = movedIds.Select(l => l.ExternalId).ToList();
+            var loserIdSet       = movedIds
                 .Select(l => $"{l.Source}:{l.ExternalId}")
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var winnerEids = await db.MediaExternalIds
-                .Where(e => e.MediaItemId == winner.Id
-                         && loserSources.Contains(e.Source)
-                         && loserExtIds.Contains(e.ExternalId))
-                .ToListAsync(ct);
+            var winnerEids = movedIds.Count > 0
+                ? await db.MediaExternalIds
+                    .Where(e => e.MediaItemId == winner.Id
+                             && loserSources.Contains(e.Source)
+                             && loserExtIds.Contains(e.ExternalId))
+                    .ToListAsync(ct)
+                : [];
             // Track which sources have already been moved to the stub to avoid
             // creating duplicate ExternalId rows (can happen after repeated merge/unmerge cycles).
             var movedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -441,7 +483,12 @@ public class MergeService(
         _                         => 1, // Unwatched
     };
 
-    private record LoserExternalId(string Source, string ExternalId);
+    // WasDuplicate defaults to false so logs written before this field existed still deserialize
+    // (System.Text.Json falls back to the constructor parameter's default for a missing property).
+    // false is the conservative choice there: it reproduces the pre-fix restore behavior for old
+    // logs rather than guessing, since we have no way to know retroactively which of those rows
+    // collided with a pre-existing winner ID.
+    private record LoserExternalId(string Source, string ExternalId, bool WasDuplicate = false);
 
     private static Dictionary<string, JsonElement> ParseMetadataBlobs(string? json)
     {
