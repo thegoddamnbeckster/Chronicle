@@ -77,8 +77,17 @@ public class PluginLoggerFactoryTests : IDisposable
         // Act
         logger.Information("Test event from {PluginId}", pluginId);
 
-        // Assert — the event should have been forwarded to the global logger.
-        sink.LogEvents.Should().ContainSingle();
-        sink.LogEvents.Single().Level.Should().Be(LogEventLevel.Information);
+        // Assert — the event should have been forwarded to the global logger. Serilog's
+        // Log.Logger is process-wide static state, and other test classes running
+        // concurrently (xUnit parallelizes across classes by default) can log to whatever
+        // logger happens to be assigned at that moment — so the sink isn't necessarily
+        // exclusive to this test. Filter to events carrying THIS test's PluginId property
+        // rather than asserting on the sink's total count.
+        var ownEvents = sink.LogEvents
+            .Where(e => e.Properties.TryGetValue("PluginId", out var v)
+                     && v.ToString().Trim('"') == pluginId)
+            .ToList();
+        ownEvents.Should().ContainSingle();
+        ownEvents.Single().Level.Should().Be(LogEventLevel.Information);
     }
 }

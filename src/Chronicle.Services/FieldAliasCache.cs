@@ -27,13 +27,26 @@ public class FieldAliasCache(IServiceScopeFactory scopeFactory)
         ["language"] = ["lang"],
     };
 
-    private volatile Dictionary<string, List<string>>? _cache;
+    // Generation + data travel together as one immutable object so publishing a reload result
+    // is a single atomic CompareExchange rather than a separate "check generation, then write
+    // data" pair of statements — see the comment on LoadAsync for why that distinction matters.
+    private sealed record CacheState(long Generation, Dictionary<string, List<string>>? Data);
+
+    private CacheState _state = new(0, null);
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public async Task<Dictionary<string, List<string>>> GetAllAsync(CancellationToken ct = default) =>
         await LoadAsync(ct);
 
-    public void Invalidate() => Interlocked.Exchange(ref _cache, null);
+    public void Invalidate()
+    {
+        CacheState old, updated;
+        do
+        {
+            old = Volatile.Read(ref _state);
+            updated = new CacheState(old.Generation + 1, null);
+        } while (Interlocked.CompareExchange(ref _state, updated, old) != old);
+    }
 
     /// <summary>
     /// Null/missing (no row saved yet) falls back to Defaults — a seed, not a regression.
@@ -55,20 +68,40 @@ public class FieldAliasCache(IServiceScopeFactory scopeFactory)
     }
 
     // For unit tests only — bypasses DB load
-    internal void InjectForTest(Dictionary<string, List<string>> config) => _cache = config;
+    internal void InjectForTest(Dictionary<string, List<string>> config) =>
+        _state = new CacheState(_state.Generation, config);
 
     private async Task<Dictionary<string, List<string>>> LoadAsync(CancellationToken ct)
     {
-        if (_cache is { } hit) return hit;
+        var snapshot = Volatile.Read(ref _state);
+        if (snapshot.Data is { } hit) return hit;
         await _lock.WaitAsync(ct);
         try
         {
-            if (_cache is { } doubleCheck) return doubleCheck;
+            snapshot = Volatile.Read(ref _state);
+            if (snapshot.Data is { } doubleCheck) return doubleCheck;
             await using var scope = scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
             var row = await db.AppSettings.FirstOrDefaultAsync(s => s.Key == SettingKey, ct);
-            _cache = ParseConfig(row?.Value);
-            return _cache;
+            var loaded = ParseConfig(row?.Value);
+
+            // Confirmed race (2026-08-05): a writer's Invalidate() can fire while THIS load's DB
+            // query is still in flight (started before the write committed). If we published
+            // unconditionally, this load's stale result could land in the cache strictly after
+            // the writer's Invalidate() and never get evicted again — every future GetAllAsync
+            // would then read pre-write data forever, e.g. a PUT that clears an alias silently
+            // "not sticking" for the rest of the process's life. CompareExchange against the
+            // EXACT snapshot object read above (not just a separate generation-number check)
+            // closes this atomically: Invalidate() always swaps in a brand-new CacheState
+            // instance, so if one ran at any point since `snapshot` was read — including in the
+            // gap between a generation check and a separate write, which a two-field check-then-
+            // act version of this fix would still miss — this CompareExchange's reference
+            // comparison fails and the stale result is simply never published. A stale load
+            // still returns correctly to THIS caller either way; it just isn't cached for the
+            // next one.
+            Interlocked.CompareExchange(ref _state, new CacheState(snapshot.Generation, loaded), snapshot);
+
+            return loaded;
         }
         finally { _lock.Release(); }
     }

@@ -199,6 +199,18 @@ namespace Chronicle.Services.Scan
                                     HierarchyLevel  = 1,
                                     ConfidenceScore = 0.85,
                                     SignalSources   = ["filename"],
+                                    // No real "Season N" subfolder exists on disk here (that's exactly
+                                    // why this group is being synthesized), but FileScanService's
+                                    // UpsertGroupItemAsync still uses FolderPath purely as a matching
+                                    // key, not a filesystem access — giving this synthesized group a
+                                    // unique, show-scoped path lets it match via the strong secondary
+                                    // (folder-path) tier on re-scan instead of falling through to the
+                                    // unscoped-by-default tertiary name-only tier, which is what let an
+                                    // entire season get misfiled under an unrelated show's identically-
+                                    // numbered season (confirmed 2026-08-05; the tertiary tier itself was
+                                    // separately fixed to be ParentId/HierarchyLevel-scoped, but this closes
+                                    // the same hole one layer earlier, in depth).
+                                    FolderPath      = Path.Combine(scanRoot, folderSignal.FolderNames[0], seasonName),
                                 };
                                 rootGroup.Children.Add(seasonGroup);
                             }

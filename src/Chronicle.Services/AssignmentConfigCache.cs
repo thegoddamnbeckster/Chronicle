@@ -7,7 +7,13 @@ namespace Chronicle.Services;
 
 public class AssignmentConfigCache(IServiceScopeFactory scopeFactory)
 {
-    private volatile Dictionary<string, Dictionary<string, List<string>>>? _cache;
+    // Generation + data travel together as one immutable object so publishing a reload result
+    // is a single atomic CompareExchange rather than a separate "check generation, then write
+    // data" pair of statements — see the comment on LoadAsync for why that distinction matters
+    // (identical fix to FieldAliasCache, which this class mirrors).
+    private sealed record CacheState(long Generation, Dictionary<string, Dictionary<string, List<string>>>? Data);
+
+    private CacheState _state = new(0, null);
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public async Task<Dictionary<string, List<string>>> GetForTypeAsync(
@@ -20,7 +26,15 @@ public class AssignmentConfigCache(IServiceScopeFactory scopeFactory)
         return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
     }
 
-    public void Invalidate() => Interlocked.Exchange(ref _cache, null);
+    public void Invalidate()
+    {
+        CacheState old, updated;
+        do
+        {
+            old = Volatile.Read(ref _state);
+            updated = new CacheState(old.Generation + 1, null);
+        } while (Interlocked.CompareExchange(ref _state, updated, old) != old);
+    }
 
     internal static Dictionary<string, Dictionary<string, List<string>>> ParseConfig(string? json)
     {
@@ -35,20 +49,31 @@ public class AssignmentConfigCache(IServiceScopeFactory scopeFactory)
 
     // For unit tests only — bypasses DB load
     internal void InjectForTest(Dictionary<string, Dictionary<string, List<string>>> config) =>
-        _cache = config;
+        _state = new CacheState(_state.Generation, config);
 
     private async Task<Dictionary<string, Dictionary<string, List<string>>>> LoadAsync(CancellationToken ct)
     {
-        if (_cache is { } hit) return hit;
+        var snapshot = Volatile.Read(ref _state);
+        if (snapshot.Data is { } hit) return hit;
         await _lock.WaitAsync(ct);
         try
         {
-            if (_cache is { } doubleCheck) return doubleCheck;
+            snapshot = Volatile.Read(ref _state);
+            if (snapshot.Data is { } doubleCheck) return doubleCheck;
             await using var scope = scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
             var row = await db.AppSettings.FirstOrDefaultAsync(s => s.Key == "metadata_assignment.config", ct);
-            _cache = ParseConfig(row?.Value);
-            return _cache;
+            var loaded = ParseConfig(row?.Value);
+
+            // CompareExchange against the EXACT snapshot object read above (not a separate
+            // generation-number check) publishes atomically: Invalidate() always swaps in a
+            // brand-new CacheState instance, so if one ran at any point since `snapshot` was
+            // read, this CompareExchange's reference comparison fails and the stale result is
+            // simply never published. See FieldAliasCache.LoadAsync for the confirmed incident
+            // and the full reasoning (identical fix, mirrored here).
+            Interlocked.CompareExchange(ref _state, new CacheState(snapshot.Generation, loaded), snapshot);
+
+            return loaded;
         }
         finally { _lock.Release(); }
     }

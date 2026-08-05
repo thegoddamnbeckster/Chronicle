@@ -17,7 +17,16 @@ public class MovieCollectionService(
     IServiceScopeFactory scopeFactory,
     ILogger<MovieCollectionService> logger) : IMovieCollectionService
 {
+    private const string CollectionExternalIdPrefix = "collection:";
+
     private const int BulkBatchSize = 200;
+
+    /// <summary>
+    /// Sentinel MediaExternalId.ExternalId (Source "chronicle") marking that a movie's current
+    /// collection membership was explicitly chosen by the user via ReparentIntoCollectionAsync,
+    /// not inferred from a provider's belongsToCollection data. See EnsureCollectionParentAsync.
+    /// </summary>
+    private const string ManualCollectionMemberMarker = "manual-collection-member";
     public async Task EnsureCollectionParentAsync(
         ChronicleDbContext db,
         MediaItem movieItem,
@@ -30,6 +39,21 @@ public class MovieCollectionService(
 
         // Only group movie-like types (movies, fanedits, anime) — not tv, not anything else
         if (movieItem.MediaType is null || !IsMovieLikeTypeName(movieItem.MediaType.Name))
+            return;
+
+        // A user who manually placed this item into a collection (via ReparentIntoCollectionAsync)
+        // must never have that choice silently undone by a later automatic enrichment pass.
+        // Concretely: manually reparenting resets the item's enrichment rows to Pending so it
+        // re-enriches in its new context; when that re-enrichment runs and the item's own TMDB
+        // match has no belongsToCollection data (e.g. a compilation/anthology movie TMDB doesn't
+        // formally list as part of the collection, like "Evil Bong-A-Thon!"), the branch below
+        // would force it straight back to root -- undoing the manual placement within minutes,
+        // with no visible error. The ManualCollectionMemberMarker below opts an item out of ALL
+        // auto-parenting logic (both directions) until the user explicitly removes it themselves
+        // via UnparentFromCollectionAsync, which clears the marker.
+        var isManuallyPlaced = await db.MediaExternalIds.AnyAsync(
+            e => e.MediaItemId == movieItem.Id && e.ExternalId == ManualCollectionMemberMarker, ct);
+        if (isManuallyPlaced)
             return;
 
         var collectionData = ExtractCollectionData(movieItem.MetadataJson);
@@ -596,19 +620,22 @@ public class MovieCollectionService(
             // Skip if a child of THIS collection already has this ExternalId.
             if (existingChildExtIds.Contains(part.ExternalId)) continue;
 
-            // Skip if the movie already exists anywhere in the DB by this ExternalId
-            // (it will be re-parented by EnsureCollectionParentAsync when it gets enriched).
-            if (await db.MediaExternalIds.AnyAsync(e => e.ExternalId == part.ExternalId, ct))
-                continue;
-
-            // Also skip if a movie with the same title + year already exists in this media type.
-            // This prevents creating stubs when the movie is already in the library under a
-            // different source's ExternalId (e.g. imported via Trakt before TMDB enrichment ran).
-            if (part.Year.HasValue &&
-                await db.MediaItems.AnyAsync(m =>
-                    m.MediaTypeId == mediaTypeId &&
-                    m.Name == part.Title &&
-                    m.Year == part.Year, ct))
+            // The movie already exists somewhere in the DB (by ExternalId, or by normalized
+            // title+year — see ReparentExistingMemberIfNeededAsync for why both checks are
+            // needed and why raw Name == was not enough). Reparent it into this collection
+            // directly instead of just skipping stub creation and hoping something else
+            // reparents it later.
+            //
+            // Confirmed directly (2026-08-03): the ORIGINAL code only skipped stub creation
+            // here ("it will be re-parented by EnsureCollectionParentAsync when it gets
+            // enriched") without actually reparenting anything. That assumption only holds if
+            // the item's OWN enrichment runs again after the collection is discovered — an
+            // item enriched in the past (which is HOW it already has this ExternalId/title
+            // match) never automatically re-triggers that. The result was exactly what got
+            // reported: the collection looked like it was "missing" a movie the user
+            // definitely owned, because the real file was sitting standalone, correctly
+            // matched to TMDB, and simply never told to join this collection.
+            if (await ReparentExistingMemberIfNeededAsync(db, collection, part, mediaTypeId, ct))
                 continue;
 
             // Save stub + ExternalId in one atomic write so the stub is never
@@ -678,6 +705,65 @@ public class MovieCollectionService(
             logger.LogInformation(
                 "Created {Count} stub(s) for collection {CollectionId} \"{CollectionName}\"",
                 created, collection.Id, collection.Name);
+
+        return true;
+    }
+
+    /// <summary>
+    /// If a real (non-stub) item matching this collection part already exists elsewhere in the
+    /// library -- by ExternalId, or by normalized title+year when no ExternalId match exists --
+    /// reparents it into <paramref name="collection"/> (unless already correctly parented there)
+    /// and returns true so the caller skips creating a duplicate stub. Returns false when no
+    /// existing item was found, meaning the caller should create a new stub instead.
+    ///
+    /// Confirmed directly (2026-08-03): before this existed, both the ExternalId match and the
+    /// title+year match below only ever skipped stub *creation* — neither actually moved the
+    /// real item into the collection. That relied on the item's own enrichment re-running and
+    /// discovering belongsToCollection on its own, which never happens for an item that was
+    /// already enriched (and thus already has the matching ExternalId/title) before this
+    /// collection was even discovered. The visible symptom was a collection missing a movie the
+    /// user definitely had a file for, sitting correctly-matched but un-reparented elsewhere.
+    /// </summary>
+    private async Task<bool> ReparentExistingMemberIfNeededAsync(
+        ChronicleDbContext db, MediaItem collection, MediaMetadata part, int mediaTypeId, CancellationToken ct)
+    {
+        var existing = await db.MediaItems
+            .Where(m => m.MediaTypeId == mediaTypeId && !m.IsStub)
+            .Where(m => db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId == part.ExternalId))
+            .FirstOrDefaultAsync(ct);
+
+        if (existing is null && part.Year.HasValue)
+        {
+            var normalizedPartTitle = MediaItemNormalizer.NormalizeName(part.Title);
+            if (!string.IsNullOrEmpty(normalizedPartTitle))
+            {
+                var sameYearCandidates = await db.MediaItems
+                    .Where(m => m.MediaTypeId == mediaTypeId && m.Year == part.Year && !m.IsStub)
+                    .ToListAsync(ct);
+                existing = sameYearCandidates.FirstOrDefault(
+                    m => MediaItemNormalizer.NormalizeName(m.Name) == normalizedPartTitle);
+            }
+        }
+
+        if (existing is null) return false;
+        if (existing.Id == collection.Id) return true; // paranoia guard, shouldn't happen
+
+        if (existing.ParentId != collection.Id)
+        {
+            var oldParentId = existing.ParentId;
+            existing.ParentId       = collection.Id;
+            existing.HierarchyLevel = 1;
+            existing.UpdatedAt      = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation(
+                "Reparented existing item {ItemId} \"{Name}\" into collection {CollectionId} \"{CollectionName}\" " +
+                "(was previously parent={OldParent}) -- found already in the library rather than creating a duplicate stub",
+                existing.Id, existing.Name, collection.Id, collection.Name,
+                oldParentId?.ToString() ?? "root");
+
+            if (oldParentId.HasValue && oldParentId.Value != collection.Id)
+                await RemoveOrphanedCollectionAsync(db, oldParentId.Value, mediaTypeId, ct);
+        }
 
         return true;
     }
@@ -800,10 +886,27 @@ public class MovieCollectionService(
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var mergeService = scope.ServiceProvider.GetRequiredService<IMergeService>();
 
-        // Find all (MediaTypeId, Name) groups that have more than one Level-0 container.
+        // Only Level-0 items that are genuinely collection CONTAINERS (marked with a
+        // "collection:{id}" external ID by EnsureCollectionParentAsync/FindOrCreateCollectionAsync)
+        // are eligible here. This previously grouped ALL root-level items library-wide by
+        // (MediaTypeId, Name) with no such check — meaning two entirely unrelated movies/shows
+        // that happened to share an exact title (not rare: remakes, reboots, generic titles)
+        // were treated as duplicates and one was permanently deleted (cascade-deleting that
+        // item's ratings/watch history) with no merge log and no way to reverse it. Confirmed
+        // 2026-08-05 during a systematic review of the merge/collection/TV-episode system.
+        var collectionContainerIds = await db.MediaExternalIds
+            .Where(e => e.ExternalId.StartsWith(CollectionExternalIdPrefix))
+            .Select(e => e.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        if (collectionContainerIds.Count == 0) return;
+
+        // Find all (MediaTypeId, Name) groups that have more than one Level-0 collection container.
         var duplicateGroups = await db.MediaItems
-            .Where(m => m.HierarchyLevel == 0)
+            .Where(m => m.HierarchyLevel == 0 && collectionContainerIds.Contains(m.Id))
             .GroupBy(m => new { m.MediaTypeId, m.Name })
             .Where(g => g.Count() > 1)
             .Select(g => new { g.Key.MediaTypeId, g.Key.Name })
@@ -818,59 +921,48 @@ public class MovieCollectionService(
             ct.ThrowIfCancellationRequested();
 
             var containers = await db.MediaItems
-                .Include(m => m.ExternalIds)
                 .Where(m => m.MediaTypeId == group.MediaTypeId &&
                             m.HierarchyLevel == 0 &&
-                            m.Name == group.Name)
+                            m.Name == group.Name &&
+                            collectionContainerIds.Contains(m.Id))
                 .OrderBy(m => m.Id) // keep the oldest (lowest Id)
                 .ToListAsync(ct);
 
             if (containers.Count < 2) continue;
 
-            var keeper = containers[0];
-            var dupes  = containers.Skip(1).ToList();
+            var keeperId = containers[0].Id;
 
-            foreach (var dupe in dupes)
+            foreach (var dupe in containers.Skip(1))
             {
-                // Re-parent all children to the keeper
-                var children = await db.MediaItems
-                    .Where(m => m.ParentId == dupe.Id)
-                    .ToListAsync(ct);
-                foreach (var child in children)
+                // Delegate to MergeService.MergeAsync instead of hand-rolling the merge: it
+                // transfers UserLibrary/InteractionEvents/MediaCredits/MediaListItems (not just
+                // children/ExternalIds/poster/overview like the old inline logic did), and
+                // writes a MediaItemMerges audit row so this is reversible via Unmerge if the
+                // name match ever turns out to be wrong.
+                //
+                // Caught per-pair rather than left to propagate: MergeAsync can legitimately
+                // throw InvalidOperationException (e.g. one side was concurrently deleted or
+                // already merged by EnsureCollectionParentAsync/RemoveOrphanedCollectionAsync
+                // running from a live enrichment pass). An uncaught throw here would abort the
+                // whole DeduplicateCollectionsAsync call mid-loop, silently leaving every
+                // remaining duplicate group unmerged and skipping the rebuild passes that run
+                // after it in RebuildMovieCollectionsService — mirrors the try/catch already
+                // used around EnsureCollectionParentAsync/EnsureCollectionStubsAsync elsewhere
+                // in this file.
+                try
                 {
-                    child.ParentId  = keeper.Id;
-                    child.UpdatedAt = DateTime.UtcNow;
-                }
+                    await mergeService.MergeAsync(keeperId, dupe.Id, mergedByUserId: null, ct);
 
-                // Move ExternalIds that aren't already on the keeper
-                foreach (var extId in dupe.ExternalIds.ToList())
+                    logger.LogInformation(
+                        "Merged duplicate collection {DupeId} \"{Name}\" into keeper {KeeperId}",
+                        dupe.Id, dupe.Name, keeperId);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    var alreadyOnKeeper = keeper.ExternalIds
-                        .Any(e => e.ExternalId == extId.ExternalId && e.Source == extId.Source);
-                    if (!alreadyOnKeeper)
-                    {
-                        extId.MediaItemId = keeper.Id;
-                    }
-                    else
-                    {
-                        db.MediaExternalIds.Remove(extId);
-                    }
+                    logger.LogWarning(ex,
+                        "DeduplicateCollections: failed to merge {DupeId} \"{Name}\" into keeper {KeeperId}; skipping this pair",
+                        dupe.Id, dupe.Name, keeperId);
                 }
-
-                // Merge poster/overview if keeper is missing them
-                if (keeper.PosterUrl is null && dupe.PosterUrl is not null)
-                    keeper.PosterUrl = dupe.PosterUrl;
-                if (keeper.Overview is null && dupe.Overview is not null)
-                    keeper.Overview = dupe.Overview;
-
-                await db.SaveChangesAsync(ct);
-
-                db.MediaItems.Remove(dupe);
-                await db.SaveChangesAsync(ct);
-
-                logger.LogInformation(
-                    "Merged duplicate collection {DupeId} \"{Name}\" into keeper {KeeperId}",
-                    dupe.Id, dupe.Name, keeper.Id);
             }
         }
 
@@ -895,7 +987,7 @@ public class MovieCollectionService(
             var batch = await db.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
-                .Where(m => (m.MediaType!.Name == "movies" || m.MediaType!.Name == "fanedits" || m.MediaType!.Name == "anime") &&
+                .Where(m => (m.MediaType!.Name == "movies" || m.MediaType!.Name == "fanedits" || m.MediaType!.Name == "anime_movies") &&
                             m.HierarchyLevel <= 1 &&
                             m.IsStub == false &&
                             m.Id > lastId &&
@@ -950,7 +1042,7 @@ public class MovieCollectionService(
             var batch = await db.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
-                .Where(m => (m.MediaType!.Name == "movies" || m.MediaType!.Name == "fanedits" || m.MediaType!.Name == "anime") &&
+                .Where(m => (m.MediaType!.Name == "movies" || m.MediaType!.Name == "fanedits" || m.MediaType!.Name == "anime_movies") &&
                             m.HierarchyLevel == 0 &&
                             m.Id > lastId &&
                             m.ExternalIds.Any(e => e.ExternalId.StartsWith("collection:")))
@@ -1006,7 +1098,10 @@ public class MovieCollectionService(
 
         if (item is null || item.HierarchyLevel != 1 || item.ParentId is null)
             return;
-        if (!IsMovieLikeTypeName(item.MediaType?.Name))
+        // Only flat media types (HierarchyLevels == 1) use the collection grouping concept — a
+        // Level-1 item of a hierarchical type (e.g. a TV season, a music album) is structural,
+        // not a collection member, and must never be pulled out via this path.
+        if (item.MediaType?.HierarchyLevels != 1)
             return;
 
         var oldParentId = item.ParentId.Value;
@@ -1014,6 +1109,14 @@ public class MovieCollectionService(
         item.ParentId       = null;
         item.HierarchyLevel = 0;
         item.UpdatedAt      = DateTime.UtcNow;
+
+        // Clear the manual-placement marker (if this item was ever manually reparented in) so
+        // auto-parenting logic applies normally again — the user has now made a different
+        // explicit choice (removing it), not left it in some auto-inferred state.
+        var marker = await db.MediaExternalIds.FirstOrDefaultAsync(
+            e => e.MediaItemId == item.Id && e.ExternalId == ManualCollectionMemberMarker, ct);
+        if (marker is not null)
+            db.MediaExternalIds.Remove(marker);
 
         // Reset enrichment so the item re-enriches at root level (fresh name/year search)
         var enrichmentRows = await db.MediaEnrichments
@@ -1046,8 +1149,10 @@ public class MovieCollectionService(
             .FirstOrDefaultAsync(m => m.Id == collectionId, ct)
             ?? throw new MediaNotFoundException(collectionId);
 
-        if (!IsMovieLikeTypeName(movie.MediaType?.Name) || !IsMovieLikeTypeName(collection.MediaType?.Name))
-            throw new InvalidOperationException("Both items must be a movie-like type (movies, fanedits, or anime).");
+        if (movie.MediaType?.HierarchyLevels != 1 || collection.MediaType?.HierarchyLevels != 1)
+            throw new InvalidOperationException(
+                "Both items must be a flat (non-hierarchical) media type to use collections — " +
+                "types with a natural multi-level hierarchy (e.g. TV, Music) can't be grouped this way.");
         if (movie.MediaTypeId != collection.MediaTypeId)
             throw new InvalidOperationException("The movie and the collection must be the same media type.");
         if (movie.ParentId is not null)
@@ -1060,6 +1165,22 @@ public class MovieCollectionService(
         movie.ParentId       = collection.Id;
         movie.HierarchyLevel = 1;
         movie.UpdatedAt      = DateTime.UtcNow;
+
+        // Mark this placement as user-chosen so EnsureCollectionParentAsync never auto-reverts
+        // it — without this, the enrichment reset below (needed so the item re-enriches in its
+        // new context) causes the very next enrichment pass to see no belongsToCollection data
+        // on this movie's own match and force it straight back to root, silently undoing the
+        // move the user just made. Confirmed happening to "Evil Bong-A-Thon!" (a compilation
+        // TMDB doesn't formally list under the Evil Bong Collection).
+        var alreadyMarked = await db.MediaExternalIds.AnyAsync(
+            e => e.MediaItemId == movie.Id && e.ExternalId == ManualCollectionMemberMarker, ct);
+        if (!alreadyMarked)
+            db.MediaExternalIds.Add(new MediaExternalId
+            {
+                MediaItemId = movie.Id,
+                Source      = "chronicle",
+                ExternalId  = ManualCollectionMemberMarker,
+            });
 
         // Reset enrichment so the item re-enriches in its new context, mirroring
         // UnparentFromCollectionAsync's reset on the way out.
@@ -1078,14 +1199,21 @@ public class MovieCollectionService(
     }
 
     /// <summary>
-    /// Returns true for media type names that participate in the movie-collections hierarchy:
-    /// movies, fanedits, and anime are all grouped into Level-0 collection containers.
+    /// Returns true for the media type names that get TMDB-style automatic collection grouping
+    /// (via a plugin's <c>belongsToCollection</c> metadata): movies, fanedits, and anime_movies.
+    /// All three are flat (HierarchyLevels == 1), so generic flat-type collection logic already
+    /// covers them — this helper exists specifically for <see cref="EnsureCollectionParentAsync"/>
+    /// and <see cref="RebuildSingleCollectionAsync"/>, which must NOT run against every flat type
+    /// (a hypothetical future flat type with no metadata provider supplying belongsToCollection
+    /// data has nothing to auto-group against). Note "anime" (the TV-hierarchical type,
+    /// HierarchyLevels == 3) is deliberately excluded — standalone anime films live on the flat
+    /// anime_movies type instead, so "anime" itself never needs TMDB collection grouping.
     /// </summary>
     private static bool IsMovieLikeTypeName(string? name) =>
         name is not null &&
-        (name.Equals("movies",   StringComparison.OrdinalIgnoreCase) ||
-         name.Equals("fanedits", StringComparison.OrdinalIgnoreCase) ||
-         name.Equals("anime",    StringComparison.OrdinalIgnoreCase));
+        (name.Equals("movies",       StringComparison.OrdinalIgnoreCase) ||
+         name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
+         name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
 
     /// <param name="Id">Plugin-specific collection identifier (string for portability).</param>
     /// <param name="Name">Display name of the collection.</param>

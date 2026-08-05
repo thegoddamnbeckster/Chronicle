@@ -25,7 +25,8 @@ namespace Chronicle.Tests.Unit.Services
 
             _context      = new ChronicleDbContext(options);
             _apiTokenMock = new Mock<IApiTokenService>();
-            _service      = new DeviceAuthService(_context, _apiTokenMock.Object);
+            _service      = new DeviceAuthService(_context, _apiTokenMock.Object,
+                Mock.Of<Microsoft.Extensions.Logging.ILogger<DeviceAuthService>>());
 
             // Seed a user so FK constraints pass when ApproveAsync creates a token
             _context.Users.Add(new User
@@ -67,8 +68,10 @@ namespace Chronicle.Tests.Unit.Services
             var result = await _service.InitiateAsync("Kodi", "http://localhost");
 
             result.Code.Should().NotBeNullOrEmpty();
-            result.DisplayCode.Should().HaveLength(9);   // "XXXX-XXXX"
-            result.ExpiresInSeconds.Should().Be(300);
+            // 6-char unambiguous-alphabet code, no dashes — see DeviceAuthService.CodeAlphabet.
+            result.DisplayCode.Should().HaveLength(6);
+            result.DisplayCode.Should().MatchRegex("^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{6}$");
+            result.ExpiresInSeconds.Should().Be(900);   // DeviceAuthService.ExpirySeconds (15 min)
 
             var record = await _context.DeviceAuthCodes
                 .FirstOrDefaultAsync(c => c.Code == result.Code);
