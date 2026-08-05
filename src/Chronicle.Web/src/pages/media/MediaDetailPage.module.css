@@ -16,6 +16,17 @@
   width: calc(100vw - var(--sidebar-width));
 }
 
+@media (max-width: 768px) {
+  /* Below 768px the sidebar becomes an off-canvas overlay (see Layout.module.css)
+   * and no longer occupies a grid column, so the viewport-minus-sidebar formula
+   * above would wrongly shrink this section by the sidebar's width. .content's
+   * padding also drops to 12px on mobile, so the cancelling margin must match. */
+  .backdropActive {
+    margin: -12px 0 0 -12px;
+    width: 100vw;
+  }
+}
+
 .backdropImg {
   position: absolute;
   inset: 0;
@@ -288,6 +299,39 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   flex-shrink: 0;
   width: 110px;
   align-self: center;
+}
+
+@media (max-width: 768px) {
+  /* At mobile widths the flex row (150px thumb + text + 110px disc) leaves the
+   * overview almost no space to wrap in — text collapses to one word per line
+   * with the disc floating on top of it. Switch to a grid: thumb and disc
+   * share a single narrow art column (disc beneath thumb), overview gets its
+   * own wider column beside them. */
+  .descriptionRow {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    column-gap: 12px;
+    row-gap: 8px;
+    align-items: start;
+  }
+
+  .fanartThumbWrap {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+  }
+
+  .fanartDiscWrap {
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    align-self: start;
+  }
+
+  .overview {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
 }
 
 .fanartDisc {

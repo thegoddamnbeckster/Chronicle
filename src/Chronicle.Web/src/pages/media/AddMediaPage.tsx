@@ -59,19 +59,45 @@ function ResultPoster({ result }: { result: MetadataSearchResult }) {
   )
 }
 
+// Restoring the last search when the user clicks Back (e.g. from a search result they
+// navigated into) is much more useful than persisting across full page reloads/tab closes,
+// so sessionStorage — not localStorage — is the right lifetime here.
+const SEARCH_STATE_KEY = 'chronicle.addMedia.search'
+
+interface StoredSearchState {
+  mediaTypeId: number
+  query: string
+  results: MetadataSearchResult[]
+  addedIds: string[]
+}
+
+function loadStoredSearchState(): StoredSearchState | null {
+  try {
+    const raw = sessionStorage.getItem(SEARCH_STATE_KEY)
+    return raw ? JSON.parse(raw) as StoredSearchState : null
+  } catch { return null }
+}
+
 export default function AddMediaPage() {
   const navigate = useNavigate()
 
+  const restoredRef = useRef(loadStoredSearchState())
+
   const [selectedType, setSelectedType] = useState<MediaTypeOption | null>(null)
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<MetadataSearchResult[]>([])
+  const [query, setQuery] = useState(restoredRef.current?.query ?? '')
+  const [results, setResults] = useState<MetadataSearchResult[]>(restoredRef.current?.results ?? [])
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [addingId, setAddingId] = useState<string | null>(null)
-  const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
+  const [addedIds, setAddedIds] = useState<Set<string>>(new Set(restoredRef.current?.addedIds ?? []))
   const [addError, setAddError] = useState<string | null>(null)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Skips exactly one re-search: the search effect fires as soon as `selectedType` is set
+  // (including the restored type below), and results were already restored for that
+  // query/type pair — without this guard, returning via Back would flash "Searching" and
+  // silently re-run a search the user already has the answer to.
+  const skipNextSearchRef = useRef(restoredRef.current !== null)
 
   const { data: mediaTypes = [] } = useQuery({
     queryKey: ['media-types'],
@@ -80,13 +106,34 @@ export default function AddMediaPage() {
   })
 
   useEffect(() => {
-    if (mediaTypes.length > 0 && selectedType === null) {
-      setSelectedType(mediaTypes[0])
-    }
+    if (mediaTypes.length === 0 || selectedType !== null) return
+    const restoredType = restoredRef.current
+      ? mediaTypes.find(t => t.id === restoredRef.current!.mediaTypeId)
+      : undefined
+    setSelectedType(restoredType ?? mediaTypes[0])
   }, [mediaTypes, selectedType])
+
+  // Persist on every change so a mid-typing Back (or a click that navigates away) doesn't
+  // lose anything — cheap enough to just always write rather than debounce the write itself.
+  useEffect(() => {
+    if (!selectedType) return
+    try {
+      const toStore: StoredSearchState = {
+        mediaTypeId: selectedType.id, query, results, addedIds: Array.from(addedIds),
+      }
+      sessionStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(toStore))
+    } catch {
+      // Quota exceeded (e.g. a huge result set) — not persisting search state isn't fatal.
+    }
+  }, [selectedType, query, results, addedIds])
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
+
+    if (skipNextSearchRef.current) {
+      skipNextSearchRef.current = false
+      return
+    }
 
     // Clear immediately so stale results don't linger while debounce is pending
     setResults([])

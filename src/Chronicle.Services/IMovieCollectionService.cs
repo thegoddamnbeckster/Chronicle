@@ -77,25 +77,30 @@ public interface IMovieCollectionService
         IReadOnlyList<(string PluginId, IMetadataProvider Provider)>? allProviders = null);
 
     /// <summary>
-    /// Removes a movie-like item from its collection container by setting ParentId = null
-    /// and HierarchyLevel = 0, then resets enrichment to Pending.
+    /// Removes an item of any flat (non-hierarchical) media type from its collection container by
+    /// setting ParentId = null and HierarchyLevel = 0, then resets enrichment to Pending.
     /// Deletes the container if it is left empty.
-    /// No-op if the item is not a Level-1 item of a movie-like type.
+    /// No-op if the item is not a Level-1 item, or its media type has HierarchyLevels &gt; 1
+    /// (e.g. TV, Music, anime) — those Level-1 items are structural, not collection members.
     /// </summary>
     Task UnparentFromCollectionAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default);
 
     /// <summary>
-    /// Manually places a standalone movie-like item into an existing collection container,
-    /// setting ParentId = collectionId and HierarchyLevel = 1, then resets enrichment to
-    /// Pending (mirrors <see cref="UnparentFromCollectionAsync"/>'s reset on the way out).
+    /// Manually places a standalone item into an existing collection container, setting
+    /// ParentId = collectionId and HierarchyLevel = 1, then resets enrichment to Pending (mirrors
+    /// <see cref="UnparentFromCollectionAsync"/>'s reset on the way out).
     /// Unlike <see cref="EnsureCollectionParentAsync"/>, this does not inspect the movie's own
     /// plugin metadata for a <c>belongsToCollection</c> match -- the caller (an admin, via the
-    /// UI) has already decided the target collection explicitly.
+    /// UI) has already decided the target collection explicitly. Works for any flat media type
+    /// (HierarchyLevels == 1) — not just movies/fanedits/anime_movies — as long as both the item
+    /// and the collection share the same media type. Types with a natural multi-level hierarchy
+    /// (TV, Music, anime) are rejected, since grouping their Level-0 items this way would
+    /// conflict with their real show/season or artist/album structure.
     /// </summary>
     /// <exception cref="MediaNotFoundException">Either id doesn't exist.</exception>
     /// <exception cref="InvalidOperationException">
     /// The movie is already parented somewhere, the target isn't a Level-0 item, either item's
-    /// media type isn't movie-like, or the two items don't share the same media type.
+    /// media type isn't flat, or the two items don't share the same media type.
     /// </exception>
     Task ReparentIntoCollectionAsync(
         ChronicleDbContext db, int movieId, int collectionId, CancellationToken ct = default);

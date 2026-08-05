@@ -19,6 +19,9 @@ export interface CollectionInfo {
   posterUrl: string | null
   overview: string | null
   movies: CollectionMember[]
+  /** False for manually-created, non-movie-like collections — there's no external
+   *  source (e.g. TMDB) to rebuild membership against. */
+  supportsRebuild: boolean
 }
 
 export const getCollection = async (mediaItemId: number): Promise<CollectionInfo> => {

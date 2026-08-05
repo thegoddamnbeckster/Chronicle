@@ -105,14 +105,29 @@ export interface MediaItem {
     runtimeMinutes?: number | null
     rating?: number | null
     genres?: string[] | null
-    cast?: string[] | null
-    directors?: string[] | null
+    cast?: { name: string; role?: string | null }[] | null
+    crew?: { name: string; job?: string | null }[] | null
     tags?: string[] | null
+    logoUrl?: string | null
+    bannerUrl?: string | null
+    clearartUrl?: string | null
+    discUrl?: string | null
+    characterArtUrl?: string | null
+    thumbUrl?: string | null
   } | null
   /** True when this is a Level 0 movies item that acts as a collection container. */
   isCollectionContainer?: boolean
   /** True when this movie was auto-created as a collection stub (not yet owned by the user). */
   isStub?: boolean
+  /** Manually-pinned image/field overrides, keyed by canonical field name (e.g. "poster_url").
+   *  A pinned field always wins over the normal plugin-priority resolution walk until cleared. */
+  overrides?: Record<string, {
+    url: string
+    sourcePluginId?: string | null
+    sourceType?: string | null
+    pinnedAt: string
+    pinnedByUserId?: number | null
+  }> | null
 }
 
 export interface MergeHistoryEntry {
@@ -156,6 +171,9 @@ export interface HistoryItem {
   timestamp: string
   markedAsWatched: boolean
   deviceName: string | null
+  /** Root-first parent context (e.g. [Show, Season] for an episode) — a scanned TV
+   *  episode's own name is often a generic code like "S28E11", meaningless alone. */
+  ancestors?: { id: number; name: string }[]
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────

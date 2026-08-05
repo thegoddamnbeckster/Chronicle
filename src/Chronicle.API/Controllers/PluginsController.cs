@@ -627,18 +627,26 @@ public class PluginsController : ControllerBase
         }
     }
 
-    // ── GET /api/v1/plugins/{id}/metadata/{externalId} ────────────────────────
+    // ── GET /api/v1/plugins/{id}/metadata?externalId=... ──────────────────────
 
     /// <summary>
     /// Fetches full metadata for a specific item by its external ID.
-    /// The ID format is plugin-specific (e.g. "movie:550" or "tv:1399" for TMDB).
+    /// The ID format is plugin-specific (e.g. "movie:550" or "tv:1399" for TMDB), and may
+    /// also be a full provider URL (e.g. a TMDB movie/tv/collection page link).
+    /// Taken as a query parameter rather than a route segment because values like a full
+    /// URL contain '/' and '?' themselves -- ASP.NET Core route segments don't decode an
+    /// encoded slash back to '/' by default, so a URL passed as {externalId} in the path
+    /// arrives at the provider mangled (e.g. "https:%2F%2F...") and fails to parse.
     /// </summary>
-    [HttpGet("{id:int}/metadata/{externalId}")]
+    [HttpGet("{id:int}/metadata")]
     public async Task<IActionResult> GetMetadata(
         int id,
-        string externalId,
+        [FromQuery] string externalId,
         CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(externalId))
+            return BadRequest(ApiResponse<object>.Fail("EXTERNAL_ID_REQUIRED", "externalId is required."));
+
         var loaded = _registry.GetLoadedPlugins().FirstOrDefault(lp => lp.DbId == id);
         if (loaded is null)
             return NotFound(ApiResponse<object>.Fail("PLUGIN_NOT_LOADED", "Plugin not found or not loaded."));
@@ -659,6 +667,10 @@ public class PluginsController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResponse<object>.Fail("PLUGIN_NOT_CONFIGURED", ex.Message));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_ID", ex.Message));
         }
         catch (HttpRequestException ex)
         {

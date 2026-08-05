@@ -36,6 +36,10 @@ namespace Chronicle.API.DTOs
         double? ProgressPercent,
         DateTime Timestamp,
         bool MarkedAsWatched,
-        string? DeviceName
+        string? DeviceName,
+        /// <summary>Root-first parent context (e.g. [Show, Season] for an episode) so the
+        /// UI can show "Show › Season › Episode" instead of just the episode's bare name,
+        /// which for scanned TV is often a generic code like "S28E11".</summary>
+        List<AncestorDto>? Ancestors = null
     );
 }

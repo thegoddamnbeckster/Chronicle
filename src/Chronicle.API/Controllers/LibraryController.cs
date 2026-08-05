@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Chronicle.API.DTOs;
+using Chronicle.API.Helpers;
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -19,6 +20,12 @@ namespace Chronicle.API.Controllers
         private readonly ILibraryService _libraryService;
         private readonly ChronicleDbContext _context;
         private readonly IUserService _userService;
+
+        // Matches auto-generated placeholder episode names like "S01E01" or "S01E339" --
+        // scanners/sync fall back to these when no real per-episode title is known.
+        private static readonly System.Text.RegularExpressions.Regex GenericEpisodeCodeRegex =
+            new(@"^S\d{1,3}E\d{1,4}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                | System.Text.RegularExpressions.RegexOptions.Compiled);
 
         public LibraryController(ILibraryService libraryService, ChronicleDbContext context, IUserService userService)
         {
@@ -108,16 +115,87 @@ namespace Chronicle.API.Controllers
                 }
             }
 
+            // For an entry tracked above the leaf level (e.g. a TV season, not a specific
+            // episode — the common case for "Watching" status), find the most recently
+            // scrobbled descendant episode so the UI can show "Show › Season › Episode"
+            // instead of just the season's bare name, which by itself tells the user nothing.
+            var nonLeafRootIds = entries
+                .Where(e => e.MediaItem != null &&
+                            e.MediaItem.HierarchyLevel < (e.MediaItem.MediaType?.HierarchyLevels ?? 1) - 1)
+                .Select(e => e.MediaItem!.Id)
+                .ToList();
+
+            var displayIdByRoot = rootIds.ToDictionary(id => id, id => id);
+            var displayNameByRoot = new Dictionary<int, string>();
+
+            if (nonLeafRootIds.Count > 0)
+            {
+                var descendants = await DescendantHelper.BuildDescendantsBatchAsync(_context, nonLeafRootIds, ct);
+                var allDescendantIds = descendants.DescendantIdsByRoot.Values.SelectMany(x => x).Distinct().ToList();
+
+                if (allDescendantIds.Count > 0)
+                {
+                    // A descendant can belong to more than one tracked root at once — e.g. the
+                    // user has both a show AND one of its own seasons marked "Watching", so an
+                    // episode of that season is a descendant of both roots. Group (not a flat
+                    // dictionary) so that's handled instead of throwing on the duplicate key.
+                    var rootsByDescendant = descendants.DescendantIdsByRoot
+                        .SelectMany(kv => kv.Value.Select(id => new { DescendantId = id, RootId = kv.Key }))
+                        .ToLookup(x => x.DescendantId, x => x.RootId);
+
+                    var recentEvents = await _context.InteractionEvents
+                        .Where(ev => ev.UserId == userId && allDescendantIds.Contains(ev.MediaItemId))
+                        .Select(ev => new { ev.MediaItemId, ev.Timestamp })
+                        .ToListAsync(ct);
+
+                    var bestTimestampByRoot = new Dictionary<int, DateTime>();
+                    foreach (var ev in recentEvents)
+                    {
+                        if (!descendants.NameById.TryGetValue(ev.MediaItemId, out var name)) continue;
+
+                        // Skip generic auto-numbered names ("S01E01", "S01E339") -- these carry
+                        // no information a bare episode/season entry doesn't already have, and
+                        // substituting one meaningless label for another (the tracked root's own
+                        // name, e.g. "One Piece", is already meaningful) just replaces a clear
+                        // show name with a confusing raw code. Only substitute when the
+                        // descendant has a real title (e.g. "Children Of The Comet").
+                        if (GenericEpisodeCodeRegex.IsMatch(name)) continue;
+
+                        foreach (var rootId in rootsByDescendant[ev.MediaItemId])
+                        {
+                            if (bestTimestampByRoot.TryGetValue(rootId, out var best) && ev.Timestamp <= best)
+                                continue;
+                            bestTimestampByRoot[rootId] = ev.Timestamp;
+                            displayIdByRoot[rootId] = ev.MediaItemId;
+                            displayNameByRoot[rootId] = name;
+                        }
+                    }
+                }
+            }
+
+            // Ancestor context (e.g. "Show" for a season-level entry, "Show, Season" for an
+            // episode) — without this, entries like a season being tracked as "Watching" show
+            // only its own bare name ("Season 07") with no indication of which show it's from.
+            // Batched against the DISPLAY id (the substitute episode when one was found above,
+            // otherwise the tracked item itself) so the breadcrumb matches whatever name is shown.
+            var ancestorsByItem = await AncestorHelper.BuildAncestorsBatchAsync(
+                _context, displayIdByRoot.Values, ct);
+
             var dtos = entries.Select(e =>
             {
                 List<string?>? dc = null;
                 List<string?>? gc = null;
+                List<AncestorDto>? ancestors = null;
+                string? displayName = null;
                 if (e.MediaItem != null)
                 {
                     directChildrenByRoot.TryGetValue(e.MediaItem.Id, out dc);
                     grandchildrenByRoot.TryGetValue(e.MediaItem.Id, out gc);
+                    var displayId = displayIdByRoot.GetValueOrDefault(e.MediaItem.Id, e.MediaItem.Id);
+                    ancestorsByItem.TryGetValue(displayId, out ancestors);
+                    displayNameByRoot.TryGetValue(e.MediaItem.Id, out displayName);
                 }
-                return ToDto(e, dc, gc);
+                return ToDto(e, dc, gc, ancestors, displayName);
             }).ToList();
 
             return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
@@ -208,9 +286,9 @@ namespace Chronicle.API.Controllers
         /// </summary>
         private static bool IsMovieLikeTypeName(string? name) =>
             name is not null &&
-            (name.Equals("movies",   StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("fanedits", StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("anime",    StringComparison.OrdinalIgnoreCase));
+            (name.Equals("movies",       StringComparison.OrdinalIgnoreCase) ||
+             name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
+             name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
 
         private static double? ExtractResolvedRating(string? metadataJson)
         {
@@ -248,10 +326,15 @@ namespace Chronicle.API.Controllers
             catch { return false; }
         }
 
+        // displayName, when set, overrides the item's own Name with a more specific
+        // recently-watched descendant episode's name (e.g. "Children Of The Comet" instead
+        // of "Season 01" for a season tracked as Watching) — see the caller in GetLibrary.
         private static LibraryEntryDto ToDto(
             UserLibrary e,
             List<string?>? directChildrenMeta = null,
-            List<string?>? grandchildrenMeta = null)
+            List<string?>? grandchildrenMeta = null,
+            List<AncestorDto>? ancestors = null,
+            string? displayName = null)
         {
             MediaItemDto? mediaDto = null;
             if (e.MediaItem != null)
@@ -283,7 +366,7 @@ namespace Chronicle.API.Controllers
                 mediaDto = new MediaItemDto(
                     e.MediaItem.Id, e.MediaItem.MediaTypeId,
                     e.MediaItem.MediaType?.DisplayName ?? string.Empty,
-                    e.MediaItem.ParentId, e.MediaItem.Name, e.MediaItem.Year,
+                    e.MediaItem.ParentId, displayName ?? e.MediaItem.Name, e.MediaItem.Year,
                     e.MediaItem.Overview, e.MediaItem.PosterUrl, e.MediaItem.RuntimeMinutes,
                     e.MediaItem.HierarchyLevel, e.MediaItem.Number,
                     e.MediaItem.CreatedAt, e.MediaItem.UpdatedAt,
@@ -294,11 +377,12 @@ namespace Chronicle.API.Controllers
                         Title: null, Overview: null, Year: null,
                         PosterUrl: null, BackdropUrl: null, RuntimeMinutes: null,
                         Rating: ExtractResolvedRating(e.MediaItem.MetadataJson),
-                        Genres: null, Cast: null, Directors: null, Tags: null),
+                        Genres: null, Cast: null, Crew: null, Tags: null),
                     IsCollectionContainer: e.MediaItem.HierarchyLevel == 0
                         && IsMovieLikeTypeName(e.MediaItem.MediaType?.Name)
                         && directChildrenMeta?.Count > 0,
-                    IsStub: e.MediaItem.IsStub);
+                    IsStub: e.MediaItem.IsStub,
+                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null);
             }
 
             var userRatingSource = e.UserRating.HasValue

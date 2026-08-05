@@ -62,7 +62,7 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
             : <img src={data.posterUrl} alt="" className={styles.collectionPoster} />
         )}
         <span>Part of <Link to={`/media/${data.id}`} className={styles.collectionLink}><em>{data.name}</em></Link></span>
-        {!compact && (
+        {!compact && data.supportsRebuild && (
           <button
             className={styles.rebuildBtn}
             onClick={() => { setRebuildSummary(null); rebuildMut.mutate() }}

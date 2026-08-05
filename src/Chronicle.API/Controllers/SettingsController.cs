@@ -555,7 +555,7 @@ public class SettingsController : ControllerBase
 
     private static string[] DefaultFieldsForLevel(int level) => level switch
     {
-        0 => ["backdrop_url", "cast", "directors", "genres", "overview", "poster_url", "rating", "runtime_minutes", "tags", "title", "year"],
+        0 => ["backdrop_url", "cast", "crew", "genres", "overview", "poster_url", "rating", "runtime_minutes", "tags", "title", "year"],
         1 => ["backdrop_url", "overview", "poster_url", "tags", "title", "year"],
         _ => ["overview", "runtime_minutes", "tags", "title", "year"],
     };

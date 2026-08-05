@@ -13,7 +13,16 @@ namespace Chronicle.API.DTOs
         string? PosterUrl,
         int? RuntimeMinutes,
         int HierarchyLevel = 0,
-        int? Number = null
+        int? Number = null,
+        /// <summary>
+        /// True when this item is being created as an intentional collection container (via
+        /// the "Add Collection" page) rather than a standalone item. A brand-new collection has
+        /// zero children, which is otherwise indistinguishable from a standalone item -- this
+        /// flag tags it unambiguously so the UI can offer the right "add a movie to me" action
+        /// immediately, before any TMDB link (which may not even resolve to a real TMDB
+        /// collection ID) or first member is added.
+        /// </summary>
+        bool IsCollection = false
     );
 
     public record UpdateMediaItemRequest(
@@ -28,8 +37,8 @@ namespace Chronicle.API.DTOs
 
     public record ReparentRequest([Required] int CollectionId);
 
-    /// <summary>Lightweight listing row for the "Add Movie Collection" management page.</summary>
-    public record CollectionSummaryDto(int Id, string Name, string? PosterUrl, int MovieCount);
+    /// <summary>Lightweight listing row for the "Add Collection" management page.</summary>
+    public record CollectionSummaryDto(int Id, string Name, string? PosterUrl, int ItemCount, int MediaTypeId);
 
     /// <summary>
     /// Body for POST /api/v1/media/{id}/metadata/{source} — lets an authenticated external
@@ -150,7 +159,30 @@ namespace Chronicle.API.DTOs
         /// collection but the user doesn't yet own it. Stubs are visible by default but can be
         /// hidden via the user's CreateCollectionStubs preference.
         /// </summary>
-        bool IsStub = false
+        bool IsStub = false,
+        /// <summary>
+        /// Manually-pinned artwork/field overrides, keyed by canonical field name (e.g.
+        /// "poster_url") — the same vocabulary as IMetadataResolutionService.GetCanonicalFields().
+        /// A pinned field always wins over the normal plugin-priority resolution walk until
+        /// explicitly cleared. Absent/empty when nothing is pinned on this item.
+        /// </summary>
+        Dictionary<string, MediaOverrideDto>? Overrides = null
+    );
+
+    /// <summary>One manually-pinned field override on a media item. See MediaItemDto.Overrides.</summary>
+    public record MediaOverrideDto(
+        string    Url,
+        string?   SourcePluginId,
+        string?   SourceType,
+        DateTime  PinnedAt,
+        int?      PinnedByUserId
+    );
+
+    /// <summary>Body for PUT /api/v1/media/{id}/overrides/{field}.</summary>
+    public record SetMediaOverrideRequest(
+        [Required] string Url,
+        string? SourcePluginId = null,
+        string? SourceType = null
     );
 
     public record MergeRequestDto(int TargetId, int WinnerId);
@@ -212,8 +244,8 @@ namespace Chronicle.API.DTOs
         int?           RuntimeMinutes,
         double?        Rating,
         List<string>?  Genres,
-        List<string>?  Cast,
-        List<string>?  Directors,
+        List<CastMemberDto>? Cast,
+        List<CrewMemberDto>? Crew,
         List<string>?  Tags,
         // Music-relevant fields — see MetadataResolutionService.FieldMap's aliased entries.
         string?        Composer = null,
@@ -229,6 +261,8 @@ namespace Chronicle.API.DTOs
         string?        LogoUrl = null,
         string?        BannerUrl = null,
         string?        ClearartUrl = null,
-        string?        DiscUrl = null
+        string?        DiscUrl = null,
+        string?        CharacterArtUrl = null,
+        string?        ThumbUrl = null
     );
 }

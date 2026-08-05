@@ -333,6 +333,17 @@
 
 .nameLink { text-decoration: none; color: inherit; }
 
+.showName {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .name {
   font-size: 12px;
   font-weight: 500;
@@ -404,6 +415,43 @@
 .showMoreBtn:hover { border-color: var(--accent); color: var(--accent); }
 
 .empty { color: var(--text-muted); padding: 40px 0; text-align: center; }
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  .info {
+    padding: 6px;
+    gap: 4px;
+  }
+
+  .name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    font-size: 11px;
+    line-height: 1.25;
+  }
+
+  .metaRow {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .statusSelect {
+    width: 100%;
+    font-size: 10px;
+    padding: 3px 4px;
+  }
+
+  .removeBtn {
+    width: 100%;
+    font-size: 10px;
+    padding: 3px 4px;
+  }
+}
 
 /* Subtle animated bar shown while background-revalidating cached library data */
 @keyframes refreshSlide {

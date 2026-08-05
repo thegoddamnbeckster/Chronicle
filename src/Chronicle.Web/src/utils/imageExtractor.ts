@@ -17,6 +17,26 @@ export interface ImageEntry {
   label: string
 }
 
+/**
+ * Renders one array element for a comma-joined summary line. Plain strings pass through
+ * as-is. Cast/crew entries ({name, role} or {name, job}) render as "Name (Role)" — without
+ * this, `String(obj)` on a plain object falls back to JS's default `[object Object]`.
+ */
+export function arrayItemToString(item: unknown): string {
+  if (typeof item === 'string') return item
+  if (typeof item === 'number' || typeof item === 'boolean') return String(item)
+  if (item && typeof item === 'object') {
+    const obj = item as Record<string, unknown>
+    const name = obj.name
+    if (typeof name === 'string') {
+      const detail = obj.role ?? obj.job
+      return typeof detail === 'string' && detail ? `${name} (${detail})` : name
+    }
+    return JSON.stringify(item)
+  }
+  return String(item)
+}
+
 const LABEL_MAP: Record<string, string> = {
   rating: 'Rating', voteaverage: 'Rating',
   genres: 'Genres', cast: 'Cast',
@@ -93,4 +113,70 @@ export function extractImages(
   }
 
   return images
+}
+
+// ── Slot-aware extraction (for the Additional Images / promote-to-first-class feature) ──
+// Additive only — extractImages() above stays untouched for its existing callers
+// (PluginMetadataBox's raw "Images" row, the page-level combined lightbox).
+
+/** The 8 canonical artwork slots — same vocabulary as MetadataResolutionService.FieldMap
+ *  on the backend (poster_url, backdrop_url, ...) and MediaItemDto.Overrides' keys. */
+export type CanonicalSlot =
+  | 'poster_url' | 'backdrop_url' | 'logo_url' | 'banner_url'
+  | 'thumb_url' | 'clearart_url' | 'disc_url' | 'character_art_url'
+
+export interface SlottedImageEntry extends ImageEntry {
+  slot: CanonicalSlot
+  pluginId: string
+}
+
+/** Maps a raw AdditionalImage.Type (from Fanart.tv/MusicBrainz/FanEdit/etc.) or a top-level
+ *  scalar field name to a canonical slot. Types absent here have no first-class slot and are
+ *  excluded from the promote-eligible pool — they still render in the existing raw per-plugin
+ *  "Images" row via extractImages(), unaffected. New artwork-supplying plugins need their
+ *  Type strings added here to become promotable. */
+const TYPE_TO_SLOT: Record<string, CanonicalSlot> = {
+  poster: 'poster_url', posterurl: 'poster_url', front: 'poster_url',
+  fanart: 'backdrop_url', backdrop: 'backdrop_url', backdropurl: 'backdrop_url',
+  clearlogo: 'logo_url', logo: 'logo_url', logourl: 'logo_url',
+  banner: 'banner_url', bannerurl: 'banner_url',
+  thumb: 'thumb_url', thumburl: 'thumb_url', thumbnail: 'thumb_url', thumbnailurl: 'thumb_url',
+  clearart: 'clearart_url', cleararturl: 'clearart_url',
+  discart: 'disc_url', disc: 'disc_url', discurl: 'disc_url',
+  characterart: 'character_art_url', character: 'character_art_url', characterarturl: 'character_art_url',
+}
+
+/**
+ * Extracts every promote-eligible image from one plugin's raw metadata blob, tagged with its
+ * canonical slot. Walks both the top-level scalar art fields (posterUrl, backdropUrl, ...)
+ * and any additionalImages/images array (using each entry's own `type`). Entries whose type
+ * has no canonical slot mapping are dropped.
+ */
+export function extractSlottedImages(
+  pluginId: string,
+  metadata: Record<string, unknown>,
+): SlottedImageEntry[] {
+  const out: SlottedImageEntry[] = []
+
+  for (const [key, value] of Object.entries(metadata)) {
+    const lower = key.toLowerCase()
+
+    if (IMAGE_ARRAY_KEYS.has(lower) && Array.isArray(value)) {
+      for (const img of value as Record<string, unknown>[]) {
+        const url = (img.url ?? img.thumbnailUrl ?? '') as string
+        if (!url) continue
+        const type = typeof img.type === 'string' ? img.type.toLowerCase() : ''
+        const slot = TYPE_TO_SLOT[type]
+        if (!slot) continue
+        out.push({ url, label: (img.type as string) ?? key, slot, pluginId })
+      }
+      continue
+    }
+
+    if (typeof value === 'string' && value && TYPE_TO_SLOT[lower]) {
+      out.push({ url: value, label: toLabel(key), slot: TYPE_TO_SLOT[lower], pluginId })
+    }
+  }
+
+  return out
 }

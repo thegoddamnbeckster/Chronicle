@@ -120,6 +120,8 @@ builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
 builder.Services.AddSingleton<ScanProgressService>();
 // ImportProgressService tracks the background import-groups task (same pattern).
 builder.Services.AddSingleton<ImportProgressService>();
+// OverrideResetProgressService tracks the background bulk image-override-reset job (same pattern).
+builder.Services.AddSingleton<OverrideResetProgressService>();
 // AssignmentConfigCache caches metadata_assignment.config from DB to avoid per-write DB hits.
 builder.Services.AddSingleton<AssignmentConfigCache>();
 // FieldAliasCache caches metadata_field_aliases.config the same way.
@@ -373,7 +375,7 @@ using (var scope = app.Services.CreateScope())
                 .ToListAsync(CancellationToken.None);
             if (batch.Count == 0) break;
             foreach (var item in batch)
-                item.NormalizedName = Chronicle.Services.MediaItemNormalizer.NormalizeName(item.Name);
+                item.NormalizedName = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(item.Name);
             await db.SaveChangesAsync(CancellationToken.None);
             normalizeTotal += batch.Count;
         }
@@ -441,8 +443,18 @@ app.Use(async (ctx, next) =>
 // Request logging must come before routing so it captures all requests.
 app.UseSerilogRequestLogging(options =>
 {
+    // RemoteIp/UserAgent kept permanently (not a temporary diagnostic) — LAN devices
+    // (Kodi add-ons especially) can have intermittent connectivity issues that are
+    // otherwise invisible server-side; knowing whether a request reached Kestrel at all,
+    // and from where, is worth the extra log width for every request.
     options.MessageTemplate =
-        "{RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+        "{RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms " +
+        "(RemoteIp={RemoteIp} UserAgent={UserAgent})";
+    options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+    {
+        diagnosticContext.Set("RemoteIp", httpContext.Connection.RemoteIpAddress?.ToString());
+        diagnosticContext.Set("UserAgent", httpContext.Request.Headers.UserAgent.ToString());
+    };
 });
 
 if (app.Environment.IsDevelopment())

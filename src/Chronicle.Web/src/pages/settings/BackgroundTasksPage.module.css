@@ -633,6 +633,26 @@
   background-color: color-mix(in srgb, transparent 8%, var(--bg-card));
 }
 
+/* ── Mobile card layout ─────────────────────────────────────────────────── */
+/* Header row (title+desc vs. badge/toggle/buttons) is too narrow to share
+   horizontally on small screens — actions overflow off-screen and the
+   description gets squeezed into a tall, hard-to-read column. Stack the
+   header vertically so the description gets the full card width, then stack
+   the actions themselves so they fill the vertical space that leaves behind
+   instead of sitting cramped in one overflowing row. */
+@media (max-width: 768px) {
+  .cardHeader {
+    flex-direction: column;
+  }
+
+  .cardActions {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 4px;
+  }
+}
+
 /* ── Run Now confirmation modal ─────────────────────────────────────────── */
 
 .confirmOverlay {

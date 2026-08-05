@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Chronicle.Core.Exceptions;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services.Plugins;
@@ -46,7 +47,27 @@ namespace Chronicle.Services
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct);
 
+            // Tag intentionally-created collections with a "collection:" marker external ID
+            // immediately, regardless of children count or whatever TMDB link (if any) gets
+            // attached afterward -- a brand-new collection has zero children just like a
+            // standalone item, and a TMDB lookup can resolve to a plain movie ID rather than a
+            // real TMDB collection ID (some box sets aren't modelled as a formal TMDB
+            // collection). Source "chronicle" (not "tmdb"/etc.) keeps this distinct from a real
+            // provider match; the UI only checks that the ExternalId value starts with
+            // "collection:", not the source.
+            if (request.IsCollection)
+            {
+                _context.MediaExternalIds.Add(new MediaExternalId
+                {
+                    MediaItemId = item.Id,
+                    Source      = "chronicle",
+                    ExternalId  = $"collection:{item.Id}"
+                });
+                await _context.SaveChangesAsync(ct);
+            }
+
             await _context.Entry(item).Reference(i => i.MediaType).LoadAsync(ct);
+            await _context.Entry(item).Collection(i => i.ExternalIds).LoadAsync(ct);
 
             return item;
         }
@@ -135,6 +156,7 @@ namespace Chronicle.Services
 
             var targetType = await _context.Set<MediaType>().FindAsync([targetMediaTypeId], ct)
                 ?? throw new InvalidOperationException($"Media type {targetMediaTypeId} not found.");
+            var sourceType = await _context.Set<MediaType>().FindAsync([item.MediaTypeId], ct);
 
             // BFS collect all descendant IDs
             var allIds = new List<int> { id };
@@ -157,7 +179,19 @@ namespace Chronicle.Services
             }
 
             var actualDepth = maxDepth + 1;
-            if (targetType.HierarchyLevels < actualDepth)
+
+            // A collection (root + members) under a flat type is a structural exception, not
+            // part of that type's declared hierarchy -- Movies/Fan Edits/Anime Movies all
+            // declare HierarchyLevels == 1, yet a collection under any of them is genuinely
+            // 2 levels deep (root + members). That's not a real multi-level hierarchy the way
+            // TV (Show/Season/Episode) or the "anime" type is, so it shouldn't be measured
+            // against actualDepth the same way: moving a whole collection between two flat
+            // types (e.g. Movies -> Anime Movies) is always structurally valid regardless of
+            // member count, since the target supports the exact same root+members shape.
+            // Only a genuinely multi-level source (HierarchyLevels > 1, e.g. a real TV show
+            // tree) still needs the real depth check against the target.
+            var isFlatToFlatCollectionMove = sourceType?.HierarchyLevels == 1 && targetType.HierarchyLevels == 1;
+            if (!isFlatToFlatCollectionMove && targetType.HierarchyLevels < actualDepth)
                 throw new InvalidOperationException(
                     $"Target type '{targetType.DisplayName}' supports {targetType.HierarchyLevels} level(s), " +
                     $"but this item tree has {actualDepth} level(s). Types are incompatible.");

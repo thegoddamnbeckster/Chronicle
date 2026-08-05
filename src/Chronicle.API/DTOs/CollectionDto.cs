@@ -14,6 +14,14 @@ public class CollectionDto
     public string? PosterUrl { get; set; }
     public string? Overview { get; set; }
     public List<CollectionMemberDto> Movies { get; set; } = [];
+    /// <summary>
+    /// True for movie-like collections (movies, fanedits, anime) whose membership is
+    /// automatically maintained from a plugin's TMDB-style "belongs to collection" metadata.
+    /// False for manually-created collections of any other media type, where there's no
+    /// external source to rebuild against — the frontend uses this to hide the Rebuild
+    /// Collection button rather than offering an action that would silently no-op.
+    /// </summary>
+    public bool SupportsRebuild { get; set; }
 }
 
 public class CollectionMemberDto

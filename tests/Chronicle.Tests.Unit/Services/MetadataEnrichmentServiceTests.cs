@@ -28,7 +28,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         _db = new ChronicleDbContext(opts);
         _registry = new Mock<IPluginRegistry>();
         var scopeFactory = BuildScopeFactory(_db, _registry.Object);
-        _svc = new MetadataEnrichmentService(scopeFactory, Mock.Of<IMetadataResolutionService>(), Mock.Of<IMovieCollectionService>(), Mock.Of<ILogger<MetadataEnrichmentService>>());
+        _svc = new MetadataEnrichmentService(scopeFactory, Mock.Of<IMetadataResolutionService>(), Mock.Of<IMovieCollectionService>(), Mock.Of<IMetadataUrlValidator>(), Mock.Of<ILogger<MetadataEnrichmentService>>());
     }
 
     [Fact]

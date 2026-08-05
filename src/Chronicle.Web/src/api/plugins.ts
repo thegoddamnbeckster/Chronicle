@@ -133,3 +133,22 @@ export async function getAuthFailures(): Promise<PluginAuthFailure[]> {
   const res = await client.get<{ data: PluginAuthFailure[] }>('/plugins/auth-failures')
   return res.data.data
 }
+
+export interface MetadataPreview {
+  externalId: string
+  title: string
+  overview: string | null
+  posterUrl: string | null
+}
+
+/**
+ * Looks up metadata for an ID or URL against a specific plugin (by DB id) without
+ * attaching it to any media item — used to preview/prefill a form (e.g. pasting a TMDB
+ * collection URL before creating the collection) ahead of the real Fix Match/create call.
+ */
+export async function previewPluginMetadata(pluginDbId: number, idOrUrl: string): Promise<MetadataPreview> {
+  const res = await client.get<{ data: MetadataPreview }>(`/plugins/${pluginDbId}/metadata`, {
+    params: { externalId: idOrUrl },
+  })
+  return res.data.data
+}
