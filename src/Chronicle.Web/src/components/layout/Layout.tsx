@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Outlet, NavLink } from 'react-router-dom'
+import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
 import { getScanStatus } from '@/api/scan'
@@ -14,7 +14,9 @@ import styles from './Layout.module.css'
 export default function Layout() {
   const { user, logout } = useAuth()
   const [version, setVersion] = useState<string | undefined>()
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const mainRef = useRef<HTMLElement>(null)
+  const location = useLocation()
   useScrollRestoration(mainRef)
 
   useEffect(() => {
@@ -22,6 +24,11 @@ export default function Layout() {
       .then(d => setVersion(`${d.version} · ${d.commitHash} · ${d.branch}`))
       .catch(() => {})
   }, [])
+
+  // Auto-hide the mobile nav drawer whenever the route changes
+  useEffect(() => {
+    setMobileNavOpen(false)
+  }, [location.pathname])
 
   const { data: scanStatus } = useQuery({
     queryKey: ['scan-status'],
@@ -35,6 +42,19 @@ export default function Layout() {
   return (
     <div className={styles.shell}>
       <header className={styles.header}>
+        <button
+          type="button"
+          className={styles.menuToggle}
+          onClick={() => setMobileNavOpen(open => !open)}
+          aria-label="Toggle navigation menu"
+          aria-expanded={mobileNavOpen}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
         <span className={styles.logo}>Chronicle</span>
         <GlobalSearch />
         <div className={styles.headerRight}>
@@ -43,7 +63,13 @@ export default function Layout() {
         </div>
       </header>
 
-      <nav className={styles.sidebar}>
+      <div
+        className={`${styles.overlay} ${mobileNavOpen ? styles.overlayVisible : ''}`}
+        onClick={() => setMobileNavOpen(false)}
+        aria-hidden="true"
+      />
+
+      <nav className={`${styles.sidebar} ${mobileNavOpen ? styles.sidebarOpen : ''}`}>
         {/* Standalone */}
         <NavLink to="/" end className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
           Dashboard
@@ -63,7 +89,7 @@ export default function Layout() {
                 Media
               </NavLink>
               <NavLink to="/media/add-collection" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-                Movie Collection
+                Collection
               </NavLink>
             </NavGroup>
             {scanStatus?.available && (

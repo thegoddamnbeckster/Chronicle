@@ -973,7 +973,7 @@ public class MetadataEnrichmentService(
 
         row.LastAttemptedAt = DateTime.UtcNow;
         string searchQuery = string.Empty;
-        List<MediaMetadata> rawCandidates = [];
+        List<ScoredCandidate> rawCandidates = [];
         try
         {
             MediaMetadata? result = null;
@@ -1311,8 +1311,43 @@ public class MetadataEnrichmentService(
                             row.MediaItemId, row.MediaItem.Name, row.ExternalId);
                         try
                         {
-                            result = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                            var nfoResult = await ProviderCallGuard.CallAsync<MediaMetadata?>(
                                 t => provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
+
+                            // Sanity-check against the item's ORIGINAL scanned title (derived from
+                            // the file scanner's folder path), NOT row.MediaItem.Name. A local NFO
+                            // is "authoritative" about which ID to use, but the file itself can be
+                            // stale/wrong (leftover from a different tool, copy-paste mistake, a
+                            // previous mis-scrape) -- confirmed directly: "Dave Matthews Band -
+                            // Weekend On The Rocks (2005).avi" had a movie.nfo pointing at TMDB
+                            // movie:72738, which is actually "VH1 Storytellers", a different DMB
+                            // concert film. Trusting the ID unconditionally silently renamed the
+                            // item to the wrong title with no way to tell from the log alone.
+                            //
+                            // Using Name instead of the folder path is a trap: once a bad match
+                            // renames the item, Name IS the wrong title, so comparing a new
+                            // candidate against it compares "wrong" against "wrong" and always
+                            // passes -- this exact item survived a Refresh All for that reason
+                            // before this fix. The on-disk folder name never gets corrupted, so
+                            // it's the only reliable ground truth for what this item actually is.
+                            var originalTitle = TryGetOriginalScannedTitle(row.MediaItem.MetadataJson)
+                                ?? row.MediaItem.Name;
+                            if (nfoResult is not null && !IsTitleMatchAcceptable(originalTitle, nfoResult.Title))
+                            {
+                                logger.LogWarning(
+                                    "NFO sidecar match REJECTED: item={ItemId} \"{Name}\" (original scanned title " +
+                                    "\"{OriginalTitle}\") -> {ExternalId} resolved to \"{MatchedTitle}\", which has " +
+                                    "insufficient title overlap with the original scanned title -- the local NFO file " +
+                                    "is almost certainly stale or wrong. Falling through to a normal name search " +
+                                    "instead of trusting it. Check the folder's .nfo file directly if this keeps " +
+                                    "happening for the same item.",
+                                    row.MediaItemId, row.MediaItem.Name, originalTitle, row.ExternalId, nfoResult.Title);
+                                row.ExternalId = null; // reset — fall through to name search
+                            }
+                            else
+                            {
+                                result = nfoResult;
+                            }
                         }
                         catch (OperationCanceledException) { throw; }
                         catch (Exception ex)
@@ -1337,8 +1372,39 @@ public class MetadataEnrichmentService(
                     .Select(t => t.Name)
                     .FirstOrDefaultAsync(ct);
 
-                if (mediaTypeName is not null &&
-                    supportedTypes.Any(t => NormalizeMediaTypeName(t) == NormalizeMediaTypeName(mediaTypeName)))
+                var typeIsSupported = mediaTypeName is not null &&
+                    supportedTypes.Any(t => NormalizeMediaTypeName(t) == NormalizeMediaTypeName(mediaTypeName));
+
+                // Unconditional, not Debug — this is the exact decision that determines whether
+                // SearchAsync gets called for this (item, plugin) pair. Logged every time so
+                // "why did plugin X get called for an item of type Y" never has to be guessed
+                // at from ProviderCallGuard's timeout/error message alone, which carries no
+                // item context. Kept at Information for supported items (expected, high-volume);
+                // logged at Warning when unsupported since a match here means a Pending row
+                // exists for a plugin that shouldn't have been queued for this item's type.
+                //
+                // DELIBERATELY PERMANENT — added 2026-08-02 to eliminate exactly this class of
+                // guesswork after a live "why is Simkl being called for a music item" investigation
+                // that static code reading alone couldn't resolve. Not a temporary debugging aid:
+                // do not remove, downgrade to Debug, or cut for being "noisy" without the user's
+                // explicit go-ahead. High per-item volume is the cost of never having to speculate
+                // about provider dispatch again — that trade was made on purpose, keep it.
+                if (typeIsSupported)
+                    logger.LogInformation(
+                        "EnrichPendingAsync: item {ItemId} \"{Name}\" (type={Type}) -> searching {Plugin} " +
+                        "(declares: {SupportedTypes})",
+                        row.MediaItemId, row.MediaItem.Name, mediaTypeName, provider.PluginId,
+                        string.Join(", ", supportedTypes));
+                else
+                    logger.LogWarning(
+                        "EnrichPendingAsync: item {ItemId} \"{Name}\" (type={Type}) has a Pending row for " +
+                        "{Plugin}, which does NOT declare support for this type (declares: {SupportedTypes}) " +
+                        "-- skipping search, but the row's mere existence means something upstream queued " +
+                        "a mismatched (item, plugin) pair and should be investigated",
+                        row.MediaItemId, row.MediaItem.Name, mediaTypeName ?? "(unresolved)", provider.PluginId,
+                        string.Join(", ", supportedTypes));
+
+                if (typeIsSupported)
                 {
                     // For music items all hierarchy levels share the same media type name.
                     // We determine what MusicBrainz entity to search for from ParentId depth
@@ -1538,8 +1604,12 @@ public class MetadataEnrichmentService(
                         t => provider.SearchAsync(searchCtx, t), provider.PluginId, "SearchAsync",
                         (IReadOnlyList<ScoredCandidate>)[], msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
 
-                    // Capture candidates for diagnostics BEFORE GetByIdAsync might overwrite result
-                    rawCandidates = searchResults.Take(5).Select(c => c.Metadata).ToList();
+                    // Capture candidates for diagnostics BEFORE GetByIdAsync might overwrite result.
+                    // Keep the whole ScoredCandidate (not just .Metadata) so the diagnostics view
+                    // below can show the plugin's own real Score/ScoreReason -- the actual numbers
+                    // the confidence gate acted on -- instead of an independently re-derived score
+                    // that has no relationship to what actually happened.
+                    rawCandidates = searchResults.Take(5).ToList();
 
                     var topCandidate = searchResults.OrderByDescending(c => c.Score).FirstOrDefault();
                     if (topCandidate is not null)
@@ -1660,10 +1730,23 @@ public class MetadataEnrichmentService(
                 // Stubs are skipped — they're placeholders and must not trigger further collection creation.
                 // Items that already have children are acting as collection containers; skip them too —
                 // running EnsureCollectionParentAsync on a container would wrongly move it under another container.
-                // Load MediaType navigation if not already present (needed by EnsureCollectionParentAsync).
                 var hasChildren = !row.MediaItem!.IsStub &&
                                   await db.MediaItems.AnyAsync(m => m.ParentId == row.MediaItemId, ct);
-                if (!row.MediaItem!.IsStub && !hasChildren)
+
+                // A collection intentionally created via the Add Collection page -- or already
+                // linked to a real TMDB collection -- must never be treated as a plain movie for
+                // re-parenting purposes, even while it still has zero members. Without this, a
+                // brand-new empty collection whose OWN Fix Match/TMDB match happens to resolve to
+                // a movie that itself belongs to some unrelated TMDB collection (exactly what
+                // happened when "Metallica: S&M Collection" matched a single movie ID) would get
+                // silently reparented UNDER that unrelated collection by EnsureCollectionParentAsync
+                // below, destroying it as its own container. Mirrors the frontend's
+                // isKnownCollection check (MediaDetailPage.tsx) on the backend.
+                var isKnownCollection = hasChildren || await db.MediaExternalIds.AnyAsync(
+                    e => e.MediaItemId == row.MediaItemId && e.ExternalId.StartsWith("collection:"), ct);
+
+                // Load MediaType navigation if not already present (needed by EnsureCollectionParentAsync).
+                if (!row.MediaItem!.IsStub && !isKnownCollection)
                 {
                     if (row.MediaItem!.MediaType is null)
                         await db.Entry(row.MediaItem).Reference(m => m.MediaType).LoadAsync(ct);
@@ -1753,19 +1836,22 @@ public class MetadataEnrichmentService(
         // ── Capture diagnostics ────────────────────────────────────────────────
         try
         {
-            var queryName  = row.MediaItem?.Name ?? string.Empty;
-            var queryYear  = row.MediaItem?.Year;
             var candidates = rawCandidates
-                .Select(c =>
-                {
-                    var (ts, ys, tot) = ScoreCandidate(queryName, queryYear, c);
-                    return new EnrichCandidate(c.Title, c.Year, c.ExternalId, ts, ys, tot);
-                })
+                .Select(c => new EnrichCandidate(
+                    c.Metadata.Title, c.Metadata.Year, c.Metadata.ExternalId, c.Score, c.ScoreReason))
                 .OrderByDescending(c => c.TotalScore)
                 .ToList();
 
             var failureReason = row.Status switch
             {
+                // "No results" is only true when the provider genuinely returned nothing --
+                // rawCandidates.Count > 0 means candidates DID come back but were rejected by
+                // the confidence gate or title-overlap check further up. Reporting both cases
+                // with the same "no results" text was actively misleading: the candidate list
+                // shown right below this message could contain the correct match.
+                EnrichmentStatus.NotFound when rawCandidates.Count > 0 =>
+                    $"{rawCandidates.Count} candidate(s) were returned but none met the confidence " +
+                    "threshold to be auto-selected. Use Fix Match to pick one manually if it's correct.",
                 EnrichmentStatus.NotFound  => "No results returned by the provider for this search query.",
                 EnrichmentStatus.Failed    => row.ErrorMessage ?? "Provider call threw an exception.",
                 EnrichmentStatus.Exhausted => "Maximum retries reached with no successful match.",
@@ -1776,6 +1862,7 @@ public class MetadataEnrichmentService(
             var diag = new EnrichDiagnostics(
                 searchQuery,
                 rawCandidates.Count,
+                DefaultConfidenceThreshold,
                 failureReason,
                 candidates,
                 ReadScannerSignals(row.MediaItem));
@@ -1810,29 +1897,6 @@ public class MetadataEnrichmentService(
     private sealed class ProviderNotFoundException : Exception
     {
         public ProviderNotFoundException(string message, Exception inner) : base(message, inner) { }
-    }
-
-    /// <summary>
-    /// Scores a search candidate against a query name and optional year.
-    /// Title: exact=60pts, contains=30pts. Year exact match: 40pts.
-    /// </summary>
-    private static (int title, int year, int total) ScoreCandidate(
-        string queryName, int? queryYear, MediaMetadata candidate)
-    {
-        int titleScore = 0;
-        var cn = (candidate.Title ?? string.Empty).Trim();
-        var qn = queryName.Trim();
-        if (string.Equals(cn, qn, StringComparison.OrdinalIgnoreCase))
-            titleScore = 60;
-        else if (cn.Contains(qn, StringComparison.OrdinalIgnoreCase)
-              || qn.Contains(cn, StringComparison.OrdinalIgnoreCase))
-            titleScore = 30;
-
-        int yearScore = 0;
-        if (queryYear.HasValue && candidate.Year.HasValue && queryYear == candidate.Year)
-            yearScore = 40;
-
-        return (titleScore, yearScore, titleScore + yearScore);
     }
 
     private static EnrichScannerSignals? ReadScannerSignals(MediaItem? item)
@@ -2188,6 +2252,24 @@ public class MetadataEnrichmentService(
     }
 
     /// <summary>
+    /// Derives the item's ORIGINAL scanned title from the file scanner's stored folder path,
+    /// rather than the item's current (possibly already-corrupted) Name. A prior bad match can
+    /// permanently overwrite MediaItem.Name -- e.g. "Dave Matthews Band - Weekend On The Rocks
+    /// (2005)" got renamed to "Dave Matthews Band - VH1 Storytellers" by an earlier wrong match.
+    /// Comparing a NEW candidate against the already-wrong Name is comparing "wrong" against
+    /// "wrong", which passes as a match and can never self-heal. The folder name on disk doesn't
+    /// change when a match goes wrong, so it's the only reliable ground truth left. Falls back to
+    /// the current Name (old behaviour) if the folder path isn't available.
+    /// </summary>
+    private static string? TryGetOriginalScannedTitle(string? metadataJson)
+    {
+        var folderPath = TryGetFileScannerFolderPath(metadataJson);
+        if (string.IsNullOrEmpty(folderPath)) return null;
+        var leaf = Path.GetFileName(folderPath.TrimEnd('\\', '/'));
+        return string.IsNullOrWhiteSpace(leaf) ? null : leaf;
+    }
+
+    /// <summary>
     /// Looks for tvshow.nfo / movie.nfo (and any *.nfo as fallback) in
     /// <paramref name="folderPath"/> and returns the numeric TMDB ID from
     /// &lt;uniqueid type="tmdb"&gt; if present.
@@ -2224,6 +2306,7 @@ public class MetadataEnrichmentService(
     private sealed record EnrichDiagnostics(
         string SearchQuery,
         int CandidatesReturned,
+        int Threshold,
         string FailureReason,
         List<EnrichCandidate> TopCandidates,
         EnrichScannerSignals? ScannerSignals);
@@ -2232,9 +2315,8 @@ public class MetadataEnrichmentService(
         string? Title,
         int? Year,
         string? ExternalId,
-        int TitleScore,
-        int YearScore,
-        int TotalScore);
+        int TotalScore,
+        string? ScoreReason);
 
     private sealed record EnrichScannerSignals(
         string? FolderPath,
@@ -2460,9 +2542,12 @@ public class MetadataEnrichmentService(
 
         // Only seed plugins that actually support this item's media type (or its parent hint).
         var normalizedType = mediaTypeName is not null ? NormalizeMediaTypeName(mediaTypeName) : null;
-        // Parent-type hint: anime → tv, fanedits → movie (mirrors FileScanService.ToMediaTypeHint)
+        // Parent-type hint: anime → tv, fanedits → movie (mirrors FileScanService.ToMediaTypeHint).
+        // anime_movies is checked first — it contains "anime" as a substring but is flat (like
+        // movies), not TV-hierarchical, so it must not fall through to the anime → tv case.
         var typeHint = mediaTypeName?.ToLowerInvariant() switch
         {
+            var n when n is not null && n.Contains("anime") && n.Contains("movie") => "movie",
             var n when n is not null && n.Contains("anime")    => "tv",
             var n when n is not null && n.Contains("fanedits") => "movie",
             _ => null,

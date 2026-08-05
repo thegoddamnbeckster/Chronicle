@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using Chronicle.API.DTOs;
+using Chronicle.API.Helpers;
 using Chronicle.Core.Exceptions;
+using Chronicle.Data;
 using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,10 +15,12 @@ namespace Chronicle.API.Controllers
     public class ScrobbleController : ControllerBase
     {
         private readonly IScrobbleService _scrobbleService;
+        private readonly ChronicleDbContext _context;
 
-        public ScrobbleController(IScrobbleService scrobbleService)
+        public ScrobbleController(IScrobbleService scrobbleService, ChronicleDbContext context)
         {
             _scrobbleService = scrobbleService;
+            _context         = context;
         }
 
         [HttpPost]
@@ -63,20 +67,32 @@ namespace Chronicle.API.Controllers
         public async Task<IActionResult> GetHistory(
             [FromQuery] int page = 1,
             [FromQuery] int perPage = 20,
-            [FromQuery] int? mediaItemId = null)
+            [FromQuery] int? mediaItemId = null,
+            CancellationToken ct = default)
         {
             var userId = GetUserId();
             var events = await _scrobbleService.GetHistoryAsync(userId, page, perPage, mediaItemId);
 
-            var dtos = events.Select(e => new HistoryItemDto(
-                e.Id,
-                e.MediaItemId,
-                e.MediaItem?.Name ?? string.Empty,
-                e.ProgressPercent,
-                e.Timestamp,
-                e.MarkedAsWatched,
-                e.DeviceName
-            )).ToList();
+            // Ancestor context (e.g. "Show, Season" for an episode) — a scanned TV episode's
+            // own name is often a generic code like "S28E11", meaningless without knowing
+            // which show/season it's from.
+            var ancestorsByItem = await AncestorHelper.BuildAncestorsBatchAsync(
+                _context, events.Select(e => e.MediaItemId), ct);
+
+            var dtos = events.Select(e =>
+            {
+                ancestorsByItem.TryGetValue(e.MediaItemId, out var ancestors);
+                return new HistoryItemDto(
+                    e.Id,
+                    e.MediaItemId,
+                    e.MediaItem?.Name ?? string.Empty,
+                    e.ProgressPercent,
+                    e.Timestamp,
+                    e.MarkedAsWatched,
+                    e.DeviceName,
+                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null
+                );
+            }).ToList();
 
             return Ok(ApiResponse<List<HistoryItemDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }

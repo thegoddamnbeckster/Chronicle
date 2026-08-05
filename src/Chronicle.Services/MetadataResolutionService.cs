@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
@@ -33,7 +34,7 @@ public class MetadataResolutionService(
             ["rating"]          = ["rating"],
             ["genres"]          = ["genres"],
             ["cast"]            = ["cast"],
-            ["directors"]       = ["directors"],
+            ["crew"]            = ["crew"],
             ["tags"]            = ["tags"],
             // Artwork fields — populated by supplementary providers such as Fanart.tv
             ["logo_url"]        = ["logoUrl"],
@@ -65,12 +66,28 @@ public class MetadataResolutionService(
 
         var blobs = ParsePluginBlobs(item.MetadataJson);
         blobs.Remove("_resolved"); // remove stale before recomputing
+        // _overrides is a separate reserved top-level key (sibling to _resolved) and is
+        // deliberately left untouched here — it round-trips through the blobs dict below.
+        var overrides = blobs.TryGetValue("_overrides", out var ovEl) && ovEl.ValueKind == JsonValueKind.Object
+            ? ovEl : default;
 
         var resolved = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 
         foreach (var (assignmentField, baseKeys) in FieldMap)
         {
             var canonicalKey = baseKeys[0];
+
+            // A manually-pinned value always wins — skip the priority/fallback walk entirely.
+            if (overrides.ValueKind == JsonValueKind.Object &&
+                overrides.TryGetProperty(assignmentField, out var overrideEntry) &&
+                overrideEntry.ValueKind == JsonValueKind.Object &&
+                overrideEntry.TryGetProperty("url", out var overrideUrl) &&
+                HasValue(overrideUrl))
+            {
+                resolved[canonicalKey] = overrideUrl;
+                continue;
+            }
+
             string[] jsonKeys = extraAliases.TryGetValue(assignmentField, out var extras) && extras.Count > 0
                 ? [.. baseKeys, .. extras]
                 : baseKeys;
@@ -158,6 +175,114 @@ public class MetadataResolutionService(
         }
 
         logger.LogInformation("Bulk _resolved recompute complete: {Total} items for '{Type}'", totalDone, mediaTypeName);
+    }
+
+    public async Task SetOverrideAsync(MediaItem item, ChronicleDbContext db, string field, string url,
+        string? sourcePluginId, string? sourceType, int? userId, CancellationToken ct = default)
+    {
+        if (!FieldMap.ContainsKey(field))
+            throw new ArgumentException($"'{field}' is not a valid canonical field.", nameof(field));
+
+        var root = ParseRootObject(item.MetadataJson);
+        var overridesObj = GetOrCreateOverridesObject(root);
+        overridesObj[field] = new JsonObject
+        {
+            ["url"]            = url,
+            ["sourcePluginId"] = sourcePluginId,
+            ["sourceType"]     = sourceType,
+            ["pinnedAt"]       = DateTime.UtcNow.ToString("O"),
+            ["pinnedByUserId"] = userId,
+        };
+        item.MetadataJson = root.ToJsonString();
+        await ResolveAsync(item, db, ct);
+    }
+
+    public async Task ClearOverrideAsync(MediaItem item, ChronicleDbContext db, string field, CancellationToken ct = default)
+    {
+        var root = ParseRootObject(item.MetadataJson);
+        if (root["_overrides"] is JsonObject overridesObj)
+            overridesObj.Remove(field);
+        item.MetadataJson = root.ToJsonString();
+        await ResolveAsync(item, db, ct);
+    }
+
+    public async Task ClearItemOverridesAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
+    {
+        var root = ParseRootObject(item.MetadataJson);
+        root.Remove("_overrides");
+        item.MetadataJson = root.ToJsonString();
+        await ResolveAsync(item, db, ct);
+    }
+
+    public Task<int> ClearOverridesForMediaTypeAsync(string mediaTypeName, Action<int, int>? onBatch = null, CancellationToken ct = default) =>
+        ClearOverridesBatchedAsync(mediaTypeName, onBatch, ct);
+
+    public Task<int> ClearAllOverridesLibraryWideAsync(Action<int, int>? onBatch = null, CancellationToken ct = default) =>
+        ClearOverridesBatchedAsync(null, onBatch, ct);
+
+    /// Shared batched worker for both the media-type-scoped and library-wide bulk override
+    /// clears — mirrors ResolveAllForMediaTypeAsync's own batch-of-100/own-DI-scope-per-batch
+    /// pattern above. onBatch(processedSoFar, clearedSoFar) fires once per committed batch.
+    private async Task<int> ClearOverridesBatchedAsync(string? mediaTypeNameFilter, Action<int, int>? onBatch, CancellationToken ct)
+    {
+        var scopeLabel = mediaTypeNameFilter is null ? "library-wide" : $"media type '{mediaTypeNameFilter}'";
+        logger.LogInformation("Starting bulk override clear ({Scope})", scopeLabel);
+        int lastId = 0, totalProcessed = 0, totalCleared = 0;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+            var query = db.MediaItems.Include(m => m.MediaType).Where(m => m.Id > lastId);
+            if (mediaTypeNameFilter is not null)
+                query = query.Where(m => m.MediaType!.Name == mediaTypeNameFilter);
+
+            var batch = await query.OrderBy(m => m.Id).Take(BatchSize).ToListAsync(ct);
+            if (batch.Count == 0) break;
+
+            foreach (var item in batch)
+            {
+                try
+                {
+                    var root = ParseRootObject(item.MetadataJson);
+                    if (root["_overrides"] is JsonObject ov && ov.Count > 0)
+                    {
+                        totalCleared++;
+                        root.Remove("_overrides");
+                        item.MetadataJson = root.ToJsonString();
+                        await ResolveAsync(item, db, ct);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                { logger.LogWarning(ex, "Bulk override clear failed for item {Id}", item.Id); }
+            }
+
+            await db.SaveChangesAsync(ct);
+            lastId          = batch[^1].Id;
+            totalProcessed += batch.Count;
+            onBatch?.Invoke(totalProcessed, totalCleared);
+            logger.LogDebug("Bulk override clear ({Scope}): {Processed} processed, {Cleared} cleared", scopeLabel, totalProcessed, totalCleared);
+        }
+
+        logger.LogInformation("Bulk override clear complete ({Scope}): {Processed} processed, {Cleared} cleared", scopeLabel, totalProcessed, totalCleared);
+        return totalCleared;
+    }
+
+    private static JsonObject ParseRootObject(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson)) return new JsonObject();
+        try { return JsonNode.Parse(metadataJson) as JsonObject ?? new JsonObject(); }
+        catch (JsonException) { return new JsonObject(); }
+    }
+
+    private static JsonObject GetOrCreateOverridesObject(JsonObject root)
+    {
+        if (root["_overrides"] is JsonObject existing) return existing;
+        var obj = new JsonObject();
+        root["_overrides"] = obj;
+        return obj;
     }
 
     /// Parses metadata_json into a mutable dictionary keyed by plugin ID.

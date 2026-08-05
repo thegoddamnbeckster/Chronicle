@@ -44,8 +44,11 @@ public class MediaMetadata
     // ── Extended fields stored in MetadataJson ────────────────────────────────
 
     public List<string> Genres { get; set; } = [];
-    public List<string> Cast { get; set; } = [];
-    public List<string> Directors { get; set; } = [];
+    public List<CastMember> Cast { get; set; } = [];
+    /// <summary>Every non-actor credit the provider supplies (director, writer, producer,
+    /// executive producer, composer, etc.) -- not just directors. Job is null when the
+    /// provider doesn't break its credits down by title.</summary>
+    public List<CrewMember> Crew { get; set; } = [];
     public double? Rating { get; set; }
 
     /// <summary>Community/folksonomy tags beyond the curated Genres list (e.g. MusicBrainz tags).</summary>
@@ -82,6 +85,20 @@ public class MediaMetadata
     /// <summary>Total number of results available (for pagination display).</summary>
     public int TotalResults { get; set; }
 }
+
+/// <summary>An actor credit: the performer's real name and, when the provider supplies it, the
+/// character/role they played. Role is null for providers that don't carry that data (e.g. band
+/// members from MusicBrainz).</summary>
+public record CastMember(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("role")] string? Role = null);
+
+/// <summary>A non-actor credit: the person's real name and, when the provider breaks
+/// credits down by title, their job (Director, Writer, Producer, Executive Producer,
+/// Composer, etc.). Job is null when the provider only supplies a flat name list.</summary>
+public record CrewMember(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("job")]  string? Job = null);
 
 /// <summary>A single additional image from a metadata provider (back cover, booklet, still, etc.).</summary>
 public class AdditionalImage

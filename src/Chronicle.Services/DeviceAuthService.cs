@@ -4,6 +4,7 @@ using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 
 namespace Chronicle.Services;
@@ -14,11 +15,13 @@ public class DeviceAuthService : IDeviceAuthService
 
     private readonly ChronicleDbContext _db;
     private readonly IApiTokenService   _apiTokenService;
+    private readonly ILogger<DeviceAuthService> _log;
 
-    public DeviceAuthService(ChronicleDbContext db, IApiTokenService apiTokenService)
+    public DeviceAuthService(ChronicleDbContext db, IApiTokenService apiTokenService, ILogger<DeviceAuthService> log)
     {
         _db              = db;
         _apiTokenService = apiTokenService;
+        _log             = log;
     }
 
     // ── Initiate ─────────────────────────────────────────────────────────────
@@ -31,6 +34,9 @@ public class DeviceAuthService : IDeviceAuthService
         // just makes it something nobody can type or read aloud. The short human code
         // (previously only a truncated *display* of a separate long code) is now the
         // one and only identifier, used everywhere: URL, QR payload, and DB lookup.
+        _log.LogInformation("DeviceAuthService.InitiateAsync: starting — DeviceName={DeviceName} BaseUrl={BaseUrl}",
+            deviceName, baseUrl);
+
         var code = await GenerateUniqueCodeAsync();
 
         var expiry  = DateTime.UtcNow.AddSeconds(ExpirySeconds);
@@ -49,6 +55,9 @@ public class DeviceAuthService : IDeviceAuthService
         await _db.SaveChangesAsync();
 
         var verificationUrl = $"{baseUrl.TrimEnd('/')}/a/{code}";
+
+        _log.LogInformation("DeviceAuthService.InitiateAsync: created code {Code}, expires {Expiry:o}",
+            code, expiry);
 
         return new InitiateDeviceAuthResult(
             code, code, verificationUrl, expiry, ExpirySeconds);

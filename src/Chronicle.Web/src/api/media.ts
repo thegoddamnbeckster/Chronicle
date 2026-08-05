@@ -47,6 +47,9 @@ export async function createMedia(payload: {
   runtimeMinutes?: number
   hierarchyLevel?: number
   number?: number
+  /** True when creating an intentional collection container (Add Collection page) so the
+   *  server can tag it unambiguously even before it has any members or a real TMDB link. */
+  isCollection?: boolean
 }): Promise<MediaItem> {
   const { data } = await client.post<ApiResponse<MediaItem>>('/media', payload)
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to create media')
@@ -104,12 +107,75 @@ export interface CollectionSummary {
   id: number
   name: string
   posterUrl: string | null
-  movieCount: number
+  itemCount: number
+  mediaTypeId: number
 }
 
 export async function getCollections(): Promise<CollectionSummary[]> {
   const { data } = await client.get<ApiResponse<CollectionSummary[]>>('/media/collections')
   return data.data ?? []
+}
+
+/**
+ * Pins a manually-chosen value for one canonical field (e.g. "poster_url") on an item — it
+ * wins over the plugin-priority resolution walk in every future refresh/sync until cleared.
+ * Returns the fully re-resolved item so callers can update their cache without a refetch.
+ */
+export async function setMediaOverride(
+  id: number,
+  field: string,
+  url: string,
+  sourcePluginId?: string,
+  sourceType?: string,
+): Promise<MediaItem> {
+  const { data } = await client.put<ApiResponse<MediaItem>>(
+    `/media/${id}/overrides/${encodeURIComponent(field)}`,
+    { url, sourcePluginId, sourceType },
+  )
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to set override')
+  return data.data
+}
+
+/** Clears one field's override on an item (idempotent). Returns the re-resolved item. */
+export async function clearMediaOverride(id: number, field: string): Promise<MediaItem> {
+  const { data } = await client.delete<ApiResponse<MediaItem>>(
+    `/media/${id}/overrides/${encodeURIComponent(field)}`,
+  )
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to clear override')
+  return data.data
+}
+
+/** Clears every override on an item. Returns the re-resolved item. */
+export async function clearAllMediaOverrides(id: number): Promise<MediaItem> {
+  const { data } = await client.delete<ApiResponse<MediaItem>>(`/media/${id}/overrides`)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to clear overrides')
+  return data.data
+}
+
+export interface OverrideResetProgress {
+  isRunning: boolean
+  isComplete: boolean
+  scope: string | null
+  processed: number
+  cleared: number
+  error: string | null
+}
+
+/** Starts a background job clearing every image/field override for a media type. Admin only. */
+export async function resetOverridesForMediaType(mediaTypeId: number): Promise<void> {
+  await client.post(`/media/overrides/reset-media-type/${mediaTypeId}`)
+}
+
+/** Starts a background job clearing every image/field override library-wide. Admin only. */
+export async function resetAllOverrides(confirmationToken: string): Promise<void> {
+  await client.post('/media/overrides/reset-all', { confirmationToken })
+}
+
+/** Polls the state of the current (or most recent) bulk override-reset job. */
+export async function getOverrideResetProgress(): Promise<OverrideResetProgress> {
+  const { data } = await client.get<ApiResponse<OverrideResetProgress>>('/media/overrides/reset-progress')
+  if (!data.data) throw new Error('Failed to fetch reset progress')
+  return data.data
 }
 
 /**

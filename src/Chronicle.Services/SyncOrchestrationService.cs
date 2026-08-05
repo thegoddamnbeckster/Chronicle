@@ -639,8 +639,16 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         ChronicleDbContext db, int mediaItemId, int userId, ImportedWatchEvent evt, CancellationToken ct)
     {
         var ts = evt.WatchedAt.UtcDateTime;
-        var exists = await db.InteractionEvents
-            .AnyAsync(e => e.UserId == userId && e.MediaItemId == mediaItemId && e.Timestamp == ts, ct);
+
+        // Approximate timestamps (source gave no real per-item time, so we fell back to
+        // "now") are a fresh value on every sync run and can never match by exact equality.
+        // Treat "any event already recorded for this item" as the dedup key instead, or a
+        // daily sync would insert a new fake "just watched" event forever.
+        var exists = evt.WatchedAtIsApproximate
+            ? await db.InteractionEvents
+                .AnyAsync(e => e.UserId == userId && e.MediaItemId == mediaItemId, ct)
+            : await db.InteractionEvents
+                .AnyAsync(e => e.UserId == userId && e.MediaItemId == mediaItemId && e.Timestamp == ts, ct);
         if (exists) return 0;
 
         db.InteractionEvents.Add(new InteractionEvent

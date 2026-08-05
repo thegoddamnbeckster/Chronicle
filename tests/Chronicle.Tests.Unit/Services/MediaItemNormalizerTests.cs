@@ -1,4 +1,4 @@
-using Chronicle.Services;
+using Chronicle.Core.Helpers;
 using FluentAssertions;
 
 namespace Chronicle.Tests.Unit.Services;

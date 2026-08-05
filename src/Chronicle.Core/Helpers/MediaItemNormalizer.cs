@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace Chronicle.Services;
+namespace Chronicle.Core.Helpers;
 
 public static class MediaItemNormalizer
 {

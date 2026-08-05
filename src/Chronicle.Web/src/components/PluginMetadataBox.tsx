@@ -3,7 +3,7 @@ import { JsonTree } from './JsonTree'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { refreshMediaForPlugin, clearMediaExternalId, suppressMediaMatch } from '@/api/media'
 import type { ExternalId, RefreshLog } from '@/types'
-import { IMAGE_KEYS, IMAGE_ARRAY_KEYS, toLabel, isImageUrl, extractImages, type ImageEntry } from '@/utils/imageExtractor'
+import { IMAGE_KEYS, IMAGE_ARRAY_KEYS, toLabel, isImageUrl, extractImages, arrayItemToString, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './PluginMetadataBox.module.css'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ export function PluginMetadataBox({
           </div>
         )
       }
-      return <span className={styles.value}>{(value as unknown[]).slice(0, 8).map(String).join(', ')}</span>
+      return <span className={styles.value}>{(value as unknown[]).slice(0, 8).map(arrayItemToString).join(', ')}</span>
     }
 
     if (typeof value === 'number') {

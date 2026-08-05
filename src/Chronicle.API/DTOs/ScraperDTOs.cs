@@ -17,6 +17,14 @@ namespace Chronicle.API.DTOs
     /// <summary>The movie-set (collection) a movie belongs to, sourced from Chronicle's own parent MediaItem.</summary>
     public record ScraperCollectionDto(int Id, string Name, string? Overview, string? PosterUrl, string? BackdropUrl);
 
+    /// <summary>An actor credit -- the performer's name and, when the source provider supplied it,
+    /// the character/role they played. Shared between the scraper and web-facing media DTOs.</summary>
+    public record CastMemberDto(string Name, string? Role);
+
+    /// <summary>A non-actor credit -- director, writer, producer, executive producer,
+    /// composer, etc. Job is null when the source provider only supplies a flat name list.</summary>
+    public record CrewMemberDto(string Name, string? Job);
+
     /// <summary>A season container belonging to a show, as already tracked in Chronicle.</summary>
     public record ScraperSeasonDto(int Id, int Number, string? Name, string? PosterUrl);
 
@@ -31,14 +39,21 @@ namespace Chronicle.API.DTOs
         string? Studio,
         int? RuntimeMinutes,
         List<string>? Genres,
-        List<string>? Cast,
-        List<string>? Directors,
+        List<CastMemberDto>? Cast,
+        List<CrewMemberDto>? Crew,
         List<string>? Tags,
         Dictionary<string, ScraperRatingDto>? Ratings,
         string? TrailerUrl,
         ScraperExternalIdsDto? ExternalIds,
         Dictionary<string, List<ScraperArtworkCandidateDto>>? Artwork,
-        ScraperCollectionDto? Collection
+        ScraperCollectionDto? Collection,
+        /// <summary>The real video file's own basename (with extension), exactly as Chronicle's
+        /// file scanner recorded it -- e.g. "2 Lava 2 Lantula! (2016).mkv". Null when this item
+        /// was never scanned from disk by Chronicle (created reactively from a Kodi search
+        /// instead). When present, this is a verified fact about the actual file, not a
+        /// re-derived title+year guess -- see movie_art_sync.py's find_movie_location(), which
+        /// tries an exact match on this filename before falling back to title/year matching.</summary>
+        string? KnownFileName
     );
 
     public record ScraperShowDetailsDto(
@@ -51,8 +66,10 @@ namespace Chronicle.API.DTOs
         string? Country,
         string? Studio,
         string? Status,
+        int? RuntimeMinutes,
         List<string>? Genres,
-        List<string>? Cast,
+        List<CastMemberDto>? Cast,
+        List<CrewMemberDto>? Crew,
         List<string>? Tags,
         Dictionary<string, ScraperRatingDto>? Ratings,
         string? TrailerUrl,
@@ -69,8 +86,8 @@ namespace Chronicle.API.DTOs
         int Season,
         int Episode,
         int? Year,
-        List<string>? Cast,
-        List<string>? Directors,
+        List<CastMemberDto>? Cast,
+        List<CrewMemberDto>? Crew,
         Dictionary<string, ScraperRatingDto>? Ratings,
         string? ThumbUrl,
         ScraperExternalIdsDto? ExternalIds

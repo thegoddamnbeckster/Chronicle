@@ -12,7 +12,8 @@ namespace Chronicle.Services
         string? PosterUrl,
         int? RuntimeMinutes,
         int HierarchyLevel,
-        int? Number
+        int? Number,
+        bool IsCollection = false
     );
 
     public record UpdateMediaRequest(

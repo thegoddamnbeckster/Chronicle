@@ -15,6 +15,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { getMetadataAssignment, putMetadataAssignment, putPluginDisplayOrder, type MetadataAssignmentConfig, type PluginInfo } from '@/api/settings'
+import { getMediaTypes, resetOverridesForMediaType, resetAllOverrides, getOverrideResetProgress, type OverrideResetProgress } from '@/api/media'
+import type { MediaTypeOption } from '@/types'
 import { useAuth } from '@/hooks/useAuth'
 import styles from './MetadataAssignmentPage.module.css'
 
@@ -128,6 +130,46 @@ export default function MetadataAssignmentPage() {
     try { return JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}') } catch { return {} }
   })
 
+  // ── Image override bulk reset (per-media-type + global) ────────────────────
+  const [mediaTypeOptions, setMediaTypeOptions] = useState<MediaTypeOption[]>([])
+  const [resetTypeId, setResetTypeId]           = useState<number | ''>('')
+  const [resetToken, setResetToken]             = useState('')
+  const [resetProgress, setResetProgress]       = useState<OverrideResetProgress | null>(null)
+  const [resetError, setResetError]             = useState<string | null>(null)
+
+  useEffect(() => {
+    getMediaTypes().then(setMediaTypeOptions).catch(e => setResetError(String(e)))
+  }, [])
+
+  useEffect(() => {
+    if (!resetProgress?.isRunning) return
+    const timer = setInterval(() => {
+      getOverrideResetProgress()
+        .then(p => { setResetProgress(p); if (!p.isRunning) clearInterval(timer) })
+        .catch(() => clearInterval(timer))
+    }, 500)
+    return () => clearInterval(timer)
+  }, [resetProgress?.isRunning])
+
+  async function startResetForType() {
+    if (resetTypeId === '') return
+    setResetError(null)
+    try {
+      await resetOverridesForMediaType(resetTypeId)
+      setResetProgress(await getOverrideResetProgress())
+    } catch (e) { setResetError(String(e)) }
+  }
+
+  async function startResetAll() {
+    if (resetToken !== 'RESET') return
+    setResetError(null)
+    try {
+      await resetAllOverrides(resetToken)
+      setResetProgress(await getOverrideResetProgress())
+      setResetToken('')
+    } catch (e) { setResetError(String(e)) }
+  }
+
   useEffect(() => {
     getMetadataAssignment()
       .then(cfg => {
@@ -238,6 +280,73 @@ export default function MetadataAssignmentPage() {
         {!saving && saved && <span className={`${styles.saveStatus} ${styles.saveStatusOk}`}>Saved ✓</span>}
         {error && <p className={styles.error}>{error}</p>}
       </div>
+
+      <section className={styles.section}>
+        <div className={styles.sectionHeader} style={{ cursor: 'default' }}>
+          <h2 className={styles.sectionTitle}>Image Overrides</h2>
+        </div>
+        <div className={styles.tableWrap} style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p className={styles.defaultBoxHint} style={{ margin: 0 }}>
+            Manually-pinned images (set from a media item's Additional Images card) always win over
+            plugin priority until reset. These bulk actions un-pin many items at once — they do not
+            undo any other metadata changes.
+          </p>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <select
+              value={resetTypeId}
+              onChange={e => setResetTypeId(e.target.value ? Number(e.target.value) : '')}
+              disabled={!isAdmin || Boolean(resetProgress?.isRunning)}
+              style={{ padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text)' }}
+            >
+              <option value="">Choose a media type…</option>
+              {mediaTypeOptions.map(mt => (
+                <option key={mt.id} value={mt.id}>{mt.displayName}</option>
+              ))}
+            </select>
+            <button
+              className={styles.applyBtn}
+              onClick={startResetForType}
+              disabled={!isAdmin || resetTypeId === '' || Boolean(resetProgress?.isRunning)}
+              title={!isAdmin ? 'Admin access required' : 'Clear every image override for this media type'}
+            >
+              Clear Overrides for Type
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder='Type "RESET" to confirm'
+              value={resetToken}
+              onChange={e => setResetToken(e.target.value)}
+              disabled={!isAdmin || Boolean(resetProgress?.isRunning)}
+              style={{ padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text)' }}
+            />
+            <button
+              className={styles.applyBtn}
+              onClick={startResetAll}
+              disabled={!isAdmin || resetToken !== 'RESET' || Boolean(resetProgress?.isRunning)}
+              title={!isAdmin ? 'Admin access required' : 'Clear every image override across the entire library'}
+            >
+              Clear ALL Overrides Library-Wide
+            </button>
+          </div>
+
+          {resetProgress && (
+            <p className={styles.defaultBoxHint} style={{ margin: 0 }}>
+              {resetProgress.isRunning
+                ? `Clearing overrides for ${resetProgress.scope}… ${resetProgress.processed} processed, ${resetProgress.cleared} cleared so far.`
+                : resetProgress.error
+                  ? `Reset failed: ${resetProgress.error}`
+                  : resetProgress.isComplete
+                    ? `Done — ${resetProgress.processed} items checked, ${resetProgress.cleared} overrides cleared for ${resetProgress.scope}.`
+                    : null}
+            </p>
+          )}
+          {resetError && <p className={styles.error}>{resetError}</p>}
+        </div>
+      </section>
 
       {mediaTypes.map(mediaType => {
         const plugins: PluginInfo[] = config.availablePlugins[mediaType] ?? []

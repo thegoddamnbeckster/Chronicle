@@ -5,6 +5,18 @@
   margin: 0 24px;
 }
 
+@media (max-width: 768px) {
+  .wrapper {
+    /* order:3 (paired with Layout.module.css's .headerRight { order: 2 }) pushes this
+       onto its own full-width row below menuToggle/logo/headerRight instead of being
+       squeezed to a sliver between them. */
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+    margin: 0;
+  }
+}
+
 .inputWrap {
   display: flex;
   align-items: center;

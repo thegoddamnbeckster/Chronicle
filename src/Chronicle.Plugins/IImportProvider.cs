@@ -66,6 +66,13 @@ public record ImportedWatchEvent(
     int? Year,
     DateTimeOffset WatchedAt,
     double? ProgressPercent,
+    /// <summary>
+    /// True when <see cref="WatchedAt"/> is not a real timestamp from the source service
+    /// but a fallback (e.g. "now", because the source only reports bulk-completed status
+    /// with no per-item history). Approximate timestamps differ on every sync run, which
+    /// defeats exact-timestamp dedup — consumers must dedupe these by (user, item) instead.
+    /// </summary>
+    bool WatchedAtIsApproximate = false,
     // ── TV episode hierarchy fields (null for non-episode events) ─────────────
     /// <summary>Source-namespaced ID of the parent show, e.g. "simkl:12345".</summary>
     string? ShowExternalId = null,

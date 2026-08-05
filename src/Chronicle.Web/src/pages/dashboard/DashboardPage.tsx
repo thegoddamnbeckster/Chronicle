@@ -30,6 +30,12 @@ function formatMinutes(mins: number): string {
   return `${h}h ${mins % 60}m`
 }
 
+/** "Show › Season" breadcrumb for an item's ancestor chain, or '' if it has none
+ *  (e.g. a standalone movie or a top-level show being tracked directly). */
+function ancestorBreadcrumb(ancestors?: { id: number; name: string }[]): string {
+  return ancestors && ancestors.length > 0 ? ancestors.map(a => a.name).join(' › ') : ''
+}
+
 export default function DashboardPage() {
   const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: getStats })
   const { data: history } = useQuery({ queryKey: ['history', 1], queryFn: () => getHistory(1) })
@@ -107,12 +113,25 @@ export default function DashboardPage() {
           <h3 className={styles.panelTitle}>Continue Watching</h3>
           {watching && watching.length > 0 ? (
             <ul className={styles.list}>
-              {watching.slice(0, 8).map(e => (
-                <li key={e.id} className={styles.listItem}>
-                  <span className={styles.itemName}>{e.mediaItem.name}</span>
-                  <span className={styles.badge}>{e.status}</span>
-                </li>
-              ))}
+              {watching.slice(0, 8).map(e => {
+                const context = ancestorBreadcrumb(e.mediaItem.ancestors)
+                return (
+                  <li key={e.id} className={styles.listItem}>
+                    <div className={styles.itemNameCol}>
+                      <span className={styles.itemName}>{e.mediaItem.name}</span>
+                      {context && <span className={styles.itemContext}>{context}</span>}
+                    </div>
+                    <div className={styles.rightCol}>
+                      <span className={styles.badge}>{e.status}</span>
+                      <span className={styles.timestamp}>
+                        {new Date(e.updatedAt).toLocaleString(undefined, {
+                          dateStyle: 'short', timeStyle: 'short',
+                        })}
+                      </span>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           ) : (
             <p className={styles.empty}>Nothing in progress.</p>
@@ -123,15 +142,23 @@ export default function DashboardPage() {
           <h3 className={styles.panelTitle}>Recent Activity</h3>
           {history && history.length > 0 ? (
             <ul className={styles.list}>
-              {history.slice(0, 8).map(h => (
-                <li key={h.id} className={styles.listItem}>
-                  <span className={styles.itemName}>{h.mediaItemName}</span>
-                  <span className={styles.meta}>
-                    {new Date(h.timestamp).toLocaleDateString()}
-                    {h.progressPercent != null && ` · ${Math.round(h.progressPercent)}%`}
-                  </span>
-                </li>
-              ))}
+              {history.slice(0, 8).map(h => {
+                const context = ancestorBreadcrumb(h.ancestors)
+                return (
+                  <li key={h.id} className={styles.listItem}>
+                    <div className={styles.itemNameCol}>
+                      <span className={styles.itemName}>{h.mediaItemName}</span>
+                      {context && <span className={styles.itemContext}>{context}</span>}
+                    </div>
+                    <span className={styles.meta}>
+                      {new Date(h.timestamp).toLocaleString(undefined, {
+                        dateStyle: 'short', timeStyle: 'short',
+                      })}
+                      {h.progressPercent != null && ` · ${Math.round(h.progressPercent)}%`}
+                    </span>
+                  </li>
+                )
+              })}
             </ul>
           ) : (
             <p className={styles.empty}>No recent activity.</p>

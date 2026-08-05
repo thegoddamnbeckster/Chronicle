@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
@@ -12,7 +12,9 @@ import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import CollectionMetadataBox from '@/components/CollectionMetadataBox'
-import { extractImages, type ImageEntry } from '@/utils/imageExtractor'
+import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
+import { SlotGalleryModal } from '@/components/SlotGalleryModal'
+import { extractImages, type ImageEntry, type CanonicalSlot, type SlottedImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 import { PosterImage } from '@/components/PosterImage'
@@ -314,6 +316,39 @@ export default function MediaDetailPage() {
     },
   })
 
+  // ── Join an Existing Collection (this item is a standalone movie, not yet a collection) ──
+  // The inverse of the block above: here `mediaId` (this page's item) is the thing being
+  // moved, and the user picks the destination collection. Deliberately a SEPARATE control
+  // from "Add to Collection" rather than making that one bidirectional based on context --
+  // reparentToCollection(id, collectionId) always means "move id under collectionId", so
+  // the two flows just need to pass mediaId in different argument positions. Confirmed via
+  // chronicle-20260802.log: using the OTHER control from a childless movie's own page passed
+  // the picked collection as `id` and this movie as `collectionId`, reparenting the real
+  // collection AS A CHILD of the movie instead of the movie into the collection -- exactly
+  // backwards. That control is now gated on children.length > 0 (see below) so it can't be
+  // misused this way again; this one is gated on children.length === 0 and does the reparent
+  // in the correct direction from the start.
+  const [joinCollectionOpen, setJoinCollectionOpen] = useState(false)
+  const [joinCollectionQuery, setJoinCollectionQuery] = useState('')
+
+  const { data: allCollections = [] } = useQuery({
+    queryKey: ['collections', 'all'],
+    queryFn: getCollections,
+    enabled: joinCollectionOpen,
+  })
+
+  const joinCollectionMut = useMutation({
+    mutationFn: (collectionId: number) => reparentToCollection(mediaId, collectionId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['media', mediaId] })
+      qc.invalidateQueries({ queryKey: ['media', mediaId, 'children'] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+      qc.invalidateQueries({ queryKey: ['collections'] })
+      setJoinCollectionOpen(false)
+      setJoinCollectionQuery('')
+    },
+  })
+
   const removeChildMut = useMutation({
     mutationFn: (childId: number) => unparentFromCollection(childId),
     onSuccess: () => {
@@ -375,11 +410,13 @@ export default function MediaDetailPage() {
   // top of the page (which loses the user's place entirely).
   const [postChangeAnchor, setPostChangeAnchor] = useState<string | null>(null)
 
+  // Always enabled -- isFlatCollectionType (below) depends on this to gate the
+  // Add/Remove-to-Collection buttons, which must be visible on first page load,
+  // not just after the user has opened the Change Type panel at least once.
   const { data: mediaTypes = [] } = useQuery({
     queryKey: ['media-types'],
     queryFn: getMediaTypes,
     staleTime: 5 * 60 * 1000,
-    enabled: changeTypeOpen,
   })
 
   const changeTypeMut = useMutation({
@@ -409,6 +446,25 @@ export default function MediaDetailPage() {
   // useState/useRef/useEffect must be before early returns (Rules of Hooks)
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
   const allImagesLenRef = useRef(0)
+
+  // ── Additional Images: type-scoped gallery modal + promote/reset mutations ──
+  const [gallerySlot, setGallerySlot] = useState<{
+    slot: CanonicalSlot; slotLabel: string; images: SlottedImageEntry[]; startIndex: number
+  } | null>(null)
+
+  const galleryPromoteMut = useMutation({
+    mutationFn: (p: { field: CanonicalSlot; img: SlottedImageEntry }) =>
+      setMediaOverride(mediaId, p.field, p.img.url, p.img.pluginId, p.img.slot),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      setGallerySlot(null)
+    },
+  })
+
+  const clearAllOverridesMut = useMutation({
+    mutationFn: () => clearAllMediaOverrides(mediaId),
+    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+  })
 
   useEffect(() => {
     if (lightboxIdx === null) return
@@ -449,13 +505,23 @@ export default function MediaDetailPage() {
     imgOffset += extractImages(meta as Record<string, unknown>, LIGHTBOX_SKIP).length
   }
 
-  // Extract Fanart.tv-specific art fields (logo, banner, thumb, disc, character)
-  const fanartMeta = item.pluginMetadata?.['chronicle.plugin.fanarttv'] as Record<string, unknown> | undefined
-  const fanartLogo      = typeof fanartMeta?.logoUrl       === 'string' && fanartMeta.logoUrl       ? fanartMeta.logoUrl       : null
-  const fanartBanner    = typeof fanartMeta?.bannerUrl     === 'string' && fanartMeta.bannerUrl     ? fanartMeta.bannerUrl     : null
-  const fanartThumb     = typeof fanartMeta?.thumbUrl      === 'string' && fanartMeta.thumbUrl      ? fanartMeta.thumbUrl      : null
-  const fanartDisc      = typeof fanartMeta?.discUrl       === 'string' && fanartMeta.discUrl       ? fanartMeta.discUrl       : null
-  const fanartCharacter = typeof fanartMeta?.characterArtUrl === 'string' && fanartMeta.characterArtUrl ? fanartMeta.characterArtUrl : null
+  // Logo/banner/thumb/disc/character art: read from resolvedMetadata first (the
+  // override-aware, priority-resolved value — this is what makes promoting one of these
+  // slots in the Additional Images card actually change what renders here), falling back
+  // to a raw per-plugin scan for items that haven't been through MetadataResolution yet.
+  // Previously these bypassed resolvedMetadata entirely and read the Fanart.tv blob
+  // directly, which meant an override on these fields would have no visible effect.
+  const rawArtScan = (key: string): string | null =>
+    item.pluginMetadata
+      ? ((Object.values(item.pluginMetadata)
+          .map(m => (m as Record<string, unknown>)?.[key])
+          .find(u => typeof u === 'string' && u) as string | undefined) ?? null)
+      : null
+  const fanartLogo      = item.resolvedMetadata?.logoUrl        ?? rawArtScan('logoUrl')
+  const fanartBanner    = item.resolvedMetadata?.bannerUrl      ?? rawArtScan('bannerUrl')
+  const fanartThumb     = item.resolvedMetadata?.thumbUrl       ?? rawArtScan('thumbUrl')
+  const fanartDisc      = item.resolvedMetadata?.discUrl        ?? rawArtScan('discUrl')
+  const fanartCharacter = item.resolvedMetadata?.characterArtUrl ?? rawArtScan('characterArtUrl')
 
   // Backdrop: resolved metadata respects the assignment-priority config; fall back to
   // raw per-plugin scan for items that haven't been through MetadataResolution yet.
@@ -467,8 +533,32 @@ export default function MediaDetailPage() {
       : undefined)
   const hasBackdrop = Boolean(backdropUrl)
 
+  // Collections apply to flat (non-hierarchical) media types — a type with a natural multi-level
+  // hierarchy (TV Show/Season/Episode, Music Artist/Album/Track, or "anime" itself) already uses
+  // ParentId/HierarchyLevel for its own structure, so grouping its Level-0 items into an ad-hoc
+  // "collection" would conflict with that. Standalone anime films live on the flat anime_movies
+  // type instead. Mirrors the backend's HierarchyLevels == 1 check.
+  const currentMediaType = mediaTypes.find(t => t.id === item.mediaTypeId)
+  const isFlatCollectionType = currentMediaType?.hierarchyLevels === 1
+
+  // children.length alone can't tell a brand-new, still-empty collection apart from a genuine
+  // standalone movie -- both are HierarchyLevel 0 / no parent / no children. A collection tagged
+  // with its TMDB collection ID (via the Add Collection page's "TMDB Collection URL" lookup) is
+  // unambiguous even at zero children, so treat that as a known collection too. Without this, a
+  // freshly created empty collection showed "Add to a Collection" (join another collection) --
+  // the wrong direction -- instead of "Add to Collection" (add movies into this one).
+  const isKnownCollection = children.length > 0
+    || item.externalIds.some(e => e.externalId?.toLowerCase().startsWith('collection:'))
+
+  const joinCollectionResults = allCollections
+    .filter(c => c.mediaTypeId === item.mediaTypeId
+      && c.id !== mediaId
+      && c.name.toLowerCase().includes(joinCollectionQuery.trim().toLowerCase()))
+    .slice(0, 8)
+
   // Extract narrators from cast entries across all plugin metadata.
-  // Hardcover stores cast as role-prefixed strings: "Narrator:Nick Podehl"
+  // Cast entries are {name, role} objects (see CastMemberDto) -- Hardcover tags
+  // narrators with role "Narrator".
   const narrators: string[] = []
   const isAudiobookType = (item.mediaTypeInternalName ?? item.mediaTypeName).toLowerCase() === 'audiobooks'
   if (isAudiobookType) {
@@ -476,8 +566,9 @@ export default function MediaDetailPage() {
       const cast = (meta as Record<string, unknown>)?.cast
       if (Array.isArray(cast)) {
         const found = cast
-          .filter((c: unknown): c is string => typeof c === 'string' && c.startsWith('Narrator:'))
-          .map((c: string) => c.replace('Narrator:', ''))
+          .filter((c: unknown): c is { name: string; role?: string } =>
+            typeof c === 'object' && c !== null && 'name' in c && (c as { role?: string }).role === 'Narrator')
+          .map(c => c.name)
         if (found.length > 0) { narrators.push(...found); break }
       }
     }
@@ -608,8 +699,7 @@ export default function MediaDetailPage() {
                 Change Type (at root)
               </Link>
             )}
-            {isAdmin && item.hierarchyLevel === 1 && item.parentId != null &&
-              (item.mediaTypeInternalName === 'movies' || item.mediaTypeInternalName === 'fanedits' || item.mediaTypeInternalName === 'anime') && (
+            {isAdmin && item.hierarchyLevel === 1 && item.parentId != null && isFlatCollectionType && (
               <button
                 className={styles.changeTypeBtn}
                 onClick={() => unparentMut.mutate()}
@@ -619,24 +709,51 @@ export default function MediaDetailPage() {
                 {unparentMut.isPending ? 'Removing…' : 'Remove from Collection'}
               </button>
             )}
-            {isAdmin && item.hierarchyLevel === 0 && item.parentId == null &&
-              (item.mediaTypeInternalName === 'movies' || item.mediaTypeInternalName === 'fanedits' || item.mediaTypeInternalName === 'anime') && (
+            {/* Both actions below reparent the SEARCH RESULT to become a child of THIS page's
+                item (see reparentMut: reparentToCollection(movieId, mediaId)) -- correct only
+                when this page's item is already an established (or intentionally created)
+                collection. Gated on isKnownCollection, not just hierarchyLevel/parentId,
+                because a brand-new standalone movie is ALSO hierarchyLevel 0 / parentId null /
+                isFlatCollectionType; showing this control there let a user "add" a real
+                collection into a plain movie, inverting the hierarchy (the movie became the
+                root, the collection its child) -- confirmed via chronicle-20260802.log around
+                20:26:05 (POST /media/{collectionId}/reparent against a childless movie's page).
+                A standalone item now gets its OWN correctly-directed control below ("Add to a
+                Collection") instead of reusing this one. "Remove from Collection" (removing a
+                current member) additionally requires children.length > 0 -- there's nothing to
+                remove from a collection that has no members yet. */}
+            {isAdmin && item.hierarchyLevel === 0 && item.parentId == null && isFlatCollectionType && isKnownCollection && (
               <>
                 <button
                   className={styles.changeTypeBtn}
                   onClick={() => { setAddToCollectionOpen(o => !o); setRemoveFromCollectionOpen(false) }}
-                  title="Add an existing standalone movie into this collection"
+                  title="Add an existing standalone item of the same media type into this collection"
                 >
                   {addToCollectionOpen ? 'Cancel' : 'Add to Collection'}
                 </button>
-                <button
-                  className={styles.changeTypeBtn}
-                  onClick={() => { setRemoveFromCollectionOpen(o => !o); setAddToCollectionOpen(false) }}
-                  title="Remove one of this collection's current movies"
-                >
-                  {removeFromCollectionOpen ? 'Cancel' : 'Remove from Collection'}
-                </button>
+                {children.length > 0 && (
+                  <button
+                    className={styles.changeTypeBtn}
+                    onClick={() => { setRemoveFromCollectionOpen(o => !o); setAddToCollectionOpen(false) }}
+                    title="Remove one of this collection's current items"
+                  >
+                    {removeFromCollectionOpen ? 'Cancel' : 'Remove from Collection'}
+                  </button>
+                )}
               </>
+            )}
+            {/* Inverse of the block above: this page's item is a standalone movie (not a known
+                collection), so the action is "move ME under an existing collection" --
+                joinCollectionMut reparents mediaId (this item) under the picked collectionId,
+                the direction that was previously inverted (see comment above). */}
+            {isAdmin && item.hierarchyLevel === 0 && item.parentId == null && isFlatCollectionType && !isKnownCollection && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => setJoinCollectionOpen(o => !o)}
+                title="Add this item into an existing collection"
+              >
+                {joinCollectionOpen ? 'Cancel' : 'Add to a Collection'}
+              </button>
             )}
             {isAdmin && (
               <button
@@ -844,6 +961,44 @@ export default function MediaDetailPage() {
             </div>
           )}
 
+          {joinCollectionOpen && (
+            <div className={styles.mergeSearch}>
+              <input
+                className={styles.mergeSearchInput}
+                type="text"
+                placeholder="Search collections to add this into…"
+                value={joinCollectionQuery}
+                onChange={e => setJoinCollectionQuery(e.target.value)}
+                autoFocus
+              />
+              {joinCollectionMut.isError && (
+                <p className={styles.changeTypeError}>
+                  {joinCollectionMut.error instanceof Error ? joinCollectionMut.error.message : 'Failed to add to collection.'}
+                </p>
+              )}
+              {joinCollectionResults.length > 0 && (
+                <div className={styles.mergeSearchResults}>
+                  {joinCollectionResults.map(result => (
+                    <button
+                      key={result.id}
+                      className={styles.mergeSearchResult}
+                      onClick={() => joinCollectionMut.mutate(result.id)}
+                      disabled={joinCollectionMut.isPending}
+                    >
+                      {result.posterUrl && (
+                        <img src={result.posterUrl} alt="" className={styles.mergeResultPoster} />
+                      )}
+                      <span className={styles.mergeResultText}>
+                        <span className={styles.mergeResultName}>{result.name}</span>
+                        <span className={styles.mergeResultType}>{result.itemCount} item{result.itemCount === 1 ? '' : 's'}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {removeFromCollectionOpen && (
             <div className={styles.removeFromCollectionPanel}>
               {children.length === 0 ? (
@@ -914,17 +1069,33 @@ export default function MediaDetailPage() {
             >
               {refreshMut.isPending ? 'Refreshing all…' : '↻ Refresh All'}
             </button>
+            {item.overrides && Object.keys(item.overrides).length > 0 && (
+              <button
+                className={styles.refreshBtn}
+                onClick={() => clearAllOverridesMut.mutate()}
+                disabled={clearAllOverridesMut.isPending}
+                title="Un-pin every manually-chosen image on this item, reverting all to the normal resolution"
+              >
+                {clearAllOverridesMut.isPending ? 'Resetting…' : '↺ Reset All Image Overrides'}
+              </button>
+            )}
             {refreshMut.isError && (
               <span className={styles.refreshError}>
                 {`Refresh failed: ${(refreshMut.error as Error).message}`}
               </span>
             )}
+            {clearAllOverridesMut.isError && (
+              <span className={styles.refreshError}>
+                {`Reset failed: ${(clearAllOverridesMut.error as Error).message}`}
+              </span>
+            )}
           </div>
 
-          {/* Collection membership box — only for movies type.
-              compact=true on individual movies: just show "Part of X" header, no card grid.
-              On collection containers (Level 0) the full grid is shown. */}
-          {(item.mediaTypeInternalName ?? item.mediaTypeName ?? '').toLowerCase() === 'movies' && (
+          {/* Collection membership box — collections now work for any flat (non-hierarchical)
+              media type, not just movies/fanedits/anime. compact=true on individual items: just
+              show "Part of X" header, no card grid. On collection containers (Level 0) the full
+              grid is shown. */}
+          {isFlatCollectionType && (
             <CollectionMetadataBox mediaItemId={mediaId} compact={item.hierarchyLevel === 1} />
           )}
 
@@ -983,22 +1154,46 @@ export default function MediaDetailPage() {
             })
           })()}
 
-          {/* File Scanner box — show whenever the item came from the scanner */}
-          {item.fileScannerMeta &&
-            (item.fileScannerMeta.filePath ||
-              item.fileScannerMeta.localPosterPath ||
-              item.fileScannerMeta.nfoPosterUrl ||
-              item.fileScannerMeta.importedAt) && (
+          {/* Additional Images — every image available across all plugins for this item,
+              grouped by artwork type, excluding whichever image currently holds each slot.
+              Click a thumbnail to promote it directly, or expand to browse a slot's full list. */}
+          <AdditionalImagesCard
+            mediaId={mediaId}
+            item={item}
+            onOpenGallery={(slot, slotLabel, images, startIndex) =>
+              setGallerySlot({ slot, slotLabel, images, startIndex })
+            }
+          />
+
+          {/* File Scanner box — show whenever the item came from the scanner, OR
+              whenever hasPhysicalFile says a file is tracked on disk. hasPhysicalFile
+              is the authoritative flag; fileScannerMeta can theoretically lag behind it
+              (e.g. not yet loaded), so a physical file must never be hidden just
+              because fileScannerMeta itself is sparse. */}
+          {(item.hasPhysicalFile ||
+            (item.fileScannerMeta &&
+              (item.fileScannerMeta.filePath ||
+                item.fileScannerMeta.localPosterPath ||
+                item.fileScannerMeta.nfoPosterUrl ||
+                item.fileScannerMeta.importedAt))) && (
             <div className={styles.scannerBox}>
               <div className={styles.scannerHeader}>File Scanner</div>
               <div className={styles.tmdbGrid}>
-                {item.fileScannerMeta.filePath && (
+                {item.fileScannerMeta?.filePath && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>File</span>
                     <span className={styles.scannerPath}>{item.fileScannerMeta.filePath}</span>
                   </div>
                 )}
-                {!item.fileScannerMeta.filePath && item.fileScannerMeta.importedAt && (
+                {!item.fileScannerMeta?.filePath && item.hasPhysicalFile && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>File</span>
+                    <span className={styles.scannerPath} style={{ color: 'var(--text-muted)' }}>
+                      Tracked on disk, but the file path hasn't loaded yet.
+                    </span>
+                  </div>
+                )}
+                {!item.fileScannerMeta?.filePath && !item.hasPhysicalFile && item.fileScannerMeta?.importedAt && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Imported</span>
                     <span className={styles.scannerPath}>
@@ -1006,7 +1201,7 @@ export default function MediaDetailPage() {
                     </span>
                   </div>
                 )}
-                {item.fileScannerMeta.localPosterPath && (
+                {item.fileScannerMeta?.localPosterPath && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Poster</span>
                     <div className={styles.scannerPosterWrap}>
@@ -1019,7 +1214,7 @@ export default function MediaDetailPage() {
                     </div>
                   </div>
                 )}
-                {item.fileScannerMeta.nfoPosterUrl && (
+                {item.fileScannerMeta?.nfoPosterUrl && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>NFO</span>
                     {item.fileScannerMeta.nfoPosterUrl.startsWith('http') ? (
@@ -1166,12 +1361,10 @@ export default function MediaDetailPage() {
       </div>{/* backdropSection */}
 
       {/* Children (seasons, episodes, tracks, etc.) — sorted by number, then filename.
-          Movie collections are sorted by year ascending (oldest first).
-          For movie collections the CollectionMetadataBox already shows the children — skip. */}
+          Flat-type collections are sorted by year ascending (oldest first).
+          For flat-type collections the CollectionMetadataBox already shows the children — skip. */}
       {children.length > 0 && (() => {
-        const isMovieCollection =
-          (item.mediaTypeInternalName ?? item.mediaTypeName ?? '').toLowerCase() === 'movies' &&
-          item.hierarchyLevel === 0
+        const isMovieCollection = isFlatCollectionType && item.hierarchyLevel === 0
 
         if (isMovieCollection) return null
 
@@ -1227,6 +1420,18 @@ export default function MediaDetailPage() {
         </section>
         )
       })()}
+
+      {/* ── Additional Images: type-scoped gallery/promote modal ──────────── */}
+      {gallerySlot && (
+        <SlotGalleryModal
+          slotLabel={gallerySlot.slotLabel}
+          images={gallerySlot.images}
+          startIndex={gallerySlot.startIndex}
+          onClose={() => setGallerySlot(null)}
+          onPromote={(img) => galleryPromoteMut.mutate({ field: gallerySlot.slot, img })}
+          isPromoting={galleryPromoteMut.isPending}
+        />
+      )}
 
       {/* ── Page-level unified image lightbox ─────────────────────── */}
       {lightboxIdx !== null && (

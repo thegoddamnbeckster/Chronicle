@@ -1,3 +1,4 @@
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,6 +9,44 @@ namespace Chronicle.Data
         public ChronicleDbContext(DbContextOptions<ChronicleDbContext> options)
             : base(options)
         {
+        }
+
+        // ── NormalizedName sync ──────────────────────────────────────────────────
+        // Confirmed directly (2026-08-03): NormalizedName was populated on 1 of 40,709
+        // existing media_items rows. It was only ever set by a handful of call sites that
+        // remembered to do it (MediaService.CreateAsync, MergeService, two spots in
+        // FileScanService) out of 20+ places across the codebase that set or change a
+        // MediaItem's Name — every other call site silently left it stale or null, which
+        // is exactly why FindByTitleAsync's own NormalizedName fallback tier, and the
+        // collection-stub dedup check in MovieCollectionService, could never rely on it.
+        // Rather than track down and fix every current and future call site (an
+        // unwinnable game — the next new creation path would just reintroduce the same
+        // gap), this keeps it in sync centrally: any MediaItem that's Added or Modified
+        // gets NormalizedName recomputed from its current Name right before the write
+        // actually happens, no matter which service/controller/plugin touched it.
+        public override int SaveChanges(bool acceptAllChangesOnSuccess)
+        {
+            SyncNormalizedNames();
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        public override Task<int> SaveChangesAsync(
+            bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            SyncNormalizedNames();
+            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+
+        private void SyncNormalizedNames()
+        {
+            foreach (var entry in ChangeTracker.Entries<MediaItem>())
+            {
+                if (entry.State is not (EntityState.Added or EntityState.Modified)) continue;
+
+                var normalized = MediaItemNormalizer.NormalizeName(entry.Entity.Name);
+                if (entry.Entity.NormalizedName != normalized)
+                    entry.Entity.NormalizedName = normalized;
+            }
         }
 
         public DbSet<User> Users => Set<User>();

@@ -49,6 +49,31 @@
 
 .textarea { resize: vertical; }
 
+.urlRow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.urlRow .input { flex: 1; }
+
+.lookupBtn {
+  flex-shrink: 0;
+  padding: 0 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.15s;
+  white-space: nowrap;
+}
+
+.lookupBtn:hover:not(:disabled) { border-color: var(--accent); }
+.lookupBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+
 .error {
   font-size: 13px;
   color: var(--danger);

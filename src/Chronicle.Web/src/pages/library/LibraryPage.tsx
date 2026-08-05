@@ -580,6 +580,13 @@ export default function LibraryPage() {
                     </Link>
                   )}
                   <div className={styles.info}>
+                    {/* A tracked episode/season's own name is often a generic code (e.g.
+                        "S01E01") that's meaningless without knowing which show it's from --
+                        ancestors[0] is the root show, so show it as a prefix line whenever
+                        this entry is anything other than a standalone root-level item. */}
+                    {entry.mediaItem.ancestors && entry.mediaItem.ancestors.length > 0 && (
+                      <div className={styles.showName}>{entry.mediaItem.ancestors[0].name}</div>
+                    )}
                     {selectMode ? (
                       <div className={styles.name}>{entry.mediaItem.name}</div>
                     ) : (

@@ -25,13 +25,14 @@ namespace Chronicle.API.Controllers
         private readonly IPluginRegistry _pluginRegistry;
         private readonly Chronicle.Services.Scan.NfoDetailParser _nfoDetailParser;
         private readonly IMetadataResolutionService _resolutionService;
+        private readonly OverrideResetProgressService _overrideResetProgress;
 
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
             IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
             ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
             IPluginRegistry pluginRegistry, Chronicle.Services.Scan.NfoDetailParser nfoDetailParser,
-            IMetadataResolutionService resolutionService)
+            IMetadataResolutionService resolutionService, OverrideResetProgressService overrideResetProgress)
         {
             _mediaService            = mediaService;
             _fileScanService         = fileScanService;
@@ -43,6 +44,7 @@ namespace Chronicle.API.Controllers
             _mergeService    = mergeService;
             _nfoDetailParser = nfoDetailParser;
             _resolutionService = resolutionService;
+            _overrideResetProgress = overrideResetProgress;
         }
 
         [HttpGet("types")]
@@ -68,7 +70,8 @@ namespace Chronicle.API.Controllers
                 request.PosterUrl,
                 request.RuntimeMinutes,
                 request.HierarchyLevel,
-                request.Number
+                request.Number,
+                request.IsCollection
             ));
 
             return CreatedAtAction(nameof(GetById), new { id = item.Id },
@@ -385,6 +388,168 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
+        /// Pins a manually-chosen value for one canonical field (e.g. "poster_url") on this
+        /// item — it wins over the plugin-priority resolution walk in every future
+        /// Refresh/Clear-Match/sync/merge, until explicitly cleared. Returns the fully
+        /// re-resolved item so the caller can update its cache without a follow-up GET.
+        /// </summary>
+        [HttpPut("{id:int}/overrides/{field}")]
+        public async Task<IActionResult> SetOverride(
+            int id, string field, [FromBody] SetMediaOverrideRequest request, CancellationToken ct)
+        {
+            var item = await _context.MediaItems
+                .Include(m => m.MediaType).Include(m => m.ExternalIds).Include(m => m.Aliases)
+                .FirstOrDefaultAsync(m => m.Id == id, ct);
+            if (item is null)
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+            if (!_resolutionService.GetCanonicalFields().Contains(field))
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("INVALID_FIELD", $"'{field}' is not an assignable field."));
+
+            try
+            {
+                await _resolutionService.SetOverrideAsync(
+                    item, _context, field, request.Url, request.SourcePluginId, request.SourceType,
+                    GetCurrentUserId(), ct);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("INVALID_FIELD", ex.Message));
+            }
+
+            item.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
+        }
+
+        /// <summary>Clears one field's override on this item (idempotent). Returns the re-resolved item.</summary>
+        [HttpDelete("{id:int}/overrides/{field}")]
+        public async Task<IActionResult> ClearOverride(int id, string field, CancellationToken ct)
+        {
+            var item = await _context.MediaItems
+                .Include(m => m.MediaType).Include(m => m.ExternalIds).Include(m => m.Aliases)
+                .FirstOrDefaultAsync(m => m.Id == id, ct);
+            if (item is null)
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+            await _resolutionService.ClearOverrideAsync(item, _context, field, ct);
+            item.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
+        }
+
+        /// <summary>Clears every override on this item. Returns the re-resolved item.</summary>
+        [HttpDelete("{id:int}/overrides")]
+        public async Task<IActionResult> ClearAllOverrides(int id, CancellationToken ct)
+        {
+            var item = await _context.MediaItems
+                .Include(m => m.MediaType).Include(m => m.ExternalIds).Include(m => m.Aliases)
+                .FirstOrDefaultAsync(m => m.Id == id, ct);
+            if (item is null)
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+            await _resolutionService.ClearItemOverridesAsync(item, _context, ct);
+            item.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
+        }
+
+        /// <summary>
+        /// Clears every image/field override for every item of the given media type. The
+        /// library can be large (tens of thousands of items), so this runs as a background
+        /// job — poll GET /media/overrides/reset-progress for status. 409 if one is already running.
+        /// </summary>
+        [HttpPost("overrides/reset-media-type/{mediaTypeId:int}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> ResetOverridesForMediaType(int mediaTypeId, CancellationToken ct)
+        {
+            if (_overrideResetProgress.GetSnapshot().IsRunning)
+                return Conflict(ApiResponse<object>.Fail("OVERRIDE_RESET_RUNNING", "An override reset is already in progress."));
+
+            var mediaType = await _context.MediaTypes.FindAsync([mediaTypeId], ct);
+            if (mediaType is null)
+                return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", $"Media type {mediaTypeId} not found."));
+
+            var typeName = mediaType.Name;
+            _overrideResetProgress.Start($"media type '{mediaType.DisplayName}'");
+
+            // Safe to run after this request completes — ClearOverridesForMediaTypeAsync
+            // re-scopes its own DbContext internally per batch (same pattern already
+            // established by ResolveAllForMediaTypeAsync, see SettingsController).
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _resolutionService.ClearOverridesForMediaTypeAsync(typeName,
+                        (processed, cleared) => _overrideResetProgress.UpdateProgress(processed, cleared),
+                        CancellationToken.None);
+                    _overrideResetProgress.Complete();
+                }
+                catch (Exception ex)
+                {
+                    _overrideResetProgress.Fail(ex.Message);
+                }
+            }, CancellationToken.None);
+
+            return Accepted(ApiResponse<object>.Ok(new { started = true }));
+        }
+
+        /// <summary>
+        /// Clears every image/field override across the entire library. Requires the literal
+        /// confirmation token "RESET" (same convention as LibraryController's NuclearReset).
+        /// Runs as a background job — poll GET /media/overrides/reset-progress for status.
+        /// </summary>
+        [HttpPost("overrides/reset-all")]
+        [Authorize(Roles = "Admin")]
+        public IActionResult ResetAllOverrides([FromBody] NuclearResetRequestDto request)
+        {
+            if (request.ConfirmationToken != "RESET")
+                return BadRequest(ApiResponse<object>.Fail("INVALID_TOKEN", "Confirmation token must be exactly 'RESET'."));
+
+            if (_overrideResetProgress.GetSnapshot().IsRunning)
+                return Conflict(ApiResponse<object>.Fail("OVERRIDE_RESET_RUNNING", "An override reset is already in progress."));
+
+            _overrideResetProgress.Start("entire library");
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _resolutionService.ClearAllOverridesLibraryWideAsync(
+                        (processed, cleared) => _overrideResetProgress.UpdateProgress(processed, cleared),
+                        CancellationToken.None);
+                    _overrideResetProgress.Complete();
+                }
+                catch (Exception ex)
+                {
+                    _overrideResetProgress.Fail(ex.Message);
+                }
+            }, CancellationToken.None);
+
+            return Accepted(ApiResponse<object>.Ok(new { started = true }));
+        }
+
+        /// <summary>Polls the state of the current (or most recent) bulk override reset job.</summary>
+        [HttpGet("overrides/reset-progress")]
+        [AllowAnonymous]
+        public IActionResult GetOverrideResetProgress()
+        {
+            var s = _overrideResetProgress.GetSnapshot();
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                isRunning = s.IsRunning,
+                isComplete = s.IsComplete,
+                scope = s.Scope,
+                processed = s.Processed,
+                cleared = s.Cleared,
+                error = s.Error,
+            }));
+        }
+
+        /// <summary>
         /// Suppresses auto-matching for a specific provider by storing a sentinel external ID.
         /// The metadata refresh service will skip this item for that provider permanently.
         /// Use ClearExternalId (DELETE) to un-suppress and allow auto-matching again.
@@ -512,9 +677,9 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
-        /// Manually places a standalone movie/fanedit/anime item into an existing collection
-        /// container. Admin only. The caller picks the target explicitly (via the collection's
-        /// own page) rather than this being auto-detected from plugin metadata.
+        /// Manually places a standalone item of any media type into an existing collection
+        /// container of the same type. Admin only. The caller picks the target explicitly (via
+        /// the collection's own page) rather than this being auto-detected from plugin metadata.
         /// </summary>
         [HttpPost("{id:int}/reparent")]
         [Authorize(Roles = "Admin")]
@@ -539,24 +704,29 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
-        /// Every Level-0 movie-like item that already has at least one child — i.e. every
-        /// real collection container, for the "Add Movie Collection" management page.
+        /// Every Level-0 item that already has at least one child — i.e. every real collection
+        /// container, for the "Add Collection" management page. Scoped to flat media types
+        /// (HierarchyLevels == 1) — movies, fanedits, anime_movies, and any other flat type the
+        /// operator has configured. Types with a natural multi-level hierarchy (TV Show/Season/
+        /// Episode, Music Artist/Album/Track, or "anime" itself) are excluded — their Level-0
+        /// items having children is normal structure, not an ad-hoc collection grouping.
         /// </summary>
         [HttpGet("collections")]
         public async Task<IActionResult> GetCollections(CancellationToken ct)
         {
-            var movieLikeTypeIds = await _context.MediaTypes
-                .Where(t => t.Name == "movies" || t.Name == "fanedits" || t.Name == "anime")
+            var flatTypeIds = await _context.MediaTypes
+                .Where(t => t.HierarchyLevels == 1)
                 .Select(t => t.Id)
                 .ToListAsync(ct);
 
             var collections = await _context.MediaItems
-                .Where(m => m.HierarchyLevel == 0 && movieLikeTypeIds.Contains(m.MediaTypeId)
+                .Where(m => m.HierarchyLevel == 0 && flatTypeIds.Contains(m.MediaTypeId)
                     && _context.MediaItems.Any(c => c.ParentId == m.Id))
                 .OrderBy(m => m.Name)
                 .Select(m => new CollectionSummaryDto(
                     m.Id, m.Name, m.PosterUrl,
-                    _context.MediaItems.Count(c => c.ParentId == m.Id)))
+                    _context.MediaItems.Count(c => c.ParentId == m.Id),
+                    m.MediaTypeId))
                 .ToListAsync(ct);
 
             return Ok(ApiResponse<List<CollectionSummaryDto>>.Ok(collections));
@@ -681,8 +851,8 @@ namespace Chronicle.API.Controllers
                             RuntimeMinutes: TryGetInt(r,    "runtimeMinutes"),
                             Rating:         TryGetDouble(r, "rating"),
                             Genres:         TryGetStringList(r, "genres"),
-                            Cast:           TryGetStringList(r, "cast"),
-                            Directors:      TryGetStringList(r, "directors"),
+                            Cast:           TryGetCastList(r, "cast"),
+                            Crew:           TryGetCrewList(r, "crew"),
                             Tags:           TryGetStringList(r, "tags"),
                             Composer:       TryGetString(r, "composer"),
                             Label:          TryGetString(r, "label"),
@@ -693,11 +863,44 @@ namespace Chronicle.API.Controllers
                             LogoUrl:        TryGetString(r, "logoUrl"),
                             BannerUrl:      TryGetString(r, "bannerUrl"),
                             ClearartUrl:    TryGetString(r, "clearartUrl"),
-                            DiscUrl:        TryGetString(r, "discUrl")
+                            DiscUrl:        TryGetString(r, "discUrl"),
+                            CharacterArtUrl: TryGetString(r, "characterArtUrl"),
+                            ThumbUrl:       TryGetString(r, "thumbUrl")
                         );
                     }
                 }
                 catch { /* malformed JSON — leave resolvedMetadata null */ }
+            }
+
+            Dictionary<string, MediaOverrideDto>? overrides = null;
+            if (!string.IsNullOrEmpty(m.MetadataJson))
+            {
+                try
+                {
+                    using var overridesDoc = System.Text.Json.JsonDocument.Parse(m.MetadataJson);
+                    if (overridesDoc.RootElement.TryGetProperty("_overrides", out var ov) &&
+                        ov.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    {
+                        foreach (var prop in ov.EnumerateObject())
+                        {
+                            if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                            var url = TryGetString(prop.Value, "url");
+                            if (string.IsNullOrEmpty(url)) continue;
+                            overrides ??= new Dictionary<string, MediaOverrideDto>(StringComparer.OrdinalIgnoreCase);
+                            overrides[prop.Name] = new MediaOverrideDto(
+                                Url:            url,
+                                SourcePluginId: TryGetString(prop.Value, "sourcePluginId"),
+                                SourceType:     TryGetString(prop.Value, "sourceType"),
+                                PinnedAt:       prop.Value.TryGetProperty("pinnedAt", out var pa) &&
+                                                pa.ValueKind == System.Text.Json.JsonValueKind.String &&
+                                                DateTime.TryParse(pa.GetString(), out var pinnedAt)
+                                                    ? pinnedAt : default,
+                                PinnedByUserId: TryGetInt(prop.Value, "pinnedByUserId")
+                            );
+                        }
+                    }
+                }
+                catch { /* malformed JSON — leave overrides null */ }
             }
 
             // Exclude episode-title aliases (e.g. "Show S01E03 - Title") — these are never
@@ -740,7 +943,8 @@ namespace Chronicle.API.Controllers
                 HasMetadataOnly: hasMetadataOnly,
                 ResolvedMetadata: resolvedMetadata,
                 Aliases: aliases,
-                MergeHistory: mergeHistory
+                MergeHistory: mergeHistory,
+                Overrides: overrides
             );
         }
 
@@ -758,9 +962,9 @@ namespace Chronicle.API.Controllers
 
         private static bool IsMovieLikeTypeName(string? name) =>
             name is not null &&
-            (name.Equals("movies",   StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("fanedits", StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("anime",    StringComparison.OrdinalIgnoreCase));
+            (name.Equals("movies",       StringComparison.OrdinalIgnoreCase) ||
+             name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
+             name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
 
         private static double? TryGetDouble(System.Text.Json.JsonElement el, string key) =>
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
@@ -774,6 +978,41 @@ namespace Chronicle.API.Controllers
                 .Where(x => x.ValueKind == System.Text.Json.JsonValueKind.String)
                 .Select(x => x.GetString()!)
                 .ToList();
+            return list.Count > 0 ? list : null;
+        }
+
+        /// <summary>Parses a "cast" array of {name, role} objects (see ScraperController's
+        /// identical TryGetCastList -- kept as a separate copy since this controller already
+        /// hand-rolls its own JsonElement helpers rather than sharing ScraperController's).</summary>
+        private static List<Chronicle.API.DTOs.CastMemberDto>? TryGetCastList(System.Text.Json.JsonElement el, string key)
+        {
+            if (!el.TryGetProperty(key, out var v) || v.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return null;
+            var list = new List<Chronicle.API.DTOs.CastMemberDto>();
+            foreach (var item in v.EnumerateArray())
+            {
+                if (item.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                var name = TryGetString(item, "name");
+                if (string.IsNullOrEmpty(name)) continue;
+                list.Add(new Chronicle.API.DTOs.CastMemberDto(name, TryGetString(item, "role")));
+            }
+            return list.Count > 0 ? list : null;
+        }
+
+        /// <summary>Parses a "crew" array of {name, job} objects (see ScraperController's
+        /// identical TryGetCrewList).</summary>
+        private static List<Chronicle.API.DTOs.CrewMemberDto>? TryGetCrewList(System.Text.Json.JsonElement el, string key)
+        {
+            if (!el.TryGetProperty(key, out var v) || v.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return null;
+            var list = new List<Chronicle.API.DTOs.CrewMemberDto>();
+            foreach (var item in v.EnumerateArray())
+            {
+                if (item.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                var name = TryGetString(item, "name");
+                if (string.IsNullOrEmpty(name)) continue;
+                list.Add(new Chronicle.API.DTOs.CrewMemberDto(name, TryGetString(item, "job")));
+            }
             return list.Count > 0 ? list : null;
         }
 
@@ -947,8 +1186,10 @@ namespace Chronicle.API.Controllers
         // "fileScanner" is the only first-class key — it gets its own typed DTO field.
         // All plugin metadata (TMDB, MusicBrainz, etc.) flows through PluginMetadata
         // keyed by full plugin ID, so Chronicle never needs to know any plugin's data shape.
+        // "_resolved"/"_overrides" are reserved, resolver-owned keys (see
+        // MetadataResolutionService) — never plugin data, so both are excluded here too.
         private static readonly HashSet<string> _firstClassKeys =
-            new(StringComparer.OrdinalIgnoreCase) { "fileScanner", "_resolved" };
+            new(StringComparer.OrdinalIgnoreCase) { "fileScanner", "_resolved", "_overrides" };
 
         private static readonly System.Text.Json.JsonSerializerOptions _jsonOpts =
             new(System.Text.Json.JsonSerializerDefaults.Web);
@@ -1219,20 +1460,21 @@ namespace Chronicle.API.Controllers
             if (item is null)
                 return NotFound(ApiResponse<CollectionDto>.Fail("MEDIA_NOT_FOUND", "Media item not found."));
 
-            // Resolve collection: if item IS a collection container (Level 0, movies type, has children)
-            // use it directly; if item is a movie within a collection (Level 1) use its parent.
-            // A Level-0 movie with no children is a standalone film — return 404 (no collection).
+            // Resolve collection: if item IS a collection container (Level 0, flat media type, has
+            // children) use it directly; if item is a member within a collection (Level 1, parent
+            // is a flat media type) use its parent. A Level-0 item with no children is standalone
+            // — return 404 (no collection).
             MediaItem? collectionItem = null;
-            bool isMoviesType = IsMovieLikeTypeName(item.MediaType?.Name);
+            bool isFlatType = item.MediaType?.HierarchyLevels == 1;
 
-            if (isMoviesType && item.HierarchyLevel == 0)
+            if (isFlatType && item.HierarchyLevel == 0)
             {
-                // Only treat as a collection container if it actually has movie children.
+                // Only treat as a collection container if it actually has children.
                 bool hasChildren = await _context.MediaItems.AnyAsync(m => m.ParentId == item.Id, ct);
                 if (hasChildren)
                     collectionItem = item;
             }
-            else if (isMoviesType && item.HierarchyLevel == 1 && item.Parent is not null)
+            else if (item.HierarchyLevel == 1 && item.Parent is not null && item.Parent.MediaType?.HierarchyLevels == 1)
             {
                 collectionItem = item.Parent;
             }
@@ -1257,11 +1499,12 @@ namespace Chronicle.API.Controllers
 
             var dto = new CollectionDto
             {
-                Id        = collectionItem.Id,
-                Name      = collectionItem.Name,
-                PosterUrl = collectionItem.PosterUrl,
-                Overview  = collectionItem.Overview,
-                Movies    = members.Select(m => new CollectionMemberDto
+                Id              = collectionItem.Id,
+                Name            = collectionItem.Name,
+                PosterUrl       = collectionItem.PosterUrl,
+                Overview        = collectionItem.Overview,
+                SupportsRebuild = IsMovieLikeTypeName(collectionItem.MediaType?.Name),
+                Movies          = members.Select(m => new CollectionMemberDto
                 {
                     Id            = m.Id,
                     Name          = m.Name,

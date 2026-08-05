@@ -27,10 +27,12 @@ namespace Chronicle.API.Controllers;
 public class DeviceAuthController : ControllerBase
 {
     private readonly IDeviceAuthService _deviceAuth;
+    private readonly ILogger<DeviceAuthController> _log;
 
-    public DeviceAuthController(IDeviceAuthService deviceAuth)
+    public DeviceAuthController(IDeviceAuthService deviceAuth, ILogger<DeviceAuthController> log)
     {
         _deviceAuth = deviceAuth;
+        _log        = log;
     }
 
     // ── Device-side (no auth required) ────────────────────────────────────────
@@ -40,18 +42,41 @@ public class DeviceAuthController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Initiate([FromBody] InitiateDeviceAuthRequestDto? request)
     {
-        var baseUrl = GetBaseUrl();
-        var result  = await _deviceAuth.InitiateAsync(request?.DeviceName, baseUrl);
+        // Deliberately verbose: device-auth is the one flow where "did the request even
+        // arrive" matters more than usual (Kodi add-ons on LAN devices, intermittent
+        // network issues that are otherwise invisible from the server side). Kept
+        // permanently, not a temporary diagnostic.
+        _log.LogInformation(
+            "DeviceAuth.Initiate: request received — RemoteIp={RemoteIp} XForwardedFor={XFwd} " +
+            "Host={Host} UserAgent={UserAgent} ContentType={ContentType} DeviceName={DeviceName}",
+            HttpContext.Connection.RemoteIpAddress, Request.Headers["X-Forwarded-For"].ToString(),
+            Request.Host, Request.Headers.UserAgent.ToString(), Request.ContentType, request?.DeviceName);
 
-        var dto = new InitiateDeviceAuthResponseDto(
-            result.Code,
-            result.DisplayCode,
-            result.VerificationUrl,
-            $"{baseUrl.TrimEnd('/')}/api/v1/auth/device/{result.Code}/qr",
-            result.ExpiresAt,
-            result.ExpiresInSeconds);
+        try
+        {
+            var baseUrl = GetBaseUrl();
+            var result  = await _deviceAuth.InitiateAsync(request?.DeviceName, baseUrl);
 
-        return Ok(ApiResponse<InitiateDeviceAuthResponseDto>.Ok(dto));
+            var dto = new InitiateDeviceAuthResponseDto(
+                result.Code,
+                result.DisplayCode,
+                result.VerificationUrl,
+                $"{baseUrl.TrimEnd('/')}/api/v1/auth/device/{result.Code}/qr",
+                result.ExpiresAt,
+                result.ExpiresInSeconds);
+
+            _log.LogInformation(
+                "DeviceAuth.Initiate: succeeded — Code={Code} BaseUrl={BaseUrl} VerificationUrl={VerificationUrl}",
+                result.Code, baseUrl, result.VerificationUrl);
+
+            return Ok(ApiResponse<InitiateDeviceAuthResponseDto>.Ok(dto));
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "DeviceAuth.Initiate: threw an exception — RemoteIp={RemoteIp}",
+                HttpContext.Connection.RemoteIpAddress);
+            throw;
+        }
     }
 
     /// <summary>Poll for approval. Called every ~5 seconds by the Kodi addon.</summary>
@@ -59,8 +84,14 @@ public class DeviceAuthController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Poll(string code)
     {
+        _log.LogInformation("DeviceAuth.Poll: Code={Code} RemoteIp={RemoteIp} UserAgent={UserAgent}",
+            code, HttpContext.Connection.RemoteIpAddress, Request.Headers.UserAgent.ToString());
+
         var result = await _deviceAuth.PollAsync(code);
         var dto    = new PollDeviceAuthResponseDto(result.Status, result.ApiKey);
+
+        _log.LogInformation("DeviceAuth.Poll: Code={Code} Status={Status}", code, result.Status);
+
         return Ok(ApiResponse<PollDeviceAuthResponseDto>.Ok(dto));
     }
 
@@ -69,9 +100,15 @@ public class DeviceAuthController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetQr(string code)
     {
+        _log.LogInformation("DeviceAuth.GetQr: Code={Code} RemoteIp={RemoteIp}",
+            code, HttpContext.Connection.RemoteIpAddress);
+
         var url = await _deviceAuth.GetVerificationUrlAsync(code, GetBaseUrl());
         if (url is null)
+        {
+            _log.LogWarning("DeviceAuth.GetQr: Code={Code} not found", code);
             return NotFound();
+        }
 
         using var generator = new QRCodeGenerator();
         var data   = generator.CreateQrCode(url, QRCodeGenerator.ECCLevel.M);

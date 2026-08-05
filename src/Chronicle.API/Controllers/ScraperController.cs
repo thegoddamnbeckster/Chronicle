@@ -66,9 +66,9 @@ public class ScraperController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active 'movies' media type is configured."));
 
         var candidates = await _context.MediaItems
-            .Where(m => m.MediaTypeId == movieTypeId && m.HierarchyLevel <= 1 && (!year.HasValue || m.Year == year))
+            .Where(m => m.MediaTypeId == movieTypeId && m.HierarchyLevel <= 1)
             .ToListAsync(ct);
-        var existing = FindByNormalizedTitle(candidates, title);
+        var existing = FindByNormalizedTitle(candidates, title, year);
 
         var item = await ResolveOrCreateAsync(existing, movieTypeId, title, year, ct);
         if (item is null)
@@ -90,6 +90,45 @@ public class ScraperController : ControllerBase
             year      = resolved?.Year ?? item.Year,
             posterUrl,
         }));
+    }
+
+    /// <summary>
+    /// Chronicle_Scraper calls this after it resolves a movie's real folder/file the "slow"
+    /// way -- title+year matching against Kodi's own VideoLibrary or source browsing --
+    /// because this item has no fileScanner record for KnownFileName to have short-circuited
+    /// that search. Persists the discovered filename so it becomes a verified, known fact for
+    /// every future request: the fuzzy fallback only ever has to run once per item, not on
+    /// every single scrape. Deliberately a separate "scraperResolvedFile" key rather than
+    /// writing into "fileScanner" itself -- that key carries broader meaning elsewhere
+    /// (MetadataContributionService, LibraryService's hierarchy-import detection) that a
+    /// scraper-side discovery shouldn't masquerade as.
+    /// </summary>
+    public sealed record ResolvedFileRequest(string FileName);
+
+    [HttpPost("movies/{id:int}/resolved-file")]
+    public async Task<IActionResult> ReportResolvedFile(int id, [FromBody] ResolvedFileRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.FileName))
+            return BadRequest(ApiResponse<object>.Fail("FILENAME_REQUIRED", "fileName is required."));
+
+        var item = await _context.MediaItems.FindAsync([id], ct);
+        if (item is null)
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+        var root = System.Text.Json.Nodes.JsonNode.Parse(
+            string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson)!.AsObject();
+        root["scraperResolvedFile"] = new System.Text.Json.Nodes.JsonObject
+        {
+            ["fileName"]   = request.FileName,
+            ["resolvedAt"] = DateTime.UtcNow.ToString("O"),
+        };
+        item.MetadataJson = root.ToJsonString();
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "scraper/movies/{ItemId}/resolved-file: recorded {FileName} -- future requests won't need to re-search for this item",
+            id, request.FileName);
+        return Ok(ApiResponse<object>.Ok(new { }));
     }
 
     /// <summary>Kodi's "getdetails" step for movies: the full richness Chronicle has for this item.</summary>
@@ -182,9 +221,9 @@ public class ScraperController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active 'tv' media type is configured."));
 
         var showCandidates = await _context.MediaItems
-            .Where(m => m.MediaTypeId == tvTypeId && m.HierarchyLevel == 0 && (!year.HasValue || m.Year == year))
+            .Where(m => m.MediaTypeId == tvTypeId && m.HierarchyLevel == 0)
             .ToListAsync(ct);
-        var item = FindByNormalizedTitle(showCandidates, title);
+        var item = FindByNormalizedTitle(showCandidates, title, year);
 
         item = await ResolveOrCreateAsync(item, tvTypeId, title, year, ct);
         if (item is null)
@@ -338,19 +377,140 @@ public class ScraperController : ControllerBase
     /// which is unspecified without an explicit ORDER BY and was intermittently landing on
     /// the empty stub, dropping the overview/cast/etc. for titles that already had every bit
     /// of that data on a different, older row.
+    ///
+    /// Year matching is tiered, not exact-only -- confirmed directly (2026-08-04) that the
+    /// caller's SQL query used to hard-filter candidates to `m.Year == year` BEFORE they ever
+    /// reached this method, so a real, already-enriched item (e.g. "2 Lava 2 Lantula!",
+    /// scanned with Year=2016 from its own file) was invisible to a search for the same movie
+    /// under a different year (Kodi sends 2017, parsed from its folder name) -- title matched
+    /// perfectly, but the year filter excluded it from `candidates` entirely, so a brand-new
+    /// empty duplicate got created instead. Confirmed this had already happened repeatedly
+    /// (three separate duplicate rows for the same movie, created on three different scrape
+    /// attempts).
+    ///
+    /// The second tier resolves this the same way a human would: not by guessing ("years are
+    /// close enough"), but by checking Chronicle's own recorded fileScanner.folderPath -- the
+    /// exact folder name Chronicle's file scanner saw, which is the SAME folder name Kodi
+    /// itself parses its search year from (Kodi's useFolderNames setting). If the year embedded
+    /// in that recorded folder name matches what Kodi sent, this is verifiably the same file on
+    /// disk, not a heuristic guess -- Kodi's search year and Chronicle's on-record folder year
+    /// both trace back to the identical folder name. A year mismatch beyond what the recorded
+    /// path itself confirms still refuses to match (could be a genuinely different film, e.g. a
+    /// same-titled remake) and falls through to creating a new item, same as before.
     /// </summary>
-    private static MediaItem? FindByNormalizedTitle(List<MediaItem> candidates, string title)
+    private static MediaItem? FindByNormalizedTitle(List<MediaItem> candidates, string title, int? year = null)
     {
         var target = NormalizeTitle(title);
         if (target.Length == 0) return null;
-        return candidates
-            .Where(m => NormalizeTitle(m.Name) == target)
-            .OrderByDescending(m => m.MetadataJson?.Length ?? 0)
-            .FirstOrDefault();
+
+        var titleMatches = candidates.Where(m => NormalizeTitle(m.Name) == target).ToList();
+        if (titleMatches.Count == 0) return null;
+
+        static MediaItem? Richest(IEnumerable<MediaItem> pool) =>
+            pool.OrderByDescending(m => m.MetadataJson?.Length ?? 0).FirstOrDefault();
+
+        if (!year.HasValue)
+            return Richest(titleMatches);
+
+        return Richest(titleMatches.Where(m => m.Year == year))
+            ?? Richest(titleMatches.Where(m => TryGetScannedFolderYear(m.MetadataJson) == year))
+            ?? Richest(titleMatches.Where(m => !m.Year.HasValue && TryGetScannedFolderYear(m.MetadataJson) is null));
     }
 
-    private static string NormalizeTitle(string? text) =>
-        text is null ? "" : new string(text.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+    // Matches a trailing "(YYYY)"/"[YYYY]" in a folder name -- same convention Kodi's own
+    // useFolderNames year parsing and _trailingYearRe (this file) both already rely on.
+    private static readonly System.Text.RegularExpressions.Regex _folderYearRe =
+        new(@"[\(\[](\d{4})[\)\]]\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Extracts the year embedded in this item's own fileScanner.folderPath, if it was ever
+    /// scanned from disk -- the same folder name Kodi's search year came from, so this is a
+    /// verified fact about the actual file, not a re-derived guess. Null if the item has no
+    /// file-scanner record, or its folder name carries no year.
+    /// </summary>
+    private static int? TryGetScannedFolderYear(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (!doc.RootElement.TryGetProperty("fileScanner", out var fs) || fs.ValueKind != JsonValueKind.Object)
+                return null;
+            var folderPath = TryGetString(fs, "folderPath");
+            if (string.IsNullOrEmpty(folderPath)) return null;
+            var folderName = folderPath.TrimEnd('\\', '/').Split('\\', '/').LastOrDefault();
+            if (string.IsNullOrEmpty(folderName)) return null;
+            var m = _folderYearRe.Match(folderName);
+            return m.Success && int.TryParse(m.Groups[1].Value, out var y) ? y : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Extracts the real video file's own basename (with extension) from this item's
+    /// fileScanner.filePaths, if it was ever scanned from disk. This is what
+    /// ScraperMovieDetailsDto.KnownFileName exposes to Chronicle_Scraper -- see that field's
+    /// own doc comment for why a verified filename beats re-deriving the location from title
+    /// and year.
+    /// </summary>
+    private static string? TryGetScannedFileName(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+
+            // Prefer the real file scanner's own record when this item has one -- it's the
+            // higher-confidence source (a full directory scan, not a single search-time guess).
+            if (doc.RootElement.TryGetProperty("fileScanner", out var fs) && fs.ValueKind == JsonValueKind.Object
+                && fs.TryGetProperty("filePaths", out var paths) && paths.ValueKind == JsonValueKind.Array)
+            {
+                var first = paths.EnumerateArray().FirstOrDefault();
+                if (first.ValueKind == JsonValueKind.String)
+                {
+                    var path = first.GetString();
+                    var name = string.IsNullOrEmpty(path) ? null : path.Split('\\', '/').LastOrDefault();
+                    if (!string.IsNullOrEmpty(name)) return name;
+                }
+            }
+
+            // Fall back to whatever Chronicle_Scraper itself previously discovered and
+            // reported back via POST .../resolved-file -- see that endpoint's doc comment.
+            if (doc.RootElement.TryGetProperty("scraperResolvedFile", out var srf) && srf.ValueKind == JsonValueKind.Object)
+                return TryGetString(srf, "fileName");
+
+            return null;
+        }
+        catch { return null; }
+    }
+
+    // Strips a trailing "(YYYY)"/"[YYYY]" year annotation before tokenizing -- year is already
+    // matched separately via the caller's candidates.Year filter, and different sources
+    // (Kodi's folder name vs. a prior TMDB-sourced stub) don't consistently fold it into the
+    // title string itself.
+    private static readonly System.Text.RegularExpressions.Regex _trailingYearRe =
+        new(@"\s*[\(\[]\d{4}[\)\]]\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Tokenizes into words, sorts them, and rejoins -- makes the match independent of word
+    /// ORDER as well as punctuation/case. Confirmed necessary directly (2026-08-03): the same
+    /// real movie existed in the library as both "Jason Lives - Friday the 13th Part VI" (an
+    /// earlier TMDB-collection-sourced stub) and "Friday the 13th Part VI - Jason Lives (1986)"
+    /// (a later file-scanner import using a differently-ordered folder name). The previous
+    /// concatenate-and-compare version treated these as two different movies -- same letters,
+    /// different order -- and silently created a duplicate instead of matching the existing
+    /// item, which is exactly the kind of duplicate Kodi's own "movie set" view can't reconcile.
+    /// Sorting the word tokens makes both resolve to the same signature regardless of order.
+    /// </summary>
+    private static string NormalizeTitle(string? text)
+    {
+        if (text is null) return "";
+        var stripped = _trailingYearRe.Replace(text, "");
+        var words = System.Text.RegularExpressions.Regex.Matches(stripped, "[A-Za-z0-9]+")
+            .Select(m => m.Value.ToLowerInvariant())
+            .OrderBy(w => w, StringComparer.Ordinal);
+        return string.Join(' ', words);
+    }
 
     // ── DTO builders ─────────────────────────────────────────────────────────
 
@@ -372,13 +532,14 @@ public class ScraperController : ControllerBase
             RuntimeMinutes: core?.RuntimeMinutes ?? item.RuntimeMinutes,
             Genres:         core?.Genres,
             Cast:           core?.Cast,
-            Directors:      core?.Directors,
+            Crew:           core?.Crew,
             Tags:           core?.Tags,
             Ratings:        CollectRatings(root),
             TrailerUrl:     FirstExtended(root, ext => TryGetString(ext, "trailer")),
             ExternalIds:    CollectExternalIds(root),
             Artwork:        CollectArtwork(root, core),
-            Collection:     collection
+            Collection:     collection,
+            KnownFileName:  TryGetScannedFileName(item.MetadataJson)
         );
     }
 
@@ -398,8 +559,10 @@ public class ScraperController : ControllerBase
             Country:    FirstExtended(root, ext => TryGetString(ext, "country")),
             Studio:     FirstExtended(root, ext => TryGetString(ext, "network")),
             Status:     FirstExtended(root, ext => TryGetString(ext, "status")),
+            RuntimeMinutes: core?.RuntimeMinutes,
             Genres:     core?.Genres,
             Cast:       core?.Cast,
+            Crew:       core?.Crew,
             Tags:       core?.Tags,
             Ratings:    CollectRatings(root),
             TrailerUrl: FirstExtended(root, ext => TryGetString(ext, "trailer")),
@@ -422,7 +585,7 @@ public class ScraperController : ControllerBase
             Episode:     item.Number ?? 0,
             Year:        core?.Year ?? item.Year,
             Cast:        core?.Cast,
-            Directors:   core?.Directors,
+            Crew:        core?.Crew,
             Ratings:     CollectRatings(root),
             ThumbUrl:    core?.PosterUrl ?? item.PosterUrl,
             ExternalIds: CollectExternalIds(root)
@@ -536,6 +699,23 @@ public class ScraperController : ControllerBase
             var source = TryGetString(partition, "source") ?? "unknown";
             foreach (var (field, artType) in ArtworkFieldMap)
                 Add(artType, TryGetString(partition, field), source);
+
+            // Lossless ingestion (see Chronicle/CLAUDE.md): a provider's single first-class
+            // field per type (posterUrl, backdropUrl, ...) is only ever its own top pick --
+            // AdditionalImages is where a provider like Fanart.tv preserves every OTHER
+            // candidate it actually has for that type. Surface those here too, tagged with
+            // the same art-type strings, so Kodi's "Choose Art" picker sees the full set
+            // this provider returned, not just the one entry ArtworkFieldMap covers.
+            if (partition.TryGetProperty("additionalImages", out var images) && images.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var img in images.EnumerateArray())
+                {
+                    var artType = TryGetString(img, "type");
+                    var url     = TryGetString(img, "url");
+                    if (!string.IsNullOrEmpty(artType) && !string.IsNullOrEmpty(url))
+                        Add(artType, url, source);
+                }
+            }
         }
 
         return result.Count > 0 ? result : null;
@@ -545,8 +725,8 @@ public class ScraperController : ControllerBase
 
     private sealed record ResolvedCore(
         string? Title, string? Overview, int? Year, string? PosterUrl, string? BackdropUrl,
-        int? RuntimeMinutes, double? Rating, List<string>? Genres, List<string>? Cast,
-        List<string>? Directors, List<string>? Tags, string? LogoUrl, string? BannerUrl,
+        int? RuntimeMinutes, double? Rating, List<string>? Genres, List<CastMemberDto>? Cast,
+        List<CrewMemberDto>? Crew, List<string>? Tags, string? LogoUrl, string? BannerUrl,
         string? ClearartUrl, string? DiscUrl, string? CharacterArtUrl);
 
     private static ResolvedCore? ParseResolvedCore(string? metadataJson)
@@ -567,8 +747,8 @@ public class ScraperController : ControllerBase
                 RuntimeMinutes: TryGetInt(r,    "runtimeMinutes"),
                 Rating:         TryGetDouble(r, "rating"),
                 Genres:         TryGetStringList(r, "genres"),
-                Cast:           TryGetStringList(r, "cast"),
-                Directors:      TryGetStringList(r, "directors"),
+                Cast:           TryGetCastList(r, "cast"),
+                Crew:           TryGetCrewList(r, "crew"),
                 Tags:           TryGetStringList(r, "tags"),
                 LogoUrl:        TryGetString(r, "logoUrl"),
                 BannerUrl:      TryGetString(r, "bannerUrl"),
@@ -608,6 +788,38 @@ public class ScraperController : ControllerBase
         var list = new List<string>();
         foreach (var item in v.EnumerateArray())
             if (item.ValueKind == JsonValueKind.String) list.Add(item.GetString()!);
+        return list.Count > 0 ? list : null;
+    }
+
+    /// <summary>Parses a "cast" array of {name, role} objects -- written by CastMember's
+    /// JsonPropertyName-attributed serialization (see Chronicle.Plugins.Models.CastMember).</summary>
+    private static List<CastMemberDto>? TryGetCastList(JsonElement e, string prop)
+    {
+        if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty(prop, out var v) || v.ValueKind != JsonValueKind.Array) return null;
+        var list = new List<CastMemberDto>();
+        foreach (var item in v.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var name = TryGetString(item, "name");
+            if (string.IsNullOrEmpty(name)) continue;
+            list.Add(new CastMemberDto(name, TryGetString(item, "role")));
+        }
+        return list.Count > 0 ? list : null;
+    }
+
+    /// <summary>Parses a "crew" array of {name, job} objects -- written by CrewMember's
+    /// JsonPropertyName-attributed serialization (see Chronicle.Plugins.Models.CrewMember).</summary>
+    private static List<CrewMemberDto>? TryGetCrewList(JsonElement e, string prop)
+    {
+        if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty(prop, out var v) || v.ValueKind != JsonValueKind.Array) return null;
+        var list = new List<CrewMemberDto>();
+        foreach (var item in v.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var name = TryGetString(item, "name");
+            if (string.IsNullOrEmpty(name)) continue;
+            list.Add(new CrewMemberDto(name, TryGetString(item, "job")));
+        }
         return list.Count > 0 ? list : null;
     }
 }

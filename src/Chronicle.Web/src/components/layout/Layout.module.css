@@ -32,6 +32,34 @@
   letter-spacing: 0.05em;
 }
 
+.menuToggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  margin-right: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+}
+
+.menuToggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.menuToggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.overlay {
+  display: none;
+}
+
 .headerRight {
   display: flex;
   align-items: center;
@@ -95,4 +123,75 @@
   overflow-y: auto;
   overflow-x: hidden; /* clip without creating a stacking context that traps fixed children */
   padding: 24px;
+}
+
+@media (max-width: 768px) {
+  .shell {
+    /* Header grows to 2 rows on mobile (nav/user row + full-width search row below it) --
+       redefine the shared --header-height var here so the grid row and the sidebar/overlay
+       top offsets (both `top: var(--header-height)`) all stay in sync automatically instead
+       of drifting out of sync with a hardcoded second value. */
+    --header-height: 96px;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "header"
+      "content"
+      "footer";
+  }
+
+  .header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 8px 16px;
+  }
+
+  /* Reorder (visually only, no JSX change) so row 1 is menuToggle + logo + headerRight,
+     and the search bar gets pushed to its own full-width row 2 -- it was previously
+     squeezed to a sliver between the logo and username/logout on narrow screens. */
+  .headerRight {
+    order: 2;
+  }
+
+  .menuToggle {
+    display: inline-flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: var(--header-height);
+    bottom: 0;
+    left: 0;
+    width: min(80vw, 280px);
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.4);
+  }
+
+  .sidebarOpen {
+    transform: translateX(0);
+  }
+
+  .overlay {
+    display: block;
+    position: fixed;
+    top: var(--header-height);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  .overlayVisible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .content {
+    padding: 12px;
+  }
 }

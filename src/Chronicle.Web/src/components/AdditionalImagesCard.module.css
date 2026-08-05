@@ -1,0 +1,42 @@
+/* AdditionalImagesCard — small additions layered on top of PluginMetadataBox's shared
+   box/grid/row/label/imageLinks/imageLink/thumbnail styles (imported directly, not duplicated). */
+
+.resetIcon {
+  margin-left: 6px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 2px;
+  vertical-align: middle;
+}
+.resetIcon:hover:not(:disabled) { opacity: 0.75; }
+.resetIcon:disabled { opacity: 0.4; cursor: default; }
+
+.thumbWrap {
+  position: relative;
+}
+
+.expandIcon {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  border: none;
+  color: #fff;
+  border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.thumbWrap:hover .expandIcon { opacity: 1; }
+.expandIcon:hover { background: rgba(0, 0, 0, 0.8); }
