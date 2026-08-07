@@ -42,4 +42,9 @@ public interface IMetadataResolutionService
     /// Clears every override across the entire library. Streams in batches of 100, saving per
     /// batch. onBatch(processedSoFar, clearedSoFar) fires after each batch commits.
     Task<int> ClearAllOverridesLibraryWideAsync(Action<int, int>? onBatch = null, CancellationToken ct = default);
+
+    /// Clears overrides for one item and everything beneath it — a collection and its members,
+    /// a show and its seasons/episodes, an artist and their albums/tracks. The root itself is
+    /// included, so a collection container's own pinned artwork is reset too.
+    Task<int> ClearOverridesForSubtreeAsync(int rootId, Action<int, int>? onBatch = null, CancellationToken ct = default);
 }

@@ -498,6 +498,44 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
+        /// Clears every image/field override for one item and everything beneath it — a
+        /// collection and its members, a show and its seasons/episodes. Runs as a background
+        /// job — poll GET /media/overrides/reset-progress for status. 409 if one is already running.
+        /// </summary>
+        [HttpPost("{id:int}/overrides/reset-subtree")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> ResetOverridesForSubtree(int id, CancellationToken ct)
+        {
+            if (_overrideResetProgress.GetSnapshot().IsRunning)
+                return Conflict(ApiResponse<object>.Fail("OVERRIDE_RESET_RUNNING", "An override reset is already in progress."));
+
+            var item = await _context.MediaItems.FindAsync([id], ct);
+            if (item is null)
+                return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+            _overrideResetProgress.Start($"\"{item.Name}\" and everything under it");
+
+            // Same fire-and-forget shape as the media-type reset above: the service re-scopes
+            // its own DbContext per batch, so it stays safe after this request has responded.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _resolutionService.ClearOverridesForSubtreeAsync(id,
+                        (processed, cleared) => _overrideResetProgress.UpdateProgress(processed, cleared),
+                        CancellationToken.None);
+                    _overrideResetProgress.Complete();
+                }
+                catch (Exception ex)
+                {
+                    _overrideResetProgress.Fail(ex.Message);
+                }
+            }, CancellationToken.None);
+
+            return Accepted(ApiResponse<object>.Ok(new { started = true }));
+        }
+
+        /// <summary>
         /// Clears every image/field override across the entire library. Requires the literal
         /// confirmation token "RESET" (same convention as LibraryController's NuclearReset).
         /// Runs as a background job — poll GET /media/overrides/reset-progress for status.

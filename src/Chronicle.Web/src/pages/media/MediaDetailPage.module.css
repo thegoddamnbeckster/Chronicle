@@ -732,6 +732,14 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   margin-top: 6px;
 }
 
+/* Neutral counterpart to .refreshError, for a background job that started successfully
+   but whose result won't appear until the next load. */
+.refreshNote {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
 .tmdbGrid {
   display: flex;
   flex-direction: column;
