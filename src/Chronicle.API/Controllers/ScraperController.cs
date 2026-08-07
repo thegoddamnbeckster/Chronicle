@@ -65,8 +65,16 @@ public class ScraperController : ControllerBase
         if (movieTypeId == 0)
             return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active 'movies' media type is configured."));
 
+        // Search every movie-like type, not just "movies". A fan edit or anime movie is still
+        // a movie file on disk, so Kodi scrapes it through this same endpoint — and if we only
+        // looked at MediaTypeId == movies we'd fail to find the item the user already has and
+        // mint a duplicate "movies" copy of their fan edit on every single scrape. That is
+        // exactly what happened in the wild (confirmed 2026-08-07: repeated fan-edit
+        // duplicates, plus surviving anime_movies/movies pairs). Creation below still uses the
+        // requested "movies" type — this only widens what counts as "already have it".
+        var movieLikeTypeIds = await GetMovieLikeTypeIdsAsync(ct);
         var candidates = await _context.MediaItems
-            .Where(m => m.MediaTypeId == movieTypeId && m.HierarchyLevel <= 1)
+            .Where(m => movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1)
             .ToListAsync(ct);
         var existing = FindByNormalizedTitle(candidates, title, year);
 
@@ -220,8 +228,12 @@ public class ScraperController : ControllerBase
         if (tvTypeId == 0)
             return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active 'tv' media type is configured."));
 
+        // Same widening as movies/search above: an anime series is scraped through Kodi's TV
+        // path, so restricting the lookup to MediaTypeId == tv would create a duplicate "tv"
+        // copy of a show the user already has filed under anime.
+        var showLikeTypeIds = await GetShowLikeTypeIdsAsync(ct);
         var showCandidates = await _context.MediaItems
-            .Where(m => m.MediaTypeId == tvTypeId && m.HierarchyLevel == 0)
+            .Where(m => showLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0)
             .ToListAsync(ct);
         var item = FindByNormalizedTitle(showCandidates, title, year);
 
@@ -357,6 +369,21 @@ public class ScraperController : ControllerBase
 
     private async Task<int> GetMediaTypeIdAsync(string name, CancellationToken ct) =>
         await _context.MediaTypes.Where(t => t.Name == name && t.IsActive).Select(t => t.Id).FirstOrDefaultAsync(ct);
+
+    /// <summary>Flat, single-level types whose items are all "a movie file on disk" as far as
+    /// Kodi is concerned — kept in sync with MovieCollectionService.IsMovieLikeTypeName.</summary>
+    private static readonly string[] MovieLikeTypeNames = ["movies", "fanedits", "anime_movies"];
+
+    /// <summary>Hierarchical show types scraped through Kodi's TV path.</summary>
+    private static readonly string[] ShowLikeTypeNames = ["tv", "anime"];
+
+    private Task<List<int>> GetMovieLikeTypeIdsAsync(CancellationToken ct) =>
+        _context.MediaTypes.Where(t => t.IsActive && MovieLikeTypeNames.Contains(t.Name))
+            .Select(t => t.Id).ToListAsync(ct);
+
+    private Task<List<int>> GetShowLikeTypeIdsAsync(CancellationToken ct) =>
+        _context.MediaTypes.Where(t => t.IsActive && ShowLikeTypeNames.Contains(t.Name))
+            .Select(t => t.Id).ToListAsync(ct);
 
     /// <summary>
     /// Matches Kodi's title against candidates ignoring punctuation/case/whitespace, not an
