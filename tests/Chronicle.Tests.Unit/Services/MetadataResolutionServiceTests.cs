@@ -1,9 +1,22 @@
 using System.Text.Json;
 using Chronicle.Core.Models;
+using Chronicle.Data;
 using Chronicle.Services;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.Tests.Unit.Services;
+
+/// <summary>Hands every requested scope the same pre-built context — enough for the batched
+/// bulk-clear paths, which only need a ChronicleDbContext per batch.</summary>
+file sealed class SingleContextScopeFactory(ChronicleDbContext ctx) : IServiceScopeFactory, IServiceScope, IServiceProvider
+{
+    public IServiceScope CreateScope() => this;
+    public IServiceProvider ServiceProvider => this;
+    public object? GetService(Type serviceType) => serviceType == typeof(ChronicleDbContext) ? ctx : null;
+    public void Dispose() { }
+}
 
 public class MetadataResolutionServiceTests
 {
@@ -184,6 +197,199 @@ public class MetadataResolutionServiceTests
         item.MetadataJson.Should().Contain("\"_resolved\"");
     }
 
+    // ── Manual image overrides (pin / unpin) ─────────────────────────────────
+    // The whole point of a pin is that it beats the plugin-priority walk and keeps beating it
+    // after later refreshes — these lock that contract down at the resolution choke point that
+    // every caller (refresh, merge, sync, bulk recompute) funnels through.
+
+    [Fact]
+    public async Task SetOverrideAsync_PinnedFieldBeatsPriorityWalk()
+    {
+        var item = BuildItem("movies", 0,
+            """{"chronicle.plugin.tmdb":{"posterUrl":"https://tmdb/auto.jpg"}}""");
+
+        await SetOverride(item, "poster_url", "https://fanart/manual.jpg", "movies", 0, new()
+        {
+            ["poster_url"] = ["chronicle.plugin.tmdb"],
+        });
+
+        item.PosterUrl.Should().Be("https://fanart/manual.jpg");
+        GetResolved(item)["posterUrl"].GetString().Should().Be("https://fanart/manual.jpg");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PinSurvivesLaterReResolve()
+    {
+        // Simulates a metadata refresh landing a new provider value after a pin was made:
+        // re-resolving must not quietly hand the slot back to the plugin.
+        var item = BuildItem("movies", 0,
+            """{"chronicle.plugin.tmdb":{"posterUrl":"https://tmdb/old.jpg"}}""");
+
+        await SetOverride(item, "poster_url", "https://fanart/manual.jpg", "movies", 0, new()
+        {
+            ["poster_url"] = ["chronicle.plugin.tmdb"],
+        });
+
+        // Provider returns something different on the next refresh.
+        var root = System.Text.Json.Nodes.JsonNode.Parse(item.MetadataJson!)!.AsObject();
+        root["chronicle.plugin.tmdb"] = new System.Text.Json.Nodes.JsonObject
+        {
+            ["posterUrl"] = "https://tmdb/brand-new.jpg",
+        };
+        item.MetadataJson = root.ToJsonString();
+
+        await ResolveWithConfig(item, "movies", 0, new()
+        {
+            ["poster_url"] = ["chronicle.plugin.tmdb"],
+        });
+
+        item.PosterUrl.Should().Be("https://fanart/manual.jpg",
+            "a manual pin must outlast provider refreshes until it is explicitly cleared");
+    }
+
+    [Fact]
+    public async Task SetOverrideAsync_SameImageCanHoldSeveralSlots()
+    {
+        var item = BuildItem("movies", 0,
+            """{"chronicle.plugin.tmdb":{"posterUrl":"https://tmdb/auto.jpg","thumbUrl":"https://tmdb/auto-thumb.jpg"}}""");
+        var config = new Dictionary<string, List<string>>
+        {
+            ["poster_url"] = ["chronicle.plugin.tmdb"],
+            ["thumb_url"]  = ["chronicle.plugin.tmdb"],
+        };
+
+        var svc = BuildService("movies", 0, config);
+        await svc.SetOverrideAsync(item, null!, "poster_url", "https://shared/art.jpg", "p", "poster", 1);
+        await svc.SetOverrideAsync(item, null!, "thumb_url",  "https://shared/art.jpg", "p", "poster", 1);
+
+        var resolved = GetResolved(item);
+        resolved["posterUrl"].GetString().Should().Be("https://shared/art.jpg");
+        resolved["thumbUrl"].GetString().Should().Be("https://shared/art.jpg");
+    }
+
+    [Fact]
+    public async Task ClearOverrideAsync_RevertsOnlyThatSlotToTheDefault()
+    {
+        var item = BuildItem("movies", 0,
+            """{"chronicle.plugin.tmdb":{"posterUrl":"https://tmdb/auto.jpg","thumbUrl":"https://tmdb/auto-thumb.jpg"}}""");
+        var config = new Dictionary<string, List<string>>
+        {
+            ["poster_url"] = ["chronicle.plugin.tmdb"],
+            ["thumb_url"]  = ["chronicle.plugin.tmdb"],
+        };
+
+        var svc = BuildService("movies", 0, config);
+        await svc.SetOverrideAsync(item, null!, "poster_url", "https://shared/art.jpg", "p", "poster", 1);
+        await svc.SetOverrideAsync(item, null!, "thumb_url",  "https://shared/art.jpg", "p", "poster", 1);
+
+        await svc.ClearOverrideAsync(item, null!, "thumb_url");
+
+        var resolved = GetResolved(item);
+        resolved["thumbUrl"].GetString().Should().Be("https://tmdb/auto-thumb.jpg", "cleared slot falls back to the provider");
+        resolved["posterUrl"].GetString().Should().Be("https://shared/art.jpg", "other slots keep their pins");
+    }
+
+    [Fact]
+    public async Task ClearItemOverridesAsync_RevertsEverySlot()
+    {
+        var item = BuildItem("movies", 0,
+            """{"chronicle.plugin.tmdb":{"posterUrl":"https://tmdb/auto.jpg","thumbUrl":"https://tmdb/auto-thumb.jpg"}}""");
+        var config = new Dictionary<string, List<string>>
+        {
+            ["poster_url"] = ["chronicle.plugin.tmdb"],
+            ["thumb_url"]  = ["chronicle.plugin.tmdb"],
+        };
+
+        var svc = BuildService("movies", 0, config);
+        await svc.SetOverrideAsync(item, null!, "poster_url", "https://shared/art.jpg", "p", "poster", 1);
+        await svc.SetOverrideAsync(item, null!, "thumb_url",  "https://shared/art.jpg", "p", "poster", 1);
+
+        await svc.ClearItemOverridesAsync(item, null!);
+
+        item.MetadataJson.Should().NotContain("_overrides");
+        var resolved = GetResolved(item);
+        resolved["posterUrl"].GetString().Should().Be("https://tmdb/auto.jpg");
+        resolved["thumbUrl"].GetString().Should().Be("https://tmdb/auto-thumb.jpg");
+    }
+
+    [Fact]
+    public async Task SetOverrideAsync_UnknownField_Throws()
+    {
+        var item = BuildItem("movies", 0, """{"chronicle.plugin.tmdb":{"posterUrl":"https://tmdb/auto.jpg"}}""");
+        var svc = BuildService("movies", 0, new() { ["poster_url"] = ["chronicle.plugin.tmdb"] });
+
+        await svc.Invoking(s => s.SetOverrideAsync(item, null!, "not_a_real_field", "https://x/y.jpg", null, null, null))
+            .Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task SetOverrideAsync_PreservesPluginBlobsAndRecordsProvenance()
+    {
+        // A pin must not clobber the lossless per-plugin blobs it sits beside (CLAUDE.md rule 6).
+        var item = BuildItem("movies", 0,
+            """{"chronicle.plugin.tmdb":{"posterUrl":"https://tmdb/auto.jpg","overview":"keep me"}}""");
+
+        await SetOverride(item, "poster_url", "https://fanart/manual.jpg", "movies", 0, new()
+        {
+            ["poster_url"] = ["chronicle.plugin.tmdb"],
+        }, sourcePluginId: "chronicle.plugin.fanarttv", sourceType: "poster", userId: 7);
+
+        var blobs = MetadataResolutionService.ParsePluginBlobs(item.MetadataJson);
+        blobs.Should().ContainKey("chronicle.plugin.tmdb");
+        blobs["chronicle.plugin.tmdb"].GetProperty("overview").GetString().Should().Be("keep me");
+
+        var pin = blobs["_overrides"].GetProperty("poster_url");
+        pin.GetProperty("url").GetString().Should().Be("https://fanart/manual.jpg");
+        pin.GetProperty("sourcePluginId").GetString().Should().Be("chronicle.plugin.fanarttv");
+        pin.GetProperty("pinnedByUserId").GetInt32().Should().Be(7);
+        pin.GetProperty("pinnedAt").GetString().Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task ClearOverridesForSubtreeAsync_ClearsRootAndDescendants_LeavesOutsidersAlone()
+    {
+        // Collection-level reset: the container itself, its members, and (for deeper trees) their
+        // children all revert — while an unrelated item at the same level keeps its pin.
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        await using var db = new ChronicleDbContext(options);
+
+        var mt = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies" };
+        db.MediaTypes.Add(mt);
+
+        const string pinned =
+            """{"chronicle.plugin.tmdb":{"posterUrl":"https://tmdb/auto.jpg"},"_overrides":{"poster_url":{"url":"https://pinned/art.jpg"}}}""";
+
+        var collection = new MediaItem { Id = 1, Name = "Coll",    MediaTypeId = 1, HierarchyLevel = 0, MetadataJson = pinned };
+        var member     = new MediaItem { Id = 2, Name = "Member",  MediaTypeId = 1, HierarchyLevel = 1, ParentId = 1, MetadataJson = pinned };
+        var grandchild = new MediaItem { Id = 3, Name = "Deeper",  MediaTypeId = 1, HierarchyLevel = 2, ParentId = 2, MetadataJson = pinned };
+        var outsider   = new MediaItem { Id = 4, Name = "Unrelated", MediaTypeId = 1, HierarchyLevel = 0, MetadataJson = pinned };
+        db.MediaItems.AddRange(collection, member, grandchild, outsider);
+        await db.SaveChangesAsync();
+
+        var cache = new AssignmentConfigCache(null!);
+        cache.InjectForTest(new Dictionary<string, Dictionary<string, List<string>>>
+        {
+            ["movies"] = new() { ["poster_url"] = ["chronicle.plugin.tmdb"] },
+        });
+        var aliasCache = new FieldAliasCache(null!);
+        aliasCache.InjectForTest(new(StringComparer.OrdinalIgnoreCase));
+        var svc = new MetadataResolutionService(
+            cache, aliasCache, new SingleContextScopeFactory(db),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<MetadataResolutionService>.Instance);
+
+        var cleared = await svc.ClearOverridesForSubtreeAsync(1);
+
+        cleared.Should().Be(3, "the container plus both descendants were pinned");
+        db.MediaItems.Single(m => m.Id == 1).MetadataJson.Should().NotContain("_overrides");
+        db.MediaItems.Single(m => m.Id == 2).MetadataJson.Should().NotContain("_overrides");
+        db.MediaItems.Single(m => m.Id == 3).MetadataJson.Should().NotContain("_overrides");
+        db.MediaItems.Single(m => m.Id == 4).MetadataJson.Should().Contain("_overrides",
+            "an item outside the subtree must keep its pin");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static MediaItem BuildItem(string mediaTypeName, int hierarchyLevel, string metadataJson) =>
@@ -212,6 +418,18 @@ public class MetadataResolutionServiceTests
         Dictionary<string, List<string>> fieldPriorityMap,
         Dictionary<string, List<string>>? fieldAliases = null)
     {
+        var svc = BuildService(mediaTypeName, hierarchyLevel, fieldPriorityMap, fieldAliases);
+        await svc.ResolveAsync(item, null!, CancellationToken.None);
+    }
+
+    /// Same wiring as ResolveWithConfig, but hands back the service so a test can drive the
+    /// override methods (which each re-run ResolveAsync internally) rather than just resolving.
+    private static MetadataResolutionService BuildService(
+        string mediaTypeName,
+        int hierarchyLevel,
+        Dictionary<string, List<string>> fieldPriorityMap,
+        Dictionary<string, List<string>>? fieldAliases = null)
+    {
         var cache = new AssignmentConfigCache(null!);
         cache.InjectForTest(new Dictionary<string, Dictionary<string, List<string>>>
         {
@@ -221,7 +439,21 @@ public class MetadataResolutionServiceTests
         // Empty, not FieldAliasCache.Defaults — tests should be deterministic and not
         // accidentally depend on the shipped-defaults seed unless a test explicitly injects one.
         aliasCache.InjectForTest(fieldAliases ?? new(StringComparer.OrdinalIgnoreCase));
-        var svc = new MetadataResolutionService(cache, aliasCache, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<MetadataResolutionService>.Instance);
-        await svc.ResolveAsync(item, null!, CancellationToken.None);
+        return new MetadataResolutionService(cache, aliasCache, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<MetadataResolutionService>.Instance);
+    }
+
+    private static async Task SetOverride(
+        MediaItem item,
+        string field,
+        string url,
+        string mediaTypeName,
+        int hierarchyLevel,
+        Dictionary<string, List<string>> fieldPriorityMap,
+        string? sourcePluginId = "chronicle.plugin.fanarttv",
+        string? sourceType = "poster",
+        int? userId = 1)
+    {
+        var svc = BuildService(mediaTypeName, hierarchyLevel, fieldPriorityMap);
+        await svc.SetOverrideAsync(item, null!, field, url, sourcePluginId, sourceType, userId, CancellationToken.None);
     }
 }

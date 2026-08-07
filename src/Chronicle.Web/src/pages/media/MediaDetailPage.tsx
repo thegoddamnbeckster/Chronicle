@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
@@ -480,6 +480,13 @@ export default function MediaDetailPage() {
   const clearAllOverridesMut = useMutation({
     mutationFn: () => clearAllMediaOverrides(mediaId),
     onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+  })
+
+  // Collection/show/artist-level reset. Runs as a background job (the subtree can be large),
+  // so unlike the per-item reset there's no updated item to write straight back into the cache.
+  const resetSubtreeMut = useMutation({
+    mutationFn: () => resetOverridesForSubtree(mediaId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['media', mediaId] }) },
   })
 
   useEffect(() => {
@@ -1100,6 +1107,18 @@ export default function MediaDetailPage() {
                 {clearAllOverridesMut.isPending ? 'Resetting…' : '↺ Reset All Image Overrides'}
               </button>
             )}
+            {/* Subtree reset — a collection/show/artist can hold pinned art on its members as
+                well as on itself, and those aren't reachable from this page's own reset. */}
+            {children.length > 0 && (
+              <button
+                className={styles.refreshBtn}
+                onClick={() => resetSubtreeMut.mutate()}
+                disabled={resetSubtreeMut.isPending}
+                title="Un-pin every manually-chosen image on this item AND everything inside it, reverting all to the normal resolution"
+              >
+                {resetSubtreeMut.isPending ? 'Resetting…' : '↺ Reset Image Overrides (incl. contents)'}
+              </button>
+            )}
             {refreshMut.isError && (
               <span className={styles.refreshError}>
                 {`Refresh failed: ${(refreshMut.error as Error).message}`}
@@ -1108,6 +1127,16 @@ export default function MediaDetailPage() {
             {clearAllOverridesMut.isError && (
               <span className={styles.refreshError}>
                 {`Reset failed: ${(clearAllOverridesMut.error as Error).message}`}
+              </span>
+            )}
+            {resetSubtreeMut.isError && (
+              <span className={styles.refreshError}>
+                {`Reset failed: ${(resetSubtreeMut.error as Error).message}`}
+              </span>
+            )}
+            {resetSubtreeMut.isSuccess && (
+              <span className={styles.refreshNote}>
+                Reset started — refresh the page in a moment to see the result.
               </span>
             )}
           </div>

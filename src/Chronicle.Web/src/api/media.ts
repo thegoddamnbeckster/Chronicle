@@ -171,6 +171,12 @@ export async function resetAllOverrides(confirmationToken: string): Promise<void
   await client.post('/media/overrides/reset-all', { confirmationToken })
 }
 
+/** Starts a background job clearing overrides for one item and every descendant — a
+ *  collection and its members, a show and its seasons/episodes. Admin only. */
+export async function resetOverridesForSubtree(id: number): Promise<void> {
+  await client.post(`/media/${id}/overrides/reset-subtree`)
+}
+
 /** Polls the state of the current (or most recent) bulk override-reset job. */
 export async function getOverrideResetProgress(): Promise<OverrideResetProgress> {
   const { data } = await client.get<ApiResponse<OverrideResetProgress>>('/media/overrides/reset-progress')

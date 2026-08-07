@@ -220,12 +220,52 @@ public class MetadataResolutionService(
     public Task<int> ClearAllOverridesLibraryWideAsync(Action<int, int>? onBatch = null, CancellationToken ct = default) =>
         ClearOverridesBatchedAsync(null, onBatch, ct);
 
+    public async Task<int> ClearOverridesForSubtreeAsync(
+        int rootId, Action<int, int>? onBatch = null, CancellationToken ct = default)
+    {
+        // Resolve the subtree first (root + every descendant), then reuse the same batched
+        // clear as the other scopes. Collections are the motivating case — "reset the artwork
+        // for this collection and everything in it" — but the walk is generic, so it works the
+        // same for a TV show's seasons/episodes or an artist's albums/tracks.
+        var ids = await CollectSubtreeIdsAsync(rootId, ct);
+        logger.LogInformation("Starting bulk override clear (subtree of {RootId}, {Count} item(s))", rootId, ids.Count);
+        return await ClearOverridesBatchedAsync(null, onBatch, ct, ids);
+    }
+
+    /// Breadth-first walk down ParentId, depth-capped like DescendantHelper's. Returns the root
+    /// itself plus every descendant, so a collection container's own pinned art is reset too.
+    private async Task<HashSet<int>> CollectSubtreeIdsAsync(int rootId, CancellationToken ct)
+    {
+        var all = new HashSet<int> { rootId };
+        var frontier = new List<int> { rootId };
+
+        for (var depth = 0; depth < 10 && frontier.Count > 0; depth++)
+        {
+            ct.ThrowIfCancellationRequested();
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+            var children = await db.MediaItems
+                .Where(m => m.ParentId != null && frontier.Contains(m.ParentId.Value))
+                .Select(m => m.Id)
+                .ToListAsync(ct);
+
+            frontier = children.Where(all.Add).ToList();
+        }
+
+        return all;
+    }
+
     /// Shared batched worker for both the media-type-scoped and library-wide bulk override
     /// clears — mirrors ResolveAllForMediaTypeAsync's own batch-of-100/own-DI-scope-per-batch
     /// pattern above. onBatch(processedSoFar, clearedSoFar) fires once per committed batch.
-    private async Task<int> ClearOverridesBatchedAsync(string? mediaTypeNameFilter, Action<int, int>? onBatch, CancellationToken ct)
+    private async Task<int> ClearOverridesBatchedAsync(
+        string? mediaTypeNameFilter, Action<int, int>? onBatch, CancellationToken ct,
+        IReadOnlyCollection<int>? restrictToIds = null)
     {
-        var scopeLabel = mediaTypeNameFilter is null ? "library-wide" : $"media type '{mediaTypeNameFilter}'";
+        var scopeLabel = restrictToIds is not null
+            ? $"{restrictToIds.Count} selected item(s)"
+            : mediaTypeNameFilter is null ? "library-wide" : $"media type '{mediaTypeNameFilter}'";
         logger.LogInformation("Starting bulk override clear ({Scope})", scopeLabel);
         int lastId = 0, totalProcessed = 0, totalCleared = 0;
 
@@ -238,6 +278,8 @@ public class MetadataResolutionService(
             var query = db.MediaItems.Include(m => m.MediaType).Where(m => m.Id > lastId);
             if (mediaTypeNameFilter is not null)
                 query = query.Where(m => m.MediaType!.Name == mediaTypeNameFilter);
+            if (restrictToIds is not null)
+                query = query.Where(m => restrictToIds.Contains(m.Id));
 
             var batch = await query.OrderBy(m => m.Id).Take(BatchSize).ToListAsync(ct);
             if (batch.Count == 0) break;

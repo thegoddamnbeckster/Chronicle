@@ -791,5 +791,7 @@ public class MovieCollectionServiceTests
             => Task.FromResult(0);
         public Task<int> ClearAllOverridesLibraryWideAsync(Action<int, int>? onBatch = null, CancellationToken ct = default)
             => Task.FromResult(0);
+        public Task<int> ClearOverridesForSubtreeAsync(int rootId, Action<int, int>? onBatch = null, CancellationToken ct = default)
+            => Task.FromResult(0);
     }
 }

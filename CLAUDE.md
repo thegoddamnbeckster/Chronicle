@@ -3,14 +3,15 @@
 Self-hosted universal media tracking platform. Tracks movies, TV, music, and any custom media type through a flexible plugin architecture.
 
 **Repo:** `thegoddamnbeckster/Chronicle`
-**Status:** Pre-implementation (docs complete, Phase 1 MVP next)
+**Status:** Active development — v0.7.0 released. Well past MVP: media/collection management,
+file scanner, 12 plugins, scrobbling, sync, merge/dedup, metadata assignment, image overrides.
 **Owner:** Chronicle Contributors — PowerShell/Python background, not a C# developer
 
 ---
 
 ## Tech Stack
 
-- **Backend:** .NET Core 8.0 / ASP.NET Core / Entity Framework Core / Kestrel
+- **Backend:** .NET 9 / ASP.NET Core / Entity Framework Core / Kestrel
 - **Frontend:** React 18 + TypeScript
 - **Database:** SQLite (default), PostgreSQL (production option)
 - **Auth:** JWT (web/mobile) + API keys (scrobblers)
@@ -22,20 +23,34 @@ Self-hosted universal media tracking platform. Tracks movies, TV, music, and any
 
 ```
 src/
-├── Chronicle.Core/           # Domain models, interfaces — NO business logic
-├── Chronicle.Data/           # EF Core DbContext, repositories, migrations
+├── Chronicle.Core/           # Domain models, helpers, interfaces — NO business logic
+├── Chronicle.Data/           # EF Core DbContext + migrations
 ├── Chronicle.Services/       # Business logic, service layer
 ├── Chronicle.API/            # ASP.NET Core controllers, middleware
-├── Chronicle.Plugins/        # Plugin interfaces (IMetadataProvider, IWidgetPlugin, IMediaTypePlugin)
-├── Chronicle.Plugins.TMDB/   # Reference plugin implementation
-├── Chronicle.Updater/        # Separate update process
+├── Chronicle.Plugins/        # Plugin interfaces (IMetadataProvider, IImportProvider, IWidgetPlugin, IThemePlugin)
 └── Chronicle.Web/            # React frontend
 
 tests/
 ├── Chronicle.Tests.Unit/
-├── Chronicle.Tests.Integration/
-└── Chronicle.Tests.E2E/
+└── Chronicle.Tests.Integration/
 ```
+
+`src/Chronicle.Plugins.TMDB/` exists on disk but is NOT in the solution — it's a vestigial
+early reference implementation. The real TMDB plugin is the sibling repo described below.
+
+### Plugins live in their own repos
+
+Plugins are NOT part of this repo and are NOT bundled into Chronicle's releases. Each is a
+sibling directory (`W:\Scripts\Chronicle.Plugin.*`) with its own GitHub repo, its own version
+number, and its own releases — users download only the ones they want. As of v0.7.0: TMDB,
+MusicBrainz, FileScanner, FanEdit, MoviesRemastered, Simkl, Trakt, Hardcover, FanartTV,
+TheTVDB, TVMaze, Themes.Default.
+
+Chronicle's own releases ship source/tag only, with no attached build artifacts.
+
+`scripts/RunTestEnvironment.ps1` rebuilds every plugin from its sibling directory and deploys
+the DLLs into `src/Chronicle.API/plugins/` — that's why plugin code changes need that script,
+not just a `dotnet build` of the API.
 
 ---
 
@@ -91,7 +106,9 @@ public interface IWidgetPlugin
 - `plugins` — Installed plugins with encrypted settings JSON
 - `app_settings` — Global key-value config
 
-Migrations are sequential SQL files with up/down scripts. Track version in `schema_version` table.
+Migrations are EF Core code-first migrations (`src/Chronicle.Data/Migrations/*.cs`), applied
+with `dotnet ef database update`. There is no hand-written SQL migration set and no
+`schema_version` table — EF's own `__EFMigrationsHistory` tracks what's applied.
 
 ---
 
@@ -137,22 +154,39 @@ Migrations are sequential SQL files with up/down scripts. Track version in `sche
 
 ## Commands
 
+**Start the dev environment with the script, not `dotnet run`:**
+
+```powershell
+.\scripts\RunTestEnvironment.ps1                # API + web + ABS bridge, each in its own window
+.\scripts\RunTestEnvironment.ps1 -ApiOnly       # API only
+```
+
+It kills stale processes, rebuilds and redeploys all 12 plugin DLLs, then starts everything.
+Running `dotnet run` by hand starts only the API with stale plugins — and leaves the frontend
+down, which looks exactly like "I can't log in".
+
+Ports come from `ports.json` at the repo root (the single source of truth, read by both
+`vite.config.ts` and the API): **API 7979, web 8888.** The ABS bridge runs on 9877.
+
 ```bash
 # Backend
 cd src/Chronicle.API && dotnet restore && dotnet build
-cd src/Chronicle.API && dotnet run                        # Starts on :8080
-cd tests && dotnet test --verbosity normal
+cd tests && dotnet test                                   # both suites
 
 # Frontend
 cd src/Chronicle.Web && npm install
-cd src/Chronicle.Web && npm run dev                       # Starts on :3000
 cd src/Chronicle.Web && npm run lint
-cd src/Chronicle.Web && npm run type-check
+cd src/Chronicle.Web && npx tsc --noEmit                  # type-check
+cd src/Chronicle.Web && npm run build
 
-# Database
+# Database (EF Core code-first)
 dotnet ef database update                                 # Apply migrations
 dotnet ef migrations add MigrationName                    # Create migration
 ```
+
+**Build gotcha:** `dotnet build` fails with MSB3027/MSB3021 file locks while Chronicle.API is
+running. Stop it first (`Get-Process Chronicle.API | Stop-Process -Force`), or just use
+RunTestEnvironment.ps1, which handles the kill-build-start ordering itself.
 
 ---
 
@@ -165,16 +199,23 @@ dotnet ef migrations add MigrationName                    # Create migration
 
 ---
 
-## Phase 1 MVP Scope (v0.1–v0.5)
+## Artwork overrides (image pinning)
 
-1. Project scaffolding and solution structure
-2. Database foundation (SQLite, EF Core, migrations)
-3. Authentication (JWT + API keys)
-4. Media management (CRUD, search, metadata via TMDB plugin)
-5. Scrobbling (receive, process, store, currently-watching)
-6. Basic statistics
-7. React frontend (dashboard, library, media detail, scrobble history)
-8. Windows deployment packaging
+Any image Chronicle knows about can be pinned into any of the 8 canonical artwork slots
+(`poster_url`, `backdrop_url`, `logo_url`, `banner_url`, `thumb_url`, `clearart_url`,
+`disc_url`, `character_art_url`). Key invariants:
+
+- Pins live in `media_items.MetadataJson` under the reserved top-level `_overrides` key —
+  sibling to `_resolved`, no separate table. Any code that rewrites MetadataJson must
+  preserve it.
+- `MetadataResolutionService.ResolveAsync` checks `_overrides[field]` **before** the
+  plugin-priority walk, so a pin wins over every provider and survives refresh, merge, sync,
+  and bulk recompute — all of which funnel through ResolveAsync. It stays until cleared.
+- An image's source type only decides how it's grouped for browsing, not what it can become:
+  a backdrop can be pinned as a poster, and one image can hold several slots at once.
+- Assignment UI lives **only** inside the full-size image viewers, never on the detail page.
+- Reset is available at five scopes: one slot, one item, one item + all descendants
+  (collections/shows), one media type, and library-wide.
 
 ---
 

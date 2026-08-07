@@ -470,6 +470,99 @@ Authorization: Bearer {token}
 
 ---
 
+## Artwork Override Endpoints
+
+Pins a specific image into one of the 8 canonical artwork slots for an item. A pin beats the
+normal plugin-priority resolution and survives every later refresh/merge/sync until cleared.
+
+Valid slot names: `poster_url`, `backdrop_url`, `logo_url`, `banner_url`, `thumb_url`,
+`clearart_url`, `disc_url`, `character_art_url`.
+
+An image is not restricted to the slot its source plugin called it — any image can be pinned
+to any slot, and the same image may hold several slots at once.
+
+### Pin an image to a slot
+
+```http
+PUT /api/v1/media/450844/overrides/poster_url
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "url": "https://assets.fanart.tv/fanart/example.jpg",
+  "sourcePluginId": "chronicle.plugin.fanarttv",
+  "sourceType": "poster"
+}
+```
+
+Returns the full updated `MediaItemDto`, so clients can swap it straight into cache without
+a refetch. Responds 400 for an unknown slot name.
+
+### Clear one slot (revert to the automatic default)
+
+```http
+DELETE /api/v1/media/450844/overrides/poster_url
+Authorization: Bearer {token}
+```
+
+### Clear every slot on one item
+
+```http
+DELETE /api/v1/media/450844/overrides
+Authorization: Bearer {token}
+```
+
+### Clear an item and everything under it (collection / show / artist)
+
+```http
+POST /api/v1/media/421316/overrides/reset-subtree
+Authorization: Bearer {token}          # Admin only
+```
+
+Background job — returns `202 Accepted`, or `409` if a reset is already running. Poll
+reset-progress below.
+
+### Clear every override for one media type
+
+```http
+POST /api/v1/media/overrides/reset-media-type/2
+Authorization: Bearer {token}          # Admin only
+```
+
+### Clear every override library-wide
+
+```http
+POST /api/v1/media/overrides/reset-all
+Authorization: Bearer {token}          # Admin only
+Content-Type: application/json
+
+{ "confirmationToken": "RESET" }
+```
+
+### Poll bulk reset progress
+
+```http
+GET /api/v1/media/overrides/reset-progress
+Authorization: Bearer {token}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "isRunning": false,
+    "isComplete": true,
+    "scope": "\"James Bond Collection\" and everything under it",
+    "processed": 28,
+    "cleared": 3,
+    "error": null
+  }
+}
+```
+
+---
+
 ## User Library Endpoints
 
 ### Get User Library
