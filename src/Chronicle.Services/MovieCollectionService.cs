@@ -129,6 +129,45 @@ public class MovieCollectionService(
             "Purged {Count} wrong stub(s) from collection {CollectionId}", stubs.Count, collectionId);
     }
 
+    public async Task<int> RemoveEmptyCollectionsAsync(CancellationToken ct = default)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+        // Genuine collection containers only — an item is one because it carries a
+        // "collection:{id}" external ID, not merely because it sits at level 0 with no
+        // children (that describes every standalone movie in the library).
+        var containerIds = await db.MediaExternalIds
+            .Where(e => e.ExternalId.StartsWith(CollectionExternalIdPrefix))
+            .Select(e => e.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        if (containerIds.Count == 0) return 0;
+
+        var empty = await db.MediaItems
+            .Where(m => containerIds.Contains(m.Id) &&
+                        m.HierarchyLevel == 0 &&
+                        !db.MediaItems.Any(child => child.ParentId == m.Id))
+            .ToListAsync(ct);
+
+        if (empty.Count == 0) return 0;
+
+        var emptyIds = empty.Select(m => m.Id).ToList();
+        var extIds = await db.MediaExternalIds
+            .Where(e => emptyIds.Contains(e.MediaItemId))
+            .ToListAsync(ct);
+
+        db.MediaExternalIds.RemoveRange(extIds);
+        db.MediaItems.RemoveRange(empty);
+        await db.SaveChangesAsync(ct);
+
+        foreach (var c in empty)
+            logger.LogInformation("Removed empty collection {Id} \"{Name}\" — no members left", c.Id, c.Name);
+
+        return empty.Count;
+    }
+
     private async Task RemoveOrphanedCollectionAsync(
         ChronicleDbContext db, int candidateId, int mediaTypeId, CancellationToken ct)
     {

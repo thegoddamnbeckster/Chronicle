@@ -39,6 +39,23 @@ public interface IMovieCollectionService
     Task DeduplicateCollectionsAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// Library-wide sweep removing collection containers that have no members left.
+    ///
+    /// RemoveOrphanedCollectionAsync only fires on the re-parenting paths (a movie moving to a
+    /// different collection, or being unparented). A collection can also be emptied by routes
+    /// that never touch those paths at all — its last member being merged away into an item
+    /// elsewhere, deleted outright, or restored to a different parent by an unmerge — and those
+    /// leave a childless container stranded in the library forever. Sweeping by end state
+    /// catches every cause, including ones not yet thought of, instead of trying to hook each
+    /// individual path.
+    ///
+    /// Only touches items that are genuinely collection containers (carrying a
+    /// "collection:{id}" external ID) — never a childless standalone movie.
+    /// </summary>
+    /// <returns>How many empty containers were removed.</returns>
+    Task<int> RemoveEmptyCollectionsAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Rebuilds a single collection: re-runs <see cref="EnsureCollectionParentAsync"/> on all
     /// non-stub children (moving any that don't belong here to their correct collection) then
     /// calls <see cref="EnsureCollectionStubsAsync"/> to fill in missing stubs.

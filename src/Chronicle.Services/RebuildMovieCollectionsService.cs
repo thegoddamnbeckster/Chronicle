@@ -56,6 +56,13 @@ public sealed class RebuildMovieCollectionsService : IScheduledTask
 
         await collectionService.CreateStubsForAllCollectionsAsync(providers, ct);
 
+        // Pass 3: sweep away containers left with no members. Runs last so it sees the final
+        // state after re-parenting and stub creation — a collection that looks empty mid-run
+        // may well have members again by the time pass 2 finishes.
+        var removed = await collectionService.RemoveEmptyCollectionsAsync(ct);
+        if (removed > 0)
+            _log.Information("RebuildMovieCollections: removed {Count} empty collection(s)", removed);
+
         _log.Information("RebuildMovieCollections: complete");
     }
 }

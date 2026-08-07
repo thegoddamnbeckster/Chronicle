@@ -713,6 +713,90 @@ public class MovieCollectionServiceTests
             "neither item is a real collection container, so a shared title alone must not merge them");
     }
 
+    // ── RemoveEmptyCollectionsAsync ─────────────────────────────────────────────
+    // A collection can be emptied by routes that never touch the re-parenting cleanup:
+    // its last member merged away, deleted, or restored elsewhere by an unmerge. Confirmed
+    // in the live library 2026-08-07 ("Metallica: S&M Collection" and "The Scrotum
+    // Collection" both stranded with zero members).
+
+    [Fact]
+    public async Task RemoveEmptyCollectionsAsync_RemovesMemberlessContainers()
+    {
+        var (svc, db) = CreateServiceWithRealMerge(Guid.NewGuid().ToString());
+        var mt = MoviesType();
+        db.MediaTypes.Add(mt);
+
+        var empty = new MediaItem
+        {
+            Name = "Emptied Collection", MediaTypeId = mt.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var populated = new MediaItem
+        {
+            Name = "Healthy Collection", MediaTypeId = mt.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.AddRange(empty, populated);
+        await db.SaveChangesAsync();
+
+        db.MediaItems.Add(new MediaItem
+        {
+            Name = "A Member", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = populated.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = empty.Id,     Source = "tmdb", ExternalId = "collection:11" });
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = populated.Id, Source = "tmdb", ExternalId = "collection:22" });
+        await db.SaveChangesAsync();
+        var emptyId = empty.Id;
+        var populatedId = populated.Id;
+
+        var removed = await svc.RemoveEmptyCollectionsAsync();
+        db.ChangeTracker.Clear();
+
+        removed.Should().Be(1);
+        db.MediaItems.Any(m => m.Id == emptyId).Should().BeFalse("a memberless collection is dead weight");
+        db.MediaItems.Any(m => m.Id == populatedId).Should().BeTrue("a collection with members must survive");
+        db.MediaExternalIds.Any(e => e.MediaItemId == emptyId).Should().BeFalse("its external IDs go with it");
+    }
+
+    [Fact]
+    public async Task RemoveEmptyCollectionsAsync_LeavesChildlessStandaloneMoviesAlone()
+    {
+        // The dangerous failure mode: every ordinary movie in the library is a level-0 item
+        // with no children. Only a "collection:{id}" external ID makes something a container.
+        var (svc, db) = CreateServiceWithRealMerge(Guid.NewGuid().ToString());
+        var mt = MoviesType();
+        db.MediaTypes.Add(mt);
+
+        var movie = new MediaItem
+        {
+            Name = "An Ordinary Movie", MediaTypeId = mt.Id, HierarchyLevel = 0, Year = 1999,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(movie);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = movie.Id, Source = "tmdb", ExternalId = "603" });
+        await db.SaveChangesAsync();
+        var movieId = movie.Id;
+
+        var removed = await svc.RemoveEmptyCollectionsAsync();
+        db.ChangeTracker.Clear();
+
+        removed.Should().Be(0);
+        db.MediaItems.Any(m => m.Id == movieId).Should().BeTrue(
+            "a childless standalone movie is not an empty collection and must never be swept away");
+    }
+
+    [Fact]
+    public async Task RemoveEmptyCollectionsAsync_NothingToDo_IsANoOp()
+    {
+        var (svc, db) = CreateServiceWithRealMerge(Guid.NewGuid().ToString());
+        db.MediaTypes.Add(MoviesType());
+        await db.SaveChangesAsync();
+
+        (await svc.RemoveEmptyCollectionsAsync()).Should().Be(0);
+    }
+
     [Fact]
     public async Task DeduplicateCollectionsAsync_TwoRealCollectionContainers_AreMergedViaMergeService()
     {

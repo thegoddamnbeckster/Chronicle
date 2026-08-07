@@ -43,6 +43,16 @@ public sealed class DuplicateCleanupService : IScheduledTask
         var removed = await RunAsync(ct);
         if (removed > 0)
             _log.Information("DuplicateCleanup: removed {Count} duplicate media items", removed);
+
+        // Merging a collection's last member away into an item elsewhere empties the container
+        // without ever going through the re-parenting paths that would normally clean it up,
+        // stranding a memberless collection in the library. This pass is the main producer of
+        // that state, so sweep for it right after rather than waiting for the weekly rebuild.
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var collections = scope.ServiceProvider.GetRequiredService<IMovieCollectionService>();
+        var emptied = await collections.RemoveEmptyCollectionsAsync(ct);
+        if (emptied > 0)
+            _log.Information("DuplicateCleanup: removed {Count} now-empty collection(s)", emptied);
     }
 
     /// <summary>
