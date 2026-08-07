@@ -130,6 +130,43 @@ export interface SlottedImageEntry extends ImageEntry {
   pluginId: string
 }
 
+/** Display names per slot, plus the resolvedMetadata key each slot maps to. Shared by every
+ *  surface that shows or promotes artwork (the Additional Images card, the type-scoped
+ *  gallery, and the page-level lightbox) so a slot is never labelled two different ways. */
+export const SLOT_INFO: Record<CanonicalSlot, { label: string; singular: string; resolvedKey: string }> = {
+  poster_url:        { label: 'Posters',       singular: 'Poster',        resolvedKey: 'posterUrl' },
+  backdrop_url:      { label: 'Backdrops',     singular: 'Backdrop',      resolvedKey: 'backdropUrl' },
+  logo_url:          { label: 'Logos',         singular: 'Logo',          resolvedKey: 'logoUrl' },
+  banner_url:        { label: 'Banners',       singular: 'Banner',        resolvedKey: 'bannerUrl' },
+  thumb_url:         { label: 'Thumbs',        singular: 'Thumb',         resolvedKey: 'thumbUrl' },
+  clearart_url:      { label: 'Clear Art',     singular: 'Clear Art',     resolvedKey: 'clearartUrl' },
+  disc_url:          { label: 'Disc Art',      singular: 'Disc Art',      resolvedKey: 'discUrl' },
+  character_art_url: { label: 'Character Art', singular: 'Character Art', resolvedKey: 'characterArtUrl' },
+}
+
+/** The canonical slot order used everywhere artwork slots are listed. */
+export const SLOT_ORDER: CanonicalSlot[] = [
+  'poster_url', 'backdrop_url', 'logo_url', 'banner_url',
+  'thumb_url', 'clearart_url', 'disc_url', 'character_art_url',
+]
+
+/**
+ * Builds a url -> slotted-entry lookup across every plugin's metadata. Lets a viewer that
+ * only knows an image's URL (the page-level lightbox, which mixes every type together)
+ * work out which slot that image could be promoted into.
+ */
+export function buildSlotLookup(
+  pluginMetadata: Record<string, unknown> | null | undefined,
+): Map<string, SlottedImageEntry> {
+  const map = new Map<string, SlottedImageEntry>()
+  for (const [pluginId, meta] of Object.entries(pluginMetadata ?? {})) {
+    for (const img of extractSlottedImages(pluginId, meta as Record<string, unknown>)) {
+      if (!map.has(img.url)) map.set(img.url, img)
+    }
+  }
+  return map
+}
+
 /** Maps a raw AdditionalImage.Type (from Fanart.tv/MusicBrainz/FanEdit/etc.) or a top-level
  *  scalar field name to a canonical slot. Types absent here have no first-class slot and are
  *  excluded from the promote-eligible pool — they still render in the existing raw per-plugin

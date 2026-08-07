@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { SlottedImageEntry } from '@/utils/imageExtractor'
+import type { CanonicalSlot, SlottedImageEntry } from '@/utils/imageExtractor'
+import type { MediaItem } from '@/types'
+import { ImageSlotControls } from './ImageSlotControls'
 import styles from './PluginMetadataBox.module.css'
 
 export interface SlotGalleryModalProps {
@@ -7,8 +9,10 @@ export interface SlotGalleryModalProps {
   images: SlottedImageEntry[]
   startIndex: number
   onClose: () => void
-  onPromote: (img: SlottedImageEntry) => void
-  isPromoting: boolean
+  overrides: MediaItem['overrides']
+  onSet: (slot: CanonicalSlot, img: SlottedImageEntry) => void
+  onClear: (slot: CanonicalSlot) => void
+  pendingSlot?: CanonicalSlot | null
 }
 
 /**
@@ -17,9 +21,12 @@ export interface SlotGalleryModalProps {
  * across every plugin, by design, for its existing "browse everything" use). This modal's
  * own index/keyboard-nav state is scoped to exactly the one slot's image list, so browsing
  * posters never crosses into backdrops/logos/etc.
+ *
+ * The slot the gallery was opened from only scopes what you BROWSE here. Assignment is not
+ * restricted to it — ImageSlotControls offers every slot for the image on screen.
  */
 export function SlotGalleryModal({
-  slotLabel, images, startIndex, onClose, onPromote, isPromoting,
+  slotLabel, images, startIndex, onClose, overrides, onSet, onClear, pendingSlot,
 }: SlotGalleryModalProps) {
   const [idx, setIdx] = useState(startIndex)
 
@@ -70,19 +77,14 @@ export function SlotGalleryModal({
             <span className={styles.lightboxCounter}> {idx + 1} / {images.length}</span>
           )}
         </span>
-        <button
-          type="button"
-          disabled={isPromoting}
-          onClick={() => onPromote(current)}
-          style={{
-            marginLeft: 12, padding: '3px 10px', borderRadius: 4, border: 'none',
-            background: 'var(--accent)', color: 'var(--accent-fg, #fff)', cursor: 'pointer',
-            fontSize: '0.8rem',
-          }}
-        >
-          {isPromoting ? 'Setting…' : `Set as ${slotLabel.replace(/s$/, '')}`}
-        </button>
       </div>
+      <ImageSlotControls
+        imageUrl={current.url}
+        overrides={overrides}
+        onSet={slot => onSet(slot, current)}
+        onClear={onClear}
+        pendingSlot={pendingSlot}
+      />
       {idx < images.length - 1 && (
         <button
           className={`${styles.lightboxNav} ${styles.lightboxNavNext}`}

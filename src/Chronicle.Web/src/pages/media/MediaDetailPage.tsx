@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride } from '@/api/media'
+import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
@@ -14,7 +14,8 @@ import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
 import { SlotGalleryModal } from '@/components/SlotGalleryModal'
-import { extractImages, type ImageEntry, type CanonicalSlot, type SlottedImageEntry } from '@/utils/imageExtractor'
+import { ImageSlotControls } from '@/components/ImageSlotControls'
+import { extractImages, buildSlotLookup, type ImageEntry, type CanonicalSlot, type SlottedImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 import { PosterImage } from '@/components/PosterImage'
@@ -452,13 +453,28 @@ export default function MediaDetailPage() {
     slot: CanonicalSlot; slotLabel: string; images: SlottedImageEntry[]; startIndex: number
   } | null>(null)
 
-  const galleryPromoteMut = useMutation({
-    mutationFn: (p: { field: CanonicalSlot; img: SlottedImageEntry }) =>
-      setMediaOverride(mediaId, p.field, p.img.url, p.img.pluginId, p.img.slot),
-    onSuccess: (updated) => {
-      qc.setQueryData(['media', mediaId], updated)
-      setGallerySlot(null)
+  // Which slot has a set/clear request in flight, so only that chip shows a busy state.
+  const [pendingSlot, setPendingSlot] = useState<CanonicalSlot | null>(null)
+
+  // Shared by both full-size viewers (the type-scoped gallery and the page-level lightbox).
+  // The gallery deliberately stays OPEN after assigning, so several slots can be given the
+  // same image in one visit and a mistaken pin can be undone on the spot.
+  const overrideSetMut = useMutation({
+    mutationFn: (p: { slot: CanonicalSlot; url: string; pluginId?: string; sourceType?: string }) => {
+      setPendingSlot(p.slot)
+      return setMediaOverride(mediaId, p.slot, p.url, p.pluginId, p.sourceType)
     },
+    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+    onSettled: () => setPendingSlot(null),
+  })
+
+  const overrideClearMut = useMutation({
+    mutationFn: (slot: CanonicalSlot) => {
+      setPendingSlot(slot)
+      return clearMediaOverride(mediaId, slot)
+    },
+    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+    onSettled: () => setPendingSlot(null),
   })
 
   const clearAllOverridesMut = useMutation({
@@ -496,6 +512,11 @@ export default function MediaDetailPage() {
     ),
   ]
   allImagesLenRef.current = allImages.length
+
+  // url -> {slot, pluginId} so the page-level lightbox (which mixes every image type) can
+  // record provenance when pinning. Assignment itself is never restricted to the looked-up
+  // slot — ImageSlotControls offers all of them.
+  const slotLookup = buildSlotLookup(item.pluginMetadata)
 
   // Per-plugin start offsets so PluginMetadataBox can pass the correct global index
   const pluginImageOffsets = new Map<string, number>()
@@ -1155,10 +1176,9 @@ export default function MediaDetailPage() {
           })()}
 
           {/* Additional Images — every image available across all plugins for this item,
-              grouped by artwork type, excluding whichever image currently holds each slot.
-              Click a thumbnail to promote it directly, or expand to browse a slot's full list. */}
+              grouped by the artwork type its source plugin reported. Browse-only: clicking a
+              thumbnail opens it full size, which is the only place artwork can be assigned. */}
           <AdditionalImagesCard
-            mediaId={mediaId}
             item={item}
             onOpenGallery={(slot, slotLabel, images, startIndex) =>
               setGallerySlot({ slot, slotLabel, images, startIndex })
@@ -1428,8 +1448,12 @@ export default function MediaDetailPage() {
           images={gallerySlot.images}
           startIndex={gallerySlot.startIndex}
           onClose={() => setGallerySlot(null)}
-          onPromote={(img) => galleryPromoteMut.mutate({ field: gallerySlot.slot, img })}
-          isPromoting={galleryPromoteMut.isPending}
+          overrides={item.overrides}
+          onSet={(slot, img) => overrideSetMut.mutate({
+            slot, url: img.url, pluginId: img.pluginId, sourceType: img.slot,
+          })}
+          onClear={(slot) => overrideClearMut.mutate(slot)}
+          pendingSlot={pendingSlot}
         />
       )}
 
@@ -1472,6 +1496,20 @@ export default function MediaDetailPage() {
               <span className={styles.lightboxCounter}> {lightboxIdx + 1} / {allImages.length}</span>
             )}
           </div>
+          {allImages[lightboxIdx]?.url && (
+            <ImageSlotControls
+              imageUrl={allImages[lightboxIdx]!.url}
+              overrides={item.overrides}
+              onSet={slot => overrideSetMut.mutate({
+                slot,
+                url: allImages[lightboxIdx]!.url,
+                pluginId: slotLookup.get(allImages[lightboxIdx]!.url)?.pluginId,
+                sourceType: slotLookup.get(allImages[lightboxIdx]!.url)?.slot,
+              })}
+              onClear={slot => overrideClearMut.mutate(slot)}
+              pendingSlot={pendingSlot}
+            />
+          )}
           {lightboxIdx < allImages.length - 1 && (
             <button
               className={`${styles.lightboxNav} ${styles.lightboxNavNext}`}

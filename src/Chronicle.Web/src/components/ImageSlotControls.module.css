@@ -1,0 +1,65 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.72);
+  max-width: min(92vw, 760px);
+}
+
+.prompt {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #aaa);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.chip {
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #555);
+  background: transparent;
+  color: var(--text, #eee);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--accent, #4a9eff);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* This image currently holds the slot — click reverts to the automatic default. */
+.chipActive {
+  background: var(--accent, #4a9eff);
+  border-color: var(--accent, #4a9eff);
+  color: var(--accent-fg, #fff);
+  font-weight: 600;
+}
+
+/* Slot is pinned, but to some other image — clicking takes it over. */
+.chipTaken {
+  border-style: dashed;
+  color: var(--text-muted, #aaa);
+}
+
+.hint {
+  font-size: 0.72rem;
+  color: var(--text-muted, #999);
+  text-align: center;
+}
