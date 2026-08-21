@@ -218,6 +218,28 @@ public sealed class DuplicateCleanupService : IScheduledTask
                 var winner = ordered[0];
                 foreach (var loser in ordered.Skip(1))
                 {
+                    // Confirmed root cause (2026-08-21): unlike Pass 1 (same file path) and Pass 3
+                    // (title match by construction), a shared (source, externalId) here is NOT
+                    // proof the two items are the same real-world thing -- an episode's external ID
+                    // is often DERIVED from its show/season/number rather than returned directly by
+                    // the provider (see the parentId-scoping comment on the tertiary name-match tier
+                    // in FileScanService, same root issue), so a numbering mismatch between two
+                    // otherwise-unrelated episodes can produce an identical derived ID. A single
+                    // manual "Run Now" merged 42 completely unrelated episode pairs this way in one
+                    // run (e.g. "Trip of a Lifetime" and "The Lost Supper" -- different episodes,
+                    // same derived tvmaze id) before this guard existed. Titles genuinely being the
+                    // same/equivalent is the one signal Pass 1 and Pass 3 already lean on, so require
+                    // it here too rather than trusting the external ID alone.
+                    if (NormalizeTitle(winner.Name) != NormalizeTitle(loser.Name))
+                    {
+                        _log.Warning(
+                            "DuplicateCleanup: external ID '{Key}' shared by {WId} ('{WName}') and {LId} " +
+                            "('{LName}') but titles don't match -- skipping (likely a derived-ID collision, " +
+                            "not a real duplicate; review manually)",
+                            group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
+                        continue;
+                    }
+
                     _log.Information(
                         "DuplicateCleanup: external ID '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
