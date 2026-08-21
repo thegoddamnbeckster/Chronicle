@@ -27,6 +27,19 @@ namespace Chronicle.Core.Exceptions
         public InvalidCredentialsException() : base("Invalid username or password.") { }
     }
 
+    /// <summary>Guards against locking every human out of admin functions: the final active
+    /// admin can't be demoted, deactivated, or deleted, whichever route is attempted.</summary>
+    public class LastAdminException : ChronicleException
+    {
+        public LastAdminException(string action)
+            : base($"Cannot {action} the last remaining admin — promote another user to admin first.") { }
+    }
+
+    public class UserContactNotFoundException : ChronicleException
+    {
+        public UserContactNotFoundException(int id) : base($"Contact {id} was not found.") { }
+    }
+
     public class LibraryEntryNotFoundException : ChronicleException
     {
         public LibraryEntryNotFoundException(int id) : base($"Library entry {id} was not found.") { }

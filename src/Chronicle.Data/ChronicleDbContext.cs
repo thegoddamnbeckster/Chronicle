@@ -50,6 +50,7 @@ namespace Chronicle.Data
         }
 
         public DbSet<User> Users => Set<User>();
+        public DbSet<UserContact> UserContacts => Set<UserContact>();
         public DbSet<MediaType> MediaTypes => Set<MediaType>();
         public DbSet<MediaItem> MediaItems => Set<MediaItem>();
         public DbSet<MediaExternalId> MediaExternalIds => Set<MediaExternalId>();
@@ -87,6 +88,29 @@ namespace Chronicle.Data
                 entity.Property(u => u.PreferencesJson)
                     .HasColumnName("preferences_json")
                     .HasDefaultValue("{}");
+                entity.Property(e => e.FirstName).HasMaxLength(100);
+                entity.Property(e => e.LastName).HasMaxLength(100);
+                entity.Property(e => e.Handle).HasMaxLength(50);
+                // Not unique: a handle is a display convenience, not a credential, and forcing
+                // uniqueness would fail the migration on any existing duplicate.
+                entity.HasIndex(e => e.Handle);
+            });
+
+            modelBuilder.Entity<UserContact>(entity =>
+            {
+                entity.ToTable("user_contacts");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.UserId, e.Kind });
+                entity.Property(e => e.Kind).IsRequired().HasMaxLength(40);
+                entity.Property(e => e.Label).HasMaxLength(80);
+                entity.Property(e => e.Value).IsRequired().HasMaxLength(500);
+                entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasOne(e => e.User)
+                    .WithMany(u => u.Contacts)
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             modelBuilder.Entity<MediaType>(entity =>

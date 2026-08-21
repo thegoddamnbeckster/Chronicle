@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using Chronicle.API;
 using Microsoft.AspNetCore.DataProtection;
@@ -105,6 +106,9 @@ builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IApiTokenService, ApiTokenService>();
 builder.Services.AddScoped<IUserService, UserService>();
+// Singleton so the scoped UserService (writer) and the JWT validation event (reader) share
+// one view of which accounts are cut off. Seeded from the database at startup.
+builder.Services.AddSingleton<IDeactivatedUserCache, DeactivatedUserCache>();
 builder.Services.AddScoped<IMediaService, MediaService>();
 builder.Services.AddScoped<ILibraryService, LibraryService>();
 builder.Services.AddScoped<IScrobbleService, ScrobbleService>();
@@ -257,6 +261,23 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero
         };
+        options.Events = new JwtBearerEvents
+        {
+            // Tokens are stateless and live 24 h, so a signature check alone would let a
+            // deactivated or deleted account keep working until its token expired. The cache
+            // is in-memory, so this costs no database round trip per request.
+            OnTokenValidated = context =>
+            {
+                var idClaim = context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (int.TryParse(idClaim, out var uid) &&
+                    context.HttpContext.RequestServices
+                           .GetRequiredService<IDeactivatedUserCache>().IsBlocked(uid))
+                {
+                    context.Fail("Account is deactivated or no longer exists.");
+                }
+                return Task.CompletedTask;
+            }
+        };
     })
     .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
         ApiKeyAuthenticationHandler.SchemeName, _ => { });
@@ -348,6 +369,12 @@ using (var scope = app.Services.CreateScope())
         // migrations, which can hang on Windows. Only call Migrate() when needed.
         if (db.Database.GetPendingMigrations().Any())
             db.Database.Migrate();
+
+        // Seed the cut-off list so suspensions survive a restart. (Deleted accounts need no
+        // entry here: any token they hold predates the restart, and a fresh sign-in is
+        // impossible once the row is gone.)
+        app.Services.GetRequiredService<IDeactivatedUserCache>()
+            .Replace(db.Users.Where(u => !u.IsActive).Select(u => u.Id).ToList());
 
         // Backfill folderPath for items imported before it was wired up.
         var fileScanService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IFileScanService>();

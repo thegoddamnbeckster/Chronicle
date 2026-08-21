@@ -43,6 +43,11 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
             return AuthenticateResult.Fail("Invalid or expired API key.");
 
         var user = token.User!;
+
+        // A deactivated account's keys must stop working too, not just its password.
+        if (!user.IsActive)
+            return AuthenticateResult.Fail("Account is deactivated.");
+
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),

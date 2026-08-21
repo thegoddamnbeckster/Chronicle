@@ -29,6 +29,8 @@ import PreferencesPage from '@/pages/preferences/PreferencesPage'
 import MetadataAssignmentPage from '@/pages/settings/MetadataAssignmentPage'
 import FieldAliasesPage from '@/pages/settings/FieldAliasesPage'
 import DuplicatesPage from '@/pages/settings/DuplicatesPage'
+import UsersPage from '@/pages/settings/UsersPage'
+import ProfilePage from '@/pages/settings/ProfilePage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -39,6 +41,13 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   }, [user, loading, navigate])
 
   if (loading || !user) return null
+  return <>{children}</>
+}
+
+/** Sits inside RequireAuth, so `user` is already resolved by the time this renders. */
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  if (!user?.isAdmin) return <Navigate to="/settings/profile" replace />
   return <>{children}</>
 }
 
@@ -83,6 +92,10 @@ export default function App() {
         <Route path="settings/metadata-assignment" element={<MetadataAssignmentPage />} />
         <Route path="settings/field-aliases" element={<FieldAliasesPage />} />
         <Route path="settings/duplicates" element={<DuplicatesPage />} />
+        {/* Admin-only in the API; RequireAdmin keeps a non-admin from reaching a page
+            that would just render a wall of 403s. */}
+        <Route path="settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
+        <Route path="settings/profile" element={<ProfilePage />} />
         <Route path="plugins" element={<PluginsPage />} />
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListDetailPage />} />

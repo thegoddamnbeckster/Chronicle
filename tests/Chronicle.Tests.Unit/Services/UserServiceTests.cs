@@ -27,7 +27,7 @@ namespace Chronicle.Tests.Unit.Services
             _hasherMock.Setup(h => h.VerifyPassword("correct", "hashed")).Returns(true);
             _hasherMock.Setup(h => h.VerifyPassword(It.Is<string>(p => p != "correct"), "hashed")).Returns(false);
 
-            _service = new UserService(_context, _hasherMock.Object);
+            _service = new UserService(_context, _hasherMock.Object, new DeactivatedUserCache());
         }
 
         [Fact]

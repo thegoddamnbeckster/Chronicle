@@ -135,6 +135,18 @@ export default function Layout() {
           <NavLink to="/settings/service" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             Service
           </NavLink>
+
+          {/* Own section, alphabetically last within Settings */}
+          <NavGroup label="Users" storageKey="nav_group_users" defaultOpen={false}>
+            <NavLink to="/settings/profile" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              My Profile
+            </NavLink>
+            {user.isAdmin && (
+              <NavLink to="/settings/users" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+                Manage Users
+              </NavLink>
+            )}
+          </NavGroup>
         </NavGroup>
 
         {/* Standalone at bottom */}

@@ -1,0 +1,151 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.empty {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.groupLabel {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-card);
+  border-radius: 4px;
+}
+
+.value {
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  word-break: break-all;
+  flex: 1;
+  min-width: 140px;
+}
+
+.tag {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.05rem 0.35rem;
+}
+
+.addForm {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.select,
+.input,
+.inputWide {
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  box-sizing: border-box;
+}
+
+.input { width: 150px; }
+.inputWide { flex: 1; min-width: 200px; }
+
+.checkLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.addBtn {
+  padding: 0.4rem 1rem;
+  background: var(--accent, #5b9bd5);
+  border: none;
+  border-radius: 4px;
+  color: var(--accent-fg);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.addBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.smallBtn {
+  padding: 0.25rem 0.6rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.smallBtn:hover:not(:disabled) {
+  background: var(--bg-secondary);
+}
+
+.dangerBtn {
+  composes: smallBtn;
+  border-color: var(--status-danger-border);
+  color: var(--status-danger-fg);
+}
+
+.dangerBtn:hover:not(:disabled) {
+  background: var(--status-danger-bg);
+}
+
+.primaryOn,
+.primaryOff {
+  padding: 0.2rem 0.5rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.primaryOn {
+  color: var(--accent, #5b9bd5);
+  border-color: var(--border);
+}
+
+.primaryOff {
+  color: var(--text-muted);
+}
+
+.primaryOff:hover {
+  color: var(--text-primary);
+}
+
+.error {
+  font-size: 0.8rem;
+  color: var(--status-danger-fg);
+}

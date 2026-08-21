@@ -1,0 +1,252 @@
+.page {
+  padding: 2rem;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 1.5rem;
+  color: var(--text-primary);
+}
+
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.cardTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 1rem;
+}
+
+.loading {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.error {
+  font-size: 0.85rem;
+  color: var(--status-danger-fg);
+  margin-top: 0.5rem;
+}
+
+.success {
+  font-size: 0.85rem;
+  color: var(--status-success-fg);
+  margin-top: 0.5rem;
+}
+
+/* Forms */
+.createForm {
+  padding: 1rem;
+  background: var(--bg-card);
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.formRow {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 160px;
+}
+
+.label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.textInput {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  box-sizing: border-box;
+}
+
+.textInput::placeholder {
+  color: var(--text-muted);
+}
+
+.checkLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding-bottom: 0.5rem;
+}
+
+.createBtn {
+  padding: 0.5rem 1.25rem;
+  background: var(--accent, #5b9bd5);
+  border: none;
+  border-radius: 4px;
+  color: var(--accent-fg);
+  font-size: 0.875rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.createBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.createBtn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+/* User list */
+.userList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.userRow {
+  background: var(--bg-card);
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+}
+
+.userRowInactive {
+  composes: userRow;
+  opacity: 0.6;
+}
+
+.userMain {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.expandBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  flex-shrink: 0;
+}
+
+.userInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+  min-width: 180px;
+}
+
+.userName {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.userHandle {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.youTag {
+  margin-left: 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent, #5b9bd5);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.05rem 0.3rem;
+}
+
+.userMeta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.userActions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.smallBtn {
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.smallBtn:hover:not(:disabled) {
+  background: var(--bg-secondary);
+}
+
+.smallBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dangerBtn {
+  composes: smallBtn;
+  border-color: var(--status-danger-border);
+  color: var(--status-danger-fg);
+}
+
+.dangerBtn:hover:not(:disabled) {
+  background: var(--status-danger-bg);
+}
+
+/* Expanded detail */
+.detail {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+.detailHeading {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 1rem 0 0.5rem;
+}
