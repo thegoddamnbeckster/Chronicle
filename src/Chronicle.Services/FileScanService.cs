@@ -412,7 +412,18 @@ namespace Chronicle.Services
                     {
                         // Fall back to title+year match so a file-scanner stub with the same
                         // title (in any normalised variant) is reused instead of duplicated.
-                        var existingByTitle = await FindByTitleAsync(meta.Title, request.MediaTypeId, meta.Year, ct);
+                        // Confirmed directly (2026-08-21): FindByTitleAsync treats a null year as
+                        // "match any year at all", not "match nothing" -- fine for its other,
+                        // explicitly-intentional no-year-filter callers, but here it silently
+                        // merged "The Running Man (1987)" onto the unrelated 2025 remake because
+                        // the provider's own metadata for that specific title had no parseable
+                        // year. An unknown candidate year must never justify reusing a same-titled
+                        // item that has a real, different year -- skip the reuse fallback entirely
+                        // and create a new item instead; a possible duplicate is far cheaper to
+                        // fix than two real movies silently merged into one.
+                        var existingByTitle = meta.Year.HasValue
+                            ? await FindByTitleAsync(meta.Title, request.MediaTypeId, meta.Year, ct)
+                            : null;
                         if (existingByTitle is not null)
                         {
                             mediaItem                  = existingByTitle;
@@ -1381,7 +1392,11 @@ namespace Chronicle.Services
                 // matches across media types: a Fan Edit and its source Movie are intentionally
                 // distinct catalog entries even when they share a title/year, so mediaTypeId is
                 // passed through unchanged to FindByTitleAsync's type-scoped lookup.
-                var existingByTitle = await FindByTitleAsync(meta.Title, mediaTypeId, meta.Year, ct);
+                // An unknown meta.Year must never fall back to a title-only match here — see the
+                // identical guard (and its "Running Man" root-cause story) in ImportApprovedAsync.
+                var existingByTitle = meta.Year.HasValue
+                    ? await FindByTitleAsync(meta.Title, mediaTypeId, meta.Year, ct)
+                    : null;
                 if (existingByTitle is not null)
                 {
                     item                = existingByTitle;
