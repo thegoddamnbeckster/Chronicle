@@ -257,6 +257,89 @@ Authorization: Bearer {token}
 
 ---
 
+## User Management Endpoints
+
+Two parallel surfaces over the same operations: `/users/me/*` acts on the caller, and
+`/users/{id}/*` acts on anyone but requires the `Admin` role. Both return the same
+`UserAccountDto` shape.
+
+### The account shape
+
+```json
+{
+  "id": 5,
+  "username": "jsmith",
+  "email": "jsmith@example.com",
+  "firstName": "Jane",
+  "lastName": "Smith",
+  "handle": "@jsmith",
+  "displayName": null,
+  "resolvedDisplayName": "@jsmith",
+  "isAdmin": true,
+  "isActive": true,
+  "createdAt": "2026-04-24T00:00:00Z",
+  "lastLoginAt": "2026-08-07T12:00:00Z",
+  "contacts": [
+    { "id": 1, "kind": "email", "label": "work", "value": "jsmith@work.example",
+      "isPrimary": true, "createdAt": "2026-08-07T00:00:00Z" }
+  ]
+}
+```
+
+`resolvedDisplayName` is computed server-side: explicit `displayName` wins, then `handle`,
+then `firstName lastName`, then `username`.
+
+`contacts[].kind` is a free-form lowercase string — `email`, `phone`, `mastodon`, `discord`,
+or anything else. New contact methods need no migration and no code change. A user may hold
+any number of each kind; at most one per kind can be `isPrimary`.
+
+### Self-service
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/users/me` | Slim session shape (unchanged) |
+| `GET` | `/api/v1/users/me/profile` | Full account incl. contacts |
+| `PUT` | `/api/v1/users/me/profile` | Full replacement — an omitted field clears it |
+| `PUT` | `/api/v1/users/me/password` | Requires `currentPassword` |
+| `GET`/`POST` | `/api/v1/users/me/contacts` | |
+| `PUT`/`DELETE` | `/api/v1/users/me/contacts/{contactId}` | Scoped to the caller — another user's id returns 404 |
+
+### Administration (`Admin` role required)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/users` | All accounts, each with contacts |
+| `GET` | `/api/v1/users/{id}` | |
+| `POST` | `/api/v1/users` | Never auto-promotes; `isAdmin` must be explicit |
+| `PUT` | `/api/v1/users/{id}/profile` | |
+| `PUT` | `/api/v1/users/{id}/password` | No current password; 400 on self (use the self route) |
+| `PUT` | `/api/v1/users/{id}/admin` | `{ "isAdmin": true }` |
+| `PUT` | `/api/v1/users/{id}/active` | Reversible suspension; 400 on self-deactivate |
+| `DELETE` | `/api/v1/users/{id}` | Irreversible; 400 on self |
+| `GET`/`POST` | `/api/v1/users/{id}/contacts` | |
+| `PUT`/`DELETE` | `/api/v1/users/{id}/contacts/{contactId}` | |
+
+### Guarantees
+
+- **Last-admin lockout is impossible.** Demote, deactivate, and delete each refuse when the
+  target is the only *active* admin, returning `409 LAST_ADMIN`. A deactivated admin does not
+  count as a backup, since it cannot log in.
+- **Self-destruction is blocked.** An admin cannot delete or deactivate their own account
+  (`400 CANNOT_DELETE_SELF` / `CANNOT_DEACTIVATE_SELF`), nor reset their own password without
+  the current one (`400 USE_SELF_ENDPOINT`).
+- **Deactivating or deleting cuts off live sessions immediately.** Tokens are stateless and
+  live 24 hours, so a signature check alone would leave a removed account working for up to a
+  day. JWT validation consults an in-memory block list (no per-request database hit), and the
+  `X-API-Key` handler refuses keys belonging to a deactivated account. Reactivating restores
+  access at once.
+- **Role changes take effect on next login** — the role lives in the JWT.
+- **Deleting a user never touches shared media.** `media_items` has no owner column. The
+  account's own rows (library, interaction events, API tokens, lists, contacts) go with it;
+  `media_item_merges.merged_by_user_id` is nulled rather than left dangling. Prefer
+  deactivation when the history matters — it is fully reversible.
+
+---
+
 ## Scrobbling Endpoints
 
 ### Scrobble Media

@@ -535,7 +535,14 @@ export default function LibraryPage() {
                   className={[
                     styles.card,
                     entry.mediaItem.isCollectionContainer ? styles.cardCollection : '',
-                    entry.mediaItem.isStub ? styles.cardStub : '',
+                    // hasMetadataOnly, not isStub -- isStub is only true for a collection's
+                    // own auto-created placeholder rows. A SIMKL/Trakt watch-history import is
+                    // a real (non-stub) item with a genuine library entry and still has no
+                    // physical file at all; hasMetadataOnly is the field that actually answers
+                    // "is this missing a file" for every case, stub or not. Mirrors the same
+                    // fix already made to the collection detail page's own "Not in Library"
+                    // badge (CollectionMetadataBox.tsx).
+                    entry.mediaItem.hasMetadataOnly ? styles.cardStub : '',
                     selectMode && selectedIds.has(entry.mediaItem.id) ? styles.cardSelected : '',
                   ].filter(Boolean).join(' ')}
                   onClick={selectMode ? () => toggleSelected(entry.mediaItem.id) : undefined}
@@ -553,7 +560,7 @@ export default function LibraryPage() {
                         {entry.mediaItem.isCollectionContainer && (
                           <div className={styles.collectionBadge}>Collection</div>
                         )}
-                        {entry.mediaItem.isStub && (
+                        {entry.mediaItem.hasMetadataOnly && (
                           <div className={styles.stubBadge}>Missing</div>
                         )}
                       </div>
@@ -573,7 +580,7 @@ export default function LibraryPage() {
                         {entry.mediaItem.isCollectionContainer && (
                           <div className={styles.collectionBadge}>Collection</div>
                         )}
-                        {entry.mediaItem.isStub && (
+                        {entry.mediaItem.hasMetadataOnly && (
                           <div className={styles.stubBadge}>Missing</div>
                         )}
                       </div>

@@ -7,6 +7,9 @@ obj/
 *.db
 *.db-shm
 *.db-wal
+*.db.bak-*
+*.db-shm.bak-*
+*.db-wal.bak-*
 publish/
 # Local dev config — may contain secrets (tokens, keys). Never commit.
 appsettings.Development.json

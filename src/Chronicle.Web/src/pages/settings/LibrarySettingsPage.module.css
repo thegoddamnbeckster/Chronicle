@@ -525,6 +525,21 @@
   border-color: var(--accent);
 }
 
+.textInput {
+  width: 320px;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-family: var(--font-mono, monospace);
+}
+.textInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .saveBtn {
   padding: 6px 14px;
   background: var(--accent);

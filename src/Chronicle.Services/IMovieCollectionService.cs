@@ -121,4 +121,38 @@ public interface IMovieCollectionService
     /// </exception>
     Task ReparentIntoCollectionAsync(
         ChronicleDbContext db, int movieId, int collectionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// True if <paramref name="itemId"/> is acting as a collection container -- it has at least
+    /// one child, or it carries a <c>collection:{id}</c> external ID (a brand-new container can
+    /// have zero children for a moment between creation and stub-seeding). The single canonical
+    /// check for "is this a collection, not a plain item" -- used anywhere that distinction
+    /// gates a structural decision (merge eligibility, scraper candidate matching, enrichment's
+    /// own re-parenting guard) so all of them agree with each other by construction instead of
+    /// drifting via separately hand-rolled copies of the same two conditions.
+    /// </summary>
+    Task<bool> IsCollectionContainerAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Batch form of <see cref="IsCollectionContainerAsync"/> — two queries over the whole
+    /// candidate set instead of two queries per item. Use whenever the container check runs
+    /// against a list rather than a single already-known item (e.g. filtering a scraper's
+    /// title-match candidate pool).
+    /// </summary>
+    Task<HashSet<int>> GetCollectionContainerIdsAsync(
+        ChronicleDbContext db, IReadOnlyCollection<int> candidateIds, CancellationToken ct = default);
+
+    /// <summary>
+    /// A poster to show for a collection that has none of its own -- the container's own
+    /// PosterUrl (set only by a Rebuild pulling the provider's dedicated collection-level
+    /// artwork) always wins when present; this is only ever consulted when that's empty.
+    /// Walks the collection's children in the same year/name display order the collection
+    /// detail page itself uses, and returns the first one with a resolved poster -- ownership
+    /// (a real local file vs. a stub or a watch-history-only import) deliberately plays no part
+    /// here: the goal is "always show a poster where one can be found," not "only ever show a
+    /// poster for something you own." Null only when literally no child has any poster at all.
+    /// The single implementation both the web collection page and the Kodi scraper's set-art
+    /// fallback call, so "first available child poster" means the same thing everywhere.
+    /// </summary>
+    Task<string?> GetFallbackPosterAsync(ChronicleDbContext db, int collectionId, CancellationToken ct = default);
 }

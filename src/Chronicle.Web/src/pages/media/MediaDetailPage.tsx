@@ -124,7 +124,6 @@ function useFold(key: string, defaultOpen: boolean) {
       setLoaded(true)
     })
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
   function toggle() {

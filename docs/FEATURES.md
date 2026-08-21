@@ -158,6 +158,16 @@ Real-time presence:
 - **User** - Standard access
 - **Limited** - View-only or restricted
 
+**Account Management** *(implemented — Settings → Users)*
+- Admins add, promote/demote, deactivate, delete, and reset passwords for any account
+- Users manage their own identity: first/last name, handle, display-name override, email
+- Display name resolves `displayName` → `handle` → `first last` → `username`
+- Unlimited contact methods per user — email, phone, and any social profile. The kind is a
+  free-form string, so a new network never needs a schema change
+- Deactivation is reversible and preserves everything; deletion is irreversible but never
+  touches shared media
+- The last active admin can never be demoted, deactivated, or deleted
+
 **Family Units:**
 - Parent/guardian accounts see all family activity
 - Children accounts see only their own

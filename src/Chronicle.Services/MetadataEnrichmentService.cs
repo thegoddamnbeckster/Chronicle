@@ -1728,11 +1728,7 @@ public class MetadataEnrichmentService(
                     row.MediaItem!.MediaType?.Name, allProviders, ct);
                 // If this is a TMDB movie enrichment, ensure collection parent exists and re-parent if needed.
                 // Stubs are skipped — they're placeholders and must not trigger further collection creation.
-                // Items that already have children are acting as collection containers; skip them too —
-                // running EnsureCollectionParentAsync on a container would wrongly move it under another container.
-                var hasChildren = !row.MediaItem!.IsStub &&
-                                  await db.MediaItems.AnyAsync(m => m.ParentId == row.MediaItemId, ct);
-
+                //
                 // A collection intentionally created via the Add Collection page -- or already
                 // linked to a real TMDB collection -- must never be treated as a plain movie for
                 // re-parenting purposes, even while it still has zero members. Without this, a
@@ -1741,9 +1737,10 @@ public class MetadataEnrichmentService(
                 // happened when "Metallica: S&M Collection" matched a single movie ID) would get
                 // silently reparented UNDER that unrelated collection by EnsureCollectionParentAsync
                 // below, destroying it as its own container. Mirrors the frontend's
-                // isKnownCollection check (MediaDetailPage.tsx) on the backend.
-                var isKnownCollection = hasChildren || await db.MediaExternalIds.AnyAsync(
-                    e => e.MediaItemId == row.MediaItemId && e.ExternalId.StartsWith("collection:"), ct);
+                // isKnownCollection check (MediaDetailPage.tsx) on the backend, and is the same
+                // container check merge eligibility and scraper candidate matching now share.
+                var isKnownCollection = !row.MediaItem!.IsStub &&
+                    await movieCollectionService.IsCollectionContainerAsync(db, row.MediaItemId, ct);
 
                 // Load MediaType navigation if not already present (needed by EnsureCollectionParentAsync).
                 if (!row.MediaItem!.IsStub && !isKnownCollection)

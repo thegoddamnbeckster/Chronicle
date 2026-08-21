@@ -95,7 +95,8 @@ public interface IWidgetPlugin
 
 ## Database Design (Key Tables)
 
-- `users` — Accounts, bcrypt passwords (cost 12), JSON preferences
+- `users` — Accounts, bcrypt passwords (cost 12), JSON preferences, identity fields (first/last/handle)
+- `user_contacts` — Any number of ways to reach a user; `kind` is free-form, not an enum
 - `media_types` — Configurable types with hierarchy levels, interaction verbs, progress units
 - `media_groups` — Groups versions of same media (e.g., Blade Runner theatrical vs Director's Cut)
 - `media_items` — Individual media; hierarchical via `parent_id` (show→season→episode)
@@ -217,7 +218,58 @@ Any image Chronicle knows about can be pinned into any of the 8 canonical artwor
 - Reset is available at five scopes: one slot, one item, one item + all descendants
   (collections/shows), one media type, and library-wide.
 
+**Collections are a special case.** A collection container can never be enriched the normal
+way: `collection:` external IDs are excluded from enrichment seeding (a container id is not a
+movie id), and a name-search fallback finds nothing because no provider's search endpoint
+returns collections. `MovieCollectionService.EnsureCollectionStubsAsync` is the only place a
+provider is asked about a collection *by id*, so it's the only place a collection can get
+artwork — it stores the provider's poster/backdrop/additionalImages onto the container
+(`PersistCollectionMetadataAsync`) before using the parts list. **Rebuilding the collection is
+what refreshes its artwork**; "Refresh metadata" does nothing for a container. TMDB carries
+dozens of alternates per collection (81 posters for Die Hard, 100 for Fast & Furious) via
+`/collection/{id}/images`, deliberately requested with no `language` filter.
+
+Partition keys in `MetadataJson` are **full plugin ids** (`chronicle.plugin.tmdb`), not short
+sources (`tmdb`) — the assignment-priority map is keyed by plugin id, so a short key stores
+fine and then silently resolves to nothing.
+
+**Kodi:** movie sets have no scraper hook, so their art reaches Kodi only as files written into
+the "Movie set information folder" by `collection_sync.py`. Automatic art is fill-only there
+(never clobber hand-curated files), but a slot the user pinned in Chronicle overwrites —
+`ScraperCollectionDto.PinnedSlots` is what tells the addon which. An overwrite is followed by
+`Textures.RemoveTexture`, since Kodi only re-hashes local images about once a day.
+
 ---
+
+## User management
+
+Managed from **Settings → Users** (its own nav section, last within Settings): *My Profile*
+for everyone, *Manage Users* for admins only. Key invariants:
+
+- Every route exists twice — `/users/me/*` for the caller, `/users/{id}/*` gated on the
+  `Admin` role. The self routes scope contact lookups by the caller's own id, so guessing
+  another user's contact id returns 404 rather than editing it.
+- **The last active admin cannot be demoted, deactivated, or deleted** (`409 LAST_ADMIN`).
+  A deactivated admin doesn't count as a backup — it can't log in.
+- An admin cannot delete or deactivate their own account, and must supply the current
+  password to change their own (an admin reset for *another* user needs none).
+- **Deactivate/delete cut off live sessions immediately.** JWTs are stateless with a 24-hour
+  life, so `DeactivatedUserCache` (singleton, checked in `OnTokenValidated`, seeded from the
+  DB at startup) blocks removed ids, and `ApiKeyAuthenticationHandler` refuses keys on
+  inactive accounts. Anything that adds a new auth path must consult both.
+- Display name resolves `displayName` → `handle` → `firstName lastName` → `username`.
+  The API returns `resolvedDisplayName`; don't recompute it beyond a live form preview.
+- `contacts[].kind` is free-form and lowercased. Never turn it into an enum — a new social
+  network must not require a migration. `CONTACT_KINDS` in `api/users.ts` is a picker
+  convenience only, with an "Other…" escape hatch.
+- Deletion never orphans media (`media_items` has no owner). It cascades the account's own
+  rows and nulls `media_item_merges.merged_by_user_id`. Deactivation is the reversible
+  option and should be the default suggestion.
+
+**Migration gotcha:** `dotnet ef database update` hangs indefinitely against the dev DB on
+Windows (EF9 takes an exclusive SQLite lock — see the comment in `Program.cs`). Don't wait on
+it. `Program.cs` applies pending migrations at API startup, so just run
+`RunTestEnvironment.ps1`.
 
 ## Documentation Reference
 

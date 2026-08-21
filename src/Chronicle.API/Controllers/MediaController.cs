@@ -707,11 +707,22 @@ namespace Chronicle.API.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UnparentFromCollection(int id, CancellationToken ct)
         {
-            await _movieCollectionService.UnparentFromCollectionAsync(_context, id, ct);
-            var updated = await _mediaService.GetByIdAsync(id, ct);
-            if (updated == null)
-                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
+            try
+            {
+                await _movieCollectionService.UnparentFromCollectionAsync(_context, id, ct);
+                var updated = await _mediaService.GetByIdAsync(id, ct);
+                if (updated == null)
+                    return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
+            }
+            catch (MediaNotFoundException ex)
+            {
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("UNPARENT_INVALID", ex.Message));
+            }
         }
 
         /// <summary>
@@ -1054,26 +1065,15 @@ namespace Chronicle.API.Controllers
             return list.Count > 0 ? list : null;
         }
 
-        private static bool HasFileScannerData(string? metadataJson)
-        {
-            if (string.IsNullOrEmpty(metadataJson)) return false;
-            if (!metadataJson.Contains("\"fileScanner\"", StringComparison.Ordinal)) return false;
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(metadataJson);
-                if (!doc.RootElement.TryGetProperty("fileScanner", out var fs)) return false;
-                if (fs.TryGetProperty("filePaths", out var fp) &&
-                    fp.ValueKind == System.Text.Json.JsonValueKind.Array &&
-                    fp.GetArrayLength() > 0)
-                    return true;
-                if (fs.TryGetProperty("filePath", out var f) &&
-                    f.ValueKind != System.Text.Json.JsonValueKind.Null &&
-                    !string.IsNullOrEmpty(f.GetString()))
-                    return true;
-                return false;
-            }
-            catch { return false; }
-        }
+        // Delegates to the single canonical reader (Chronicle.Services.Scan.FileIdentityJson) --
+        // this was the ORIGINAL of what LibraryController's own copy explicitly called itself a
+        // mirror of, and it had the same gap: only ever checked fileScanner, never
+        // scraperResolvedFile, so the media detail page for an item Kodi had confirmed a real
+        // file for -- but Chronicle's own scanner never touched -- showed HasPhysicalFile=false
+        // even while the very same page's scraperResolvedFile section proved a file existed.
+        // Confirmed live 2026-08-20 on item 445734 ("Marked Men - Rule + Shaw").
+        private static bool HasFileScannerData(string? metadataJson) =>
+            Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(metadataJson);
 
         /// <summary>
         /// Removes external-ID rows (and their MetadataJson blob key) whose owning plugin
@@ -1535,11 +1535,21 @@ namespace Chronicle.API.Controllers
                 .Where(l => l.UserId == userId.Value && memberIds.Contains(l.MediaItemId))
                 .ToDictionaryAsync(l => l.MediaItemId, ct);
 
+            // The collection's own poster (set only by a Rebuild pulling the provider's
+            // dedicated collection-level art) always wins when present. When it's empty, fall
+            // back to the first member's own poster -- same rule, same order, the Kodi scraper's
+            // set-art fallback uses (IMovieCollectionService.GetFallbackPosterAsync) -- so the
+            // web page always has a poster to show wherever one exists in the collection at all,
+            // regardless of whether that member is a file the user actually owns.
+            var posterUrl = collectionItem.PosterUrl;
+            if (string.IsNullOrEmpty(posterUrl))
+                posterUrl = await _movieCollectionService.GetFallbackPosterAsync(_context, collectionItem.Id, ct);
+
             var dto = new CollectionDto
             {
                 Id              = collectionItem.Id,
                 Name            = collectionItem.Name,
-                PosterUrl       = collectionItem.PosterUrl,
+                PosterUrl       = posterUrl,
                 Overview        = collectionItem.Overview,
                 SupportsRebuild = IsMovieLikeTypeName(collectionItem.MediaType?.Name),
                 Movies          = members.Select(m => new CollectionMemberDto
@@ -1554,6 +1564,7 @@ namespace Chronicle.API.Controllers
                     UserRating       = le?.UserRating,
                     UserRatingSource = le?.UserRating.HasValue == true ? ExtractUserRatingSource(m.MetadataJson, le.UserRating.Value) : null,
                     IsStub           = m.IsStub,
+                    HasFile          = Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(m.MetadataJson),
                 }).ToList(),
             };
 

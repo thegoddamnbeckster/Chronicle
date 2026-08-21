@@ -13,7 +13,8 @@ namespace Chronicle.Tests.Unit.Services;
 public class MovieCollectionServiceTests
 {
     private static MovieCollectionService CreateService() =>
-        new(Mock.Of<IServiceScopeFactory>(), NullLogger<MovieCollectionService>.Instance);
+        new(Mock.Of<IServiceScopeFactory>(), new StubHttpClientFactory(new StubImageHandler()),
+            NullLogger<MovieCollectionService>.Instance);
 
     private static ChronicleDbContext CreateInMemoryDb()
     {
@@ -669,11 +670,14 @@ public class MovieCollectionServiceTests
             .UseInMemoryDatabase(dbName)
             .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning)));
         services.AddScoped<IMetadataResolutionService, NoopResolutionService>();
+        services.AddScoped<IMovieCollectionService, MovieCollectionService>();
         services.AddScoped<IMergeService, MergeService>();
+        services.AddSingleton<IHttpClientFactory>(new StubHttpClientFactory(new StubImageHandler()));
         services.AddLogging();
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-        var svc = new MovieCollectionService(scopeFactory, NullLogger<MovieCollectionService>.Instance);
+        var svc = new MovieCollectionService(
+            scopeFactory, new StubHttpClientFactory(new StubImageHandler()), NullLogger<MovieCollectionService>.Instance);
         // A live db instance for arranging/asserting, sharing the same named in-memory database
         // as the one the service's own scopes will resolve.
         var db = provider.GetRequiredService<ChronicleDbContext>();
@@ -857,6 +861,436 @@ public class MovieCollectionServiceTests
     }
 
     /// <summary>No-op resolution service — ResolveAsync's side effect isn't under test here.</summary>
+    // ── Collection artwork persistence ──────────────────────────────────────────
+    // A collection is the one media type ordinary enrichment can never reach: "collection:"
+    // external IDs are excluded from enrichment seeding, and a name search finds nothing
+    // because no provider's search endpoint returns collections. EnsureCollectionStubsAsync is
+    // the only place a provider is ever asked about a collection by id, so it's the only place
+    // the collection's own artwork can be captured — it used to take the parts list and throw
+    // the rest away, leaving every collection with one poster and an empty image gallery.
+
+    private static (MovieCollectionService svc, ChronicleDbContext db) CreateServiceForStubs(
+        string dbName, IHttpClientFactory? httpClientFactory = null, IMetadataResolutionService? resolutionService = null)
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<ChronicleDbContext>(o => o
+            .UseInMemoryDatabase(dbName)
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning)));
+        services.AddScoped(_ => resolutionService ?? new NoopResolutionService());
+        services.AddLogging();
+        var provider = services.BuildServiceProvider();
+        var svc = new MovieCollectionService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            httpClientFactory ?? new StubHttpClientFactory(new StubImageHandler()),
+            NullLogger<MovieCollectionService>.Instance);
+        return (svc, provider.GetRequiredService<ChronicleDbContext>());
+    }
+
+    /// <summary>
+    /// Unlike NoopResolutionService (deliberately inert -- ResolveAsync's own behaviour isn't
+    /// what most of these tests are about), the local-write tests below specifically need
+    /// collection.PosterUrl and the "_resolved" backdropUrl/logoUrl to actually be populated,
+    /// since that's what WriteLocalCollectionArtAsync reads. This fake does the minimal
+    /// equivalent of the real MetadataResolutionService's own promotion step -- copy the first
+    /// plugin partition's posterUrl/backdropUrl/logoUrl into item.PosterUrl and "_resolved" --
+    /// without pulling in the real service's full priority-map/alias machinery, which isn't
+    /// under test here.
+    /// </summary>
+    private sealed class FakeResolutionServiceThatPromotesArt : IMetadataResolutionService
+    {
+        public Task ResolveAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(
+                string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
+            string? posterUrl = null, backdropUrl = null, logoUrl = null;
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (prop.Name is "_resolved" or "_overrides" or "fileScanner") continue;
+                if (posterUrl is null && prop.Value.TryGetProperty("posterUrl", out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String)
+                    posterUrl = p.GetString();
+                if (backdropUrl is null && prop.Value.TryGetProperty("backdropUrl", out var b) && b.ValueKind == System.Text.Json.JsonValueKind.String)
+                    backdropUrl = b.GetString();
+                if (logoUrl is null && prop.Value.TryGetProperty("logoUrl", out var l) && l.ValueKind == System.Text.Json.JsonValueKind.String)
+                    logoUrl = l.GetString();
+            }
+
+            item.PosterUrl = posterUrl;
+            var blobs = MetadataResolutionService.ParsePluginBlobs(item.MetadataJson);
+            blobs["_resolved"] = System.Text.Json.JsonSerializer.SerializeToElement(new { posterUrl, backdropUrl, logoUrl });
+            item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(blobs);
+            return Task.CompletedTask;
+        }
+        public Task ResolveAllForMediaTypeAsync(string mediaTypeName, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public IReadOnlyCollection<string> GetCanonicalFields() => Array.Empty<string>();
+        public Task SetOverrideAsync(MediaItem item, ChronicleDbContext db, string field, string url,
+            string? sourcePluginId, string? sourceType, int? userId, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ClearOverrideAsync(MediaItem item, ChronicleDbContext db, string field, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task ClearItemOverridesAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
+            => Task.CompletedTask;
+        public Task<int> ClearOverridesForMediaTypeAsync(string mediaTypeName, Action<int, int>? onBatch = null, CancellationToken ct = default)
+            => Task.FromResult(0);
+        public Task<int> ClearAllOverridesLibraryWideAsync(Action<int, int>? onBatch = null, CancellationToken ct = default)
+            => Task.FromResult(0);
+        public Task<int> ClearOverridesForSubtreeAsync(int rootId, Action<int, int>? onBatch = null, CancellationToken ct = default)
+            => Task.FromResult(0);
+    }
+
+    /// <summary>Minimal IHttpClientFactory backed by a fixed HttpMessageHandler -- for
+    /// WriteLocalCollectionArtAsync's own image downloads, which don't need real network
+    /// access in a unit test, just deterministic bytes tied to the requested URL.</summary>
+    private sealed class StubHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    /// <summary>Returns 200 OK with the request URL itself as the "image" bytes, so a test can
+    /// assert which URL actually produced which written file without a real download.</summary>
+    private sealed class StubImageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes($"fake-image-bytes:{request.RequestUri}")),
+            });
+    }
+
+    /// <summary>A collection container with a tmdb "collection:{id}" external ID.</summary>
+    private static async Task<MediaItem> SeedCollectionAsync(ChronicleDbContext db, string name, string tmdbId)
+    {
+        var mt = await db.MediaTypes.FirstOrDefaultAsync(t => t.Id == 1);
+        if (mt is null) { db.MediaTypes.Add(MoviesType()); await db.SaveChangesAsync(); }
+
+        var collection = new MediaItem
+        {
+            Name = name, MediaTypeId = 1, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(collection);
+        await db.SaveChangesAsync();
+
+        collection.ExternalIds.Add(new MediaExternalId
+        {
+            MediaItemId = collection.Id, Source = "tmdb", ExternalId = $"collection:{tmdbId}",
+        });
+        await db.SaveChangesAsync();
+        return collection;
+    }
+
+    private static Chronicle.Plugins.Models.MediaMetadata CollectionMetadata(string title, int posterCount) =>
+        new()
+        {
+            ExternalId  = "collection:1570",
+            Source      = "tmdb",
+            Title       = title,
+            Overview    = "Yippee ki-yay.",
+            PosterUrl   = "https://img/collection-poster.jpg",
+            BackdropUrl = "https://img/collection-backdrop.jpg",
+            AdditionalImages = [.. Enumerable.Range(0, posterCount).Select(i =>
+                new Chronicle.Plugins.Models.AdditionalImage
+                {
+                    Url = $"https://img/p{i}.jpg", ThumbnailUrl = $"https://img/t{i}.jpg", Type = "poster",
+                })],
+            Results = [new Chronicle.Plugins.Models.MediaMetadata
+            {
+                ExternalId = "movie:562", Source = "tmdb", Title = "Die Hard", Year = 1988,
+            }],
+        };
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_StoresCollectionArtworkOnTheContainer()
+    {
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+        var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 3));
+
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        var stored = (await db.MediaItems.FirstAsync(m => m.Id == collection.Id)).MetadataJson;
+        stored.Should().NotBeNullOrEmpty();
+        using var doc = System.Text.Json.JsonDocument.Parse(stored!);
+        var tmdb = doc.RootElement.GetProperty("chronicle.plugin.tmdb");
+        tmdb.GetProperty("posterUrl").GetString().Should().Be("https://img/collection-poster.jpg");
+        tmdb.GetProperty("backdropUrl").GetString().Should().Be("https://img/collection-backdrop.jpg");
+        tmdb.GetProperty("additionalImages").GetArrayLength().Should().Be(3);
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_PreservesOtherSourcesAndUserPins()
+    {
+        // Writing one provider's partition must never disturb another's, and must never touch
+        // the reserved "_overrides" key — that's the user's own artwork choice.
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+        collection.MetadataJson = """
+            {
+              "fanarttv":   { "posterUrl": "https://img/fanart-poster.jpg" },
+              "_overrides": { "poster_url": { "url": "https://img/user-pick.jpg" } }
+            }
+            """;
+        await db.SaveChangesAsync();
+
+        var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 2));
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(
+            (await db.MediaItems.FirstAsync(m => m.Id == collection.Id)).MetadataJson!);
+        doc.RootElement.GetProperty("fanarttv").GetProperty("posterUrl").GetString()
+            .Should().Be("https://img/fanart-poster.jpg");
+        doc.RootElement.GetProperty("_overrides").GetProperty("poster_url").GetProperty("url").GetString()
+            .Should().Be("https://img/user-pick.jpg", "a user's pinned artwork must survive re-enrichment");
+        doc.RootElement.GetProperty("chronicle.plugin.tmdb")
+            .GetProperty("additionalImages").GetArrayLength().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_UsesFullPluginIdAndClearsAShortSourceDuplicate()
+    {
+        // The partition key must be the full plugin id — the assignment-priority map is keyed
+        // by it, so a short "tmdb" key stores fine and then resolves to nothing, leaving the
+        // collection with no poster and a phantom extra provider box in the UI.
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+        collection.MetadataJson = """{ "tmdb": { "posterUrl": "https://img/legacy.jpg" } }""";
+        await db.SaveChangesAsync();
+
+        var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 2));
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(
+            (await db.MediaItems.FirstAsync(m => m.Id == collection.Id)).MetadataJson!);
+        doc.RootElement.TryGetProperty("chronicle.plugin.tmdb", out _).Should().BeTrue();
+        doc.RootElement.TryGetProperty("tmdb", out _).Should()
+            .BeFalse("the short-source duplicate must be cleared, not left as dead weight");
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_NameMismatch_DoesNotStoreArtwork()
+    {
+        // A wrong-match collection is purged rather than trusted; storing its artwork first
+        // would leave the container wearing another franchise's posters.
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+        var provider = StubProvider(CollectionMetadata("Alien Collection", posterCount: 5));
+
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        (await db.MediaItems.FirstAsync(m => m.Id == collection.Id)).MetadataJson
+            .Should().BeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_ProviderWithNoArtwork_LeavesMetadataAlone()
+    {
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Bare Collection", "999");
+        var bare = new Chronicle.Plugins.Models.MediaMetadata
+        {
+            ExternalId = "collection:999", Source = "tmdb", Title = "Bare Collection",
+            Results = [new Chronicle.Plugins.Models.MediaMetadata
+            {
+                ExternalId = "movie:1", Source = "tmdb", Title = "Only Member", Year = 2000,
+            }],
+        };
+        var provider = StubProvider(bare);
+
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        (await db.MediaItems.FirstAsync(m => m.Id == collection.Id)).MetadataJson
+            .Should().BeNullOrEmpty();
+    }
+
+    // ── Direct local-write (kodi_movie_collection_folder) ───────────────────────
+    // Chronicle used to only ever reach a set's local folder indirectly, as a side effect of
+    // collection_sync.py running when Kodi happened to scrape a movie -- meaning a correction
+    // made in Chronicle (a language fix, a fallback pick) could sit correct-but-invisible for an
+    // arbitrary amount of time. When kodi_movie_collection_folder is configured, Chronicle now
+    // writes poster/fanart/clearlogo directly, itself, the moment a collection's art is
+    // persisted -- these tests exercise that path end-to-end against a real temp directory.
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_WithFolderConfigured_WritesLocalArtFiles()
+    {
+        var tempDir = Directory.CreateTempSubdirectory("chronicle_collection_art_test_").FullName;
+        try
+        {
+            var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString(),
+                resolutionService: new FakeResolutionServiceThatPromotesArt());
+            db.AppSettings.Add(new AppSetting { Key = "kodi_movie_collection_folder", Value = tempDir });
+            await db.SaveChangesAsync();
+
+            var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+            var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 3));
+
+            await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+                allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+            var setFolder = Path.Combine(tempDir, "Die Hard Collection");
+            var posterPath = Path.Combine(setFolder, "poster.jpg");
+            var fanartPath = Path.Combine(setFolder, "fanart.jpg");
+            File.Exists(posterPath).Should().BeTrue("Chronicle should write the resolved poster directly, not wait on Kodi");
+            File.Exists(fanartPath).Should().BeTrue();
+            File.Exists(Path.Combine(setFolder, "clearlogo.png")).Should()
+                .BeFalse("no logoUrl was resolved for this collection, so nothing should be written for that slot");
+
+            (await File.ReadAllTextAsync(posterPath)).Should().Contain("collection-poster.jpg",
+                "the poster file's bytes should come from the poster URL, not get mixed up with fanart");
+            (await File.ReadAllTextAsync(fanartPath)).Should().Contain("collection-backdrop.jpg");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_WithNoFolderConfigured_WritesNoLocalFiles()
+    {
+        var tempDir = Directory.CreateTempSubdirectory("chronicle_collection_art_test_").FullName;
+        try
+        {
+            // Setting deliberately left unconfigured -- this is the default, "Kodi-only" state.
+            var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+            var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+            var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 3));
+
+            await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+                allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+            Directory.GetFileSystemEntries(tempDir).Should().BeEmpty(
+                "with no folder configured, Chronicle must not write anywhere on disk");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_WithFolderConfigured_OverwritesAStaleExistingFile()
+    {
+        // Same "Chronicle is authoritative" policy collection_sync.py itself now has (see its
+        // 2026-08-21 fill-only -> overwrite change) -- a stale local file must not silently win
+        // forever just because it already exists.
+        var tempDir = Directory.CreateTempSubdirectory("chronicle_collection_art_test_").FullName;
+        try
+        {
+            var setFolder = Path.Combine(tempDir, "Die Hard Collection");
+            Directory.CreateDirectory(setFolder);
+            var posterPath = Path.Combine(setFolder, "poster.jpg");
+            await File.WriteAllTextAsync(posterPath, "stale-wrong-language-poster");
+
+            var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString(),
+                resolutionService: new FakeResolutionServiceThatPromotesArt());
+            db.AppSettings.Add(new AppSetting { Key = "kodi_movie_collection_folder", Value = tempDir });
+            await db.SaveChangesAsync();
+
+            var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+            var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 3));
+
+            await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+                allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+            (await File.ReadAllTextAsync(posterPath)).Should().Contain("collection-poster.jpg")
+                .And.NotContain("stale-wrong-language-poster");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_WithFolderConfigured_WritesEveryBackdropToExtrafanart()
+    {
+        // No cap, per explicit instruction -- every backdrop Chronicle has for the collection
+        // goes into extrafanart/, not just the top pick that lands in fanart.jpg.
+        var tempDir = Directory.CreateTempSubdirectory("chronicle_collection_art_test_").FullName;
+        try
+        {
+            var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString(),
+                resolutionService: new FakeResolutionServiceThatPromotesArt());
+            db.AppSettings.Add(new AppSetting { Key = "kodi_movie_collection_folder", Value = tempDir });
+            await db.SaveChangesAsync();
+
+            var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+            var meta = CollectionMetadata("Die Hard Collection", posterCount: 0);
+            meta.AdditionalImages.AddRange([
+                new Chronicle.Plugins.Models.AdditionalImage { Url = "https://img/bd0.jpg", Type = "backdrop" },
+                new Chronicle.Plugins.Models.AdditionalImage { Url = "https://img/bd1.jpg", Type = "backdrop" },
+                new Chronicle.Plugins.Models.AdditionalImage { Url = "https://img/bd2.jpg", Type = "backdrop" },
+            ]);
+            var provider = StubProvider(meta);
+
+            await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+                allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+            var extraFolder = Path.Combine(tempDir, "Die Hard Collection", "extrafanart");
+            Directory.GetFiles(extraFolder).Should().HaveCount(3, "all three backdrops should be written, uncapped");
+            (await File.ReadAllTextAsync(Path.Combine(extraFolder, "fanart1.jpg"))).Should().Contain("bd0.jpg");
+            (await File.ReadAllTextAsync(Path.Combine(extraFolder, "fanart2.jpg"))).Should().Contain("bd1.jpg");
+            (await File.ReadAllTextAsync(Path.Combine(extraFolder, "fanart3.jpg"))).Should().Contain("bd2.jpg");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_WithFolderConfigured_ExtrafanartIsClearedNotMerged()
+    {
+        // "Chronicle is authoritative" applies to the whole folder, not just additively -- a
+        // backdrop Chronicle no longer offers must not linger forever as stale leftover content.
+        var tempDir = Directory.CreateTempSubdirectory("chronicle_collection_art_test_").FullName;
+        try
+        {
+            var extraFolder = Path.Combine(tempDir, "Die Hard Collection", "extrafanart");
+            Directory.CreateDirectory(extraFolder);
+            await File.WriteAllTextAsync(Path.Combine(extraFolder, "fanart1.jpg"), "stale-old-backdrop");
+            await File.WriteAllTextAsync(Path.Combine(extraFolder, "fanart2.jpg"), "another-stale-one");
+
+            var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString(),
+                resolutionService: new FakeResolutionServiceThatPromotesArt());
+            db.AppSettings.Add(new AppSetting { Key = "kodi_movie_collection_folder", Value = tempDir });
+            await db.SaveChangesAsync();
+
+            var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+            var meta = CollectionMetadata("Die Hard Collection", posterCount: 0);
+            meta.AdditionalImages.Add(
+                new Chronicle.Plugins.Models.AdditionalImage { Url = "https://img/fresh.jpg", Type = "backdrop" });
+            var provider = StubProvider(meta);
+
+            await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+                allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+            Directory.GetFiles(extraFolder).Should().HaveCount(1,
+                "the two stale files must be gone, replaced by the single current backdrop");
+            (await File.ReadAllTextAsync(Path.Combine(extraFolder, "fanart1.jpg"))).Should().Contain("fresh.jpg");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static Mock<Chronicle.Plugins.IMetadataProvider> StubProvider(
+        Chronicle.Plugins.Models.MediaMetadata meta)
+    {
+        var provider = new Mock<Chronicle.Plugins.IMetadataProvider>();
+        provider.SetupGet(p => p.Name).Returns("TMDB");
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(meta);
+        return provider;
+    }
+
     private sealed class NoopResolutionService : IMetadataResolutionService
     {
         public Task ResolveAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)

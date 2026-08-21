@@ -97,6 +97,14 @@ export default function LibrarySettingsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['appSettings'] }),
   })
 
+  // ── Kodi movie collection folder ─────────────────────────────────────────
+  const [collectionFolderInput, setCollectionFolderInput] = useState<string>('')
+  const currentCollectionFolder = appSettings?.['kodi_movie_collection_folder'] ?? ''
+  const collectionFolderMut = useMutation({
+    mutationFn: (val: string) => putAppSetting('kodi_movie_collection_folder', val),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['appSettings'] }); setCollectionFolderInput('') },
+  })
+
   // ── Danger Zone ──────────────────────────────────────────────────────────
   const [clearConfirm, setClearConfirm] = useState(false)
   const clearMut = useMutation({
@@ -406,6 +414,54 @@ export default function LibrarySettingsPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* ── Kodi Movie Collections ───────────────────────────────────────── */}
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Kodi Movie Collections</h3>
+          <p className={styles.sectionDesc}>
+            Lets Chronicle write collection artwork (poster, fanart, clearlogo) directly into
+            Kodi's own "Movie set information folder" — independent of Kodi ever scraping a
+            movie, so a correction made here (a language fix, a fallback pick) reaches that
+            folder right away instead of waiting on the next library scan.
+          </p>
+        </div>
+        <div className={styles.articleSection}>
+          <div className={styles.settingRow}>
+            <div className={styles.settingLabel}>
+              <span className={styles.settingName}>Collection Folder Path</span>
+              <span className={styles.settingHint}>
+                Must be the exact same folder Kodi's own Settings → Media → Library →
+                "Movie set information folder" points at — a UNC path (e.g.{' '}
+                <code>\\server\share\Movie Collections</code>) reachable both by wherever
+                Chronicle's own server process runs and by whatever account the Kodi
+                instance(s) use, not a drive letter specific to one machine. Leave blank to
+                disable — Chronicle then only ever reaches this folder indirectly, via the
+                Chronicle_Scraper Kodi addon, when Kodi itself decides to scrape a movie.
+              </span>
+            </div>
+            <div className={styles.settingControl}>
+              <input
+                type="text"
+                className={styles.textInput}
+                placeholder={currentCollectionFolder || '\\\\server\\share\\Movie Collections'}
+                value={collectionFolderInput}
+                onChange={e => setCollectionFolderInput(e.target.value)}
+              />
+              <button
+                className={styles.saveBtn}
+                disabled={collectionFolderMut.isPending}
+                onClick={() => collectionFolderMut.mutate(collectionFolderInput)}
+              >
+                {collectionFolderMut.isPending ? 'Saving…' : 'Save'}
+              </button>
+              {collectionFolderMut.isSuccess && !collectionFolderInput && (
+                <span className={styles.savedBadge}>✓ Saved</span>
+              )}
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* ── Import settings ──────────────────────────────────────────────── */}

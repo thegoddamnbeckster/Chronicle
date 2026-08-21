@@ -14,8 +14,34 @@ namespace Chronicle.API.DTOs
     /// <summary>One candidate image for a given Kodi art type, tagged with the provider it came from.</summary>
     public record ScraperArtworkCandidateDto(string Url, string Source);
 
-    /// <summary>The movie-set (collection) a movie belongs to, sourced from Chronicle's own parent MediaItem.</summary>
-    public record ScraperCollectionDto(int Id, string Name, string? Overview, string? PosterUrl, string? BackdropUrl);
+    /// <summary>
+    /// The movie-set (collection) a movie belongs to, sourced from Chronicle's own parent
+    /// MediaItem.
+    /// <para>
+    /// Kodi never scrapes a movie set — it has no getdetails hook for one — so the addon's only
+    /// route is writing files into Kodi's "Movie set information folder". That's why every art
+    /// type travels here rather than just a poster: whatever isn't in this payload can't reach
+    /// Kodi at all.
+    /// </para>
+    /// </summary>
+    public record ScraperCollectionDto(
+        int Id,
+        string Name,
+        string? Overview,
+        string? PosterUrl,
+        string? BackdropUrl,
+        string? LogoUrl = null,
+        string? BannerUrl = null,
+        string? ClearartUrl = null,
+        string? DiscUrl = null,
+        string? ThumbUrl = null,
+        /// <summary>
+        /// Canonical slot names ("poster_url", "disc_url", …) the user has explicitly pinned in
+        /// Chronicle. The addon is deliberately fill-only for automatically resolved art so it
+        /// never clobbers hand-curated files — but a pin is the user speaking, so those slots
+        /// must overwrite instead. Empty when nothing is pinned.
+        /// </summary>
+        IReadOnlyList<string>? PinnedSlots = null);
 
     /// <summary>An actor credit -- the performer's name and, when the source provider supplied it,
     /// the character/role they played. Shared between the scraper and web-facing media DTOs.</summary>
@@ -86,10 +112,16 @@ namespace Chronicle.API.DTOs
         int Season,
         int Episode,
         int? Year,
+        string? Aired,
+        int? RuntimeMinutes,
         List<CastMemberDto>? Cast,
         List<CrewMemberDto>? Crew,
         Dictionary<string, ScraperRatingDto>? Ratings,
         string? ThumbUrl,
-        ScraperExternalIdsDto? ExternalIds
+        ScraperExternalIdsDto? ExternalIds,
+        // The parent show's own title/year -- not this episode's -- so the Kodi addon can locate
+        // the show's own folder on disk for this episode (see ScraperController.GetEpisodeDetails).
+        string? ShowTitle,
+        int? ShowYear
     );
 }

@@ -58,7 +58,10 @@ CREATE TABLE users (
     username TEXT NOT NULL UNIQUE,
     email TEXT UNIQUE,
     password_hash TEXT NOT NULL, -- bcrypt, cost 12
-    display_name TEXT,
+    display_name TEXT, -- explicit override; wins over every fallback below
+    first_name TEXT,
+    last_name TEXT,
+    handle TEXT, -- not unique: a handle is a label, not an identity
     avatar_url TEXT, -- URL only, no file storage
     bio TEXT,
     timezone TEXT DEFAULT 'UTC',
@@ -75,7 +78,35 @@ CREATE TABLE users (
 CREATE UNIQUE INDEX idx_users_username ON users(username);
 CREATE UNIQUE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_is_active ON users(is_active);
+CREATE INDEX idx_users_handle ON users(handle);
 ```
+
+**Display name resolution** (computed, not stored) — `display_name` → `handle` →
+`first_name last_name` → `username`. The first non-empty wins.
+
+### user_contacts
+
+Any number of ways to reach a user. `kind` is a free-form lowercase string, not an enum, so a
+new contact method — a new social network, a work extension, a Matrix ID — needs no migration
+and no code change. Same reasoning as the generic media model.
+
+```sql
+CREATE TABLE user_contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, -- "email", "phone", "mastodon", "discord", "website", …
+    label TEXT, -- optional discriminator: "work", "mobile", "personal"
+    value TEXT NOT NULL, -- the address/number/handle/URL itself
+    is_primary BOOLEAN NOT NULL DEFAULT 0, -- at most one per (user, kind); enforced in the service
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_user_contacts_user_kind ON user_contacts(user_id, kind);
+```
+
+A user may hold several entries of the same kind (three phone numbers), and the same value may
+appear under several kinds. Deleting a user cascades their contacts.
 
 **Privacy Settings Example:**
 ```json

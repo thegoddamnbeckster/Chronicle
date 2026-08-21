@@ -499,13 +499,66 @@ file sealed class DirectScopeFactory : IServiceScopeFactory
     {
         private readonly ChronicleDbContext _ctx;
         private static readonly IMetadataResolutionService _noopResolution = new NoopResolutionService();
-        public DirectServiceProvider(ChronicleDbContext ctx) => _ctx = ctx;
+        private static readonly IMovieCollectionService _noopCollections = new NoopMovieCollectionService();
+        private readonly IMergeService _mergeService;
+
+        public DirectServiceProvider(ChronicleDbContext ctx)
+        {
+            _ctx = ctx;
+            // A real MergeService, not a fake -- these tests exercise RunAsync's merge behavior
+            // (see e.g. RunAsync_UserLibraryReassignedToWinner_BeforeLoserDeleted below), and
+            // that behavior now lives in MergeService.MergeLoadedItemsAsync, the single shared
+            // implementation DuplicateCleanupService calls instead of its own former copy.
+            _mergeService = new MergeService(
+                _ctx, _noopResolution, _noopCollections,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<MergeService>.Instance);
+        }
+
         public object? GetService(Type serviceType)
         {
             if (serviceType == typeof(ChronicleDbContext))          return _ctx;
             if (serviceType == typeof(IMetadataResolutionService))  return _noopResolution;
+            if (serviceType == typeof(IMovieCollectionService))     return _noopCollections;
+            if (serviceType == typeof(IMergeService))               return _mergeService;
             return null;
         }
+    }
+
+    /// <summary>
+    /// No-op collection service for unit tests — none of these tests exercise real collection
+    /// containers, so IsCollectionContainerAsync always reporting "not a container" keeps
+    /// MergeService's new container-mismatch guard a no-op here. Every other member is
+    /// unreachable from DuplicateCleanupService.RunAsync and throws if that ever changes.
+    /// </summary>
+    private sealed class NoopMovieCollectionService : IMovieCollectionService
+    {
+        public Task<bool> IsCollectionContainerAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default)
+            => Task.FromResult(false);
+        public Task<HashSet<int>> GetCollectionContainerIdsAsync(
+            ChronicleDbContext db, IReadOnlyCollection<int> candidateIds, CancellationToken ct = default)
+            => Task.FromResult(new HashSet<int>());
+        public Task<string?> GetFallbackPosterAsync(ChronicleDbContext db, int collectionId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task EnsureCollectionParentAsync(ChronicleDbContext db, Chronicle.Core.Models.MediaItem movieItem,
+            string? pluginId = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task ProcessAllExistingMovieCollectionsAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task DeduplicateCollectionsAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<int> RemoveEmptyCollectionsAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task RebuildSingleCollectionAsync(int collectionId,
+            IReadOnlyList<(string PluginId, Chronicle.Plugins.IMetadataProvider Provider)> providers,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public Task CreateStubsForAllCollectionsAsync(
+            IReadOnlyList<(string PluginId, Chronicle.Plugins.IMetadataProvider Provider)> providers,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> EnsureCollectionStubsAsync(ChronicleDbContext db, Chronicle.Core.Models.MediaItem collection,
+            Chronicle.Plugins.IMetadataProvider provider, CancellationToken ct = default,
+            IReadOnlyList<(string PluginId, Chronicle.Plugins.IMetadataProvider Provider)>? allProviders = null)
+            => throw new NotSupportedException();
+        public Task UnparentFromCollectionAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task ReparentIntoCollectionAsync(ChronicleDbContext db, int movieId, int collectionId, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 
     /// <summary>

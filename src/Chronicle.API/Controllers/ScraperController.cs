@@ -35,14 +35,16 @@ public class ScraperController : ControllerBase
     private readonly ChronicleDbContext _context;
     private readonly IMediaService _mediaService;
     private readonly IMetadataEnrichmentService _enrichment;
+    private readonly IMovieCollectionService _collections;
     private readonly ILogger<ScraperController> _logger;
 
     public ScraperController(ChronicleDbContext context, IMediaService mediaService,
-        IMetadataEnrichmentService enrichment, ILogger<ScraperController> logger)
+        IMetadataEnrichmentService enrichment, IMovieCollectionService collections, ILogger<ScraperController> logger)
     {
         _context    = context;
         _mediaService = mediaService;
         _enrichment = enrichment;
+        _collections = collections;
         _logger     = logger;
     }
 
@@ -56,7 +58,8 @@ public class ScraperController : ControllerBase
     /// confidence-scored resolution, so there's nothing for Kodi's user to disambiguate.
     /// </summary>
     [HttpGet("movies/search")]
-    public async Task<IActionResult> SearchMovies([FromQuery] string? title, [FromQuery] int? year, CancellationToken ct)
+    public async Task<IActionResult> SearchMovies(
+        [FromQuery] string? title, [FromQuery] int? year, [FromQuery] string? fileName, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(title))
             return BadRequest(ApiResponse<object>.Fail("TITLE_REQUIRED", "title is required."));
@@ -76,9 +79,40 @@ public class ScraperController : ControllerBase
         var candidates = await _context.MediaItems
             .Where(m => movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1)
             .ToListAsync(ct);
-        var existing = FindByNormalizedTitle(candidates, title, year);
 
-        var item = await ResolveOrCreateAsync(existing, movieTypeId, title, year, ct);
+        // Exclude collection containers from candidate matching -- a container's own Name can
+        // coincidentally normalize-match a searched title (e.g. a folder literally named "John
+        // Wick Collection"), and Kodi always expects a real movie's id back from this endpoint,
+        // never a container's. Confirmed the underlying data can support this: containers sit at
+        // HierarchyLevel 0, same as any other candidate here, so nothing else filters them out.
+        var containerIds = await _collections.GetCollectionContainerIdsAsync(
+            _context, candidates.Select(c => c.Id).ToList(), ct);
+        if (containerIds.Count > 0)
+            candidates = candidates.Where(c => !containerIds.Contains(c.Id)).ToList();
+
+        // Confirmation by filename, tried before title matching: title-token matching only
+        // finds an existing item when the title Kodi derived from the folder name happens to
+        // agree with Chronicle's own stored title -- it has no way to know "Alien - Derelict"
+        // and "Derelict" are the same physical file. A verified filename sidesteps that
+        // entirely: if any existing candidate's own recorded file (fileScanner.filePaths, or a
+        // prior scrape's reported KnownFileName) has this exact basename, it IS this movie,
+        // regardless of what title mismatch would otherwise have missed it. This is what
+        // closes the gap that let a fan edit spawn a second, wrongly-typed, posterless
+        // duplicate of itself on every scrape (confirmed live 2026-08-20: items 487715-487718).
+        MediaItem? existing = null;
+        if (!string.IsNullOrWhiteSpace(fileName))
+        {
+            existing = candidates.FirstOrDefault(c =>
+                string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+                _logger.LogInformation(
+                    "scraper/movies/search: title={Title} year={Year} fileName={FileName} -> matched existing item {ItemId} by filename (skipped title matching)",
+                    title, year, fileName, existing.Id);
+        }
+
+        existing ??= FindByNormalizedTitle(candidates, title, year);
+
+        var item = await ResolveOrCreateAsync(existing, movieTypeId, title, year, fileName, ct);
         if (item is null)
         {
             _logger.LogWarning("scraper/movies/search: title={Title} year={Year} -- resolve-or-create failed, returning 404", title, year);
@@ -123,20 +157,32 @@ public class ScraperController : ControllerBase
         if (item is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
-        var root = System.Text.Json.Nodes.JsonNode.Parse(
-            string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson)!.AsObject();
-        root["scraperResolvedFile"] = new System.Text.Json.Nodes.JsonObject
-        {
-            ["fileName"]   = request.FileName,
-            ["resolvedAt"] = DateTime.UtcNow.ToString("O"),
-        };
-        item.MetadataJson = root.ToJsonString();
+        SetScraperResolvedFile(item, request.FileName);
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation(
             "scraper/movies/{ItemId}/resolved-file: recorded {FileName} -- future requests won't need to re-search for this item",
             id, request.FileName);
         return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>
+    /// Stamps the "scraperResolvedFile" partition onto an item's MetadataJson -- the single
+    /// place that shape gets written, shared by ReportResolvedFile (an existing item, reported
+    /// back after the fact) and ResolveOrCreateAsync (a brand-new item, stamped immediately with
+    /// whatever filename the search request already carried). Does not save -- the caller
+    /// controls when/whether to commit.
+    /// </summary>
+    private static void SetScraperResolvedFile(MediaItem item, string fileName)
+    {
+        var root = System.Text.Json.Nodes.JsonNode.Parse(
+            string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson)!.AsObject();
+        root["scraperResolvedFile"] = new System.Text.Json.Nodes.JsonObject
+        {
+            ["fileName"]   = fileName,
+            ["resolvedAt"] = DateTime.UtcNow.ToString("O"),
+        };
+        item.MetadataJson = root.ToJsonString();
     }
 
     /// <summary>Kodi's "getdetails" step for movies: the full richness Chronicle has for this item.</summary>
@@ -167,9 +213,14 @@ public class ScraperController : ControllerBase
                     // registration like the earlier Video3/Video7 bug -- Chronicle genuinely has
                     // nothing for the collection itself), most with several real member movies,
                     // not just one-off single-movie groupings. Rather than leave Kodi's set card
-                    // permanently blank, fall back to any member movie's own poster -- better
-                    // than nothing, and a common convention other media managers already use.
-                    collectionPoster = await FindFallbackCollectionPosterAsync(parent.Id, ct);
+                    // permanently blank, fall back to the first member's own poster (same rule,
+                    // same order, the web collection page now also falls back with -- see
+                    // IMovieCollectionService.GetFallbackPosterAsync) -- better than nothing, and
+                    // a common convention other media managers already use. Deliberately no
+                    // ownership filter: a collection member without a local file is exactly as
+                    // eligible a poster source as one you have -- the goal is always showing a
+                    // poster where one exists, not gating it on file ownership.
+                    collectionPoster = await _collections.GetFallbackPosterAsync(_context, parent.Id, ct);
                     usedFallback = collectionPoster is not null;
                 }
 
@@ -178,7 +229,15 @@ public class ScraperController : ControllerBase
                     parentResolved?.Title ?? parent.Name,
                     parentResolved?.Overview ?? parent.Overview,
                     collectionPoster,
-                    parentResolved?.BackdropUrl);
+                    parentResolved?.BackdropUrl,
+                    // Kodi's set folder accepts all of these; anything omitted here simply
+                    // cannot reach Kodi, since movie sets have no scraper hook of their own.
+                    LogoUrl:     parentResolved?.LogoUrl,
+                    BannerUrl:   parentResolved?.BannerUrl,
+                    ClearartUrl: parentResolved?.ClearartUrl,
+                    DiscUrl:     parentResolved?.DiscUrl,
+                    ThumbUrl:    parentResolved?.ThumbUrl,
+                    PinnedSlots: ParsePinnedSlots(parent.MetadataJson));
 
                 if (string.IsNullOrEmpty(collectionPoster))
                     _logger.LogWarning(
@@ -237,7 +296,10 @@ public class ScraperController : ControllerBase
             .ToListAsync(ct);
         var item = FindByNormalizedTitle(showCandidates, title, year);
 
-        item = await ResolveOrCreateAsync(item, tvTypeId, title, year, ct);
+        // TV shows have no filename-confirmation signal from Kodi's find step (that feature
+        // is movies-only, per SearchMovies's fileName parameter) -- explicit null, not an
+        // oversight.
+        item = await ResolveOrCreateAsync(item, tvTypeId, title, year, fileName: null, ct);
         if (item is null)
             return NotFound(ApiResponse<object>.Fail("RESOLVE_FAILED", "Could not resolve or create this show."));
 
@@ -317,27 +379,61 @@ public class ScraperController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
         var season = 1;
+        string? showTitle = null;
+        int? showYear = null;
         if (item.ParentId.HasValue)
         {
             var parent = await _context.MediaItems.FindAsync([item.ParentId.Value], ct);
             if (parent is not null && parent.HierarchyLevel == 1)
+            {
                 season = parent.Number ?? 1;
+                // The show itself is one level further up -- needed so the addon can locate the
+                // show's own folder on disk for this episode (Kodi's find/getepisodedetails
+                // contract never hands it a file path any more than the movies one does; see
+                // Chronicle_Scraper's movie_art_sync.py module docstring for the same gap on the
+                // movie side). Nothing here assumes only one hierarchy shape -- if the show
+                // somehow isn't found, showTitle/showYear are simply left null.
+                if (parent.ParentId.HasValue)
+                {
+                    var show = await _context.MediaItems.FindAsync([parent.ParentId.Value], ct);
+                    if (show is not null && show.HierarchyLevel == 0)
+                    {
+                        var showResolved = ParseResolvedCore(show.MetadataJson);
+                        showTitle = showResolved?.Title ?? show.Name;
+                        showYear  = showResolved?.Year ?? show.Year;
+                    }
+                }
+            }
         }
 
-        var dto = BuildEpisodeDetails(item, season);
+        var dto = BuildEpisodeDetails(item, season, showTitle, showYear);
         return Ok(ApiResponse<ScraperEpisodeDetailsDto>.Ok(dto));
     }
 
     // ── Shared resolve-or-create ────────────────────────────────────────────
 
     private async Task<MediaItem?> ResolveOrCreateAsync(
-        MediaItem? existing, int mediaTypeId, string title, int? year, CancellationToken ct)
+        MediaItem? existing, int mediaTypeId, string title, int? year, string? fileName, CancellationToken ct)
     {
         var item = existing;
         if (item is null)
         {
             item = await _mediaService.CreateAsync(new CreateMediaRequest(
                 mediaTypeId, null, title, year, null, null, null, 0, null), ct);
+
+            // Stamp + save BEFORE enrichment, not after: a caller with a filename already knows
+            // a real physical file exists for whatever's about to be created, and losing that
+            // fact here is exactly what previously left a freshly-created item with no file
+            // record at all until get_details() rediscovered it later via a completely separate
+            // source-browsing fallback (confirmed live 2026-08-20, "Marked Men - Rule + Shaw").
+            // Saved first so EnrichItemAsync's own separately-tracked DbContext instance reads
+            // this back rather than racing it -- enrichment only merges its own plugin
+            // partition in, it never touches unrelated keys like scraperResolvedFile.
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                SetScraperResolvedFile(item, fileName);
+                await _context.SaveChangesAsync(ct);
+            }
 
             await _enrichment.EnrichItemAsync(item.Id,
                 new EnrichmentOptions(EnrichmentMode.Force, Cascade: false), ct);
@@ -352,21 +448,6 @@ public class ScraperController : ControllerBase
 
     /// <summary>Any member movie's own poster, resolved metadata first, for use only when the
     /// collection itself has none. Returns the first one found, not necessarily the "best".</summary>
-    private async Task<string?> FindFallbackCollectionPosterAsync(int collectionId, CancellationToken ct)
-    {
-        var children = await _context.MediaItems
-            .Where(m => m.ParentId == collectionId)
-            .ToListAsync(ct);
-
-        foreach (var child in children)
-        {
-            var poster = ParseResolvedCore(child.MetadataJson)?.PosterUrl ?? child.PosterUrl;
-            if (!string.IsNullOrEmpty(poster))
-                return poster;
-        }
-        return null;
-    }
-
     private async Task<int> GetMediaTypeIdAsync(string name, CancellationToken ct) =>
         await _context.MediaTypes.Where(t => t.Name == name && t.IsActive).Select(t => t.Id).FirstOrDefaultAsync(ct);
 
@@ -480,36 +561,11 @@ public class ScraperController : ControllerBase
     /// own doc comment for why a verified filename beats re-deriving the location from title
     /// and year.
     /// </summary>
-    private static string? TryGetScannedFileName(string? metadataJson)
-    {
-        if (string.IsNullOrEmpty(metadataJson)) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(metadataJson);
-
-            // Prefer the real file scanner's own record when this item has one -- it's the
-            // higher-confidence source (a full directory scan, not a single search-time guess).
-            if (doc.RootElement.TryGetProperty("fileScanner", out var fs) && fs.ValueKind == JsonValueKind.Object
-                && fs.TryGetProperty("filePaths", out var paths) && paths.ValueKind == JsonValueKind.Array)
-            {
-                var first = paths.EnumerateArray().FirstOrDefault();
-                if (first.ValueKind == JsonValueKind.String)
-                {
-                    var path = first.GetString();
-                    var name = string.IsNullOrEmpty(path) ? null : path.Split('\\', '/').LastOrDefault();
-                    if (!string.IsNullOrEmpty(name)) return name;
-                }
-            }
-
-            // Fall back to whatever Chronicle_Scraper itself previously discovered and
-            // reported back via POST .../resolved-file -- see that endpoint's doc comment.
-            if (doc.RootElement.TryGetProperty("scraperResolvedFile", out var srf) && srf.ValueKind == JsonValueKind.Object)
-                return TryGetString(srf, "fileName");
-
-            return null;
-        }
-        catch { return null; }
-    }
+    // Delegates to the single canonical reader (Chronicle.Services.Scan.FileIdentityJson) --
+    // same fileScanner-then-scraperResolvedFile fallback, now shared with HasKnownFile instead
+    // of two independent copies of this exact logic.
+    private static string? TryGetScannedFileName(string? metadataJson) =>
+        Chronicle.Services.Scan.FileIdentityJson.GetKnownFileName(metadataJson);
 
     // Strips a trailing "(YYYY)"/"[YYYY]" year annotation before tokenizing -- year is already
     // matched separately via the caller's candidates.Year filter, and different sources
@@ -599,23 +655,27 @@ public class ScraperController : ControllerBase
         );
     }
 
-    private static ScraperEpisodeDetailsDto BuildEpisodeDetails(MediaItem item, int season)
+    private static ScraperEpisodeDetailsDto BuildEpisodeDetails(MediaItem item, int season, string? showTitle, int? showYear)
     {
         using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
         var root = doc.RootElement;
         var core = ParseResolvedCore(item.MetadataJson);
 
         return new ScraperEpisodeDetailsDto(
-            Title:       core?.Title ?? item.Name,
-            Overview:    core?.Overview ?? item.Overview,
-            Season:      season,
-            Episode:     item.Number ?? 0,
-            Year:        core?.Year ?? item.Year,
-            Cast:        core?.Cast,
-            Crew:        core?.Crew,
-            Ratings:     CollectRatings(root),
-            ThumbUrl:    core?.PosterUrl ?? item.PosterUrl,
-            ExternalIds: CollectExternalIds(root)
+            Title:          core?.Title ?? item.Name,
+            Overview:       core?.Overview ?? item.Overview,
+            Season:         season,
+            Episode:        item.Number ?? 0,
+            Year:           core?.Year ?? item.Year,
+            Aired:          FirstExtended(root, ext => TryGetString(ext, "air_date") ?? TryGetString(ext, "aired") ?? TryGetString(ext, "released")),
+            RuntimeMinutes: core?.RuntimeMinutes,
+            Cast:           core?.Cast,
+            Crew:           core?.Crew,
+            Ratings:        CollectRatings(root),
+            ThumbUrl:       core?.PosterUrl ?? item.PosterUrl,
+            ExternalIds:    CollectExternalIds(root),
+            ShowTitle:      showTitle,
+            ShowYear:       showYear
         );
     }
 
@@ -754,7 +814,28 @@ public class ScraperController : ControllerBase
         string? Title, string? Overview, int? Year, string? PosterUrl, string? BackdropUrl,
         int? RuntimeMinutes, double? Rating, List<string>? Genres, List<CastMemberDto>? Cast,
         List<CrewMemberDto>? Crew, List<string>? Tags, string? LogoUrl, string? BannerUrl,
-        string? ClearartUrl, string? DiscUrl, string? CharacterArtUrl);
+        string? ClearartUrl, string? DiscUrl, string? CharacterArtUrl, string? ThumbUrl);
+
+    /// <summary>
+    /// Which artwork slots the user has explicitly pinned, read from the reserved
+    /// <c>_overrides</c> key. Lets the Kodi addon tell "Chronicle happened to resolve this"
+    /// from "the user chose this" — only the latter earns the right to overwrite a local file.
+    /// </summary>
+    private static IReadOnlyList<string> ParsePinnedSlots(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (!doc.RootElement.TryGetProperty("_overrides", out var o) || o.ValueKind != JsonValueKind.Object)
+                return [];
+            return [.. o.EnumerateObject().Select(p => p.Name)];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
 
     private static ResolvedCore? ParseResolvedCore(string? metadataJson)
     {
@@ -781,7 +862,8 @@ public class ScraperController : ControllerBase
                 BannerUrl:      TryGetString(r, "bannerUrl"),
                 ClearartUrl:    TryGetString(r, "clearartUrl"),
                 DiscUrl:        TryGetString(r, "discUrl"),
-                CharacterArtUrl: TryGetString(r, "characterArtUrl")
+                CharacterArtUrl: TryGetString(r, "characterArtUrl"),
+                ThumbUrl:       TryGetString(r, "thumbUrl")
             );
         }
         catch { return null; }

@@ -63,7 +63,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var context           = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
-        var resolutionService = scope.ServiceProvider.GetRequiredService<IMetadataResolutionService>();
+        var mergeService      = scope.ServiceProvider.GetRequiredService<IMergeService>();
 
         int removed = 0;
         var alreadyRemoved = new HashSet<int>();
@@ -119,11 +119,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                         _log.Information(
                             "DuplicateCleanup: path '{Path}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                             group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
-                        await using var tx = await context.Database.BeginTransactionAsync(ct);
-                        var merged = await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
-                        await context.SaveChangesAsync(ct);
-                        await tx.CommitAsync(ct);
-                        if (merged)
+                        if (await TryMergeAsync(context, mergeService, winner, loser, ct))
                         {
                             alreadyRemoved.Add(loser.Id);
                             removed++;
@@ -225,11 +221,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: external ID '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
-                    await using var tx = await context.Database.BeginTransactionAsync(ct);
-                    var merged = await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
-                    await context.SaveChangesAsync(ct);
-                    await tx.CommitAsync(ct);
-                    if (merged)
+                    if (await TryMergeAsync(context, mergeService, winner, loser, ct))
                     {
                         alreadyRemoved.Add(loser.Id);
                         removed++;
@@ -292,11 +284,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: title-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         $"{group.Key.Item1} / {group.Key.Year}", winner.Id, winner.Name, loser.Id, loser.Name);
-                    await using var tx = await context.Database.BeginTransactionAsync(ct);
-                    var merged = await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
-                    await context.SaveChangesAsync(ct);
-                    await tx.CommitAsync(ct);
-                    if (merged)
+                    if (await TryMergeAsync(context, mergeService, winner, loser, ct))
                     {
                         alreadyRemoved.Add(loser.Id);
                         removed++;
@@ -385,11 +373,7 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     _log.Information(
                         "DuplicateCleanup: same-parent name-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         $"{group.Key.Item2} / parent {group.Key.ParentId}", winner.Id, winner.Name, loser.Id, loser.Name);
-                    await using var tx = await context.Database.BeginTransactionAsync(ct);
-                    var merged = await MergeAndDeleteAsync(context, resolutionService, winner, loser, ct);
-                    await context.SaveChangesAsync(ct);
-                    await tx.CommitAsync(ct);
-                    if (merged)
+                    if (await TryMergeAsync(context, mergeService, winner, loser, ct))
                     {
                         alreadyRemoved.Add(loser.Id);
                         removed++;
@@ -407,329 +391,31 @@ public sealed class DuplicateCleanupService : IScheduledTask
     // ── Private helpers ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Reassigns all user data from <paramref name="loser"/> to <paramref name="winner"/>
-    /// then marks <paramref name="loser"/> for deletion.
-    /// Changes are staged on <paramref name="context"/>; the caller issues SaveChangesAsync.
-    /// Returns false (and stages no changes) if a structural invariant is violated — the
-    /// caller must NOT treat the pair as merged in that case.
+    /// Checks merge eligibility (shared with the manual merge path — see
+    /// <see cref="IMergeService.CheckMergeEligibilityAsync"/>) and, if eligible, performs the
+    /// merge via the single shared implementation and commits it in its own transaction.
+    /// Logs and returns false rather than throwing when ineligible — every automatic pass above
+    /// filters loosely (by file path, external ID, or name) before reaching here, so a
+    /// structural mismatch here means the loose upstream filter let through something that
+    /// isn't actually a duplicate; skipping that one pair and continuing the run is correct,
+    /// an unattended scheduled task aborting entirely over one bad pair is not.
     /// </summary>
-    private static async Task<bool> MergeAndDeleteAsync(
-        ChronicleDbContext context,
-        IMetadataResolutionService resolutionService,
-        MediaItem winner,
-        MediaItem loser,
-        CancellationToken ct)
+    private async Task<bool> TryMergeAsync(
+        ChronicleDbContext context, IMergeService mergeService, MediaItem winner, MediaItem loser, CancellationToken ct)
     {
-        // ── Structural invariant guards ────────────────────────────────────────────
-        // Mirrors MergeService.MergeAsync's guards, which this method duplicates rather than
-        // calls (different transaction/batch shape). Every automatic pass above filters loosely
-        // (by file path, external ID, or name) before reaching here — these are the same hard
-        // safety checks the manual merge path enforces, so an automatic pass can never merge
-        // across hierarchy levels or across parents the way a data-quality edge case could sneak
-        // a shared file-path/external-ID/name match past the looser upstream filters.
-        if (winner.HierarchyLevel != loser.HierarchyLevel)
+        var reason = await mergeService.CheckMergeEligibilityAsync(context, winner, loser, ct);
+        if (reason is not null)
         {
-            Log.ForContext<DuplicateCleanupService>().Warning(
-                "MergeAndDelete: skipping {WId}/{LId} — hierarchy levels differ ({WLevel} vs {LLevel})",
-                winner.Id, loser.Id, winner.HierarchyLevel, loser.HierarchyLevel);
-            return false;
-        }
-        if (winner.HierarchyLevel > 0 && winner.ParentId != loser.ParentId)
-        {
-            Log.ForContext<DuplicateCleanupService>().Warning(
-                "MergeAndDelete: skipping {WId}/{LId} — non-root items with different parents ({WParent} vs {LParent})",
-                winner.Id, loser.Id, winner.ParentId, loser.ParentId);
+            _log.Warning("MergeAndDelete: skipping {WId}/{LId} — {Reason}", winner.Id, loser.Id, reason);
             return false;
         }
 
-        // ── Snapshot loser state BEFORE any re-pointing (for merge log) ──────────
-        // These queries MUST run first — once ExternalIds and Children are re-parented
-        // to the winner, querying by loser.Id returns nothing.
-        var loserExtIdsRaw = await context.MediaExternalIds
-            .Where(e => e.MediaItemId == loser.Id)
-            .Select(e => new { e.Source, e.ExternalId })
-            .ToListAsync(ct);
-        // Load full child entities here — re-used for both the snapshot IDs and re-parenting,
-        // avoiding a second query later.
-        var loserChildrenSnapshot = await context.MediaItems
-            .Where(m => m.ParentId == loser.Id)
-            .ToListAsync(ct);
-        var loserChildIdsSnapshot = loserChildrenSnapshot.Select(m => m.Id).ToList();
-
-        // Queried fresh rather than read off winner.ExternalIds — several of the callers above
-        // (Pass 3/Pass 4's itemsById lookups) load `winner` without .Include(ExternalIds), and
-        // with no lazy-loading proxies configured, the nav collection would silently read as
-        // empty for those, causing every duplicate-detection check below to falsely conclude
-        // the winner owns none of its own external IDs.
-        var winnerExtIdsSnapshot = await context.MediaExternalIds
-            .Where(e => e.MediaItemId == winner.Id)
-            .Select(e => new { e.Source, e.ExternalId })
-            .ToListAsync(ct);
-
-        // Same distinction MergeService.MergeAsync records: whether the winner already owned
-        // an identical (Source, ExternalId) row before this merge. Unmerge needs this to avoid
-        // stealing the winner's own pre-merge external ID when restoring the loser as a stub —
-        // see MergeService.UnmergeAsync's LoserExternalId.WasDuplicate handling.
-        var winnerIdSetForLog = winnerExtIdsSnapshot
-            .Select(e => $"{e.Source}:{e.ExternalId}")
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var loserExtIdsSnapshot = loserExtIdsRaw
-            .Select(e => new LoserExternalIdSnapshot(
-                e.Source, e.ExternalId, winnerIdSetForLog.Contains($"{e.Source}:{e.ExternalId}")))
-            .ToList();
-
-        // Repoint merge-log rows where the loser was itself a previous merge's winner — see
-        // MergeService.MergeAsync for the full rationale (deleting the loser below would
-        // otherwise cascade-delete that earlier merge's audit trail via the MediaItemMerges
-        // .WinnerId FK, permanently breaking Unmerge for it).
-        var priorMergesWonByLoser = await context.MediaItemMerges
-            .Where(m => m.WinnerId == loser.Id)
-            .ToListAsync(ct);
-        foreach (var priorMerge in priorMergesWonByLoser)
-            priorMerge.WinnerId = winner.Id;
-
-        // ── UserLibrary ───────────────────────────────────────────────────────────
-        // For each user who has the loser in their library: if the winner is already
-        // there, merge — keeping the better status (e.g. Completed > Unwatched).
-        var loserLibEntries = await context.UserLibraries
-            .Where(l => l.MediaItemId == loser.Id)
-            .ToListAsync(ct);
-        var loserLibUserIds = loserLibEntries.Select(l => l.UserId).ToList();
-        var winnerLibByUser = loserLibUserIds.Count > 0
-            ? await context.UserLibraries
-                .Where(l => l.MediaItemId == winner.Id && loserLibUserIds.Contains(l.UserId))
-                .ToDictionaryAsync(l => l.UserId, ct)
-            : new Dictionary<int, UserLibrary>();
-
-        foreach (var lib in loserLibEntries)
-        {
-            winnerLibByUser.TryGetValue(lib.UserId, out var winnerLib);
-
-            if (winnerLib is not null)
-            {
-                var loserRank  = StatusRank(lib.Status);
-                var winnerRank = StatusRank(winnerLib.Status);
-                if (loserRank > winnerRank)
-                {
-                    winnerLib.Status      = lib.Status;
-                    winnerLib.CompletedAt = lib.CompletedAt ?? winnerLib.CompletedAt;
-                    winnerLib.UserRating  = lib.UserRating  ?? winnerLib.UserRating;
-                    winnerLib.UpdatedAt   = DateTime.UtcNow;
-                }
-                else
-                {
-                    // Same or lower rank — keep winner's status but fill any missing data.
-                    winnerLib.CompletedAt ??= lib.CompletedAt;
-                    winnerLib.UserRating  ??= lib.UserRating;
-                    winnerLib.UpdatedAt = DateTime.UtcNow;
-                }
-                context.UserLibraries.Remove(lib);
-            }
-            else
-                lib.MediaItemId = winner.Id;
-        }
-
-        // ── InteractionEvents ─────────────────────────────────────────────────────
-        // Re-point loser events to the winner, but deduplicate first: if the winner
-        // already has an event for the same (UserId, Timestamp) the UNIQUE constraint
-        // would be violated. Drop the loser's copy in that case — the data is identical.
-        var loserEvents = await context.InteractionEvents
-            .Where(e => e.MediaItemId == loser.Id)
-            .ToListAsync(ct);
-
-        if (loserEvents.Count > 0)
-        {
-            // Build a set of (UserId, Timestamp) pairs already on the winner.
-            var winnerEventKeys = (await context.InteractionEvents
-                .Where(e => e.MediaItemId == winner.Id)
-                .Select(e => new { e.UserId, e.Timestamp })
-                .ToListAsync(ct))
-                .Select(e => new UserTimestampKey(e.UserId, e.Timestamp))
-                .ToHashSet(new UserTimestampComparer());
-
-            foreach (var ev in loserEvents)
-            {
-                if (winnerEventKeys.Contains(new UserTimestampKey(ev.UserId, ev.Timestamp)))
-                    context.InteractionEvents.Remove(ev);   // duplicate — discard
-                else
-                    ev.MediaItemId = winner.Id;             // unique — re-point
-            }
-        }
-
-        // ── MediaListItems ────────────────────────────────────────────────────────
-        var loserListItems = await context.MediaListItems
-            .Where(li => li.MediaItemId == loser.Id)
-            .ToListAsync(ct);
-
-        foreach (var li in loserListItems)
-            li.MediaItemId = winner.Id;
-
-        // ── MediaCredits — re-point; deduplicate by (person_name, role) ─────────────
-        var loserCredits = await context.MediaCredits
-            .Where(c => c.MediaItemId == loser.Id)
-            .ToListAsync(ct);
-        var winnerCreditSet = (await context.MediaCredits
-            .Where(c => c.MediaItemId == winner.Id)
-            .Select(c => new { c.PersonName, c.Role })
-            .ToListAsync(ct))
-            .Select(c => $"{c.PersonName}\0{c.Role}")
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var credit in loserCredits)
-        {
-            if (winnerCreditSet.Contains($"{credit.PersonName}\0{credit.Role}"))
-                context.MediaCredits.Remove(credit);
-            else
-                credit.MediaItemId = winner.Id;
-        }
-
-        // ── Child media items — re-parent to winner ───────────────────────────────
-        // Use the snapshot already loaded at the top rather than querying again.
-        foreach (var child in loserChildrenSnapshot)
-        {
-            child.ParentId = winner.Id;
-            child.NormalizedName = MediaItemNormalizer.NormalizeName(child.Name);
-        }
-
-        // ── MediaExternalIds — merge into winner, don't just delete ──────────────
-        // Grafting the loser's IDs (e.g. "simkl:12345") onto the winner means
-        // future syncs resolve at Stage 1 without re-creating the stub.
-        var winnerIdSet = winnerIdSetForLog;
-
-        var loserExternalIds = await context.MediaExternalIds
-            .Where(e => e.MediaItemId == loser.Id)
-            .ToListAsync(ct);
-
-        foreach (var ext in loserExternalIds)
-        {
-            if (winnerIdSet.Contains($"{ext.Source}:{ext.ExternalId}"))
-                context.MediaExternalIds.Remove(ext);   // winner already has it — drop duplicate row
-            else
-                ext.MediaItemId = winner.Id;            // graft onto winner
-        }
-
-        // ── MediaEnrichments — remove loser's rows; reset winner rows for new sources ──
-        context.MediaEnrichments.RemoveRange(
-            await context.MediaEnrichments.Where(e => e.MediaItemId == loser.Id).ToListAsync(ct));
-
-        // Reset winner enrichment rows for sources that were newly grafted (not deleted as
-        // duplicates) so the winner is re-enriched with the combined external IDs.
-        var newSources = loserExternalIds
-            .Where(e => !winnerIdSet.Contains($"{e.Source}:{e.ExternalId}"))
-            .Select(e => e.Source)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (newSources.Count > 0)
-        {
-            var winnerEnrichmentRows = await context.MediaEnrichments
-                .Where(e => e.MediaItemId == winner.Id)
-                .ToListAsync(ct);
-            foreach (var row in winnerEnrichmentRows)
-            {
-                var shortId = PluginIdHelper.ToSource(row.PluginId);
-                if (newSources.Contains(shortId) &&
-                    row.Status is Chronicle.Core.Models.EnrichmentStatus.Completed
-                               or Chronicle.Core.Models.EnrichmentStatus.NotFound
-                               or Chronicle.Core.Models.EnrichmentStatus.Exhausted)
-                {
-                    row.Status     = Chronicle.Core.Models.EnrichmentStatus.Pending;
-                    row.RetryCount = 0;
-                    row.ErrorMessage = null;
-                }
-            }
-        }
-
-        // ── AKA ───────────────────────────────────────────────────────────────────
-        // Skip episode-pattern names (e.g. "Show S01E03 - Title") — they are child items,
-        // not real alternate titles, and would pollute the AKA line on the parent. Mirrors
-        // MergeService.MergeAsync's identical guard.
-        if (MergeService.NamesRequireAka(winner.Name, loser.Name)
-            && !Regex.IsMatch(loser.Name, @"S\d{1,2}E\d{1,2}", RegexOptions.IgnoreCase))
-        {
-            context.MediaItemAliases.Add(new Chronicle.Core.Models.MediaItemAlias
-            {
-                MediaItemId = winner.Id,
-                Alias       = loser.Name,
-                Source      = "merge",
-                CreatedAt   = DateTime.UtcNow,
-            });
-        }
-
-        // ── Remove the stale (winner, loser) duplicate-candidate row, if any ──────
-        // Rows referencing only the loser are already handled by that FK's cascade delete
-        // below; this covers the specific winner/loser pair. Mirrors MergeService.MergeAsync.
-        var staleCandidates = await context.MediaItemDuplicateCandidates
-            .Where(c => (c.ItemAId == winner.Id || c.ItemAId == loser.Id) &&
-                        (c.ItemBId == winner.Id || c.ItemBId == loser.Id))
-            .ToListAsync(ct);
-        context.MediaItemDuplicateCandidates.RemoveRange(staleCandidates);
-
-        // ── Record merge log (enables unmerge) ───────────────────────────────────
-        // Uses the snapshot captured at the top, before any re-pointing occurred.
-        context.MediaItemMerges.Add(new Chronicle.Core.Models.MediaItemMerge
-        {
-            WinnerId             = winner.Id,
-            LoserOriginalId      = loser.Id,
-            LoserName            = loser.Name,
-            LoserMediaTypeId     = loser.MediaTypeId,
-            LoserHierarchyLevel  = loser.HierarchyLevel,
-            LoserParentId        = loser.ParentId,
-            LoserYear            = loser.Year,
-            LoserNumber          = loser.Number,
-            LoserExternalIdsJson = System.Text.Json.JsonSerializer.Serialize(loserExtIdsSnapshot),
-            LoserChildIdsJson    = System.Text.Json.JsonSerializer.Serialize(loserChildIdsSnapshot),
-            LoserMetadataJson    = loser.MetadataJson,
-            MergedAt             = DateTime.UtcNow,
-            MergedByUserId       = null, // automatic
-        });
-
-        // ── NormalizedName on winner ────────────────────────────────────────────
-        winner.NormalizedName = MediaItemNormalizer.NormalizeName(winner.Name);
-
-        // ── metadata_json — merge loser blobs into winner (winner takes precedence) ──
-        // Ensures lossless ingestion: plugin data from the loser that the winner lacks
-        // is preserved rather than discarded.
-        if (!string.IsNullOrEmpty(loser.MetadataJson))
-        {
-            try
-            {
-                var winnerBlobs = ParseBlobs(winner.MetadataJson);
-                var loserBlobs  = ParseBlobs(loser.MetadataJson);
-                foreach (var (key, val) in loserBlobs)
-                    if (!winnerBlobs.ContainsKey(key) && key != "_resolved")
-                        winnerBlobs[key] = val;
-                winner.MetadataJson = System.Text.Json.JsonSerializer.Serialize(winnerBlobs);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                // Malformed metadata — skip blob merge rather than aborting the cleanup.
-            }
-        }
-
-        // ── Recompute _resolved so the UI reflects the merged metadata ────────────
-        await resolutionService.ResolveAsync(winner, context, ct);
-
-        // ── Stamp winner as modified ──────────────────────────────────────────────
-        winner.UpdatedAt = DateTime.UtcNow;
-
-        // ── Finally delete the loser ──────────────────────────────────────────────
-        context.MediaItems.Remove(loser);
+        await using var tx = await context.Database.BeginTransactionAsync(ct);
+        await mergeService.MergeLoadedItemsAsync(context, winner, loser, mergedByUserId: null, ct);
+        await context.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return true;
     }
-
-    /// <summary>
-    /// Scores a media item for survivor selection.
-    /// Higher is better.  Items with more metadata are preferred.
-    /// </summary>
-    private static int StatusRank(Chronicle.Core.Models.LibraryStatus status) => status switch
-    {
-        Chronicle.Core.Models.LibraryStatus.Rewatching  => 7,
-        Chronicle.Core.Models.LibraryStatus.Completed   => 6,
-        Chronicle.Core.Models.LibraryStatus.Watching    => 5,
-        Chronicle.Core.Models.LibraryStatus.OnHold      => 4,
-        Chronicle.Core.Models.LibraryStatus.PlanToWatch => 3,
-        Chronicle.Core.Models.LibraryStatus.Dropped     => 2,
-        _                                                => 1,  // Unwatched
-    };
 
     private static string NormalizeTitle(string name)
     {
@@ -760,32 +446,4 @@ public sealed class DuplicateCleanupService : IScheduledTask
         return score;
     }
 
-    private static Dictionary<string, System.Text.Json.JsonElement> ParseBlobs(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return [];
-        try { return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json) ?? []; }
-        catch (System.Text.Json.JsonException) { return []; }
-    }
-
-    // Shape matches MergeService's private LoserExternalId record exactly (same property names,
-    // Source/ExternalId/WasDuplicate) — both write to and are read from the same
-    // MediaItemMerges.LoserExternalIdsJson column via MergeService.UnmergeAsync, which is the
-    // single shared unmerge path for merges recorded by either implementation.
-    private record LoserExternalIdSnapshot(string Source, string ExternalId, bool WasDuplicate);
-
-    // ── InteractionEvent deduplication helpers ────────────────────────────────
-
-    private record UserTimestampKey(int UserId, DateTime Timestamp);
-
-    private sealed class UserTimestampComparer
-        : IEqualityComparer<UserTimestampKey>
-    {
-        public bool Equals(UserTimestampKey? x, UserTimestampKey? y) =>
-            x is not null && y is not null
-            && x.UserId == y.UserId
-            && x.Timestamp == y.Timestamp;
-
-        public int GetHashCode(UserTimestampKey obj) =>
-            HashCode.Combine(obj.UserId, obj.Timestamp);
-    }
 }

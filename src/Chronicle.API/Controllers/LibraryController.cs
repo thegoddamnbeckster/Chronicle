@@ -20,6 +20,7 @@ namespace Chronicle.API.Controllers
         private readonly ILibraryService _libraryService;
         private readonly ChronicleDbContext _context;
         private readonly IUserService _userService;
+        private readonly IMovieCollectionService _movieCollectionService;
 
         // Matches auto-generated placeholder episode names like "S01E01" or "S01E339" --
         // scanners/sync fall back to these when no real per-episode title is known.
@@ -27,22 +28,25 @@ namespace Chronicle.API.Controllers
             new(@"^S\d{1,3}E\d{1,4}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase
                 | System.Text.RegularExpressions.RegexOptions.Compiled);
 
-        public LibraryController(ILibraryService libraryService, ChronicleDbContext context, IUserService userService)
+        public LibraryController(ILibraryService libraryService, ChronicleDbContext context, IUserService userService,
+            IMovieCollectionService movieCollectionService)
         {
             _libraryService = libraryService;
             _context = context;
             _userService = userService;
+            _movieCollectionService = movieCollectionService;
         }
 
         [HttpPost]
-        public async Task<IActionResult> Add([FromBody] AddToLibraryRequestDto request)
+        public async Task<IActionResult> Add([FromBody] AddToLibraryRequestDto request, CancellationToken ct)
         {
             var userId = GetUserId();
             if (!Enum.TryParse<LibraryStatus>(request.Status, out var status))
                 return BadRequest(ApiResponse<LibraryEntryDto>.Fail("INVALID_STATUS", $"Unknown status '{request.Status}'."));
 
             var entry = await _libraryService.AddAsync(userId, new AddToLibraryRequest(request.MediaItemId, status));
-            return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry)));
+            var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
+            return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));
         }
 
         [HttpGet]
@@ -181,12 +185,29 @@ namespace Chronicle.API.Controllers
             var ancestorsByItem = await AncestorHelper.BuildAncestorsBatchAsync(
                 _context, displayIdByRoot.Values, ct);
 
+            // Collection containers with no poster of their own need a fallback -- same rule as
+            // the collection detail page and Kodi's set-art fallback
+            // (IMovieCollectionService.GetFallbackPosterAsync). Computed here, once per
+            // posterless container on this page rather than inside ToDto, so entries that don't
+            // need it (the overwhelming majority) cost nothing extra.
+            var fallbackPosterByRoot = new Dictionary<int, string?>();
+            foreach (var e in entries)
+            {
+                if (e.MediaItem is null || e.MediaItem.HierarchyLevel != 0) continue;
+                if (!string.IsNullOrEmpty(e.MediaItem.PosterUrl)) continue;
+                if (!IsMovieLikeTypeName(e.MediaItem.MediaType?.Name)) continue;
+                if (!directChildrenByRoot.TryGetValue(e.MediaItem.Id, out var dc) || dc.Count == 0) continue;
+                fallbackPosterByRoot[e.MediaItem.Id] =
+                    await _movieCollectionService.GetFallbackPosterAsync(_context, e.MediaItem.Id, ct);
+            }
+
             var dtos = entries.Select(e =>
             {
                 List<string?>? dc = null;
                 List<string?>? gc = null;
                 List<AncestorDto>? ancestors = null;
                 string? displayName = null;
+                string? fallbackPosterUrl = null;
                 if (e.MediaItem != null)
                 {
                     directChildrenByRoot.TryGetValue(e.MediaItem.Id, out dc);
@@ -194,15 +215,16 @@ namespace Chronicle.API.Controllers
                     var displayId = displayIdByRoot.GetValueOrDefault(e.MediaItem.Id, e.MediaItem.Id);
                     ancestorsByItem.TryGetValue(displayId, out ancestors);
                     displayNameByRoot.TryGetValue(e.MediaItem.Id, out displayName);
+                    fallbackPosterByRoot.TryGetValue(e.MediaItem.Id, out fallbackPosterUrl);
                 }
-                return ToDto(e, dc, gc, ancestors, displayName);
+                return ToDto(e, dc, gc, ancestors, displayName, fallbackPosterUrl);
             }).ToList();
 
             return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }
 
         [HttpPatch("{id:int}")]
-        public async Task<IActionResult> Update(int id, [FromBody] UpdateLibraryRequestDto request)
+        public async Task<IActionResult> Update(int id, [FromBody] UpdateLibraryRequestDto request, CancellationToken ct)
         {
             var userId = GetUserId();
             LibraryStatus? parsedStatus = null;
@@ -217,7 +239,8 @@ namespace Chronicle.API.Controllers
             try
             {
                 var entry = await _libraryService.UpdateAsync(userId, id, new UpdateLibraryRequest(parsedStatus, request.UserRating, request.Notes));
-                return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry)));
+                var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
+                return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));
             }
             catch (LibraryEntryNotFoundException ex)
             {
@@ -290,6 +313,23 @@ namespace Chronicle.API.Controllers
              name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
              name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
 
+        /// <summary>
+        /// Single-item counterpart to GetLibrary's batched fallback-poster lookup, for the
+        /// Add/Update actions that return one freshly-changed LibraryEntryDto rather than a
+        /// page of them. Null unless <paramref name="item"/> is genuinely a posterless
+        /// collection container -- same rule as everywhere else a collection's poster can be
+        /// shown (IMovieCollectionService.GetFallbackPosterAsync).
+        /// </summary>
+        private async Task<string?> GetFallbackPosterIfNeededAsync(MediaItem? item, CancellationToken ct)
+        {
+            if (item is null || item.HierarchyLevel != 0) return null;
+            if (!string.IsNullOrEmpty(item.PosterUrl)) return null;
+            if (!IsMovieLikeTypeName(item.MediaType?.Name)) return null;
+            var hasChildren = await _context.MediaItems.AnyAsync(m => m.ParentId == item.Id, ct);
+            if (!hasChildren) return null;
+            return await _movieCollectionService.GetFallbackPosterAsync(_context, item.Id, ct);
+        }
+
         private static double? ExtractResolvedRating(string? metadataJson)
         {
             if (string.IsNullOrEmpty(metadataJson)) return null;
@@ -305,26 +345,16 @@ namespace Chronicle.API.Controllers
             return null;
         }
 
-        private static bool HasFileScannerData(string? metadataJson)
-        {
-            if (string.IsNullOrEmpty(metadataJson)) return false;
-            if (!metadataJson.Contains("\"fileScanner\"", StringComparison.Ordinal)) return false;
-            try
-            {
-                using var doc = JsonDocument.Parse(metadataJson);
-                if (!doc.RootElement.TryGetProperty("fileScanner", out var fs)) return false;
-                if (fs.TryGetProperty("filePaths", out var fp) &&
-                    fp.ValueKind == JsonValueKind.Array &&
-                    fp.GetArrayLength() > 0)
-                    return true;
-                if (fs.TryGetProperty("filePath", out var f) &&
-                    f.ValueKind != JsonValueKind.Null &&
-                    !string.IsNullOrEmpty(f.GetString()))
-                    return true;
-                return false;
-            }
-            catch { return false; }
-        }
+        // Delegates to the single canonical reader (Chronicle.Services.Scan.FileIdentityJson) --
+        // this used to be its own hand-rolled copy (noted as "mirrors the same helper in
+        // MediaController", which had already drifted from a THIRD copy in ScraperController),
+        // and it never checked scraperResolvedFile, so an item Kodi had confirmed a real file
+        // for -- but that Chronicle's own scanner never touched -- showed as "Missing" here
+        // regardless. It also carried a dead "fileScanner.filePath" (singular) fallback that no
+        // writer anywhere in the codebase has ever produced -- FileIdentityJson never checked it
+        // either, and dropping it here changes nothing reachable.
+        private static bool HasFileScannerData(string? metadataJson) =>
+            Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(metadataJson);
 
         // displayName, when set, overrides the item's own Name with a more specific
         // recently-watched descendant episode's name (e.g. "Children Of The Comet" instead
@@ -334,7 +364,14 @@ namespace Chronicle.API.Controllers
             List<string?>? directChildrenMeta = null,
             List<string?>? grandchildrenMeta = null,
             List<AncestorDto>? ancestors = null,
-            string? displayName = null)
+            string? displayName = null,
+            // Precomputed by the caller (IMovieCollectionService.GetFallbackPosterAsync) only
+            // for entries that are actually posterless collection containers -- keeps ToDto
+            // itself synchronous rather than threading a DbContext/service call through every
+            // entry on the page. Same rule everywhere a collection's poster can be shown: the
+            // Kodi scraper's set-art fallback and the collection detail page use the identical
+            // shared method.
+            string? fallbackPosterUrl = null)
         {
             MediaItemDto? mediaDto = null;
             if (e.MediaItem != null)
@@ -367,7 +404,7 @@ namespace Chronicle.API.Controllers
                     e.MediaItem.Id, e.MediaItem.MediaTypeId,
                     e.MediaItem.MediaType?.DisplayName ?? string.Empty,
                     e.MediaItem.ParentId, displayName ?? e.MediaItem.Name, e.MediaItem.Year,
-                    e.MediaItem.Overview, e.MediaItem.PosterUrl, e.MediaItem.RuntimeMinutes,
+                    e.MediaItem.Overview, e.MediaItem.PosterUrl ?? fallbackPosterUrl, e.MediaItem.RuntimeMinutes,
                     e.MediaItem.HierarchyLevel, e.MediaItem.Number,
                     e.MediaItem.CreatedAt, e.MediaItem.UpdatedAt,
                     e.MediaItem.ExternalIds.Select(x => new ExternalIdDto(x.Source, x.ExternalId)).ToList(),

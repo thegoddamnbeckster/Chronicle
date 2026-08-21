@@ -24,14 +24,6 @@ namespace Chronicle.Services
         Task<ImportApprovedSummary> ImportApprovedAsync(ImportApprovedRequest request, CancellationToken ct = default);
 
         /// <summary>
-        /// Re-fetches full metadata from the first available metadata provider for an
-        /// existing MediaItem using its stored external IDs. Updates Name, Year, Overview,
-        /// PosterUrl, and RuntimeMinutes in-place.
-        /// Returns null if the item has no external IDs or no metadata provider is loaded.
-        /// </summary>
-        Task<Chronicle.Core.Models.MediaItem?> RefreshMetadataAsync(int mediaItemId, CancellationToken ct = default);
-
-        /// <summary>
         /// Imports scanned files directly into the library using only the data the file
         /// scanner already collected (title, year, file path). No metadata provider call is
         /// made — the background MetadataRefreshService will enrich each item with TMDB

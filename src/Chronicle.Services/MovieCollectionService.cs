@@ -15,11 +15,21 @@ namespace Chronicle.Services;
 
 public class MovieCollectionService(
     IServiceScopeFactory scopeFactory,
+    IHttpClientFactory httpClientFactory,
     ILogger<MovieCollectionService> logger) : IMovieCollectionService
 {
     private const string CollectionExternalIdPrefix = "collection:";
 
     private const int BulkBatchSize = 200;
+
+    /// <summary>
+    /// app_settings key for the local filesystem path Chronicle writes collection art into
+    /// directly, independent of any Kodi scrape ever happening -- see WriteLocalCollectionArtAsync.
+    /// Must be the SAME folder Kodi's own "Movie set information folder" setting points at (a
+    /// UNC path reachable by both wherever Chronicle's own process runs AND whatever account the
+    /// Kodi instance(s) run as), or the two just write to two different places that never meet.
+    /// </summary>
+    internal const string KodiCollectionFolderSettingKey = "kodi_movie_collection_folder";
 
     /// <summary>
     /// Sentinel MediaExternalId.ExternalId (Source "chronicle") marking that a movie's current
@@ -59,9 +69,19 @@ public class MovieCollectionService(
         var collectionData = ExtractCollectionData(movieItem.MetadataJson);
         if (collectionData is null)
         {
-            // Movie has no collection data — ensure it is at root level
+            // Movie has no collection data — ensure it is at root level. Unlike the
+            // re-parent branch below, this used to have no log line at all, which made a
+            // movie silently falling out of a collection (e.g. because it was manually
+            // placed but the marker check above somehow found nothing) invisible in
+            // kodi.log/chronicle logs alike -- confirmed the hard way via "Ballerina"
+            // vanishing from the John Wick Collection with zero trace of when or why.
             if (movieItem.ParentId is not null)
             {
+                var oldParentId = movieItem.ParentId.Value;
+                logger.LogInformation(
+                    "Movie {ItemId} \"{Name}\" removed from collection {CollectionId} -- no collection " +
+                    "data from any provider and no manual-placement marker",
+                    movieItem.Id, movieItem.Name, oldParentId);
                 movieItem.ParentId = null;
                 movieItem.HierarchyLevel = 0;
                 movieItem.UpdatedAt = DateTime.UtcNow;
@@ -107,6 +127,291 @@ public class MovieCollectionService(
             logger.LogInformation(
                 "Movie {ItemId} \"{Name}\" re-parented under new collection {CollectionId} \"{CollectionName}\" (source={Source})",
                 movieItem.Id, movieItem.Name, collection.Id, collection.Name, collectionData.Source);
+        }
+    }
+
+    /// <summary>
+    /// Stores a collection container's own metadata — title, overview, and every artwork the
+    /// provider returned — into the container's plugin partition, then re-resolves.
+    /// <para>
+    /// This is the only route a collection has to artwork. Ordinary enrichment can't do it:
+    /// "collection:" external IDs are deliberately excluded from enrichment seeding (a
+    /// container id is not a movie id), and falling back to a name search finds nothing
+    /// because no provider's search endpoint returns collections. So the container is only
+    /// ever handed its own data here, at the one call site that legitimately asks a provider
+    /// about a collection by id.
+    /// </para>
+    /// Writes only this provider's partition, leaving every other source untouched, exactly
+    /// like MetadataContributionService — and never clears the reserved keys, so a user's
+    /// pinned artwork in "_overrides" survives.
+    /// </summary>
+    /// <param name="pluginId">
+    /// The provider's full plugin id (e.g. "chronicle.plugin.tmdb") — the same partition key
+    /// every other media item uses, and what the assignment-priority map is keyed by.
+    /// </param>
+    private async Task PersistCollectionMetadataAsync(
+        ChronicleDbContext db,
+        MediaItem collection,
+        MediaMetadata meta,
+        string pluginId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(pluginId)) return;
+
+        // Nothing worth storing — don't churn MetadataJson (and the resolve that follows) for
+        // a provider that returned only a parts list.
+        var hasArtwork = meta.PosterUrl is not null || meta.BackdropUrl is not null
+                         || meta.LogoUrl is not null || meta.AdditionalImages.Count > 0;
+        if (!hasArtwork && string.IsNullOrWhiteSpace(meta.Overview)) return;
+
+        try
+        {
+            var blobs = MetadataResolutionService.ParsePluginBlobs(collection.MetadataJson);
+
+            // This method owns this provider's partition on a collection, so it normalizes the
+            // key: a partition stored under the short source form ("tmdb" rather than
+            // "chronicle.plugin.tmdb") resolves to nothing, because the assignment-priority map
+            // is keyed by full plugin id — it would sit there forever as a dead duplicate and
+            // surface as a phantom extra provider box in the UI.
+            var shortSource = PluginIdHelper.ToSource(pluginId);
+            if (!string.Equals(shortSource, pluginId, StringComparison.OrdinalIgnoreCase))
+                blobs.Remove(shortSource);
+
+            blobs[pluginId] = JsonSerializer.SerializeToElement(new
+            {
+                title            = meta.Title,
+                overview         = meta.Overview,
+                posterUrl        = meta.PosterUrl,
+                backdropUrl      = meta.BackdropUrl,
+                logoUrl          = meta.LogoUrl,
+                additionalImages = meta.AdditionalImages,
+            });
+
+            collection.MetadataJson = JsonSerializer.Serialize(blobs);
+
+            // A provider deliberately declining to offer a poster this time (e.g. TMDB has no
+            // language-appropriate collection poster at all -- see
+            // TmdbMetadataProvider.SelectPreferredCollectionPosterUrl) must actually clear any
+            // stale poster this same provider previously stored here, not leave it stuck in
+            // place forever. ResolveAsync below only ever WRITES collection.PosterUrl when the
+            // resolved value is non-empty (deliberately, so a transient provider failure can't
+            // wipe out good data) -- it would never notice or clear a stale wrong-language
+            // poster on its own. Clearing it here first gives ResolveAsync's own cross-provider
+            // priority walk a fair, un-stuck chance to redetermine the true answer: a genuinely
+            // better poster from a different provider still wins normally, and only a
+            // single-provider collection with nothing acceptable actually ends up null --
+            // which is what lets GetFallbackPosterAsync's member-movie fallback take over on
+            // the next read instead of showing whatever this provider last happened to offer.
+            if (meta.PosterUrl is null && !string.IsNullOrEmpty(collection.PosterUrl))
+                collection.PosterUrl = null;
+
+            using var scope = scopeFactory.CreateScope();
+            var resolution = scope.ServiceProvider.GetRequiredService<IMetadataResolutionService>();
+            if (collection.MediaType is null)
+                await db.Entry(collection).Reference(m => m.MediaType).LoadAsync(ct);
+            await resolution.ResolveAsync(collection, db, ct);
+            await db.SaveChangesAsync(ct);
+
+            logger.LogInformation(
+                "Collection {CollectionId} \"{Name}\": stored {ImageCount} artwork candidate(s) from {PluginId}",
+                collection.Id, collection.Name, meta.AdditionalImages.Count, pluginId);
+
+            // Independent of anything Kodi ever does -- writes directly to a configured local/UNC
+            // path, if one is set, so the folder Kodi reads from is correct even if no Kodi scrape
+            // ever triggers collection_sync.py's own copy of this same write. See the setting key's
+            // own doc comment for why the two must point at the same physical folder.
+            await WriteLocalCollectionArtAsync(scope.ServiceProvider, collection, meta.AdditionalImages, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Artwork is a bonus; the stub/hierarchy work this method sits inside is the point.
+            logger.LogWarning(ex,
+                "Collection {CollectionId} \"{Name}\": could not store {PluginId} metadata",
+                collection.Id, collection.Name, pluginId);
+        }
+    }
+
+    /// <summary>
+    /// Writes poster/fanart/clearlogo directly into
+    /// "&lt;KodiCollectionFolderSettingKey setting&gt;/&lt;collection name&gt;/" from Chronicle's
+    /// own currently-resolved art -- unconditionally overwriting whatever's already there, same
+    /// policy as collection_sync.py's own write (Chronicle is authoritative once it has a
+    /// candidate; a value it deliberately has nothing for leaves the local file untouched rather
+    /// than deleting it). No-ops entirely if the setting isn't configured.
+    ///
+    /// Uses the exact same subfolder name collection_sync.py uses (the collection's own Name,
+    /// unmodified) -- the two MUST agree byte-for-byte on the folder name, or Chronicle's direct
+    /// write and Kodi's own local-file lookup silently point at two different places.
+    /// </summary>
+    private async Task WriteLocalCollectionArtAsync(
+        IServiceProvider services, MediaItem collection, List<AdditionalImage> additionalImages, CancellationToken ct)
+    {
+        var db = services.GetRequiredService<ChronicleDbContext>();
+        var setting = await db.AppSettings.FindAsync([KodiCollectionFolderSettingKey], ct);
+        var basePath = setting?.Value;
+        if (string.IsNullOrWhiteSpace(basePath))
+        {
+            logger.LogDebug(
+                "Collection {CollectionId} \"{Name}\": {SettingKey} is not configured -- skipping direct local write",
+                collection.Id, collection.Name, KodiCollectionFolderSettingKey);
+            return;
+        }
+
+        var (backdropUrl, logoUrl) = ParseResolvedBackdropAndLogo(collection.MetadataJson);
+        var extraBackdrops = additionalImages.Where(i => i.Type == "backdrop").ToList();
+        if (collection.PosterUrl is null && backdropUrl is null && logoUrl is null && extraBackdrops.Count == 0)
+        {
+            logger.LogInformation(
+                "Collection {CollectionId} \"{Name}\": no poster/backdrop/logo/extra-backdrops currently " +
+                "resolved -- nothing to write to {BasePath}", collection.Id, collection.Name, basePath);
+            return;
+        }
+
+        string setFolder;
+        try
+        {
+            setFolder = Path.Combine(basePath, collection.Name);
+            Directory.CreateDirectory(setFolder);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex,
+                "Collection {CollectionId} \"{Name}\": couldn't create/reach local art folder under {BasePath}",
+                collection.Id, collection.Name, basePath);
+            return;
+        }
+
+        logger.LogInformation(
+            "Collection {CollectionId} \"{Name}\": writing local art directly to {SetFolder} " +
+            "(poster={HasPoster}, backdrop={HasBackdrop}, logo={HasLogo}, extraBackdrops={ExtraBackdropCount})",
+            collection.Id, collection.Name, setFolder,
+            collection.PosterUrl is not null, backdropUrl is not null, logoUrl is not null, extraBackdrops.Count);
+
+        var posterOk   = await WriteLocalImageAsync(collection, collection.PosterUrl, Path.Combine(setFolder, "poster.jpg"), "poster", ct);
+        var backdropOk = await WriteLocalImageAsync(collection, backdropUrl, Path.Combine(setFolder, "fanart.jpg"), "backdrop", ct);
+        var logoOk     = await WriteLocalImageAsync(collection, logoUrl, Path.Combine(setFolder, "clearlogo.png"), "logo", ct);
+        var extraCount = await WriteExtraFanartAsync(collection, setFolder, extraBackdrops, ct);
+
+        logger.LogInformation(
+            "Collection {CollectionId} \"{Name}\": local art write to {SetFolder} complete -- " +
+            "poster={PosterResult}, backdrop={BackdropResult}, logo={LogoResult}, extrafanart={ExtraFanartResult}",
+            collection.Id, collection.Name, setFolder,
+            DescribeWriteResult(collection.PosterUrl, posterOk),
+            DescribeWriteResult(backdropUrl, backdropOk),
+            DescribeWriteResult(logoUrl, logoOk),
+            extraBackdrops.Count == 0 ? "skipped (nothing resolved)" : $"{extraCount}/{extraBackdrops.Count} written");
+    }
+
+    private static string DescribeWriteResult(string? url, bool ok) =>
+        url is null ? "skipped (nothing resolved)" : ok ? "written" : "FAILED (see warning above)";
+
+    /// <summary>
+    /// Writes every backdrop Chronicle currently has for this collection into
+    /// "&lt;setFolder&gt;/extrafanart/" -- Kodi's own convention for offering a skin more than
+    /// one backdrop for a single item (unlike poster/fanart/clearlogo/etc, which Kodi's local-art
+    /// scheme only ever recognises one file for). No cap: every candidate is downloaded, exactly
+    /// as many as Chronicle's own gallery has (TMDB alone carries up to ~100 for some franchises)
+    /// -- deliberate, per explicit instruction, even though that means real bandwidth/disk cost
+    /// at library scale.
+    ///
+    /// The folder is cleared and rewritten from scratch on every call, not merged with whatever
+    /// was there before -- same "Chronicle is authoritative" policy as every other slot here, just
+    /// applied to a directory of files instead of one: a backdrop Chronicle no longer offers must
+    /// not linger forever just because a stale copy is still sitting on disk. No-ops (leaves
+    /// whatever's already there untouched) when Chronicle has zero backdrop candidates, same as
+    /// the single-file slots above.
+    /// </summary>
+    private async Task<int> WriteExtraFanartAsync(
+        MediaItem collection, string setFolder, List<AdditionalImage> backdrops, CancellationToken ct)
+    {
+        if (backdrops.Count == 0) return 0;
+
+        var extraFolder = Path.Combine(setFolder, "extrafanart");
+        try
+        {
+            if (Directory.Exists(extraFolder))
+            {
+                foreach (var existing in Directory.EnumerateFiles(extraFolder))
+                    File.Delete(existing);
+            }
+            else
+            {
+                Directory.CreateDirectory(extraFolder);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex,
+                "Collection {CollectionId} \"{Name}\": couldn't clear/create {ExtraFolder} -- skipping extrafanart entirely",
+                collection.Id, collection.Name, extraFolder);
+            return 0;
+        }
+
+        logger.LogInformation(
+            "Collection {CollectionId} \"{Name}\": downloading {Count} extra backdrop(s) to {ExtraFolder}",
+            collection.Id, collection.Name, backdrops.Count, extraFolder);
+
+        var written = 0;
+        for (var i = 0; i < backdrops.Count; i++)
+        {
+            var destPath = Path.Combine(extraFolder, $"fanart{i + 1}.jpg");
+            if (await WriteLocalImageAsync(collection, backdrops[i].Url, destPath, $"extrafanart[{i + 1}/{backdrops.Count}]", ct))
+                written++;
+        }
+
+        logger.LogInformation(
+            "Collection {CollectionId} \"{Name}\": extrafanart complete -- {Written}/{Total} written to {ExtraFolder}",
+            collection.Id, collection.Name, written, backdrops.Count, extraFolder);
+
+        return written;
+    }
+
+    private async Task<bool> WriteLocalImageAsync(MediaItem collection, string? url, string destPath, string artType, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        try
+        {
+            var http = httpClientFactory.CreateClient();
+            var bytes = await http.GetByteArrayAsync(url, ct);
+            await File.WriteAllBytesAsync(destPath, bytes, ct);
+            logger.LogInformation(
+                "Collection {CollectionId} \"{Name}\": wrote {ArtType} ({ByteCount} bytes) to {Path} from {Url}",
+                collection.Id, collection.Name, artType, bytes.Length, destPath, url);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex,
+                "Collection {CollectionId} \"{Name}\": couldn't write {ArtType} to {Path} from {Url}",
+                collection.Id, collection.Name, artType, destPath, url);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// backdropUrl/logoUrl aren't first-class MediaItem columns the way PosterUrl is (see
+    /// MetadataResolutionService.ResolveAsync's "promote first-class columns" step, which only
+    /// ever promotes posterUrl/overview/runtimeMinutes/title/year) -- reading them back means
+    /// pulling straight from the item's own freshly-recomputed "_resolved" JSON instead.
+    /// </summary>
+    private static (string? BackdropUrl, string? LogoUrl) ParseResolvedBackdropAndLogo(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return (null, null);
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (!doc.RootElement.TryGetProperty("_resolved", out var r) || r.ValueKind != JsonValueKind.Object)
+                return (null, null);
+
+            string? backdrop = r.TryGetProperty("backdropUrl", out var b) && b.ValueKind == JsonValueKind.String
+                ? b.GetString() : null;
+            string? logo = r.TryGetProperty("logoUrl", out var l) && l.ValueKind == JsonValueKind.String
+                ? l.GetString() : null;
+            return (backdrop, logo);
+        }
+        catch (JsonException)
+        {
+            return (null, null);
         }
     }
 
@@ -604,6 +909,17 @@ public class MovieCollectionService(
 
             return false;
         }
+
+        // The provider just handed us the collection's own metadata — artwork included. Storing
+        // it is the only way a collection ever gets art: name-search enrichment can't help,
+        // because no provider's search endpoint returns collections at all (they're excluded
+        // from enrichment seeding by design, since a "collection:" id is not a movie id). Before
+        // this, a collection kept whatever single poster its member movie's belongsToCollection
+        // block happened to carry and the Additional Images gallery had nothing to offer.
+        // Keyed by the full plugin id, not the short source: that's the partition key every
+        // other item uses and the key the assignment-priority map is looked up by. A short
+        // "tmdb" key would store fine and then resolve to nothing.
+        await PersistCollectionMetadataAsync(db, collection, collectionMeta, collectionPluginId, ct);
 
         if (collectionMeta.Results is null || collectionMeta.Results.Count == 0)
             return true;
@@ -1133,15 +1449,17 @@ public class MovieCollectionService(
     {
         var item = await db.MediaItems
             .Include(m => m.MediaType)
-            .FirstOrDefaultAsync(m => m.Id == itemId, ct);
+            .FirstOrDefaultAsync(m => m.Id == itemId, ct)
+            ?? throw new MediaNotFoundException(itemId);
 
-        if (item is null || item.HierarchyLevel != 1 || item.ParentId is null)
-            return;
+        if (item.HierarchyLevel != 1 || item.ParentId is null)
+            throw new InvalidOperationException($"Item {itemId} is not currently in a collection.");
         // Only flat media types (HierarchyLevels == 1) use the collection grouping concept — a
         // Level-1 item of a hierarchical type (e.g. a TV season, a music album) is structural,
         // not a collection member, and must never be pulled out via this path.
         if (item.MediaType?.HierarchyLevels != 1)
-            return;
+            throw new InvalidOperationException(
+                "Only flat (non-hierarchical) media types support collection membership.");
 
         var oldParentId = item.ParentId.Value;
 
@@ -1235,6 +1553,75 @@ public class MovieCollectionService(
         }
 
         await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<bool> IsCollectionContainerAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default)
+    {
+        if (await db.MediaItems.AnyAsync(m => m.ParentId == itemId, ct))
+            return true;
+        return await db.MediaExternalIds.AnyAsync(
+            e => e.MediaItemId == itemId && e.ExternalId.StartsWith(CollectionExternalIdPrefix), ct);
+    }
+
+    public async Task<HashSet<int>> GetCollectionContainerIdsAsync(
+        ChronicleDbContext db, IReadOnlyCollection<int> candidateIds, CancellationToken ct = default)
+    {
+        if (candidateIds.Count == 0) return [];
+
+        var byChildren = await db.MediaItems
+            .Where(m => m.ParentId != null && candidateIds.Contains(m.ParentId!.Value))
+            .Select(m => m.ParentId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var byExternalId = await db.MediaExternalIds
+            .Where(e => candidateIds.Contains(e.MediaItemId) && e.ExternalId.StartsWith(CollectionExternalIdPrefix))
+            .Select(e => e.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var result = new HashSet<int>(byChildren);
+        result.UnionWith(byExternalId);
+        return result;
+    }
+
+    public async Task<string?> GetFallbackPosterAsync(
+        ChronicleDbContext db, int collectionId, CancellationToken ct = default)
+    {
+        // Same year/name ordering the collection detail page itself sorts children by
+        // (MediaController.GetCollection) -- "the first one in the collection" means the
+        // same thing here as it does on screen, not an arbitrary DB row order.
+        var children = await db.MediaItems
+            .Where(m => m.ParentId == collectionId)
+            .OrderBy(m => m.Year == null ? 1 : 0)
+            .ThenBy(m => m.Year)
+            .ThenBy(m => m.Name)
+            .Select(m => new { m.PosterUrl, m.MetadataJson })
+            .ToListAsync(ct);
+
+        foreach (var child in children)
+        {
+            var poster = ExtractResolvedPosterUrl(child.MetadataJson) ?? child.PosterUrl;
+            if (!string.IsNullOrEmpty(poster))
+                return poster;
+        }
+        return null;
+    }
+
+    private static string? ExtractResolvedPosterUrl(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (doc.RootElement.TryGetProperty("_resolved", out var r) &&
+                r.ValueKind == JsonValueKind.Object &&
+                r.TryGetProperty("posterUrl", out var p) &&
+                p.ValueKind == JsonValueKind.String)
+                return p.GetString();
+        }
+        catch (JsonException) { }
+        return null;
     }
 
     /// <summary>

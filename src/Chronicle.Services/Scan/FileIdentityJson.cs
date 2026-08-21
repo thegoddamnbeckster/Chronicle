@@ -111,5 +111,56 @@ namespace Chronicle.Services.Scan
             var storedSet = stored.ToHashSet(StringComparer.OrdinalIgnoreCase);
             return candidatePaths.Any(storedSet.Contains);
         }
+
+        /// <summary>
+        /// True if Chronicle has ANY record of a real physical file for this item -- either
+        /// from its own file scanner ("fileScanner.filePaths", the authoritative source used
+        /// everywhere above) or from a Kodi scraper's own filesystem discovery reported back
+        /// after the fact ("scraperResolvedFile.fileName" -- a weaker signal, a bare filename
+        /// with no directory, not independently verified by Chronicle -- but still real: Kodi
+        /// found this exact file on disk, it just never went through Chronicle's own directory
+        /// scan). Deliberately NOT folded into ExtractFilePaths/PrimaryFilePathKey/
+        /// ContainsAnyFilePath above -- those exist specifically for exact-path duplicate
+        /// matching (DuplicateCleanupService, scan de-dup), where a bare filename with no
+        /// directory context is a meaningfully weaker, riskier signal than a verified full
+        /// path. This is the broader "do I actually own a file for this" signal instead, for
+        /// ownership displays (library grid, collection membership) -- not for merge decisions.
+        /// </summary>
+        public static bool HasKnownFile(string? metadataJson) =>
+            GetKnownFileName(metadataJson) is not null;
+
+        /// <summary>
+        /// The real video file's own basename (with extension) for this item, if Chronicle
+        /// knows one -- preferring its own file scanner's record
+        /// ("fileScanner.filePaths[0]", the higher-confidence source: a full directory scan,
+        /// not a single search-time guess) and falling back to a Kodi scraper's own filesystem
+        /// discovery reported back after the fact ("scraperResolvedFile.fileName"). Null when
+        /// Chronicle has no file record for this item at all. The single reader behind both
+        /// HasKnownFile above and ScraperController's KnownFileName field for Kodi -- previously
+        /// two independent hand-rolled copies of this exact fileScanner-then-scraperResolvedFile
+        /// fallback (one of which, until now, only ever checked the first half).
+        /// </summary>
+        public static string? GetKnownFileName(string? metadataJson)
+        {
+            var paths = ExtractFilePaths(metadataJson);
+            if (paths.Count > 0)
+            {
+                var name = paths[0].Split('\\', '/').LastOrDefault();
+                if (!string.IsNullOrEmpty(name)) return name;
+            }
+
+            if (string.IsNullOrEmpty(metadataJson)) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(metadataJson);
+                if (doc.RootElement.TryGetProperty("scraperResolvedFile", out var srf) &&
+                    srf.ValueKind == JsonValueKind.Object &&
+                    srf.TryGetProperty("fileName", out var fn) &&
+                    fn.ValueKind == JsonValueKind.String)
+                    return fn.GetString();
+            }
+            catch (JsonException) { }
+            return null;
+        }
     }
 }

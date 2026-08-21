@@ -87,7 +87,11 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
               key={movie.id}
               className={[
                 styles.card,
-                !movie.inLibrary ? styles.notInLibrary : '',
+                // "Not in library" means "I don't have this file" -- isStub/inLibrary alone
+                // both say yes for a SIMKL/Trakt watch-history import that has neither a
+                // placeholder row nor a physical file, just a real UserLibrary entry recording
+                // that it was watched. hasFile is the one signal that actually answers it.
+                !movie.hasFile ? styles.notInLibrary : '',
                 movie.isStub ? styles.stubCard : '',
               ].filter(Boolean).join(' ')}
             >
@@ -97,7 +101,7 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
                     ? <FanartImage src={movie.posterUrl!} wrapperClassName={styles.moviePosterWrap} imgClassName={styles.moviePosterImg} minHeight={120} />
                     : <PosterImage posterUrl={movie.posterUrl} name={movie.name} />
                   }
-                  {movie.isStub && (
+                  {!movie.hasFile && (
                     <div className={styles.stubBanner}>Not in Library</div>
                   )}
                 </div>
@@ -108,7 +112,7 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
                 </Link>
                 <div className={styles.metaRow}>
                   {movie.year && <span className={styles.year}>{movie.year}</span>}
-                  {movie.isStub && <span className={styles.stubLabel}>Not in your library</span>}
+                  {!movie.hasFile && <span className={styles.stubLabel}>Not in your library</span>}
                   {!movie.isStub && movie.rating != null && (
                     <span className={styles.rating} title="Public rating">★ {movie.rating.toFixed(1)}</span>
                   )}
