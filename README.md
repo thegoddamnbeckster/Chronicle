@@ -18,7 +18,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 
 ### Core Platform
 - **Authentication** — JWT for web/mobile, API key auth for scrobblers (`chr_live_...` prefix)
-- **User management** — Registration, login, preferences, fold state; first user auto-promoted to admin
+- **User management** — Registration, login, preferences, fold state; first user auto-promoted to admin; profiles with first/last name, a freely-changeable handle, and free-form contacts; admin-only user management with deactivation (immediately invalidates live JWTs and API keys) and last-admin protection
 - **REST API** — Versioned at `/api/v1/`, full Swagger UI at `/swagger`
 - **SQLite database** — EF Core 9 with sequential migration files
 - **Plugin system** — Isolated `PluginLoadContext` per plugin; supports metadata, import, widget, and report plugin types; hot-reload without API restart
@@ -52,6 +52,10 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 - **`SyncOrchestrationService`** — 4-stage item matching (ExternalId → cross-ref AdditionalIds → title+year → create stub); deduplicates watch events; delta sync via stored `last_synced_at`
 - **Watch history, ratings, watchlist** — All synced per plugin
 - **Credits** — Cast and director credits synced from Trakt
+
+### Kodi Integration
+- **Scraper API** — Dedicated `/api/v1/scraper/*` endpoints let a Kodi addon ([Chronicle_Scraper](https://github.com/thegoddamnbeckster/Chronicle_Scraper)) use Chronicle as its metadata source instead of talking to TMDB/TVDB directly; covers movies, TV shows, seasons, and episodes (with show title/year, aired date, and runtime)
+- **Kodi Movie Collections** — Chronicle can write collection posters/backdrops/logos and every backdrop as extrafanart directly into a shared UNC folder that Kodi instances point at, so collection artwork stays in sync across multiple Kodi installs sharing one library without each one re-scraping
 
 ### Installed Plugins
 
@@ -138,8 +142,8 @@ src/
 └── Chronicle.Web/        # React 18 + TypeScript frontend
 
 tests/
-├── Chronicle.Tests.Unit/         # 264 passing
-└── Chronicle.Tests.Integration/  # 123 passing
+├── Chronicle.Tests.Unit/         # 410 passing
+└── Chronicle.Tests.Integration/  # 181 passing
 ```
 
 ---
