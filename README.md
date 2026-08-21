@@ -9,7 +9,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 ## Project Status
 
 **Current Phase:** Active development
-**Current Version:** v0.7.1
+**Current Version:** v0.8.0
 **Target v1.0:** Q4 2026
 
 ---
@@ -164,12 +164,14 @@ tests/
 - ✅ Hardcover plugin — book/audiobook metadata + reading history import
 - ✅ Physical file vs metadata-only indicators
 - ✅ Global search
-- 🔲 Fanart.tv plugin
+- ✅ Fanart.tv plugin
+- ✅ Kodi scraper/scrobbler integration ([Chronicle_Scraper](https://github.com/thegoddamnbeckster/Chronicle_Scraper), [Chronicle_Scrobbler](https://github.com/thegoddamnbeckster/Chronicle_Scrobbler)) — movie/TV metadata, collection art sync, bidirectional watch-history/rating sync
+- ✅ User management — profiles, contacts, admin controls
 - 🔲 Plugin update notifications
 
 ### Phase 3: Advanced Features
 - 🔲 Multi-user library sharing
-- 🔲 Kodi/Plex scrobbler integration
+- 🔲 Plex scrobbler integration
 - 🔲 Custom media types via UI
 - 🔲 Docker support
 
