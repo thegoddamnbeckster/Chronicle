@@ -2,6 +2,16 @@
 
 ## Open Bugs
 
+### BUG-041: Chronicle_Scraper addon can't connect to Chronicle right after fresh install -- works after a Kodi restart
+**Status:** Open *(reported 2026-08-22, thegoddamnbeckster/Chronicle_Scraper addon, not this repo)*
+**Symptom:** Right after installing the addon, using Settings → "Connect to Chronicle" (the QR/PIN device-auth flow, `lib/device_auth.py`'s `DeviceAuthManager.run()`) fails to connect. Turning Kodi off and back on, then retrying the exact same flow, works.
+**Not yet root-caused** -- no `kodi.log` from an actual repro was available to confirm this the way BUG-040 was confirmed. Two plausible, unconfirmed hypotheses, ranked by likelihood:
+  1. **Settings-field commit race (more likely).** `DeviceAuthManager._initiate()` reads `ADDON.getSetting('chronicle_url')` fresh at call time (`lib/device_auth.py:116`), not a cached value -- so if it fails, the URL field genuinely wasn't persisted to `settings.xml` yet at the moment the "Connect to Chronicle" action button fired. Kodi doesn't necessarily flush a sibling field edit on the same settings page to disk before an action-type setting's `RunScript` executes, unless the user has already left/blurred that field or closed and reopened Settings -- a known general class of Kodi settings-screen quirk. A Kodi restart sidesteps it because by the next launch the previous session's settings.xml write has already fully flushed.
+  2. **Multi-extension-point addon registration lag.** This addon declares four extension points (`xbmc.metadata.scraper.movies`, `xbmc.metadata.scraper.tvshows`, `xbmc.python.script`, and `xbmc.service` with `start="startup"`). A `start="startup"` service only launches at Kodi's own startup, not when the addon is installed/enabled mid-session -- so `service.py` genuinely isn't running yet on a fresh mid-session install. Unconfirmed whether the connect flow actually depends on anything `service.py` sets up; nothing found in `default.py`/`device_auth.py` that obviously does, so this is the weaker of the two theories.
+**Next step if picked up:** repro with debug logging enabled and pull `kodi.log` from the actual failed attempt -- both `ChronicleClient._get`/`_build_request` and `DeviceAuthManager._initiate` already log warnings on failure (`Couldn't contact Chronicle`, HTTP errors, etc.), which would immediately confirm or rule out hypothesis 1. Deferred at user's request ("bug for later").
+
+---
+
 ### BUG-040: Global search results can't be scrolled on mobile -- any touch navigates immediately
 **Status:** Open *(reported 2026-08-22)*
 **Symptom:** On mobile, pressing/dragging on the search results dropdown to scroll it instead immediately navigates to whatever result is under the finger.
