@@ -39,10 +39,27 @@ export default function HistoryPage() {
           <tbody>
             {history.map(h => (
               <tr key={h.id}>
-                <td className={styles.titleCell}>{h.mediaItemName}</td>
+                <td className={styles.titleCell}>
+                  {h.ancestors && h.ancestors.length > 0 && (
+                    <span className={styles.ancestors}>
+                      {h.ancestors.map(a => a.name).join(' › ')} ›{' '}
+                    </span>
+                  )}
+                  {h.mediaItemName}
+                </td>
                 <td>{h.progressPercent != null ? `${Math.round(h.progressPercent)}%` : '—'}</td>
                 <td className={styles.meta}>{h.deviceName ?? '—'}</td>
-                <td className={styles.meta}>{formatDate(h.timestamp)}</td>
+                <td className={styles.meta}>
+                  {h.timestampIsApproximate && (
+                    <span
+                      className={styles.approx}
+                      title="Exact time not reported by the source (e.g. a whole show bulk-marked complete shares one date across every episode) — this is not this item's own precise watch time."
+                    >
+                      ~{' '}
+                    </span>
+                  )}
+                  {formatDate(h.timestamp)}
+                </td>
                 <td>
                   {h.markedAsWatched
                     ? <span className={styles.yes}>✓</span>

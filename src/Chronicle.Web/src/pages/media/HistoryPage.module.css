@@ -35,7 +35,11 @@
 
 .titleCell { font-weight: 500; }
 
+.ancestors { font-weight: 400; color: var(--text-muted); }
+
 .meta { color: var(--text-muted); font-size: 12px; }
+
+.approx { cursor: help; color: var(--text-muted); }
 
 .yes { color: var(--success); font-weight: 700; }
 .no { color: var(--text-muted); }

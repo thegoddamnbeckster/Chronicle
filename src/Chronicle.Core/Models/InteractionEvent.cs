@@ -16,6 +16,12 @@ namespace Chronicle.Core.Models
         /// <summary>Whether this event triggered a "watched" mark (progress >= 80%).</summary>
         public bool MarkedAsWatched { get; set; } = false;
 
+        /// <summary>True when <see cref="Timestamp"/> was not reported per-item by the source
+        /// (e.g. a SIMKL show bulk-marked "completed" gives one last-watched date for the whole
+        /// show, not each episode) -- borrowed from a broader scope or a plain import-time
+        /// fallback, not that specific item's own genuine watch time.</summary>
+        public bool TimestampIsApproximate { get; set; } = false;
+
         public DateTime CreatedAt { get; set; }
 
         // Navigation

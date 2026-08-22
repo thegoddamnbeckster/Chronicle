@@ -2,6 +2,18 @@
 
 ## Open Bugs
 
+### BUG-046: Watch History shows ~20 episodes all with the exact same timestamp
+**Status:** Fixed *(2026-08-22)*
+**Symptom:** User: "No, nobody watched 30 different videos at exactly the same time on the 20th. This makes no sense." -- the Watch History page showed a run of episodes (S28E02 through S28E21) all timestamped "Aug 20, 2026, 9:04 PM", device "—".
+**Root cause:** Not a bug in the sense of wrong data -- SIMKL (the source, confirmed actively delta-syncing) only records one `LastWatchedAt` for a show bulk-marked "completed" via its own UI, not a timestamp per episode. `SimklImportProvider.GetWatchHistoryAsync` already correctly falls back per-episode (`ep.WatchedAt ?? showWatchedAt`), but `WatchedAtIsApproximate` was computed as `realEpWatchedAt is null && realShowWatchedAt is null` -- since the show DID have a real date, every episode borrowing it was marked "not approximate", so nothing downstream could tell "the show's one shared date" apart from "this episode's own genuine watch time". The identical Aug 20 9:04 PM timestamp itself is real SIMKL data, correctly propagated -- just presented with no indication it's shared/approximate.
+**Fix:**
+- `Chronicle.Plugin.Simkl`: `WatchedAtIsApproximate` now `true` whenever `realEpWatchedAt is null` (borrowing the show's date is still an approximation for that specific episode), for both TV and anime.
+- `Chronicle` server: new `InteractionEvent.TimestampIsApproximate` column (migration `20260822212432_AddTimestampIsApproximateToInteractionEvent`), set from `evt.WatchedAtIsApproximate` in `SyncOrchestrationService.UpsertWatchEventAsync`, threaded through `HistoryItemDto`/`ScrobbleController.GetHistory`.
+- `HistoryPage.tsx`: rows with an approximate timestamp now show a "~" marker (tooltip explains why) instead of presenting the borrowed date as exact. Also fixed an adjacent, already-declared-but-never-wired gap in the same component: `ancestors` (e.g. show/season context) was already returned by the API with a comment saying it exists so "S28E11"-style bare episode codes aren't meaningless, but the page never rendered it -- now shown as "Show › Season ›" before the episode name.
+- 2 new tests in `SyncOrchestrationServiceTests.cs` covering both the approximate and exact-timestamp paths end-to-end through `SyncAsync`.
+
+---
+
 ### BUG-041: Chronicle_Scraper addon can't connect to Chronicle right after fresh install -- works after a Kodi restart
 **Status:** Fixed *(2026-08-22, Chronicle_Scraper v2.13.6, hypothesis 1 addressed; hypothesis 2 not ruled out but considered unlikely)*
 **Symptom:** Right after installing the addon, using Settings → "Connect to Chronicle" (the QR/PIN device-auth flow, `lib/device_auth.py`'s `DeviceAuthManager.run()`) fails to connect. Turning Kodi off and back on, then retrying the exact same flow, works.
@@ -312,7 +324,8 @@ This is almost certainly there to beat a race with `handleBlur` (the search inpu
 **Fix:** `TmdbMetadataProvider.PluginId` changed from `"tmdb"` to `"chronicle.plugin.tmdb"` to match the catalog and all DB records. Source manifest `plugin_id` updated likewise. DLL rebuilt and redeployed. *(2026-04-20)*
 **Trakt health check -- root-caused 2026-08-22 (the OAuth-token guess above was wrong):** Live log showed both Trakt search calls and the health check getting HTTP 403 from Trakt's own API. `MetadataHealthCheckAsync` hits `/movies/trending`, an endpoint that needs no user OAuth at all -- only a valid `client_id` header -- so a 403 there means **Trakt itself is rejecting the configured client_id** (revoked, mistyped, or the Trakt API application was disabled/deleted on trakt.tv), not a stale user auth token.
 **Fix (Chronicle.Plugin.Trakt, commit c96ef8a):** `MetadataHealthCheckAsync` now throws a specific message on 401/403 ("Trakt rejected the configured client_id...") instead of silently returning `false`, so the health-check UI shows that instead of the generic "Health check returned unhealthy." Verified live: `GET /api/v1/plugins/{id}/health` now returns `"Trakt rejected the configured client_id (HTTP 403) -- check the API application on trakt.tv/oauth/applications and re-enter its Client ID."`, correctly classified non-critical.
-**Remaining (user action, cannot be fixed from code):** Check the Trakt API application at trakt.tv/oauth/applications -- confirm it still exists and is active, then re-enter its Client ID in Chronicle's Trakt plugin settings.
+**Final root cause (confirmed by user 2026-08-22):** trakt.tv/oauth/applications shows "Creating new apps requires Trakt VIP" -- Trakt now gates API-application creation behind a paid VIP membership, and the user does not have one. A free account cannot obtain a client_id at all as of 2026; this is a Trakt platform policy change, not fixable in Chronicle's code. Documented in `Chronicle.Plugin.Trakt`'s manifest description and README (commit 7e87e45) so this is visible on the Plugins page and doesn't look like a Chronicle bug to a future reader.
+**Remaining (user action, not currently possible without paying for Trakt VIP):** Either purchase Trakt VIP to create/keep an API application, or accept that Trakt import/sync is unavailable on a free account.
 
 ---
 

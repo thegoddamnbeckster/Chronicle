@@ -659,6 +659,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             ProgressPercent = evt.ProgressPercent ?? 100,
             MarkedAsWatched = true,
             CreatedAt       = DateTime.UtcNow,
+            TimestampIsApproximate = evt.WatchedAtIsApproximate,
         });
         await db.SaveChangesAsync(ct);
         return 1;

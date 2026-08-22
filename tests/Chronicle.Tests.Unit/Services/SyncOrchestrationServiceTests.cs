@@ -203,6 +203,66 @@ public class SyncOrchestrationServiceMatchTests : IDisposable
         series.ParentId.Should().Be(author!.Id);
     }
 
+    // ── TimestampIsApproximate propagation ──────────────────────────────────────
+
+    [Fact]
+    public async Task SyncAsync_PersistsTimestampIsApproximate_WhenEventFlaggedApproximate()
+    {
+        // The exact case this covers: a SIMKL show bulk-marked "completed" shares one
+        // last-watched date across every episode -- ImportedWatchEvent.WatchedAtIsApproximate
+        // must survive all the way into the persisted InteractionEvent so the History page
+        // can tell "this episode's own genuine watch time" apart from "borrowed from the show".
+        await EnsureMediaTypeAsync();
+        var user = new User { Username = "approx_test", PasswordHash = "x",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync();
+
+        var sharedShowDate = new DateTimeOffset(2026, 8, 20, 21, 4, 0, TimeSpan.Zero);
+        var mockProvider = new Mock<IImportProvider>();
+        mockProvider.Setup(p => p.IsAuthenticatedAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockProvider.Setup(p => p.GetWatchHistoryAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new ImportedWatchEvent(
+                "trakt:12345", new Dictionary<string, string>(), "movie", "Fight Club", 1999,
+                sharedShowDate, 100, WatchedAtIsApproximate: true)]);
+        mockProvider.Setup(p => p.GetRatingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        mockProvider.Setup(p => p.GetWatchlistAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        var service = BuildService(mockProvider.Object);
+
+        await service.SyncAsync("chronicle.plugin.trakt", fullSync: true, userId: user.Id);
+
+        var stored = await _db.InteractionEvents.SingleAsync(e => e.UserId == user.Id);
+        stored.TimestampIsApproximate.Should().BeTrue();
+        stored.Timestamp.Should().Be(sharedShowDate.UtcDateTime);
+    }
+
+    [Fact]
+    public async Task SyncAsync_LeavesTimestampIsApproximateFalse_ForARealPerItemTimestamp()
+    {
+        await EnsureMediaTypeAsync();
+        var user = new User { Username = "exact_test", PasswordHash = "x",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync();
+
+        var mockProvider = new Mock<IImportProvider>();
+        mockProvider.Setup(p => p.IsAuthenticatedAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockProvider.Setup(p => p.GetWatchHistoryAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new ImportedWatchEvent(
+                "trakt:12345", new Dictionary<string, string>(), "movie", "Fight Club", 1999,
+                DateTimeOffset.UtcNow, 100, WatchedAtIsApproximate: false)]);
+        mockProvider.Setup(p => p.GetRatingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        mockProvider.Setup(p => p.GetWatchlistAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        var service = BuildService(mockProvider.Object);
+
+        await service.SyncAsync("chronicle.plugin.trakt", fullSync: true, userId: user.Id);
+
+        var stored = await _db.InteractionEvents.SingleAsync(e => e.UserId == user.Id);
+        stored.TimestampIsApproximate.Should().BeFalse();
+    }
+
     private static IServiceScopeFactory BuildScopeFactory(ChronicleDbContext db, IPluginRegistry registry)
     {
         var services = new ServiceCollection();
