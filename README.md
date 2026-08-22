@@ -9,7 +9,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 ## Project Status
 
 **Current Phase:** Active development
-**Current Version:** v0.8.0
+**Current Version:** v0.8.1
 **Target v1.0:** Q4 2026
 
 ---

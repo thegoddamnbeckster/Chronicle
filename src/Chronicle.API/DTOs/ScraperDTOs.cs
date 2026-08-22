@@ -51,8 +51,14 @@ namespace Chronicle.API.DTOs
     /// composer, etc. Job is null when the source provider only supplies a flat name list.</summary>
     public record CrewMemberDto(string Name, string? Job);
 
-    /// <summary>A season container belonging to a show, as already tracked in Chronicle.</summary>
-    public record ScraperSeasonDto(int Id, int Number, string? Name, string? PosterUrl);
+    /// <summary>A season container belonging to a show, as already tracked in Chronicle. PosterUrl
+    /// is Chronicle's own top pick (kept for simple callers); Artwork carries every candidate for
+    /// every art type this season has, same shape as a movie's or show's own Artwork -- a season
+    /// is its own MediaItem with its own per-provider MetadataJson partitions, so it's resolved
+    /// exactly the same way.</summary>
+    public record ScraperSeasonDto(
+        int Id, int Number, string? Name, string? PosterUrl,
+        Dictionary<string, List<ScraperArtworkCandidateDto>>? Artwork = null);
 
     public record ScraperMovieDetailsDto(
         string? Title,
@@ -117,11 +123,19 @@ namespace Chronicle.API.DTOs
         List<CastMemberDto>? Cast,
         List<CrewMemberDto>? Crew,
         Dictionary<string, ScraperRatingDto>? Ratings,
+        /// <summary>Chronicle's own top pick for the episode thumb -- kept for simple callers;
+        /// equal to Artwork["thumb"][0].Url when Artwork has a thumb candidate at all.</summary>
         string? ThumbUrl,
         ScraperExternalIdsDto? ExternalIds,
         // The parent show's own title/year -- not this episode's -- so the Kodi addon can locate
         // the show's own folder on disk for this episode (see ScraperController.GetEpisodeDetails).
         string? ShowTitle,
-        int? ShowYear
+        int? ShowYear,
+        /// <summary>Every art-type candidate this episode has -- same shape as a movie's own
+        /// Artwork. In practice episodes usually only ever have "thumb" candidates (no configured
+        /// provider currently supplies per-episode fanart/etc.), but this isn't hardcoded to just
+        /// that type -- whatever CollectArtwork actually finds in the episode's own MetadataJson
+        /// is passed through, same as every other item type.</summary>
+        Dictionary<string, List<ScraperArtworkCandidateDto>>? Artwork = null
     );
 }
