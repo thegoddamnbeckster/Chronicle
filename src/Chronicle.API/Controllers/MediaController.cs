@@ -1,5 +1,6 @@
 using Chronicle.API.DTOs;
 using Chronicle.Core.Exceptions;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services;
@@ -15,6 +16,16 @@ namespace Chronicle.API.Controllers
     [Authorize]
     public class MediaController : ControllerBase
     {
+        /// <summary>The 8 canonical artwork slots -- the only SetOverride fields whose value is
+        /// actually a URL Chronicle might later fetch, so the only ones checked for URL shape
+        /// and SSRF safety (see ExternalUrlSafety). Every other canonical field pins an
+        /// arbitrary plain value (title, overview, genres, ...) through the same endpoint.</summary>
+        private static readonly HashSet<string> ImageUrlFields = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "poster_url", "backdrop_url", "logo_url", "banner_url",
+            "thumb_url", "clearart_url", "disc_url", "character_art_url",
+        };
+
         private readonly IMediaService _mediaService;
         private readonly IFileScanService _fileScanService;
         private readonly IMetadataEnrichmentService _enrichment;
@@ -405,6 +416,17 @@ namespace Chronicle.API.Controllers
 
             if (!_resolutionService.GetCanonicalFields().Contains(field))
                 return BadRequest(ApiResponse<MediaItemDto>.Fail("INVALID_FIELD", $"'{field}' is not an assignable field."));
+
+            // Only the 8 canonical artwork slots actually carry a URL -- every other canonical
+            // field (title, overview, genres, cast, ...) pins an arbitrary plain value through
+            // this same generic endpoint, so a URL-shape/reachability check would be wrong there.
+            if (ImageUrlFields.Contains(field))
+            {
+                if (!ExternalUrlSafety.IsWellFormedHttpUrl(request.Url, out var uri))
+                    return BadRequest(ApiResponse<MediaItemDto>.Fail("INVALID_URL", "Must be a valid http:// or https:// URL."));
+                if (!await ExternalUrlSafety.IsSafeToFetchAsync(uri!, ct))
+                    return BadRequest(ApiResponse<MediaItemDto>.Fail("INVALID_URL", "That URL doesn't point to a reachable public host."));
+            }
 
             try
             {
@@ -1700,8 +1722,12 @@ namespace Chronicle.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> PosterProxy([FromQuery] string url, CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                || (uri.Scheme != "https" && uri.Scheme != "http"))
+            if (!ExternalUrlSafety.IsWellFormedHttpUrl(url, out var uri))
+                return BadRequest("Invalid URL.");
+            // SSRF guard: this endpoint is anonymous and makes the SERVER fetch whatever URL a
+            // caller supplies -- without this, it could be pointed at an internal service or a
+            // cloud metadata endpoint (169.254.169.254) and have the response streamed back.
+            if (!await ExternalUrlSafety.IsSafeToFetchAsync(uri!, ct))
                 return BadRequest("Invalid URL.");
 
             using var http = new System.Net.Http.HttpClient();

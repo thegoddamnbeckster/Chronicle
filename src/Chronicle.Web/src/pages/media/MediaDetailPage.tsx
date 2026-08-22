@@ -14,6 +14,7 @@ import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
 import { SlotGalleryModal } from '@/components/SlotGalleryModal'
+import { ManualImageUrlModal } from '@/components/ManualImageUrlModal'
 import { ImageSlotControls } from '@/components/ImageSlotControls'
 import { extractImages, buildSlotLookup, type ImageEntry, type CanonicalSlot, type SlottedImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
@@ -455,6 +456,9 @@ export default function MediaDetailPage() {
   // Which slot has a set/clear request in flight, so only that chip shows a busy state.
   const [pendingSlot, setPendingSlot] = useState<CanonicalSlot | null>(null)
 
+  // ── Manual "add image from URL" modal (for items no provider found any candidates for) ──
+  const [manualImageOpen, setManualImageOpen] = useState(false)
+
   // Shared by both full-size viewers (the type-scoped gallery and the page-level lightbox).
   // The gallery deliberately stays OPEN after assigning, so several slots can be given the
   // same image in one visit and a mistaken pin can be undone on the spot.
@@ -720,6 +724,15 @@ export default function MediaDetailPage() {
           )}
 
           <div className={styles.deleteArea}>
+            {isAdmin && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => setManualImageOpen(true)}
+                title="Pin an image Chronicle didn't find on its own — useful when no provider has any candidates for this item"
+              >
+                + Add Image URL
+              </button>
+            )}
             {isAdmin && item.parentId == null && (
               <button
                 className={styles.changeTypeBtn}
@@ -1492,6 +1505,17 @@ export default function MediaDetailPage() {
           onSet={(slot, img) => overrideSetMut.mutate({
             slot, url: img.url, pluginId: img.pluginId, sourceType: img.slot,
           })}
+          onClear={(slot) => overrideClearMut.mutate(slot)}
+          pendingSlot={pendingSlot}
+        />
+      )}
+
+      {/* ── Manual "add image from URL" modal ──────────────────────────────── */}
+      {manualImageOpen && (
+        <ManualImageUrlModal
+          onClose={() => setManualImageOpen(false)}
+          overrides={item.overrides}
+          onSet={(slot, url) => overrideSetMut.mutate({ slot, url })}
           onClear={(slot) => overrideClearMut.mutate(slot)}
           pendingSlot={pendingSlot}
         />
