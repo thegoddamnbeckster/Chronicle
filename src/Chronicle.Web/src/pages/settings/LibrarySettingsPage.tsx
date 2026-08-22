@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
@@ -102,8 +102,20 @@ export default function LibrarySettingsPage() {
   const currentCollectionFolder = appSettings?.['kodi_movie_collection_folder'] ?? ''
   const collectionFolderMut = useMutation({
     mutationFn: (val: string) => putAppSetting('kodi_movie_collection_folder', val),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['appSettings'] }); setCollectionFolderInput('') },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['appSettings'] }),
   })
+
+  // Both inputs above are controlled but only ever initialised to '' -- without this, an
+  // already-saved value only ever showed up as placeholder text (which looks unset/greyed-out,
+  // not real editable content), and clicking Save while the box looked "already filled in" that
+  // way actually submitted an empty string, silently clearing the saved setting. Re-sync from
+  // the server's current value whenever it loads or changes (including right after our own
+  // save, once invalidateQueries above refetches it) so the box always shows real, editable text.
+  useEffect(() => {
+    if (!appSettings) return
+    setBatchSizeInput(appSettings['import_batch_size'] ?? '')
+    setCollectionFolderInput(appSettings['kodi_movie_collection_folder'] ?? '')
+  }, [appSettings])
 
   // ── Danger Zone ──────────────────────────────────────────────────────────
   const [clearConfirm, setClearConfirm] = useState(false)
@@ -451,12 +463,15 @@ export default function LibrarySettingsPage() {
               />
               <button
                 className={styles.saveBtn}
-                disabled={collectionFolderMut.isPending}
+                disabled={
+                  collectionFolderMut.isPending ||
+                  collectionFolderInput === (appSettings?.['kodi_movie_collection_folder'] ?? '')
+                }
                 onClick={() => collectionFolderMut.mutate(collectionFolderInput)}
               >
                 {collectionFolderMut.isPending ? 'Saving…' : 'Save'}
               </button>
-              {collectionFolderMut.isSuccess && !collectionFolderInput && (
+              {collectionFolderMut.isSuccess && (
                 <span className={styles.savedBadge}>✓ Saved</span>
               )}
             </div>
@@ -494,19 +509,20 @@ export default function LibrarySettingsPage() {
               />
               <button
                 className={styles.saveBtn}
-                disabled={batchSizeMut.isPending || !batchSizeInput}
+                disabled={
+                  batchSizeMut.isPending || !batchSizeInput ||
+                  batchSizeInput === (appSettings?.['import_batch_size'] ?? '')
+                }
                 onClick={() => {
                   const n = parseInt(batchSizeInput, 10)
                   if (!isNaN(n) && n >= 1 && n <= 500) {
-                    batchSizeMut.mutate(String(n), {
-                      onSuccess: () => setBatchSizeInput(''),
-                    })
+                    batchSizeMut.mutate(String(n))
                   }
                 }}
               >
                 {batchSizeMut.isPending ? 'Saving…' : 'Save'}
               </button>
-              {batchSizeMut.isSuccess && !batchSizeInput && (
+              {batchSizeMut.isSuccess && (
                 <span className={styles.savedBadge}>✓ Saved</span>
               )}
             </div>

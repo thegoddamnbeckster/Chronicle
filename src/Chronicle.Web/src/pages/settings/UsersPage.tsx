@@ -307,7 +307,18 @@ function UserDetail({ user, onChanged }: { user: UserAccountDto; onChanged: () =
             <input className={styles.textInput} value={displayName}
                    onChange={e => setDisplayName(e.target.value)} maxLength={100} />
           </div>
-          <button type="submit" className={styles.createBtn} disabled={saving}>
+          <button
+            type="submit"
+            className={styles.createBtn}
+            disabled={
+              saving ||
+              (firstName === (user.firstName ?? '') &&
+                lastName === (user.lastName ?? '') &&
+                handle === (user.handle ?? '') &&
+                displayName === (user.displayName ?? '') &&
+                email === (user.email ?? ''))
+            }
+          >
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>

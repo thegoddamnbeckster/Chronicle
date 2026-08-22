@@ -146,7 +146,18 @@ export default function ProfilePage() {
                      onChange={e => setDisplayName(e.target.value)} maxLength={100}
                      placeholder="leave blank to use the rule above" />
             </div>
-            <button type="submit" className={styles.createBtn} disabled={saving}>
+            <button
+              type="submit"
+              className={styles.createBtn}
+              disabled={
+                saving ||
+                (firstName === (profile.firstName ?? '') &&
+                  lastName === (profile.lastName ?? '') &&
+                  handle === (profile.handle ?? '') &&
+                  displayName === (profile.displayName ?? '') &&
+                  email === (profile.email ?? ''))
+              }
+            >
               {saving ? 'Saving…' : 'Save Profile'}
             </button>
           </div>

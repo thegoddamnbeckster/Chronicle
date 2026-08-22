@@ -185,6 +185,7 @@ export default function PluginsPage() {
   const [schema, setSchema] = useState<PluginSettingsSchema | null>(null)
   const [schemaLoading, setSchemaLoading] = useState(false)
   const [formValues, setFormValues] = useState<Record<string, string>>({})
+  const [savedFormValues, setSavedFormValues] = useState<Record<string, string>>({})
   const [secretVisible, setSecretVisible] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -325,6 +326,7 @@ export default function PluginsPage() {
       setConfigOpenId(null)
       setSchema(null)
       setFormValues({})
+      setSavedFormValues({})
       setSaveError(null)
       setSchemaError(null)
       setSecretVisible({})
@@ -333,6 +335,7 @@ export default function PluginsPage() {
     setConfigOpenId(id)
     setSchema(null)
     setFormValues({})
+    setSavedFormValues({})
     setSaveError(null)
     setSchemaError(null)
     setSchemaLoading(true)
@@ -349,6 +352,7 @@ export default function PluginsPage() {
       }
       Object.assign(values, saved)
       setFormValues(values)
+      setSavedFormValues(values)
     } catch {
       setSchemaError('Failed to load plugin settings. Please try again.')
     } finally {
@@ -356,11 +360,20 @@ export default function PluginsPage() {
     }
   }
 
+  function isFormDirty(): boolean {
+    const keys = new Set([...Object.keys(formValues), ...Object.keys(savedFormValues)])
+    for (const key of keys) {
+      if ((formValues[key] ?? '') !== (savedFormValues[key] ?? '')) return true
+    }
+    return false
+  }
+
   async function handleSave(pluginId: number) {
     setSaving(true)
     setSaveError(null)
     try {
       await updatePluginSettings(pluginId, formValues)
+      setSavedFormValues(formValues)
       // Keep the panel open so import providers can proceed to Connect immediately
       setSavedPluginId(pluginId)
       setTimeout(() => setSavedPluginId(prev => prev === pluginId ? null : prev), 3000)
@@ -784,7 +797,7 @@ export default function PluginsPage() {
                             <button
                               className={styles.submitBtn}
                               onClick={() => handleSave(plugin.id)}
-                              disabled={saving}
+                              disabled={saving || !isFormDirty()}
                             >
                               {saving ? 'Saving…' : 'Save Settings'}
                             </button>
