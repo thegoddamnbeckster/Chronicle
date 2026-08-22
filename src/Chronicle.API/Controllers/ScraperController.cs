@@ -324,6 +324,7 @@ public class ScraperController : ControllerBase
         var seasons = await _context.MediaItems
             .Where(m => m.ParentId == id && m.HierarchyLevel == 1)
             .OrderBy(m => m.Number)
+            .Select(m => new MediaItem { Id = m.Id, Number = m.Number, Name = m.Name, MetadataJson = m.MetadataJson, PosterUrl = m.PosterUrl })
             .ToListAsync(ct);
         var seasonDtos = seasons.Select(BuildSeasonDetails).ToList();
 
@@ -599,7 +600,7 @@ public class ScraperController : ControllerBase
 
     private static ScraperMovieDetailsDto BuildMovieDetails(MediaItem item, ScraperCollectionDto? collection)
     {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
+        using var doc = ParseMetadataOrEmpty(item.MetadataJson);
         var root = doc.RootElement;
         var core = ParseResolvedCore(item.MetadataJson);
 
@@ -628,7 +629,7 @@ public class ScraperController : ControllerBase
 
     private static ScraperShowDetailsDto BuildShowDetails(MediaItem item, List<ScraperSeasonDto> seasons)
     {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
+        using var doc = ParseMetadataOrEmpty(item.MetadataJson);
         var root = doc.RootElement;
         var core = ParseResolvedCore(item.MetadataJson);
 
@@ -657,7 +658,7 @@ public class ScraperController : ControllerBase
 
     private static ScraperEpisodeDetailsDto BuildEpisodeDetails(MediaItem item, int season, string? showTitle, int? showYear)
     {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
+        using var doc = ParseMetadataOrEmpty(item.MetadataJson);
         var root = doc.RootElement;
         var core = ParseResolvedCore(item.MetadataJson);
         var artwork = CollectEpisodeArtwork(root, core);
@@ -690,7 +691,7 @@ public class ScraperController : ControllerBase
     /// this needs no re-keying.</summary>
     private static ScraperSeasonDto BuildSeasonDetails(MediaItem season)
     {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(season.MetadataJson) ? "{}" : season.MetadataJson);
+        using var doc = ParseMetadataOrEmpty(season.MetadataJson);
         var root = doc.RootElement;
         var core = ParseResolvedCore(season.MetadataJson);
 
@@ -717,7 +718,12 @@ public class ScraperController : ControllerBase
         if (artwork is null) return null;
 
         if (artwork.Remove("poster", out var posterCandidates))
-            artwork["thumb"] = posterCandidates;
+        {
+            if (artwork.TryGetValue("thumb", out var existingThumbs))
+                existingThumbs.AddRange(posterCandidates);
+            else
+                artwork["thumb"] = posterCandidates;
+        }
 
         return artwork.Count > 0 ? artwork : null;
     }
@@ -877,6 +883,22 @@ public class ScraperController : ControllerBase
         catch (JsonException)
         {
             return [];
+        }
+    }
+
+    /// <summary>Parses a season's MetadataJson for the raw-root callers (CollectArtwork) need,
+    /// degrading to an empty object on malformed JSON instead of 500ing the whole tv/details
+    /// request over one bad season -- the same tolerance ParseResolvedCore already has.</summary>
+    private static JsonDocument ParseMetadataOrEmpty(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return JsonDocument.Parse("{}");
+        try
+        {
+            return JsonDocument.Parse(metadataJson);
+        }
+        catch (JsonException)
+        {
+            return JsonDocument.Parse("{}");
         }
     }
 
