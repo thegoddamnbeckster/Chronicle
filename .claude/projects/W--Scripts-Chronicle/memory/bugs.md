@@ -2,6 +2,18 @@
 
 ## Open Bugs
 
+### BUG-040: Global search results can't be scrolled on mobile -- any touch navigates immediately
+**Status:** Open *(reported 2026-08-22)*
+**Symptom:** On mobile, pressing/dragging on the search results dropdown to scroll it instead immediately navigates to whatever result is under the finger.
+**Likely root cause:** `src/Chronicle.Web/src/components/layout/GlobalSearch.tsx:106` -- each result row fires `handleSelect` on `onPointerDown` (not `onClick`), with `e.preventDefault()` called immediately:
+```tsx
+onPointerDown={e => { e.preventDefault(); handleSelect(item) }}
+```
+This is almost certainly there to beat a race with `handleBlur` (the search input's `onBlur` sets `open=false` before a `click` event would otherwise fire, closing the dropdown before a click lands) -- see `onBlur`/`handleBlur` a few lines above. But on mobile, `pointerdown` fires the instant a finger touches the screen, before the browser can tell a tap from the start of a scroll/drag gesture, and `preventDefault()` there suppresses native scroll handling for that touch too -- so any touch on a result row, including a scroll attempt, fires navigation instantly.
+**Not yet fixed:** needs a fix that still beats the blur-close race on desktop (e.g. distinguish a tap from a drag by tracking pointerup position/movement delta instead of firing on pointerdown alone, or use `onMouseDown`/`onTouchEnd` with movement-threshold logic) without breaking mobile scroll. Deferred at user's request ("bug for later").
+
+---
+
 ### BUG-039: MetadataEnrichmentService had two independently-implemented enrichment engines (EnrichOneAsync / EnrichItemCoreAsync)
 **Status:** Fixed *(2026-07-13)*
 **Symptom:** Discovered while investigating why the Hardcover enrichment for "Endymion" (item 274316) flipped from `Completed` (real cover art, overview, rating) to `Status=NotFound` within ~20 minutes, with a self-contradictory `DiagnosticsJson` (`failureReason: "Matched successfully."` alongside `Status: NotFound`).
