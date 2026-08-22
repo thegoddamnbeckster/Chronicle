@@ -2,6 +2,15 @@
 
 ## Open Bugs
 
+### BUG-047: Plugin catalog missing most plugins
+**Status:** Fixed *(2026-08-22)*
+**Symptom:** User: "we're missing several items in the plugin catalog." The catalog (Plugins page → "+ Install Plugin") showed only TMDB, MusicBrainz, and File Scanner, all marked Installed -- FanEdit, Fanart.tv, Hardcover, Movies Remastered (MRDb), SIMKL, TheTVDB, Trakt, TVMaze, and Default Themes were all missing despite being real, already-installed, working plugins.
+**Root cause:** `PluginsController.PluginCatalog` is a hand-maintained static C# array (this is exactly the "no hardcoding" pattern this project's own conventions warn against) that was never updated as more plugins shipped -- it only ever had 3 entries.
+**Fix:** Added the 9 missing entries (name/description/author/icon/GitHub repo/tags/version, sourced from each plugin's own manifest.json). `Sha256` left empty for all 9, matching TMDB's own existing "cleared — recalculate after each plugin release" precedent -- computing a real digest would need the actual packaged release ZIP, not the source tree. 2 new integration tests (`PluginCatalogTests.cs`): one asserts every currently-known plugin id is present (a tripwire against this exact staleness recurring), one asserts every entry has the fields the install flow actually needs populated.
+**Not fixed, flagged for later:** this is still a hardcoded list that will go stale again the next time a plugin ships -- nothing enforces keeping it in sync short of remembering to update it (and the new test) together. A DB-backed or auto-discovered catalog would remove the recurring-staleness risk entirely; not attempted here since it's a larger design change than "restore the missing entries."
+
+---
+
 ### BUG-046: Watch History shows ~20 episodes all with the exact same timestamp
 **Status:** Fixed *(2026-08-22)*
 **Symptom:** User: "No, nobody watched 30 different videos at exactly the same time on the 20th. This makes no sense." -- the Watch History page showed a run of episodes (S28E02 through S28E21) all timestamped "Aug 20, 2026, 9:04 PM", device "—".
