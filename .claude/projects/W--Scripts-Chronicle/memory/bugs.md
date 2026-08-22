@@ -263,9 +263,11 @@ This is almost certainly there to beat a race with `handleBlur` (the search inpu
 ---
 
 ### BUG-022: Import page duplicates functionality that belongs in Background Tasks
-**Status:** Open (design issue)  
+**Status:** Fixed *(2026-08-22, discussed with user first per this entry's own note)*
 **Symptom:** `/import` is a standalone page with "Connect Account" flows for Trakt and SIMKL. The actual import/sync work is triggered as background tasks. Having a separate Import tab feels like a duplicate of the Background Tasks page.  
-**Fix needed:** Consolidate — the Connect Account auth flow could live in plugin Settings; the import trigger could live in Background Tasks. Discuss before acting.
+**Discussed:** user chose "move Connect Account into plugin Settings; Background Tasks keeps Run Now/schedule; /import page goes away entirely."
+**Found already mostly done:** `PluginsPage.tsx` already had a complete `InlineImportSection` component (account-connect PIN/QR flow, poll loop, connected/disconnected states) wired into each import provider's Configure panel — apparently built to replace `/import` but never finished. Background Tasks already has `{plugin}:import-all`/`{plugin}:delta-sync` scheduled tasks with working Run Now/Schedule for both Trakt and SIMKL — already covers the "import trigger" side too.
+**Fix:** Removed the now-fully-redundant standalone `/import` route, its nav link, and `ImportPage.tsx`/`.module.css`. Deleted the now-dead `importHistory`/`importRatings`/`importWatchlist` API wrapper functions from `api/import.ts` (their only caller was the deleted page; the `ImportResult` type stays, still used by `ScanPage.tsx` for an unrelated file-scan-import concept). Verified live: nav no longer shows Import, `/import` falls through to the app's default redirect instead of 404ing.
 
 ---
 

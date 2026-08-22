@@ -13,7 +13,6 @@ import AddMediaPage from '@/pages/media/AddMediaPage'
 import AddCollectionPage from '@/pages/media/AddCollectionPage'
 import MediaDetailPage from '@/pages/media/MediaDetailPage'
 import HistoryPage from '@/pages/media/HistoryPage'
-import ImportPage from '@/pages/import/ImportPage'
 import ReportsPage from '@/pages/reports/ReportsPage'
 import ServiceSettingsPage from '@/pages/settings/ServiceSettingsPage'
 import ApiKeysPage from '@/pages/settings/ApiKeysPage'
@@ -82,7 +81,6 @@ export default function App() {
             <MediaDetailPage />
           </ErrorBoundary>
         } />
-        <Route path="import" element={<ImportPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="settings/service" element={<ServiceSettingsPage />} />
         <Route path="settings/api-keys" element={<ApiKeysPage />} />
