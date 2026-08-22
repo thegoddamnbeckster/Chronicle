@@ -28,6 +28,22 @@
 
 ---
 
+### BUG-044: Library page card poster doesn't update after pinning a new image on the detail/collection screen
+**Status:** Fixed *(2026-08-22, Chronicle server)*
+**Symptom:** User: "Have you got a bug in your list about the library collection poster not being updated after I update it in the movie collection detail screen?" -- pinning a new poster (or other image) on a media item's or collection's detail page updates that page correctly but the Library page's card grid keeps showing the old image.
+**Root cause:** `MediaDetailPage.tsx`'s three image-override mutations (`overrideSetMut`, `overrideClearMut`, `clearAllOverridesMut`) only wrote the updated item into the `['media', mediaId]` React Query cache via `qc.setQueryData` -- unlike every other mutation in the same file (delete, refresh, reparent, merge, change-type, etc.), none of them invalidated the `['library']` query the Library page's cards are built from, so the old cached poster kept showing there until something unrelated happened to invalidate it.
+**Fix:** Added `qc.invalidateQueries({ queryKey: ['library'] })` to all three mutations' `onSuccess`, matching the pattern every other mutation in the file already uses.
+
+---
+
+### BUG-045 (feature request): Manually assign an arbitrary image URL when Chronicle has no candidates at all
+**Status:** Open (deferred at user's request -- "can be looked at later")
+**Symptom:** Item 432609 (a movie) has no automatically-detected images from any provider, so there is nothing to pin -- the existing pin system (see CLAUDE.md's "Artwork overrides" section) only lets you choose from images Chronicle already knows about, surfaced via the full-size image viewers. When a provider has nothing (an obscure title, a concert film, etc.), there's no way to manually supply a poster/backdrop/etc. URL yourself.
+**Requested:** A way to paste an arbitrary external image URL and have it assigned into one of the 8 canonical artwork slots, for exactly the case where the provider pipeline found nothing at all.
+**Not yet investigated:** where this UI should live (a new control on the detail page itself, since the existing "click an image in the viewer" flow has literally nothing to click when the candidate list is empty), and whether `setMediaOverride` (`Chronicle.Web/src/api/media.ts`) already accepts an arbitrary caller-supplied URL or is currently only ever called with URLs Chronicle itself already returned as candidates (security: validate/sanitize a user-pasted URL before storing/fetching it).
+
+---
+
 ### BUG-040: Global search results can't be scrolled on mobile -- any touch navigates immediately
 **Status:** Open *(reported 2026-08-22)*
 **Symptom:** On mobile, pressing/dragging on the search results dropdown to scroll it instead immediately navigates to whatever result is under the finger.
@@ -136,10 +152,10 @@ This is almost certainly there to beat a race with `handleBlur` (the search inpu
 ---
 
 ### BUG-014: FanEdit plugin icon not displayed on Metadata Assignment page
-**Status:** Open  
-**Symptom:** FanEdit plugin rows on the Metadata Assignment page show no icon. TMDB rows correctly display the TMDB colour icon. The FanEdit manifest declares `iconUrl: "https://www.fanedit.org/favicon.ico"`.  
-**Root cause:** The icon proxy (`GET /api/v1/plugins/{id}/icon`) previously rejected SVG content, and fanedit.org may serve their favicon as SVG (or the proxy is failing the fetch/magic-byte check for another reason). The SVG→PNG conversion fix was deployed in commit 492d5cc but has not yet been tested against the live fanedit.org favicon.  
-**Fix:** Deployed in 492d5cc — restart the API and verify the icon now loads. If it still fails, inspect the proxy response for that plugin's id to determine whether the content-type or magic-byte check is the remaining obstacle.
+**Status:** Fixed *(confirmed 2026-08-22)*
+**Symptom:** FanEdit plugin rows on the Metadata Assignment page show no icon. TMDB rows correctly display the TMDB colour icon. The FanEdit manifest declared `iconUrl: "https://www.fanedit.org/favicon.ico"` at the time this was reported.
+**Root cause:** See BUG-019 -- FanEdit's manifest was changed 2026-05-22 to an embedded SVG data URI instead of the unreliable external favicon, independent of this file's own SVG→PNG proxy fix (492d5cc).
+**Verified live 2026-08-22:** FanEdit's icon loads correctly on the Metadata Assignment page via the icon proxy (24x24 PNG, no load error).
 
 ---
 
@@ -259,23 +275,23 @@ This is almost certainly there to beat a race with `handleBlur` (the search inpu
 **Root cause:** `GetSettingsSchema` endpoint returned 404 if the plugin wasn't loaded AND it never checked `ImportProviders` — so Trakt/SIMKL settings also errored.
 **Fix (code):** `PluginsController.GetSettingsSchema` now checks `ImportProviders` after `MetadataProviders` and `FileScannerPlugins`.
 **2026-07-13:** Manifest version was still `1.0.0` despite three later tagged releases having shipped — bumped to `1.3.0` (matching the new release, see BUG-018) and redeployed the DLL to `plugins/chronicle.plugin.tmdb/`.
-**Remaining (user action):** Re-enter TMDB API key in Configure if it's still wiped from the duplicate-ID cleanup (icon still needs checking — untouched this session).
+**2026-08-22 check:** Confirmed fixed and verified live. Icon proxy (`/api/v1/plugins/{id}/icon`) returns HTTP 200 with real `.ico` content (15KB, themoviedb.org's actual favicon). Version is `1.3.1` (current). Health check reports `healthy: true` -- confirms the API key is configured and working, was not wiped.
 
 ---
 
 ### BUG-020: Audiobooks not available as media type in File Scan
-**Status:** Partially fixed *(2026-04-20)*  
+**Status:** Fixed *(2026-04-20 code fix; remaining items confirmed done 2026-08-22)*
 **Root cause:** `GetStatusAsync` only returned media types declared by the scanner's `GetSupportedMediaTypes()` (hardcoded: movies/tv/music). Any type not in that list was hidden from the dropdown.  
 **Fix (code):** `GetStatusAsync` now queries all `media_types` from the DB dynamically. `ScanAsync` now falls back to the first available scanner when no scanner explicitly declares the requested type.  
-**Remaining:** An "Audiobooks" row must exist in the `media_types` table. Add it via the admin UI or a migration. MusicBrainz plugin's `GetSupportedMediaTypes()` should also declare `"audiobooks"` for enrichment to work.
+**2026-08-22 check:** Both remaining items confirmed done. `GET /api/v1/media/types` returns an `audiobooks` row (id 6, hierarchyLevels 3). MusicBrainz's `supportedMediaTypes` is `["music", "audiobooks"]`.
 
 ---
 
 ### BUG-019: FanEdit icon missing in Background Tasks page
-**Status:** Open  
+**Status:** Fixed *(confirmed 2026-08-22 -- was already resolved by an unrelated, more robust fix; tracker was stale)*
 **Symptom:** The FanEdit plugin group header on the Background Tasks page shows no icon. Other plugins (SIMKL, Trakt) display their icons correctly.  
-**Root cause:** Likely the same icon proxy issue as BUG-014 (fanedit.org favicon). The SVG-fix deployed in 492d5cc may not have been tested against the live fanedit.org URL, or the deployed `chronicle.plugin.fanedit` directory still has the pre-fix binary.  
-**Fix needed:** Confirm the fanedit.org favicon is reachable via the icon proxy and renders in the UI. Redeploy if necessary.
+**Actual root cause (found 2026-08-22, different from the original guess):** Chronicle.Plugin.FanEdit's own `manifest.json` was changed on 2026-05-22 (commit 7fea914, "fix(manifest): replace external favicon with embedded SVG icon") to declare an inline base64 SVG data URI as `iconUrl` instead of `https://www.fanedit.org/favicon.ico` -- fanedit.org's favicon was "unreliable from server-side fetches (wrong content type or unavailable)". This sidesteps the icon-proxy question entirely for FanEdit: no external fetch happens at all anymore.
+**Verified live:** On the Metadata Assignment page (BUG-014), FanEdit's icon loads via the `/api/v1/plugins/{id}/icon` proxy, 24x24, no load error. On the Background Tasks page's Scheduled Tasks group header (what this bug actually meant -- the Enrichment Status table above it has no icon column for any plugin, by design), the raw `data:image/svg+xml` URI renders directly (browsers support inline SVG data URIs in `<img src>` natively), no load error. Both confirmed via DOM inspection (`complete: true`, non-zero `naturalWidth`).
 
 ---
 
@@ -286,13 +302,15 @@ This is almost certainly there to beat a race with `handleBlur` (the search inpu
 ---
 
 ### BUG-015: TMDB missing from Enrichment Status box; SIMKL/Trakt non-functional; Trakt health check failing
-**Status:** Fixed (TMDB) — SIMKL/Trakt by-design; Trakt health check open  
+**Status:** Fixed (TMDB) — SIMKL/Trakt by-design; Trakt health check root-caused, needs a user action to fully resolve
 **Symptom:** TMDB does not appear in the Enrichment Status table on the Background Tasks page. SIMKL and Trakt plugins are installed but appear to do nothing. The Trakt plugin reports unhealthy despite a valid API secret key being configured.  
 **Root cause (investigated):**  
 - TMDB not in Enrichment Status: Two issues combined — (1) TMDB was uninstalled (see BUG-017). (2) Even after reinstall, `PluginId` in `TmdbMetadataProvider.cs` was `"tmdb"` while the catalog, enrichment rows, and database records all used `"chronicle.plugin.tmdb"`. The mismatch meant enrichment seeding wrote rows under `"tmdb"` but GetStatsAsync looked for `"chronicle.plugin.tmdb"`.  
 - SIMKL/Trakt do nothing: These are **import providers** (scrobbling receivers), not metadata enrichment providers. They appear in the plugin list but not in the Enrichment Status table (which is metadata-only by design). Outbound watch-status sync to Trakt/SIMKL is a planned feature (see backlog).  
-- Trakt health check failing: Trakt uses OAuth tokens, not simple API keys. The health check calls the Trakt API; if the token format is wrong or expired the check fails.  
 **Fix:** `TmdbMetadataProvider.PluginId` changed from `"tmdb"` to `"chronicle.plugin.tmdb"` to match the catalog and all DB records. Source manifest `plugin_id` updated likewise. DLL rebuilt and redeployed. *(2026-04-20)*
+**Trakt health check -- root-caused 2026-08-22 (the OAuth-token guess above was wrong):** Live log showed both Trakt search calls and the health check getting HTTP 403 from Trakt's own API. `MetadataHealthCheckAsync` hits `/movies/trending`, an endpoint that needs no user OAuth at all -- only a valid `client_id` header -- so a 403 there means **Trakt itself is rejecting the configured client_id** (revoked, mistyped, or the Trakt API application was disabled/deleted on trakt.tv), not a stale user auth token.
+**Fix (Chronicle.Plugin.Trakt, commit c96ef8a):** `MetadataHealthCheckAsync` now throws a specific message on 401/403 ("Trakt rejected the configured client_id...") instead of silently returning `false`, so the health-check UI shows that instead of the generic "Health check returned unhealthy." Verified live: `GET /api/v1/plugins/{id}/health` now returns `"Trakt rejected the configured client_id (HTTP 403) -- check the API application on trakt.tv/oauth/applications and re-enter its Client ID."`, correctly classified non-critical.
+**Remaining (user action, cannot be fixed from code):** Check the Trakt API application at trakt.tv/oauth/applications -- confirm it still exists and is active, then re-enter its Client ID in Chronicle's Trakt plugin settings.
 
 ---
 

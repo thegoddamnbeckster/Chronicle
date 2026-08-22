@@ -463,7 +463,13 @@ export default function MediaDetailPage() {
       setPendingSlot(p.slot)
       return setMediaOverride(mediaId, p.slot, p.url, p.pluginId, p.sourceType)
     },
-    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      // The Library page's card grid is a separately cached query -- without this, a pinned
+      // poster/backdrop/etc. shows correctly here but keeps showing the old image on Library
+      // until something else happens to invalidate that cache.
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
     onSettled: () => setPendingSlot(null),
   })
 
@@ -472,13 +478,19 @@ export default function MediaDetailPage() {
       setPendingSlot(slot)
       return clearMediaOverride(mediaId, slot)
     },
-    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
     onSettled: () => setPendingSlot(null),
   })
 
   const clearAllOverridesMut = useMutation({
     mutationFn: () => clearAllMediaOverrides(mediaId),
-    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
   })
 
   // Collection/show/artist-level reset. Runs as a background job (the subtree can be large),
