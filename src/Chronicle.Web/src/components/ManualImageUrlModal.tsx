@@ -21,6 +21,21 @@ export interface ManualImageUrlModalProps {
  * to pin it (the server independently re-validates and rejects anything unsafe to fetch —
  * see ExternalUrlSafety — this preview is just fast user feedback, not the security boundary).
  */
+// Mirrors the server's own ExternalUrlSafety.IsWellFormedHttpUrl scheme check. The server
+// re-validates before ever fetching anything (see this component's own docstring), but that
+// check only runs once the user clicks a slot to pin the image -- the preview below renders
+// straight into an <img src> before that round-trip, so a javascript:/data: URL pasted here
+// would otherwise reach the DOM completely unvalidated.
+const SAFE_URL_SCHEMES = new Set(['http:', 'https:'])
+
+function isSafePreviewUrl(candidate: string): boolean {
+  try {
+    return SAFE_URL_SCHEMES.has(new URL(candidate).protocol)
+  } catch {
+    return false
+  }
+}
+
 export function ManualImageUrlModal({ onClose, overrides, onSet, onClear, pendingSlot }: ManualImageUrlModalProps) {
   const [url, setUrl] = useState('')
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -29,6 +44,11 @@ export function ManualImageUrlModal({ onClose, overrides, onSet, onClear, pendin
   function handlePreview() {
     const trimmed = url.trim()
     if (!trimmed) return
+    if (!isSafePreviewUrl(trimmed)) {
+      setPreviewUrl(null)
+      setLoadFailed(true)
+      return
+    }
     setLoadFailed(false)
     setPreviewUrl(trimmed)
   }
