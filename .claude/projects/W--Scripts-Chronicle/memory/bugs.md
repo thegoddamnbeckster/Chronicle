@@ -2,6 +2,22 @@
 
 ## Open Bugs
 
+### BUG-049: Uninstalling a plugin didn't stop it reappearing after a restart
+**Status:** Fixed *(2026-08-22, Chronicle server)*
+**Symptom:** User uninstalled Trakt via the UI; it showed back up (enabled) on the next dev-environment restart. User: "The plugin was uninstalled... If the plugin is uninstalled, it is expected that it is unloaded and becomes unloaded." Correctly called out an earlier wrong assumption on my part.
+**Root cause:** `PluginService.UninstallPluginAsync` removed the DB row and unloaded the plugin from the in-memory registry, but never deleted its deployed `plugins/{id}/` folder. `PluginHostService.AutoRegisterBundledPluginsAsync` (exists so bundled plugins like TMDB are available on a fresh install) scans that folder on every API startup and auto-registers any manifest.json it finds with no matching DB row -- it can't tell "never installed" apart from "user explicitly uninstalled this", so the very next restart silently reinstalled Trakt right back.
+**Fix:** `UninstallPluginAsync` now deletes the plugin's directory after removing the DB rows (forces the AssemblyLoadContext unload to complete via `GC.Collect()`/`WaitForPendingFinalizers()` first, retries the delete a few times, and is best-effort -- a lingering file lock never fails the uninstall itself). 2 new tests.
+
+---
+
+### BUG-048: TV episodes stop scanning in after switching Kodi's scraper away from Chronicle and back
+**Status:** Fixed *(2026-08-22, Chronicle_Scraper v2.13.7)*
+**Symptom:** User: "when I switch from the Chronicle Scraper to something else and then back to the Chronicle scraper, Kodi completely dumps the entire library... Kodi has to scan files in. This is what is failing." Confirmed live: Kodi's own log showed, for every TV episode, "Asked to lookup episode ... online, but we have either no episode guide or we are using the local scraper" -- `tvshow_scraper.py` was never being invoked at all (zero matching log lines anywhere).
+**Root cause:** Kodi always prefers a local `tvshow.nfo` already sitting in a show's folder over calling the scraper live. `tv_nfo_writer.py`'s `sync_show_nfo()` never wrote an `<episodeguide>` tag into that file -- `get_details()` correctly called `vtag.setEpisodeGuide()` on every *live* scrape, but that value only ever reached Kodi's in-memory VideoInfoTag, never the NFO on disk. So once write_nfo had written a show's NFO once, every later scan that read it directly (not just after a scraper switch -- any routine rescan of an already-scraped show) had no way to learn how to fetch that show's episodes from Chronicle again.
+**Fix:** `_build_show_nfo()`/`sync_show_nfo()` now accept the same lookup string `get_details()` passes to `setEpisodeGuide()`, so both paths resolve identically. Existing shows: Settings → "Rebuild local NFOs from Chronicle" regenerates `tvshow.nfo` with the fix without waiting for a natural rescrape. 4 new tests.
+
+---
+
 ### BUG-047: Plugin catalog missing most plugins
 **Status:** Fixed *(2026-08-22)*
 **Symptom:** User: "we're missing several items in the plugin catalog." The catalog (Plugins page → "+ Install Plugin") showed only TMDB, MusicBrainz, and File Scanner, all marked Installed -- FanEdit, Fanart.tv, Hardcover, Movies Remastered (MRDb), SIMKL, TheTVDB, Trakt, TVMaze, and Default Themes were all missing despite being real, already-installed, working plugins.
