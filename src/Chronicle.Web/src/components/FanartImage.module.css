@@ -2,6 +2,10 @@
   position: relative;
 }
 
+.clickable {
+  cursor: pointer;
+}
+
 /* Hidden state for the img while loading — kept in DOM so browser fetches it */
 .hidden {
   visibility: hidden;

@@ -97,9 +97,6 @@ export default function Layout() {
                 File Scan
               </NavLink>
             )}
-            <NavLink to="/import" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-              Import
-            </NavLink>
             <NavLink to="/lists" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
               Lists
             </NavLink>

@@ -324,10 +324,11 @@ public class ScraperController : ControllerBase
         var seasons = await _context.MediaItems
             .Where(m => m.ParentId == id && m.HierarchyLevel == 1)
             .OrderBy(m => m.Number)
-            .Select(m => new ScraperSeasonDto(m.Id, m.Number ?? 0, m.Name, m.PosterUrl))
+            .Select(m => new MediaItem { Id = m.Id, Number = m.Number, Name = m.Name, MetadataJson = m.MetadataJson, PosterUrl = m.PosterUrl })
             .ToListAsync(ct);
+        var seasonDtos = seasons.Select(BuildSeasonDetails).ToList();
 
-        var dto = BuildShowDetails(item, seasons);
+        var dto = BuildShowDetails(item, seasonDtos);
         return Ok(ApiResponse<ScraperShowDetailsDto>.Ok(dto));
     }
 
@@ -599,7 +600,7 @@ public class ScraperController : ControllerBase
 
     private static ScraperMovieDetailsDto BuildMovieDetails(MediaItem item, ScraperCollectionDto? collection)
     {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
+        using var doc = ParseMetadataOrEmpty(item.MetadataJson);
         var root = doc.RootElement;
         var core = ParseResolvedCore(item.MetadataJson);
 
@@ -628,7 +629,7 @@ public class ScraperController : ControllerBase
 
     private static ScraperShowDetailsDto BuildShowDetails(MediaItem item, List<ScraperSeasonDto> seasons)
     {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
+        using var doc = ParseMetadataOrEmpty(item.MetadataJson);
         var root = doc.RootElement;
         var core = ParseResolvedCore(item.MetadataJson);
 
@@ -657,9 +658,13 @@ public class ScraperController : ControllerBase
 
     private static ScraperEpisodeDetailsDto BuildEpisodeDetails(MediaItem item, int season, string? showTitle, int? showYear)
     {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
+        using var doc = ParseMetadataOrEmpty(item.MetadataJson);
         var root = doc.RootElement;
         var core = ParseResolvedCore(item.MetadataJson);
+        var artwork = CollectEpisodeArtwork(root, core);
+        var thumbUrl = (artwork is not null && artwork.TryGetValue("thumb", out var thumbs) && thumbs.Count > 0)
+            ? thumbs[0].Url
+            : core?.PosterUrl ?? item.PosterUrl;
 
         return new ScraperEpisodeDetailsDto(
             Title:          core?.Title ?? item.Name,
@@ -672,11 +677,55 @@ public class ScraperController : ControllerBase
             Cast:           core?.Cast,
             Crew:           core?.Crew,
             Ratings:        CollectRatings(root),
-            ThumbUrl:       core?.PosterUrl ?? item.PosterUrl,
+            ThumbUrl:       thumbUrl,
             ExternalIds:    CollectExternalIds(root),
             ShowTitle:      showTitle,
-            ShowYear:       showYear
+            ShowYear:       showYear,
+            Artwork:        artwork
         );
+    }
+
+    /// <summary>Every art-type candidate a season has -- a season is its own MediaItem with its
+    /// own per-provider MetadataJson partitions, resolved exactly the same way a movie or show
+    /// is. Seasons have a genuine "poster" concept (an actual season poster), so unlike episodes
+    /// this needs no re-keying.</summary>
+    private static ScraperSeasonDto BuildSeasonDetails(MediaItem season)
+    {
+        using var doc = ParseMetadataOrEmpty(season.MetadataJson);
+        var root = doc.RootElement;
+        var core = ParseResolvedCore(season.MetadataJson);
+
+        return new ScraperSeasonDto(
+            season.Id,
+            season.Number ?? 0,
+            season.Name,
+            core?.PosterUrl ?? season.PosterUrl,
+            CollectArtwork(root, core)
+        );
+    }
+
+    /// <summary>Episodes have no "poster" of their own in Kodi's model -- what CollectArtwork
+    /// calls "poster" (Chronicle's own top pick plus any provider's posterUrl-shaped field) IS
+    /// the episode's thumb/screenshot candidate set, the same field ThumbUrl already used
+    /// (core?.PosterUrl) back when this only ever carried one URL. Re-keyed so the addon's own
+    /// 'thumb' art type -- the only one Kodi's episode NFO/art picker actually recognises -- lines
+    /// up with what the rest of the payload expects. Any other art type CollectArtwork happens to
+    /// find (no configured provider currently supplies per-episode fanart etc., but nothing stops
+    /// one from doing so later) passes through unchanged.</summary>
+    private static Dictionary<string, List<ScraperArtworkCandidateDto>>? CollectEpisodeArtwork(JsonElement root, ResolvedCore? core)
+    {
+        var artwork = CollectArtwork(root, core);
+        if (artwork is null) return null;
+
+        if (artwork.Remove("poster", out var posterCandidates))
+        {
+            if (artwork.TryGetValue("thumb", out var existingThumbs))
+                existingThumbs.AddRange(posterCandidates);
+            else
+                artwork["thumb"] = posterCandidates;
+        }
+
+        return artwork.Count > 0 ? artwork : null;
     }
 
     // ── Cross-provider aggregation ───────────────────────────────────────────
@@ -834,6 +883,22 @@ public class ScraperController : ControllerBase
         catch (JsonException)
         {
             return [];
+        }
+    }
+
+    /// <summary>Parses a season's MetadataJson for the raw-root callers (CollectArtwork) need,
+    /// degrading to an empty object on malformed JSON instead of 500ing the whole tv/details
+    /// request over one bad season -- the same tolerance ParseResolvedCore already has.</summary>
+    private static JsonDocument ParseMetadataOrEmpty(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return JsonDocument.Parse("{}");
+        try
+        {
+            return JsonDocument.Parse(metadataJson);
+        }
+        catch (JsonException)
+        {
+            return JsonDocument.Parse("{}");
         }
     }
 

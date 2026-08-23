@@ -40,6 +40,10 @@ namespace Chronicle.API.DTOs
         /// <summary>Root-first parent context (e.g. [Show, Season] for an episode) so the
         /// UI can show "Show › Season › Episode" instead of just the episode's bare name,
         /// which for scanned TV is often a generic code like "S28E11".</summary>
-        List<AncestorDto>? Ancestors = null
+        List<AncestorDto>? Ancestors = null,
+        /// <summary>True when Timestamp was not reported per-item by the source (e.g. a whole
+        /// SIMKL show bulk-marked "completed" shares one last-watched date across every
+        /// episode) -- not that specific item's own genuine watch time.</summary>
+        bool TimestampIsApproximate = false
     );
 }

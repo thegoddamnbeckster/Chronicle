@@ -27,8 +27,13 @@ public class BackgroundTasksController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll()
     {
+        // A task row belonging to a plugin persists for as long as the plugin was ever
+        // installed -- disabling or uninstalling the plugin doesn't clean these up, so without
+        // this filter a disabled/removed plugin's tasks (Run Now included) keep showing up
+        // indefinitely. Core tasks with no owning plugin (PluginId null) are unaffected.
         var rows = await _db.BackgroundTasks
             .Include(t => t.Plugin)
+            .Where(t => t.PluginId == null || (t.Plugin != null && t.Plugin.IsEnabled))
             .OrderBy(t => t.DisplayName)
             .ToListAsync();
 

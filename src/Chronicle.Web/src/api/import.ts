@@ -1,5 +1,5 @@
 import client from './client'
-import type { ApiResponse, ImportProvider, ImportAuthStart, ImportPollResult, ImportResult, SyncResult, SyncJobStatus } from '@/types'
+import type { ApiResponse, ImportProvider, ImportAuthStart, ImportPollResult, SyncResult, SyncJobStatus } from '@/types'
 
 export async function getImportProviders(): Promise<ImportProvider[]> {
   const { data } = await client.get<ApiResponse<ImportProvider[]>>('/import/providers')
@@ -25,31 +25,6 @@ export async function getAuthStatus(pluginId: string): Promise<boolean> {
     `/import/${pluginId}/auth/status`,
   )
   return data.data?.authenticated ?? false
-}
-
-export async function importHistory(
-  pluginId: string,
-  since?: string,
-): Promise<ImportResult> {
-  const { data } = await client.post<ApiResponse<ImportResult>>(
-    `/import/${pluginId}/history`,
-    null,
-    { params: since ? { since } : undefined },
-  )
-  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Import failed')
-  return data.data
-}
-
-export async function importRatings(pluginId: string): Promise<ImportResult> {
-  const { data } = await client.post<ApiResponse<ImportResult>>(`/import/${pluginId}/ratings`)
-  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Import failed')
-  return data.data
-}
-
-export async function importWatchlist(pluginId: string): Promise<ImportResult> {
-  const { data } = await client.post<ApiResponse<ImportResult>>(`/import/${pluginId}/watchlist`)
-  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Import failed')
-  return data.data
 }
 
 /**

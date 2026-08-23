@@ -2,6 +2,101 @@
 
 ## Open Bugs
 
+### BUG-049: Uninstalling a plugin didn't stop it reappearing after a restart
+**Status:** Fixed *(2026-08-22, Chronicle server)*
+**Symptom:** User uninstalled Trakt via the UI; it showed back up (enabled) on the next dev-environment restart. User: "The plugin was uninstalled... If the plugin is uninstalled, it is expected that it is unloaded and becomes unloaded." Correctly called out an earlier wrong assumption on my part.
+**Root cause:** `PluginService.UninstallPluginAsync` removed the DB row and unloaded the plugin from the in-memory registry, but never deleted its deployed `plugins/{id}/` folder. `PluginHostService.AutoRegisterBundledPluginsAsync` (exists so bundled plugins like TMDB are available on a fresh install) scans that folder on every API startup and auto-registers any manifest.json it finds with no matching DB row -- it can't tell "never installed" apart from "user explicitly uninstalled this", so the very next restart silently reinstalled Trakt right back.
+**Fix:** `UninstallPluginAsync` now deletes the plugin's directory after removing the DB rows (forces the AssemblyLoadContext unload to complete via `GC.Collect()`/`WaitForPendingFinalizers()` first, retries the delete a few times, and is best-effort -- a lingering file lock never fails the uninstall itself). 2 new tests.
+
+---
+
+### BUG-048: TV episodes stop scanning in after switching Kodi's scraper away from Chronicle and back
+**Status:** Fixed *(2026-08-22, Chronicle_Scraper v2.13.7)*
+**Symptom:** User: "when I switch from the Chronicle Scraper to something else and then back to the Chronicle scraper, Kodi completely dumps the entire library... Kodi has to scan files in. This is what is failing." Confirmed live: Kodi's own log showed, for every TV episode, "Asked to lookup episode ... online, but we have either no episode guide or we are using the local scraper" -- `tvshow_scraper.py` was never being invoked at all (zero matching log lines anywhere).
+**Root cause:** Kodi always prefers a local `tvshow.nfo` already sitting in a show's folder over calling the scraper live. `tv_nfo_writer.py`'s `sync_show_nfo()` never wrote an `<episodeguide>` tag into that file -- `get_details()` correctly called `vtag.setEpisodeGuide()` on every *live* scrape, but that value only ever reached Kodi's in-memory VideoInfoTag, never the NFO on disk. So once write_nfo had written a show's NFO once, every later scan that read it directly (not just after a scraper switch -- any routine rescan of an already-scraped show) had no way to learn how to fetch that show's episodes from Chronicle again.
+**Fix:** `_build_show_nfo()`/`sync_show_nfo()` now accept the same lookup string `get_details()` passes to `setEpisodeGuide()`, so both paths resolve identically. Existing shows: Settings → "Rebuild local NFOs from Chronicle" regenerates `tvshow.nfo` with the fix without waiting for a natural rescrape. 4 new tests.
+
+---
+
+### BUG-047: Plugin catalog missing most plugins
+**Status:** Fixed *(2026-08-22)*
+**Symptom:** User: "we're missing several items in the plugin catalog." The catalog (Plugins page → "+ Install Plugin") showed only TMDB, MusicBrainz, and File Scanner, all marked Installed -- FanEdit, Fanart.tv, Hardcover, Movies Remastered (MRDb), SIMKL, TheTVDB, Trakt, TVMaze, and Default Themes were all missing despite being real, already-installed, working plugins.
+**Root cause:** `PluginsController.PluginCatalog` is a hand-maintained static C# array (this is exactly the "no hardcoding" pattern this project's own conventions warn against) that was never updated as more plugins shipped -- it only ever had 3 entries.
+**Fix:** Added the 9 missing entries (name/description/author/icon/GitHub repo/tags/version, sourced from each plugin's own manifest.json). `Sha256` left empty for all 9, matching TMDB's own existing "cleared — recalculate after each plugin release" precedent -- computing a real digest would need the actual packaged release ZIP, not the source tree. 2 new integration tests (`PluginCatalogTests.cs`): one asserts every currently-known plugin id is present (a tripwire against this exact staleness recurring), one asserts every entry has the fields the install flow actually needs populated.
+**Not fixed, flagged for later:** this is still a hardcoded list that will go stale again the next time a plugin ships -- nothing enforces keeping it in sync short of remembering to update it (and the new test) together. A DB-backed or auto-discovered catalog would remove the recurring-staleness risk entirely; not attempted here since it's a larger design change than "restore the missing entries."
+
+---
+
+### BUG-046: Watch History shows ~20 episodes all with the exact same timestamp
+**Status:** Fixed *(2026-08-22)*
+**Symptom:** User: "No, nobody watched 30 different videos at exactly the same time on the 20th. This makes no sense." -- the Watch History page showed a run of episodes (S28E02 through S28E21) all timestamped "Aug 20, 2026, 9:04 PM", device "—".
+**Root cause:** Not a bug in the sense of wrong data -- SIMKL (the source, confirmed actively delta-syncing) only records one `LastWatchedAt` for a show bulk-marked "completed" via its own UI, not a timestamp per episode. `SimklImportProvider.GetWatchHistoryAsync` already correctly falls back per-episode (`ep.WatchedAt ?? showWatchedAt`), but `WatchedAtIsApproximate` was computed as `realEpWatchedAt is null && realShowWatchedAt is null` -- since the show DID have a real date, every episode borrowing it was marked "not approximate", so nothing downstream could tell "the show's one shared date" apart from "this episode's own genuine watch time". The identical Aug 20 9:04 PM timestamp itself is real SIMKL data, correctly propagated -- just presented with no indication it's shared/approximate.
+**Fix:**
+- `Chronicle.Plugin.Simkl`: `WatchedAtIsApproximate` now `true` whenever `realEpWatchedAt is null` (borrowing the show's date is still an approximation for that specific episode), for both TV and anime.
+- `Chronicle` server: new `InteractionEvent.TimestampIsApproximate` column (migration `20260822212432_AddTimestampIsApproximateToInteractionEvent`), set from `evt.WatchedAtIsApproximate` in `SyncOrchestrationService.UpsertWatchEventAsync`, threaded through `HistoryItemDto`/`ScrobbleController.GetHistory`.
+- `HistoryPage.tsx`: rows with an approximate timestamp now show a "~" marker (tooltip explains why) instead of presenting the borrowed date as exact. Also fixed an adjacent, already-declared-but-never-wired gap in the same component: `ancestors` (e.g. show/season context) was already returned by the API with a comment saying it exists so "S28E11"-style bare episode codes aren't meaningless, but the page never rendered it -- now shown as "Show › Season ›" before the episode name.
+- 2 new tests in `SyncOrchestrationServiceTests.cs` covering both the approximate and exact-timestamp paths end-to-end through `SyncAsync`.
+
+---
+
+### BUG-041: Chronicle_Scraper addon can't connect to Chronicle right after fresh install -- works after a Kodi restart
+**Status:** Fixed *(2026-08-22, Chronicle_Scraper v2.13.6, hypothesis 1 addressed; hypothesis 2 not ruled out but considered unlikely)*
+**Symptom:** Right after installing the addon, using Settings → "Connect to Chronicle" (the QR/PIN device-auth flow, `lib/device_auth.py`'s `DeviceAuthManager.run()`) fails to connect. Turning Kodi off and back on, then retrying the exact same flow, works.
+**Root cause (hypothesis 1, addressed without a live repro):** `DeviceAuthManager._initiate()` read `ADDON.getSetting('chronicle_url')` fresh at call time -- but "Connect to Chronicle" is a `RunScript` action fired from the same Settings screen as the `chronicle_url` text field, and Kodi doesn't guarantee that field's just-typed edit is committed to the addon's settings store before `RunScript` launches this as a separate process. A Kodi restart sidesteps it because the previous session's settings write has already fully flushed by the next launch.
+**Fix:** New `_read_chronicle_url()` retries the setting read up to 3 times (0.5s apart) before concluding it's genuinely empty, absorbing the commit race instead of failing on the first read. `run()` also now shows a distinct "Chronicle server URL is not set" message (string #32108) when the URL never settles, instead of misreporting it as "could not contact Chronicle" -- makes a real not-configured case immediately distinguishable from a genuine network/server failure. 5 new tests in `tests/test_device_auth.py`.
+**Hypothesis 2 (multi-extension-point registration lag) left unconfirmed:** still no evidence found that the connect flow depends on anything `service.py` sets up; not pursued further since hypothesis 1 is a real, confirmed-by-code-reading race with an unconditionally-safe fix, and the fix should resolve the reported symptom regardless of which hypothesis was the actual cause. Reopen and pull a real `kodi.log` if this recurs after v2.13.6.
+
+---
+
+### BUG-042: Kodi on Shield periodically reports movie collections folder "not reachable"
+**Status:** Fixed *(2026-08-22, Chronicle_Scraper v2.13.6)*
+**Symptom:** Reported by the user: "in Kodi on the shield, the scraper will often throw up messages saying that it is not able to access the collection folder registered in Kodi." Matches `lib/collection_sync.py`'s `_notify_unreachable` notification verbatim ("Movie collections folder not reachable: {folder}"), throttled to at most one popup per 10 minutes but still firing periodically.
+**Root cause:** `sync_collection_art` treated a single failed `xbmcvfs.mkdirs()` (creating a missing set folder) or a single `write_remote_file` `'write_failed'` result as proof the configured network folder was genuinely unreachable. Android's Kodi SMB/network VFS client routinely drops and reconnects its session (Wi-Fi doze, the NAS still waking from its own sleep, a brief DHCP/DNS blip) -- a hiccup that normally clears within a second or two, but a single-shot check reported every one of those as a permanently broken folder.
+**Fix:** New `_mkdirs_with_retry`/`_write_with_retry` helpers retry the specific failing operation up to 3 times (1.5s apart) before falling through to `_notify_unreachable`. `write_with_retry` only retries on `'write_failed'` -- a `'download_failed'` says nothing about the destination folder's own reachability, so that outcome still returns immediately. 6 new tests in `tests/test_collection_sync_folder_retry.py`.
+
+---
+
+### BUG-043: Chronicle web settings inputs showed a saved value only as placeholder text; Save could silently wipe it
+**Status:** Fixed *(2026-08-22, Chronicle server)*
+**Symptom:** User: "I have set this once already. Did it not save? If it's been set, it needs to be editable text." — screenshot showed the already-configured "Collection Folder Path" setting rendered in dim placeholder styling, indistinguishable from unset.
+**Root cause:** `LibrarySettingsPage.tsx`'s Collection Folder Path and Batch Size inputs were controlled (`value={...Input}`) but the local input state was permanently initialised to `''` and never synced from the loaded `appSettings` value -- the actual saved value was shown only via the `placeholder` prop, which always renders as dim/ghost text. Clicking Save without editing anything then submitted the empty string, silently clearing an already-configured setting (concretely destructive for Collection Folder Path, whose blank value means "disabled").
+**Fix:** Both inputs now re-sync from `appSettings` via a `useEffect` whenever it loads or changes (including right after a save, once the query invalidates), so a saved value always shows as real, editable text. Save is now disabled until the input actually differs from the saved value. Same disabled-until-changed treatment applied to three other places with the same already-set-value-edit shape that were displaying correctly but let a no-op Save go through anyway: `PluginsPage.tsx`'s plugin config panel, `ProfilePage.tsx`, and `UsersPage.tsx`'s user-detail edit form.
+**Related fix (found while committing the above):** `.gitignore`'s `plugins/` rule was unanchored, so it also matched `src/Chronicle.Web/src/pages/plugins/` (a real, already-tracked frontend source directory) -- `git add` of any new file created there was being silently refused. Anchored to `/plugins/` (repo root only, matching the intent already stated in the adjacent `src/Chronicle.API/plugins/` rule). Anchoring the pattern also revealed a `docs/plugins/` directory of untracked markdown files that had been invisible to `git status` this whole time -- left as-is (not committed), flagging for the user to review since some look like superseded drafts (`PLUGIN_FANART.md` alongside `PLUGIN_FANART_V3.md`/`PLUGIN_FANART_v2.md`, same pattern for SIMKL/Trakt/Wikipedia).
+
+---
+
+### BUG-044: Library page card poster doesn't update after pinning a new image on the detail/collection screen
+**Status:** Fixed *(2026-08-22, Chronicle server)*
+**Symptom:** User: "Have you got a bug in your list about the library collection poster not being updated after I update it in the movie collection detail screen?" -- pinning a new poster (or other image) on a media item's or collection's detail page updates that page correctly but the Library page's card grid keeps showing the old image.
+**Root cause:** `MediaDetailPage.tsx`'s three image-override mutations (`overrideSetMut`, `overrideClearMut`, `clearAllOverridesMut`) only wrote the updated item into the `['media', mediaId]` React Query cache via `qc.setQueryData` -- unlike every other mutation in the same file (delete, refresh, reparent, merge, change-type, etc.), none of them invalidated the `['library']` query the Library page's cards are built from, so the old cached poster kept showing there until something unrelated happened to invalidate it.
+**Fix:** Added `qc.invalidateQueries({ queryKey: ['library'] })` to all three mutations' `onSuccess`, matching the pattern every other mutation in the file already uses.
+
+---
+
+### BUG-045 (feature request): Manually assign an arbitrary image URL when Chronicle has no candidates at all
+**Status:** Fixed *(2026-08-22, picked up per "please look after the entirety of manually adding an image")*
+**Symptom:** Item 432609, "In This Moment - Rock on the Range 2015" (a concert film), has no automatically-detected images from any provider (Fanart.tv/SIMKL/Trakt/TMDB all show "No match found") -- the existing pin system only lets you choose from images Chronicle already knows about, surfaced via the full-size image viewers, so there was nothing to click.
+**Security finding made while scoping this (fixed as a prerequisite):** `MediaController.SetOverride`/`SetOverrideAsync` accepted any string as a canonical-field value with zero URL validation, and the separate `MediaController.PosterProxy` endpoint (`[AllowAnonymous]`) does a server-side fetch of any caller-supplied URL with only a scheme check -- classic SSRF (could be pointed at an internal service or a cloud metadata endpoint, e.g. 169.254.169.254, and have the response streamed back). A user-facing free-text URL input would have made this trivial to trigger. New `Chronicle.Core.Helpers.ExternalUrlSafety` (well-formed http/https check + DNS-resolve-then-reject-private/loopback/link-local/CGNAT ranges, IPv4 and IPv6) is now applied at both choke points -- `SetOverride` only for the 8 actual image-URL canonical fields (title/overview/genres/etc. still accept a plain arbitrary value through the same generic endpoint, unchanged) and `PosterProxy` for every request regardless of source.
+**Fix:**
+- New `ManualImageUrlModal.tsx` component: paste a URL, live `<img>` preview confirms it actually loads (client-side UX only -- the server independently re-validates and is the real security boundary), then reuses the existing `ImageSlotControls` to pin it into any of the 8 slots -- identical mechanism to picking an existing candidate, just with a manually-supplied source instead of a plugin-supplied one.
+- New "+ Add Image URL" button in `MediaDetailPage.tsx`'s top toolbar (`deleteArea`, admin-gated, matching this project's own established convention that entity-level actions live in the toolbar, not nested in a display sub-component -- see `feedback_chronicle_ui_action_placement` memory), available for every item, not just ones with zero candidates.
+- 22 new unit tests (`ExternalUrlSafetyTests.cs`) and 10 new integration tests (`MediaOverrideUrlSafetyTests.cs`) covering the validator directly and both hardened endpoints end-to-end (rejects private/loopback/link-local/malformed, accepts a real public URL, confirms non-image fields are still unvalidated).
+**Not fully live-verified:** confirmed the exact item (432609) has no images and reproduces the reported empty state; confirmed the backend validation end-to-end via the passing integration tests; could not click through the actual modal as the item's own real admin account (only had a non-admin test account available) -- the button is a straightforward `isAdmin &&`-gated JSX addition following the exact pattern of every other admin-only toolbar button already in the file, so this is considered low-risk, but worth a quick manual click-through.
+
+---
+
+### BUG-040: Global search results can't be scrolled on mobile -- any touch navigates immediately
+**Status:** Open *(reported 2026-08-22)*
+**Symptom:** On mobile, pressing/dragging on the search results dropdown to scroll it instead immediately navigates to whatever result is under the finger.
+**Likely root cause:** `src/Chronicle.Web/src/components/layout/GlobalSearch.tsx:106` -- each result row fires `handleSelect` on `onPointerDown` (not `onClick`), with `e.preventDefault()` called immediately:
+```tsx
+onPointerDown={e => { e.preventDefault(); handleSelect(item) }}
+```
+This is almost certainly there to beat a race with `handleBlur` (the search input's `onBlur` sets `open=false` before a `click` event would otherwise fire, closing the dropdown before a click lands) -- see `onBlur`/`handleBlur` a few lines above. But on mobile, `pointerdown` fires the instant a finger touches the screen, before the browser can tell a tap from the start of a scroll/drag gesture, and `preventDefault()` there suppresses native scroll handling for that touch too -- so any touch on a result row, including a scroll attempt, fires navigation instantly.
+**Not yet fixed:** needs a fix that still beats the blur-close race on desktop (e.g. distinguish a tap from a drag by tracking pointerup position/movement delta instead of firing on pointerdown alone, or use `onMouseDown`/`onTouchEnd` with movement-threshold logic) without breaking mobile scroll. Deferred at user's request ("bug for later").
+
+---
+
 ### BUG-039: MetadataEnrichmentService had two independently-implemented enrichment engines (EnrichOneAsync / EnrichItemCoreAsync)
 **Status:** Fixed *(2026-07-13)*
 **Symptom:** Discovered while investigating why the Hardcover enrichment for "Endymion" (item 274316) flipped from `Completed` (real cover art, overview, rating) to `Status=NotFound` within ~20 minutes, with a self-contradictory `DiagnosticsJson` (`failureReason: "Matched successfully."` alongside `Status: NotFound`).
@@ -98,10 +193,10 @@
 ---
 
 ### BUG-014: FanEdit plugin icon not displayed on Metadata Assignment page
-**Status:** Open  
-**Symptom:** FanEdit plugin rows on the Metadata Assignment page show no icon. TMDB rows correctly display the TMDB colour icon. The FanEdit manifest declares `iconUrl: "https://www.fanedit.org/favicon.ico"`.  
-**Root cause:** The icon proxy (`GET /api/v1/plugins/{id}/icon`) previously rejected SVG content, and fanedit.org may serve their favicon as SVG (or the proxy is failing the fetch/magic-byte check for another reason). The SVG→PNG conversion fix was deployed in commit 492d5cc but has not yet been tested against the live fanedit.org favicon.  
-**Fix:** Deployed in 492d5cc — restart the API and verify the icon now loads. If it still fails, inspect the proxy response for that plugin's id to determine whether the content-type or magic-byte check is the remaining obstacle.
+**Status:** Fixed *(confirmed 2026-08-22)*
+**Symptom:** FanEdit plugin rows on the Metadata Assignment page show no icon. TMDB rows correctly display the TMDB colour icon. The FanEdit manifest declared `iconUrl: "https://www.fanedit.org/favicon.ico"` at the time this was reported.
+**Root cause:** See BUG-019 -- FanEdit's manifest was changed 2026-05-22 to an embedded SVG data URI instead of the unreliable external favicon, independent of this file's own SVG→PNG proxy fix (492d5cc).
+**Verified live 2026-08-22:** FanEdit's icon loads correctly on the Metadata Assignment page via the icon proxy (24x24 PNG, no load error).
 
 ---
 
@@ -209,9 +304,11 @@
 ---
 
 ### BUG-022: Import page duplicates functionality that belongs in Background Tasks
-**Status:** Open (design issue)  
+**Status:** Fixed *(2026-08-22, discussed with user first per this entry's own note)*
 **Symptom:** `/import` is a standalone page with "Connect Account" flows for Trakt and SIMKL. The actual import/sync work is triggered as background tasks. Having a separate Import tab feels like a duplicate of the Background Tasks page.  
-**Fix needed:** Consolidate — the Connect Account auth flow could live in plugin Settings; the import trigger could live in Background Tasks. Discuss before acting.
+**Discussed:** user chose "move Connect Account into plugin Settings; Background Tasks keeps Run Now/schedule; /import page goes away entirely."
+**Found already mostly done:** `PluginsPage.tsx` already had a complete `InlineImportSection` component (account-connect PIN/QR flow, poll loop, connected/disconnected states) wired into each import provider's Configure panel — apparently built to replace `/import` but never finished. Background Tasks already has `{plugin}:import-all`/`{plugin}:delta-sync` scheduled tasks with working Run Now/Schedule for both Trakt and SIMKL — already covers the "import trigger" side too.
+**Fix:** Removed the now-fully-redundant standalone `/import` route, its nav link, and `ImportPage.tsx`/`.module.css`. Deleted the now-dead `importHistory`/`importRatings`/`importWatchlist` API wrapper functions from `api/import.ts` (their only caller was the deleted page; the `ImportResult` type stays, still used by `ScanPage.tsx` for an unrelated file-scan-import concept). Verified live: nav no longer shows Import, `/import` falls through to the app's default redirect instead of 404ing.
 
 ---
 
@@ -221,23 +318,23 @@
 **Root cause:** `GetSettingsSchema` endpoint returned 404 if the plugin wasn't loaded AND it never checked `ImportProviders` — so Trakt/SIMKL settings also errored.
 **Fix (code):** `PluginsController.GetSettingsSchema` now checks `ImportProviders` after `MetadataProviders` and `FileScannerPlugins`.
 **2026-07-13:** Manifest version was still `1.0.0` despite three later tagged releases having shipped — bumped to `1.3.0` (matching the new release, see BUG-018) and redeployed the DLL to `plugins/chronicle.plugin.tmdb/`.
-**Remaining (user action):** Re-enter TMDB API key in Configure if it's still wiped from the duplicate-ID cleanup (icon still needs checking — untouched this session).
+**2026-08-22 check:** Confirmed fixed and verified live. Icon proxy (`/api/v1/plugins/{id}/icon`) returns HTTP 200 with real `.ico` content (15KB, themoviedb.org's actual favicon). Version is `1.3.1` (current). Health check reports `healthy: true` -- confirms the API key is configured and working, was not wiped.
 
 ---
 
 ### BUG-020: Audiobooks not available as media type in File Scan
-**Status:** Partially fixed *(2026-04-20)*  
+**Status:** Fixed *(2026-04-20 code fix; remaining items confirmed done 2026-08-22)*
 **Root cause:** `GetStatusAsync` only returned media types declared by the scanner's `GetSupportedMediaTypes()` (hardcoded: movies/tv/music). Any type not in that list was hidden from the dropdown.  
 **Fix (code):** `GetStatusAsync` now queries all `media_types` from the DB dynamically. `ScanAsync` now falls back to the first available scanner when no scanner explicitly declares the requested type.  
-**Remaining:** An "Audiobooks" row must exist in the `media_types` table. Add it via the admin UI or a migration. MusicBrainz plugin's `GetSupportedMediaTypes()` should also declare `"audiobooks"` for enrichment to work.
+**2026-08-22 check:** Both remaining items confirmed done. `GET /api/v1/media/types` returns an `audiobooks` row (id 6, hierarchyLevels 3). MusicBrainz's `supportedMediaTypes` is `["music", "audiobooks"]`.
 
 ---
 
 ### BUG-019: FanEdit icon missing in Background Tasks page
-**Status:** Open  
+**Status:** Fixed *(confirmed 2026-08-22 -- was already resolved by an unrelated, more robust fix; tracker was stale)*
 **Symptom:** The FanEdit plugin group header on the Background Tasks page shows no icon. Other plugins (SIMKL, Trakt) display their icons correctly.  
-**Root cause:** Likely the same icon proxy issue as BUG-014 (fanedit.org favicon). The SVG-fix deployed in 492d5cc may not have been tested against the live fanedit.org URL, or the deployed `chronicle.plugin.fanedit` directory still has the pre-fix binary.  
-**Fix needed:** Confirm the fanedit.org favicon is reachable via the icon proxy and renders in the UI. Redeploy if necessary.
+**Actual root cause (found 2026-08-22, different from the original guess):** Chronicle.Plugin.FanEdit's own `manifest.json` was changed on 2026-05-22 (commit 7fea914, "fix(manifest): replace external favicon with embedded SVG icon") to declare an inline base64 SVG data URI as `iconUrl` instead of `https://www.fanedit.org/favicon.ico` -- fanedit.org's favicon was "unreliable from server-side fetches (wrong content type or unavailable)". This sidesteps the icon-proxy question entirely for FanEdit: no external fetch happens at all anymore.
+**Verified live:** On the Metadata Assignment page (BUG-014), FanEdit's icon loads via the `/api/v1/plugins/{id}/icon` proxy, 24x24, no load error. On the Background Tasks page's Scheduled Tasks group header (what this bug actually meant -- the Enrichment Status table above it has no icon column for any plugin, by design), the raw `data:image/svg+xml` URI renders directly (browsers support inline SVG data URIs in `<img src>` natively), no load error. Both confirmed via DOM inspection (`complete: true`, non-zero `naturalWidth`).
 
 ---
 
@@ -248,13 +345,16 @@
 ---
 
 ### BUG-015: TMDB missing from Enrichment Status box; SIMKL/Trakt non-functional; Trakt health check failing
-**Status:** Fixed (TMDB) — SIMKL/Trakt by-design; Trakt health check open  
+**Status:** Fixed (TMDB) — SIMKL/Trakt by-design; Trakt health check root-caused, needs a user action to fully resolve
 **Symptom:** TMDB does not appear in the Enrichment Status table on the Background Tasks page. SIMKL and Trakt plugins are installed but appear to do nothing. The Trakt plugin reports unhealthy despite a valid API secret key being configured.  
 **Root cause (investigated):**  
 - TMDB not in Enrichment Status: Two issues combined — (1) TMDB was uninstalled (see BUG-017). (2) Even after reinstall, `PluginId` in `TmdbMetadataProvider.cs` was `"tmdb"` while the catalog, enrichment rows, and database records all used `"chronicle.plugin.tmdb"`. The mismatch meant enrichment seeding wrote rows under `"tmdb"` but GetStatsAsync looked for `"chronicle.plugin.tmdb"`.  
 - SIMKL/Trakt do nothing: These are **import providers** (scrobbling receivers), not metadata enrichment providers. They appear in the plugin list but not in the Enrichment Status table (which is metadata-only by design). Outbound watch-status sync to Trakt/SIMKL is a planned feature (see backlog).  
-- Trakt health check failing: Trakt uses OAuth tokens, not simple API keys. The health check calls the Trakt API; if the token format is wrong or expired the check fails.  
 **Fix:** `TmdbMetadataProvider.PluginId` changed from `"tmdb"` to `"chronicle.plugin.tmdb"` to match the catalog and all DB records. Source manifest `plugin_id` updated likewise. DLL rebuilt and redeployed. *(2026-04-20)*
+**Trakt health check -- root-caused 2026-08-22 (the OAuth-token guess above was wrong):** Live log showed both Trakt search calls and the health check getting HTTP 403 from Trakt's own API. `MetadataHealthCheckAsync` hits `/movies/trending`, an endpoint that needs no user OAuth at all -- only a valid `client_id` header -- so a 403 there means **Trakt itself is rejecting the configured client_id** (revoked, mistyped, or the Trakt API application was disabled/deleted on trakt.tv), not a stale user auth token.
+**Fix (Chronicle.Plugin.Trakt, commit c96ef8a):** `MetadataHealthCheckAsync` now throws a specific message on 401/403 ("Trakt rejected the configured client_id...") instead of silently returning `false`, so the health-check UI shows that instead of the generic "Health check returned unhealthy." Verified live: `GET /api/v1/plugins/{id}/health` now returns `"Trakt rejected the configured client_id (HTTP 403) -- check the API application on trakt.tv/oauth/applications and re-enter its Client ID."`, correctly classified non-critical.
+**Final root cause (confirmed by user 2026-08-22):** trakt.tv/oauth/applications shows "Creating new apps requires Trakt VIP" -- Trakt now gates API-application creation behind a paid VIP membership, and the user does not have one. A free account cannot obtain a client_id at all as of 2026; this is a Trakt platform policy change, not fixable in Chronicle's code. Documented in `Chronicle.Plugin.Trakt`'s manifest description and README (commit 7e87e45) so this is visible on the Plugins page and doesn't look like a Chronicle bug to a future reader.
+**Remaining (user action, not currently possible without paying for Trakt VIP):** Either purchase Trakt VIP to create/keep an API application, or accept that Trakt import/sync is unavailable on a free account.
 
 ---
 

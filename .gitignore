@@ -97,8 +97,10 @@ src/Chronicle.API/plugins/
 .claude/settings.local.json
 .claude/worktrees/
 
-# Runtime plugin binaries (deployed from individual plugin repos)
-plugins/
+# Runtime plugin binaries (deployed from individual plugin repos) -- anchored to repo
+# root: an unanchored "plugins/" also matched src/Chronicle.Web/src/pages/plugins/ (a
+# real source directory), silently blocking `git add` of any new file created there.
+/plugins/
 
 # Scratch / temporary build output directories
 build_check/

@@ -147,11 +147,6 @@ $PluginProjects = @(
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.simkl"
     },
     @{
-        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Trakt\Chronicle.Plugin.Trakt.csproj"
-        DllName    = "Chronicle.Plugin.Trakt.dll"
-        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.trakt"
-    },
-    @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Hardcover\Chronicle.Plugin.Hardcover.csproj"
         DllName    = "Chronicle.Plugin.Hardcover.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.hardcover"
@@ -165,11 +160,6 @@ $PluginProjects = @(
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Themes.Default\Chronicle.Plugin.Themes.Default.csproj"
         DllName    = "Chronicle.Plugin.Themes.Default.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.themes.default"
-    },
-    @{
-        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.TheTVDB\Chronicle.Plugin.TheTVDB.csproj"
-        DllName    = "Chronicle.Plugin.TheTVDB.dll"
-        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.thetvdb"
     },
     @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.TVMaze\Chronicle.Plugin.TVMaze.csproj"

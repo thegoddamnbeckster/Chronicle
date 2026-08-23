@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import {
-  extractSlottedImages, SLOT_INFO, SLOT_ORDER,
+  buildSlotImages, SLOT_INFO, SLOT_ORDER,
   type CanonicalSlot, type SlottedImageEntry,
 } from '@/utils/imageExtractor'
 import type { MediaItem } from '@/types'
@@ -19,32 +19,18 @@ export interface AdditionalImagesCardProps {
  * is only ever assigned while it's actually visible at full size.
  */
 export function AdditionalImagesCard({ item, onOpenGallery }: AdditionalImagesCardProps) {
+  // buildSlotImages already dedupes across plugins and adds a synthetic entry for a manually
+  // pinned override with no plugin blob of its own — without that, a slot filled only via
+  // ManualImageUrlModal would have no row here at all, and no way back into the viewer to
+  // change or clear it.
   const bySlot = useMemo(() => {
     const map = new Map<CanonicalSlot, SlottedImageEntry[]>()
-    for (const [pluginId, meta] of Object.entries(item.pluginMetadata ?? {})) {
-      for (const img of extractSlottedImages(pluginId, meta as Record<string, unknown>)) {
-        const list = map.get(img.slot) ?? []
-        list.push(img)
-        map.set(img.slot, list)
-      }
-    }
-    // Dedupe identical URLs across plugins (two providers can return the same CDN URL).
-    // The image currently filling a slot is deliberately kept in the list — it's how you
-    // navigate back to it in the viewer to unpin it.
     for (const slot of SLOT_ORDER) {
-      const list = map.get(slot)
-      if (!list) continue
-      const seen = new Set<string>()
-      const deduped = list.filter(img => {
-        if (seen.has(img.url)) return false
-        seen.add(img.url)
-        return true
-      })
-      if (deduped.length > 0) map.set(slot, deduped)
-      else map.delete(slot)
+      const images = buildSlotImages(item, slot)
+      if (images.length > 0) map.set(slot, images)
     }
     return map
-  }, [item.pluginMetadata])
+  }, [item])
 
   if (bySlot.size === 0) return null
 

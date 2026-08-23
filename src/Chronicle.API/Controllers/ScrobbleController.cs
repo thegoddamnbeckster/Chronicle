@@ -90,7 +90,8 @@ namespace Chronicle.API.Controllers
                     e.Timestamp,
                     e.MarkedAsWatched,
                     e.DeviceName,
-                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null
+                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null,
+                    TimestampIsApproximate: e.TimestampIsApproximate
                 );
             }).ToList();
 

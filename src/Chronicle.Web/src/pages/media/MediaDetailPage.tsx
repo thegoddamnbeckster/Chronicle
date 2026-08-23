@@ -14,8 +14,9 @@ import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
 import { SlotGalleryModal } from '@/components/SlotGalleryModal'
+import { ManualImageUrlModal } from '@/components/ManualImageUrlModal'
 import { ImageSlotControls } from '@/components/ImageSlotControls'
-import { extractImages, buildSlotLookup, type ImageEntry, type CanonicalSlot, type SlottedImageEntry } from '@/utils/imageExtractor'
+import { extractImages, buildSlotLookup, buildSlotImages, SLOT_INFO, type ImageEntry, type CanonicalSlot, type SlottedImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 import { PosterImage } from '@/components/PosterImage'
@@ -455,6 +456,9 @@ export default function MediaDetailPage() {
   // Which slot has a set/clear request in flight, so only that chip shows a busy state.
   const [pendingSlot, setPendingSlot] = useState<CanonicalSlot | null>(null)
 
+  // ── Manual "add image from URL" modal (for items no provider found any candidates for) ──
+  const [manualImageOpen, setManualImageOpen] = useState(false)
+
   // Shared by both full-size viewers (the type-scoped gallery and the page-level lightbox).
   // The gallery deliberately stays OPEN after assigning, so several slots can be given the
   // same image in one visit and a mistaken pin can be undone on the spot.
@@ -463,7 +467,13 @@ export default function MediaDetailPage() {
       setPendingSlot(p.slot)
       return setMediaOverride(mediaId, p.slot, p.url, p.pluginId, p.sourceType)
     },
-    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      // The Library page's card grid is a separately cached query -- without this, a pinned
+      // poster/backdrop/etc. shows correctly here but keeps showing the old image on Library
+      // until something else happens to invalidate that cache.
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
     onSettled: () => setPendingSlot(null),
   })
 
@@ -472,13 +482,19 @@ export default function MediaDetailPage() {
       setPendingSlot(slot)
       return clearMediaOverride(mediaId, slot)
     },
-    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
     onSettled: () => setPendingSlot(null),
   })
 
   const clearAllOverridesMut = useMutation({
     mutationFn: () => clearAllMediaOverrides(mediaId),
-    onSuccess: (updated) => { qc.setQueryData(['media', mediaId], updated) },
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
   })
 
   // Collection/show/artist-level reset. Runs as a background job (the subtree can be large),
@@ -523,6 +539,15 @@ export default function MediaDetailPage() {
   // record provenance when pinning. Assignment itself is never restricted to the looked-up
   // slot — ImageSlotControls offers all of them.
   const slotLookup = buildSlotLookup(item.pluginMetadata)
+
+  // Opens the type-scoped gallery directly from an on-page logo/banner/thumb/disc/character
+  // image (which, unlike the poster, has no "Additional Images" card row to click through) --
+  // same mechanism, just entered from the rendered image itself instead of a thumbnail.
+  function openSlotGallery(slot: CanonicalSlot) {
+    const images = buildSlotImages(item!, slot)
+    if (images.length === 0) return
+    setGallerySlot({ slot, slotLabel: SLOT_INFO[slot].label, images, startIndex: 0 })
+  }
 
   // Per-plugin start offsets so PluginMetadataBox can pass the correct global index
   const pluginImageOffsets = new Map<string, number>()
@@ -668,6 +693,7 @@ export default function MediaDetailPage() {
           wrapperClassName={styles.fanartBannerWrap}
           imgClassName={styles.fanartBanner}
           minHeight={60}
+          onClick={() => openSlotGallery('banner_url')}
         />
       )}
 
@@ -685,6 +711,7 @@ export default function MediaDetailPage() {
               wrapperClassName={styles.fanartCharacterWrap}
               imgClassName={styles.fanartCharacter}
               minHeight={120}
+              onClick={() => openSlotGallery('character_art_url')}
             />
           )}
         </div>
@@ -697,6 +724,7 @@ export default function MediaDetailPage() {
               wrapperClassName={styles.fanartLogoWrap}
               imgClassName={styles.fanartLogo}
               minHeight={80}
+              onClick={() => openSlotGallery('logo_url')}
             />
           )}
           <h1 className={styles.title}>{item.name}</h1>
@@ -708,6 +736,15 @@ export default function MediaDetailPage() {
           )}
 
           <div className={styles.deleteArea}>
+            {isAdmin && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => setManualImageOpen(true)}
+                title="Pin an image Chronicle didn't find on its own — useful when no provider has any candidates for this item"
+              >
+                + Add Image URL
+              </button>
+            )}
             {isAdmin && item.parentId == null && (
               <button
                 className={styles.changeTypeBtn}
@@ -1073,6 +1110,7 @@ export default function MediaDetailPage() {
                   wrapperClassName={styles.fanartThumbWrap}
                   imgClassName={styles.fanartThumb}
                   minHeight={150}
+                  onClick={() => openSlotGallery('thumb_url')}
                 />
               )}
               {item.overview && <p className={styles.overview}>{item.overview}</p>}
@@ -1082,6 +1120,7 @@ export default function MediaDetailPage() {
                   wrapperClassName={styles.fanartDiscWrap}
                   imgClassName={styles.fanartDisc}
                   minHeight={110}
+                  onClick={() => openSlotGallery('disc_url')}
                 />
               )}
             </div>
@@ -1166,6 +1205,12 @@ export default function MediaDetailPage() {
             ]
             return pluginIds.map(pluginId => {
               const plugin = plugins.find(p => p.pluginId === pluginId)
+              // Skip a plugin that's been uninstalled (not in `plugins` at all) or disabled --
+              // its historical enrichment/metadata rows persist on the item forever, but a
+              // removed/disabled plugin should stop showing up anywhere, not linger as a dead
+              // "No match" card on every item it was ever attempted against. Reported: a Trakt
+              // card kept appearing after the user disabled it, expecting it gone entirely.
+              if (!plugin || !plugin.isEnabled) return null
               // Skip plugins that don't support this item's media type.
               // This prevents e.g. a TMDB "No match" box from appearing on Music items.
               // Use mediaTypeInternalName (canonical DB name like "tv") for comparison since
@@ -1480,6 +1525,17 @@ export default function MediaDetailPage() {
           onSet={(slot, img) => overrideSetMut.mutate({
             slot, url: img.url, pluginId: img.pluginId, sourceType: img.slot,
           })}
+          onClear={(slot) => overrideClearMut.mutate(slot)}
+          pendingSlot={pendingSlot}
+        />
+      )}
+
+      {/* ── Manual "add image from URL" modal ──────────────────────────────── */}
+      {manualImageOpen && (
+        <ManualImageUrlModal
+          onClose={() => setManualImageOpen(false)}
+          overrides={item.overrides}
+          onSet={(slot, url) => overrideSetMut.mutate({ slot, url })}
           onClear={(slot) => overrideClearMut.mutate(slot)}
           pendingSlot={pendingSlot}
         />
