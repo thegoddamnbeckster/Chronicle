@@ -217,3 +217,42 @@ export function extractSlottedImages(
 
   return out
 }
+
+/**
+ * Every promote-eligible image for one slot, deduped across plugins — the same pool
+ * AdditionalImagesCard groups by slot, but scoped to a single one so a full-size viewer
+ * opened directly from the on-page banner/logo/thumb/disc/character-art image (which has no
+ * "Additional Images" card row to click through) has something to show.
+ *
+ * A slot pinned via ManualImageUrlModal has no plugin blob at all — it lives only in
+ * `_overrides` — so without this it would be pinned successfully but then unreachable to
+ * change or clear (nothing to click). If the current override's URL isn't already present
+ * from a plugin, a synthetic entry is added for it, tagged with its own sourcePluginId (or
+ * 'manual' if none was recorded).
+ */
+export function buildSlotImages(item: {
+  pluginMetadata?: Record<string, unknown> | null
+  overrides?: Partial<Record<CanonicalSlot, { url: string; sourcePluginId?: string | null }>> | null
+}, slot: CanonicalSlot): SlottedImageEntry[] {
+  const seen = new Set<string>()
+  const images: SlottedImageEntry[] = []
+  for (const [pluginId, meta] of Object.entries(item.pluginMetadata ?? {})) {
+    for (const img of extractSlottedImages(pluginId, meta as Record<string, unknown>)) {
+      if (img.slot !== slot || seen.has(img.url)) continue
+      seen.add(img.url)
+      images.push(img)
+    }
+  }
+
+  const pinned = item.overrides?.[slot]
+  if (pinned?.url && !seen.has(pinned.url)) {
+    images.unshift({
+      url: pinned.url,
+      label: SLOT_INFO[slot].singular,
+      slot,
+      pluginId: pinned.sourcePluginId || 'manual',
+    })
+  }
+
+  return images
+}

@@ -16,7 +16,7 @@ import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
 import { SlotGalleryModal } from '@/components/SlotGalleryModal'
 import { ManualImageUrlModal } from '@/components/ManualImageUrlModal'
 import { ImageSlotControls } from '@/components/ImageSlotControls'
-import { extractImages, buildSlotLookup, type ImageEntry, type CanonicalSlot, type SlottedImageEntry } from '@/utils/imageExtractor'
+import { extractImages, buildSlotLookup, buildSlotImages, SLOT_INFO, type ImageEntry, type CanonicalSlot, type SlottedImageEntry } from '@/utils/imageExtractor'
 import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 import { PosterImage } from '@/components/PosterImage'
@@ -540,6 +540,15 @@ export default function MediaDetailPage() {
   // slot — ImageSlotControls offers all of them.
   const slotLookup = buildSlotLookup(item.pluginMetadata)
 
+  // Opens the type-scoped gallery directly from an on-page logo/banner/thumb/disc/character
+  // image (which, unlike the poster, has no "Additional Images" card row to click through) --
+  // same mechanism, just entered from the rendered image itself instead of a thumbnail.
+  function openSlotGallery(slot: CanonicalSlot) {
+    const images = buildSlotImages(item!, slot)
+    if (images.length === 0) return
+    setGallerySlot({ slot, slotLabel: SLOT_INFO[slot].label, images, startIndex: 0 })
+  }
+
   // Per-plugin start offsets so PluginMetadataBox can pass the correct global index
   const pluginImageOffsets = new Map<string, number>()
   let imgOffset = item.posterUrl ? 1 : 0
@@ -684,6 +693,7 @@ export default function MediaDetailPage() {
           wrapperClassName={styles.fanartBannerWrap}
           imgClassName={styles.fanartBanner}
           minHeight={60}
+          onClick={() => openSlotGallery('banner_url')}
         />
       )}
 
@@ -701,6 +711,7 @@ export default function MediaDetailPage() {
               wrapperClassName={styles.fanartCharacterWrap}
               imgClassName={styles.fanartCharacter}
               minHeight={120}
+              onClick={() => openSlotGallery('character_art_url')}
             />
           )}
         </div>
@@ -713,6 +724,7 @@ export default function MediaDetailPage() {
               wrapperClassName={styles.fanartLogoWrap}
               imgClassName={styles.fanartLogo}
               minHeight={80}
+              onClick={() => openSlotGallery('logo_url')}
             />
           )}
           <h1 className={styles.title}>{item.name}</h1>
@@ -1098,6 +1110,7 @@ export default function MediaDetailPage() {
                   wrapperClassName={styles.fanartThumbWrap}
                   imgClassName={styles.fanartThumb}
                   minHeight={150}
+                  onClick={() => openSlotGallery('thumb_url')}
                 />
               )}
               {item.overview && <p className={styles.overview}>{item.overview}</p>}
@@ -1107,6 +1120,7 @@ export default function MediaDetailPage() {
                   wrapperClassName={styles.fanartDiscWrap}
                   imgClassName={styles.fanartDisc}
                   minHeight={110}
+                  onClick={() => openSlotGallery('disc_url')}
                 />
               )}
             </div>
