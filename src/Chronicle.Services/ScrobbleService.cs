@@ -84,25 +84,28 @@ namespace Chronicle.Services
                     return match.MediaItem;
             }
 
-            if (!string.IsNullOrWhiteSpace(request.Title))
-            {
-                var titleMatch = await _context.MediaItems
-                    .FirstOrDefaultAsync(m =>
-                        m.Name == request.Title &&
-                        (!request.Year.HasValue || m.Year == request.Year), ct);
-
-                if (titleMatch != null)
-                {
-                    await StoreExternalIdsAsync(titleMatch.Id, externalIds, ct);
-                    return titleMatch;
-                }
-            }
-
             if (string.IsNullOrWhiteSpace(request.Title))
                 throw new ArgumentException(
                     "Scrobble request has no MediaItemId and no Title to create a stub item from.");
 
+            // Resolved once, up front, so the title fallback below can scope its match to
+            // the same media type — matching on Name/Year alone let a scrobble for a movie
+            // silently land on a same-named/same-year TV item (or vice versa) with no way
+            // to tell them apart afterwards.
             var typeId = await ResolveMediaTypeIdAsync(request.MediaType, ct);
+
+            var titleMatch = await _context.MediaItems
+                .FirstOrDefaultAsync(m =>
+                    m.Name == request.Title &&
+                    m.MediaTypeId == typeId &&
+                    (!request.Year.HasValue || m.Year == request.Year), ct);
+
+            if (titleMatch != null)
+            {
+                await StoreExternalIdsAsync(titleMatch.Id, externalIds, ct);
+                return titleMatch;
+            }
+
             var stub = new MediaItem
             {
                 MediaTypeId    = typeId,

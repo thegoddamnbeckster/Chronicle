@@ -248,12 +248,19 @@ public class ImportService : IImportService
                 return match.MediaItem;
         }
 
+        // Resolved once, up front, so the title fallback below can scope its match to the
+        // same media type — matching on Name/Year alone let an imported event for a movie
+        // silently land on a same-named/same-year TV item (or vice versa), with no way to
+        // tell them apart afterwards.
+        var typeId = await ResolveMediaTypeIdAsync(mediaType, ct);
+
         // 2. Try title + year match
         if (!string.IsNullOrWhiteSpace(title))
         {
             var titleMatch = await _db.MediaItems
                 .FirstOrDefaultAsync(m =>
                     m.Name == title &&
+                    m.MediaTypeId == typeId &&
                     (!year.HasValue || m.Year == year), ct);
 
             if (titleMatch != null)
@@ -265,8 +272,6 @@ public class ImportService : IImportService
         }
 
         // 3. Create a stub item
-        var typeId = await ResolveMediaTypeIdAsync(mediaType, ct);
-
         var stub = new MediaItem
         {
             MediaTypeId    = typeId,

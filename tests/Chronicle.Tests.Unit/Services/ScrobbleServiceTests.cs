@@ -144,6 +144,32 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task ScrobbleAsync_NoMediaItemId_TitleMatchesAcrossTypes_ScopesMatchToRequestedMediaType()
+        {
+            // Seed a movie sharing the exact name of the TV item already seeded in the
+            // constructor ("Test Episode", MediaTypeId 1/"tv") — the title fallback must not
+            // cross media types just because the names happen to collide.
+            _context.MediaTypes.Add(new MediaType
+            {
+                Id = 2, Name = "movie", DisplayName = "Movies", CreatedAt = DateTime.UtcNow
+            });
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 2, MediaTypeId = 2, Name = "Test Episode", Year = 2020,
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+            });
+            await _context.SaveChangesAsync();
+
+            var request = new ScrobbleRequest(
+                MediaItemId: null, ProgressPercent: 50.0, Timestamp: null, DeviceName: "Kodi",
+                Title: "Test Episode", MediaType: "movie");
+
+            var result = await _service.ScrobbleAsync(1, request);
+
+            result.Event.MediaItemId.Should().Be(2); // the movie, not the TV item with the same name
+        }
+
+        [Fact]
         public async Task ScrobbleAsync_NoMediaItemId_NoTitleNoMatch_ThrowsArgumentException()
         {
             var request = new ScrobbleRequest(
