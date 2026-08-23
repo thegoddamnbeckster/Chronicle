@@ -221,7 +221,54 @@ public class PluginService : IPluginService
 
         await _db.SaveChangesAsync();
 
+        // Delete the deployed plugin folder -- without this, PluginHostService's own
+        // AutoRegisterBundledPluginsAsync (which exists to make bundled plugins like TMDB
+        // available on a fresh install) rediscovers the still-present manifest.json + DLL on
+        // the very next API restart and silently reinstalls the plugin right back, with no way
+        // to tell "never installed" apart from "user explicitly uninstalled this". Confirmed
+        // live: an uninstalled Trakt came back enabled after a routine restart. Best-effort --
+        // a lingering file lock here must never fail the uninstall itself, which has already
+        // fully succeeded from the DB's point of view.
+        DeletePluginDirectory(plugin.DllPath, plugin.PluginId);
+
         _log.Information("Uninstalled plugin {PluginId} (db id {Id})", plugin.PluginId, id);
+    }
+
+    private void DeletePluginDirectory(string dllPath, string pluginId)
+    {
+        var dir = Path.GetDirectoryName(dllPath);
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            return;
+
+        // AssemblyLoadContext.Unload() (called just above, via _registry.UnloadPlugin) only
+        // requests an unload -- the GC has to actually collect the context before its DLL's
+        // file lock is released. Force that now rather than leaving it to chance, then retry
+        // the delete a few times in case Windows hasn't let go yet.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+                _log.Information("Removed deployed plugin directory {Dir} for {PluginId}", dir, pluginId);
+                return;
+            }
+            catch (Exception ex) when (attempt < 3)
+            {
+                _log.Debug(ex, "Delete of {Dir} failed on attempt {Attempt}, retrying", dir, attempt);
+                Thread.Sleep(300);
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex,
+                    "Could not remove deployed plugin directory {Dir} for {PluginId} after uninstall -- " +
+                    "if its manifest.json is still there on the next restart, the plugin may be silently " +
+                    "reinstalled. Delete {Dir} manually if that happens.", dir, pluginId, dir);
+            }
+        }
     }
 
     public Task<bool> UnloadFromRegistryAsync(string pluginId)
