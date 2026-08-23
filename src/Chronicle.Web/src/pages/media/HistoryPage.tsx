@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { getHistory } from '@/api/scrobble'
 import styles from './HistoryPage.module.css'
 
@@ -26,32 +27,44 @@ export default function HistoryPage() {
       )}
 
       {history.length > 0 && (
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Progress</th>
-              <th>Device</th>
-              <th>When</th>
-              <th>Watched</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.map(h => (
-              <tr key={h.id}>
-                <td className={styles.titleCell}>{h.mediaItemName}</td>
-                <td>{h.progressPercent != null ? `${Math.round(h.progressPercent)}%` : '—'}</td>
-                <td className={styles.meta}>{h.deviceName ?? '—'}</td>
-                <td className={styles.meta}>{formatDate(h.timestamp)}</td>
-                <td>
-                  {h.markedAsWatched
-                    ? <span className={styles.yes}>✓</span>
-                    : <span className={styles.no}>—</span>}
-                </td>
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Progress</th>
+                <th>Device</th>
+                <th>When</th>
+                <th>Watched</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {history.map(h => (
+                <tr key={h.id}>
+                  <td className={styles.titleCell}>
+                    <Link to={`/media/${h.mediaItemId}`} className={styles.titleLink}>
+                      {h.ancestors && h.ancestors.length > 0 && (
+                        <span className={styles.breadcrumb}>
+                          {h.ancestors.map(a => a.name).join(' › ')}
+                          {' › '}
+                        </span>
+                      )}
+                      {h.mediaItemName}
+                    </Link>
+                  </td>
+                  <td>{h.progressPercent != null ? `${Math.round(h.progressPercent)}%` : '—'}</td>
+                  <td className={styles.meta}>{h.deviceName ?? '—'}</td>
+                  <td className={styles.meta}>{formatDate(h.timestamp)}</td>
+                  <td>
+                    {h.markedAsWatched
+                      ? <span className={styles.yes}>✓</span>
+                      : <span className={styles.no}>—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )
