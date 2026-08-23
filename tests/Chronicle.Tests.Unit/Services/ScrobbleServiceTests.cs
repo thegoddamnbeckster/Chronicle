@@ -151,7 +151,7 @@ namespace Chronicle.Tests.Unit.Services
             // cross media types just because the names happen to collide.
             _context.MediaTypes.Add(new MediaType
             {
-                Id = 2, Name = "movie", DisplayName = "Movies", CreatedAt = DateTime.UtcNow
+                Id = 2, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow
             });
             _context.MediaItems.Add(new MediaItem
             {

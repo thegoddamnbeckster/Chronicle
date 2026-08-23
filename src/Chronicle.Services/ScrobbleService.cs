@@ -1,6 +1,7 @@
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Services.Matching;
 using Microsoft.EntityFrameworkCore;
 
 namespace Chronicle.Services
@@ -65,11 +66,13 @@ namespace Chronicle.Services
         /// <summary>
         /// Resolves a <see cref="ScrobbleRequest"/> that arrived without a Chronicle
         /// MediaItemId (e.g. from the Kodi addon scrobbling an item Chronicle has never
-        /// seen before) — matches by external ID first, then title+year, then creates a
-        /// stub item. Mirrors <c>ImportService.FindOrCreateMediaItemAsync</c>'s approach;
-        /// kept as its own small implementation here rather than a shared abstraction since
-        /// the two callers' input shapes differ (import events vs. live scrobble requests)
-        /// and ImportService's working, tested logic shouldn't be disturbed for this.
+        /// seen before) — matches by external ID first, then title+year scoped to media
+        /// type, then creates a stub item. The type resolution and title/year matching
+        /// themselves live in <see cref="MediaItemMatcher"/>, shared with
+        /// <c>ImportService.FindOrCreateMediaItemAsync</c> and
+        /// <c>SyncOrchestrationService.MatchOrCreateAsync</c> — those three used to each
+        /// carry their own copy, which had drifted out of sync (see MediaItemMatcher's own
+        /// docs for the bug that caused).
         /// </summary>
         private async Task<MediaItem> FindOrCreateMediaItemAsync(ScrobbleRequest request, CancellationToken ct)
         {
@@ -88,27 +91,27 @@ namespace Chronicle.Services
                 throw new ArgumentException(
                     "Scrobble request has no MediaItemId and no Title to create a stub item from.");
 
-            // Resolved once, up front, so the title fallback below can scope its match to
-            // the same media type — matching on Name/Year alone let a scrobble for a movie
-            // silently land on a same-named/same-year TV item (or vice versa) with no way
-            // to tell them apart afterwards.
-            var typeId = await ResolveMediaTypeIdAsync(request.MediaType, ct);
-
-            var titleMatch = await _context.MediaItems
-                .FirstOrDefaultAsync(m =>
-                    m.Name == request.Title &&
-                    m.MediaTypeId == typeId &&
-                    (!request.Year.HasValue || m.Year == request.Year), ct);
-
-            if (titleMatch != null)
+            // Only attempts a title+year match when a media type can be confidently
+            // resolved -- an omitted/unrecognized MediaType skips straight to stub creation
+            // rather than matching unscoped (which would risk the exact cross-type
+            // collision this scoping exists to prevent; see MediaItemMatcher docs).
+            var matchTypeId = await MediaItemMatcher.TryResolveMediaTypeIdForMatchAsync(_context, request.MediaType, ct);
+            if (matchTypeId.HasValue)
             {
-                await StoreExternalIdsAsync(titleMatch.Id, externalIds, ct);
-                return titleMatch;
+                var titleMatch = await MediaItemMatcher.FindByTitleYearAsync(
+                    _context, request.Title, request.Year, matchTypeId.Value, ct);
+
+                if (titleMatch != null)
+                {
+                    await StoreExternalIdsAsync(titleMatch.Id, externalIds, ct);
+                    return titleMatch;
+                }
             }
 
+            var stubTypeId = await MediaItemMatcher.ResolveMediaTypeIdForStubAsync(_context, request.MediaType, ct);
             var stub = new MediaItem
             {
-                MediaTypeId    = typeId,
+                MediaTypeId    = stubTypeId,
                 Name           = request.Title,
                 Year           = request.Year,
                 HierarchyLevel = 0,
@@ -140,30 +143,6 @@ namespace Chronicle.Services
                         ExternalId  = extId,
                     });
             }
-        }
-
-        private async Task<int> ResolveMediaTypeIdAsync(string? mediaType, CancellationToken ct)
-        {
-            var normalised = (mediaType ?? "movie").ToLowerInvariant() switch
-            {
-                "tv_episode" or "tv_show" or "show" or "tv" => "tv",
-                "movie" or "film" => "movie",
-                "track" or "song"  => "music",
-                var other          => other,
-            };
-
-            var type = await _context.MediaTypes
-                .FirstOrDefaultAsync(t => t.Name == normalised && t.IsActive, ct);
-            if (type != null) return type.Id;
-
-            var fallback = await _context.MediaTypes
-                .Where(t => t.IsActive)
-                .OrderBy(t => t.Id)
-                .FirstOrDefaultAsync(ct);
-
-            return fallback?.Id
-                ?? throw new InvalidOperationException(
-                    "No active media types found in the database. Create at least one media type first.");
         }
 
         public async Task<IEnumerable<InteractionEvent>> GetHistoryAsync(

@@ -25,7 +25,7 @@ namespace Chronicle.Tests.Unit.Services
             _service = new ImportService(_db, _registry.Object, _pluginService.Object);
 
             _db.MediaTypes.Add(new MediaType { Id = 1, Name = "tv", DisplayName = "TV Shows", CreatedAt = DateTime.UtcNow });
-            _db.MediaTypes.Add(new MediaType { Id = 2, Name = "movie", DisplayName = "Movies", CreatedAt = DateTime.UtcNow });
+            _db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow });
             // A TV item that shares its exact name+year with an in-flight movie import below —
             // the title fallback must not cross media types just because these collide.
             _db.MediaItems.Add(new MediaItem
@@ -49,7 +49,8 @@ namespace Chronicle.Tests.Unit.Services
                         MediaType: "movie",
                         Title: "Chronicle",
                         Year: 2026,
-                        WatchedAt: DateTimeOffset.UtcNow)
+                        WatchedAt: DateTimeOffset.UtcNow,
+                        ProgressPercent: 100.0)
                 });
             _registry.Setup(r => r.GetImportProvider("chronicle.plugin.trakt")).Returns(provider.Object);
 

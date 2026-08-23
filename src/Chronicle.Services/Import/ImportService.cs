@@ -1,6 +1,7 @@
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
+using Chronicle.Services.Matching;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -220,13 +221,16 @@ public class ImportService : IImportService
     }
 
     /// <summary>
-    /// Finds a matching <see cref="MediaItem"/> via external IDs, then title+year,
-    /// then creates a stub item if nothing is found.
+    /// Finds a matching <see cref="MediaItem"/> via external IDs, then title+year scoped
+    /// to media type, then creates a stub item if nothing is found. The type resolution
+    /// and title/year matching live in <see cref="MediaItemMatcher"/>, shared with
+    /// <c>ScrobbleService.FindOrCreateMediaItemAsync</c> and
+    /// <c>SyncOrchestrationService.MatchOrCreateAsync</c>.
     /// </summary>
     private async Task<MediaItem> FindOrCreateMediaItemAsync(
         string primaryExternalId,
         IReadOnlyDictionary<string, string> additionalIds,
-        string mediaType,
+        string? mediaType,
         string title,
         int? year,
         CancellationToken ct)
@@ -248,20 +252,16 @@ public class ImportService : IImportService
                 return match.MediaItem;
         }
 
-        // Resolved once, up front, so the title fallback below can scope its match to the
-        // same media type — matching on Name/Year alone let an imported event for a movie
-        // silently land on a same-named/same-year TV item (or vice versa), with no way to
-        // tell them apart afterwards.
-        var typeId = await ResolveMediaTypeIdAsync(mediaType, ct);
+        // Only attempts a title+year match when a media type can be confidently resolved --
+        // an omitted/unrecognized mediaType skips straight to stub creation rather than
+        // matching unscoped (which would risk the exact cross-type collision this scoping
+        // exists to prevent; see MediaItemMatcher docs).
+        var matchTypeId = await MediaItemMatcher.TryResolveMediaTypeIdForMatchAsync(_db, mediaType, ct);
 
         // 2. Try title + year match
-        if (!string.IsNullOrWhiteSpace(title))
+        if (matchTypeId.HasValue && !string.IsNullOrWhiteSpace(title))
         {
-            var titleMatch = await _db.MediaItems
-                .FirstOrDefaultAsync(m =>
-                    m.Name == title &&
-                    m.MediaTypeId == typeId &&
-                    (!year.HasValue || m.Year == year), ct);
+            var titleMatch = await MediaItemMatcher.FindByTitleYearAsync(_db, title, year, matchTypeId.Value, ct);
 
             if (titleMatch != null)
             {
@@ -272,9 +272,10 @@ public class ImportService : IImportService
         }
 
         // 3. Create a stub item
+        var stubTypeId = await MediaItemMatcher.ResolveMediaTypeIdForStubAsync(_db, mediaType, ct);
         var stub = new MediaItem
         {
-            MediaTypeId    = typeId,
+            MediaTypeId    = stubTypeId,
             Name           = title,
             Year           = year,
             HierarchyLevel = 0,
@@ -349,31 +350,4 @@ public class ImportService : IImportService
         }
     }
 
-    private async Task<int> ResolveMediaTypeIdAsync(string mediaType, CancellationToken ct)
-    {
-        // Try to resolve a media type id that matches the import type name
-        var normalised = mediaType.ToLowerInvariant() switch
-        {
-            "tv_episode" or "tv_show" or "show" or "tv" => "tv",
-            "movie" or "film" => "movie",
-            "anime" => "anime",
-            _ => mediaType.ToLowerInvariant()
-        };
-
-        var type = await _db.MediaTypes
-            .FirstOrDefaultAsync(t => t.Name == normalised && t.IsActive, ct);
-
-        if (type != null)
-            return type.Id;
-
-        // Fall back to the first available active type
-        var fallback = await _db.MediaTypes
-            .Where(t => t.IsActive)
-            .OrderBy(t => t.Id)
-            .FirstOrDefaultAsync(ct);
-
-        return fallback?.Id
-            ?? throw new InvalidOperationException(
-                "No active media types found in the database. Create at least one media type first.");
-    }
 }
