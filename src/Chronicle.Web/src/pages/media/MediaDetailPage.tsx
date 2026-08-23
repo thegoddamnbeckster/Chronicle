@@ -1205,6 +1205,12 @@ export default function MediaDetailPage() {
             ]
             return pluginIds.map(pluginId => {
               const plugin = plugins.find(p => p.pluginId === pluginId)
+              // Skip a plugin that's been uninstalled (not in `plugins` at all) or disabled --
+              // its historical enrichment/metadata rows persist on the item forever, but a
+              // removed/disabled plugin should stop showing up anywhere, not linger as a dead
+              // "No match" card on every item it was ever attempted against. Reported: a Trakt
+              // card kept appearing after the user disabled it, expecting it gone entirely.
+              if (!plugin || !plugin.isEnabled) return null
               // Skip plugins that don't support this item's media type.
               // This prevents e.g. a TMDB "No match" box from appearing on Music items.
               // Use mediaTypeInternalName (canonical DB name like "tv") for comparison since
