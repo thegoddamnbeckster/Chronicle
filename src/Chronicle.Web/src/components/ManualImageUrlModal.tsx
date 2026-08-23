@@ -26,14 +26,20 @@ export interface ManualImageUrlModalProps {
 // check only runs once the user clicks a slot to pin the image -- the preview below renders
 // straight into an <img src> before that round-trip, so a javascript:/data: URL pasted here
 // would otherwise reach the DOM completely unvalidated.
+//
+// Returns a freshly re-serialized URL (via the URL object's own .toString(), not the original
+// substring) rather than just a pass/fail boolean -- what reaches the DOM is a new string this
+// function produced from a validated http(s) URL, never the literal characters the user typed.
 const SAFE_URL_SCHEMES = new Set(['http:', 'https:'])
 
-function isSafePreviewUrl(candidate: string): boolean {
+function toSafePreviewUrl(candidate: string): string | null {
+  let parsed: URL
   try {
-    return SAFE_URL_SCHEMES.has(new URL(candidate).protocol)
+    parsed = new URL(candidate)
   } catch {
-    return false
+    return null
   }
+  return SAFE_URL_SCHEMES.has(parsed.protocol) ? parsed.toString() : null
 }
 
 export function ManualImageUrlModal({ onClose, overrides, onSet, onClear, pendingSlot }: ManualImageUrlModalProps) {
@@ -44,13 +50,14 @@ export function ManualImageUrlModal({ onClose, overrides, onSet, onClear, pendin
   function handlePreview() {
     const trimmed = url.trim()
     if (!trimmed) return
-    if (!isSafePreviewUrl(trimmed)) {
+    const safeUrl = toSafePreviewUrl(trimmed)
+    if (!safeUrl) {
       setPreviewUrl(null)
       setLoadFailed(true)
       return
     }
     setLoadFailed(false)
-    setPreviewUrl(trimmed)
+    setPreviewUrl(safeUrl)
   }
 
   return (
