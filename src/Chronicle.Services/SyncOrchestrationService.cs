@@ -3,6 +3,7 @@ using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
+using Chronicle.Services.Matching;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -199,7 +200,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             return await MatchOrCreateEpisodeAsync(db, evt, pluginId, ct);
 
         // Route books/audiobooks to the Author→Series→Book hierarchy builder.
-        var mappedType = MapMediaType(evt.MediaType);
+        var mappedType = MediaItemMatcher.NormalizeMediaTypeName(evt.MediaType);
         if ((mappedType == "books" || mappedType == "audiobooks") && evt.AuthorName is not null)
             return await MatchOrCreateBookAsync(db, evt, pluginId, ct);
 
@@ -228,36 +229,21 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             }
         }
 
-        // 3. Title + year fuzzy match — check both "Title" and "Title (Year)" forms,
-        //    plus colon/dash variants so file-scanner names ("A - B") match canonical
-        //    titles ("A: B") and vice versa.
-        //    IMPORTANT: restrict to items of the same media type so a TV show never
-        //    matches a movie stub that happens to share the same title and year
+        // 3. Title + year fuzzy match — see MediaItemMatcher.FindByTitleYearAsync for the
+        //    "Title"/"Title (Year)"/colon-dash-variant matching and the media-type scoping
+        //    that keeps a TV show from matching a movie stub sharing the same title/year
         //    (e.g. "Star Wars: The Clone Wars (2008)" exists as both).
         if (evt.Title is not null && evt.Year.HasValue)
         {
-            var mappedTypeName = MapMediaType(evt.MediaType);
-            var mediaTypeId = await db.MediaTypes
-                .Where(t => t.Name == mappedTypeName)
-                .Select(t => t.Id)
-                .FirstOrDefaultAsync(ct);
-
-            var dashTitle     = evt.Title.Replace(": ", " - ");
-            var colonTitle    = evt.Title.Replace(" - ", ": ");
-            var nameWithYear  = $"{evt.Title} ({evt.Year.Value})";
-            var dashWithYear  = $"{dashTitle} ({evt.Year.Value})";
-            var colonWithYear = $"{colonTitle} ({evt.Year.Value})";
-
-            var byTitle = await db.MediaItems
-                .FirstOrDefaultAsync(i => i.Year == evt.Year &&
-                    i.MediaTypeId == mediaTypeId &&
-                    (i.Name == evt.Title     || i.Name == nameWithYear  ||
-                     i.Name == dashTitle     || i.Name == dashWithYear  ||
-                     i.Name == colonTitle    || i.Name == colonWithYear), ct);
-            if (byTitle is not null)
+            var mediaTypeId = await MediaItemMatcher.TryResolveMediaTypeIdForMatchAsync(db, evt.MediaType, ct);
+            if (mediaTypeId.HasValue)
             {
-                await GraftExternalIdAsync(db, byTitle.Id, pluginId, evt.ExternalId, ct);
-                return (byTitle, false);
+                var byTitle = await MediaItemMatcher.FindByTitleYearAsync(db, evt.Title, evt.Year, mediaTypeId.Value, ct);
+                if (byTitle is not null)
+                {
+                    await GraftExternalIdAsync(db, byTitle.Id, pluginId, evt.ExternalId, ct);
+                    return (byTitle, false);
+                }
             }
         }
 
@@ -300,7 +286,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         ImportedItemMetadata? meta,
         CancellationToken ct)
     {
-        var mediaTypeName = MapMediaType(evt.MediaType);
+        var mediaTypeName = MediaItemMatcher.NormalizeMediaTypeName(evt.MediaType);
         var mediaType = await db.MediaTypes
             .FirstOrDefaultAsync(t => t.Name == mediaTypeName, ct)
             ?? throw new InvalidOperationException($"Media type '{mediaTypeName}' not found in database.");
@@ -482,7 +468,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     private async Task<(MediaItem item, bool isNew)> MatchOrCreateBookAsync(
         ChronicleDbContext db, ImportedWatchEvent evt, string pluginId, CancellationToken ct)
     {
-        var mediaTypeName = MapMediaType(evt.MediaType);
+        var mediaTypeName = MediaItemMatcher.NormalizeMediaTypeName(evt.MediaType);
         var mediaType = await db.MediaTypes
             .FirstOrDefaultAsync(t => t.Name == mediaTypeName, ct)
             ?? throw new InvalidOperationException($"Media type '{mediaTypeName}' not found in database.");
@@ -783,16 +769,6 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
     private static string SourceFromPluginId(string pluginId) =>
         PluginIdHelper.ToSource(pluginId);
-
-    private static string MapMediaType(string importType) => importType switch
-    {
-        "movie"         => "movies",
-        "tv_show"       => "tv",
-        "tv_episode"    => "tv",
-        "anime_episode" => "anime",
-        "book"          => "books",
-        _               => importType,
-    };
 
     private static void MergeImportedMetadata(MediaItem item, string pluginId, ImportedItemMetadata meta)
     {

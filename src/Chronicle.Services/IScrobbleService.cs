@@ -28,6 +28,32 @@ namespace Chronicle.Services
         bool MarkedAsWatched
     );
 
+    /// <summary>
+    /// Identifies an item to check for a stored resume position, the same way a
+    /// <see cref="ScrobbleRequest"/> identifies one to scrobble -- MediaItemId when
+    /// already known, otherwise ExternalIds/Title/Year/MediaType to resolve it. Never
+    /// creates a stub if nothing matches (unlike scrobbling) -- see
+    /// ScrobbleService.TryFindMediaItemAsync.
+    /// </summary>
+    public record ResumeLookupRequest(
+        int? MediaItemId,
+        IReadOnlyDictionary<string, string>? ExternalIds = null,
+        string? Title = null,
+        int? Year = null,
+        string? MediaType = null
+    );
+
+    /// <summary>
+    /// A stored cross-device resume position. ResumePositionPercent is percent-of-
+    /// duration, not raw seconds -- see UserLibrary.ResumePositionPercent's own doc for
+    /// why percent is the portable unit across devices/encodes.
+    /// </summary>
+    public record ResumeState(
+        int MediaItemId,
+        double ResumePositionPercent,
+        DateTime? ResumeUpdatedAt
+    );
+
     public interface IScrobbleService
     {
         Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request, CancellationToken ct = default);
@@ -41,5 +67,12 @@ namespace Chronicle.Services
         /// </summary>
         Task<(DateTime? LastWatchedAt, int WatchedCount)> GetWatchSummaryAsync(
             int userId, int mediaItemId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Null if the item can't be resolved at all, or resolves but has nothing to
+        /// resume (never scrobbled, or already fully watched) -- see ResumeState's own
+        /// doc for why a client doesn't need to distinguish those cases.
+        /// </summary>
+        Task<ResumeState?> GetResumeStateAsync(int userId, ResumeLookupRequest request, CancellationToken ct = default);
     }
 }

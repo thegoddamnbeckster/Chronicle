@@ -29,6 +29,23 @@ namespace Chronicle.API.DTOs
         int WatchedCount
     );
 
+    /// <summary>Same identifying shape as ScrobbleRequestDto minus progress -- a client
+    /// checking "is there something to resume" supplies whatever it would've supplied
+    /// to scrobble this item.</summary>
+    public record ResumeLookupRequestDto(
+        int? MediaItemId,
+        Dictionary<string, string>? ExternalIds = null,
+        string? Title = null,
+        int? Year = null,
+        string? MediaType = null
+    );
+
+    public record ResumeStateDto(
+        int MediaItemId,
+        double ResumePositionPercent,
+        DateTime? ResumeUpdatedAt
+    );
+
     public record HistoryItemDto(
         int Id,
         int MediaItemId,

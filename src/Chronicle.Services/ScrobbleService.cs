@@ -1,6 +1,7 @@
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Services.Matching;
 using Microsoft.EntityFrameworkCore;
 
 namespace Chronicle.Services
@@ -27,6 +28,11 @@ namespace Chronicle.Services
             var markedAsWatched = request.ProgressPercent >= WatchedThreshold;
             var timestamp = request.Timestamp ?? DateTime.UtcNow;
 
+            // Every scrobble (not just watched-threshold crossings) upserts the library
+            // entry -- resume position needs to be current after every progress update,
+            // not just once an item is finished. See UpsertLibraryStateAsync.
+            var entry = await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
+
             var evt = new InteractionEvent
             {
                 UserId          = userId,
@@ -40,72 +46,70 @@ namespace Chronicle.Services
 
             _context.InteractionEvents.Add(evt);
 
-            if (markedAsWatched)
-                await UpdateLibraryStatusAsync(userId, mediaItemId, ct);
-
             try
             {
                 await _context.SaveChangesAsync(ct);
+                return new ScrobbleResult(evt, markedAsWatched);
             }
-            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex, "user_libraries"))
+            {
+                // Two concurrent first-time scrobbles for the same (user, item) both found
+                // no existing row and both tried to insert, tripping the unique index. The
+                // whole SaveChangesAsync failed atomically, so evt's insert didn't land
+                // either -- detach only the losing UserLibrary insert (not the whole change
+                // set, which would also discard the still-valid evt add), reload the row the
+                // other request just committed, and retry as an update against it.
+                _context.Entry(entry).State = EntityState.Detached;
+                entry = await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
+                await _context.SaveChangesAsync(ct);
+                return new ScrobbleResult(evt, markedAsWatched);
+            }
+            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex, "interaction_events"))
             {
                 // Duplicate scrobble — same (user, item, timestamp) already recorded.
-                // Clear the failed insert and return the pre-existing event.
-                _context.ChangeTracker.Clear();
-                var existing = await _context.InteractionEvents
+                // Detach only the failed event insert -- the UserLibrary upsert above is
+                // still a valid, unrelated change and must survive this retry (unlike the
+                // old ChangeTracker.Clear() here, which silently discarded it too) -- then
+                // return the pre-existing event.
+                _context.Entry(evt).State = EntityState.Detached;
+                await _context.SaveChangesAsync(ct);
+                var existing = await _context.InteractionEvents.AsNoTracking()
                     .FirstAsync(e => e.UserId == userId
                                   && e.MediaItemId == mediaItemId
                                   && e.Timestamp == timestamp, ct);
                 return new ScrobbleResult(existing, markedAsWatched);
             }
-
-            return new ScrobbleResult(evt, markedAsWatched);
         }
 
         /// <summary>
         /// Resolves a <see cref="ScrobbleRequest"/> that arrived without a Chronicle
         /// MediaItemId (e.g. from the Kodi addon scrobbling an item Chronicle has never
-        /// seen before) — matches by external ID first, then title+year, then creates a
-        /// stub item. Mirrors <c>ImportService.FindOrCreateMediaItemAsync</c>'s approach;
-        /// kept as its own small implementation here rather than a shared abstraction since
-        /// the two callers' input shapes differ (import events vs. live scrobble requests)
-        /// and ImportService's working, tested logic shouldn't be disturbed for this.
+        /// seen before) — matches by external ID first, then title+year scoped to media
+        /// type, then creates a stub item. The type resolution and title/year matching
+        /// themselves live in <see cref="MediaItemMatcher"/>, shared with
+        /// <c>ImportService.FindOrCreateMediaItemAsync</c> and
+        /// <c>SyncOrchestrationService.MatchOrCreateAsync</c> — those three used to each
+        /// carry their own copy, which had drifted out of sync (see MediaItemMatcher's own
+        /// docs for the bug that caused).
         /// </summary>
         private async Task<MediaItem> FindOrCreateMediaItemAsync(ScrobbleRequest request, CancellationToken ct)
         {
             var externalIds = request.ExternalIds ?? new Dictionary<string, string>();
-
-            foreach (var (source, extId) in externalIds)
+            var found = await TryFindMediaItemAsync(request.Title, request.Year, request.MediaType, externalIds, ct);
+            if (found != null)
             {
-                var match = await _context.MediaExternalIds
-                    .Include(x => x.MediaItem)
-                    .FirstOrDefaultAsync(x => x.Source == source.ToLowerInvariant() && x.ExternalId == extId, ct);
-                if (match?.MediaItem != null)
-                    return match.MediaItem;
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.Title))
-            {
-                var titleMatch = await _context.MediaItems
-                    .FirstOrDefaultAsync(m =>
-                        m.Name == request.Title &&
-                        (!request.Year.HasValue || m.Year == request.Year), ct);
-
-                if (titleMatch != null)
-                {
-                    await StoreExternalIdsAsync(titleMatch.Id, externalIds, ct);
-                    return titleMatch;
-                }
+                await StoreExternalIdsAsync(found.Id, externalIds, ct);
+                return found;
             }
 
             if (string.IsNullOrWhiteSpace(request.Title))
                 throw new ArgumentException(
                     "Scrobble request has no MediaItemId and no Title to create a stub item from.");
 
-            var typeId = await ResolveMediaTypeIdAsync(request.MediaType, ct);
+            var stubTypeId = await MediaItemMatcher.ResolveMediaTypeIdForStubAsync(_context, request.MediaType, ct);
             var stub = new MediaItem
             {
-                MediaTypeId    = typeId,
+                MediaTypeId    = stubTypeId,
                 Name           = request.Title,
                 Year           = request.Year,
                 HierarchyLevel = 0,
@@ -119,6 +123,78 @@ namespace Chronicle.Services
             await _context.SaveChangesAsync(ct);
 
             return stub;
+        }
+
+        /// <summary>
+        /// The "find" half of FindOrCreateMediaItemAsync, split out so
+        /// GetResumeStateAsync can look an item up WITHOUT ever creating a stub --
+        /// checking "is there a resume position for this?" must never itself create a
+        /// media item for something Chronicle has never actually seen. Same external-ID-
+        /// then-type-scoped-title/year matching either caller uses; returns null on no
+        /// match instead of falling through to stub creation.
+        /// </summary>
+        private async Task<MediaItem?> TryFindMediaItemAsync(
+            string? title, int? year, string? mediaType,
+            IReadOnlyDictionary<string, string> externalIds, CancellationToken ct)
+        {
+            foreach (var (source, extId) in externalIds)
+            {
+                var match = await _context.MediaExternalIds
+                    .Include(x => x.MediaItem)
+                    .FirstOrDefaultAsync(x => x.Source == source.ToLowerInvariant() && x.ExternalId == extId, ct);
+                if (match?.MediaItem != null)
+                    return match.MediaItem;
+            }
+
+            if (string.IsNullOrWhiteSpace(title))
+                return null;
+
+            // Only attempts a title+year match when a media type can be confidently
+            // resolved -- an omitted/unrecognized MediaType returns null rather than
+            // matching unscoped (which would risk the exact cross-type collision this
+            // scoping exists to prevent; see MediaItemMatcher docs).
+            var matchTypeId = await MediaItemMatcher.TryResolveMediaTypeIdForMatchAsync(_context, mediaType, ct);
+            if (!matchTypeId.HasValue)
+                return null;
+
+            return await MediaItemMatcher.FindByTitleYearAsync(_context, title, year, matchTypeId.Value, ct);
+        }
+
+        /// <summary>
+        /// The cross-device "resume where I left off" lookup: resolves the item the same
+        /// way a scrobble would (external ID, then type-scoped title/year -- never
+        /// creates a stub, see TryFindMediaItemAsync), then returns its stored resume
+        /// position if it has one. Null covers both "never seen this item" and "seen it,
+        /// nothing to resume" identically -- a client checking whether to seek on
+        /// playback start only ever needs to know "is there a position to resume from",
+        /// not why not.
+        /// </summary>
+        public async Task<ResumeState?> GetResumeStateAsync(int userId, ResumeLookupRequest request, CancellationToken ct = default)
+        {
+            int mediaItemId;
+            if (request.MediaItemId.HasValue)
+            {
+                // No need to fetch the MediaItem itself just to confirm it exists --
+                // UserLibrary.MediaItemId is a real FK, so a row can only exist for a
+                // media item that does; a nonexistent id falls through to the same
+                // "entry == null -> null" result the MediaItems lookup would have given.
+                mediaItemId = request.MediaItemId.Value;
+            }
+            else
+            {
+                var mediaItem = await TryFindMediaItemAsync(
+                    request.Title, request.Year, request.MediaType, request.ExternalIds ?? new Dictionary<string, string>(), ct);
+                if (mediaItem == null)
+                    return null;
+                mediaItemId = mediaItem.Id;
+            }
+
+            var entry = await _context.UserLibraries.AsNoTracking()
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+            if (entry?.ResumePositionPercent is not double percent)
+                return null;
+
+            return new ResumeState(mediaItemId, percent, entry.ResumeUpdatedAt);
         }
 
         private async Task StoreExternalIdsAsync(
@@ -137,30 +213,6 @@ namespace Chronicle.Services
                         ExternalId  = extId,
                     });
             }
-        }
-
-        private async Task<int> ResolveMediaTypeIdAsync(string? mediaType, CancellationToken ct)
-        {
-            var normalised = (mediaType ?? "movie").ToLowerInvariant() switch
-            {
-                "tv_episode" or "tv_show" or "show" or "tv" => "tv",
-                "movie" or "film" => "movie",
-                "track" or "song"  => "music",
-                var other          => other,
-            };
-
-            var type = await _context.MediaTypes
-                .FirstOrDefaultAsync(t => t.Name == normalised && t.IsActive, ct);
-            if (type != null) return type.Id;
-
-            var fallback = await _context.MediaTypes
-                .Where(t => t.IsActive)
-                .OrderBy(t => t.Id)
-                .FirstOrDefaultAsync(ct);
-
-            return fallback?.Id
-                ?? throw new InvalidOperationException(
-                    "No active media types found in the database. Create at least one media type first.");
         }
 
         public async Task<IEnumerable<InteractionEvent>> GetHistoryAsync(
@@ -198,7 +250,18 @@ namespace Chronicle.Services
             return (lastWatchedAt, count);
         }
 
-        private async Task UpdateLibraryStatusAsync(int userId, int mediaItemId, CancellationToken ct)
+        /// <summary>
+        /// Runs on every scrobble, not just watched-threshold crossings -- unlike the
+        /// old UpdateLibraryStatusAsync this replaces, resume position needs to be
+        /// current after every progress update, and an item the user only ever gets
+        /// partway through should still show as "Watching", not stay absent from their
+        /// library entirely until (if ever) they finish it. Returns the tracked entry so
+        /// callers can detach it and retry precisely on a unique-constraint conflict
+        /// without discarding unrelated pending changes (see ScrobbleAsync).
+        /// </summary>
+        private async Task<UserLibrary> UpsertLibraryStateAsync(
+            int userId, int mediaItemId, double? progressPercent, bool markedAsWatched,
+            DateTime timestamp, CancellationToken ct)
         {
             var entry = await _context.UserLibraries
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
@@ -216,16 +279,46 @@ namespace Chronicle.Services
                 };
                 _context.UserLibraries.Add(entry);
             }
-            else if (entry.Status == LibraryStatus.PlanToWatch)
+            else
             {
-                entry.Status    = LibraryStatus.Watching;
-                entry.StartedAt ??= DateTime.UtcNow;
+                if (entry.Status == LibraryStatus.PlanToWatch)
+                {
+                    entry.Status    = LibraryStatus.Watching;
+                    entry.StartedAt ??= DateTime.UtcNow;
+                }
+
+                // Refreshed on every real progress update, not just the PlanToWatch->
+                // Watching transition -- an actively-watched item should always read as
+                // recently active (Continue Watching sorts on this), not go stale the
+                // moment its first scrobble lands.
                 entry.UpdatedAt = DateTime.UtcNow;
             }
+
+            // Cleared once watched -- an item you just finished has nothing left to
+            // "resume", and leaving a stale percent behind would make a later rewatch
+            // start with a bogus seek-ahead on whatever device picks it up next.
+            if (markedAsWatched)
+            {
+                entry.ResumePositionPercent = null;
+                entry.ResumeUpdatedAt       = null;
+            }
+            // A resume position is only ever overwritten by a scrobble at least as recent
+            // as the one that set it -- otherwise a delayed/out-of-order scrobble (an
+            // offline queue replay, a backfill import) with an older explicit Timestamp
+            // could clobber a genuinely newer position with stale data.
+            else if (progressPercent.HasValue
+                     && (entry.ResumeUpdatedAt is not DateTime existing || timestamp >= existing))
+            {
+                entry.ResumePositionPercent = progressPercent.Value;
+                entry.ResumeUpdatedAt       = timestamp;
+            }
+
+            return entry;
         }
 
-        private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>
+        private static bool IsUniqueConstraintViolation(DbUpdateException ex, string table) =>
             ex.InnerException?.Message.Contains("UNIQUE constraint failed",
-                StringComparison.OrdinalIgnoreCase) == true;
+                StringComparison.OrdinalIgnoreCase) == true
+            && ex.InnerException.Message.Contains(table, StringComparison.OrdinalIgnoreCase);
     }
 }

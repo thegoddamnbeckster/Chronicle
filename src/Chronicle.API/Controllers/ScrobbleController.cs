@@ -110,6 +110,34 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<WatchSummaryDto>.Ok(new WatchSummaryDto(lastWatchedAt, watchedCount)));
         }
 
+        /// <summary>
+        /// The cross-device "resume where I left off" check — a scrobble client calls
+        /// this on playback start, before it has any local resume bookmark of its own
+        /// (e.g. the very first time this device plays this item), to pick up wherever
+        /// a *different* device last left off. POST (not GET) since ExternalIds is a
+        /// dictionary body, same as scrobbling itself. success:true with data:null (not
+        /// 404) when the item can't be resolved or has nothing to resume — this is a
+        /// routine "no" a client checks on every playback start, not an error.
+        /// </summary>
+        [HttpPost("resume")]
+        public async Task<IActionResult> GetResumeState([FromBody] ResumeLookupRequestDto request)
+        {
+            var userId = GetUserId();
+            var state = await _scrobbleService.GetResumeStateAsync(userId, new ResumeLookupRequest(
+                request.MediaItemId,
+                request.ExternalIds,
+                request.Title,
+                request.Year,
+                request.MediaType
+            ), HttpContext.RequestAborted);
+
+            if (state is null)
+                return Ok(ApiResponse<ResumeStateDto>.Ok(null!));
+
+            return Ok(ApiResponse<ResumeStateDto>.Ok(new ResumeStateDto(
+                state.MediaItemId, state.ResumePositionPercent, state.ResumeUpdatedAt)));
+        }
+
         private int GetUserId() =>
             int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     }

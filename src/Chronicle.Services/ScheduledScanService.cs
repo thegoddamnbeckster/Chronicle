@@ -241,7 +241,7 @@ public sealed class ScheduledScanService : IScheduledTask
                 return new FolderPreview(folder, [], 0, below.Count);
             }
 
-            var importGroups = passing.Select(ToImport).ToList();
+            var importGroups = passing.Select(FileScanService.ToScanGroupImport).ToList();
             int fileCount    = importGroups.Sum(g => g.TotalFileCount);
 
             return new FolderPreview(folder, importGroups, fileCount, below.Count);
@@ -282,12 +282,4 @@ public sealed class ScheduledScanService : IScheduledTask
         }
     }
 
-    private static ScanGroupImport ToImport(ScanGroup group) => new(
-        group.Name,
-        group.Year,
-        group.PosterPath,
-        group.Children.Select(c => ToImport(c)).ToList(),
-        group.Files,
-        group.FolderPath,
-        group.Number);
 }

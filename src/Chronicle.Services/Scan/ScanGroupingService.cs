@@ -287,13 +287,22 @@ namespace Chronicle.Services.Scan
                 }
             }
 
-            // Roll up confidence scores from children to parents
-            foreach (var g in result.Groups)
-                RollUpConfidence(g);
-
-            // Prune empty nodes: remove children with no media files at any level
+            // Prune empty nodes FIRST: remove children with no media files at any level
+            // (e.g. a leftover "Season 1" folder holding only orphaned .xml/.nfo sidecars
+            // next to the real "Season 01" folder that has the actual video files). This
+            // MUST happen before the confidence roll-up below -- an empty phantom child
+            // was previously still averaged into its parent's confidence score even though
+            // it gets deleted from the tree a moment later, silently dragging a
+            // well-formed show's score below the auto-import threshold. Confirmed
+            // 2026-08-24: a show with one correct season folder and one leftover empty
+            // one scored 78% instead of 85%, just missing the default 80% cutoff.
             foreach (var g in result.Groups)
                 PruneEmptyChildren(g);
+
+            // Roll up confidence scores from children to parents, now that only real,
+            // file-bearing groups remain in the tree.
+            foreach (var g in result.Groups)
+                RollUpConfidence(g);
 
             // Remove root groups that ended up with no files at all (sidecar-only folders)
             result.Groups.RemoveAll(g => g.TotalFileCount == 0);
@@ -401,6 +410,21 @@ namespace Chronicle.Services.Scan
             double score = 0.5;
             if (tag?.Title is not null) score += 0.25;
             if (nfo?.Title is not null) score += 0.25;
+
+            // A season+episode number parsed directly from the filename (the standard
+            // Sonarr/Radarr "Show - S01E02 - Title" convention) is structurally
+            // unambiguous on its own -- the file's identity (which show, which episode)
+            // isn't in question here, only how much extra metadata (synopsis, cast, a
+            // cleaned title) is available for it, and that gets filled in later by
+            // enrichment regardless of this score. Without this, a show with no NFO/tag
+            // sidecars scored ~0.5-0.75 -- below the default 80% auto-import threshold --
+            // meaning every one of its episodes was silently skipped by both the nightly
+            // scheduled scan and a manual "Scan Now", even though the file itself was
+            // never in doubt. Confirmed 2026-08-24: a real library scan skipped hundreds
+            // of correctly-named episodes this way.
+            if (folder.DetectedSeason.HasValue && folder.DetectedEpisode.HasValue)
+                score += 0.35;
+
             return Math.Clamp(score, 0.0, 1.0);
         }
 
