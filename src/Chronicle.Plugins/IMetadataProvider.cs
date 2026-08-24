@@ -58,6 +58,23 @@ public interface IMetadataProvider
     /// <summary>Fetches full metadata for the item identified by the provider's external id.</summary>
     Task<MediaMetadata> GetByIdAsync(string externalId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Returns every episode in one season of a TV show, keyed by this provider's own
+    /// external id for the SHOW (not a season/episode id — the provider resolves the
+    /// season internally). Lets a scraper-facing caller (e.g. Kodi's TV addon) ask "what
+    /// episodes does season N have" directly from this provider's upstream catalog,
+    /// without requiring Chronicle to have already locally scanned/imported any of the
+    /// show's files first — this is the metadata source of record for the show's own
+    /// episode guide, independent of what a user's file scanner has found on disk.
+    ///
+    /// Return an empty list (the default) if this provider doesn't support TV, doesn't
+    /// carry per-episode data, or the season doesn't exist. Callers try providers in
+    /// order and move on to the next on an empty result — never throw for "not supported".
+    /// </summary>
+    Task<IReadOnlyList<ProviderEpisodeSummary>> GetEpisodeListAsync(
+        string showExternalId, int seasonNumber, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ProviderEpisodeSummary>>([]);
+
     /// <summary>Downloads an image from the given URL and returns the raw bytes.</summary>
     Task<byte[]> GetImageAsync(string url, CancellationToken ct = default);
 

@@ -17,6 +17,19 @@ namespace Chronicle.Services.Scan
 
     public class NfoSignalExtractor
     {
+        /// <summary>
+        /// Kodi's own reserved season/show-level NFO filenames -- never a legitimate
+        /// per-file sidecar, so the "any .nfo in folder" fallback below must exclude them.
+        /// Matching one of these instead of the true sidecar (e.g. a season NFO's own
+        /// &lt;title&gt;Season 2&lt;/title&gt; for every episode in that season folder) silently
+        /// overwrote every episode's parsed title with the season's -- confirmed 2026-08-24
+        /// scanning a real library where every episode in "Citadel/Season 02" came out
+        /// named "Season 2".
+        /// </summary>
+        private static readonly System.Text.RegularExpressions.Regex _seasonOrShowNfo =
+            new(@"^(tvshow|season(-specials|-all)?\d*)\.nfo$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
         /// <summary>Finds a .nfo sidecar next to <paramref name="filePath"/>.</summary>
         public string? FindSidecar(string filePath)
         {
@@ -28,10 +41,13 @@ namespace Chronicle.Services.Scan
             var adjacent = Path.Combine(dir, stem + ".nfo");
             if (System.IO.File.Exists(adjacent)) return adjacent;
 
-            // Fall back to any .nfo in the same folder
+            // Fall back to any OTHER .nfo in the same folder (e.g. a movie's own NFO
+            // named differently from its video file) -- but never a season/show NFO,
+            // which describes the whole folder, not this one file.
             try
             {
-                return Directory.EnumerateFiles(dir, "*.nfo").FirstOrDefault();
+                return Directory.EnumerateFiles(dir, "*.nfo")
+                    .FirstOrDefault(f => !_seasonOrShowNfo.IsMatch(Path.GetFileName(f)));
             }
             catch { return null; }
         }

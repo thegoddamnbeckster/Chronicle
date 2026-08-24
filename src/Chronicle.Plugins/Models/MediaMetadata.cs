@@ -100,6 +100,19 @@ public record CrewMember(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("job")]  string? Job = null);
 
+/// <summary>
+/// One episode as returned by <see cref="IMetadataProvider.GetEpisodeListAsync"/> --
+/// deliberately minimal (just enough to build a local Episode item and match it against
+/// a file Kodi found by season/episode number), not the full <see cref="MediaMetadata"/>
+/// shape a per-episode <c>GetByIdAsync</c> call would return.
+/// </summary>
+public record ProviderEpisodeSummary(
+    int EpisodeNumber,
+    string Title,
+    string? Overview = null,
+    string? StillUrl = null,
+    string? AirDate = null);
+
 /// <summary>A single additional image from a metadata provider (back cover, booklet, still, etc.).</summary>
 public class AdditionalImage
 {

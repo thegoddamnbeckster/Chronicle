@@ -1,7 +1,11 @@
 using Chronicle.API.DTOs;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Plugins;
+using Chronicle.Plugins.Models;
 using Chronicle.Services;
+using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -36,15 +40,18 @@ public class ScraperController : ControllerBase
     private readonly IMediaService _mediaService;
     private readonly IMetadataEnrichmentService _enrichment;
     private readonly IMovieCollectionService _collections;
+    private readonly IPluginRegistry _registry;
     private readonly ILogger<ScraperController> _logger;
 
     public ScraperController(ChronicleDbContext context, IMediaService mediaService,
-        IMetadataEnrichmentService enrichment, IMovieCollectionService collections, ILogger<ScraperController> logger)
+        IMetadataEnrichmentService enrichment, IMovieCollectionService collections,
+        IPluginRegistry registry, ILogger<ScraperController> logger)
     {
         _context    = context;
         _mediaService = mediaService;
         _enrichment = enrichment;
         _collections = collections;
+        _registry   = registry;
         _logger     = logger;
     }
 
@@ -332,13 +339,20 @@ public class ScraperController : ControllerBase
     }
 
     /// <summary>
-    /// Kodi's "getepisodelist" step: every episode Chronicle already has under this show,
-    /// walking through season containers when present (see class remarks on the one show
-    /// in dev data where episodes attach directly to the show, skipping the season level).
-    /// Does not create anything -- episodes are expected to already exist from Chronicle's
-    /// own file-scanner/import pipeline. A show with no episodes yet in Chronicle simply
-    /// returns an empty list; Kodi's own filename matching has nothing to resolve against
-    /// until Chronicle's backend populates them.
+    /// Kodi's "getepisodelist" step: every episode for this show, walking through season
+    /// containers when present (see class remarks on the one show in dev data where
+    /// episodes attach directly to the show, skipping the season level).
+    ///
+    /// If Chronicle has no local episode records yet, resolves them on the spot from
+    /// whichever configured metadata provider has an external id for this show (see
+    /// EnsureEpisodesResolvedAsync) -- mirroring the same resolve-or-create pattern
+    /// SearchShows/SearchMovies already use for the show/movie itself, rather than
+    /// requiring Chronicle's separate file-scanner/import pipeline to have already run
+    /// first. A file scanner import still wins if it got there first (existing episodes
+    /// are never touched here), and still supplies the richer per-file data (exact
+    /// filename, stream details) that only scanning a real file on disk can provide --
+    /// this only fills the gap when nothing has scanned this show's files yet, so Kodi
+    /// still gets a real episode list to match its local files against immediately.
     /// </summary>
     [HttpGet("tv/episodes")]
     public async Task<IActionResult> GetEpisodes([FromQuery] int showId, CancellationToken ct)
@@ -346,6 +360,8 @@ public class ScraperController : ControllerBase
         var show = await _context.MediaItems.FindAsync([showId], ct);
         if (show is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {showId} not found."));
+
+        await EnsureEpisodesResolvedAsync(show, ct);
 
         var seasonIds = await _context.MediaItems
             .Where(m => m.ParentId == showId && m.HierarchyLevel == 1)
@@ -368,6 +384,228 @@ public class ScraperController : ControllerBase
             e.Name)).ToList();
 
         return Ok(ApiResponse<List<ScraperEpisodeSummaryDto>>.Ok(result));
+    }
+
+    /// <summary>camelCase to match every "chronicle.plugin.*" partition already written
+    /// elsewhere (see MetadataEnrichmentService.MetadataBlobOptions, which this mirrors --
+    /// that one is internal to Chronicle.Services and not visible from this assembly).</summary>
+    private static readonly JsonSerializerOptions ScraperMetadataBlobOptions =
+        new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    /// <summary>One lock per show id, so two concurrent requests for the same show can't
+    /// both see the same missing season and both create it. Scoped to this process only
+    /// (adequate for Chronicle's single-API-instance deployment model) -- see
+    /// EnsureEpisodesResolvedAsync. Mirrors MetadataEnrichmentService's own per-plugin
+    /// SemaphoreSlim dictionary pattern.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, SemaphoreSlim>
+        _episodeResolutionLocks = new();
+
+    /// <summary>
+    /// Fetches this show's episode guide directly from whichever configured metadata
+    /// provider has an external id for it, and creates the Season/Episode hierarchy for
+    /// any season Chronicle doesn't already have local episodes for -- Chronicle doesn't
+    /// need its own file scanner to have already found these exact files first; the
+    /// provider's own episode guide is the source of truth Kodi's local file matching (by
+    /// season/episode number) needs to work against.
+    ///
+    /// Checked PER SEASON, not per-show: a show can have some seasons from a real file
+    /// scan (with per-file data a scan alone can supply, like exact filenames) and be
+    /// completely missing others -- e.g. only season 1 was ever scanned before season 2
+    /// aired and landed in a folder no scan folder covers yet. A season that already has
+    /// local episodes (from either this method or a file-scanner import) is left untouched.
+    ///
+    /// Tries providers in the order their external ids appear on the show's MetadataJson,
+    /// NOT Chronicle's configured per-field resolution priority (MetadataResolutionService)
+    /// -- that priority is about which provider's VALUE wins for an already-resolved field,
+    /// not which provider order to attempt an episode-list fetch in, and wiring the two
+    /// together is future work. Not every provider implements GetEpisodeListAsync (default
+    /// is "unsupported, return empty"); the first one that actually returns a season's
+    /// worth of episodes wins, and every subsequent season for this show uses that same
+    /// provider for consistency. Stops after several consecutive provider-queried (not
+    /// skipped-because-already-local) seasons come back empty -- past a show's real season
+    /// count, not a failure.
+    ///
+    /// Each season is created inside its own transaction, so a request cancelled or a
+    /// provider that throws mid-season rolls that season back entirely rather than leaving
+    /// a half-populated season permanently "resolved" (only episode EXISTENCE, not
+    /// completeness, is what marks a season as done). A per-show lock serializes concurrent
+    /// callers so two overlapping requests for the same show can't both create the same
+    /// season. Provider failures are caught and logged -- this endpoint degrades to
+    /// whatever local data already exists rather than turning what used to be a pure DB
+    /// read into a 500.
+    /// </summary>
+    private async Task EnsureEpisodesResolvedAsync(MediaItem show, CancellationToken ct)
+    {
+        var candidates = CollectProviderExternalIds(show.MetadataJson);
+        if (candidates.Count == 0) return;
+
+        var showLock = _episodeResolutionLocks.GetOrAdd(show.Id, _ => new SemaphoreSlim(1, 1));
+        await showLock.WaitAsync(ct);
+        try
+        {
+            await ResolveEpisodesLockedAsync(show, candidates, ct);
+        }
+        catch (Exception ex)
+        {
+            // Degrade gracefully: this endpoint used to be a pure local read that could
+            // never fail except for a missing show. A provider timeout/rate-limit/bug must
+            // not turn Kodi's getepisodelist call into a 500 -- return whatever local data
+            // already exists (possibly none) instead.
+            _logger.LogWarning(ex,
+                "scraper/tv/episodes: episode resolution failed for show {ShowId}, returning local data only",
+                show.Id);
+        }
+        finally
+        {
+            showLock.Release();
+        }
+    }
+
+    private async Task ResolveEpisodesLockedAsync(
+        MediaItem show, List<(string PluginId, string ExternalId)> candidates, CancellationToken ct)
+    {
+        // Seasons that already have at least one local episode with a KNOWN number -- left
+        // alone regardless of source, so a real file-scanner import always wins for the
+        // season it actually covers. A season row with a null Number (shouldn't normally
+        // happen, but not impossible from a legacy import path) is never treated as
+        // "resolved" for any season number -- especially not season 0 (Specials), which a
+        // naive `Number ?? 0` would silently and permanently block.
+        var existingSeasonNumbers = (await _context.MediaItems
+            .Where(s => s.ParentId == show.Id && s.HierarchyLevel == 1 && s.Number != null)
+            .Where(s => _context.MediaItems.Any(e => e.ParentId == s.Id && e.HierarchyLevel == 2))
+            .Select(s => s.Number!.Value)
+            .ToListAsync(ct))
+            .ToHashSet();
+
+        IMetadataProvider? provider = null;
+        string? showExternalId = null;
+        string? providerPluginId = null;
+
+        const int maxSeasons = 60;      // safety bound, not a real-world show's actual season count
+        const int emptyStreakLimit = 5; // tolerate a show that doesn't start numbering at season 1
+        var consecutiveEmpty = 0;
+
+        // Season 0 is "Specials" (Kodi's own convention for behind-the-scenes/bonus content
+        // that isn't part of the numbered run) -- a real, common season, not a placeholder,
+        // and some shows have nothing BUT specials scanned yet.
+        for (var seasonNum = 0; seasonNum <= maxSeasons && consecutiveEmpty < emptyStreakLimit; seasonNum++)
+        {
+            if (existingSeasonNumbers.Contains(seasonNum))
+            {
+                consecutiveEmpty = 0;
+                continue;
+            }
+
+            IReadOnlyList<ProviderEpisodeSummary> episodes;
+            if (provider is not null)
+            {
+                episodes = await provider.GetEpisodeListAsync(showExternalId!, seasonNum, ct);
+            }
+            else
+            {
+                episodes = [];
+                foreach (var (pluginId, externalId) in candidates)
+                {
+                    var candidate = _registry.GetMetadataProvider(pluginId);
+                    if (candidate is null) continue;
+
+                    var result = await candidate.GetEpisodeListAsync(externalId, seasonNum, ct);
+                    if (result.Count == 0) continue;
+
+                    provider = candidate;
+                    showExternalId = externalId;
+                    providerPluginId = pluginId;
+                    episodes = result;
+                    break;
+                }
+            }
+
+            if (episodes.Count == 0)
+            {
+                consecutiveEmpty++;
+                continue;
+            }
+            consecutiveEmpty = 0;
+
+            await using (var tx = await _context.Database.BeginTransactionAsync(ct))
+            {
+                var season = await _mediaService.CreateAsync(new CreateMediaRequest(
+                    show.MediaTypeId, show.Id, $"Season {seasonNum}", null, null, null, null,
+                    HierarchyLevel: 1, Number: seasonNum), ct);
+
+                foreach (var ep in episodes)
+                {
+                    var episode = await _mediaService.CreateAsync(new CreateMediaRequest(
+                        show.MediaTypeId, season.Id, ep.Title, null, ep.Overview, ep.StillUrl, null,
+                        HierarchyLevel: 2, Number: ep.EpisodeNumber), ct);
+
+                    StampProviderPartition(episode, providerPluginId!, ep, seasonNum);
+                }
+
+                await _context.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+            }
+
+            _logger.LogInformation(
+                "scraper/tv/episodes: resolved season {Season} of show {ShowId} ({Count} episodes) from {PluginId}, no local scan required",
+                seasonNum, show.Id, episodes.Count, providerPluginId);
+        }
+    }
+
+    /// <summary>
+    /// Stamps a "chronicle.plugin.*" MetadataJson partition on a provider-resolved episode,
+    /// the same shape MetadataEnrichmentService.MergeMetadata writes for every other
+    /// enriched item -- without this, GetEpisodeDetails' Cast/Crew/Ratings/ExternalIds/Aired
+    /// fields (which read exclusively from provider partitions, never from plain columns)
+    /// silently report nothing for every episode this method creates. Deliberately minimal:
+    /// only the fields ProviderEpisodeSummary actually carries (title/overview/still/air
+    /// date) are known here -- full cast/crew/external-id enrichment for these episodes is
+    /// still a gap versus the search-based ResolveOrCreateAsync path, tracked separately.
+    /// </summary>
+    private static void StampProviderPartition(
+        MediaItem episode, string pluginId, ProviderEpisodeSummary ep, int seasonNum)
+    {
+        var metadata = new MediaMetadata
+        {
+            Source      = PluginIdHelper.ToSource(pluginId),
+            Title       = ep.Title,
+            Overview    = ep.Overview,
+            PosterUrl   = ep.StillUrl,
+            ExtendedData = JsonSerializer.SerializeToElement(new
+            {
+                season_number  = seasonNum,
+                episode_number = ep.EpisodeNumber,
+                air_date       = ep.AirDate,
+            }),
+        };
+
+        var partitions = string.IsNullOrEmpty(episode.MetadataJson)
+            ? new Dictionary<string, JsonElement>()
+            : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(episode.MetadataJson!) ?? [];
+        partitions[pluginId] = JsonSerializer.SerializeToElement(metadata, ScraperMetadataBlobOptions);
+        episode.MetadataJson = JsonSerializer.Serialize(partitions);
+    }
+
+    /// <summary>Every (pluginId, externalId) pair this item has a stored external id for, in
+    /// the order they appear in MetadataJson -- see EnsureEpisodesResolvedAsync.</summary>
+    private static List<(string PluginId, string ExternalId)> CollectProviderExternalIds(string? metadataJson)
+    {
+        var result = new List<(string, string)>();
+        if (string.IsNullOrEmpty(metadataJson)) return result;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return result;
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (!prop.Name.StartsWith("chronicle.plugin.", StringComparison.Ordinal)) continue;
+                if (prop.Value.ValueKind != JsonValueKind.Object) continue;
+                var extId = TryGetString(prop.Value, "externalId");
+                if (!string.IsNullOrEmpty(extId)) result.Add((prop.Name, extId));
+            }
+        }
+        catch (JsonException) { }
+        return result;
     }
 
     /// <summary>Kodi's "getepisodedetails" step: full details for one already-known episode.</summary>

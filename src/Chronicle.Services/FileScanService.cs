@@ -98,6 +98,21 @@ namespace Chronicle.Services
                 return await ScanAudiobooksHierarchicallyAsync(
                     scannedFiles, mediaType, userId, threshold, ct);
 
+            // Other 3-level hierarchy types (TV, anime, ...): the flat per-file loop below
+            // treats every file as an independent top-level item using FileNameParser's
+            // single-character-separator regex, which mis-parses the extremely common
+            // "Show - S01E01 - Episode Title" naming convention (three-char " - " separators)
+            // into orphaned, wrongly-named items with no Show/Season nesting at all -- confirmed
+            // 2026-08-24 scanning a real library where this silently produced hundreds of
+            // garbage top-level "episodes". ScheduledScanService's nightly scan already avoids
+            // this by routing through the folder-hierarchy-aware PreviewGroupedAsync/
+            // ImportGroupsAsync pair instead of the flat scanner output; a manual "Scan Now"
+            // must use the exact same path so it doesn't silently misbehave for any type the
+            // flat loop was never designed for.
+            if (mediaType.HierarchyLevels >= 3 &&
+                !string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+                return await ScanHierarchicalAsync(request, mediaType, userId, threshold, ct);
+
             var added = 0;
             var alreadyInLibrary = 0;
             var skippedFiles = new List<SkippedFile>();
@@ -156,6 +171,87 @@ namespace Chronicle.Services
 
             return new FileScanSummary(added, skippedFiles.Count, alreadyInLibrary, skippedFiles);
         }
+
+        /// <summary>
+        /// "Scan Now" for a 3-level hierarchy type other than audiobooks (TV, anime, ...):
+        /// groups files by folder structure via PreviewGroupedAsync, then persists the
+        /// groups meeting the confidence threshold via ImportGroupsAsync -- the same pair
+        /// ScheduledScanService's nightly scan uses, so a manual scan produces the same
+        /// correctly-nested Show/Season/Episode hierarchy instead of flat, ungrouped items.
+        /// </summary>
+        private async Task<FileScanSummary> ScanHierarchicalAsync(
+            FileScanRequest request, MediaType mediaType, int userId, int threshold, CancellationToken ct)
+        {
+            var groupResult = await PreviewGroupedAsync(
+                new ScanPreviewRequest(request.Path, request.Recursive, request.MediaTypeId), ct);
+
+            double thresholdFraction = threshold / 100.0;
+            var passing = groupResult.Groups.Where(g => g.ConfidenceScore >= thresholdFraction).ToList();
+            var below   = groupResult.Groups.Where(g => g.ConfidenceScore < thresholdFraction).ToList();
+
+            var skippedFiles = below
+                .Select(g => (Group: g, Score: (int)Math.Round(g.ConfidenceScore * 100)))
+                .SelectMany(g => CollectLeafFiles(g.Group).Select(f =>
+                    new SkippedFile(f, Path.GetFileNameWithoutExtension(f), g.Score)))
+                .ToList();
+
+            if (passing.Count == 0)
+            {
+                _log.Information("Hierarchical scan complete: 0 added, {Skipped} below threshold", skippedFiles.Count);
+                return new FileScanSummary(0, skippedFiles.Count, 0, skippedFiles);
+            }
+
+            var importGroups  = passing.Select(ToScanGroupImport).ToList();
+            var importRequest = new ImportGroupsRequest(importGroups, request.MediaTypeId);
+
+            // manageProgress:false hands responsibility for Start/Complete to THIS caller
+            // (see ImportGroupsAsync's own manageProgress branches) -- ScheduledScanService
+            // brackets its own manageProgress:false calls the same way. Omitting this left
+            // the shared ImportProgressService singleton permanently reporting IsRunning
+            // after every manual "Scan Now" on a TV/anime folder.
+            var totalFiles = importGroups.Sum(g => g.TotalFileCount);
+            _importProgress.Start(totalFiles);
+            ImportApprovedSummary summary;
+            try
+            {
+                summary = await ImportGroupsAsync(importRequest, [userId], ct, manageProgress: false);
+            }
+            catch
+            {
+                _importProgress.Fail("Hierarchical scan failed");
+                throw;
+            }
+            _importProgress.Complete(new ImportProgressResult
+            {
+                Imported   = summary.Imported,
+                Failed     = summary.Failed,
+                Failures   = summary.Failures,
+                Duplicates = summary.Duplicates,
+                TotalFiles = totalFiles,
+            });
+
+            _log.Information(
+                "Hierarchical scan complete: {Added} added, {AlreadyInLibrary} already in library, {Skipped} below threshold",
+                summary.Imported, summary.Duplicates, skippedFiles.Count);
+
+            return new FileScanSummary(summary.Imported, skippedFiles.Count, summary.Duplicates, skippedFiles);
+        }
+
+        private static List<string> CollectLeafFiles(ScanGroup group) =>
+            group.Files.Concat(group.Children.SelectMany(CollectLeafFiles)).ToList();
+
+        /// <summary>Converts a grouped-scan result into the shape ImportGroupsAsync persists.
+        /// Internal (not private) so ScheduledScanService's nightly scan uses this exact same
+        /// conversion instead of maintaining its own copy -- the two used to be
+        /// near-verbatim duplicates that could silently drift apart.</summary>
+        internal static ScanGroupImport ToScanGroupImport(ScanGroup group) => new(
+            group.Name,
+            group.Year,
+            group.PosterPath,
+            group.Children.Select(ToScanGroupImport).ToList(),
+            group.Files,
+            group.FolderPath,
+            group.Number);
 
         // ── Preview ───────────────────────────────────────────────────────────────
 
