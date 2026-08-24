@@ -241,12 +241,17 @@ public class ImportService : IImportService
         if (primaryParts.Length == 2)
             allIds[primaryParts[0]] = primaryParts[1];
 
-        // 1. Try to match any of the external IDs against media_external_ids
+        // 1. Try to match any of the external IDs against media_external_ids. Source is
+        // matched case-insensitively (lowercased, same as StoreExternalIdsAsync's write
+        // path below and ScrobbleService.TryFindMediaItemAsync's own lookup) -- a
+        // mixed-case source string from a plugin used to silently miss an existing row
+        // that only differed in case, creating an avoidable duplicate stub.
         foreach (var (source, extId) in allIds)
         {
+            var normalizedSource = source.ToLowerInvariant();
             var match = await _db.MediaExternalIds
                 .Include(x => x.MediaItem)
-                .FirstOrDefaultAsync(x => x.Source == source && x.ExternalId == extId, ct);
+                .FirstOrDefaultAsync(x => x.Source == normalizedSource && x.ExternalId == extId, ct);
 
             if (match?.MediaItem != null)
                 return match.MediaItem;
@@ -299,15 +304,16 @@ public class ImportService : IImportService
     {
         foreach (var (source, extId) in ids)
         {
+            var normalizedSource = source.ToLowerInvariant();
             var exists = await _db.MediaExternalIds.AnyAsync(
-                x => x.MediaItemId == mediaItemId && x.Source == source, ct);
+                x => x.MediaItemId == mediaItemId && x.Source == normalizedSource, ct);
 
             if (!exists)
             {
                 _db.MediaExternalIds.Add(new MediaExternalId
                 {
                     MediaItemId = mediaItemId,
-                    Source      = source,
+                    Source      = normalizedSource,
                     ExternalId  = extId,
                 });
             }

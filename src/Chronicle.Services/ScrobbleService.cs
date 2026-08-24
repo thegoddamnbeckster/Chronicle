@@ -28,6 +28,11 @@ namespace Chronicle.Services
             var markedAsWatched = request.ProgressPercent >= WatchedThreshold;
             var timestamp = request.Timestamp ?? DateTime.UtcNow;
 
+            // Every scrobble (not just watched-threshold crossings) upserts the library
+            // entry -- resume position needs to be current after every progress update,
+            // not just once an item is finished. See UpsertLibraryStateAsync.
+            var entry = await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
+
             var evt = new InteractionEvent
             {
                 UserId          = userId,
@@ -41,28 +46,39 @@ namespace Chronicle.Services
 
             _context.InteractionEvents.Add(evt);
 
-            // Every scrobble (not just watched-threshold crossings) upserts the library
-            // entry -- resume position needs to be current after every progress update,
-            // not just once an item is finished. See UpsertLibraryStateAsync.
-            await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
-
             try
             {
                 await _context.SaveChangesAsync(ct);
+                return new ScrobbleResult(evt, markedAsWatched);
             }
-            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex, "user_libraries"))
+            {
+                // Two concurrent first-time scrobbles for the same (user, item) both found
+                // no existing row and both tried to insert, tripping the unique index. The
+                // whole SaveChangesAsync failed atomically, so evt's insert didn't land
+                // either -- detach only the losing UserLibrary insert (not the whole change
+                // set, which would also discard the still-valid evt add), reload the row the
+                // other request just committed, and retry as an update against it.
+                _context.Entry(entry).State = EntityState.Detached;
+                entry = await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
+                await _context.SaveChangesAsync(ct);
+                return new ScrobbleResult(evt, markedAsWatched);
+            }
+            catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex, "interaction_events"))
             {
                 // Duplicate scrobble — same (user, item, timestamp) already recorded.
-                // Clear the failed insert and return the pre-existing event.
-                _context.ChangeTracker.Clear();
-                var existing = await _context.InteractionEvents
+                // Detach only the failed event insert -- the UserLibrary upsert above is
+                // still a valid, unrelated change and must survive this retry (unlike the
+                // old ChangeTracker.Clear() here, which silently discarded it too) -- then
+                // return the pre-existing event.
+                _context.Entry(evt).State = EntityState.Detached;
+                await _context.SaveChangesAsync(ct);
+                var existing = await _context.InteractionEvents.AsNoTracking()
                     .FirstAsync(e => e.UserId == userId
                                   && e.MediaItemId == mediaItemId
                                   && e.Timestamp == timestamp, ct);
                 return new ScrobbleResult(existing, markedAsWatched);
             }
-
-            return new ScrobbleResult(evt, markedAsWatched);
         }
 
         /// <summary>
@@ -155,19 +171,30 @@ namespace Chronicle.Services
         /// </summary>
         public async Task<ResumeState?> GetResumeStateAsync(int userId, ResumeLookupRequest request, CancellationToken ct = default)
         {
-            var mediaItem = request.MediaItemId.HasValue
-                ? await _context.MediaItems.FindAsync([request.MediaItemId.Value], ct)
-                : await TryFindMediaItemAsync(
+            int mediaItemId;
+            if (request.MediaItemId.HasValue)
+            {
+                // No need to fetch the MediaItem itself just to confirm it exists --
+                // UserLibrary.MediaItemId is a real FK, so a row can only exist for a
+                // media item that does; a nonexistent id falls through to the same
+                // "entry == null -> null" result the MediaItems lookup would have given.
+                mediaItemId = request.MediaItemId.Value;
+            }
+            else
+            {
+                var mediaItem = await TryFindMediaItemAsync(
                     request.Title, request.Year, request.MediaType, request.ExternalIds ?? new Dictionary<string, string>(), ct);
-            if (mediaItem == null)
-                return null;
+                if (mediaItem == null)
+                    return null;
+                mediaItemId = mediaItem.Id;
+            }
 
             var entry = await _context.UserLibraries.AsNoTracking()
-                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItem.Id, ct);
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
             if (entry?.ResumePositionPercent is not double percent)
                 return null;
 
-            return new ResumeState(mediaItem.Id, percent, entry.ResumeUpdatedAt);
+            return new ResumeState(mediaItemId, percent, entry.ResumeUpdatedAt);
         }
 
         private async Task StoreExternalIdsAsync(
@@ -228,9 +255,11 @@ namespace Chronicle.Services
         /// old UpdateLibraryStatusAsync this replaces, resume position needs to be
         /// current after every progress update, and an item the user only ever gets
         /// partway through should still show as "Watching", not stay absent from their
-        /// library entirely until (if ever) they finish it.
+        /// library entirely until (if ever) they finish it. Returns the tracked entry so
+        /// callers can detach it and retry precisely on a unique-constraint conflict
+        /// without discarding unrelated pending changes (see ScrobbleAsync).
         /// </summary>
-        private async Task UpsertLibraryStateAsync(
+        private async Task<UserLibrary> UpsertLibraryStateAsync(
             int userId, int mediaItemId, double? progressPercent, bool markedAsWatched,
             DateTime timestamp, CancellationToken ct)
         {
@@ -250,10 +279,18 @@ namespace Chronicle.Services
                 };
                 _context.UserLibraries.Add(entry);
             }
-            else if (entry.Status == LibraryStatus.PlanToWatch)
+            else
             {
-                entry.Status    = LibraryStatus.Watching;
-                entry.StartedAt ??= DateTime.UtcNow;
+                if (entry.Status == LibraryStatus.PlanToWatch)
+                {
+                    entry.Status    = LibraryStatus.Watching;
+                    entry.StartedAt ??= DateTime.UtcNow;
+                }
+
+                // Refreshed on every real progress update, not just the PlanToWatch->
+                // Watching transition -- an actively-watched item should always read as
+                // recently active (Continue Watching sorts on this), not go stale the
+                // moment its first scrobble lands.
                 entry.UpdatedAt = DateTime.UtcNow;
             }
 
@@ -265,15 +302,23 @@ namespace Chronicle.Services
                 entry.ResumePositionPercent = null;
                 entry.ResumeUpdatedAt       = null;
             }
-            else if (progressPercent.HasValue)
+            // A resume position is only ever overwritten by a scrobble at least as recent
+            // as the one that set it -- otherwise a delayed/out-of-order scrobble (an
+            // offline queue replay, a backfill import) with an older explicit Timestamp
+            // could clobber a genuinely newer position with stale data.
+            else if (progressPercent.HasValue
+                     && (entry.ResumeUpdatedAt is not DateTime existing || timestamp >= existing))
             {
                 entry.ResumePositionPercent = progressPercent.Value;
                 entry.ResumeUpdatedAt       = timestamp;
             }
+
+            return entry;
         }
 
-        private static bool IsUniqueConstraintViolation(DbUpdateException ex) =>
+        private static bool IsUniqueConstraintViolation(DbUpdateException ex, string table) =>
             ex.InnerException?.Message.Contains("UNIQUE constraint failed",
-                StringComparison.OrdinalIgnoreCase) == true;
+                StringComparison.OrdinalIgnoreCase) == true
+            && ex.InnerException.Message.Contains(table, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -59,11 +59,7 @@ public static class MediaItemMatcher
         if (string.IsNullOrWhiteSpace(mediaType))
             return null;
 
-        var name = NormalizeMediaTypeName(mediaType);
-        return await db.MediaTypes
-            .Where(t => t.Name == name && t.IsActive)
-            .Select(t => (int?)t.Id)
-            .FirstOrDefaultAsync(ct);
+        return await ResolveTypeIdPreferringLiteralAsync(db, mediaType, ct);
     }
 
     /// <summary>
@@ -78,10 +74,10 @@ public static class MediaItemMatcher
     public static async Task<int> ResolveMediaTypeIdForStubAsync(
         ChronicleDbContext db, string? mediaType, CancellationToken ct)
     {
-        var name = NormalizeMediaTypeName(string.IsNullOrWhiteSpace(mediaType) ? "movies" : mediaType);
+        var input = string.IsNullOrWhiteSpace(mediaType) ? "movies" : mediaType;
 
-        var type = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == name && t.IsActive, ct);
-        if (type is not null) return type.Id;
+        var resolved = await ResolveTypeIdPreferringLiteralAsync(db, input, ct);
+        if (resolved.HasValue) return resolved.Value;
 
         var fallback = await db.MediaTypes
             .Where(t => t.IsActive)
@@ -91,6 +87,37 @@ public static class MediaItemMatcher
         return fallback?.Id
             ?? throw new InvalidOperationException(
                 "No active media types found in the database. Create at least one media type first.");
+    }
+
+    /// <summary>
+    /// Resolves a MediaTypeId by name, checking the raw (lowercased) input against the DB
+    /// BEFORE applying the built-in alias table above. A user-defined custom MediaType always
+    /// wins over an alias — e.g. if a user creates a type literally named "episode" (a real,
+    /// intentional use of Architecture Rule 1's "nothing hardcoded"), scrobbles/imports tagged
+    /// "episode" must resolve to THAT type, not get silently redirected to the seeded "tv" row
+    /// by the "episode" -> "tv" alias, which exists only to cover Kodi's own untyped item
+    /// string when no such custom type exists.
+    /// </summary>
+    private static async Task<int?> ResolveTypeIdPreferringLiteralAsync(
+        ChronicleDbContext db, string mediaType, CancellationToken ct)
+    {
+        var raw = mediaType.ToLowerInvariant();
+
+        var literal = await db.MediaTypes
+            .Where(t => t.Name == raw && t.IsActive)
+            .Select(t => (int?)t.Id)
+            .FirstOrDefaultAsync(ct);
+        if (literal.HasValue)
+            return literal;
+
+        var aliased = NormalizeMediaTypeName(raw);
+        if (aliased == raw)
+            return null; // no alias applies, and the literal lookup above already came back empty
+
+        return await db.MediaTypes
+            .Where(t => t.Name == aliased && t.IsActive)
+            .Select(t => (int?)t.Id)
+            .FirstOrDefaultAsync(ct);
     }
 
     /// <summary>
