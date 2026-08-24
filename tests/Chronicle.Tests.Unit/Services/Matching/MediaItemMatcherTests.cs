@@ -28,6 +28,7 @@ namespace Chronicle.Tests.Unit.Services.Matching
         [InlineData("MOVIE", "movies")]
         [InlineData("tv_show", "tv")]
         [InlineData("tv_episode", "tv")]
+        [InlineData("episode", "tv")] // Kodi's own Player.GetItem "type" value for TV episodes -- see Chronicle_Scrobbler's media_info.py
         [InlineData("track", "music")]
         [InlineData("book", "books")]
         [InlineData("audiobooks", "audiobooks")] // unrecognized -- passed through, not hardcoded away

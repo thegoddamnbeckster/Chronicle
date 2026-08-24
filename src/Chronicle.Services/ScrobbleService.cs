@@ -41,8 +41,10 @@ namespace Chronicle.Services
 
             _context.InteractionEvents.Add(evt);
 
-            if (markedAsWatched)
-                await UpdateLibraryStatusAsync(userId, mediaItemId, ct);
+            // Every scrobble (not just watched-threshold crossings) upserts the library
+            // entry -- resume position needs to be current after every progress update,
+            // not just once an item is finished. See UpsertLibraryStateAsync.
+            await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
 
             try
             {
@@ -77,36 +79,16 @@ namespace Chronicle.Services
         private async Task<MediaItem> FindOrCreateMediaItemAsync(ScrobbleRequest request, CancellationToken ct)
         {
             var externalIds = request.ExternalIds ?? new Dictionary<string, string>();
-
-            foreach (var (source, extId) in externalIds)
+            var found = await TryFindMediaItemAsync(request.Title, request.Year, request.MediaType, externalIds, ct);
+            if (found != null)
             {
-                var match = await _context.MediaExternalIds
-                    .Include(x => x.MediaItem)
-                    .FirstOrDefaultAsync(x => x.Source == source.ToLowerInvariant() && x.ExternalId == extId, ct);
-                if (match?.MediaItem != null)
-                    return match.MediaItem;
+                await StoreExternalIdsAsync(found.Id, externalIds, ct);
+                return found;
             }
 
             if (string.IsNullOrWhiteSpace(request.Title))
                 throw new ArgumentException(
                     "Scrobble request has no MediaItemId and no Title to create a stub item from.");
-
-            // Only attempts a title+year match when a media type can be confidently
-            // resolved -- an omitted/unrecognized MediaType skips straight to stub creation
-            // rather than matching unscoped (which would risk the exact cross-type
-            // collision this scoping exists to prevent; see MediaItemMatcher docs).
-            var matchTypeId = await MediaItemMatcher.TryResolveMediaTypeIdForMatchAsync(_context, request.MediaType, ct);
-            if (matchTypeId.HasValue)
-            {
-                var titleMatch = await MediaItemMatcher.FindByTitleYearAsync(
-                    _context, request.Title, request.Year, matchTypeId.Value, ct);
-
-                if (titleMatch != null)
-                {
-                    await StoreExternalIdsAsync(titleMatch.Id, externalIds, ct);
-                    return titleMatch;
-                }
-            }
 
             var stubTypeId = await MediaItemMatcher.ResolveMediaTypeIdForStubAsync(_context, request.MediaType, ct);
             var stub = new MediaItem
@@ -125,6 +107,67 @@ namespace Chronicle.Services
             await _context.SaveChangesAsync(ct);
 
             return stub;
+        }
+
+        /// <summary>
+        /// The "find" half of FindOrCreateMediaItemAsync, split out so
+        /// GetResumeStateAsync can look an item up WITHOUT ever creating a stub --
+        /// checking "is there a resume position for this?" must never itself create a
+        /// media item for something Chronicle has never actually seen. Same external-ID-
+        /// then-type-scoped-title/year matching either caller uses; returns null on no
+        /// match instead of falling through to stub creation.
+        /// </summary>
+        private async Task<MediaItem?> TryFindMediaItemAsync(
+            string? title, int? year, string? mediaType,
+            IReadOnlyDictionary<string, string> externalIds, CancellationToken ct)
+        {
+            foreach (var (source, extId) in externalIds)
+            {
+                var match = await _context.MediaExternalIds
+                    .Include(x => x.MediaItem)
+                    .FirstOrDefaultAsync(x => x.Source == source.ToLowerInvariant() && x.ExternalId == extId, ct);
+                if (match?.MediaItem != null)
+                    return match.MediaItem;
+            }
+
+            if (string.IsNullOrWhiteSpace(title))
+                return null;
+
+            // Only attempts a title+year match when a media type can be confidently
+            // resolved -- an omitted/unrecognized MediaType returns null rather than
+            // matching unscoped (which would risk the exact cross-type collision this
+            // scoping exists to prevent; see MediaItemMatcher docs).
+            var matchTypeId = await MediaItemMatcher.TryResolveMediaTypeIdForMatchAsync(_context, mediaType, ct);
+            if (!matchTypeId.HasValue)
+                return null;
+
+            return await MediaItemMatcher.FindByTitleYearAsync(_context, title, year, matchTypeId.Value, ct);
+        }
+
+        /// <summary>
+        /// The cross-device "resume where I left off" lookup: resolves the item the same
+        /// way a scrobble would (external ID, then type-scoped title/year -- never
+        /// creates a stub, see TryFindMediaItemAsync), then returns its stored resume
+        /// position if it has one. Null covers both "never seen this item" and "seen it,
+        /// nothing to resume" identically -- a client checking whether to seek on
+        /// playback start only ever needs to know "is there a position to resume from",
+        /// not why not.
+        /// </summary>
+        public async Task<ResumeState?> GetResumeStateAsync(int userId, ResumeLookupRequest request, CancellationToken ct = default)
+        {
+            var mediaItem = request.MediaItemId.HasValue
+                ? await _context.MediaItems.FindAsync([request.MediaItemId.Value], ct)
+                : await TryFindMediaItemAsync(
+                    request.Title, request.Year, request.MediaType, request.ExternalIds ?? new Dictionary<string, string>(), ct);
+            if (mediaItem == null)
+                return null;
+
+            var entry = await _context.UserLibraries.AsNoTracking()
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItem.Id, ct);
+            if (entry?.ResumePositionPercent is not double percent)
+                return null;
+
+            return new ResumeState(mediaItem.Id, percent, entry.ResumeUpdatedAt);
         }
 
         private async Task StoreExternalIdsAsync(
@@ -180,7 +223,16 @@ namespace Chronicle.Services
             return (lastWatchedAt, count);
         }
 
-        private async Task UpdateLibraryStatusAsync(int userId, int mediaItemId, CancellationToken ct)
+        /// <summary>
+        /// Runs on every scrobble, not just watched-threshold crossings -- unlike the
+        /// old UpdateLibraryStatusAsync this replaces, resume position needs to be
+        /// current after every progress update, and an item the user only ever gets
+        /// partway through should still show as "Watching", not stay absent from their
+        /// library entirely until (if ever) they finish it.
+        /// </summary>
+        private async Task UpsertLibraryStateAsync(
+            int userId, int mediaItemId, double? progressPercent, bool markedAsWatched,
+            DateTime timestamp, CancellationToken ct)
         {
             var entry = await _context.UserLibraries
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
@@ -203,6 +255,20 @@ namespace Chronicle.Services
                 entry.Status    = LibraryStatus.Watching;
                 entry.StartedAt ??= DateTime.UtcNow;
                 entry.UpdatedAt = DateTime.UtcNow;
+            }
+
+            // Cleared once watched -- an item you just finished has nothing left to
+            // "resume", and leaving a stale percent behind would make a later rewatch
+            // start with a bogus seek-ahead on whatever device picks it up next.
+            if (markedAsWatched)
+            {
+                entry.ResumePositionPercent = null;
+                entry.ResumeUpdatedAt       = null;
+            }
+            else if (progressPercent.HasValue)
+            {
+                entry.ResumePositionPercent = progressPercent.Value;
+                entry.ResumeUpdatedAt       = timestamp;
             }
         }
 

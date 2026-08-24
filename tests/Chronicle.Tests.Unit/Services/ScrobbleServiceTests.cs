@@ -202,6 +202,102 @@ namespace Chronicle.Tests.Unit.Services
             lastWatchedAt.Should().BeCloseTo(latest, TimeSpan.FromSeconds(1));
         }
 
+        [Fact]
+        public async Task ScrobbleAsync_BelowWatchedThreshold_SetsResumePosition()
+        {
+            var when = DateTime.UtcNow;
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 42.0, when, "Kodi"));
+
+            var entry = await _context.UserLibraries.FirstAsync(l => l.UserId == 1 && l.MediaItemId == 1);
+            entry.ResumePositionPercent.Should().Be(42.0);
+            entry.ResumeUpdatedAt.Should().Be(when);
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_LowProgress_StillCreatesLibraryEntryAsWatching()
+        {
+            // Unlike the old watched-threshold-only upsert, ANY scrobble should create/
+            // update the library entry now -- resume position has to be tracked from the
+            // very first progress update, not just once an item is finished.
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 5.0, null, "Kodi"));
+
+            var entry = await _context.UserLibraries.FirstOrDefaultAsync(l => l.UserId == 1 && l.MediaItemId == 1);
+            entry.Should().NotBeNull();
+            entry!.Status.Should().Be(LibraryStatus.Watching);
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_CrossesWatchedThreshold_ClearsResumePosition()
+        {
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 60.0, DateTime.UtcNow.AddMinutes(-5), "Kodi"));
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 95.0, DateTime.UtcNow, "Kodi"));
+
+            var entry = await _context.UserLibraries.FirstAsync(l => l.UserId == 1 && l.MediaItemId == 1);
+            entry.ResumePositionPercent.Should().BeNull();
+            entry.ResumeUpdatedAt.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task GetResumeStateAsync_KnownItemWithResumePosition_ReturnsIt()
+        {
+            var when = DateTime.UtcNow;
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 33.0, when, "Kodi"));
+
+            var state = await _service.GetResumeStateAsync(1, new ResumeLookupRequest(1));
+
+            state.Should().NotBeNull();
+            state!.MediaItemId.Should().Be(1);
+            state.ResumePositionPercent.Should().Be(33.0);
+            state.ResumeUpdatedAt.Should().Be(when);
+        }
+
+        [Fact]
+        public async Task GetResumeStateAsync_ItemNeverScrobbled_ReturnsNull()
+        {
+            var state = await _service.GetResumeStateAsync(1, new ResumeLookupRequest(1));
+
+            state.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task GetResumeStateAsync_FullyWatchedItem_ReturnsNull()
+        {
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 90.0, null, "Kodi"));
+
+            var state = await _service.GetResumeStateAsync(1, new ResumeLookupRequest(1));
+
+            state.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task GetResumeStateAsync_UnresolvableItem_ReturnsNullAndCreatesNoStub()
+        {
+            var before = await _context.MediaItems.CountAsync();
+
+            var state = await _service.GetResumeStateAsync(1, new ResumeLookupRequest(
+                MediaItemId: null, Title: "Something Chronicle Has Never Heard Of", Year: 2026, MediaType: "movie"));
+
+            state.Should().BeNull();
+            (await _context.MediaItems.CountAsync()).Should().Be(before); // never creates a stub
+        }
+
+        [Fact]
+        public async Task GetResumeStateAsync_ResolvesByExternalId_LikeScrobbleDoes()
+        {
+            _context.MediaExternalIds.Add(new MediaExternalId
+            {
+                MediaItemId = 1, Source = "imdb", ExternalId = "tt1234567"
+            });
+            await _context.SaveChangesAsync();
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 20.0, null, "Kodi"));
+
+            var state = await _service.GetResumeStateAsync(1, new ResumeLookupRequest(
+                MediaItemId: null, ExternalIds: new Dictionary<string, string> { ["imdb"] = "tt1234567" }));
+
+            state.Should().NotBeNull();
+            state!.MediaItemId.Should().Be(1);
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

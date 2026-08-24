@@ -26,7 +26,15 @@ public static class MediaItemMatcher
     /// </summary>
     public static string NormalizeMediaTypeName(string mediaType) => mediaType.ToLowerInvariant() switch
     {
-        "tv_show" or "tv_episode" or "show" or "tv" => "tv",
+        // "episode" (no tv_ prefix) is what Kodi's own Player.GetItem/VideoLibrary
+        // JSON-RPC literally returns as an item's "type" for a TV episode -- confirmed
+        // in Chronicle_Scrobbler's media_info.py, whose media_type property passes it
+        // straight through unchanged into every scrobble payload's mediaType field.
+        // Missing here meant every TV episode scrobble/resume-lookup had a mediaType
+        // this table didn't recognize, so it could never resolve to the seeded "tv"
+        // type at all -- silently defeating the whole point of type-scoped matching
+        // for the single most common TV scrobble source.
+        "tv_show" or "tv_episode" or "show" or "tv" or "episode" => "tv",
         "movie" or "film"                            => "movies",
         "anime_episode"                              => "anime",
         "track" or "song"                            => "music",
