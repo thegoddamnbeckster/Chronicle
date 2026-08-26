@@ -44,6 +44,40 @@ public class FileScanServiceHierarchyTests
         Assert.Equal(3600, result[0].TotalDurationSeconds);
     }
 
+    [Fact]
+    public void CollapseAudiobooksToFolders_BookFolderUnderAuthor_SetsAuthorFolderPath()
+    {
+        var libraryRoot = @"C:\Books";
+        var authorFolder = libraryRoot + @"\Brandon Sanderson";
+        var bookFolder    = authorFolder + @"\Stormlight - 1 - (2010) - The Way of Kings";
+        var files = new List<ScannedFile>
+        {
+            new() { FilePath = bookFolder + @"\01.mp3", DurationSeconds = 1800,
+                    AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
+        };
+
+        var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, libraryRoot);
+
+        Assert.Single(result);
+        Assert.Equal(authorFolder, result[0].AuthorFolderPath);
+    }
+
+    [Fact]
+    public void CollapseAudiobooksToFolders_BookFolderAtScanRoot_LeavesAuthorFolderPathNull()
+    {
+        var root       = @"C:\Books\Brandon Sanderson";
+        var bookFolder = root; // book folder IS the scan root — no author level above it
+        var files = new List<ScannedFile>
+        {
+            new() { FilePath = bookFolder + @"\01.mp3", DurationSeconds = 1800 },
+        };
+
+        var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, root);
+
+        Assert.Single(result);
+        Assert.Null(result[0].AuthorFolderPath);
+    }
+
     // ── GroupAudiobooksByAuthorAndSeries ──────────────────────────────────────
 
     [Fact]
@@ -81,6 +115,23 @@ public class FileScanServiceHierarchyTests
         Assert.Equal(1, standalone.HierarchyLevel);
         Assert.Empty(standalone.Children);
         Assert.Single(standalone.Files);
+    }
+
+    [Fact]
+    public void GroupAudiobooksByAuthorAndSeries_PropagatesAuthorFolderPathOntoAuthorGroup()
+    {
+        var files = new List<ScannedFile>
+        {
+            new() { FilePath = @"C:\Books\B Sanderson\SA-1-(2010)-Way",
+                    ParsedTitle = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson",
+                    AudioGrouping = "Stormlight Archive", ParsedYear = 2010,
+                    AuthorFolderPath = @"C:\Books\B Sanderson" },
+        };
+
+        var groups = FileScanService.GroupAudiobooksByAuthorAndSeriesForTest(files);
+
+        Assert.Single(groups);
+        Assert.Equal(@"C:\Books\B Sanderson", groups[0].FolderPath);
     }
 
     [Fact]

@@ -84,8 +84,14 @@ namespace Chronicle.Tests.Unit.Services
             var libraryEntry = _context.UserLibraries
                 .FirstOrDefault(l => l.UserId == 1 && l.MediaItemId == 1);
 
+            // A scrobble at/above WatchedThreshold marks the item Completed outright, not
+            // "Watching" -- confirmed live 2026-08-24 that the previous behavior (asserted
+            // here until now) left watched-threshold scrobbles stuck as Watching/Unwatched
+            // forever, since nothing ever transitioned a library entry to Completed.
             libraryEntry.Should().NotBeNull();
-            libraryEntry!.Status.Should().Be(LibraryStatus.Watching);
+            libraryEntry!.Status.Should().Be(LibraryStatus.Completed);
+            libraryEntry.CompletedAt.Should().NotBeNull();
+            libraryEntry.ResumePositionPercent.Should().BeNull();
         }
 
         [Fact]
@@ -296,6 +302,94 @@ namespace Chronicle.Tests.Unit.Services
 
             state.Should().NotBeNull();
             state!.MediaItemId.Should().Be(1);
+        }
+
+        // ── RateAsync ──────────────────────────────────────────────────────────────
+
+        [Fact]
+        public async Task RateAsync_KnownItem_SetsUserRating()
+        {
+            var result = await _service.RateAsync(1, new RateRequest(1, 8));
+
+            result.MediaItemId.Should().Be(1);
+            result.Rating.Should().Be(8);
+
+            var entry = await _context.UserLibraries.FirstAsync(l => l.UserId == 1 && l.MediaItemId == 1);
+            entry.UserRating.Should().Be(8);
+        }
+
+        [Fact]
+        public async Task RateAsync_NoExistingLibraryEntry_CreatesOneAsCompleted()
+        {
+            // Rating something implies it was watched -- even if this user's own device
+            // never itself scrobbled it (e.g. a different device did the scrobbling).
+            await _service.RateAsync(1, new RateRequest(1, 9));
+
+            var entry = await _context.UserLibraries.FirstOrDefaultAsync(l => l.UserId == 1 && l.MediaItemId == 1);
+            entry.Should().NotBeNull();
+            entry!.Status.Should().Be(LibraryStatus.Completed);
+            entry.UserRating.Should().Be(9);
+        }
+
+        [Fact]
+        public async Task RateAsync_ExistingLibraryEntry_OverwritesRatingWithoutChangingStatus()
+        {
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 40.0, null, "Kodi")); // -> Watching, unfinished
+
+            await _service.RateAsync(1, new RateRequest(1, 7));
+
+            var entry = await _context.UserLibraries.FirstAsync(l => l.UserId == 1 && l.MediaItemId == 1);
+            entry.UserRating.Should().Be(7);
+            entry.Status.Should().Be(LibraryStatus.Watching); // rating alone doesn't force it to Completed
+
+            await _service.RateAsync(1, new RateRequest(1, 3)); // rate again -- overwrites, not additive
+            entry.UserRating.Should().Be(3);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(11)]
+        [InlineData(-1)]
+        public async Task RateAsync_RatingOutsideOneToTen_ThrowsArgumentException(int rating)
+        {
+            await FluentActions.Invoking(() => _service.RateAsync(1, new RateRequest(1, rating)))
+                .Should().ThrowAsync<ArgumentException>();
+        }
+
+        [Fact]
+        public async Task RateAsync_UnknownMediaItemId_Throws()
+        {
+            await FluentActions.Invoking(() => _service.RateAsync(1, new RateRequest(999, 5)))
+                .Should().ThrowAsync<MediaNotFoundException>();
+        }
+
+        [Fact]
+        public async Task RateAsync_ResolvesByExternalId_LikeScrobbleDoes()
+        {
+            _context.MediaExternalIds.Add(new MediaExternalId
+            {
+                MediaItemId = 1, Source = "imdb", ExternalId = "tt1234567"
+            });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.RateAsync(1, new RateRequest(
+                MediaItemId: null, Rating: 6,
+                ExternalIds: new Dictionary<string, string> { ["imdb"] = "tt1234567" }));
+
+            result.MediaItemId.Should().Be(1);
+        }
+
+        [Fact]
+        public async Task RateAsync_UnresolvableTitle_ThrowsAndCreatesNoStub()
+        {
+            var before = await _context.MediaItems.CountAsync();
+
+            await FluentActions.Invoking(() => _service.RateAsync(1, new RateRequest(
+                    MediaItemId: null, Rating: 5,
+                    Title: "Something Chronicle Has Never Heard Of", Year: 2026, MediaType: "movie")))
+                .Should().ThrowAsync<MediaNotFoundException>();
+
+            (await _context.MediaItems.CountAsync()).Should().Be(before); // never creates a stub
         }
 
         public void Dispose() => _context.Dispose();

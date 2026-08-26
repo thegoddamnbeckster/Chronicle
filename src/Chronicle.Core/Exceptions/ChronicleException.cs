@@ -9,6 +9,7 @@ namespace Chronicle.Core.Exceptions
     public class MediaNotFoundException : ChronicleException
     {
         public MediaNotFoundException(int id) : base($"Media item {id} was not found.") { }
+        public MediaNotFoundException(string title) : base($"No media item resolvable from title '{title}'.") { }
     }
 
     public class UserNotFoundException : ChronicleException

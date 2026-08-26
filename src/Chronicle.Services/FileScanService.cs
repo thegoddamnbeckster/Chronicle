@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Core.Models.Scan;
@@ -717,7 +718,8 @@ namespace Chronicle.Services
 
                 // Find or create Author (L0)
                 var author = await FindOrCreateParentAsync(
-                    authorGroup.Name, mediaType.Id, parentId: null, hierarchyLevel: 0, ct);
+                    authorGroup.Name, mediaType.Id, parentId: null, hierarchyLevel: 0, ct,
+                    folderPath: authorGroup.FolderPath);
 
                 // Library entry lives at the Author level (one entry per author, not per book)
                 var entryExists = await _context.UserLibraries
@@ -1908,6 +1910,12 @@ namespace Chronicle.Services
                 var parentFolderName = (!parentIsRoot && parentDir is not null)
                     ? Path.GetFileName(parentDir)
                     : null;
+                // The full path (not just the name) of that same author folder — carried onto
+                // the representative entry so the Author container item can later record where
+                // it physically lives. Kept independent of whether an AudioAlbumArtist/AudioArtist
+                // tag was present: the folder-name fallback above only fires when tags are absent,
+                // but the physical folder path is valid signal either way.
+                rep.AuthorFolderPath = (!parentIsRoot && parentDir is not null) ? parentDir : null;
 
                 // Always parse the folder name for series/year — used as fallback below.
                 var (folderTitle, folderYear, folderSeries) =
@@ -2113,6 +2121,9 @@ namespace Chronicle.Services
                     };
                     authorGroups[authorName] = authorGroup;
                 }
+                // First known folder wins — later files for the same tag-derived author name
+                // filling in what an earlier one (e.g. a root-level standalone file) couldn't.
+                authorGroup.FolderPath ??= file.AuthorFolderPath;
 
                 // Build the leaf ScanGroup for the book itself
                 var bookName = !string.IsNullOrWhiteSpace(file.ParsedTitle)
@@ -2203,7 +2214,8 @@ namespace Chronicle.Services
             int mediaTypeId,
             int? parentId,
             int hierarchyLevel,
-            CancellationToken ct)
+            CancellationToken ct,
+            string? folderPath = null)
         {
             var nameLower = name.ToLowerInvariant();
 
@@ -2217,7 +2229,15 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(ct);
 
             if (existing is not null)
+            {
+                // Backfill: this container was created before folderPath was ever recorded for
+                // L0/L1 parent nodes (only leaf book items got one), so every author scanned
+                // before this fix shows "No file on disk" in the UI despite the scanner knowing
+                // exactly which directory it lives in. Patch it in on the next rescan.
+                if (folderPath is not null)
+                    SetContainerFolderPathIfMissing(existing, folderPath);
                 return existing;
+            }
 
             var item = new MediaItem
             {
@@ -2228,10 +2248,50 @@ namespace Chronicle.Services
                 CreatedAt      = DateTime.UtcNow,
                 UpdatedAt      = DateTime.UtcNow,
             };
+            if (folderPath is not null)
+                SetContainerFolderPathIfMissing(item, folderPath);
 
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct);
             return item;
+        }
+
+        /// <summary>
+        /// Sets "fileScanner.folderPath" on a container item (Author/Series) if not already
+        /// present — a surgical single-key merge, deliberately NOT routed through
+        /// SerializeMetadata(). SerializeMetadata rebuilds MetadataJson from a typed
+        /// {Tmdb, FileScanner} root, which silently drops every other partition (a provider's
+        /// own full-plugin-id key, "_overrides", "_resolved") on round-trip — fine for a fresh
+        /// item with no MetadataJson yet, but every one of these container items has typically
+        /// already been enriched by a metadata provider (e.g. Hardcover) by the time a rescan
+        /// runs this backfill, and that data must survive untouched.
+        /// </summary>
+        private static void SetContainerFolderPathIfMissing(MediaItem item, string folderPath)
+        {
+            JsonObject root;
+            try
+            {
+                root = (!string.IsNullOrWhiteSpace(item.MetadataJson)
+                    ? JsonNode.Parse(item.MetadataJson) as JsonObject
+                    : null) ?? new JsonObject();
+            }
+            catch (JsonException)
+            {
+                root = new JsonObject();
+            }
+
+            if (root["fileScanner"] is not JsonObject fs)
+            {
+                fs = new JsonObject();
+                root["fileScanner"] = fs;
+            }
+
+            if (fs["folderPath"] is not null)
+                return;   // already recorded — never overwrite with a possibly-stale rescan value
+
+            fs["folderPath"] = folderPath;
+            item.MetadataJson = root.ToJsonString();
+            item.UpdatedAt    = DateTime.UtcNow;
         }
 
         // ── MetadataJson helpers ──────────────────────────────────────────────────

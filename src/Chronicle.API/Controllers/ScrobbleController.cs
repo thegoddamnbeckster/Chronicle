@@ -90,7 +90,8 @@ namespace Chronicle.API.Controllers
                     e.Timestamp,
                     e.MarkedAsWatched,
                     e.DeviceName,
-                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null
+                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null,
+                    IsApproximateTimestamp: e.IsApproximateTimestamp
                 );
             }).ToList();
 
@@ -136,6 +137,46 @@ namespace Chronicle.API.Controllers
 
             return Ok(ApiResponse<ResumeStateDto>.Ok(new ResumeStateDto(
                 state.MediaItemId, state.ResumePositionPercent, state.ResumeUpdatedAt)));
+        }
+
+        /// <summary>
+        /// Sets/overwrites the caller's rating (1-10) for an item -- the same UserRating
+        /// field the web UI's "Your Rating" dropdown edits. Used by the rating add-on's
+        /// SIMKL-style post-playback prompt: the item is identified the same way a
+        /// scrobble/resume-check would be (MediaItemId if known, else ExternalIds/Title/
+        /// Year/MediaType), never creating a stub media item if it can't be resolved --
+        /// a rating is expected to arrive for something already scrobbled at least once.
+        /// </summary>
+        [HttpPost("rating")]
+        public async Task<IActionResult> Rate([FromBody] RateRequestDto request)
+        {
+            if (request.MediaItemId is null && string.IsNullOrWhiteSpace(request.Title))
+                return BadRequest(ApiResponse<RateResponseDto>.Fail(
+                    "MEDIA_ITEM_REQUIRED", "Supply either mediaItemId or title (+ optional externalIds/year)."));
+
+            var userId = GetUserId();
+            try
+            {
+                var result = await _scrobbleService.RateAsync(userId, new RateRequest(
+                    request.MediaItemId,
+                    request.Rating,
+                    request.ExternalIds,
+                    request.Title,
+                    request.Year,
+                    request.MediaType
+                ), HttpContext.RequestAborted);
+
+                return Ok(ApiResponse<RateResponseDto>.Ok(
+                    new RateResponseDto(result.MediaItemId, result.Rating)));
+            }
+            catch (MediaNotFoundException ex)
+            {
+                return NotFound(ApiResponse<RateResponseDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ApiResponse<RateResponseDto>.Fail("INVALID_RATING", ex.Message));
+            }
         }
 
         private int GetUserId() =>

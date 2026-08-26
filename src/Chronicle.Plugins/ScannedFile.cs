@@ -78,6 +78,14 @@ public class ScannedFile
     /// Audiobook managers store the series name here (e.g. "The Kingkiller Chronicle").
     /// </summary>
     public string? AudioGrouping { get; set; }
+    /// <summary>
+    /// Absolute path to this book's parent directory (the author folder, under the
+    /// expected &lt;Author&gt;\&lt;Series - Num - (Year) - Title&gt;\files layout) — null when
+    /// the book folder sits directly at the scan root. Set by <c>CollapseAudiobooksToFolders</c>;
+    /// carried onto the Author-level ScanGroup so the container item can record where it
+    /// physically lives, the same way a book item records its own folder.
+    /// </summary>
+    public string? AuthorFolderPath { get; set; }
 
     // ── Container / embedded video tags ────────────────────────────────────
     /// <summary>Title embedded in the media container's tag (distinct from ParsedTitle, which is filename-derived).</summary>

@@ -197,6 +197,67 @@ namespace Chronicle.Services
             return new ResumeState(mediaItemId, percent, entry.ResumeUpdatedAt);
         }
 
+        /// <summary>
+        /// Sets the caller's UserRating for an item, resolving it the same way
+        /// GetResumeStateAsync does (MediaItemId when known, else external-id/title/year
+        /// match -- never a stub creation, since a rating is expected to arrive after the
+        /// item was already scrobbled at least once). Creates the UserLibrary row if one
+        /// doesn't exist yet (e.g. a rating submitted for an item scrobbled by a different
+        /// device that never itself created a library entry here) so the rating has
+        /// somewhere to live, same as UpsertLibraryStateAsync does for scrobbles.
+        /// </summary>
+        public async Task<RateResult> RateAsync(int userId, RateRequest request, CancellationToken ct = default)
+        {
+            if (request.Rating is < 1 or > 10)
+                throw new ArgumentException("Rating must be between 1 and 10.");
+
+            int mediaItemId;
+            if (request.MediaItemId.HasValue)
+            {
+                mediaItemId = request.MediaItemId.Value;
+                var exists = await _context.MediaItems.AnyAsync(m => m.Id == mediaItemId, ct);
+                if (!exists)
+                    throw new MediaNotFoundException(mediaItemId);
+            }
+            else
+            {
+                var item = await TryFindMediaItemAsync(
+                    request.Title, request.Year, request.MediaType,
+                    request.ExternalIds ?? new Dictionary<string, string>(), ct);
+                if (item is null)
+                    throw new MediaNotFoundException(request.Title ?? "(untitled)");
+                mediaItemId = item.Id;
+            }
+
+            var entry = await _context.UserLibraries
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+
+            if (entry is null)
+            {
+                entry = new UserLibrary
+                {
+                    UserId      = userId,
+                    MediaItemId = mediaItemId,
+                    // A rating implies the item was watched -- there's no scrobble history
+                    // for it under this user yet (that's the only way this branch is
+                    // reached), so mark it Completed rather than leaving it Unwatched with
+                    // a rating attached, which the library view would show inconsistently.
+                    Status      = LibraryStatus.Completed,
+                    AddedAt     = DateTime.UtcNow,
+                    UpdatedAt   = DateTime.UtcNow,
+                    StartedAt   = DateTime.UtcNow,
+                    CompletedAt = DateTime.UtcNow,
+                };
+                _context.UserLibraries.Add(entry);
+            }
+
+            entry.UserRating = request.Rating;
+            entry.UpdatedAt  = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            return new RateResult(mediaItemId, request.Rating);
+        }
+
         private async Task StoreExternalIdsAsync(
             int mediaItemId, IReadOnlyDictionary<string, string> ids, CancellationToken ct)
         {
@@ -272,25 +333,37 @@ namespace Chronicle.Services
                 {
                     UserId      = userId,
                     MediaItemId = mediaItemId,
-                    Status      = LibraryStatus.Watching,
+                    Status      = markedAsWatched ? LibraryStatus.Completed : LibraryStatus.Watching,
                     AddedAt     = DateTime.UtcNow,
                     UpdatedAt   = DateTime.UtcNow,
-                    StartedAt   = DateTime.UtcNow
+                    StartedAt   = DateTime.UtcNow,
+                    CompletedAt = markedAsWatched ? timestamp : null,
                 };
                 _context.UserLibraries.Add(entry);
             }
             else
             {
-                if (entry.Status == LibraryStatus.PlanToWatch)
+                // A scrobble crossing the watched threshold is a strong, unambiguous signal
+                // regardless of whatever status the entry was already in (including a stale
+                // "Watching" left behind by a version of this method that never made this
+                // transition at all -- confirmed live 2026-08-24: entries scrobbled past
+                // WatchedThreshold stayed "Unwatched" forever, since only the PlanToWatch->
+                // Watching transition below existed and nothing ever set Completed).
+                if (markedAsWatched)
+                {
+                    entry.Status      = LibraryStatus.Completed;
+                    entry.CompletedAt = timestamp;
+                    entry.StartedAt ??= DateTime.UtcNow;
+                }
+                else if (entry.Status is LibraryStatus.PlanToWatch or LibraryStatus.Unwatched)
                 {
                     entry.Status    = LibraryStatus.Watching;
                     entry.StartedAt ??= DateTime.UtcNow;
                 }
 
-                // Refreshed on every real progress update, not just the PlanToWatch->
-                // Watching transition -- an actively-watched item should always read as
-                // recently active (Continue Watching sorts on this), not go stale the
-                // moment its first scrobble lands.
+                // Refreshed on every real progress update, not just a status transition --
+                // an actively-watched item should always read as recently active (Continue
+                // Watching sorts on this), not go stale the moment its first scrobble lands.
                 entry.UpdatedAt = DateTime.UtcNow;
             }
 

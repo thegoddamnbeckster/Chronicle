@@ -54,6 +54,24 @@ namespace Chronicle.Services
         DateTime? ResumeUpdatedAt
     );
 
+    /// <summary>
+    /// Identifies an item to rate the same way a <see cref="ScrobbleRequest"/> identifies
+    /// one to scrobble -- MediaItemId when already known, otherwise ExternalIds/Title/
+    /// Year/MediaType to resolve it. Never creates a stub if nothing matches (same as
+    /// <see cref="ResumeLookupRequest"/>) -- a rating always arrives after a scrobble
+    /// session for the same item, so the item is expected to already exist.
+    /// </summary>
+    public record RateRequest(
+        int? MediaItemId,
+        int Rating,
+        IReadOnlyDictionary<string, string>? ExternalIds = null,
+        string? Title = null,
+        int? Year = null,
+        string? MediaType = null
+    );
+
+    public record RateResult(int MediaItemId, int Rating);
+
     public interface IScrobbleService
     {
         Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request, CancellationToken ct = default);
@@ -74,5 +92,15 @@ namespace Chronicle.Services
         /// doc for why a client doesn't need to distinguish those cases.
         /// </summary>
         Task<ResumeState?> GetResumeStateAsync(int userId, ResumeLookupRequest request, CancellationToken ct = default);
+
+        /// <summary>
+        /// Sets/overwrites the caller's UserRating (1-10) for an item -- the same field
+        /// the web UI's "Your Rating" dropdown edits, so a rating submitted from a Kodi
+        /// addon (e.g. the SIMKL-style post-playback prompt) and one set from the browser
+        /// are indistinguishable afterward, same field, same place. Throws
+        /// <see cref="Chronicle.Core.Exceptions.MediaNotFoundException"/> if the item
+        /// can't be resolved, ArgumentException if Rating is outside 1-10.
+        /// </summary>
+        Task<RateResult> RateAsync(int userId, RateRequest request, CancellationToken ct = default);
     }
 }
