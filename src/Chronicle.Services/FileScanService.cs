@@ -2082,6 +2082,15 @@ namespace Chronicle.Services
             IEnumerable<Chronicle.Plugins.Models.ScannedFile> files) => GroupByShow(files);
 
         /// <summary>Exposed for unit testing only.</summary>
+        /// <summary>Exposed for unit testing only -- lets a test exercise the real
+        /// FindOrCreateParentAsync (including its merge-alias resolution) without needing
+        /// a full plugin-registry-backed ScanAsync call, since none of this method's
+        /// actual work touches _registry/_protector/_progress/_importProgress/_groupingService.</summary>
+        internal Task<FileScanSummary> ScanAudiobooksHierarchicallyForTest(
+            List<Chronicle.Plugins.Models.ScannedFile> collapsed, MediaType mediaType,
+            int userId, int threshold, CancellationToken ct = default) =>
+            ScanAudiobooksHierarchicallyAsync(collapsed, mediaType, userId, threshold, ct);
+
         internal static List<ScanGroup> GroupAudiobooksByAuthorAndSeriesForTest(
             IEnumerable<Chronicle.Plugins.Models.ScannedFile> collapsed) =>
             GroupAudiobooksByAuthorAndSeries(collapsed);
@@ -2237,6 +2246,35 @@ namespace Chronicle.Services
                 if (folderPath is not null)
                     SetContainerFolderPathIfMissing(existing, folderPath);
                 return existing;
+            }
+
+            // No exact-name match -- before creating a brand new item, check whether this
+            // literal name string was already merged away into a survivor under a different
+            // name. This method only ever matches on an exact Name string; MergeService deletes
+            // the loser row and records the loser's name only as a display-only MediaItemAlias
+            // (Source="merge") -- nothing here ever consulted it before. Without this check,
+            // every rescan re-derives the same tag-sourced name from the same files (e.g. an
+            // ID3 AudioAlbumArtist tag literally containing "James Hunter, eden Hudson") and
+            // recreates the exact duplicate a user had just merged away. Confirmed live
+            // (2026-08-27): several audiobook authors merged one day reappeared as fresh stubs
+            // after the very next night's scheduled scan.
+            var aliasedItem = await _context.MediaItemAliases
+                .Where(a => a.Alias.ToLower() == nameLower
+                         && a.MediaItem!.MediaTypeId == mediaTypeId
+                         && a.MediaItem.HierarchyLevel == hierarchyLevel
+                         && (parentId == null || a.MediaItem.ParentId == parentId))
+                .Select(a => a.MediaItem!)
+                .FirstOrDefaultAsync(ct);
+
+            if (aliasedItem is not null)
+            {
+                _log.Information(
+                    "FindOrCreateParentAsync: '{Name}' matches a merge alias -- resolving to " +
+                    "existing item {Id} ('{WinnerName}') instead of creating a duplicate",
+                    name, aliasedItem.Id, aliasedItem.Name);
+                if (folderPath is not null)
+                    SetContainerFolderPathIfMissing(aliasedItem, folderPath);
+                return aliasedItem;
             }
 
             var item = new MediaItem

@@ -1,5 +1,8 @@
+using Chronicle.Core.Models;
+using Chronicle.Data;
 using Chronicle.Plugins.Models;
 using Chronicle.Services;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace Chronicle.Tests.Unit.Services;
@@ -132,6 +135,101 @@ public class FileScanServiceHierarchyTests
 
         Assert.Single(groups);
         Assert.Equal(@"C:\Books\B Sanderson", groups[0].FolderPath);
+    }
+
+    // ── FindOrCreateParentAsync merge-alias resolution ────────────────────────
+
+    private static ChronicleDbContext NewInMemoryContext()
+    {
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        return new ChronicleDbContext(options);
+    }
+
+    [Fact]
+    public async Task ScanAudiobooksHierarchically_TagNameWasMergedAway_ResolvesToAliasWinner_NotADuplicate()
+    {
+        await using var context = NewInMemoryContext();
+
+        var mediaType = new MediaType
+        {
+            Id = 1, Name = "audiobooks", DisplayName = "Audiobooks",
+            HierarchyLevels = 3, CreatedAt = DateTime.UtcNow,
+        };
+        context.MediaTypes.Add(mediaType);
+
+        // The survivor of a previous merge -- e.g. "James Hunter, eden Hudson" was merged
+        // into this item, which recorded the loser's exact name as a merge alias.
+        var winner = new MediaItem
+        {
+            Id = 100, MediaTypeId = 1, Name = "James Hunter", HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        context.MediaItems.Add(winner);
+        context.MediaItemAliases.Add(new MediaItemAlias
+        {
+            MediaItemId = 100, Alias = "James Hunter, eden Hudson", Source = "merge",
+            CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var service = new FileScanService(context, null!, null!, null!, null!, null!);
+
+        // A fresh scan re-derives the exact merged-away tag string from the audiobook's
+        // own ID3 AudioAlbumArtist tag -- no MediaItem has that literal Name any more.
+        var collapsed = new List<ScannedFile>
+        {
+            new()
+            {
+                FilePath = @"C:\Books\James Hunter\Rebel Bounty Hunter - 1 - (2020) - Fringe World",
+                ParsedTitle = "Fringe World", AudioAlbumArtist = "James Hunter, eden Hudson",
+                ParsedYear = 2020, TotalDurationSeconds = 3600,
+            },
+        };
+
+        await service.ScanAudiobooksHierarchicallyForTest(collapsed, mediaType, userId: 1, threshold: 0);
+
+        // No new author-level duplicate was created -- exactly the one seeded winner remains.
+        var authorItems = await context.MediaItems.Where(m => m.HierarchyLevel == 0).ToListAsync();
+        Assert.Single(authorItems);
+        Assert.Equal(100, authorItems[0].Id);
+
+        // The new book was parented under the existing winner, not a fresh stub.
+        var book = await context.MediaItems.SingleAsync(m => m.HierarchyLevel == 1);
+        Assert.Equal(100, book.ParentId);
+    }
+
+    [Fact]
+    public async Task ScanAudiobooksHierarchically_NoAliasMatch_StillCreatesNewAuthor()
+    {
+        await using var context = NewInMemoryContext();
+
+        var mediaType = new MediaType
+        {
+            Id = 1, Name = "audiobooks", DisplayName = "Audiobooks",
+            HierarchyLevels = 3, CreatedAt = DateTime.UtcNow,
+        };
+        context.MediaTypes.Add(mediaType);
+        await context.SaveChangesAsync();
+
+        var service = new FileScanService(context, null!, null!, null!, null!, null!);
+
+        var collapsed = new List<ScannedFile>
+        {
+            new()
+            {
+                FilePath = @"C:\Books\Brand New Author\Some Book",
+                ParsedTitle = "Some Book", AudioAlbumArtist = "Brand New Author",
+                ParsedYear = 2022, TotalDurationSeconds = 1800,
+            },
+        };
+
+        await service.ScanAudiobooksHierarchicallyForTest(collapsed, mediaType, userId: 1, threshold: 0);
+
+        var authorItems = await context.MediaItems.Where(m => m.HierarchyLevel == 0).ToListAsync();
+        Assert.Single(authorItems);
+        Assert.Equal("Brand New Author", authorItems[0].Name);
     }
 
     [Fact]
