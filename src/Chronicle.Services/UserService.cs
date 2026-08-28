@@ -101,6 +101,8 @@ namespace Chronicle.Services
 
             if (patch.CreateCollectionStubs.HasValue) current.CreateCollectionStubs = patch.CreateCollectionStubs;
 
+            if (patch.ShowNowPlayingBanner.HasValue) current.ShowNowPlayingBanner = patch.ShowNowPlayingBanner;
+
             if (patch.DefaultFoldsOpen.HasValue)
                 current.DefaultFoldsOpen = patch.DefaultFoldsOpen;
 

@@ -157,6 +157,34 @@ namespace Chronicle.Tests.Unit.Services
             prefs.CreateCollectionStubs.Should().BeFalse();
         }
 
+        [Fact]
+        public async Task UpdatePreferencesAsync_ShowNowPlayingBanner_Persists()
+        {
+            // Arrange
+            var user = await _service.RegisterAsync("dave", "correct", null);
+
+            // Act
+            await _service.UpdatePreferencesAsync(user.Id, new UserPreferences { ShowNowPlayingBanner = false });
+
+            // Assert
+            var prefs = await _service.GetPreferencesAsync(user.Id);
+            prefs.ShowNowPlayingBanner.Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task GetPreferencesAsync_ShowNowPlayingBanner_UnsetByDefault()
+        {
+            // The "default to on" behavior lives in the API layer (UsersController's
+            // `prefs.ShowNowPlayingBanner ?? true`), not here — an unset preference is null,
+            // not true, at the service/storage layer. Pinning that distinction so a future
+            // change doesn't accidentally bake the default into storage instead.
+            var user = await _service.RegisterAsync("erin", "correct", null);
+
+            var prefs = await _service.GetPreferencesAsync(user.Id);
+
+            prefs.ShowNowPlayingBanner.Should().BeNull();
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

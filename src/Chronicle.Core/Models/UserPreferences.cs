@@ -10,6 +10,9 @@ public class UserPreferences
     /// When false, stubs are hidden from all library views.
     /// </summary>
     public bool? CreateCollectionStubs { get; set; }
+    /// <summary>When true (default), the "Now Playing" banner shows active playback sessions
+    /// at the top of the main content area. When false, it never renders.</summary>
+    public bool? ShowNowPlayingBanner { get; set; }
     /// <summary>
     /// Per-fold open/closed state. Keys: "media.{id}.{pluginId}", "backgroundTasks.{pluginId}".
     /// Values: true = open, false = closed.

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import { useAuth } from '@/hooks/useAuth'
 import { getActiveSessions } from '@/api/scrobble'
 import { PosterImage } from '@/components/PosterImage'
 import styles from './NowPlayingBanner.module.css'
@@ -24,13 +25,21 @@ function formatMinutes(minutes: number): string {
  * from anywhere in the app per the same shell every route renders through.
  */
 export default function NowPlayingBanner() {
+  const { user } = useAuth()
+  // Default true, matching the backend's default when this preference has never been set —
+  // see UsersController's `prefs.ShowNowPlayingBanner ?? true`.
+  const enabled = user?.showNowPlayingBanner ?? true
+
   const { data: sessions = [] } = useQuery({
     queryKey: ['active-sessions'],
     queryFn: getActiveSessions,
     refetchInterval: POLL_INTERVAL_MS,
+    // Stops polling entirely when the user has turned the banner off, rather than fetching
+    // data every 20s just to immediately discard it.
+    enabled,
   })
 
-  if (sessions.length === 0) return null
+  if (!enabled || sessions.length === 0) return null
 
   return (
     <div className={styles.stack}>

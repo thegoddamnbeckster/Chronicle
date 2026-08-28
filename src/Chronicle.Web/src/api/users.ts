@@ -5,6 +5,9 @@ export interface UserPreferences {
   defaultFoldsOpen?: boolean
   folds?: Record<string, boolean>
   createCollectionStubs?: boolean
+  /** When true (default), the "Now Playing" banner shows active playback sessions at the
+   *  top of the main content area. When false, it never renders. */
+  showNowPlayingBanner?: boolean
   /** Active theme storage key ("{pluginId}:{themeKey}"), synced across devices. */
   theme?: string
 }

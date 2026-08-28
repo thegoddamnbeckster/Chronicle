@@ -6,6 +6,7 @@ export interface User {
   displayName: string | null
   isAdmin: boolean
   showDiagnostics: boolean
+  showNowPlayingBanner: boolean
 }
 
 export interface AuthResponse {

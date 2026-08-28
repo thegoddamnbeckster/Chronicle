@@ -15,5 +15,6 @@ namespace Chronicle.API.DTOs
 
     public record AuthResponse(string Token, UserDto User);
 
-    public record UserDto(int Id, string Username, string? Email, string? DisplayName, bool IsAdmin, bool ShowDiagnostics);
+    public record UserDto(int Id, string Username, string? Email, string? DisplayName, bool IsAdmin, bool ShowDiagnostics,
+        bool ShowNowPlayingBanner = true);
 }

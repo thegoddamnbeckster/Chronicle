@@ -33,7 +33,8 @@ namespace Chronicle.API.Controllers
 
             var prefs = await _userService.GetPreferencesAsync(userId);
             return Ok(ApiResponse<UserDto>.Ok(new UserDto(user.Id, user.Username, user.Email, user.DisplayName, user.IsAdmin,
-                prefs.ShowDiagnostics ?? user.IsAdmin)));
+                prefs.ShowDiagnostics ?? user.IsAdmin,
+                prefs.ShowNowPlayingBanner ?? true)));
         }
 
         /// <summary>The full profile, including contacts — the slim /me shape is fixed by the
@@ -103,6 +104,7 @@ namespace Chronicle.API.Controllers
                 defaultFoldsOpen       = prefs.DefaultFoldsOpen,
                 folds                  = prefs.Folds ?? new Dictionary<string, bool>(),
                 createCollectionStubs  = prefs.CreateCollectionStubs ?? true,
+                showNowPlayingBanner   = prefs.ShowNowPlayingBanner ?? true,
                 theme                  = prefs.Theme,
             }));
         }
@@ -117,6 +119,7 @@ namespace Chronicle.API.Controllers
                 DefaultFoldsOpen      = req.DefaultFoldsOpen,
                 Folds                 = req.Folds,
                 CreateCollectionStubs = req.CreateCollectionStubs,
+                ShowNowPlayingBanner  = req.ShowNowPlayingBanner,
                 Theme                 = req.Theme,
             };
             await _userService.UpdatePreferencesAsync(userId, patch);
@@ -128,6 +131,7 @@ namespace Chronicle.API.Controllers
                 defaultFoldsOpen      = prefs.DefaultFoldsOpen,
                 folds                 = prefs.Folds ?? new Dictionary<string, bool>(),
                 createCollectionStubs = prefs.CreateCollectionStubs ?? true,
+                showNowPlayingBanner  = prefs.ShowNowPlayingBanner ?? true,
                 theme                 = prefs.Theme,
             }));
         }
@@ -366,6 +370,7 @@ namespace Chronicle.API.Controllers
         bool? DefaultFoldsOpen,
         Dictionary<string, bool>? Folds,
         bool? CreateCollectionStubs = null,
+        bool? ShowNowPlayingBanner = null,
         string? Theme = null
     );
 }

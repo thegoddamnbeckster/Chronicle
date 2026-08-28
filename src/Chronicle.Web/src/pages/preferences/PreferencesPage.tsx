@@ -11,6 +11,8 @@ export default function PreferencesPage() {
   const { user, setUser } = useAuth()
   const [diagEnabled, setDiagEnabled] = useState(user?.showDiagnostics ?? false)
   const [diagSaving, setDiagSaving] = useState(false)
+  const [nowPlayingEnabled, setNowPlayingEnabled] = useState(user?.showNowPlayingBanner ?? true)
+  const [nowPlayingSaving, setNowPlayingSaving] = useState(false)
 
   async function handleDiagToggle(value: boolean) {
     setDiagEnabled(value)
@@ -22,6 +24,19 @@ export default function PreferencesPage() {
       setDiagEnabled(!value) // revert on error
     } finally {
       setDiagSaving(false)
+    }
+  }
+
+  async function handleNowPlayingToggle(value: boolean) {
+    setNowPlayingEnabled(value)
+    setNowPlayingSaving(true)
+    try {
+      await updateMyPreferences({ showNowPlayingBanner: value })
+      if (user) setUser({ ...user, showNowPlayingBanner: value })
+    } catch {
+      setNowPlayingEnabled(!value) // revert on error
+    } finally {
+      setNowPlayingSaving(false)
     }
   }
 
@@ -60,6 +75,29 @@ export default function PreferencesPage() {
               </button>
             )
           })}
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionTitle}>Now Playing</h2>
+        <p className={styles.sectionDesc}>Options for the "Now Playing" banner.</p>
+
+        <div className={styles.settingRow}>
+          <div>
+            <div className={styles.settingLabel}>Show Now Playing Banner</div>
+            <div className={styles.settingDesc}>
+              Shows a banner at the top of the page for each device you're actively watching
+              something on, with its current progress.
+            </div>
+          </div>
+          <button
+            className={`${styles.toggle} ${nowPlayingEnabled ? styles.toggleOn : ''}`}
+            onClick={() => handleNowPlayingToggle(!nowPlayingEnabled)}
+            disabled={nowPlayingSaving}
+            aria-pressed={nowPlayingEnabled}
+          >
+            {nowPlayingEnabled ? 'On' : 'Off'}
+          </button>
         </div>
       </section>
 
