@@ -154,6 +154,27 @@ public class SettingsController : ControllerBase
 
         var assignableFields = await BuildAssignableFieldsAsync();
 
+        // Drop any stored entry that's no longer valid: an unknown media type entirely (e.g. its
+        // owning plugin was uninstalled) or a field no longer assignable within an otherwise-
+        // valid media type (e.g. a canonical field renamed/removed after being saved — confirmed
+        // cause of a real bug: "directors" was renamed to "crew", but old saved config for
+        // "tv"/"movies" still had a "directors" entry). Filtering here, on read, means the
+        // frontend's `assignments` state never contains stale data — and since every save round-
+        // trips that state back to PutMetadataAssignment, staleness naturally stops being
+        // persisted too, without a separate data migration. This also protects against any
+        // future field/type rename causing the same class of bug, not just this one field.
+        assignments = assignments
+            .Where(kv => assignableFields.ContainsKey(kv.Key))
+            .ToDictionary(
+                kv => kv.Key,
+                kv =>
+                {
+                    var allowed = assignableFields[kv.Key];
+                    return kv.Value
+                        .Where(f => allowed.Contains(f.Key, StringComparer.OrdinalIgnoreCase))
+                        .ToDictionary(f => f.Key, f => f.Value, StringComparer.OrdinalIgnoreCase);
+                });
+
         // Load DB plugin records to map PluginId → DB id for the proxy URL.
         var dbPlugins  = await _db.Plugins.ToListAsync();
         var allEntries = _pluginRegistry.GetMetadataProviderEntries().ToList();
@@ -311,6 +332,16 @@ public class SettingsController : ControllerBase
 
         var assignableFields = await BuildAssignableFieldsAsync();
 
+        // Deliberately strict — MetadataAssignment_Put_RejectsBadFieldName (SettingsTests.cs)
+        // exists specifically to pin this behavior. A tempting-looking alternative (silently
+        // drop unassignable fields instead of rejecting) was tried and reverted here: it directly
+        // contradicts that existing, intentional test. It's also unnecessary — the real bug (a
+        // stale field surviving in stored config after a canonical-field rename, e.g.
+        // "directors" → "crew") is fixed at the read side in GetMetadataAssignment above, which
+        // filters stale fields out of what the frontend ever sees. Since every save round-trips
+        // that same (now-clean) state, this endpoint never encounters the stale field again after
+        // one legitimate save — no separate data migration needed, and "reject a genuine typo"
+        // stays intact.
         foreach (var (mediaType, fields) in request.Assignments)
         {
             if (!assignableFields.TryGetValue(mediaType, out var allowedFields))

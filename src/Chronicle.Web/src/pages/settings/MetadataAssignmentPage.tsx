@@ -210,15 +210,20 @@ export default function MetadataAssignmentPage() {
     })
   }
 
-  const save = useCallback(async (next: Record<string, Record<string, string[]>>) => {
+  // Returns whether the save succeeded, so a caller that chains a second independent request
+  // (applyDefaultToAll's display-order sync) can decide whether to even attempt it, rather than
+  // racing two independent writers against the same shared error-banner state.
+  const save = useCallback(async (next: Record<string, Record<string, string[]>>): Promise<boolean> => {
     setSaving(true)
     setError(null)
     try {
       await putMetadataAssignment(next)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+      return true
     } catch (e) {
       setError(String(e))
+      return false
     } finally {
       setSaving(false)
     }
@@ -233,11 +238,17 @@ export default function MetadataAssignmentPage() {
   function handleDefaultReorder(mediaType: string, newOrder: string[]) {
     const next = { ...defaultOrders, [mediaType]: newOrder }
     setDefaultOrders(next)
-    // Auto-save the display order immediately (independent of field assignments)
-    putPluginDisplayOrder(next).catch(e => setError(String(e)))
+    // Auto-save the display order immediately (independent of field assignments).
+    // Clears a stale error banner on success — otherwise a failed field-priority save
+    // elsewhere on the page (a different media type, an earlier action) leaves its error
+    // visibly attached to this action even though this drag itself succeeded, since this
+    // page has one shared error banner rather than one scoped per action.
+    putPluginDisplayOrder(next)
+      .then(() => setError(null))
+      .catch(e => setError(String(e)))
   }
 
-  function applyDefaultToAll(mediaType: string) {
+  async function applyDefaultToAll(mediaType: string) {
     if (!config) return
     const order = defaultOrders[mediaType] ?? []
     const fieldAssignments: Record<string, string[]> = {}
@@ -253,10 +264,20 @@ export default function MetadataAssignmentPage() {
     }
     const next = { ...assignments, [mediaType]: fieldAssignments }
     setAssignments(next)
-    save(next)
-    // Keep display order in sync — if the user says "apply this order to all fields",
-    // the detail page should also show plugins in that same order.
-    putPluginDisplayOrder({ ...defaultOrders, [mediaType]: order }).catch(e => setError(String(e)))
+    const saveOk = await save(next)
+    // If the field-priority save failed, don't attempt the display-order sync — and don't let
+    // it race save()'s own error-banner write. An earlier version fired both calls concurrently
+    // and cleared the banner on the display-order call's success regardless of whether save()
+    // itself had just failed, which could silently hide a genuine save failure.
+    if (!saveOk) return
+    // Keep display order in sync — if the user says "apply this order to all fields", the
+    // detail page should also show plugins in that same order.
+    try {
+      await putPluginDisplayOrder({ ...defaultOrders, [mediaType]: order })
+      setError(null)
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   if (!config) return (

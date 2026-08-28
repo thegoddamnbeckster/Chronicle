@@ -2,7 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Chronicle.Core.Models;
+using Chronicle.Data;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.Tests.Integration;
 
@@ -124,5 +128,76 @@ public class SettingsTests : IClassFixture<ChronicleApiFactory>
         var putResp = await client.PutAsJsonAsync("/api/v1/settings/metadata-assignment", config);
 
         putResp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Regression test for a real reported bug: a canonical field ("directors") was renamed to
+    /// "crew" (commit b86fa5f), but existing saved config still had a "directors" entry under
+    /// "movies"/"tv" — never migrated. Because PutMetadataAssignment always receives (and
+    /// GetMetadataAssignment always returns) the FULL stored config, the stale field made every
+    /// future save fail with "Field 'directors' is not assignable for media type 'tv'",
+    /// regardless of what the user actually changed or which media type/section they were in.
+    ///
+    /// This seeds that exact scenario directly against the DB (bypassing PUT's own validation,
+    /// which would rightly reject "directors" if it went through the normal save path — the
+    /// point is to simulate data that predates a field rename, not to test PUT's validation
+    /// again) and asserts: (1) GET filters the stale field out before the frontend ever sees it,
+    /// and (2) a subsequent save — built the same way the frontend builds one, from the GET
+    /// response — succeeds and the stored config comes out permanently clean, with no separate
+    /// migration step required.
+    /// </summary>
+    [Fact]
+    public async Task MetadataAssignment_StaleFieldFromPriorRename_FilteredOnReadAndSelfHealsOnSave()
+    {
+        var client = await AdminClientAsync();
+
+        // Seed stale legacy config directly — "directors" alongside the still-valid "title".
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var staleJson = JsonSerializer.Serialize(new Dictionary<string, Dictionary<string, string[]>>
+            {
+                ["movies"] = new()
+                {
+                    ["title"] = ["chronicle.plugin.tmdb"],
+                    ["directors"] = ["chronicle.plugin.trakt", "chronicle.plugin.tmdb"],
+                },
+            });
+
+            var existing = await db.AppSettings.FirstOrDefaultAsync(s => s.Key == "metadata_assignment.config");
+            if (existing is null)
+                db.AppSettings.Add(new AppSetting { Key = "metadata_assignment.config", Value = staleJson });
+            else
+                existing.Value = staleJson;
+            await db.SaveChangesAsync();
+        }
+
+        // GET must filter the stale field out — the frontend must never see it.
+        var getResp = await client.GetAsync("/api/v1/settings/metadata-assignment");
+        Assert.Equal(HttpStatusCode.OK, getResp.StatusCode);
+
+        var body = await getResp.Content.ReadFromJsonAsync<JsonElement>();
+        var movies = body.GetProperty("data").GetProperty("assignments").GetProperty("movies");
+
+        movies.TryGetProperty("directors", out _).Should().BeFalse("the stale field must be filtered before reaching the frontend");
+        movies.GetProperty("title")[0].GetString().Should().Be("chronicle.plugin.tmdb", "the still-valid field must survive filtering");
+
+        // A save built from that (now-clean) GET response — exactly how the frontend's full-
+        // config spread works — must succeed. Before the fix, this failed for ANY save, on ANY
+        // media type, anywhere on the page, as long as the stale field sat in stored config.
+        var next = new Dictionary<string, object>
+        {
+            ["movies"] = new Dictionary<string, string[]> { ["title"] = ["chronicle.plugin.trakt"] },
+        };
+        var putResp = await client.PutAsJsonAsync("/api/v1/settings/metadata-assignment", new { assignments = next });
+        putResp.StatusCode.Should().Be(HttpStatusCode.OK, "a save built from the filtered GET response must not resurrect the stale field");
+
+        // And the stored config is now permanently clean — no migration step needed.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var stored = await db.AppSettings.FirstAsync(s => s.Key == "metadata_assignment.config");
+            stored.Value.Should().NotContain("directors");
+        }
     }
 }
