@@ -2,7 +2,9 @@ using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins.Models;
 using Chronicle.Services;
+using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using Xunit;
 
 namespace Chronicle.Tests.Unit.Services;
@@ -226,6 +228,96 @@ public class FileScanServiceHierarchyTests
         };
 
         await service.ScanAudiobooksHierarchicallyForTest(collapsed, mediaType, userId: 1, threshold: 0);
+
+        var authorItems = await context.MediaItems.Where(m => m.HierarchyLevel == 0).ToListAsync();
+        Assert.Single(authorItems);
+        Assert.Equal("Brand New Author", authorItems[0].Name);
+    }
+
+    // ── UpsertGroupItemAsync merge-alias resolution (ImportGroupsAsync) ───────
+    //
+    // Separate code path from FindOrCreateParentAsync above -- UpsertGroupItemAsync is what
+    // ScheduledScanService's nightly scan (via ImportGroupsAsync) actually calls for
+    // audiobooks in production. Confirmed live (2026-08-28): merging "Domagoj Kurmaić" into
+    // an existing winner correctly recorded a MediaItemAlias, but the very next scheduled
+    // scan still recreated it as a fresh duplicate stub, because this method never checked
+    // MediaItemAliases at all -- FindOrCreateParentAsync's 2026-08-27 fix never touched it.
+
+    [Fact]
+    public async Task ImportGroupsAsync_RootNameWasMergedAway_ResolvesToAliasWinner_NotADuplicate()
+    {
+        await using var context = NewInMemoryContext();
+
+        var mediaType = new MediaType
+        {
+            Id = 1, Name = "audiobooks", DisplayName = "Audiobooks",
+            HierarchyLevels = 3, CreatedAt = DateTime.UtcNow,
+        };
+        context.MediaTypes.Add(mediaType);
+
+        var winner = new MediaItem
+        {
+            Id = 100, MediaTypeId = 1, Name = "Domagoj Kurmaic", HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        context.MediaItems.Add(winner);
+        context.MediaItemAliases.Add(new MediaItemAlias
+        {
+            MediaItemId = 100, Alias = "Domagoj Kurmaić", Source = "merge",
+            CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var service = new FileScanService(
+            context, null!, null!, null!, new ImportProgressService(), null!);
+
+        var request = new ImportGroupsRequest(
+            [
+                new ScanGroupImport(
+                    Name: "Domagoj Kurmaić", Year: null, PosterPath: null,
+                    Children: [], Files: [], FolderPath: @"E:\Audio Books\Domagoj Kurmaić"),
+            ],
+            MediaTypeId: 1);
+
+        await service.ImportGroupsAsync(request, userIds: [1], manageProgress: false);
+
+        // No new author-level duplicate was created -- exactly the one seeded winner remains.
+        var authorItems = await context.MediaItems.Where(m => m.HierarchyLevel == 0).ToListAsync();
+        Assert.Single(authorItems);
+        Assert.Equal(100, authorItems[0].Id);
+    }
+
+    [Fact]
+    public async Task ImportGroupsAsync_NoAliasMatch_StillCreatesNewRoot()
+    {
+        await using var context = NewInMemoryContext();
+
+        var mediaType = new MediaType
+        {
+            Id = 1, Name = "audiobooks", DisplayName = "Audiobooks",
+            HierarchyLevels = 3, CreatedAt = DateTime.UtcNow,
+        };
+        context.MediaTypes.Add(mediaType);
+        await context.SaveChangesAsync();
+
+        // Unlike the alias-match test above, this one DOES create a new item, which
+        // triggers enrichment-row seeding -- needs a registry that returns no providers,
+        // not null.
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+
+        var service = new FileScanService(
+            context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var request = new ImportGroupsRequest(
+            [
+                new ScanGroupImport(
+                    Name: "Brand New Author", Year: null, PosterPath: null,
+                    Children: [], Files: [], FolderPath: @"E:\Audio Books\Brand New Author"),
+            ],
+            MediaTypeId: 1);
+
+        await service.ImportGroupsAsync(request, userIds: [1], manageProgress: false);
 
         var authorItems = await context.MediaItems.Where(m => m.HierarchyLevel == 0).ToListAsync();
         Assert.Single(authorItems);

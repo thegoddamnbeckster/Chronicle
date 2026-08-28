@@ -2826,6 +2826,40 @@ namespace Chronicle.Services
                 return string.Equals(dbNameClean, groupNameClean, StringComparison.OrdinalIgnoreCase);
             });
 
+            // Quaternary: resolve a merged-away name via MediaItemAlias. UpsertGroupItemAsync
+            // is a SEPARATE implementation from FindOrCreateParentAsync (used by
+            // ScanAudiobooksHierarchicallyAsync/ImportHierarchicalAsync) -- despite the
+            // similar purpose, patching one does not patch the other, and this is the one
+            // ScheduledScanService's nightly scan (via ImportGroupsAsync) actually calls for
+            // audiobooks in production. FindOrCreateParentAsync's 2026-08-27 alias-resolution
+            // fix (see its own docstring) therefore never covered the real scheduled-scan path
+            // at all. Confirmed live (2026-08-28): "Domagoj Kurmaić" and "Shirtaloon, Travis
+            // Deverell" were each merged the day before via the UI -- which does correctly
+            // record a MediaItemAlias row (Source="merge") -- yet the very next scheduled scan
+            // recreated both as fresh duplicate stubs, because this method never consulted
+            // MediaItemAliases at all before today. Same nameLower/parentId/hierarchyLevel
+            // scoping as the name tier just above, and as FindOrCreateParentAsync's own check.
+            if (existing is null)
+            {
+                // ToLowerInvariant, not ToLower -- matches FindOrCreateParentAsync's own alias
+                // check and avoids a culture-dependent casing bug (e.g. Turkish "İ"/"i") that a
+                // thread's current culture could introduce into this comparison.
+                var groupNameCleanLower = groupNameClean.ToLowerInvariant();
+                existing = await _context.MediaItemAliases
+                    .Where(a => a.Alias.ToLower() == groupNameCleanLower
+                             && a.MediaItem!.MediaTypeId == mediaTypeId
+                             && (hierarchyLevel == 0 ||
+                                 (a.MediaItem.ParentId == parentId && a.MediaItem.HierarchyLevel == hierarchyLevel)))
+                    .Select(a => a.MediaItem!)
+                    .FirstOrDefaultAsync(ct);
+
+                if (existing is not null)
+                    _log.Information(
+                        "UpsertGroupItemAsync: '{Name}' matches a merge alias -- resolving to " +
+                        "existing item {Id} ('{WinnerName}') instead of creating a duplicate",
+                        group.Name, existing.Id, existing.Name);
+            }
+
             if (existing is not null)
             {
                 existing.UpdatedAt   = DateTime.UtcNow;
