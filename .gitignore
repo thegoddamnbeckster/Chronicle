@@ -98,7 +98,9 @@ src/Chronicle.API/plugins/
 .claude/worktrees/
 
 # Runtime plugin binaries (deployed from individual plugin repos)
-plugins/
+# Anchored to the actual deploy path — a bare "plugins/" also matches docs/plugins/,
+# which silently swallowed real design docs (never committed, no warning) until caught here.
+/src/Chronicle.API/plugins/
 
 # Scratch / temporary build output directories
 build_check/
