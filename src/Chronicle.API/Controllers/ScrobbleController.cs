@@ -179,6 +179,40 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>
+        /// One entry per device the caller currently has actively playing — powers the
+        /// "Now Playing" banner. Polled by the frontend on a short interval; see
+        /// ScrobbleService.GetActiveSessionsAsync for how "actively playing" is inferred
+        /// (there's no explicit start/stop signal in the scrobble protocol to key off).
+        /// </summary>
+        [HttpGet("active")]
+        public async Task<IActionResult> GetActiveSessions(CancellationToken ct)
+        {
+            var userId = GetUserId();
+            var sessions = await _scrobbleService.GetActiveSessionsAsync(userId, ct);
+
+            var ancestorsByItem = await AncestorHelper.BuildAncestorsBatchAsync(
+                _context, sessions.Select(s => s.MediaItemId), ct);
+
+            var dtos = sessions.Select(s =>
+            {
+                ancestorsByItem.TryGetValue(s.MediaItemId, out var ancestors);
+                return new ActiveSessionDto(
+                    s.MediaItemId,
+                    s.MediaItemName,
+                    s.PosterUrl,
+                    s.ProgressPercent,
+                    s.ElapsedMinutes,
+                    s.RuntimeMinutes,
+                    s.DeviceName,
+                    s.LastUpdatedAt,
+                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null
+                );
+            }).ToList();
+
+            return Ok(ApiResponse<List<ActiveSessionDto>>.Ok(dtos));
+        }
+
         private int GetUserId() =>
             int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     }

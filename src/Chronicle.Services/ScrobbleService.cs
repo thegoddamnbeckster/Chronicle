@@ -258,6 +258,60 @@ namespace Chronicle.Services
             return new RateResult(mediaItemId, request.Rating);
         }
 
+        /// <summary>
+        /// The scrobble protocol has no explicit "playback started/stopped" signal — every
+        /// call is just a periodic percent-progress ping (see InteractionEvent's fields; there
+        /// is no EventType/IsPlaying anywhere in this model). "Actively playing right now" is
+        /// therefore inferred purely from recency: a session counts as live if its most recent
+        /// event for a given device is within ActiveSessionWindow. This isn't an arbitrary
+        /// guess — every real scrobbler client (Kodi, Audiobookshelf) defaults to a 30-second
+        /// poll interval while playing, and the Kodi client specifically stops sending updates
+        /// entirely while paused (onPlayBackPaused) — so the event stream itself already goes
+        /// quiet within moments of a pause/stop, and a window a few multiples of that default
+        /// interval is the correct margin against jitter/a slower-than-default configured
+        /// interval, not a magic number.
+        /// </summary>
+        private static readonly TimeSpan ActiveSessionWindow = TimeSpan.FromSeconds(90);
+
+        public async Task<IReadOnlyList<ActiveSession>> GetActiveSessionsAsync(int userId, CancellationToken ct = default)
+        {
+            var cutoff = DateTime.UtcNow - ActiveSessionWindow;
+
+            // Small result set by construction (a handful of devices, each with at most a
+            // couple of events inside a 90-second window at a 30-second default poll rate) —
+            // safe to reduce to "latest per device" in memory rather than push a group-by-then-
+            // first-per-group query through the EF/SQLite translator.
+            var recentEvents = await _context.InteractionEvents
+                .Where(e => e.UserId == userId && e.Timestamp >= cutoff)
+                .Include(e => e.MediaItem)
+                .OrderByDescending(e => e.Timestamp)
+                .ToListAsync(ct);
+
+            var latestPerDevice = recentEvents
+                .Where(e => !e.MarkedAsWatched && e.MediaItem != null)
+                .GroupBy(e => e.DeviceName ?? "Unknown Device")
+                .Select(g => g.First()); // already ordered desc by Timestamp above
+
+            return latestPerDevice.Select(e =>
+            {
+                var runtimeMinutes = e.MediaItem!.RuntimeMinutes;
+                var progress = e.ProgressPercent ?? 0;
+                int? elapsedMinutes = runtimeMinutes is int rt
+                    ? (int)Math.Round(rt * progress / 100.0)
+                    : null;
+
+                return new ActiveSession(
+                    e.MediaItemId,
+                    e.MediaItem.Name,
+                    e.MediaItem.PosterUrl,
+                    progress,
+                    elapsedMinutes,
+                    runtimeMinutes,
+                    e.DeviceName,
+                    e.Timestamp);
+            }).ToList();
+        }
+
         private async Task StoreExternalIdsAsync(
             int mediaItemId, IReadOnlyDictionary<string, string> ids, CancellationToken ct)
         {

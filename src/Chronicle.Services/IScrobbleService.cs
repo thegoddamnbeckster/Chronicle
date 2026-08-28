@@ -72,6 +72,22 @@ namespace Chronicle.Services
 
     public record RateResult(int MediaItemId, int Rating);
 
+    /// <summary>
+    /// One currently-live playback session, inferred from scrobble recency rather than any
+    /// explicit start/stop signal (the scrobble protocol has none — see ScrobbleService's own
+    /// doc on GetActiveSessionsAsync for why a staleness window is the correct proxy).
+    /// </summary>
+    public record ActiveSession(
+        int MediaItemId,
+        string MediaItemName,
+        string? PosterUrl,
+        double ProgressPercent,
+        int? ElapsedMinutes,
+        int? RuntimeMinutes,
+        string? DeviceName,
+        DateTime LastUpdatedAt
+    );
+
     public interface IScrobbleService
     {
         Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request, CancellationToken ct = default);
@@ -102,5 +118,13 @@ namespace Chronicle.Services
         /// can't be resolved, ArgumentException if Rating is outside 1-10.
         /// </summary>
         Task<RateResult> RateAsync(int userId, RateRequest request, CancellationToken ct = default);
+
+        /// <summary>
+        /// One entry per device currently believed to be actively playing something for this
+        /// user — see ScrobbleService's implementation doc for the staleness-window inference.
+        /// Devices with no recent scrobble, or whose most recent event already crossed the
+        /// watched threshold, are simply absent — never returned as a "finished" entry.
+        /// </summary>
+        Task<IReadOnlyList<ActiveSession>> GetActiveSessionsAsync(int userId, CancellationToken ct = default);
     }
 }

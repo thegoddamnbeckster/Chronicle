@@ -9,6 +9,7 @@ import NavGroup from './NavGroup'
 import ActivityPanel from './ActivityPanel'
 import AppFooter from './AppFooter'
 import GlobalSearch from './GlobalSearch'
+import NowPlayingBanner from './NowPlayingBanner'
 import styles from './Layout.module.css'
 
 export default function Layout() {
@@ -158,6 +159,7 @@ export default function Layout() {
       </nav>
 
       <main ref={mainRef} className={styles.content}>
+        <NowPlayingBanner />
         <Outlet />
       </main>
 

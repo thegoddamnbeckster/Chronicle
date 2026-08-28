@@ -160,6 +160,7 @@ export interface LibraryEntry {
   updatedAt: string
   startedAt: string | null
   completedAt: string | null
+  resumePositionPercent: number | null
 }
 
 // ── Scrobble ──────────────────────────────────────────────────────────────────
@@ -173,6 +174,24 @@ export interface HistoryItem {
   deviceName: string | null
   /** Root-first parent context (e.g. [Show, Season] for an episode) — a scanned TV
    *  episode's own name is often a generic code like "S28E11", meaningless alone. */
+  ancestors?: { id: number; name: string }[]
+  /** True when `timestamp` is a borrowed fallback (e.g. a SIMKL-imported episode
+   *  stamped with its show's last-watched date), not this item's own real watch time. */
+  isApproximateTimestamp: boolean
+}
+
+/** One currently-live playback session, for the "Now Playing" banner. "Actively playing"
+ *  is inferred server-side from scrobble recency — see ScrobbleService.GetActiveSessionsAsync. */
+export interface ActiveSession {
+  mediaItemId: number
+  mediaItemName: string
+  posterUrl: string | null
+  progressPercent: number
+  /** Null when the item has no known runtime — show percentage only. */
+  elapsedMinutes: number | null
+  runtimeMinutes: number | null
+  deviceName: string | null
+  lastUpdatedAt: string
   ancestors?: { id: number; name: string }[]
 }
 

@@ -392,6 +392,124 @@ namespace Chronicle.Tests.Unit.Services
             (await _context.MediaItems.CountAsync()).Should().Be(before); // never creates a stub
         }
 
+        // ── GetActiveSessionsAsync ──────────────────────────────────────────────
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_RecentScrobble_IsReturned()
+        {
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 30.0, DateTime.UtcNow, "Kodi Living Room"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active.Should().ContainSingle();
+            active[0].MediaItemId.Should().Be(1);
+            active[0].DeviceName.Should().Be("Kodi Living Room");
+            active[0].ProgressPercent.Should().Be(30.0);
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_ScrobbleOlderThanWindow_IsNotReturned()
+        {
+            // The service's staleness window is 90s — 5 minutes is unambiguously stale
+            // regardless of the exact constant, so this doesn't need to know its value.
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 30.0, DateTime.UtcNow.AddMinutes(-5), "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_RecentButAlreadyMarkedWatched_IsNotReturned()
+        {
+            // 85% crosses the 80% watched threshold — a session that just finished is not
+            // "still actively watching," even though its event is well within the time window.
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 85.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_ComputesElapsedMinutesFromRuntime()
+        {
+            // Seeded item 1 has RuntimeMinutes = 45; 40% of 45 = 18.
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 40.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active[0].ElapsedMinutes.Should().Be(18);
+            active[0].RuntimeMinutes.Should().Be(45);
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_UnknownRuntime_ElapsedMinutesIsNullNotZero()
+        {
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 2, MediaTypeId = 1, Name = "No Runtime Item",
+                RuntimeMinutes = null, HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(2, 40.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active[0].ElapsedMinutes.Should().BeNull();
+            active[0].ProgressPercent.Should().Be(40.0); // still present even without a runtime
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_TwoDevices_ReturnsOnePerDevice()
+        {
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 2, MediaTypeId = 1, Name = "Second Item", RuntimeMinutes = 30,
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 20.0, DateTime.UtcNow, "Kodi Living Room"));
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(2, 60.0, DateTime.UtcNow, "Kodi Bedroom"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active.Should().HaveCount(2);
+            active.Select(a => a.DeviceName).Should().BeEquivalentTo(["Kodi Living Room", "Kodi Bedroom"]);
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_SameDeviceMultiplePings_ReturnsOnlyTheLatest()
+        {
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 10.0, DateTime.UtcNow.AddSeconds(-30), "Kodi"));
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 15.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active.Should().ContainSingle();
+            active[0].ProgressPercent.Should().Be(15.0); // the more recent ping wins, not the first
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_DoesNotLeakOtherUsersSessions()
+        {
+            _context.Users.Add(new User
+            {
+                Id = 2, Username = "otheruser", PasswordHash = "hash",
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.ScrobbleAsync(2, new ScrobbleRequest(1, 20.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active.Should().BeEmpty();
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

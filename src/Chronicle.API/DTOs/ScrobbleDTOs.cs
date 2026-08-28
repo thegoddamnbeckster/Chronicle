@@ -63,6 +63,21 @@ namespace Chronicle.API.DTOs
         int Rating
     );
 
+    /// <summary>One currently-live playback session for the "Now Playing" banner — see
+    /// ScrobbleService.GetActiveSessionsAsync for how "actively playing" is inferred.</summary>
+    public record ActiveSessionDto(
+        int MediaItemId,
+        string MediaItemName,
+        string? PosterUrl,
+        double ProgressPercent,
+        /// <summary>Null when the item has no known runtime — the UI shows percentage only.</summary>
+        int? ElapsedMinutes,
+        int? RuntimeMinutes,
+        string? DeviceName,
+        DateTime LastUpdatedAt,
+        List<AncestorDto>? Ancestors = null
+    );
+
     public record HistoryItemDto(
         int Id,
         int MediaItemId,
