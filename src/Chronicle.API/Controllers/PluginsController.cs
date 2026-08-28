@@ -721,6 +721,19 @@ public class PluginsController : ControllerBase
             Sha256:      "30f7996b2b3edd47f57084c1c774aa87d137fabdee50ffd3e0a185c2bef730e9",
             Version:     "1.2.0"
         ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.wikipedia",
+            Name:        "Wikipedia",
+            Description: "Broad fallback summaries, full article sections, and images from Wikipedia for any media type — including People. No API key required.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "https://en.wikipedia.org/static/apple-touch/wikipedia.png",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Wikipedia",
+            AssetName:   "Chronicle.Plugin.Wikipedia.zip",
+            DllName:     "Chronicle.Plugin.Wikipedia.dll",
+            Tags:        ["movies", "tv", "music", "books", "games", "people", "metadata"],
+            Sha256:      "98b9943b24cad8bfd0c60bfd8cec2e2398d0cc99b23461b89fbc4255a7197fce",
+            Version:     "1.0.0"
+        ),
     ];
 
     // ── GET /api/v1/plugins/catalog ───────────────────────────────────────────
