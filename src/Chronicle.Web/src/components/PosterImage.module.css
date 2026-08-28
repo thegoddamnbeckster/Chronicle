@@ -21,3 +21,17 @@
   object-fit: contain;
   display: block;
 }
+
+.progressTrack {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--success);
+}

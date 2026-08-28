@@ -18,6 +18,13 @@ interface PosterImageProps {
    * Default false — eager loading ensures onLoad fires and the placeholder hides.
    */
   lazy?: boolean
+  /**
+   * In-progress watch/read/listen position, 0-100. Renders a thin green fill bar
+   * across the bottom edge of the poster. Omit, or pass null/0, to show no bar —
+   * a completed item's resume position is cleared server-side (not sent as 0), so
+   * callers don't need to distinguish "not started" from "finished" themselves.
+   */
+  progressPercent?: number | null
 }
 
 /**
@@ -25,8 +32,9 @@ interface PosterImageProps {
  * until the image finishes loading. Prevents blank gaps when images load slowly
  * (e.g. from fanart.tv) and handles load errors gracefully.
  */
-export function PosterImage({ posterUrl, name, className, onClick, imgClassName, placeholderContent, lazy = false }: PosterImageProps) {
+export function PosterImage({ posterUrl, name, className, onClick, imgClassName, placeholderContent, lazy = false, progressPercent }: PosterImageProps) {
   const [loaded, setLoaded] = useState(false)
+  const clampedProgress = progressPercent != null ? Math.max(0, Math.min(100, progressPercent)) : null
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
@@ -46,6 +54,11 @@ export function PosterImage({ posterUrl, name, className, onClick, imgClassName,
           onLoad={() => setLoaded(true)}
           onError={() => setLoaded(false)}
         />
+      )}
+      {clampedProgress != null && clampedProgress > 0 && (
+        <div className={styles.progressTrack} title={`${Math.round(clampedProgress)}% watched`}>
+          <div className={styles.progressFill} style={{ width: `${clampedProgress}%` }} />
+        </div>
       )}
     </div>
   )

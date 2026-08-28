@@ -678,6 +678,7 @@ export default function MediaDetailPage() {
             name={item.name}
             imgClassName={styles.posterClickable}
             onClick={() => setLightboxIdx(0)}
+            progressPercent={libraryEntry?.resumePositionPercent}
           />
           {fanartCharacter && (
             <FanartImage
@@ -1449,6 +1450,7 @@ export default function MediaDetailPage() {
                 {(() => {
                   const enriched = child.enrichmentStatuses != null &&
                     Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
+                  const childProgress = library.find(e => e.mediaItem.id === child.id)?.resumePositionPercent
                   return (
                     <PosterImage
                       posterUrl={child.posterUrl}
@@ -1457,6 +1459,7 @@ export default function MediaDetailPage() {
                       placeholderContent={enriched
                         ? <span className={styles.childNoArt}>No art</span>
                         : (child.number ?? child.name.charAt(0))}
+                      progressPercent={childProgress}
                     />
                   )
                 })()}
