@@ -77,6 +77,13 @@ export default function NowPlayingBanner() {
               </div>
               <div className={styles.titleRow}>
                 {context && <span className={styles.context}>{context}</span>}
+                {/* Per-user request (2026-08-29): show season/episode numbers alongside the
+                    episode's own name -- absent for movies, which have no season/episode. */}
+                {session.season != null && session.episode != null && (
+                  <span className={styles.episodeCode}>
+                    S{String(session.season).padStart(2, '0')}E{String(session.episode).padStart(2, '0')}
+                  </span>
+                )}
                 <span className={styles.title}>{session.mediaItemName}</span>
                 {session.userRating != null && (
                   <span className={styles.ratingBadge}>{session.userRating}</span>

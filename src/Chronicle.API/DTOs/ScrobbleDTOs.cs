@@ -86,7 +86,10 @@ namespace Chronicle.API.DTOs
         List<AncestorDto>? Ancestors = null,
         /// <summary>The caller's own 1-10 rating for this item, if set — shown as a badge
         /// on the Now Playing banner. Null, not 0, when unrated.</summary>
-        int? UserRating = null
+        int? UserRating = null,
+        /// <summary>Null for anything that isn't a TV episode. See ActiveSession's own doc.</summary>
+        int? Season = null,
+        int? Episode = null
     );
 
     public record HistoryItemDto(

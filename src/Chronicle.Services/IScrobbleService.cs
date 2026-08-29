@@ -109,7 +109,13 @@ namespace Chronicle.Services
         int? RuntimeMinutes,
         string? DeviceName,
         DateTime LastUpdatedAt,
-        int? UserRating = null
+        int? UserRating = null,
+        /// <summary>Null for anything that isn't a TV episode -- movies have no season/episode
+        /// to show. Per-user request (2026-08-29): the Now Playing banner should show the
+        /// episode's own season/episode numbers alongside its name, not just the name, since
+        /// that's "obviously different than the movie version" of the same banner.</summary>
+        int? Season = null,
+        int? Episode = null
     );
 
     public interface IScrobbleService

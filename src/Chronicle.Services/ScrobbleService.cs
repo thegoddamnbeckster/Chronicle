@@ -335,6 +335,29 @@ namespace Chronicle.Services
                 .Select(l => new { l.MediaItemId, l.UserRating })
                 .ToDictionaryAsync(l => l.MediaItemId, l => l.UserRating, ct);
 
+            // Season/episode numbers + poster roll-up for the Now Playing banner, per-user
+            // request (2026-08-29): the banner should show "S03E04" alongside the episode's
+            // own name, and when the episode itself has no poster (common -- episode stills
+            // are the last thing to get scraped), fall back to the season's poster, then the
+            // show's, rather than showing a blank/generic image for something that clearly
+            // has real artwork available one or two levels up.
+            var seasonIds = latestPerDevice
+                .Where(e => e.MediaItem!.HierarchyLevel == 2 && e.MediaItem.ParentId.HasValue)
+                .Select(e => e.MediaItem!.ParentId!.Value)
+                .Distinct().ToList();
+            var seasonsById = await _context.MediaItems
+                .Where(m => seasonIds.Contains(m.Id))
+                .Select(m => new { m.Id, m.Number, m.ParentId, m.PosterUrl })
+                .ToDictionaryAsync(m => m.Id, ct);
+            var showIds = seasonsById.Values
+                .Where(s => s.ParentId.HasValue)
+                .Select(s => s.ParentId!.Value)
+                .Distinct().ToList();
+            var showsById = await _context.MediaItems
+                .Where(m => showIds.Contains(m.Id))
+                .Select(m => new { m.Id, m.PosterUrl })
+                .ToDictionaryAsync(m => m.Id, ct);
+
             return latestPerDevice.Select(e =>
             {
                 var runtimeMinutes = e.MediaItem!.RuntimeMinutes;
@@ -343,16 +366,32 @@ namespace Chronicle.Services
                     ? (int)Math.Round(rt * progress / 100.0)
                     : null;
 
+                int? season = null, episode = null;
+                var posterUrl = e.MediaItem.PosterUrl;
+                if (e.MediaItem.HierarchyLevel == 2 && e.MediaItem.ParentId.HasValue
+                    && seasonsById.TryGetValue(e.MediaItem.ParentId.Value, out var seasonRow))
+                {
+                    episode = e.MediaItem.Number;
+                    season  = seasonRow.Number;
+
+                    posterUrl ??= seasonRow.PosterUrl;
+                    if (posterUrl is null && seasonRow.ParentId.HasValue
+                        && showsById.TryGetValue(seasonRow.ParentId.Value, out var showRow))
+                        posterUrl = showRow.PosterUrl;
+                }
+
                 return new ActiveSession(
                     e.MediaItemId,
                     e.MediaItem.Name,
-                    e.MediaItem.PosterUrl,
+                    posterUrl,
                     progress,
                     elapsedMinutes,
                     runtimeMinutes,
                     e.DeviceName,
                     e.Timestamp,
-                    ratingsByItem.GetValueOrDefault(e.MediaItemId));
+                    ratingsByItem.GetValueOrDefault(e.MediaItemId),
+                    season,
+                    episode);
             }).ToList();
         }
 

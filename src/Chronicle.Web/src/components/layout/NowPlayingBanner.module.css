@@ -6,6 +6,15 @@
 }
 
 .banner {
+  /* Fixed, not percentage/stretch-derived -- matches this banner's actual single-line
+     content height (measured live: deviceHeader + titleRow + deviceRow + progressTrack
+     + gaps = 76px). A flex item's percentage-height descendant resolving against
+     another flex item's align-self:stretch size is a well-known CSS circularity (the
+     descendant's intrinsic size gets used for the line's own cross-size calculation
+     before stretch is applied, inflating the row to the image's full raw resolution --
+     confirmed live, the poster briefly rendered near its full ~1000px+ source size).
+     A concrete length sidesteps that entirely. */
+  --now-playing-poster-size: 76px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -22,11 +31,34 @@
   border-color: var(--accent);
 }
 
-.poster {
-  width: 40px;
+/* Per-user request (2026-08-29): the poster was too small to make out. Sized by HEIGHT
+   (matching the banner's own content height) instead of a fixed width, with the image's
+   own aspect ratio driving its width via object-fit:contain -- a landscape still (wider
+   than tall) ends up wider than the old fixed 40px and naturally pushes the text over via
+   the flex row, while a portrait poster (taller than wide) ends up close to the old width,
+   leaving the text roughly where it was. Both are the same rule; the described difference
+   in behavior falls out of the aspect ratio, no separate orientation check needed.
+   Selector specificity (.banner .poster[ img]) is deliberately higher than PosterImage's
+   own .root/.img rules (width:100%/height:auto) so this override doesn't depend on CSS
+   module import order. */
+.banner .poster {
+  width: auto;
+  height: var(--now-playing-poster-size);
   flex-shrink: 0;
   border-radius: 4px;
   overflow: hidden;
+}
+
+.banner .poster img {
+  height: 100%;
+  width: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.banner .poster > div:first-child {
+  min-height: 0;
+  height: 100%;
 }
 
 .info {
@@ -77,6 +109,17 @@
   text-overflow: ellipsis;
 }
 
+.episodeCode {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted, #888);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
 .title {
   font-weight: 600;
   white-space: nowrap;
@@ -109,4 +152,22 @@
 .progressFill {
   height: 100%;
   background: var(--success);
+}
+
+/* Per-user request (2026-08-29): on a narrow window the device name / breadcrumb / title
+   were truncating with an ellipsis instead of wrapping, making them unreadable on mobile
+   (single-line nowrap made sense on desktop, where the row is wide enough to fit them). */
+@media (max-width: 768px) {
+  .deviceHeader,
+  .context,
+  .title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    word-break: break-word;
+  }
+
+  .titleRow {
+    flex-wrap: wrap;
+  }
 }

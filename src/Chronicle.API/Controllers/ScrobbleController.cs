@@ -212,7 +212,9 @@ namespace Chronicle.API.Controllers
                     s.DeviceName,
                     s.LastUpdatedAt,
                     Ancestors: ancestors is { Count: > 0 } ? ancestors : null,
-                    UserRating: s.UserRating
+                    UserRating: s.UserRating,
+                    Season: s.Season,
+                    Episode: s.Episode
                 );
             }).ToList();
 

@@ -510,6 +510,105 @@ namespace Chronicle.Tests.Unit.Services
             active.Should().BeEmpty();
         }
 
+        // ── GetActiveSessionsAsync: episode season/episode numbers + poster roll-up ──
+
+        private async Task<(MediaItem show, MediaItem season, MediaItem episode)> SeedEpisodeHierarchyAsync(
+            string? showPoster, string? seasonPoster, string? episodePoster)
+        {
+            var show = new MediaItem
+            {
+                Id = 10, MediaTypeId = 1, Name = "Rick and Morty", Year = 2013, PosterUrl = showPoster,
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            var season = new MediaItem
+            {
+                Id = 11, MediaTypeId = 1, Name = "Season 3", Number = 3, ParentId = 10, PosterUrl = seasonPoster,
+                HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            var episode = new MediaItem
+            {
+                Id = 12, MediaTypeId = 1, Name = "Vindicators 3", Number = 4, ParentId = 11, PosterUrl = episodePoster,
+                RuntimeMinutes = 22, HierarchyLevel = 2, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _context.MediaItems.AddRange(show, season, episode);
+            await _context.SaveChangesAsync();
+            return (show, season, episode);
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_Episode_ReturnsSeasonAndEpisodeNumbers()
+        {
+            await SeedEpisodeHierarchyAsync(showPoster: null, seasonPoster: null, episodePoster: null);
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(12, 30.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active.Should().ContainSingle();
+            active[0].Season.Should().Be(3);
+            active[0].Episode.Should().Be(4);
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_Movie_SeasonAndEpisodeAreNull()
+        {
+            // Seeded item 1 is a plain HierarchyLevel-2 "episode"-shaped item with no
+            // parent -- exercises the movie/no-hierarchy path, where Season/Episode must
+            // stay null rather than resolving a nonexistent parent chain.
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 30.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active[0].Season.Should().BeNull();
+            active[0].Episode.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_EpisodeHasOwnPoster_UsesIt()
+        {
+            await SeedEpisodeHierarchyAsync(showPoster: "show.jpg", seasonPoster: "season.jpg", episodePoster: "episode.jpg");
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(12, 30.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active[0].PosterUrl.Should().Be("episode.jpg");
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_EpisodeHasNoPoster_RollsUpToSeason()
+        {
+            // Per-user request (2026-08-29): "if the episode doesn't have a poster, roll
+            // up to the season."
+            await SeedEpisodeHierarchyAsync(showPoster: "show.jpg", seasonPoster: "season.jpg", episodePoster: null);
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(12, 30.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active[0].PosterUrl.Should().Be("season.jpg");
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_EpisodeAndSeasonHaveNoPoster_RollsUpToShow()
+        {
+            // "no season poster, roll up to the show."
+            await SeedEpisodeHierarchyAsync(showPoster: "show.jpg", seasonPoster: null, episodePoster: null);
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(12, 30.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active[0].PosterUrl.Should().Be("show.jpg");
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_NoPosterAnywhereInHierarchy_IsNull()
+        {
+            await SeedEpisodeHierarchyAsync(showPoster: null, seasonPoster: null, episodePoster: null);
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(12, 30.0, DateTime.UtcNow, "Kodi"));
+
+            var active = await _service.GetActiveSessionsAsync(1);
+
+            active[0].PosterUrl.Should().BeNull();
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

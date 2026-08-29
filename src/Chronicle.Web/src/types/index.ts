@@ -196,6 +196,9 @@ export interface ActiveSession {
   ancestors?: { id: number; name: string }[]
   /** The caller's own 1-10 rating for this item, if set — shown as a badge on the banner. */
   userRating?: number | null
+  /** Null for anything that isn't a TV episode — movies have no season/episode to show. */
+  season?: number | null
+  episode?: number | null
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
