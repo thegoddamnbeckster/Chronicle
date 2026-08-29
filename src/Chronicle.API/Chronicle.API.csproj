@@ -26,6 +26,14 @@
     <ApplicationIcon>chronicle.ico</ApplicationIcon>
     <Win32Resource></Win32Resource>
     <UserSecretsId>c969fa09-cee3-4e32-80f7-a8406e2b99ee</UserSecretsId>
+    <!-- Read by DiagnosticsController via AssemblyInformationalVersionAttribute, shown in the
+         web app's own footer. With no <Version> set at all, the SDK silently defaults to
+         "1.0.0", a value that never changes no matter what actually ships — functionally
+         indistinguishable from a hardcoded string even though it isn't literally one in code.
+         Confirmed live (2026-08-29) this had drifted from CLAUDE.md's own documented status
+         ("v0.7.0 released"); this project file is the actual source of truth now, so bump it
+         here going forward, matching CLAUDE.md's own status line. -->
+    <Version>0.7.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

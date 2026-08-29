@@ -6,13 +6,19 @@
 }
 
 /* ── Always-visible bar ────────────────────────────────────────── */
+/* flex-wrap, not position:absolute -- barRight used to be pinned to the right
+   edge independently of how wide the centered copyright/version text grew,
+   so on a narrow viewport the two would overlap instead of making room for
+   each other. Letting everything wrap onto its own line when space is tight
+   is the fix -- confirmed live (2026-08-29) the "▼ Diagnostics" button was
+   overlapping the "Wiki" link on mobile. */
 .bar {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   padding: 8px 24px;
-  position: relative;
 }
 
 .symbol {
@@ -34,12 +40,10 @@
 }
 
 .barRight {
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
