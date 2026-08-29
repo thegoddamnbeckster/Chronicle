@@ -26,15 +26,42 @@
     <ApplicationIcon>chronicle.ico</ApplicationIcon>
     <Win32Resource></Win32Resource>
     <UserSecretsId>c969fa09-cee3-4e32-80f7-a8406e2b99ee</UserSecretsId>
-    <!-- Read by DiagnosticsController via AssemblyInformationalVersionAttribute, shown in the
-         web app's own footer. With no <Version> set at all, the SDK silently defaults to
-         "1.0.0", a value that never changes no matter what actually ships — functionally
-         indistinguishable from a hardcoded string even though it isn't literally one in code.
-         Confirmed live (2026-08-29) this had drifted from CLAUDE.md's own documented status
-         ("v0.7.0 released"); this project file is the actual source of truth now, so bump it
-         here going forward, matching CLAUDE.md's own status line. -->
-    <Version>0.7.0</Version>
+    <!-- Fallback only: SetVersionFromGit below overwrites this on every build where git is
+         available. Exists so a git-less build environment (e.g. a published artifact with no
+         .git folder) still gets something better than the SDK's own silent "1.0.0" default.
+         Per-user directive (2026-08-29): "I never want to have to hound you to make sure it's
+         updated. it should just always be the current version." A manually-typed number here
+         is exactly the kind of thing that goes stale — this one already had, having drifted
+         from the actual latest tag (v0.9.0, 19 commits behind HEAD at the time) within the
+         same session that set it. -->
+    <Version>0.9.0</Version>
   </PropertyGroup>
+
+  <!-- Derives the version actually shown in DiagnosticsController/the web app's footer from
+       git itself, every build, so it can never go stale the way a manually-maintained
+       Version string already proved it does. The "git describe" command walks back from HEAD
+       to the nearest tag and reports how many commits past it HEAD is (e.g.
+       "v0.9.0-19-g84f4f2d"), so "the current version" is always an honest reflection of the
+       actual code, not a promise someone has to remember to keep. The dirty-state flag it's
+       given marks uncommitted working-tree changes, relevant here since RunTestEnvironment.ps1
+       runs straight from the working tree, not a clean checkout. ContinueOnError means a
+       git-less environment (no .git present, e.g. some published/archived deployments) simply
+       keeps the static Version fallback above instead of failing the build. -->
+  <Target Name="SetVersionFromGit" BeforeTargets="CoreCompile;GetAssemblyVersion;GenerateNuspec">
+    <Exec Command="git describe --tags --always --dirty"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low"
+          ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitDescribeOutput" />
+      <Output TaskParameter="ExitCode" PropertyName="GitDescribeExitCode" />
+    </Exec>
+    <PropertyGroup Condition="'$(GitDescribeExitCode)' == '0' And '$(GitDescribeOutput)' != ''">
+      <!-- Strips a leading "v" (git tags here are "v0.9.0", not "0.9.0"); InformationalVersion
+           is free-text and doesn't need it, and DiagnosticsController already prepends nothing. -->
+      <InformationalVersion>$(GitDescribeOutput.TrimStart('v'))</InformationalVersion>
+    </PropertyGroup>
+  </Target>
 
   <ItemGroup>
     <!-- Embed the icon so it travels with the published output -->
