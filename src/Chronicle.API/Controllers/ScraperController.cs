@@ -750,17 +750,57 @@ public class ScraperController : ControllerBase
         if (target.Length == 0) return null;
 
         var titleMatches = candidates.Where(m => NormalizeTitle(m.Name) == target).ToList();
-        if (titleMatches.Count == 0) return null;
 
+        // Already belonging to a collection outranks raw MetadataJson size -- confirmed
+        // directly (2026-08-29) that picking purely by size can land on an orphan duplicate
+        // that happens to have accumulated more plugin partitions over several bad re-scrapes,
+        // while the one properly-grouped item stays untouched and un-selected -- exactly the
+        // "Chronicle groups it, Kodi doesn't" gap this whole method exists to prevent.
         static MediaItem? Richest(IEnumerable<MediaItem> pool) =>
-            pool.OrderByDescending(m => m.MetadataJson?.Length ?? 0).FirstOrDefault();
+            pool.OrderByDescending(m => m.ParentId.HasValue)
+                .ThenByDescending(m => m.MetadataJson?.Length ?? 0)
+                .FirstOrDefault();
 
-        if (!year.HasValue)
-            return Richest(titleMatches);
+        if (titleMatches.Count > 0)
+        {
+            if (!year.HasValue)
+                return Richest(titleMatches);
 
-        return Richest(titleMatches.Where(m => m.Year == year))
-            ?? Richest(titleMatches.Where(m => TryGetScannedFolderYear(m.MetadataJson) == year))
-            ?? Richest(titleMatches.Where(m => !m.Year.HasValue && TryGetScannedFolderYear(m.MetadataJson) is null));
+            var exact = Richest(titleMatches.Where(m => m.Year == year))
+                ?? Richest(titleMatches.Where(m => TryGetScannedFolderYear(m.MetadataJson) == year))
+                ?? Richest(titleMatches.Where(m => !m.Year.HasValue && TryGetScannedFolderYear(m.MetadataJson) is null));
+            if (exact is not null) return exact;
+        }
+
+        // Missing-subtitle-word fallback -- confirmed directly (2026-08-29): a stale/legacy
+        // local NFO can leave Kodi permanently searching under a truncated title (e.g. "The
+        // Toxic Avenger" for what Chronicle's own enriched item is titled "The Toxic Avenger
+        // Unrated") -- every scrape misses the exact-token-set match above AND has no fileName
+        // to short-circuit with (find_movie_location itself fails to locate the file under the
+        // wrong title), so a fresh duplicate got minted on every single re-scrape, confirmed
+        // recurring over a full week (8 duplicates, 2026-08-22 through 2026-08-29). Exact year
+        // match is required (no folder-year tier here -- that signal doesn't exist without a
+        // located file). Picks the richest candidate the same way the exact-match tier above
+        // does, rather than requiring a unique match -- confirmed directly that requiring
+        // uniqueness makes this tier useless exactly where it's needed most: once a title
+        // mismatch has already produced several duplicates (as it did here), every one of them
+        // satisfies the subset condition, so "exactly one" can never be true again and every
+        // future scrape would keep minting new items forever instead of ever converging back
+        // onto the existing (increasingly enriched) ones.
+        if (!year.HasValue) return null;
+        var targetTokens = target.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        if (targetTokens.Count == 0) return null;
+
+        var subsetMatches = candidates.Where(m =>
+        {
+            if (m.Year != year) return false;
+            var mTokens = NormalizeTitle(m.Name).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .ToHashSet(StringComparer.Ordinal);
+            if (mTokens.Count == 0) return false;
+            return targetTokens.IsSubsetOf(mTokens) || mTokens.IsSubsetOf(targetTokens);
+        });
+
+        return Richest(subsetMatches);
     }
 
     // Matches a trailing "(YYYY)"/"[YYYY]" in a folder name -- same convention Kodi's own
