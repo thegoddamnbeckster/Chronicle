@@ -199,6 +199,14 @@
 .value {
   color: var(--text);
   word-break: break-word;
+  /* Preserves the blank-line paragraph breaks a plugin's own overview text can carry
+     (e.g. Wikipedia's multi-paragraph article lead) -- plain text rendering otherwise
+     collapses every "\n\n" the same way normal HTML whitespace always does, flattening
+     a genuinely multi-paragraph overview into one unbroken run on screen even though
+     the underlying string is correct. Harmless for every other field this renders --
+     numbers, ratings, single-line strings -- since none of them contain a newline to
+     begin with. */
+  white-space: pre-line;
 }
 
 .tagList {
