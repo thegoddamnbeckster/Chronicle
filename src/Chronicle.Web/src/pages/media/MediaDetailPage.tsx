@@ -1234,15 +1234,22 @@ export default function MediaDetailPage() {
                     <span className={styles.scannerPath}>{item.fileScannerMeta.filePath}</span>
                   </div>
                 )}
-                {!item.fileScannerMeta?.filePath && item.hasPhysicalFile && (
+                {/* No own path recorded (neither a file nor a folder). This is not a loading
+                    state -- fileScannerMeta and hasPhysicalFile are returned together in the
+                    same API response, so there is nothing left to arrive later. hasPhysicalFile
+                    can still be true here: it rolls up from descendants (e.g. an Author grouped
+                    purely from tag metadata, with no folder of its own -- her books each have
+                    their own real path, she doesn't). State that plainly instead of implying a
+                    pending load that will never resolve. */}
+                {!item.fileScannerMeta?.filePath && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>File</span>
                     <span className={styles.scannerPath} style={{ color: 'var(--text-muted)' }}>
-                      Tracked on disk, but the file path hasn't loaded yet.
+                      No file on disk for this item.
                     </span>
                   </div>
                 )}
-                {!item.fileScannerMeta?.filePath && !item.hasPhysicalFile && item.fileScannerMeta?.importedAt && (
+                {!item.fileScannerMeta?.filePath && item.fileScannerMeta?.importedAt && (
                   <div className={styles.tmdbRow}>
                     <span className={styles.tmdbLabel}>Imported</span>
                     <span className={styles.scannerPath}>
@@ -1352,7 +1359,14 @@ export default function MediaDetailPage() {
             </div>
           )}
 
-          {/* Library actions */}
+          {/* Library actions -- hidden for a collection container itself (isKnownCollection,
+              same check the "Add to Collection"/"Add to a Collection" toggle above already
+              uses): a collection isn't something you watch or rate as a whole, only the
+              movies inside it are. Confirmed live (2026-08-29) this control had no such guard
+              at all -- a stray click on a collection's own page set its UserLibrary status to
+              "Watching" with zero backing interaction_event, ever, showing up in Continue
+              Watching for something nobody actually watched. */}
+          {!(item.hierarchyLevel === 0 && item.parentId == null && isFlatCollectionType && isKnownCollection) && (
           <div className={styles.librarySection}>
             {libraryEntry ? (
               <div className={styles.libraryControls}>
@@ -1404,6 +1418,7 @@ export default function MediaDetailPage() {
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
         </div>{/* backdropContent */}

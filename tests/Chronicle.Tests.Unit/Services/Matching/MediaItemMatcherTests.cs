@@ -102,6 +102,57 @@ namespace Chronicle.Tests.Unit.Services.Matching
         }
 
         [Fact]
+        public async Task FindByTitleYearAsync_ExcludesCollectionContainer_EvenOnExactTitleMatch()
+        {
+            // Regression test (2026-08-29): a sync event titled "Robot Jox Collection" (Simkl
+            // tracks "collections" as their own trackable entity) used to match straight onto
+            // Chronicle's own movie-set CONTAINER of that exact name, silently setting a watch
+            // status on something nobody ever actually watched -- confirmed live via zero
+            // backing interaction_events. A container is never a valid match target for a
+            // scrobble/import/sync event.
+            _db.MediaItems.Add(new MediaItem
+            {
+                Id = 1, MediaTypeId = 2, Name = "Robot Jox Collection",
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            _db.MediaExternalIds.Add(new MediaExternalId
+            {
+                MediaItemId = 1, Source = "chronicle", ExternalId = "collection:1",
+            });
+            await _db.SaveChangesAsync();
+
+            var match = await MediaItemMatcher.FindByTitleYearAsync(
+                _db, "Robot Jox Collection", year: null, mediaTypeId: 2, default);
+
+            match.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task FindByTitleYearAsync_StillMatchesTvShowWithSeasonChildren()
+        {
+            // Guards against a too-broad fix for the container-exclusion test above: a real
+            // TV show's season/episode children are normal structure, not a sign of being a
+            // synthetic container -- excluding "has children" here would have broken this.
+            _db.MediaItems.Add(new MediaItem
+            {
+                Id = 1, MediaTypeId = 1, Name = "Rick and Morty", Year = 2013,
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            _db.MediaItems.Add(new MediaItem
+            {
+                Id = 2, MediaTypeId = 1, Name = "Season 01", ParentId = 1,
+                HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+
+            var match = await MediaItemMatcher.FindByTitleYearAsync(
+                _db, "Rick and Morty", year: 2013, mediaTypeId: 1, default);
+
+            match.Should().NotBeNull();
+            match!.Id.Should().Be(1);
+        }
+
+        [Fact]
         public async Task ResolveMediaTypeIdForStubAsync_UnresolvedType_FallsBackToFirstActiveType()
         {
             var id = await MediaItemMatcher.ResolveMediaTypeIdForStubAsync(_db, "podcast", default);

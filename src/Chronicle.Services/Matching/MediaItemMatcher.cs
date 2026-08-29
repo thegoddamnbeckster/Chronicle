@@ -139,11 +139,37 @@ public static class MediaItemMatcher
         var dashWithYear  = year.HasValue ? $"{dashTitle} ({year.Value})" : null;
         var colonWithYear = year.HasValue ? $"{colonTitle} ({year.Value})" : null;
 
+        // Excludes collection containers from candidates -- confirmed live (2026-08-29,
+        // "Robot Jox Collection"): a sync event whose own title happens to exactly match
+        // one of Chronicle's own movie-set container names (Simkl tracks "collections" as
+        // their own trackable entity, distinct from individual movies) matched straight
+        // onto the CONTAINER itself here, silently setting a watch status on something
+        // that was never actually watched -- confirmed via zero backing interaction_events
+        // and a shared bulk-insert timestamp with 634 other rows from the same sync run
+        // (1272 total across every historical sync, once discovered). A container is never
+        // a valid match target for a scrobble/import/sync event, which always represents a
+        // real, individual watchable item -- ScraperController.SearchMovies already
+        // excludes containers from ITS OWN candidate pool for the identical reason; this
+        // matcher never had the same protection.
+        //
+        // Deliberately NOT using IMovieCollectionService.GetCollectionContainerIdsAsync's
+        // full "has children OR collection:-prefixed external id" definition here: THAT
+        // check is only ever run against a movie-scoped candidate pool (where "has
+        // children" is unambiguous -- a real movie never naturally has any), but this
+        // matcher runs across every media type, including TV shows and music artists,
+        // which have season/album children as completely normal structure, not a sign of
+        // being a synthetic container. Excluding "has children" here would have wrongly
+        // excluded every legitimate TV show from ever being matched again -- exactly the
+        // opposite of tonight's earlier "Rick and Morty" fix. Confirmed "Robot Jox
+        // Collection" itself carries the "collection:487727" external id, so that signal
+        // alone is enough without needing the type-ambiguous children check at all.
         return await db.MediaItems.FirstOrDefaultAsync(m =>
             m.MediaTypeId == mediaTypeId &&
             (!year.HasValue || m.Year == year) &&
             (m.Name == title      || m.Name == nameWithYear  ||
              m.Name == dashTitle  || m.Name == dashWithYear  ||
-             m.Name == colonTitle || m.Name == colonWithYear), ct);
+             m.Name == colonTitle || m.Name == colonWithYear) &&
+            !db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId.StartsWith("collection:")),
+            ct);
     }
 }
