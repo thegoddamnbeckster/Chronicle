@@ -181,6 +181,13 @@ const TYPE_TO_SLOT: Record<string, CanonicalSlot> = {
   clearart: 'clearart_url', cleararturl: 'clearart_url',
   discart: 'disc_url', disc: 'disc_url', discurl: 'disc_url',
   characterart: 'character_art_url', character: 'character_art_url', characterarturl: 'character_art_url',
+  // Wikipedia's own generic image type -- an article's photos/logos/icons carry no real
+  // poster-vs-backdrop-vs-logo semantics of their own (unlike Fanart.tv/TMDB, which tag by
+  // actual art category). Per-user request (2026-08-29): treat them the same as every other
+  // plugin's images rather than excluding them from the promote-eligible pool entirely --
+  // defaults into Posters, the same general-purpose bucket "front" already falls into, and
+  // the user can re-pin any of them to a different slot from the picker like any other image.
+  article: 'poster_url',
 }
 
 /**
