@@ -318,8 +318,17 @@ namespace Chronicle.Services
                 .OrderByDescending(e => e.Timestamp)
                 .ToListAsync(ct);
 
+            // Per-user report (2026-08-29): "when I get close to the end of the episode,
+            // the banner disappears. it needs to stay up until the video has been turned
+            // off." This used to also filter out MarkedAsWatched events, on the assumption
+            // that crossing the watched threshold (80% by default) meant playback was
+            // done -- wrong: Kodi keeps playing (and scrobbling) well past that threshold,
+            // all the way to the actual end of the episode/credits. Recency alone (the
+            // ActiveSessionWindow cutoff above) is the correct signal for "still actually
+            // playing" -- MarkedAsWatched is a separate, library-status concern that
+            // shouldn't hide a session that's still live.
             var latestPerDevice = recentEvents
-                .Where(e => !e.MarkedAsWatched && e.MediaItem != null)
+                .Where(e => e.MediaItem != null)
                 .GroupBy(e => e.DeviceName ?? "Unknown Device")
                 .Select(g => g.First()) // already ordered desc by Timestamp above
                 .ToList();

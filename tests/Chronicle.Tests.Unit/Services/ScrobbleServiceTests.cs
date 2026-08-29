@@ -420,15 +420,19 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
-        public async Task GetActiveSessionsAsync_RecentButAlreadyMarkedWatched_IsNotReturned()
+        public async Task GetActiveSessionsAsync_RecentAndMarkedWatched_IsStillReturned()
         {
-            // 85% crosses the 80% watched threshold — a session that just finished is not
-            // "still actively watching," even though its event is well within the time window.
+            // Regression test (2026-08-29): "when I get close to the end of the episode,
+            // the banner disappears. it needs to stay up until the video has been turned
+            // off." Kodi keeps playing (and scrobbling) well past the 80% watched
+            // threshold, all the way to the actual end -- MarkedAsWatched must not hide an
+            // otherwise-recent, still-live session.
             await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 85.0, DateTime.UtcNow, "Kodi"));
 
             var active = await _service.GetActiveSessionsAsync(1);
 
-            active.Should().BeEmpty();
+            active.Should().ContainSingle();
+            active[0].ProgressPercent.Should().Be(85.0);
         }
 
         [Fact]

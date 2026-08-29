@@ -152,8 +152,10 @@ namespace Chronicle.Services
         /// <summary>
         /// One entry per device currently believed to be actively playing something for this
         /// user — see ScrobbleService's implementation doc for the staleness-window inference.
-        /// Devices with no recent scrobble, or whose most recent event already crossed the
-        /// watched threshold, are simply absent — never returned as a "finished" entry.
+        /// Devices with no recent scrobble are simply absent. Crossing the watched threshold
+        /// does NOT remove a device from this list on its own — Kodi keeps playing (and
+        /// scrobbling) well past that threshold, all the way to the actual end; only
+        /// staleness (no event within the window, i.e. playback actually stopped) does.
         /// </summary>
         Task<IReadOnlyList<ActiveSession>> GetActiveSessionsAsync(int userId, CancellationToken ct = default);
     }
