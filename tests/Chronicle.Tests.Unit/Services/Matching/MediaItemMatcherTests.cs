@@ -160,6 +160,155 @@ namespace Chronicle.Tests.Unit.Services.Matching
             id.Should().Be(1); // "tv" -- lowest Id among active types
         }
 
+        [Fact]
+        public async Task FindEpisodeAsync_NoSeason_ReturnsNull()
+        {
+            var show = await AddShowAsync();
+
+            var episode = await MediaItemMatcher.FindEpisodeAsync(_db, show.Id, season: 1, episode: 1, default);
+
+            episode.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task FindEpisodeAsync_SeasonExistsButNotEpisode_ReturnsNull()
+        {
+            var show = await AddShowAsync();
+            await AddSeasonAsync(show.Id, 1);
+
+            var episode = await MediaItemMatcher.FindEpisodeAsync(_db, show.Id, season: 1, episode: 4, default);
+
+            episode.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task FindEpisodeAsync_ExistingEpisode_ReturnsIt()
+        {
+            var show = await AddShowAsync();
+            var season = await AddSeasonAsync(show.Id, 3);
+            var episode = await AddEpisodeAsync(season.Id, 4, "Vindicators 3: The Return of Worldender");
+
+            var match = await MediaItemMatcher.FindEpisodeAsync(_db, show.Id, season: 3, episode: 4, default);
+
+            match.Should().NotBeNull();
+            match!.Id.Should().Be(episode.Id);
+        }
+
+        [Fact]
+        public async Task FindOrCreateEpisodeAsync_NoExistingSeasonOrEpisode_CreatesBoth()
+        {
+            var show = await AddShowAsync();
+
+            var episode = await MediaItemMatcher.FindOrCreateEpisodeAsync(
+                _db, show, season: 3, episode: 4, episodeTitle: "Vindicators 3: The Return of Worldender", default);
+
+            episode.Name.Should().Be("Vindicators 3: The Return of Worldender");
+            episode.HierarchyLevel.Should().Be(2);
+            episode.Number.Should().Be(4);
+
+            var season = await _db.MediaItems.SingleAsync(i => i.ParentId == show.Id && i.HierarchyLevel == 1);
+            season.Number.Should().Be(3);
+            episode.ParentId.Should().Be(season.Id);
+        }
+
+        [Fact]
+        public async Task FindOrCreateEpisodeAsync_NoEpisodeTitleSupplied_FallsBackToSeasonEpisodeCode()
+        {
+            var show = await AddShowAsync();
+
+            var episode = await MediaItemMatcher.FindOrCreateEpisodeAsync(
+                _db, show, season: 3, episode: 4, episodeTitle: null, default);
+
+            episode.Name.Should().Be("S03E04");
+        }
+
+        [Fact]
+        public async Task FindOrCreateEpisodeAsync_ExistingEpisodeWithRealTitle_NeverOverwritesIt()
+        {
+            // An already-scraped episode (TMDB/TVDB/NFO import) has a real title -- a scrobble's
+            // own episodeTitle (which may just be Kodi's locally cached label) must never clobber it.
+            var show = await AddShowAsync();
+            var season = await AddSeasonAsync(show.Id, 3);
+            var existing = await AddEpisodeAsync(season.Id, 4, "Vindicators 3: The Return of Worldender");
+
+            var episode = await MediaItemMatcher.FindOrCreateEpisodeAsync(
+                _db, show, season: 3, episode: 4, episodeTitle: "Some Other Title", default);
+
+            episode.Id.Should().Be(existing.Id);
+            episode.Name.Should().Be("Vindicators 3: The Return of Worldender");
+        }
+
+        [Fact]
+        public async Task FindOrCreateEpisodeAsync_ExistingEpisodeStillHasPlaceholderName_UpgradesToRealTitle()
+        {
+            // Regression test (2026-08-29, "you're missing the episode name"): an episode synced
+            // in earlier (e.g. via Simkl import, which doesn't always carry a per-episode title)
+            // can sit indefinitely with a generic "S03E04"-style Name even after metadata
+            // enrichment succeeds elsewhere, since enrichment never writes back into the raw Name
+            // column ActiveSessionDto/HistoryItemDto read directly. Confirmed live against a real
+            // "Rick and Morty" S03E04 item. A scrobble carrying a real episodeTitle (Kodi's local
+            // library scan almost always has one) should upgrade the stale placeholder.
+            var show = await AddShowAsync();
+            var season = await AddSeasonAsync(show.Id, 3);
+            var existing = await AddEpisodeAsync(season.Id, 4, "S03E04");
+
+            var episode = await MediaItemMatcher.FindOrCreateEpisodeAsync(
+                _db, show, season: 3, episode: 4, episodeTitle: "Vindicators 3: The Return of Worldender", default);
+
+            episode.Id.Should().Be(existing.Id);
+            episode.Name.Should().Be("Vindicators 3: The Return of Worldender");
+        }
+
+        [Fact]
+        public async Task FindOrCreateEpisodeAsync_ExistingPlaceholderNamedEpisode_NoEpisodeTitleSupplied_LeavesPlaceholderAlone()
+        {
+            var show = await AddShowAsync();
+            var season = await AddSeasonAsync(show.Id, 3);
+            var existing = await AddEpisodeAsync(season.Id, 4, "S03E04");
+
+            var episode = await MediaItemMatcher.FindOrCreateEpisodeAsync(
+                _db, show, season: 3, episode: 4, episodeTitle: null, default);
+
+            episode.Id.Should().Be(existing.Id);
+            episode.Name.Should().Be("S03E04");
+        }
+
+        private async Task<MediaItem> AddShowAsync()
+        {
+            var show = new MediaItem
+            {
+                MediaTypeId = 1, Name = "Rick and Morty", Year = 2013,
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _db.MediaItems.Add(show);
+            await _db.SaveChangesAsync();
+            return show;
+        }
+
+        private async Task<MediaItem> AddSeasonAsync(int showId, int number)
+        {
+            var season = new MediaItem
+            {
+                MediaTypeId = 1, Name = $"Season {number}", ParentId = showId,
+                HierarchyLevel = 1, Number = number, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _db.MediaItems.Add(season);
+            await _db.SaveChangesAsync();
+            return season;
+        }
+
+        private async Task<MediaItem> AddEpisodeAsync(int seasonId, int number, string name)
+        {
+            var episode = new MediaItem
+            {
+                MediaTypeId = 1, Name = name, ParentId = seasonId,
+                HierarchyLevel = 2, Number = number, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _db.MediaItems.Add(episode);
+            await _db.SaveChangesAsync();
+            return episode;
+        }
+
         public void Dispose() => _db.Dispose();
     }
 }

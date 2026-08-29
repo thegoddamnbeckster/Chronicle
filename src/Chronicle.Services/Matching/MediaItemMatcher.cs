@@ -172,4 +172,104 @@ public static class MediaItemMatcher
             !db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId.StartsWith("collection:")),
             ct);
     }
+
+    // ── Episode hierarchy resolution ─────────────────────────────────────────
+
+    /// <summary>
+    /// Read-only lookup of an existing episode within a show's own season/episode
+    /// hierarchy — never creates anything, matching the "resume never creates a stub"
+    /// rule ScrobbleService.GetResumeStateAsync already follows for the show-level
+    /// lookup this composes with. Null when the season, or the episode within it,
+    /// doesn't exist yet.
+    /// </summary>
+    public static async Task<MediaItem?> FindEpisodeAsync(
+        ChronicleDbContext db, int showId, int season, int episode, CancellationToken ct)
+    {
+        var seasonItem = await db.MediaItems.FirstOrDefaultAsync(
+            i => i.ParentId == showId && i.HierarchyLevel == 1 && i.Number == season, ct);
+        if (seasonItem is null) return null;
+
+        return await db.MediaItems.FirstOrDefaultAsync(
+            i => i.ParentId == seasonItem.Id && i.HierarchyLevel == 2 && i.Number == episode, ct);
+    }
+
+    /// <summary>
+    /// Per-user report (2026-08-29): "you're missing the episode name" -- a scrobble's
+    /// title/year/externalIds resolve onto the SHOW (Chronicle_Scrobbler always sends
+    /// the show's own title for an episode, per its own media_info.py docstring, since
+    /// Chronicle's scrobble contract used to have no fields for season/episode at all),
+    /// so the show itself was always what got scrobbled -- correct for external-id/
+    /// title matching purposes, but it meant every episode watch showed as just "Rick
+    /// and Morty" everywhere (Now Playing, History), with no episode identity at all,
+    /// even though Chronicle already has the real, fully-scraped episode sitting right
+    /// there in its own hierarchy under that same show.
+    ///
+    /// Called AFTER the show itself is resolved (by the caller, via the existing
+    /// title/year/externalIds matcher above) -- this only handles the season/episode
+    /// step, reusing FindEpisodeAsync's own lookup first so an already-scraped episode
+    /// (with its own real title, from TMDB/TVDB/NFO import) is always preferred over
+    /// creating a new stub. episodeTitle is otherwise the FALLBACK name only, used
+    /// when no existing episode is found -- never overwrites a real title an existing
+    /// episode already has. The one exception: an existing episode whose own Name is
+    /// STILL that same generic "S03E04"-style placeholder (e.g. synced in from Simkl,
+    /// which doesn't always carry a per-episode title, before enrichment ever ran) gets
+    /// upgraded to episodeTitle when one is supplied -- Kodi's local library scan
+    /// already has the real title, and there's no reason to keep showing a code once a
+    /// caller hands us something better. Confirmed live (2026-08-29): a Rick and Morty
+    /// S03E04 item synced this way sat with Name="S03E04" for weeks despite TMDB/TVMaze
+    /// enrichment already having found "Vindicators 3: The Return of Worldender" --
+    /// enrichment writes into MetadataJson/resolved metadata only, never back into the
+    /// raw Name column that ActiveSessionDto/HistoryItemDto read directly.
+    /// </summary>
+    public static async Task<MediaItem> FindOrCreateEpisodeAsync(
+        ChronicleDbContext db, MediaItem show, int season, int episode, string? episodeTitle, CancellationToken ct)
+    {
+        var existing = await FindEpisodeAsync(db, show.Id, season, episode, ct);
+        if (existing is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(episodeTitle)
+                && existing.Name == $"S{season:D2}E{episode:D2}"
+                && episodeTitle != existing.Name)
+            {
+                existing.Name      = episodeTitle;
+                existing.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+            }
+            return existing;
+        }
+
+        var seasonItem = await db.MediaItems.FirstOrDefaultAsync(
+            i => i.ParentId == show.Id && i.HierarchyLevel == 1 && i.Number == season, ct);
+        if (seasonItem is null)
+        {
+            seasonItem = new MediaItem
+            {
+                Name           = $"Season {season}",
+                MediaTypeId    = show.MediaTypeId,
+                ParentId       = show.Id,
+                HierarchyLevel = 1,
+                Number         = season,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(seasonItem);
+            await db.SaveChangesAsync(ct);
+        }
+
+        var episodeItem = new MediaItem
+        {
+            Name           = string.IsNullOrWhiteSpace(episodeTitle)
+                ? $"S{season:D2}E{episode:D2}"
+                : episodeTitle,
+            MediaTypeId    = show.MediaTypeId,
+            ParentId       = seasonItem.Id,
+            HierarchyLevel = 2,
+            Number         = episode,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(episodeItem);
+        await db.SaveChangesAsync(ct);
+        return episodeItem;
+    }
 }

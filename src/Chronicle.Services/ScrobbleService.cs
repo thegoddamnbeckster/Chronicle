@@ -99,7 +99,7 @@ namespace Chronicle.Services
             if (found != null)
             {
                 await StoreExternalIdsAsync(found.Id, externalIds, ct);
-                return found;
+                return await ResolveEpisodeIfRequestedAsync(found, request, ct);
             }
 
             if (string.IsNullOrWhiteSpace(request.Title))
@@ -122,8 +122,23 @@ namespace Chronicle.Services
             await StoreExternalIdsAsync(stub.Id, externalIds, ct);
             await _context.SaveChangesAsync(ct);
 
-            return stub;
+            return await ResolveEpisodeIfRequestedAsync(stub, request, ct);
         }
+
+        /// <summary>
+        /// Once the SHOW item is resolved/created (Title/Year/ExternalIds always identify
+        /// the show, never the episode), steps one level further down into the actual
+        /// episode when the request carries Season/Episode -- creating the season/episode
+        /// items if they don't exist yet. Without this, every scrobble for a show landed
+        /// on the show item itself and Chronicle had no way to know or display which
+        /// episode was actually watched (see ScrobbleRequest.Season's own doc).
+        /// </summary>
+        private async Task<MediaItem> ResolveEpisodeIfRequestedAsync(
+            MediaItem show, ScrobbleRequest request, CancellationToken ct) =>
+            request.Season.HasValue && request.Episode.HasValue
+                ? await MediaItemMatcher.FindOrCreateEpisodeAsync(
+                    _context, show, request.Season.Value, request.Episode.Value, request.EpisodeTitle, ct)
+                : show;
 
         /// <summary>
         /// The "find" half of FindOrCreateMediaItemAsync, split out so
@@ -186,6 +201,22 @@ namespace Chronicle.Services
                     request.Title, request.Year, request.MediaType, request.ExternalIds ?? new Dictionary<string, string>(), ct);
                 if (mediaItem == null)
                     return null;
+
+                // Same show->episode step FindOrCreateMediaItemAsync takes for a scrobble --
+                // needed so a resume check lands on the same item id a scrobble for the same
+                // episode would (the show's own UserLibrary row won't carry the episode's
+                // resume position once scrobbles start resolving onto the episode instead of
+                // the show). Read-only: an episode that doesn't exist yet just means nothing
+                // to resume, not a reason to create one.
+                if (request.Season.HasValue && request.Episode.HasValue)
+                {
+                    var episode = await MediaItemMatcher.FindEpisodeAsync(
+                        _context, mediaItem.Id, request.Season.Value, request.Episode.Value, ct);
+                    if (episode == null)
+                        return null;
+                    mediaItem = episode;
+                }
+
                 mediaItemId = mediaItem.Id;
             }
 

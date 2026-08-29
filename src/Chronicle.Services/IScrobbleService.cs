@@ -20,7 +20,22 @@ namespace Chronicle.Services
         int? Year = null,
         /// <summary>"movie" | "tv_episode" | "tv_show" | "track" — used only to pick a
         /// media type when a stub item must be created. Defaults to "movie".</summary>
-        string? MediaType = null
+        string? MediaType = null,
+        /// <summary>
+        /// Present only when MediaType is "episode" — resolves the scrobble onto the
+        /// actual episode item in Chronicle's existing show/season/episode hierarchy
+        /// instead of the show itself. Per-user report (2026-08-29): "you're missing
+        /// the episode name" -- Chronicle's scrobble model used to match at the show
+        /// level only, by design, discarding season/episode entirely even when the
+        /// real episode already existed in the library. See
+        /// MediaItemMatcher.FindOrCreateEpisodeAsync.
+        /// </summary>
+        int? Season = null,
+        int? Episode = null,
+        /// <summary>Fallback name only, used solely when Chronicle has to create a new
+        /// episode item (no existing one found at that season/episode number) -- never
+        /// overwrites a real title an existing episode already has.</summary>
+        string? EpisodeTitle = null
     );
 
     public record ScrobbleResult(
@@ -40,7 +55,15 @@ namespace Chronicle.Services
         IReadOnlyDictionary<string, string>? ExternalIds = null,
         string? Title = null,
         int? Year = null,
-        string? MediaType = null
+        string? MediaType = null,
+        /// <summary>Same episode-hierarchy resolution ScrobbleRequest uses -- required
+        /// so a resume check lands on the same item id a scrobble for the same episode
+        /// would (the show's own UserLibrary row won't have the episode's resume
+        /// position once ScrobbleRequest.Season/Episode start resolving scrobbles onto
+        /// the episode instead of the show). Never creates anything if missing, unlike
+        /// scrobbling -- see MediaItemMatcher.FindEpisodeAsync.</summary>
+        int? Season = null,
+        int? Episode = null
     );
 
     /// <summary>

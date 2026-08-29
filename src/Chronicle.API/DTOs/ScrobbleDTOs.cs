@@ -12,7 +12,13 @@ namespace Chronicle.API.DTOs
         Dictionary<string, string>? ExternalIds = null,
         string? Title = null,
         int? Year = null,
-        string? MediaType = null
+        string? MediaType = null,
+        /// <summary>Present only when MediaType is "episode" -- resolves the scrobble
+        /// onto the actual episode item in Chronicle's existing hierarchy instead of
+        /// just the show. See ScrobbleRequest's own doc for why.</summary>
+        int? Season = null,
+        int? Episode = null,
+        string? EpisodeTitle = null
     );
 
     public record ScrobbleResponseDto(
@@ -37,7 +43,9 @@ namespace Chronicle.API.DTOs
         Dictionary<string, string>? ExternalIds = null,
         string? Title = null,
         int? Year = null,
-        string? MediaType = null
+        string? MediaType = null,
+        int? Season = null,
+        int? Episode = null
     );
 
     public record ResumeStateDto(

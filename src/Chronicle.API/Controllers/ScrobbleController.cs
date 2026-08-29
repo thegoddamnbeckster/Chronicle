@@ -41,7 +41,10 @@ namespace Chronicle.API.Controllers
                     request.ExternalIds,
                     request.Title,
                     request.Year,
-                    request.MediaType
+                    request.MediaType,
+                    request.Season,
+                    request.Episode,
+                    request.EpisodeTitle
                 ), HttpContext.RequestAborted);
 
                 return Ok(ApiResponse<ScrobbleResponseDto>.Ok(new ScrobbleResponseDto(
@@ -129,7 +132,9 @@ namespace Chronicle.API.Controllers
                 request.ExternalIds,
                 request.Title,
                 request.Year,
-                request.MediaType
+                request.MediaType,
+                request.Season,
+                request.Episode
             ), HttpContext.RequestAborted);
 
             if (state is null)
