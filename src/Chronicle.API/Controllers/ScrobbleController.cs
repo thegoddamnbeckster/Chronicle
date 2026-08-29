@@ -206,7 +206,8 @@ namespace Chronicle.API.Controllers
                     s.RuntimeMinutes,
                     s.DeviceName,
                     s.LastUpdatedAt,
-                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null
+                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null,
+                    UserRating: s.UserRating
                 );
             }).ToList();
 

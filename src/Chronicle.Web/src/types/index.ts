@@ -194,6 +194,8 @@ export interface ActiveSession {
   deviceName: string | null
   lastUpdatedAt: string
   ancestors?: { id: number; name: string }[]
+  /** The caller's own 1-10 rating for this item, if set — shown as a badge on the banner. */
+  userRating?: number | null
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────

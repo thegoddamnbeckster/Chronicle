@@ -75,7 +75,10 @@ namespace Chronicle.API.DTOs
         int? RuntimeMinutes,
         string? DeviceName,
         DateTime LastUpdatedAt,
-        List<AncestorDto>? Ancestors = null
+        List<AncestorDto>? Ancestors = null,
+        /// <summary>The caller's own 1-10 rating for this item, if set — shown as a badge
+        /// on the Now Playing banner. Null, not 0, when unrated.</summary>
+        int? UserRating = null
     );
 
     public record HistoryItemDto(

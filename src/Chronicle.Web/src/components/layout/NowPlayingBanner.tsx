@@ -69,12 +69,20 @@ export default function NowPlayingBanner() {
               className={styles.poster}
             />
             <div className={styles.info}>
+              {/* Prominent per-user request (2026-08-28): the device this is playing on
+                  is the thing worth knowing at a glance, not a small trailing detail —
+                  it's what tells you WHICH banner is which when more than one is stacked. */}
+              <div className={styles.deviceHeader}>
+                Now playing on <span className={styles.deviceName}>{session.deviceName ?? 'Unknown device'}</span>
+              </div>
               <div className={styles.titleRow}>
                 {context && <span className={styles.context}>{context}</span>}
                 <span className={styles.title}>{session.mediaItemName}</span>
+                {session.userRating != null && (
+                  <span className={styles.ratingBadge}>{session.userRating}</span>
+                )}
               </div>
               <div className={styles.deviceRow}>
-                <span className={styles.device}>{session.deviceName ?? 'Unknown device'}</span>
                 <span className={styles.percent}>
                   {Math.round(percent)}%{timeText ? ` · ${timeText}` : ''}
                 </span>

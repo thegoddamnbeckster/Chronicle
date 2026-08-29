@@ -85,7 +85,8 @@ namespace Chronicle.Services
         int? ElapsedMinutes,
         int? RuntimeMinutes,
         string? DeviceName,
-        DateTime LastUpdatedAt
+        DateTime LastUpdatedAt,
+        int? UserRating = null
     );
 
     public interface IScrobbleService

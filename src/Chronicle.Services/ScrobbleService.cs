@@ -290,7 +290,19 @@ namespace Chronicle.Services
             var latestPerDevice = recentEvents
                 .Where(e => !e.MarkedAsWatched && e.MediaItem != null)
                 .GroupBy(e => e.DeviceName ?? "Unknown Device")
-                .Select(g => g.First()); // already ordered desc by Timestamp above
+                .Select(g => g.First()) // already ordered desc by Timestamp above
+                .ToList();
+
+            // Per-user request (2026-08-28): show the caller's OWN rating for whatever's
+            // playing right on the Now Playing banner, not just on the media detail page.
+            // Batched (not per-session) since latestPerDevice is already small by
+            // construction (a handful of devices at most) -- one extra round trip for
+            // the whole banner, not one per device.
+            var activeItemIds = latestPerDevice.Select(e => e.MediaItemId).Distinct().ToList();
+            var ratingsByItem = await _context.UserLibraries
+                .Where(l => l.UserId == userId && activeItemIds.Contains(l.MediaItemId))
+                .Select(l => new { l.MediaItemId, l.UserRating })
+                .ToDictionaryAsync(l => l.MediaItemId, l => l.UserRating, ct);
 
             return latestPerDevice.Select(e =>
             {
@@ -308,7 +320,8 @@ namespace Chronicle.Services
                     elapsedMinutes,
                     runtimeMinutes,
                     e.DeviceName,
-                    e.Timestamp);
+                    e.Timestamp,
+                    ratingsByItem.GetValueOrDefault(e.MediaItemId));
             }).ToList();
         }
 
