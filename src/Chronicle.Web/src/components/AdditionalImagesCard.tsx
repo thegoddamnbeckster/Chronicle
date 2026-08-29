@@ -69,7 +69,7 @@ export function AdditionalImagesCard({ item, onOpenGallery }: AdditionalImagesCa
             <div key={slot} className={`${boxStyles.row} ${boxStyles.rowImages}`}>
               <span className={boxStyles.label}>{info.label}</span>
               <div className={boxStyles.imageLinks}>
-                {images.slice(0, 12).map((img, i) => {
+                {images.map((img, i) => {
                   const isPinned = pinnedUrl === img.url
                   return (
                     <div key={`${img.pluginId}-${img.url}`} className={styles.thumbWrap}>

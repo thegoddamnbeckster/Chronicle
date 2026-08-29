@@ -341,7 +341,7 @@ export function PluginMetadataBox({
           <div className={`${styles.row} ${styles.rowImages}`}>
             <span className={styles.label}>Images</span>
             <div className={styles.imageLinks}>
-              {imageEntries.slice(0, 8).map((img, i) => (
+              {imageEntries.map((img, i) => (
                 <button
                   key={i}
                   className={styles.imageLink}
@@ -409,10 +409,10 @@ export function PluginMetadataBox({
             <div className={styles.lightboxCaption}>
               {imageEntries[lightboxIdx]?.label}
               {imageEntries.length > 1 && (
-                <span className={styles.lightboxCounter}> {lightboxIdx + 1} / {Math.min(imageEntries.length, 8)}</span>
+                <span className={styles.lightboxCounter}> {lightboxIdx + 1} / {imageEntries.length}</span>
               )}
             </div>
-            {lightboxIdx < Math.min(imageEntries.length, 8) - 1 && (
+            {lightboxIdx < imageEntries.length - 1 && (
               <button
                 className={`${styles.lightboxNav} ${styles.lightboxNavNext}`}
                 onClick={e => { e.stopPropagation(); setLightboxIdx(lightboxIdx + 1) }}
