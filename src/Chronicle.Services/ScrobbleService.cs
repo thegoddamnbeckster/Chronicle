@@ -343,6 +343,37 @@ namespace Chronicle.Services
             }
         }
 
+        // A continuous playback session sends a fresh scrobble progress-tick roughly every
+        // 30s (Chronicle_Scrobbler's own poll interval) -- a gap bigger than this starts a
+        // new "watch session" for history-display purposes. Long enough to survive a pause
+        // or a quick interruption, short enough that a genuinely separate rewatch days (or
+        // even hours) later still gets counted as its own session.
+        private const int HistorySessionGapSeconds = 1800;
+
+        // Bounded recent-event window scanned before session-collapsing -- see
+        // GetHistoryAsync's own doc comment for why this isn't the user's entire history.
+        private const int HistoryScanWindow = 2000;
+
+        /// <summary>
+        /// Per-user confirmed report (2026-08-29): a single ~20-minute episode showed as
+        /// a dozen near-duplicate history rows (36%, 34%, 32%, 30%, 27%, 25%, 11%, ...) --
+        /// one per raw progress-tick interaction_event -- instead of the one entry a
+        /// "history" view should show for one sitting. interaction_events itself stays a
+        /// fine-grained log on purpose (the dashboard's own activity chart plots every
+        /// individual scrobble), so the collapsing happens here, not at write time:
+        /// consecutive same-item events are grouped into sessions (a gap over
+        /// HistorySessionGapSeconds starts a new one), and only each session's LATEST
+        /// event -- highest progress, most representative timestamp -- is returned.
+        ///
+        /// Scans a bounded recent window (HistoryScanWindow raw events) rather than this
+        /// user's entire history before collapsing: loading literally every event a user
+        /// has ever generated, on every page load, doesn't scale as that count only ever
+        /// grows (23,579 rows for one user after a few weeks, confirmed directly). The
+        /// tradeoff is that pagination far enough back can undercount how many session
+        /// rows actually exist that deep in history -- acceptable since the common case
+        /// (viewing recent history) is exactly right, and nothing here discards a single
+        /// raw interaction_event, only which ones GetHistoryAsync itself surfaces.
+        /// </summary>
         public async Task<IEnumerable<InteractionEvent>> GetHistoryAsync(
             int userId, int page = 1, int perPage = 20, int? mediaItemId = null)
         {
@@ -357,11 +388,36 @@ namespace Chronicle.Services
             if (mediaItemId.HasValue)
                 query = query.Where(e => e.MediaItemId == mediaItemId.Value);
 
-            return await query
+            var raw = await query
+                .OrderByDescending(e => e.Timestamp)
+                .Take(HistoryScanWindow)
+                .ToListAsync();
+
+            var sessions = new List<InteractionEvent>();
+            foreach (var group in raw.GroupBy(e => e.MediaItemId))
+            {
+                InteractionEvent? sessionLatest = null;
+                DateTime lastTimestamp = default;
+                foreach (var evt in group.OrderByDescending(e => e.Timestamp))
+                {
+                    if (sessionLatest is null ||
+                        (lastTimestamp - evt.Timestamp).TotalSeconds > HistorySessionGapSeconds)
+                    {
+                        if (sessionLatest is not null)
+                            sessions.Add(sessionLatest);
+                        sessionLatest = evt;
+                    }
+                    lastTimestamp = evt.Timestamp;
+                }
+                if (sessionLatest is not null)
+                    sessions.Add(sessionLatest);
+            }
+
+            return sessions
                 .OrderByDescending(e => e.Timestamp)
                 .Skip((page - 1) * perPage)
                 .Take(perPage)
-                .ToListAsync();
+                .ToList();
         }
 
         public async Task<(DateTime? LastWatchedAt, int WatchedCount)> GetWatchSummaryAsync(
