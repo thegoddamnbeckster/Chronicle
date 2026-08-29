@@ -103,7 +103,17 @@ export default function GlobalSearch() {
               key={item.id}
               className={styles.result}
               role="option"
-              onPointerDown={e => { e.preventDefault(); handleSelect(item) }}
+              // onClick, not onPointerDown+preventDefault -- that combination is a classic
+              // mobile-scroll killer: preventDefault() on pointerdown tells the browser not
+              // to start a touch-scroll gesture from this element at all, and every result
+              // row had it, so no row in the (max-height: 400px, overflow-y: auto) dropdown
+              // could be touch-scrolled past. Confirmed live report (2026-08-29): "still have
+              // that bug in mobile with being unable to scroll search results." Blur on the
+              // input (which tapping a result triggers) only affects wrapper focus styling
+              // here, not `open`/`results`, so there's nothing the pointerdown-first ordering
+              // was actually protecting -- onClick fires after the browser's own tap/scroll
+              // gesture is resolved, which is exactly what a normal list-item click needs.
+              onClick={() => handleSelect(item)}
             >
               <div className={styles.thumb}>
                 <PosterImage posterUrl={item.posterUrl} name={item.name} imgClassName={styles.poster} />
