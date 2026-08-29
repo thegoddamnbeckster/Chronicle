@@ -54,7 +54,15 @@ export default function HistoryPage() {
                   </td>
                   <td>{h.progressPercent != null ? `${Math.round(h.progressPercent)}%` : '—'}</td>
                   <td className={styles.meta}>{h.deviceName ?? '—'}</td>
-                  <td className={styles.meta}>{formatDate(h.timestamp)}</td>
+                  <td className={styles.meta}>
+                    {h.isApproximateTimestamp ? (
+                      <span title="Exact time not available from the source — this is the show's (or item's) last-watched date, not this episode's own.">
+                        ~{formatDate(h.timestamp)}
+                      </span>
+                    ) : (
+                      formatDate(h.timestamp)
+                    )}
+                  </td>
                   <td>
                     {h.markedAsWatched
                       ? <span className={styles.yes}>✓</span>

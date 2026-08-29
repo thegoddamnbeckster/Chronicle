@@ -113,6 +113,31 @@ export function buildStatusBreakdown(
     .sort((a, b) => b.count - a.count)
 }
 
+/** "Show › Season" breadcrumb for an item's ancestor chain, or '' if it has none
+ *  (e.g. a standalone movie or a top-level show being tracked directly). */
+export function ancestorBreadcrumb(ancestors?: { id: number; name: string }[]): string {
+  return ancestors && ancestors.length > 0 ? ancestors.map(a => a.name).join(' › ') : ''
+}
+
+/**
+ * Collapses a history list down to one entry per media item — the most recent
+ * scrobble for that item — while preserving overall recency order. A single
+ * episode reports progress repeatedly as it plays (0%, 1%, 55%, ...), which is
+ * exactly what the raw list is for (the activity charts above count every ping
+ * on purpose), but a "recent activity" list showing every ping as its own row
+ * reads as the same episode watched many times instead of once, in progress.
+ */
+export function dedupeHistoryByMediaItem(history: HistoryItem[]): HistoryItem[] {
+  const seen = new Set<number>()
+  const result: HistoryItem[] = []
+  for (const h of history) {
+    if (seen.has(h.mediaItemId)) continue
+    seen.add(h.mediaItemId)
+    result.push(h)
+  }
+  return result
+}
+
 /** Builds a 30-day activity array (daily counts) from history items. */
 export function buildMonthlyActivity(
   history: HistoryItem[],

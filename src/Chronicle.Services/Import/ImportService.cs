@@ -93,9 +93,10 @@ public class ImportService : IImportService
                     MediaItemId    = mediaItem.Id,
                     Timestamp      = ts,
                     ProgressPercent = progress,
-                    DeviceName     = $"Import: {pluginId}",
+                    DeviceName     = provider.Name,
                     MarkedAsWatched = progress >= 80.0,
                     CreatedAt      = DateTime.UtcNow,
+                    IsApproximateTimestamp = evt.WatchedAtIsApproximate,
                 });
 
                 // Ensure a library entry exists and is marked Completed

@@ -94,6 +94,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.itemName:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .itemContext {

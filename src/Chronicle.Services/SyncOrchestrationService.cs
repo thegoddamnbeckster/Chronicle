@@ -120,7 +120,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 var (item, isNew) = await MatchOrCreateAsync(db, evt, pluginId, ct);
                 if (isNew) stubsCreated++; else itemsMatched++;
                 if (resolvedUserId > 0)
-                    watchEventsAdded += await UpsertWatchEventAsync(db, item.Id, resolvedUserId.Value, evt, ct);
+                    watchEventsAdded += await UpsertWatchEventAsync(db, item.Id, resolvedUserId.Value, evt, provider.Name, ct);
 
                 // Library status belongs on the root show, not on individual episodes.
                 var libraryItemId = item.ParentId.HasValue
@@ -622,7 +622,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     // ── Watch event ───────────────────────────────────────────────────────────
 
     private static async Task<int> UpsertWatchEventAsync(
-        ChronicleDbContext db, int mediaItemId, int userId, ImportedWatchEvent evt, CancellationToken ct)
+        ChronicleDbContext db, int mediaItemId, int userId, ImportedWatchEvent evt, string sourceName, CancellationToken ct)
     {
         var ts = evt.WatchedAt.UtcDateTime;
 
@@ -643,8 +643,10 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             MediaItemId     = mediaItemId,
             Timestamp       = ts,
             ProgressPercent = evt.ProgressPercent ?? 100,
+            DeviceName      = sourceName,
             MarkedAsWatched = true,
             CreatedAt       = DateTime.UtcNow,
+            IsApproximateTimestamp = evt.WatchedAtIsApproximate,
         });
         await db.SaveChangesAsync(ct);
         return 1;

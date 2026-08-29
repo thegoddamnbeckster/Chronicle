@@ -3,6 +3,7 @@ using System;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Chronicle.Data.Migrations
 {
     [DbContext(typeof(ChronicleDbContext))]
-    partial class ChronicleDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825144113_AddIsApproximateTimestampToInteractionEvent")]
+    partial class AddIsApproximateTimestampToInteractionEvent
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.19");
@@ -719,9 +722,6 @@ namespace Chronicle.Data.Migrations
                         .HasColumnType("TEXT")
                         .HasDefaultValue("minutes");
 
-                    b.Property<bool>("SupportsCollections")
-                        .HasColumnType("INTEGER");
-
                     b.HasKey("Id");
 
                     b.HasIndex("Name")
@@ -742,8 +742,7 @@ namespace Chronicle.Data.Migrations
                             IsActive = true,
                             IsBuiltIn = true,
                             Name = "tv",
-                            ProgressUnit = "minutes",
-                            SupportsCollections = false
+                            ProgressUnit = "minutes"
                         },
                         new
                         {
@@ -757,8 +756,7 @@ namespace Chronicle.Data.Migrations
                             IsActive = true,
                             IsBuiltIn = true,
                             Name = "movies",
-                            ProgressUnit = "minutes",
-                            SupportsCollections = false
+                            ProgressUnit = "minutes"
                         },
                         new
                         {
@@ -772,8 +770,7 @@ namespace Chronicle.Data.Migrations
                             IsActive = true,
                             IsBuiltIn = true,
                             Name = "music",
-                            ProgressUnit = "tracks",
-                            SupportsCollections = false
+                            ProgressUnit = "tracks"
                         });
                 });
 

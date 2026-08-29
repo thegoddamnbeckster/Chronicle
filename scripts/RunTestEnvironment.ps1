@@ -167,14 +167,14 @@ $PluginProjects = @(
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.themes.default"
     },
     @{
-        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.TheTVDB\Chronicle.Plugin.TheTVDB.csproj"
-        DllName    = "Chronicle.Plugin.TheTVDB.dll"
-        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.thetvdb"
-    },
-    @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.TVMaze\Chronicle.Plugin.TVMaze.csproj"
         DllName    = "Chronicle.Plugin.TVMaze.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.tvmaze"
+    },
+    @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Wikipedia\Chronicle.Plugin.Wikipedia.csproj"
+        DllName    = "Chronicle.Plugin.Wikipedia.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.wikipedia"
     }
 )
 

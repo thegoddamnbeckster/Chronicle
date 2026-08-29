@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import {
   AreaChart,
   Area,
@@ -20,6 +21,8 @@ import {
   getLibraryPage,
   buildMonthlyActivity,
   buildStatusBreakdown,
+  ancestorBreadcrumb,
+  dedupeHistoryByMediaItem,
 } from '@/api/reports'
 import { getLibraryStats } from '@/api/stats'
 import { getDiagnostics } from '@/api/diagnostics'
@@ -97,6 +100,8 @@ export default function ReportsPage() {
 
   const monthlyData = buildMonthlyActivity(history)
   const statusData  = buildStatusBreakdown(library)
+  // One row per media item (latest scrobble), not one row per progress ping.
+  const recentScrobbles = dedupeHistoryByMediaItem(history)
 
   // Weekly average
   const totalThisMonth = monthlyData.reduce((s, d) => s + d.count, 0)
@@ -311,7 +316,7 @@ export default function ReportsPage() {
       {/* ── Recent history table ── */}
       <SectionTitle>Recent Scrobbles</SectionTitle>
       <div className={styles.tableWrap}>
-        {history.length === 0 ? (
+        {recentScrobbles.length === 0 ? (
           <p className={styles.noData}>No scrobbles recorded yet.</p>
         ) : (
           <table className={styles.table}>
@@ -324,14 +329,27 @@ export default function ReportsPage() {
               </tr>
             </thead>
             <tbody>
-              {history.slice(0, 20).map(h => (
-                <tr key={h.id}>
-                  <td>{h.mediaItemName}</td>
-                  <td>{h.progressPercent != null ? `${Math.round(h.progressPercent)}%` : '—'}</td>
-                  <td>{h.deviceName ?? '—'}</td>
-                  <td>{new Date(h.timestamp).toLocaleString()}</td>
-                </tr>
-              ))}
+              {recentScrobbles.slice(0, 20).map(h => {
+                const context = ancestorBreadcrumb(h.ancestors)
+                return (
+                  <tr key={h.id}>
+                    <td>
+                      <Link to={`/media/${h.mediaItemId}`}>{h.mediaItemName}</Link>
+                      {context && <div className={styles.rowContext}>{context}</div>}
+                    </td>
+                    <td>{h.progressPercent != null ? `${Math.round(h.progressPercent)}%` : '—'}</td>
+                    <td>{h.deviceName ?? '—'}</td>
+                    <td
+                      title={h.isApproximateTimestamp
+                        ? "Exact time not available from the source — this is the show's (or item's) last-watched date, not this episode's own."
+                        : undefined}
+                    >
+                      {h.isApproximateTimestamp && '~'}
+                      {new Date(h.timestamp).toLocaleString()}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

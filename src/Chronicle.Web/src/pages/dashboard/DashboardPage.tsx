@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import {
   AreaChart,
   Area,
@@ -9,9 +10,8 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { getStats } from '@/api/stats'
-import { getHistory } from '@/api/scrobble'
 import { getLibrary } from '@/api/library'
-import { buildWeeklyActivity } from '@/api/reports'
+import { ancestorBreadcrumb, buildWeeklyActivity, dedupeHistoryByMediaItem, getHistoryPage } from '@/api/reports'
 import styles from './DashboardPage.module.css'
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -30,21 +30,21 @@ function formatMinutes(mins: number): string {
   return `${h}h ${mins % 60}m`
 }
 
-/** "Show › Season" breadcrumb for an item's ancestor chain, or '' if it has none
- *  (e.g. a standalone movie or a top-level show being tracked directly). */
-function ancestorBreadcrumb(ancestors?: { id: number; name: string }[]): string {
-  return ancestors && ancestors.length > 0 ? ancestors.map(a => a.name).join(' › ') : ''
-}
-
 export default function DashboardPage() {
   const { data: stats } = useQuery({ queryKey: ['stats'], queryFn: getStats })
-  const { data: history } = useQuery({ queryKey: ['history', 1], queryFn: () => getHistory(1) })
+  // Fetched wide (100 raw pings) so that deduping down to one row per media
+  // item below still leaves a full, non-starved "Recent Activity" list.
+  const { data: history } = useQuery({
+    queryKey: ['history', 'dashboard'],
+    queryFn: () => getHistoryPage(1, 100),
+  })
   const { data: watching } = useQuery({
     queryKey: ['library', 'Watching'],
     queryFn: () => getLibrary('Watching'),
   })
 
   const weeklyData = history ? buildWeeklyActivity(history) : []
+  const recentActivity = history ? dedupeHistoryByMediaItem(history) : []
 
   return (
     <div className={styles.page}>
@@ -115,10 +115,13 @@ export default function DashboardPage() {
             <ul className={styles.list}>
               {watching.slice(0, 8).map(e => {
                 const context = ancestorBreadcrumb(e.mediaItem.ancestors)
+                const percent = e.resumePositionPercent
                 return (
                   <li key={e.id} className={styles.listItem}>
                     <div className={styles.itemNameCol}>
-                      <span className={styles.itemName}>{e.mediaItem.name}</span>
+                      <Link to={`/media/${e.mediaItem.id}`} className={styles.itemName}>
+                        {e.mediaItem.name}
+                      </Link>
                       {context && <span className={styles.itemContext}>{context}</span>}
                     </div>
                     <div className={styles.rightCol}>
@@ -127,6 +130,7 @@ export default function DashboardPage() {
                         {new Date(e.updatedAt).toLocaleString(undefined, {
                           dateStyle: 'short', timeStyle: 'short',
                         })}
+                        {percent != null && ` · ${Math.round(percent)}%`}
                       </span>
                     </div>
                   </li>
@@ -140,17 +144,25 @@ export default function DashboardPage() {
 
         <section className={styles.panel}>
           <h3 className={styles.panelTitle}>Recent Activity</h3>
-          {history && history.length > 0 ? (
+          {recentActivity.length > 0 ? (
             <ul className={styles.list}>
-              {history.slice(0, 8).map(h => {
+              {recentActivity.slice(0, 8).map(h => {
                 const context = ancestorBreadcrumb(h.ancestors)
                 return (
                   <li key={h.id} className={styles.listItem}>
                     <div className={styles.itemNameCol}>
-                      <span className={styles.itemName}>{h.mediaItemName}</span>
+                      <Link to={`/media/${h.mediaItemId}`} className={styles.itemName}>
+                        {h.mediaItemName}
+                      </Link>
                       {context && <span className={styles.itemContext}>{context}</span>}
                     </div>
-                    <span className={styles.meta}>
+                    <span
+                      className={styles.meta}
+                      title={h.isApproximateTimestamp
+                        ? "Exact time not available from the source — this is the show's (or item's) last-watched date, not this episode's own."
+                        : undefined}
+                    >
+                      {h.isApproximateTimestamp && '~'}
                       {new Date(h.timestamp).toLocaleString(undefined, {
                         dateStyle: 'short', timeStyle: 'short',
                       })}

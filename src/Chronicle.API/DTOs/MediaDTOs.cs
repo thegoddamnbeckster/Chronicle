@@ -224,7 +224,8 @@ namespace Chronicle.API.DTOs
         DateTime AddedAt,
         DateTime UpdatedAt,
         DateTime? StartedAt,
-        DateTime? CompletedAt
+        DateTime? CompletedAt,
+        double? ResumePositionPercent = null
     );
 
     public record NuclearResetRequestDto(string ConfirmationToken);

@@ -126,3 +126,8 @@
 .table tr:last-child td { border-bottom: none; }
 
 .table tbody tr:hover { background: var(--bg-hover); }
+
+.rowContext {
+  font-size: 11px;
+  color: var(--text-muted);
+}

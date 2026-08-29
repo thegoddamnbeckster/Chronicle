@@ -123,8 +123,16 @@ namespace Chronicle.API.Controllers
             // episode — the common case for "Watching" status), find the most recently
             // scrobbled descendant episode so the UI can show "Show › Season › Episode"
             // instead of just the season's bare name, which by itself tells the user nothing.
+            //
+            // HierarchyLevel > 0 excludes the root of the tree on purpose. The root is the
+            // item's own identity (a Show, a Movie Collection, an Author) and its name is
+            // never uninformative the way an intermediate "Season 07" is -- substituting it
+            // away replaced "Vernor Vinge" with whichever book he last finished, while the
+            // ancestor breadcrumb (computed from that substitute book's own parent chain)
+            // still correctly said "Vernor Vinge" above it. Confirmed bug, 2026-08-25.
             var nonLeafRootIds = entries
                 .Where(e => e.MediaItem != null &&
+                            e.MediaItem.HierarchyLevel > 0 &&
                             e.MediaItem.HierarchyLevel < (e.MediaItem.MediaType?.HierarchyLevels ?? 1) - 1)
                 .Select(e => e.MediaItem!.Id)
                 .ToList();
@@ -416,7 +424,7 @@ namespace Chronicle.API.Controllers
                         Rating: ExtractResolvedRating(e.MediaItem.MetadataJson),
                         Genres: null, Cast: null, Crew: null, Tags: null),
                     IsCollectionContainer: e.MediaItem.HierarchyLevel == 0
-                        && IsMovieLikeTypeName(e.MediaItem.MediaType?.Name)
+                        && (e.MediaItem.MediaType?.SupportsCollections ?? false)
                         && directChildrenMeta?.Count > 0,
                     IsStub: e.MediaItem.IsStub,
                     Ancestors: ancestors is { Count: > 0 } ? ancestors : null);
@@ -429,7 +437,7 @@ namespace Chronicle.API.Controllers
             return new LibraryEntryDto(
                 e.Id, e.UserId, mediaDto!, e.Status.ToString(),
                 e.UserRating, userRatingSource, e.Notes, e.AddedAt, e.UpdatedAt,
-                e.StartedAt, e.CompletedAt);
+                e.StartedAt, e.CompletedAt, e.ResumePositionPercent);
         }
     }
 }

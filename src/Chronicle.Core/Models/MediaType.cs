@@ -21,6 +21,16 @@ namespace Chronicle.Core.Models
 
         public bool IsBuiltIn { get; set; } = false;
         public bool IsActive { get; set; } = true;
+
+        /// <summary>
+        /// True when a level-0 item of this type is a bucket of distinct works rather than
+        /// one continuous work with sub-parts (a Movie Collection or an Audiobook Author, vs.
+        /// a TV Show whose seasons/episodes are chapters of the same thing, not separate
+        /// works). Drives whether the library grid shows the item as a browsable "Collection"
+        /// card (no status tracking of its own) instead of a normal tracked entry.
+        /// </summary>
+        public bool SupportsCollections { get; set; } = false;
+
         public DateTime CreatedAt { get; set; }
     }
 }
