@@ -233,6 +233,21 @@ foreach ($plugin in $PluginProjects) {
     }
 }
 
+# ── Prune stale plugin directories ────────────────────────────────────────────
+# The API's plugin loader auto-discovers every subfolder under plugins/, not just
+# the ones this script just built -- so a plugin removed from $PluginProjects above
+# (e.g. TheTVDB, swapped out for Wikipedia) keeps silently loading forever unless its
+# leftover DLL directory is also deleted. This bit us repeatedly: TheTVDB was pulled
+# from this list before, but its directory from an old run was never removed, so it
+# kept reappearing in the installed-plugins list on every single restart regardless.
+if (Test-Path $PluginsDir) {
+    $ExpectedPluginDirs = $PluginProjects | ForEach-Object { Split-Path $_.OutputDir -Leaf }
+    Get-ChildItem $PluginsDir -Directory | Where-Object { $_.Name -notin $ExpectedPluginDirs } | ForEach-Object {
+        Write-Host "  Pruning stale plugin directory: $($_.Name)" -ForegroundColor DarkYellow
+        Remove-Item $_.FullName -Recurse -Force
+    }
+}
+
 # ── Start API ─────────────────────────────────────────────────────────────────
 if (-not $WebOnly) {
     if (-not (Test-Path $ApiProject)) {
