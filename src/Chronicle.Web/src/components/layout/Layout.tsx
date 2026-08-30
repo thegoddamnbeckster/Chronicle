@@ -85,6 +85,9 @@ export default function Layout() {
             <NavLink to="/library" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
               Library
             </NavLink>
+            <NavLink to="/people" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              People
+            </NavLink>
             <NavGroup label="Add" storageKey="nav_group_add" defaultOpen={false}>
               <NavLink to="/media/add" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
                 Media

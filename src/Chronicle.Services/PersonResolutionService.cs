@@ -21,6 +21,7 @@ namespace Chronicle.Services;
 /// </summary>
 public class PersonResolutionService(
     IPluginRegistry pluginRegistry,
+    IMetadataResolutionService resolutionService,
     ILogger<PersonResolutionService> logger) : IPersonResolutionService
 {
     public async Task ResolveAndRecordCreditAsync(
@@ -43,10 +44,20 @@ public class PersonResolutionService(
         // Step 5: accumulate the headshot, if supplied. INSERT-only, never overwritten (see
         // PersonHeadshot's own doc) -- a duplicate (person, url) pair is simply skipped rather
         // than erroring, since re-discovering the same photo on re-enrichment is routine, not
-        // exceptional.
+        // exceptional. Checks BOTH the database and this DbContext's own not-yet-saved Added
+        // entries -- a person credited under both Cast and Crew in the same enrichment result
+        // (e.g. an actor who's also Executive Producer, the exact "Anson Mount" case the design
+        // doc itself uses as an example) can have the identical ProfileImageUrl resolved twice
+        // within one batch, before the caller's single SaveChangesAsync at the end of the
+        // cast+crew loop -- a DB-only check can't see the first (still-pending) insert, so both
+        // get added and the unique index on (person_media_item_id, url) throws at save time.
+        // Confirmed live (2026-08-30): a real Force-refresh against TMDB hit exactly this.
         if (!string.IsNullOrWhiteSpace(profileImageUrl))
         {
-            var alreadySeen = await db.PersonHeadshots.AnyAsync(
+            var alreadyPending = db.ChangeTracker.Entries<PersonHeadshot>().Any(e =>
+                e.State == EntityState.Added &&
+                e.Entity.PersonMediaItemId == person.Id && e.Entity.Url == profileImageUrl);
+            var alreadySeen = alreadyPending || await db.PersonHeadshots.AnyAsync(
                 h => h.PersonMediaItemId == person.Id && h.Url == profileImageUrl, ct);
             if (!alreadySeen)
             {
@@ -56,6 +67,27 @@ public class PersonResolutionService(
                     Url               = profileImageUrl,
                     Source            = source,
                 });
+
+                // A brand-new headshot doesn't do anything on its own -- MetadataResolutionService.
+                // ResolveAsync is what actually promotes a person_headshots row onto the person's
+                // own PosterUrl column (Section 1.5's special-cased poster_url resolution for
+                // "people"-type items). Nothing else re-resolves the PERSON item when a headshot
+                // arrives via this "credit on someone else's title" feed path -- the enrichment
+                // pass currently running is for the TITLE (a movie/show), not this person, so
+                // without this call a person could accumulate headshots indefinitely and never
+                // actually get a PosterUrl. Confirmed live (2026-08-30): a real TMDB force-refresh
+                // recorded the headshot correctly but the person's own PosterUrl stayed null.
+                // Needs MediaType loaded -- ResolveAsync branches on item.MediaType?.Name, and
+                // neither lookup path above (external-id join, name match) or the fresh-stub
+                // branch populates that navigation.
+                if (person.MediaType is null)
+                    await db.Entry(person).Reference(p => p.MediaType).LoadAsync(ct);
+                // Flush the headshot insert first -- ResolveAsync's poster_url resolution reads
+                // person_headshots back via a real query (GetLatestHeadshotUrlAsync), which (like
+                // the duplicate checks above) only sees committed rows, not this same batch's
+                // still-pending Add.
+                await db.SaveChangesAsync(ct);
+                await resolutionService.ResolveAsync(person, db, ct);
             }
         }
 
@@ -127,10 +159,15 @@ public class PersonResolutionService(
                 person.Id, personName, source);
         }
 
-        // Step 4: record the external id, if new.
+        // Step 4: record the external id, if new. Same not-yet-saved-entries check as the
+        // headshot one above, for the same reason (a person resolved twice in one batch,
+        // before the caller's single end-of-loop SaveChangesAsync).
         if (!string.IsNullOrWhiteSpace(externalPersonId))
         {
-            var alreadyRecorded = await db.MediaExternalIds.AnyAsync(
+            var alreadyPending = db.ChangeTracker.Entries<MediaExternalId>().Any(e =>
+                e.State == EntityState.Added &&
+                e.Entity.MediaItemId == person.Id && e.Entity.Source == source && e.Entity.ExternalId == externalPersonId);
+            var alreadyRecorded = alreadyPending || await db.MediaExternalIds.AnyAsync(
                 x => x.MediaItemId == person.Id && x.Source == source && x.ExternalId == externalPersonId, ct);
             if (!alreadyRecorded)
             {

@@ -265,6 +265,7 @@ public class ScraperController : ControllerBase
         }
 
         var dto = BuildMovieDetails(item, collection);
+        dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
 
         var artworkSummary = dto.Artwork is null
             ? "(none)"
@@ -335,6 +336,7 @@ public class ScraperController : ControllerBase
             .ToListAsync(ct);
 
         var dto = BuildShowDetails(item, seasons);
+        dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
         return Ok(ApiResponse<ScraperShowDetailsDto>.Ok(dto));
     }
 
@@ -645,6 +647,7 @@ public class ScraperController : ControllerBase
         }
 
         var dto = BuildEpisodeDetails(item, season, showTitle, showYear);
+        dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
         return Ok(ApiResponse<ScraperEpisodeDetailsDto>.Ok(dto));
     }
 
@@ -1145,6 +1148,47 @@ public class ScraperController : ControllerBase
             );
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Resolves each cast member's own headshot (Chronicle's person_headshots-backed
+    /// PosterUrl -- already override-aware and kept in sync with newly-discovered photos, see
+    /// PersonResolutionService) and returns the SAME list with ThumbUrl stamped on, per
+    /// docs/plans/2026-08-28-people-section-design.md Section 7. Matches by NormalizedName --
+    /// the same name-based lookup PersonResolutionService itself falls back to when no
+    /// external id is available, so it carries the identical common-name collision caveat
+    /// (accepted, not solved, by this design). A person Chronicle hasn't resolved yet (or has
+    /// no headshot for) simply keeps ThumbUrl null -- Kodi's own NFO writer already treats a
+    /// missing &lt;thumb&gt; as "no actor photo", nothing new to handle there.
+    /// </summary>
+    private async Task<List<CastMemberDto>?> ResolveCastThumbnailsAsync(List<CastMemberDto>? cast, CancellationToken ct)
+    {
+        if (cast is null || cast.Count == 0) return cast;
+
+        var normalizedNames = cast
+            .Select(c => Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(c.Name))
+            .Where(n => n.Length > 0)
+            .Distinct()
+            .ToList();
+        if (normalizedNames.Count == 0) return cast;
+
+        var peopleTypeId = await _context.MediaTypes
+            .Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
+        if (peopleTypeId is null) return cast;
+
+        var thumbsByName = await _context.MediaItems
+            .Where(m => m.MediaTypeId == peopleTypeId.Value && m.NormalizedName != null
+                        && normalizedNames.Contains(m.NormalizedName))
+            .Select(m => new { m.NormalizedName, m.PosterUrl })
+            .ToDictionaryAsync(m => m.NormalizedName!, m => m.PosterUrl, ct);
+
+        return cast.Select(c =>
+        {
+            var normalized = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(c.Name);
+            return thumbsByName.TryGetValue(normalized, out var thumb) && !string.IsNullOrEmpty(thumb)
+                ? c with { ThumbUrl = thumb }
+                : c;
+        }).ToList();
     }
 
     // ── JSON helpers ─────────────────────────────────────────────────────────

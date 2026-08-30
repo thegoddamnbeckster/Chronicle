@@ -166,7 +166,11 @@ namespace Chronicle.API.DTOs
         /// A pinned field always wins over the normal plugin-priority resolution walk until
         /// explicitly cleared. Absent/empty when nothing is pinned on this item.
         /// </summary>
-        Dictionary<string, MediaOverrideDto>? Overrides = null
+        Dictionary<string, MediaOverrideDto>? Overrides = null,
+        /// <summary>Promoted canonical fields for MediaTypeName == "people" -- null for every
+        /// other media type. See MediaItem.BirthDate's own doc.</summary>
+        DateTime? BirthDate = null,
+        DateTime? DeathDate = null
     );
 
     /// <summary>One manually-pinned field override on a media item. See MediaItemDto.Overrides.</summary>

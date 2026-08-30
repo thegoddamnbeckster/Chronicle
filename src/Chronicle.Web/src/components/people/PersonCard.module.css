@@ -1,0 +1,59 @@
+.personCard {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease;
+}
+
+.personCard:hover {
+  border-color: var(--accent);
+}
+
+.poster {
+  position: relative;
+}
+
+.deceasedBar {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 56%;
+  height: 14%;
+  background: rgba(0, 0, 0, 0.82);
+  transform-origin: bottom right;
+  transform: rotate(-8deg) translate(8%, 8%);
+  clip-path: polygon(0 40%, 100% 0, 100% 100%, 0 100%);
+}
+
+.info {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.positions {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dates {
+  font-size: 0.8em;
+  color: var(--text-muted);
+}

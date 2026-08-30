@@ -1,0 +1,121 @@
+.loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.hero {
+  display: flex;
+  gap: 24px;
+}
+
+.posterWrap {
+  width: 220px;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.heroInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+}
+
+.deceasedBadge {
+  font-size: 0.5em;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 2px 10px;
+}
+
+.dates {
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.bio {
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.credits {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.empty {
+  color: var(--text-muted);
+}
+
+.creditGroupTitle {
+  margin: 0 0 10px;
+}
+
+.creditGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.creditCard {
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  transition: border-color 0.15s ease;
+}
+
+.creditCard:hover {
+  border-color: var(--accent);
+}
+
+.creditInfo {
+  padding: 6px 8px;
+}
+
+.creditName {
+  font-weight: 600;
+  font-size: 0.9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.creditCharacter,
+.creditYear {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 640px) {
+  .hero {
+    flex-direction: column;
+  }
+
+  .posterWrap {
+    width: 160px;
+  }
+}

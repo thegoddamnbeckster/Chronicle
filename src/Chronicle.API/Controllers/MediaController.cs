@@ -993,7 +993,9 @@ namespace Chronicle.API.Controllers
                 ResolvedMetadata: resolvedMetadata,
                 Aliases: aliases,
                 MergeHistory: mergeHistory,
-                Overrides: overrides
+                Overrides: overrides,
+                BirthDate: m.BirthDate,
+                DeathDate: m.DeathDate
             );
         }
 

@@ -129,6 +129,9 @@ export interface MediaItem {
     pinnedAt: string
     pinnedByUserId?: number | null
   }> | null
+  /** Promoted canonical fields for mediaTypeName == "people" -- null for every other type. */
+  birthDate?: string | null
+  deathDate?: string | null
 }
 
 export interface MergeHistoryEntry {
@@ -148,6 +151,35 @@ export type LibraryStatus =
   | 'Dropped'
   | 'OnHold'
   | 'Rewatching'
+
+// ── People ───────────────────────────────────────────────────────────────────
+// People are catalog-wide, not per-user library items -- no watch-status concept applies
+// (docs/plans/2026-08-28-people-section-design.md Section 1.4). A person's own detail reuses
+// the generic MediaItem/MediaItemDto shape (fetched via the normal GET /media/:id endpoint);
+// these two types are only for the parts that ARE People-specific: the catalog list and the
+// role-grouped credits section on the detail page.
+export interface PersonListItem {
+  id: number
+  name: string
+  posterUrl: string | null
+  birthDate: string | null
+  deathDate: string | null
+  roles: string[]
+}
+
+export interface PersonCredit {
+  mediaItemId: number
+  name: string
+  posterUrl: string | null
+  year: number | null
+  mediaTypeName: string
+  characterName: string | null
+}
+
+export interface PersonCreditGroup {
+  role: string
+  items: PersonCredit[]
+}
 
 export interface LibraryEntry {
   id: number

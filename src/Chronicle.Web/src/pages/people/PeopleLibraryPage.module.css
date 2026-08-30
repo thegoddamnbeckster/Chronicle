@@ -1,0 +1,80 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+}
+
+.select {
+  background: var(--bg-secondary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+
+.roleChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.roleChip,
+.roleChipActive {
+  border-radius: 99px;
+  padding: 4px 12px;
+  font-size: 0.85em;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.roleChipActive {
+  background: var(--accent);
+  color: var(--bg-primary, #000);
+  border-color: var(--accent);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 14px;
+}
+
+.empty {
+  color: var(--text-muted);
+  padding: 40px 0;
+  text-align: center;
+}
+
+.loadMoreRow {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0;
+}
+
+.loadMoreButton {
+  background: var(--bg-secondary);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 20px;
+  cursor: pointer;
+}
+
+.loadMoreButton:hover {
+  border-color: var(--accent);
+}

@@ -26,7 +26,8 @@ public class PersonResolutionServiceTests : IDisposable
         _registry = new Mock<IPluginRegistry>();
         _registry.Setup(r => r.GetMetadataProviderEntries())
             .Returns(new List<(string, IMetadataProvider, string?)>());
-        _svc = new PersonResolutionService(_registry.Object, Mock.Of<ILogger<PersonResolutionService>>());
+        _svc = new PersonResolutionService(
+            _registry.Object, Mock.Of<IMetadataResolutionService>(), Mock.Of<ILogger<PersonResolutionService>>());
 
         _db.MediaTypes.Add(new MediaType { Id = 1, Name = "people", DisplayName = "People", CreatedAt = DateTime.UtcNow });
         _db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow });
@@ -172,6 +173,36 @@ public class PersonResolutionServiceTests : IDisposable
         var rows = await _db.MediaEnrichments.Where(e => e.MediaItemId == person.Id).ToListAsync();
         rows.Should().ContainSingle();
         rows[0].PluginId.Should().Be("chronicle.plugin.wikipedia");
+    }
+
+    [Fact]
+    public async Task ResolveAndRecordCreditAsync_SamePersonCreditedTwiceInOneBatch_DoesNotThrowOnSave()
+    {
+        // Regression test (2026-08-30): confirmed live against a real TMDB force-refresh --
+        // a person credited under BOTH Cast (Actor) and Crew (e.g. Executive Producer) in the
+        // same enrichment result, with the identical ProfileImageUrl both times (TMDB returns
+        // the same profile_path regardless of which credit list a person appears in), used to
+        // throw a unique-constraint violation on person_headshots at SaveChangesAsync -- the
+        // duplicate-headshot check only queried the database, which can't see the FIRST
+        // occurrence's insert until the batch is actually saved. Real caller pattern
+        // (MetadataEnrichmentService.ResolveCreditsAsync): many ResolveAndRecordCreditAsync
+        // calls, one SaveChangesAsync at the very end.
+        var movie = new MediaItem { MediaTypeId = 2, Name = "Strange New Worlds", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(movie);
+        await _db.SaveChangesAsync();
+
+        await _svc.ResolveAndRecordCreditAsync(
+            _db, movie.Id, "Anson Mount", "tmdb:287", "tmdb", "https://image.tmdb.org/photo.jpg",
+            role: "Actor", characterName: "Christopher Pike", billingOrder: 0, default);
+        await _svc.ResolveAndRecordCreditAsync(
+            _db, movie.Id, "Anson Mount", "tmdb:287", "tmdb", "https://image.tmdb.org/photo.jpg",
+            role: "Executive Producer", characterName: null, billingOrder: null, default);
+
+        // Must not throw (the actual bug: DbUpdateException from the unique index).
+        await _db.SaveChangesAsync();
+
+        (await _db.PersonHeadshots.CountAsync()).Should().Be(1);
+        (await _db.MediaCredits.CountAsync(c => c.MediaItemId == movie.Id)).Should().Be(2);
     }
 
     public void Dispose() => _db.Dispose();

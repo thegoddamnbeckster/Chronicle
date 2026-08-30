@@ -9,6 +9,8 @@ import LoginPage from '@/pages/auth/LoginPage'
 import RegisterPage from '@/pages/auth/RegisterPage'
 import DashboardPage from '@/pages/dashboard/DashboardPage'
 import LibraryPage from '@/pages/library/LibraryPage'
+import PeopleLibraryPage from '@/pages/people/PeopleLibraryPage'
+import PersonDetailPage from '@/pages/people/PersonDetailPage'
 import AddMediaPage from '@/pages/media/AddMediaPage'
 import AddCollectionPage from '@/pages/media/AddCollectionPage'
 import MediaDetailPage from '@/pages/media/MediaDetailPage'
@@ -74,6 +76,12 @@ export default function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="library" element={<LibraryPage />} />
+        <Route path="people" element={<PeopleLibraryPage />} />
+        <Route path="people/:id" element={
+          <ErrorBoundary context="Person Detail">
+            <PersonDetailPage />
+          </ErrorBoundary>
+        } />
         <Route path="history" element={<HistoryPage />} />
         <Route path="media/add" element={<AddMediaPage />} />
         <Route path="media/add-collection" element={<AddCollectionPage />} />
