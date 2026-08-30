@@ -5,7 +5,8 @@ public record SyncSummary(
     int  StubsCreated,
     int  WatchEventsAdded,
     int  CreditsAdded,
-    IReadOnlyList<string> Errors
+    IReadOnlyList<string> Errors,
+    int  ProgressUpdated = 0
 );
 
 /// <summary>Snapshot of a background sync job.</summary>

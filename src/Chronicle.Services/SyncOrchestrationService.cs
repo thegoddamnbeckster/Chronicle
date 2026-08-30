@@ -104,13 +104,15 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         var historyTask   = provider.GetWatchHistoryAsync(since, ct);
         var ratingsTask   = provider.GetRatingsAsync(ct);
         var watchlistTask = provider.GetWatchlistAsync(ct);
-        await Task.WhenAll(historyTask, ratingsTask, watchlistTask);
+        var progressTask  = provider.GetPlaybackProgressAsync(ct);
+        await Task.WhenAll(historyTask, ratingsTask, watchlistTask, progressTask);
 
         var history   = await historyTask;
         var ratings   = await ratingsTask;
         var watchlist = await watchlistTask;
+        var progress  = await progressTask;
 
-        int itemsMatched = 0, stubsCreated = 0, watchEventsAdded = 0, creditsAdded = 0;
+        int itemsMatched = 0, stubsCreated = 0, watchEventsAdded = 0, creditsAdded = 0, progressUpdated = 0;
         var errors = new List<string>();
 
         foreach (var evt in history)
@@ -168,6 +170,20 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             }
         }
 
+        foreach (var p in progress)
+        {
+            try
+            {
+                if (resolvedUserId > 0 && await UpsertPlaybackProgressAsync(db, p, pluginId, resolvedUserId.Value, ct))
+                    progressUpdated++;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Sync error processing playback progress {ExternalId}", p.ExternalId);
+                errors.Add($"progress {p.ExternalId}: {ex.Message}");
+            }
+        }
+
         // Persist last-synced timestamp
         var setting = await db.AppSettings.FindAsync([syncKey], ct);
         if (setting is null)
@@ -177,13 +193,13 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         await db.SaveChangesAsync(ct);
 
         _log.LogInformation(
-            "Sync complete for {PluginId}: {Matched} matched, {Created} stubs, {Events} events, {Credits} credits, {Errors} errors",
-            pluginId, itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, errors.Count);
+            "Sync complete for {PluginId}: {Matched} matched, {Created} stubs, {Events} events, {Credits} credits, {Progress} progress updates, {Errors} errors",
+            pluginId, itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, progressUpdated, errors.Count);
 
         if (stubsCreated > 0)
             TriggerEnrichmentInBackground();
 
-        return new SyncSummary(itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, errors);
+        return new SyncSummary(itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, errors, progressUpdated);
     }
 
     // ── Item matching ─────────────────────────────────────────────────────────
@@ -744,8 +760,73 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             db.UserLibraries.Add(lib);
         }
 
-        lib.UserRating = rating.Rating;
+        // Per-user request (2026-08-30): "the most recent status wins" -- a rating already
+        // present with a NEWER timestamp than this sync's own (e.g. rated more recently on
+        // Chronicle's web UI, or pushed from Kodi via Chronicle_Rating) must not be clobbered
+        // by a stale value from this pass. A rating with no recorded timestamp yet (predates
+        // this column, or came from a source with no real timestamp -- see Simkl's own
+        // GetRatingsAsync doc) is treated as unconditionally old so a real incoming timestamp
+        // always wins.
+        if (lib.UserRatingUpdatedAt is { } existingRatedAt && rating.RatedAt.UtcDateTime <= existingRatedAt)
+            return;
+
+        lib.UserRating          = rating.Rating;
+        lib.UserRatingUpdatedAt = rating.RatedAt.UtcDateTime;
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Feed path for ImportedPlaybackProgress (Trakt's GET /sync/playback/{movies,episodes} --
+    /// see that record's own doc for why Simkl never supplies any). Same "most recent wins"
+    /// rule as UpsertRatingAsync, compared against ResumeUpdatedAt -- this device's own live
+    /// scrobbles (ScrobbleService) and another sync source both write that same field, so a
+    /// stale Trakt sync must never overwrite a genuinely more recent position. Returns true
+    /// when the position was actually applied (for the caller's own summary count), false when
+    /// skipped (no match, or a newer position already on file).
+    /// </summary>
+    internal static async Task<bool> UpsertPlaybackProgressAsync(
+        ChronicleDbContext db, ImportedPlaybackProgress progress, string pluginId, int userId, CancellationToken ct)
+    {
+        var source = SourceFromPluginId(pluginId);
+        var mediaItemId = await db.MediaExternalIds
+            .Where(e => e.Source == source && e.ExternalId == progress.ExternalId)
+            .Select(e => e.MediaItemId)
+            .FirstOrDefaultAsync(ct);
+        if (mediaItemId == 0) return false;
+
+        // Progress belongs on the episode/movie item itself (unlike library STATUS, which
+        // belongs on the root show) -- Kodi's own resume field is per-episode, and so is
+        // Chronicle's own ResumePositionPercent (see ScrobbleService).
+        var lib = await db.UserLibraries
+            .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+        if (lib is null)
+        {
+            lib = new UserLibrary
+            {
+                UserId      = userId,
+                MediaItemId = mediaItemId,
+                Status      = LibraryStatus.Watching,
+                AddedAt     = DateTime.UtcNow,
+                UpdatedAt   = DateTime.UtcNow,
+                StartedAt   = DateTime.UtcNow,
+            };
+            db.UserLibraries.Add(lib);
+        }
+        else if (lib.Status is LibraryStatus.Unwatched or LibraryStatus.PlanToWatch)
+        {
+            // Don't downgrade Completed/Dropped/OnHold/Rewatching -- an in-progress position
+            // from a sync source doesn't necessarily mean they're watching it again right now.
+            lib.Status = LibraryStatus.Watching;
+        }
+
+        if (lib.ResumeUpdatedAt is { } existingResumeAt && progress.UpdatedAt.UtcDateTime <= existingResumeAt)
+            return false;
+
+        lib.ResumePositionPercent = progress.ProgressPercent;
+        lib.ResumeUpdatedAt       = progress.UpdatedAt.UtcDateTime;
+        lib.UpdatedAt             = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 
     // ── Credits ───────────────────────────────────────────────────────────────

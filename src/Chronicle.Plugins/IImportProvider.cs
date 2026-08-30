@@ -89,6 +89,36 @@ public record ImportedWatchEvent(
     double? SeriesPosition = null
 );
 
+/// <summary>
+/// A snapshot of in-progress (not yet finished) playback position, as opposed to
+/// ImportedWatchEvent which represents a completed watch. Fed by services that expose a real
+/// resume/playback-progress API (Trakt's GET /sync/playback/{movies,episodes}) -- NOT every
+/// service has one: Simkl's own sync API has no fractional-progress concept at all, only a
+/// per-episode watched/not-watched boolean and a whole-item status, so its IImportProvider
+/// implementation simply never returns any of these (the interface default below already
+/// covers that -- see GetPlaybackProgressAsync's own doc).
+/// </summary>
+public record ImportedPlaybackProgress(
+    /// <summary>Source-namespaced ID, e.g. "trakt:movie:12345" or "trakt:episode:67890".</summary>
+    string ExternalId,
+    IReadOnlyDictionary<string, string> AdditionalIds,
+    /// <summary>"movie" | "tv_episode"</summary>
+    string MediaType,
+    string Title,
+    int? Year,
+    /// <summary>0-100.</summary>
+    double ProgressPercent,
+    /// <summary>When the service last recorded this position -- the "most recent wins" clock
+    /// SyncOrchestrationService.UpsertPlaybackProgressAsync compares against whatever's already
+    /// stored (this device's own scrobbles, another sync source) before overwriting.</summary>
+    DateTimeOffset UpdatedAt,
+    // ── TV episode hierarchy fields (null for movies) ──────────────────────────
+    string? ShowExternalId = null,
+    string? ShowTitle = null,
+    int? SeasonNumber = null,
+    int? EpisodeNumber = null
+);
+
 public record ImportedRating(
     string ExternalId,
     IReadOnlyDictionary<string, string> AdditionalIds,
@@ -196,6 +226,16 @@ public interface IImportProvider
 
     /// <summary>Returns the user's watchlist (items they plan to watch).</summary>
     Task<List<ImportedWatchlistEntry>> GetWatchlistAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the user's current in-progress (not yet finished) playback positions --
+    /// distinct from GetWatchHistoryAsync, which only ever reports completed watches.
+    /// Default: empty list. Not every service has a fractional-progress concept to report --
+    /// see ImportedPlaybackProgress's own doc for why Simkl's implementation never overrides
+    /// this. Trakt does (GET /sync/playback/{movies,episodes}).
+    /// </summary>
+    Task<List<ImportedPlaybackProgress>> GetPlaybackProgressAsync(CancellationToken ct = default)
+        => Task.FromResult(new List<ImportedPlaybackProgress>());
 
     Task<bool> HealthCheckAsync(CancellationToken ct = default);
 

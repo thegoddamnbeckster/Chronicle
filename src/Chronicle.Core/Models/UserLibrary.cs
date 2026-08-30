@@ -18,6 +18,15 @@ namespace Chronicle.Core.Models
         public int MediaItemId { get; set; }
         public LibraryStatus Status { get; set; } = LibraryStatus.PlanToWatch;
         public int? UserRating { get; set; }
+        /// <summary>
+        /// When the current UserRating value was actually set -- distinct from the generic
+        /// UpdatedAt (which is bumped by status changes, resume updates, notes, etc. too).
+        /// Drives "most recent wins" conflict resolution when Trakt/Simkl/Chronicle's own web
+        /// UI/a Kodi-pushed manual rating disagree about the same item -- see
+        /// SyncOrchestrationService.UpsertRatingAsync. Null means the rating predates this
+        /// column (treated as "unknown, assume old" so a real incoming timestamp always wins).
+        /// </summary>
+        public DateTime? UserRatingUpdatedAt { get; set; }
         public string? Notes { get; set; }
         public DateTime AddedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
