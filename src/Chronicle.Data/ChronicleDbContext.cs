@@ -70,6 +70,7 @@ namespace Chronicle.Data
         public DbSet<MediaItemMerge> MediaItemMerges { get; set; } = null!;
         public DbSet<MediaItemDuplicateCandidate> MediaItemDuplicateCandidates { get; set; } = null!;
         public DbSet<MediaItemDuplicateDismissal> MediaItemDuplicateDismissals { get; set; } = null!;
+        public DbSet<PersonHeadshot> PersonHeadshots { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -400,13 +401,48 @@ namespace Chronicle.Data
                 e.Property(c => c.ExternalPersonId).HasColumnName("external_person_id");
                 e.Property(c => c.CreatedAt).HasColumnName("created_at");
 
+                e.Property(c => c.PersonMediaItemId).HasColumnName("person_media_item_id");
+
                 e.HasOne(c => c.MediaItem)
                  .WithMany()
                  .HasForeignKey(c => c.MediaItemId)
                  .OnDelete(DeleteBehavior.Cascade);
 
+                // Nullable long-term (see MediaCredit.PersonMediaItemId's own doc) -- SetNull,
+                // not Cascade, so deleting a resolved person never takes the credit row itself
+                // (and its provenance: PersonName/ExternalPersonId) down with it.
+                e.HasOne(c => c.PersonMediaItem)
+                 .WithMany()
+                 .HasForeignKey(c => c.PersonMediaItemId)
+                 .OnDelete(DeleteBehavior.SetNull);
+
                 e.HasIndex(c => c.MediaItemId).HasDatabaseName("idx_media_credits_item");
                 e.HasIndex(c => c.PersonName).HasDatabaseName("idx_media_credits_person");
+                e.HasIndex(c => c.PersonMediaItemId).HasDatabaseName("idx_media_credits_person_item");
+            });
+
+            modelBuilder.Entity<PersonHeadshot>(e =>
+            {
+                e.ToTable("person_headshots");
+                e.HasKey(h => h.Id);
+                e.Property(h => h.Id).HasColumnName("id");
+                e.Property(h => h.PersonMediaItemId).HasColumnName("person_media_item_id");
+                e.Property(h => h.Url).HasColumnName("url").IsRequired();
+                e.Property(h => h.ThumbnailUrl).HasColumnName("thumbnail_url");
+                e.Property(h => h.Source).HasColumnName("source").IsRequired();
+                e.Property(h => h.FirstSeenAt).HasColumnName("first_seen_at");
+
+                e.HasOne(h => h.PersonMediaItem)
+                 .WithMany()
+                 .HasForeignKey(h => h.PersonMediaItemId)
+                 .OnDelete(DeleteBehavior.Cascade);
+
+                // Rows are inserted, never overwritten -- INSERT OR IGNORE on this pair (see
+                // PersonHeadshot's own doc) is what makes re-discovering the same URL on
+                // re-enrichment a no-op instead of a duplicate row.
+                e.HasIndex(h => new { h.PersonMediaItemId, h.Url }).IsUnique()
+                 .HasDatabaseName("idx_person_headshots_unique");
+                e.HasIndex(h => h.PersonMediaItemId).HasDatabaseName("idx_person_headshots_person");
             });
 
             // NormalizedName on MediaItem

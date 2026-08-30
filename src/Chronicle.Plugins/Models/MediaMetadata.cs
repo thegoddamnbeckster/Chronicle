@@ -88,17 +88,27 @@ public class MediaMetadata
 
 /// <summary>An actor credit: the performer's real name and, when the provider supplies it, the
 /// character/role they played. Role is null for providers that don't carry that data (e.g. band
-/// members from MusicBrainz).</summary>
+/// members from MusicBrainz). ExternalPersonId/ProfileImageUrl are optional trailing fields (see
+/// docs/plans/2026-08-28-people-section-design.md Section 2) -- existing positional-record
+/// construction in every plugin still compiles unchanged; only plugins updated to thread through
+/// a provider's own person id/photo (e.g. TMDB's cast.id/profile_path) populate them.
+/// ExternalPersonId convention: "{source}:{id}", e.g. "tmdb:287" -- what
+/// PersonResolutionService keys dedup on.</summary>
 public record CastMember(
     [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("role")] string? Role = null);
+    [property: JsonPropertyName("role")] string? Role = null,
+    [property: JsonPropertyName("externalPersonId")] string? ExternalPersonId = null,
+    [property: JsonPropertyName("profileImageUrl")] string? ProfileImageUrl = null);
 
 /// <summary>A non-actor credit: the person's real name and, when the provider breaks
 /// credits down by title, their job (Director, Writer, Producer, Executive Producer,
-/// Composer, etc.). Job is null when the provider only supplies a flat name list.</summary>
+/// Composer, etc.). Job is null when the provider only supplies a flat name list.
+/// ExternalPersonId/ProfileImageUrl -- see CastMember's own doc for the same fields.</summary>
 public record CrewMember(
     [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("job")]  string? Job = null);
+    [property: JsonPropertyName("job")]  string? Job = null,
+    [property: JsonPropertyName("externalPersonId")] string? ExternalPersonId = null,
+    [property: JsonPropertyName("profileImageUrl")] string? ProfileImageUrl = null);
 
 /// <summary>
 /// One episode as returned by <see cref="IMetadataProvider.GetEpisodeListAsync"/> --

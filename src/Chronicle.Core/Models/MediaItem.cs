@@ -18,6 +18,15 @@ namespace Chronicle.Core.Models
         public string? PosterUrl { get; set; }
         public int? RuntimeMinutes { get; set; }
 
+        /// <summary>
+        /// Promoted canonical fields for MediaTypeName == "people" (birth_date/death_date in
+        /// MetadataResolutionService.FieldMap), same promotion pattern as PosterUrl/RuntimeMinutes
+        /// above -- needed so the People grid can render birth/death text and a deceased badge on
+        /// every card without per-card resolution-blob parsing. Null for every other media type.
+        /// </summary>
+        public DateTime? BirthDate { get; set; }
+        public DateTime? DeathDate { get; set; }
+
         /// <summary>Hierarchy depth (0 = root, 1 = child, 2 = grandchild).</summary>
         public int HierarchyLevel { get; set; } = 0;
 

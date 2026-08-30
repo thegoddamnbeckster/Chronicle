@@ -53,6 +53,9 @@ public class MetadataResolutionService(
             ["mood"]            = ["mood"],
             ["language"]        = ["language"],
             ["isrc"]            = ["isrc"],
+            // "people"-type fields (docs/plans/2026-08-28-people-section-design.md Section 1.3).
+            ["birth_date"]      = ["birthDate"],
+            ["death_date"]      = ["deathDate"],
         };
 
     public IReadOnlyCollection<string> GetCanonicalFields() => FieldMap.Keys;
@@ -85,6 +88,19 @@ public class MetadataResolutionService(
                 HasValue(overrideUrl))
             {
                 resolved[canonicalKey] = overrideUrl;
+                continue;
+            }
+
+            // "people"-type items resolve poster_url from the accumulated person_headshots
+            // table instead of the normal per-plugin-blob priority walk -- headshots are
+            // genuinely cross-plugin-source and accumulating (Section 1.5), not siloed per
+            // plugin the way every other field/type is. An explicit pin (checked above) still
+            // always wins.
+            if (assignmentField == "poster_url" && mediaTypeName == "people")
+            {
+                var headshotUrl = await GetLatestHeadshotUrlAsync(db, item.Id, ct);
+                if (headshotUrl is not null)
+                    resolved[canonicalKey] = JsonSerializer.SerializeToElement(headshotUrl);
                 continue;
             }
 
@@ -128,6 +144,10 @@ public class MetadataResolutionService(
             item.Overview = ov.GetString();
         if (resolved.TryGetValue("runtimeMinutes", out var rt) && rt.ValueKind == JsonValueKind.Number)
             item.RuntimeMinutes = rt.GetInt32();
+        if (resolved.TryGetValue("birthDate", out var bd) && HasValue(bd) && DateTime.TryParse(bd.GetString(), out var bdVal))
+            item.BirthDate = bdVal;
+        if (resolved.TryGetValue("deathDate", out var dd) && HasValue(dd) && DateTime.TryParse(dd.GetString(), out var ddVal))
+            item.DeathDate = ddVal;
 
         // title and year only promoted at level 0
         if (item.HierarchyLevel == 0)
@@ -176,6 +196,16 @@ public class MetadataResolutionService(
 
         logger.LogInformation("Bulk _resolved recompute complete: {Total} items for '{Type}'", totalDone, mediaTypeName);
     }
+
+    /// <summary>Most-recently-discovered headshot for a person (see PersonHeadshot's own doc for
+    /// why "most recent" means discovery order, not the photo's real-world date). Null if none
+    /// have been recorded yet -- resolution falls through with no poster_url for this field.</summary>
+    private static async Task<string?> GetLatestHeadshotUrlAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct) =>
+        await db.PersonHeadshots
+            .Where(h => h.PersonMediaItemId == personMediaItemId)
+            .OrderByDescending(h => h.FirstSeenAt)
+            .Select(h => h.Url)
+            .FirstOrDefaultAsync(ct);
 
     public async Task SetOverrideAsync(MediaItem item, ChronicleDbContext db, string field, string url,
         string? sourcePluginId, string? sourceType, int? userId, CancellationToken ct = default)

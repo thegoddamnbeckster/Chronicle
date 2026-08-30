@@ -96,6 +96,14 @@ public sealed class PluginHostService : IHostedService
         var enrichmentService = scope.ServiceProvider.GetRequiredService<IMetadataEnrichmentService>();
         await enrichmentService.SeedEnrichmentRowsFromExternalIdsAsync(cancellationToken);
 
+        // Backfill pre-existing Trakt-sourced credits (media_credits.person_media_item_id
+        // didn't exist before this column was added) onto real people -- see
+        // docs/plans/2026-08-28-people-section-design.md Section 1.2. Naturally idempotent:
+        // the query is only ever non-empty for rows that haven't been resolved yet, so this
+        // is a no-op on every startup after the first successful pass, and self-healing if an
+        // earlier attempt only got partway through (e.g. app restart mid-backfill).
+        await BackfillPersonCreditsAsync(db, scope.ServiceProvider, cancellationToken);
+
         _log.Information("PluginHostService startup complete");
     }
 
@@ -208,6 +216,53 @@ public sealed class PluginHostService : IHostedService
 
         _log.Debug("MediaTypeSync: verified {Count} media type(s) from plugins ({Synced} changed)",
             allSupport.Count, synced);
+    }
+
+    // ── People backfill ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Resolves every pre-existing Trakt-sourced media_credits row that has no
+    /// PersonMediaItemId yet onto a real "people"-type MediaItem, using PersonName +
+    /// ExternalPersonId (Trakt's own numeric person id, already captured on these rows) --
+    /// best-effort, same resolution logic (PersonResolutionService.ResolvePersonOnlyAsync) new
+    /// credits use going forward. Skipped entirely, quietly, if the "people" media type isn't
+    /// registered yet (e.g. the Wikipedia plugin isn't installed) -- there's nothing to
+    /// backfill onto.
+    /// </summary>
+    private async Task BackfillPersonCreditsAsync(ChronicleDbContext db, IServiceProvider services, CancellationToken ct)
+    {
+        var peopleTypeExists = await db.MediaTypes.AnyAsync(t => t.Name == "people", ct);
+        if (!peopleTypeExists)
+            return;
+
+        var unresolved = await db.MediaCredits
+            .Where(c => c.Source == "trakt" && c.PersonMediaItemId == null)
+            .ToListAsync(ct);
+        if (unresolved.Count == 0)
+            return;
+
+        _log.Information("PeopleBackfill: resolving {Count} pre-existing Trakt credit row(s) onto people", unresolved.Count);
+        var personResolutionService = services.GetRequiredService<IPersonResolutionService>();
+        var resolved = 0;
+
+        foreach (var credit in unresolved)
+        {
+            try
+            {
+                var person = await personResolutionService.ResolvePersonOnlyAsync(
+                    db, credit.PersonName, credit.ExternalPersonId, credit.Source, ct);
+                credit.PersonMediaItemId = person.Id;
+                resolved++;
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "PeopleBackfill: failed to resolve credit {CreditId} (\"{Name}\")",
+                    credit.Id, credit.PersonName);
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        _log.Information("PeopleBackfill: resolved {Resolved}/{Total} credit row(s)", resolved, unresolved.Count);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

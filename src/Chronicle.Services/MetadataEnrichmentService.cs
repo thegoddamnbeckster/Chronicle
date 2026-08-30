@@ -20,6 +20,7 @@ public class MetadataEnrichmentService(
     IMetadataResolutionService resolutionService,
     IMovieCollectionService movieCollectionService,
     IMetadataUrlValidator urlValidator,
+    IPersonResolutionService personResolutionService,
     ILogger<MetadataEnrichmentService> logger) : IMetadataEnrichmentService
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
@@ -1716,6 +1717,7 @@ public class MetadataEnrichmentService(
                 await urlValidator.ValidateAndCleanAsync(result, ct);
                 MergeMetadata(row.MediaItem!, row.PluginId, result);
                 await resolutionService.ResolveAsync(row.MediaItem!, db, ct);
+                await ResolveCreditsAsync(db, row.MediaItem!, row.PluginId, result, ct);
                 // Keep media_external_ids in sync with the enrichment result so that
                 // Fix Match (which calls this path with an IdOverride) actually persists
                 // the new TMDB ID — not just the enrichment tracking row.
@@ -2362,6 +2364,50 @@ public class MetadataEnrichmentService(
         }
 
         item.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Walks a fresh enrichment result's Cast/Crew and resolves each entry onto a real
+    /// "people"-type MediaItem via PersonResolutionService, giving media_credits a queryable,
+    /// person-linked representation of the same information the flat cast/crew metadata_json
+    /// keys already render generically today (additive, not a replacement -- see
+    /// docs/plans/2026-08-28-people-section-design.md Section 2). No-op when the result has no
+    /// credits, or when the item itself is a "people"-type item (a person's own Wikipedia bio
+    /// has no Cast/Crew, but this guard is explicit rather than assumed).
+    ///
+    /// Clears any existing rows for (item, source) first, then re-adds one per credit -- same
+    /// delete-and-reinsert-per-(item, source) pattern
+    /// SyncOrchestrationService.FetchAndStoreCreditsAsync already uses for Trakt-sourced credits,
+    /// so a title's credit list from a given source is always a clean replacement, never an
+    /// accumulating duplicate set across repeated enrichment runs.
+    /// </summary>
+    private async Task ResolveCreditsAsync(
+        ChronicleDbContext db, MediaItem item, string pluginId, MediaMetadata result, CancellationToken ct)
+    {
+        if (result.Cast.Count == 0 && result.Crew.Count == 0)
+            return;
+        if (string.Equals(item.MediaType?.Name, "people", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var source = PluginIdHelper.ToSource(pluginId);
+        var old = db.MediaCredits.Where(c => c.MediaItemId == item.Id && c.Source == source);
+        db.MediaCredits.RemoveRange(old);
+
+        var billingOrder = 0;
+        foreach (var cast in result.Cast)
+        {
+            await personResolutionService.ResolveAndRecordCreditAsync(
+                db, item.Id, cast.Name, cast.ExternalPersonId, source, cast.ProfileImageUrl,
+                role: "Actor", characterName: cast.Role, billingOrder: billingOrder++, ct);
+        }
+        foreach (var crew in result.Crew)
+        {
+            await personResolutionService.ResolveAndRecordCreditAsync(
+                db, item.Id, crew.Name, crew.ExternalPersonId, source, crew.ProfileImageUrl,
+                role: crew.Job ?? "Crew", characterName: null, billingOrder: null, ct);
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 
     // ── EnrichItemCoreAsync (item overload — thin wrapper) ─────────────────────
