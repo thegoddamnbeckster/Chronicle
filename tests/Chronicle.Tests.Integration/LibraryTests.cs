@@ -118,6 +118,26 @@ namespace Chronicle.Tests.Integration
         }
 
         [Fact]
+        public async Task GetLibrary_ReturnsMediaTypeInternalName()
+        {
+            // Confirmed real bug (2026-08-30, per-user report "Chronicle isn't sending ratings
+            // to Kodi's my ratings"): this field was never populated by LibraryController's own
+            // ToDto, unlike MediaController's. Chronicle_Scrobbler's whole Kodi rating/art/
+            // playcount sync reads this exact field (from this exact endpoint) to decide movie
+            // vs. TV-show vs. episode -- with it always null, every branch silently no-opped.
+            var (client, mediaId) = await SetupAsync();
+            await client.PostAsJsonAsync("/api/v1/library", new { mediaItemId = mediaId, status = "Watching" });
+
+            var response = await client.GetAsync("/api/v1/library");
+            var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+
+            var entry = doc.GetProperty("data").EnumerateArray()
+                .First(e => e.GetProperty("mediaItem").GetProperty("id").GetInt32() == mediaId);
+            entry.GetProperty("mediaItem").GetProperty("mediaTypeInternalName").GetString()
+                .Should().Be("tv"); // mediaTypeId 1 is seeded as Name="tv"
+        }
+
+        [Fact]
         public async Task GetLibrary_FilterByStatus_ReturnsFiltered()
         {
             var (client, mediaId) = await SetupAsync();

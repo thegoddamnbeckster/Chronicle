@@ -711,7 +711,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         }
     }
 
-    private static async Task UpsertRatingAsync(
+    internal static async Task UpsertRatingAsync(
         ChronicleDbContext db, ImportedRating rating, string pluginId, int userId, CancellationToken ct)
     {
         var source = SourceFromPluginId(pluginId);
@@ -723,7 +723,26 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         var lib = await db.UserLibraries
             .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
-        if (lib is null) return;
+        if (lib is null)
+        {
+            // Confirmed real bug (2026-08-30): a rating for an item that's matched in Chronicle's
+            // catalog but has no UserLibrary row yet (e.g. rated directly on Trakt/Simkl without
+            // ever syncing a watch event for it, or synced before this item was auto-tracked) was
+            // silently dropped -- same "create if missing" pattern UpsertWatchEventAsync and
+            // UpsertWatchlistStatusAsync already use, just missing here. A rating is itself strong
+            // evidence the item was watched, so the new row defaults to Completed rather than the
+            // Unwatched a plain auto-track would use.
+            lib = new UserLibrary
+            {
+                UserId      = userId,
+                MediaItemId = mediaItemId,
+                Status      = LibraryStatus.Completed,
+                AddedAt     = DateTime.UtcNow,
+                UpdatedAt   = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow,
+            };
+            db.UserLibraries.Add(lib);
+        }
 
         lib.UserRating = rating.Rating;
         await db.SaveChangesAsync(ct);

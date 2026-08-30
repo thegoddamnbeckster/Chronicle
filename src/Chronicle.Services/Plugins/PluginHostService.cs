@@ -104,6 +104,13 @@ public sealed class PluginHostService : IHostedService
         // earlier attempt only got partway through (e.g. app restart mid-backfill).
         await BackfillPersonCreditsAsync(db, scope.ServiceProvider, cancellationToken);
 
+        // Resolves cast/crew already sitting in every item's cached metadata_json (from every
+        // enrichment run before today) into real media_credits rows -- see
+        // QueueCachedCreditsBackfillAsync's own doc for why this is fire-and-forget rather than
+        // awaited here like the two backfills above: at library scale (tens of thousands of
+        // items) it would otherwise add minutes to every single startup.
+        QueueCachedCreditsBackfill();
+
         _log.Information("PluginHostService startup complete");
     }
 
@@ -270,6 +277,187 @@ public sealed class PluginHostService : IHostedService
 
         await db.SaveChangesAsync(ct);
         _log.Information("PeopleBackfill: resolved {Resolved}/{Total} credit row(s)", resolved, unresolved.Count);
+    }
+
+    private const string CachedCreditsBackfillCompletedKey = "people.cached_credits_backfill_completed_at";
+
+    /// <summary>
+    /// Fire-and-forget wrapper around <see cref="BackfillCreditsFromCachedMetadataAsync"/> --
+    /// deliberately NOT awaited by StartAsync, unlike the two backfills above. Those are
+    /// naturally small (a handful of legacy rows); this one walks every media_item in the
+    /// library, which for a mature Chronicle install (tens of thousands of items) would add
+    /// real minutes to every single app startup if it blocked the host from serving requests.
+    /// Uses its own DbContext scope since the one StartAsync used is disposed by the time this
+    /// runs. Confirmed live (2026-08-30): a person credited on real library titles (Party Down,
+    /// Step Brothers) showed only whatever credit happened to come from a title enriched AFTER
+    /// the People feature shipped -- every other title's already-cached cast/crew data was
+    /// sitting unused with zero media_credits rows to show for it, because credit resolution
+    /// only ever ran on a fresh enrichment result, never retroactively.
+    /// </summary>
+    private void QueueCachedCreditsBackfill()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+                // Full-library scale means even the read-only "anything left to do" scan is
+                // expensive -- once a full pass completes, skip entirely on every later startup
+                // rather than re-scanning tens of thousands of items to confirm there's nothing
+                // new (a fresh enrichment's own ResolveCreditsAsync keeps genuinely new credits
+                // current going forward; this backfill only ever needed to run once).
+                var alreadyDone = await db.AppSettings.AnyAsync(s => s.Key == CachedCreditsBackfillCompletedKey);
+                if (alreadyDone)
+                {
+                    _log.Debug("CachedCreditsBackfill: already completed a prior pass — skipping");
+                    return;
+                }
+
+                var personResolutionService = scope.ServiceProvider.GetRequiredService<IPersonResolutionService>();
+                await BackfillCreditsFromCachedMetadataAsync(db, personResolutionService, CancellationToken.None);
+
+                db.AppSettings.Add(new AppSetting
+                {
+                    Key   = CachedCreditsBackfillCompletedKey,
+                    Value = DateTimeOffset.UtcNow.ToString("O"),
+                });
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "CachedCreditsBackfill: background pass failed");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Walks every media_item's cached per-plugin metadata_json blob and resolves any cast/crew
+    /// array found there into real media_credits rows via PersonResolutionService -- pure local
+    /// reprocessing of data Chronicle already fetched, never a network call. Paged by id
+    /// (keyset, not offset, so a later page doesn't re-scan earlier rows) with periodic
+    /// SaveChanges + ChangeTracker.Clear() so the DbContext doesn't accumulate the whole
+    /// library's worth of tracked entities in memory across the run. Skips any (item, source)
+    /// pair that already has at least one media_credits row -- covers both a title genuinely
+    /// re-enriched since the People feature shipped and a page this same pass already resolved.
+    /// </summary>
+    internal async Task BackfillCreditsFromCachedMetadataAsync(
+        ChronicleDbContext db, IPersonResolutionService personResolutionService, CancellationToken ct)
+    {
+        var peopleTypeExists = await db.MediaTypes.AnyAsync(t => t.Name == "people", ct);
+        if (!peopleTypeExists)
+        {
+            _log.Debug("CachedCreditsBackfill: skipped — \"people\" media type not registered yet");
+            return;
+        }
+
+        var resolvedPairs = (await db.MediaCredits
+            .Select(c => new { c.MediaItemId, c.Source })
+            .Distinct()
+            .ToListAsync(ct))
+            .Select(x => (x.MediaItemId, x.Source))
+            .ToHashSet();
+
+        _log.Information("CachedCreditsBackfill: starting ({AlreadyResolved} (item, source) pair(s) already resolved)",
+            resolvedPairs.Count);
+
+        const int pageSize = 200;
+        var lastId = 0;
+        var itemsScanned = 0;
+        var creditsResolved = 0;
+
+        while (!ct.IsCancellationRequested)
+        {
+            var page = await db.MediaItems
+                .Where(m => m.Id > lastId && m.MetadataJson != null)
+                .OrderBy(m => m.Id)
+                .Take(pageSize)
+                .Select(m => new { m.Id, m.MetadataJson })
+                .ToListAsync(ct);
+            if (page.Count == 0) break;
+            lastId = page[^1].Id;
+
+            foreach (var item in page)
+            {
+                itemsScanned++;
+
+                Dictionary<string, JsonElement>? blobs;
+                try { blobs = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson!); }
+                catch (JsonException) { continue; }
+                if (blobs is null) continue;
+
+                foreach (var (pluginId, blob) in blobs)
+                {
+                    if (pluginId is "_resolved" or "_overrides") continue;
+                    if (blob.ValueKind != JsonValueKind.Object) continue;
+
+                    var source = Chronicle.Core.Helpers.PluginIdHelper.ToSource(pluginId);
+                    if (!resolvedPairs.Add((item.Id, source))) continue;
+
+                    var hasCast = blob.TryGetProperty("cast", out var castEl) && castEl.ValueKind == JsonValueKind.Array && castEl.GetArrayLength() > 0;
+                    var hasCrew = blob.TryGetProperty("crew", out var crewEl) && crewEl.ValueKind == JsonValueKind.Array && crewEl.GetArrayLength() > 0;
+                    if (!hasCast && !hasCrew) continue; // nothing to backfill for this pair
+
+                    if (hasCast)
+                    {
+                        List<CastMember>? cast = null;
+                        try { cast = JsonSerializer.Deserialize<List<CastMember>>(castEl.GetRawText()); }
+                        catch (JsonException) { }
+
+                        var billingOrder = 0;
+                        foreach (var c in cast ?? [])
+                        {
+                            if (string.IsNullOrWhiteSpace(c.Name)) continue;
+                            try
+                            {
+                                await personResolutionService.ResolveAndRecordCreditAsync(
+                                    db, item.Id, c.Name, c.ExternalPersonId, source, c.ProfileImageUrl,
+                                    role: "Actor", characterName: c.Role, billingOrder: billingOrder++, ct);
+                                creditsResolved++;
+                            }
+                            catch (Exception ex)
+                            {
+                                _log.Warning(ex, "CachedCreditsBackfill: failed cast \"{Name}\" on item {ItemId}", c.Name, item.Id);
+                            }
+                        }
+                    }
+
+                    if (hasCrew)
+                    {
+                        List<CrewMember>? crew = null;
+                        try { crew = JsonSerializer.Deserialize<List<CrewMember>>(crewEl.GetRawText()); }
+                        catch (JsonException) { }
+
+                        foreach (var c in crew ?? [])
+                        {
+                            if (string.IsNullOrWhiteSpace(c.Name)) continue;
+                            try
+                            {
+                                await personResolutionService.ResolveAndRecordCreditAsync(
+                                    db, item.Id, c.Name, c.ExternalPersonId, source, c.ProfileImageUrl,
+                                    role: c.Job ?? "Crew", characterName: null, billingOrder: null, ct);
+                                creditsResolved++;
+                            }
+                            catch (Exception ex)
+                            {
+                                _log.Warning(ex, "CachedCreditsBackfill: failed crew \"{Name}\" on item {ItemId}", c.Name, item.Id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear();
+            _log.Information(
+                "CachedCreditsBackfill: progress — {Scanned} item(s) scanned, {Resolved} credit(s) resolved (through item id {LastId})",
+                itemsScanned, creditsResolved, lastId);
+        }
+
+        _log.Information(
+            "CachedCreditsBackfill: complete — {Scanned} item(s) scanned, {Resolved} credit(s) resolved",
+            itemsScanned, creditsResolved);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

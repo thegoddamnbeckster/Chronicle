@@ -429,6 +429,16 @@ namespace Chronicle.API.Controllers
                         PosterUrl: null, BackdropUrl: null, RuntimeMinutes: null,
                         Rating: ExtractResolvedRating(e.MediaItem.MetadataJson),
                         Genres: null, Cast: null, Crew: null, Tags: null),
+                    // Confirmed real bug (2026-08-30, per-user report "Chronicle isn't sending
+                    // ratings to Kodi's my ratings"): this field was never set here, unlike
+                    // MediaController's own ToDto. Chronicle_Scrobbler's whole Kodi rating/art/
+                    // playcount sync (both the long-standing manual "Sync Watch History &
+                    // Ratings Now" action and today's new silent background pass) branches on
+                    // exactly this field to decide movie vs. TV-show vs. episode -- with it
+                    // always null, every branch always failed its type check and silently did
+                    // nothing, for every item, since this endpoint (GET /api/v1/library, which
+                    // is what that whole sync reads) has existed.
+                    MediaTypeInternalName: e.MediaItem.MediaType?.Name,
                     IsCollectionContainer: e.MediaItem.HierarchyLevel == 0
                         && (e.MediaItem.MediaType?.SupportsCollections ?? false)
                         && directChildrenMeta?.Count > 0,
