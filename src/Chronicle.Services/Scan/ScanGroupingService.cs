@@ -13,8 +13,9 @@ namespace Chronicle.Services.Scan
         // Extensions that are metadata/sidecar — never become MediaItems themselves
         private static readonly HashSet<string> _sidecarExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
-            ".nfo", ".jpg", ".jpeg", ".png", ".webp", ".bmp",
-            ".tbn", ".txt", ".xml", ".srt", ".sub", ".idx",
+            ".nfo", ".nfo-orig", ".jpg", ".jpeg", ".png", ".webp", ".bmp",
+            ".tbn", ".txt", ".xml", ".srt", ".sub", ".idx", ".ass",
+            ".cue", ".log",
         };
 
         // Folder names whose entire contents are treated as sidecar/supplemental material.
@@ -68,6 +69,15 @@ namespace Chronicle.Services.Scan
                 var folderSignal = _folder.Extract(path, scanRoot);
                 if (!isSidecar && folderSignal.FolderNames.Any(f => _sidecarFolderNames.Contains(f)))
                     isSidecar = true;
+
+                // Anything that's neither a recognized sidecar NOR a recognized playable media
+                // extension is junk as far as importing goes (cache files, lock files, Kodi's own
+                // ".metathumb" thumbnail cache, etc.) -- skip it entirely rather than defaulting
+                // to "not a sidecar, so it must be media" (confirmed bug 2026-08-29: a stray
+                // ".metathumb" file sitting next to a real .mp4 got imported as the movie's own
+                // file, and picked ahead of the real file whenever paths were sorted/read back).
+                if (!isSidecar && !MediaFileExtensions.Recognized.Contains(ext))
+                    continue;
                 // Skip expensive tag/nfo extraction for files we've already classified as sidecars.
                 var tagSignal    = isSidecar ? null : _tags.Extract(path);
                 var nfoPath      = isSidecar ? null : _nfo.FindSidecar(path);

@@ -188,6 +188,27 @@ public class ScanGroupingServiceTests
     }
 
     [Fact]
+    public void Group_UnrecognizedNonSidecarExtension_IsExcludedFromFiles()
+    {
+        // Confirmed bug (2026-08-29): a Kodi ".metathumb" cache file sitting next to the real
+        // movie file was imported as if it were the movie itself, because it matched neither
+        // the sidecar denylist nor any media extension -- the old code defaulted "not a known
+        // sidecar" to "must be media". It also sorted ahead of the real file (alphabetically
+        // ".metathumb" < ".mp4"), so it displayed as the item's "own" file in the UI.
+        var files = new[]
+        {
+            @"H:\Movies\The Fate of the Furious (2017)\The Fate of the Furious (2017).metathumb",
+            @"H:\Movies\The Fate of the Furious (2017)\The Fate of the Furious (2017).mp4",
+        };
+
+        var result = _svc.Group(files, scanRoot: @"H:\Movies", hierarchyLevels: 1);
+
+        result.Groups.Should().HaveCount(1);
+        result.Groups[0].Files.Should().ContainSingle()
+            .Which.Should().EndWith(".mp4");
+    }
+
+    [Fact]
     public void Group_MultipleArtists_CreatesOneGroupPerArtist()
     {
         var files = new[]

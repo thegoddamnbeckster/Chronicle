@@ -48,16 +48,8 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
     private static readonly Regex _episodeCode =
         new(@"[Ss](\d{1,2})[Ee](\d{1,3})", RegexOptions.Compiled);
 
-    // Recognised media file extensions
-    private static readonly HashSet<string> _mediaExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        // Video
-        ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".ts", ".m2ts",
-        ".mpg", ".mpeg", ".flv", ".webm", ".vob", ".divx",
-        // Audio
-        ".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wma", ".aac",
-        ".wav", ".aiff", ".ape", ".mpc",
-    };
+    // Recognised media file extensions -- see MediaFileExtensions for why this is shared.
+    private static readonly HashSet<string> _mediaExtensions = MediaFileExtensions.Recognized;
 
     // Poster image file names to look for alongside media files
     private static readonly string[] _posterFileNames =
