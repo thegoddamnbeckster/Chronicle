@@ -95,13 +95,20 @@ public class PersonResolutionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ResolvePersonOnlyAsync_NoPeopleMediaTypeRegistered_Throws()
+    public async Task ResolvePersonOnlyAsync_NoPeopleMediaTypeRegistered_SelfHealsInsteadOfThrowing()
     {
+        // Nothing in the normal plugin-media-type-sync path guarantees "people" exists yet --
+        // unlike every other type, no single installed plugin owns registering it (see
+        // PersonResolutionService.GetPeopleMediaTypeIdAsync). Resolving the very first credit,
+        // ever, must still work rather than requiring a specific plugin to be installed first.
         var db2 = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
 
-        await FluentActions.Invoking(() => _svc.ResolvePersonOnlyAsync(db2, "Anson Mount", null, "wikipedia", default))
-            .Should().ThrowAsync<InvalidOperationException>();
+        var person = await _svc.ResolvePersonOnlyAsync(db2, "Anson Mount", null, "wikipedia", default);
+
+        var mediaType = await db2.MediaTypes.SingleAsync(t => t.Name == "people");
+        person.MediaTypeId.Should().Be(mediaType.Id);
+        mediaType.IsTrackable.Should().BeFalse();
     }
 
     [Fact]

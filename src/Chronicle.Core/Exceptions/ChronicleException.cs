@@ -82,5 +82,13 @@ namespace Chronicle.Core.Exceptions
         public NoProviderConfiguredException(string message) : base(message) { }
     }
 
+    /// <summary>A reference/catalog media type (MediaType.IsTrackable == false, e.g. "people")
+    /// can't be added to a user's library -- it's credited on other media, never watched or
+    /// listened to on its own.</summary>
+    public class NotTrackableMediaException : ChronicleException
+    {
+        public NotTrackableMediaException(int mediaItemId)
+            : base($"Media item {mediaItemId} is a reference type and cannot be added to a library.") { }
+    }
 
 }

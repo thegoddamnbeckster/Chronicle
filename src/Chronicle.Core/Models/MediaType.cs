@@ -31,6 +31,16 @@ namespace Chronicle.Core.Models
         /// </summary>
         public bool SupportsCollections { get; set; } = false;
 
+        /// <summary>
+        /// False for a reference/catalog type whose items exist only to be pointed at by other
+        /// media (e.g. "people", credited on movies/shows/albums but never watched or listened
+        /// to on their own) -- LibraryService.GetForUserAsync's auto-track-every-root-item
+        /// mechanism skips these, so they never pick up a spurious per-user status/rating and
+        /// never show up as a section in the tracked Library grid. True for every ordinary
+        /// trackable type (movies, TV, music, books, ...).
+        /// </summary>
+        public bool IsTrackable { get; set; } = true;
+
         public DateTime CreatedAt { get; set; }
     }
 }

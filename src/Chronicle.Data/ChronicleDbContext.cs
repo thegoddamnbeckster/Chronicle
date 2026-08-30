@@ -123,6 +123,7 @@ namespace Chronicle.Data
                 entity.Property(e => e.DisplayName).IsRequired();
                 entity.Property(e => e.InteractionVerb).HasDefaultValue("watched");
                 entity.Property(e => e.ProgressUnit).HasDefaultValue("minutes");
+                entity.Property(e => e.IsTrackable).HasDefaultValue(true);
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 // Seed: built-in media types

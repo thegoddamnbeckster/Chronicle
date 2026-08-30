@@ -44,9 +44,16 @@ namespace Chronicle.API.Controllers
             if (!Enum.TryParse<LibraryStatus>(request.Status, out var status))
                 return BadRequest(ApiResponse<LibraryEntryDto>.Fail("INVALID_STATUS", $"Unknown status '{request.Status}'."));
 
-            var entry = await _libraryService.AddAsync(userId, new AddToLibraryRequest(request.MediaItemId, status));
-            var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
-            return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));
+            try
+            {
+                var entry = await _libraryService.AddAsync(userId, new AddToLibraryRequest(request.MediaItemId, status));
+                var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
+                return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));
+            }
+            catch (NotTrackableMediaException ex)
+            {
+                return BadRequest(ApiResponse<LibraryEntryDto>.Fail("NOT_TRACKABLE", ex.Message));
+            }
         }
 
         [HttpGet]

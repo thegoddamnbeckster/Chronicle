@@ -183,14 +183,47 @@ public class PersonResolutionService(
         return person;
     }
 
+    /// <summary>
+    /// Unlike every other media type, "people" has no single plugin that owns registering it --
+    /// cast/crew credits come from whichever provider (TMDB, MusicBrainz, Hardcover, ...) is
+    /// enriching the title being credited, so nothing in the normal plugin-media-type-sync path
+    /// (PluginHostService.SyncMediaTypesFromPluginsAsync) ever creates this row. Self-heals by
+    /// creating it here, the first time anyone is ever credited, instead of requiring an install
+    /// step that doesn't otherwise exist. IsTrackable = false: a person is a reference/catalog
+    /// entry credited on other media, never something tracked/watched on its own -- see
+    /// MediaType.IsTrackable.
+    /// </summary>
     private static async Task<int> GetPeopleMediaTypeIdAsync(ChronicleDbContext db, CancellationToken ct)
     {
         var id = await db.MediaTypes.Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
-        if (id is null)
-            throw new InvalidOperationException(
-                "No 'people' media type is registered -- the Wikipedia plugin (the type's canonical " +
-                "registrant) must be installed and have run PluginHostService's media-type sync at least once.");
-        return id.Value;
+        if (id is not null)
+            return id.Value;
+
+        var mediaType = new MediaType
+        {
+            Name            = "people",
+            DisplayName     = "People",
+            HierarchyLevels = 1,
+            InteractionVerb = "viewed",
+            ProgressUnit    = "percent",
+            IsBuiltIn       = true,
+            IsActive        = true,
+            IsTrackable     = false,
+            CreatedAt       = DateTime.UtcNow,
+        };
+        db.MediaTypes.Add(mediaType);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return mediaType.Id;
+        }
+        catch (DbUpdateException)
+        {
+            // Lost a race with another concurrent credit resolution also creating this row --
+            // the unique index on Name rejected ours; fall back to whichever one won.
+            db.ChangeTracker.Clear();
+            return await db.MediaTypes.Where(t => t.Name == "people").Select(t => t.Id).FirstAsync(ct);
+        }
     }
 
     private async Task SeedEnrichmentRowsAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct)

@@ -37,6 +37,14 @@ public class MediaTypeSupport
     /// <summary>Lower numbers = higher priority when multiple providers support the same type.</summary>
     public int DefaultPriority { get; set; } = 10;
 
+    /// <summary>
+    /// False for a reference/catalog type whose items are only ever pointed at by other media
+    /// (e.g. "people" -- credited on movies/shows/albums, never watched or listened to on its
+    /// own). Chronicle's library auto-tracking (every root item a user hasn't interacted with
+    /// gets an implicit Unwatched row) skips these. True for every ordinary trackable type.
+    /// </summary>
+    public bool IsTrackable { get; set; } = true;
+
     /// <summary>Metadata fields this plugin can populate for the root level (level 0) of this type.</summary>
     public List<string> SupportedFields { get; set; } = [];
 

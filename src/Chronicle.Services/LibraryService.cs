@@ -26,6 +26,13 @@ namespace Chronicle.Services
             if (existing != null)
                 return existing;
 
+            var isTrackable = await _context.MediaItems
+                .Where(m => m.Id == request.MediaItemId)
+                .Select(m => (bool?)m.MediaType!.IsTrackable)
+                .FirstOrDefaultAsync(ct);
+            if (isTrackable == false)
+                throw new NotTrackableMediaException(request.MediaItemId);
+
             var entry = new UserLibrary
             {
                 UserId = userId,
@@ -56,6 +63,7 @@ namespace Chronicle.Services
             var itemsQuery = _context.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
+                .Where(m => m.MediaType!.IsTrackable)
                 .AsQueryable();
 
             if (!includeStubs)

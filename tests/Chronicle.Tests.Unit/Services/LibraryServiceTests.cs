@@ -161,4 +161,52 @@ public class LibraryServiceTests
         Assert.Single(results);
         Assert.Equal(show.Id, results[0].MediaItemId);
     }
+
+    // ── IsTrackable ("people" and other reference/catalog types) ────────────────
+
+    [Fact]
+    public async Task GetForUserAsync_NonTrackableMediaType_NeitherReturnedNorAutoTracked()
+    {
+        var db = MakeDb();
+
+        var trackable = new MediaType { Name = "movies", HierarchyLevels = 1, IsTrackable = true, CreatedAt = DateTime.UtcNow };
+        var people    = new MediaType { Name = "people", HierarchyLevels = 1, IsTrackable = false, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.AddRange(trackable, people);
+        await db.SaveChangesAsync();
+
+        var movie  = new MediaItem { Name = "A Movie",  MediaTypeId = trackable.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var person = new MediaItem { Name = "Some Actor", MediaTypeId = people.Id,  CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.AddRange(movie, person);
+        await db.SaveChangesAsync();
+
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        // Act: neither item has a UserLibrary row yet -- GetForUserAsync auto-creates
+        // Unwatched rows for every root item it returns.
+        var results = (await svc.GetForUserAsync(1, rootOnly: true)).ToList();
+
+        // Assert: only the trackable movie comes back, and only it got an auto-created row.
+        Assert.Single(results);
+        Assert.Equal(movie.Id, results[0].MediaItemId);
+        Assert.False(await db.UserLibraries.AnyAsync(l => l.MediaItemId == person.Id));
+    }
+
+    [Fact]
+    public async Task AddAsync_NonTrackableMediaType_ThrowsNotTrackableMediaException()
+    {
+        var db = MakeDb();
+
+        var people = new MediaType { Name = "people", HierarchyLevels = 1, IsTrackable = false, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(people);
+        await db.SaveChangesAsync();
+
+        var person = new MediaItem { Name = "Some Actor", MediaTypeId = people.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(person);
+        await db.SaveChangesAsync();
+
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        await Assert.ThrowsAsync<Chronicle.Core.Exceptions.NotTrackableMediaException>(
+            () => svc.AddAsync(1, new AddToLibraryRequest(person.Id, LibraryStatus.Watching)));
+    }
 }

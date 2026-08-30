@@ -47,7 +47,10 @@ export default function GlobalSearch() {
 
   function handleSelect(item: MediaItem) {
     setOpen(false)
-    navigate(`/media/${item.id}`)
+    // People are a reference type (see MediaType.IsTrackable) with their own detail page --
+    // routing them through /media/:id would land on the generic MediaDetailPage, complete with
+    // library-status controls and a "Missing" badge that make no sense for a person.
+    navigate(item.mediaTypeName === 'People' ? `/people/${item.id}` : `/media/${item.id}`)
   }
 
   function handleFocus() {

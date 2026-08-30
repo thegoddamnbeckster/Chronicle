@@ -151,6 +151,10 @@ public sealed class PluginHostService : IHostedService
                                        .FirstOrDefault(v => v != "watched") ?? "watched",
                     ProgressUnit    = g.Select(s => s.ProgressUnit)
                                        .FirstOrDefault(u => u != "minutes") ?? "minutes",
+                    // Any plugin declaring this type non-trackable wins -- a reference type stays
+                    // a reference type even if another plugin's entry left IsTrackable at its
+                    // (trackable) default.
+                    IsTrackable     = g.All(s => s.IsTrackable),
                 };
             })
             .ToList();
@@ -180,6 +184,7 @@ public sealed class PluginHostService : IHostedService
                     ProgressUnit    = support.ProgressUnit,
                     IsBuiltIn       = false,
                     IsActive        = true,
+                    IsTrackable     = support.IsTrackable,
                     CreatedAt       = DateTime.UtcNow,
                 });
                 _log.Information("MediaTypeSync: added new media type '{Name}' ({Display})",
@@ -202,6 +207,8 @@ public sealed class PluginHostService : IHostedService
                 { existing.InteractionVerb = support.InteractionVerb; changed = true; }
                 if (support.ProgressUnit != "minutes" && existing.ProgressUnit != support.ProgressUnit)
                 { existing.ProgressUnit = support.ProgressUnit; changed = true; }
+                if (existing.IsTrackable != support.IsTrackable)
+                { existing.IsTrackable = support.IsTrackable; changed = true; }
 
                 if (changed)
                 {
