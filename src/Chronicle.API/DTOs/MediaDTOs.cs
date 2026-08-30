@@ -229,7 +229,16 @@ namespace Chronicle.API.DTOs
         DateTime UpdatedAt,
         DateTime? StartedAt,
         DateTime? CompletedAt,
-        double? ResumePositionPercent = null
+        double? ResumePositionPercent = null,
+        /// <summary>
+        /// When ResumePositionPercent was last set -- exposed so a client (Chronicle_Scrobbler's
+        /// silent sync) can compare against its own device's local playback clock (Kodi's
+        /// lastplayed) to decide which side of a resume-position conflict is actually newer,
+        /// instead of blindly pushing one direction. Per-user request (2026-08-30): "if
+        /// Chronicle's last watched status is older than Kodi's... Kodi should win... if
+        /// Chronicle's data is more current than Kodi's, Chronicle's data should sync into Kodi."
+        /// </summary>
+        DateTime? ResumeUpdatedAt = null
     );
 
     public record NuclearResetRequestDto(string ConfirmationToken);

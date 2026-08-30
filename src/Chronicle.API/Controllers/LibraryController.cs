@@ -453,7 +453,7 @@ namespace Chronicle.API.Controllers
             return new LibraryEntryDto(
                 e.Id, e.UserId, mediaDto!, e.Status.ToString(),
                 e.UserRating, userRatingSource, e.Notes, e.AddedAt, e.UpdatedAt,
-                e.StartedAt, e.CompletedAt, e.ResumePositionPercent);
+                e.StartedAt, e.CompletedAt, e.ResumePositionPercent, e.ResumeUpdatedAt);
         }
     }
 }
