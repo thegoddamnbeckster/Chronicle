@@ -450,11 +450,15 @@ namespace Chronicle.Tests.Integration
         }
 
         [Fact]
-        public async Task GetMediaItem_ShowWithMixedEpisodes_HasBothPhysicalFileAndMetadataOnly()
+        public async Task GetMediaItem_ShowWithMixedEpisodes_HasPhysicalFileTrueAndMetadataOnlyFalse()
         {
             // Arrange — a TV Show (level 0) with one season containing two episodes:
-            // one episode has a file, the other does not.  The show should report
-            // hasPhysicalFile=true AND hasMetadataOnly=true (mixed state).
+            // one episode has a file, the other does not. Per-user correction (2026-08-30):
+            // "why are so many tv shows showing as missing when they aren't?" -- a mixed state
+            // (some episodes present, one missing -- e.g. a not-yet-aired episode) used to also
+            // set hasMetadataOnly=true, showing the same "Missing" badge as a show with nothing
+            // downloaded at all. hasMetadataOnly is now true only when there's no physical file
+            // ANYWHERE in the subtree -- a show with at least one real file is never "Missing".
             const string episodeWithFileMeta =
                 """{"fileScanner": {"filePaths": ["/tv/mixed/s01e01.mkv"], "importedAt": "2026-01-01T00:00:00Z"}}""";
             // episode without any file scanner data (metadata-only)
@@ -530,8 +534,8 @@ namespace Chronicle.Tests.Integration
             var data = body.GetProperty("data");
             data.GetProperty("hasPhysicalFile").GetBoolean().Should().BeTrue(
                 "at least one episode has a physical file");
-            data.GetProperty("hasMetadataOnly").GetBoolean().Should().BeTrue(
-                "at least one episode is metadata-only, so the show is in a mixed state");
+            data.GetProperty("hasMetadataOnly").GetBoolean().Should().BeFalse(
+                "the show has a real physical file somewhere, so it is not \"Missing\" even though one episode isn't downloaded yet");
         }
     }
 }

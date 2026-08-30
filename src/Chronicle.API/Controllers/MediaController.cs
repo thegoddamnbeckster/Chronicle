@@ -857,30 +857,30 @@ namespace Chronicle.API.Controllers
             // intermediate nodes (seasons) do not falsely trigger the metadata-only flag.
             bool hasOwnFile = HasFileScannerData(m.MetadataJson);
             bool childrenHaveFile;
-            bool childrenMissFile;
 
             if (grandchildrenMeta?.Count > 0)
             {
                 // Grandchildren (episodes/tracks) are the real leaf level — use them exclusively.
                 childrenHaveFile = grandchildrenMeta.Any(HasFileScannerData);
-                childrenMissFile = grandchildrenMeta.Any(j => !HasFileScannerData(j));
             }
             else if (directChildrenMeta?.Count > 0)
             {
                 // No grandchildren — use direct children as the leaf level.
                 childrenHaveFile = directChildrenMeta.Any(HasFileScannerData);
-                childrenMissFile = directChildrenMeta.Any(j => !HasFileScannerData(j));
             }
             else
             {
                 childrenHaveFile = false;
-                childrenMissFile = false;
             }
 
             bool hasPhysicalFile = hasOwnFile || childrenHaveFile;
-            // hasMetadataOnly is true when the item (and all its leaves) have no physical file,
-            // OR when some leaves exist but not all of them have a file (mixed state).
-            bool hasMetadataOnly = !hasPhysicalFile || childrenMissFile;
+            // Per-user correction (2026-08-30): "why are so many tv shows showing as missing
+            // when they aren't?" -- hasMetadataOnly used to also fire for a "mixed" state (some
+            // leaves have a file, some don't -- e.g. one not-yet-aired episode out of a whole
+            // season), which meant a show with 19/20 episodes present still showed the same
+            // "Missing" badge as a show with literally nothing downloaded. Now true only when
+            // there's no physical file anywhere in the item's own subtree.
+            bool hasMetadataOnly = !hasPhysicalFile;
 
             ResolvedMetadataDto? resolvedMetadata = null;
             if (!string.IsNullOrEmpty(m.MetadataJson))

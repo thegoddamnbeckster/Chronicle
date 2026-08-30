@@ -387,26 +387,25 @@ namespace Chronicle.API.Controllers
                 // Compute physical-file indicators using the same leaf-level logic as MediaController.
                 bool hasOwnFile = HasFileScannerData(e.MediaItem.MetadataJson);
                 bool childrenHaveFile;
-                bool childrenMissFile;
 
                 if (grandchildrenMeta?.Count > 0)
                 {
                     childrenHaveFile = grandchildrenMeta.Any(HasFileScannerData);
-                    childrenMissFile = grandchildrenMeta.Any(j => !HasFileScannerData(j));
                 }
                 else if (directChildrenMeta?.Count > 0)
                 {
                     childrenHaveFile = directChildrenMeta.Any(HasFileScannerData);
-                    childrenMissFile = directChildrenMeta.Any(j => !HasFileScannerData(j));
                 }
                 else
                 {
                     childrenHaveFile = false;
-                    childrenMissFile = false;
                 }
 
                 bool hasPhysicalFile = hasOwnFile || childrenHaveFile;
-                bool hasMetadataOnly = !hasPhysicalFile || childrenMissFile;
+                // Per-user correction (2026-08-30): "MISSING" now means no physical file
+                // anywhere in the item's subtree, not "some part of it is incomplete" -- see
+                // MediaController's own ToDto for the full reasoning (same logic here).
+                bool hasMetadataOnly = !hasPhysicalFile;
 
                 mediaDto = new MediaItemDto(
                     e.MediaItem.Id, e.MediaItem.MediaTypeId,
