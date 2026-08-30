@@ -36,4 +36,15 @@ public interface IPersonResolutionService
     Task<MediaItem> ResolvePersonOnlyAsync(
         ChronicleDbContext db, string personName, string? externalPersonId, string source,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Feed path 1 of the design doc's Section 1.5: a person's own enrichment (Wikipedia's bio
+    /// photo, TMDB's own /person/{id} profile picture plus its full alternate-photo gallery,
+    /// ...) returning one or more photos for the person item directly, as opposed to a photo
+    /// arriving via someone else's credit list. No-op if <paramref name="photos"/> is empty
+    /// (blank/null URLs are filtered out).
+    /// </summary>
+    Task RecordOwnPortraitAsync(
+        ChronicleDbContext db, MediaItem person, IEnumerable<(string Url, string? ThumbnailUrl)> photos,
+        string source, CancellationToken ct = default);
 }

@@ -1,14 +1,19 @@
 import { Link, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { getMedia } from '@/api/media'
-import { getPersonCredits } from '@/api/people'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { getMedia, setMediaOverride, clearMediaOverride } from '@/api/media'
+import { getPersonCredits, getPersonHeadshots } from '@/api/people'
 import { PosterImage } from '@/components/PosterImage'
 import styles from './PersonDetailPage.module.css'
 
 function formatDate(iso: string | null | undefined): string | null {
   if (!iso) return null
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+  if (Number.isNaN(d.getTime())) return null
+  // A birth/death date is a calendar date with no meaningful time-of-day -- it's stored as
+  // midnight UTC, so formatting in the viewer's LOCAL timezone can roll it back a day for
+  // anyone west of UTC (confirmed live: "1973-04-03T00:00:00Z" displayed as "April 2" for a
+  // UTC-6 viewer). Pin the format to UTC so the calendar date shown always matches what's stored.
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })
 }
 
 /** Person detail page -- reuses the generic GET /media/:id endpoint for the person's own
@@ -19,6 +24,7 @@ function formatDate(iso: string | null | undefined): string | null {
 export default function PersonDetailPage() {
   const { id } = useParams<{ id: string }>()
   const personId = Number(id)
+  const qc = useQueryClient()
 
   const { data: person, isLoading } = useQuery({
     queryKey: ['media', personId],
@@ -30,6 +36,31 @@ export default function PersonDetailPage() {
     queryKey: ['person-credits', personId],
     queryFn: () => getPersonCredits(personId),
     enabled: !Number.isNaN(personId),
+  })
+
+  // Every photo Chronicle has ever accumulated for this person (person_headshots), not just
+  // whichever one is currently resolved onto PosterUrl -- lets the user actually see and pick
+  // among alternates instead of being stuck with whatever was discovered first.
+  const { data: headshots = [] } = useQuery({
+    queryKey: ['person-headshots', personId],
+    queryFn: () => getPersonHeadshots(personId),
+    enabled: !Number.isNaN(personId),
+  })
+
+  const pinMut = useMutation({
+    mutationFn: (url: string) => setMediaOverride(personId, 'poster_url', url),
+    onSuccess: updated => {
+      qc.setQueryData(['media', personId], updated)
+      qc.invalidateQueries({ queryKey: ['person-headshots', personId] })
+    },
+  })
+
+  const resetMut = useMutation({
+    mutationFn: () => clearMediaOverride(personId, 'poster_url'),
+    onSuccess: updated => {
+      qc.setQueryData(['media', personId], updated)
+      qc.invalidateQueries({ queryKey: ['person-headshots', personId] })
+    },
   })
 
   if (isLoading || !person) {
@@ -61,6 +92,39 @@ export default function PersonDetailPage() {
           {bio && <p className={styles.bio}>{bio}</p>}
         </div>
       </div>
+
+      {headshots.length > 1 && (
+        <section className={styles.photos}>
+          <div className={styles.photosHeader}>
+            <h2 className={styles.creditGroupTitle}>Photos</h2>
+            {headshots.some(h => !h.isCurrent) && (
+              <button
+                type="button"
+                className={styles.resetPhotoBtn}
+                onClick={() => resetMut.mutate()}
+                disabled={resetMut.isPending}
+              >
+                Reset to newest
+              </button>
+            )}
+          </div>
+          <div className={styles.photoGrid}>
+            {headshots.map(h => (
+              <button
+                key={h.id}
+                type="button"
+                className={`${styles.photoThumb} ${h.isCurrent ? styles.photoThumbCurrent : ''}`}
+                title={h.source}
+                disabled={h.isCurrent || pinMut.isPending}
+                onClick={() => pinMut.mutate(h.url)}
+              >
+                <PosterImage posterUrl={h.thumbnailUrl ?? h.url} name={person.name} lazy />
+                {h.isCurrent && <span className={styles.photoCurrentBadge}>Current</span>}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className={styles.credits}>
         {creditGroups.length === 0 ? (

@@ -181,6 +181,15 @@ export interface PersonCreditGroup {
   items: PersonCredit[]
 }
 
+export interface PersonHeadshot {
+  id: number
+  url: string
+  thumbnailUrl: string | null
+  source: string
+  firstSeenAt: string
+  isCurrent: boolean
+}
+
 export interface LibraryEntry {
   id: number
   userId: number

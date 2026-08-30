@@ -119,6 +119,28 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<List<PersonCreditGroupDto>>.Ok(groups));
         }
 
+        /// <summary>Every accumulated photo for this person (person_headshots -- Section 1.5),
+        /// newest-discovered first, for the detail page's photo picker. Answers "surely there's
+        /// more than one" by actually surfacing every headshot Chronicle has ever recorded for
+        /// them, not just whichever one happens to be currently resolved onto PosterUrl.</summary>
+        [HttpGet("{id:int}/headshots")]
+        public async Task<IActionResult> GetHeadshots(int id, CancellationToken ct)
+        {
+            var posterUrl = await _context.MediaItems
+                .Where(m => m.Id == id)
+                .Select(m => m.PosterUrl)
+                .FirstOrDefaultAsync(ct);
+
+            var headshots = await _context.PersonHeadshots
+                .Where(h => h.PersonMediaItemId == id)
+                .OrderByDescending(h => h.FirstSeenAt)
+                .Select(h => new PersonHeadshotDto(
+                    h.Id, h.Url, h.ThumbnailUrl, h.Source, h.FirstSeenAt, h.Url == posterUrl))
+                .ToListAsync(ct);
+
+            return Ok(ApiResponse<List<PersonHeadshotDto>>.Ok(headshots));
+        }
+
         private async Task<int?> GetPeopleMediaTypeIdAsync(CancellationToken ct) =>
             await _context.MediaTypes.Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
     }

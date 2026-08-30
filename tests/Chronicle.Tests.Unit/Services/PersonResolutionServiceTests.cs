@@ -139,6 +139,72 @@ public class PersonResolutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RecordOwnPortraitAsync_NewPosterUrl_InsertsHeadshot()
+    {
+        // Feed path 1 of Section 1.5: a person's OWN enrichment result (not a credit on
+        // someone else's title) supplying a photo -- e.g. TMDB's own /person/{id} profile
+        // picture, or Wikipedia's bio photo.
+        var person = await _svc.ResolvePersonOnlyAsync(_db, "Keanu Reeves", "tmdb:6384", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        await _svc.RecordOwnPortraitAsync(_db, person,
+            [("https://image.tmdb.org/t/p/original/keanu.jpg", "https://image.tmdb.org/t/p/w500/keanu.jpg")],
+            "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        var headshot = await _db.PersonHeadshots.SingleAsync(h => h.PersonMediaItemId == person.Id);
+        headshot.Url.Should().Be("https://image.tmdb.org/t/p/original/keanu.jpg");
+        headshot.ThumbnailUrl.Should().Be("https://image.tmdb.org/t/p/w500/keanu.jpg");
+        headshot.Source.Should().Be("tmdb");
+    }
+
+    [Fact]
+    public async Task RecordOwnPortraitAsync_MultipleUrls_InsertsEveryOne()
+    {
+        // TMDB's own /person/{id}/images gallery can return dozens of alternate photos in a
+        // single enrichment result -- all of them, not just the one "current" pick, must reach
+        // person_headshots for the picker to have anything to show beyond a single photo.
+        var person = await _svc.ResolvePersonOnlyAsync(_db, "Keanu Reeves", "tmdb:6384", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        await _svc.RecordOwnPortraitAsync(_db, person,
+            [("https://image.tmdb.org/a.jpg", (string?)null),
+             ("https://image.tmdb.org/b.jpg", null),
+             ("https://image.tmdb.org/c.jpg", null)],
+            "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        (await _db.PersonHeadshots.CountAsync(h => h.PersonMediaItemId == person.Id)).Should().Be(3);
+    }
+
+    [Fact]
+    public async Task RecordOwnPortraitAsync_SameUrlTwice_DoesNotDuplicate()
+    {
+        var person = await _svc.ResolvePersonOnlyAsync(_db, "Keanu Reeves", "tmdb:6384", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        await _svc.RecordOwnPortraitAsync(_db, person, [("https://image.tmdb.org/t/p/h632/keanu.jpg", (string?)null)], "tmdb", default);
+        await _db.SaveChangesAsync();
+        await _svc.RecordOwnPortraitAsync(_db, person, [("https://image.tmdb.org/t/p/h632/keanu.jpg", (string?)null)], "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        (await _db.PersonHeadshots.CountAsync(h => h.PersonMediaItemId == person.Id)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RecordOwnPortraitAsync_EmptyOrBlankUrls_NoOp()
+    {
+        var person = await _svc.ResolvePersonOnlyAsync(_db, "Keanu Reeves", "tmdb:6384", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        await _svc.RecordOwnPortraitAsync(_db, person, [], "tmdb", default);
+        await _svc.RecordOwnPortraitAsync(_db, person, [(null!, (string?)null), ("", null)], "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        (await _db.PersonHeadshots.CountAsync(h => h.PersonMediaItemId == person.Id)).Should().Be(0);
+    }
+
+    [Fact]
     public async Task ResolveAndRecordCreditAsync_SameHeadshotUrlTwice_DoesNotDuplicate()
     {
         var movie1 = new MediaItem { MediaTypeId = 2, Name = "Movie 1", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };

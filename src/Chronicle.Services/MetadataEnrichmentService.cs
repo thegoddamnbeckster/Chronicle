@@ -1718,6 +1718,20 @@ public class MetadataEnrichmentService(
                 MergeMetadata(row.MediaItem!, row.PluginId, result);
                 await resolutionService.ResolveAsync(row.MediaItem!, db, ct);
                 await ResolveCreditsAsync(db, row.MediaItem!, row.PluginId, result, ct);
+                if (string.Equals(row.MediaItem!.MediaType?.Name, "people", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Both the single "current" pick (PosterUrl) and every "poster"-tagged
+                    // alternate in the provider's own gallery (TMDB's AdditionalImages) count as
+                    // accumulated headshots -- otherwise only ever one photo per source ever
+                    // reaches person_headshots, defeating the point of a picker.
+                    var photos = new List<(string Url, string? ThumbnailUrl)>();
+                    if (result.PosterUrl is not null) photos.Add((result.PosterUrl, null));
+                    photos.AddRange(result.AdditionalImages
+                        .Where(i => i.Type == "poster")
+                        .Select(i => (i.Url, (string?)i.ThumbnailUrl)));
+                    await personResolutionService.RecordOwnPortraitAsync(
+                        db, row.MediaItem!, photos, PluginIdHelper.ToSource(row.PluginId), ct);
+                }
                 // Keep media_external_ids in sync with the enrichment result so that
                 // Fix Match (which calls this path with an IdOverride) actually persists
                 // the new TMDB ID — not just the enrichment tracking row.

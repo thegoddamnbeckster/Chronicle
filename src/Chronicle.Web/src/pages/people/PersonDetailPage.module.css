@@ -53,6 +53,75 @@
   white-space: pre-wrap;
 }
 
+.photos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.photosHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.photosHeader .creditGroupTitle {
+  margin: 0;
+}
+
+.resetPhotoBtn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 0.85em;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.resetPhotoBtn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.photoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 10px;
+}
+
+.photoThumb {
+  position: relative;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+
+.photoThumb:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.photoThumbCurrent {
+  border-color: var(--accent);
+  cursor: default;
+}
+
+.photoCurrentBadge {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 0.7em;
+  text-align: center;
+  padding: 2px 0;
+  border-radius: 4px;
+}
+
 .credits {
   display: flex;
   flex-direction: column;

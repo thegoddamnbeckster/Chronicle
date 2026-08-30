@@ -28,4 +28,17 @@ namespace Chronicle.API.DTOs
         string Role,
         List<PersonCreditDto> Items
     );
+
+    /// <summary>One accumulated photo for a person (person_headshots), for the photo-picker
+    /// section of the person detail page. IsCurrent marks whichever one is presently resolved
+    /// onto the person's own PosterUrl (either an explicit pin via the standard _overrides
+    /// mechanism, or -- absent a pin -- the most-recently-discovered headshot).</summary>
+    public record PersonHeadshotDto(
+        int Id,
+        string Url,
+        string? ThumbnailUrl,
+        string Source,
+        DateTime FirstSeenAt,
+        bool IsCurrent
+    );
 }

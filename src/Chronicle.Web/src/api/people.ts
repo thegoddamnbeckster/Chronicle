@@ -1,5 +1,5 @@
 import client from './client'
-import type { ApiResponse, PersonListItem, PersonCreditGroup } from '@/types'
+import type { ApiResponse, PersonListItem, PersonCreditGroup, PersonHeadshot } from '@/types'
 
 export interface GetPeopleParams {
   sort?: 'name' | 'birthDate' | 'createdAt'
@@ -21,5 +21,10 @@ export async function getPersonRoles(): Promise<string[]> {
 
 export async function getPersonCredits(id: number): Promise<PersonCreditGroup[]> {
   const { data } = await client.get<ApiResponse<PersonCreditGroup[]>>(`/people/${id}/credits`)
+  return data.data ?? []
+}
+
+export async function getPersonHeadshots(id: number): Promise<PersonHeadshot[]> {
+  const { data } = await client.get<ApiResponse<PersonHeadshot[]>>(`/people/${id}/headshots`)
   return data.data ?? []
 }
