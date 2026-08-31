@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree } from '@/api/media'
+import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
@@ -22,10 +22,18 @@ import { PosterImage } from '@/components/PosterImage'
 import { FanartImage } from '@/components/FanartImage'
 import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import { unmergeItem } from '@/api/duplicates'
+import { PersonCard } from '@/components/people/PersonCard'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
   'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
 ]
+
+/** On-screen/on-record talent -- per-user request (2026-08-30): "only actors, band members
+ * or narrators go on top. the remaining cast, crew, whatever go below." A person with any of
+ * these roles on this title (alongside possibly others, e.g. an actor who also wrote) lands in
+ * the top group; everyone else (director, composer, gaffer, ...) goes in the group below. */
+const ON_SCREEN_ROLES = new Set(['actor', 'narrator', 'musician', 'vocals', 'playback singer'])
+const isOnScreenRole = (roles: string[]) => roles.some(r => ON_SCREEN_ROLES.has(r.toLowerCase()))
 
 /** Returns a display label for a LibraryStatus value that is appropriate for the given media type. */
 function getStatusLabel(status: LibraryStatus, mediaTypeName: string): string {
@@ -216,6 +224,14 @@ export default function MediaDetailPage() {
     queryFn: () => getNfoDetail(mediaId),
     enabled: !isNaN(mediaId) && !!item?.fileScannerMeta?.nfoPath,
   })
+
+  const { data: peopleInvolved = [] } = useQuery({
+    queryKey: ['media', mediaId, 'people'],
+    queryFn: () => getMediaPeople(mediaId),
+    enabled: !isNaN(mediaId),
+  })
+  const onScreenPeople = peopleInvolved.filter(p => isOnScreenRole(p.roles))
+  const otherPeople = peopleInvolved.filter(p => !isOnScreenRole(p.roles))
 
   // Get the user's library entry for this item (if any)
   const { data: library = [] } = useQuery({
@@ -1066,6 +1082,14 @@ export default function MediaDetailPage() {
             )}
           </div>
 
+          {onScreenPeople.length > 0 && (
+            <div className={styles.peopleRow}>
+              {onScreenPeople.map(person => (
+                <PersonCard key={person.id} person={person} />
+              ))}
+            </div>
+          )}
+
           {(item.overview || fanartThumb || fanartDisc) && (
             <div className={styles.descriptionRow}>
               {fanartThumb && (
@@ -1203,6 +1227,21 @@ export default function MediaDetailPage() {
               )
             })
           })()}
+
+          {/* Crew -- per-user request (2026-08-30): "crew section needs to be at the bottom,
+              above the list of images." Cast (onScreenPeople) stays up top per the section's
+              original placement ("above the thumbnail and below the pills"); crew moves all
+              the way down here, directly above Additional Images. */}
+          {otherPeople.length > 0 && (
+            <>
+              <div className={styles.peopleGroupLabel}>Crew</div>
+              <div className={styles.peopleRow}>
+                {otherPeople.map(person => (
+                  <PersonCard key={person.id} person={person} />
+                ))}
+              </div>
+            </>
+          )}
 
           {/* Additional Images — every image available across all plugins for this item,
               grouped by the artwork type its source plugin reported. Browse-only: clicking a

@@ -407,6 +407,41 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   margin-bottom: 16px;
 }
 
+/* Cast/crew section -- per-user request (2026-08-30): exactly 3 cards across on mobile,
+   stretched to fill the row width (no dead space on the right); on desktop the cards stay
+   the same fixed size instead of stretching to 3 huge posters, with as many fitting the row
+   as the window allows. Two explicit modes rather than one auto-fill/minmax rule -- a single
+   rule can't satisfy both "always exactly 3, filled" on narrow widths and "fixed size, grows
+   in count" on wide ones without landing in a fragile pixel-rounding no-man's-land at the
+   mobile/desktop boundary. 768px matches this file's existing mobile breakpoint (see
+   .backdropActive above), where the sidebar itself also switches modes. */
+.peopleRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  /* .metaBoxed (this row's own parent) has its own 24px horizontal padding on top of
+   * .backdropContentActive's -- per-user report (2026-08-30, phone screenshot): that stacked
+   * padding was visibly narrowing the row and its cards. Cancel just this row's own parent
+   * padding (not backdropContent's too) so cards land flush with the hero banner's own text
+   * edge, not the raw viewport edge -- same idiom .backdropActive above already uses to break
+   * out of the same padding stack for the hero art. */
+  margin: 0 -24px 16px;
+}
+
+@media (min-width: 769px) {
+  .peopleRow {
+    grid-template-columns: repeat(auto-fill, 84px);
+  }
+}
+
+.peopleGroupLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin: 4px 0 8px;
+}
+
 .chip {
   font-size: 12px;
   padding: 3px 10px;

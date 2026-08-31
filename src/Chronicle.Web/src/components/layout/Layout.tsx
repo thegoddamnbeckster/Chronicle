@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useEffect, useRef, useState, type RefObject } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
@@ -11,6 +11,12 @@ import AppFooter from './AppFooter'
 import GlobalSearch from './GlobalSearch'
 import NowPlayingBanner from './NowPlayingBanner'
 import styles from './Layout.module.css'
+
+/** The app shell's own scrollable content region (the <main> below) -- exposed so a page
+ * that needs to virtualize a long list (e.g. PeopleLibraryPage) can scroll/measure against
+ * the REAL scroll container instead of creating its own nested one, which would silently
+ * break useScrollRestoration's existing scroll-position memory for this element. */
+export const MainScrollContext = createContext<RefObject<HTMLElement | null>>({ current: null })
 
 export default function Layout() {
   const { user, logout } = useAuth()
@@ -161,10 +167,12 @@ export default function Layout() {
         <ActivityPanel />
       </nav>
 
-      <main ref={mainRef} className={styles.content}>
-        <NowPlayingBanner />
-        <Outlet />
-      </main>
+      <MainScrollContext.Provider value={mainRef}>
+        <main ref={mainRef} className={styles.content}>
+          <NowPlayingBanner />
+          <Outlet />
+        </main>
+      </MainScrollContext.Provider>
 
       <div className={styles.footer}>
         <AppFooter

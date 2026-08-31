@@ -1,6 +1,6 @@
 import axios from 'axios'
 import client, { ApiError } from './client'
-import type { ApiResponse, MediaItem, MediaTypeOption, NfoDetail } from '@/types'
+import type { ApiResponse, MediaItem, MediaTypeOption, NfoDetail, PersonListItem } from '@/types'
 
 export async function getMediaTypes(): Promise<MediaTypeOption[]> {
   const { data } = await client.get<ApiResponse<MediaTypeOption[]>>('/media/types')
@@ -22,6 +22,13 @@ export async function getMedia(id: number): Promise<MediaItem> {
 
 export async function getMediaChildren(id: number): Promise<MediaItem[]> {
   const { data } = await client.get<ApiResponse<MediaItem[]>>(`/media/${id}/children`)
+  return data.data ?? []
+}
+
+/** People credited on this title (cast/crew) -- mirror of getPersonCredits, walking the other
+ * direction (title -> people rather than person -> titles). Only resolved credits come back. */
+export async function getMediaPeople(id: number): Promise<PersonListItem[]> {
+  const { data } = await client.get<ApiResponse<PersonListItem[]>>(`/media/${id}/people`)
   return data.data ?? []
 }
 

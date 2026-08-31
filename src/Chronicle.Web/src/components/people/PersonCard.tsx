@@ -23,12 +23,23 @@ function formatDateRange(birth: string | null, death: string | null): string | n
 }
 
 /** One entry on the catalog-wide People grid (PeopleLibraryPage) -- see
- * docs/plans/2026-08-28-people-section-design.md Section 5. */
-export function PersonCard({ person }: { person: PersonListItem }) {
+ * docs/plans/2026-08-28-people-section-design.md Section 5.
+ *
+ * navState, when given, is carried as router location state so PersonDetailPage can build
+ * the same "↑ People" / Prev / Next navigation MediaDetailPage already has for library items
+ * -- per-user request (2026-08-30): "movie details have an up library button... I need that
+ * same kind of thing for people. also next and previous buttons." Mirrors LibraryPage's own
+ * per-section listIds/listLabel state passed to its media cards. */
+export function PersonCard({
+  person, navState,
+}: {
+  person: PersonListItem
+  navState?: { listIds: number[]; listLabel?: string }
+}) {
   const dates = formatDateRange(person.birthDate, person.deathDate)
 
   return (
-    <Link to={`/people/${person.id}`} className={styles.personCard}>
+    <Link to={`/people/${person.id}`} state={navState} className={styles.personCard}>
       <div className={styles.poster}>
         <PosterImage posterUrl={person.posterUrl} name={person.name} lazy />
         {person.deathDate && (

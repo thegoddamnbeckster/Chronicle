@@ -206,6 +206,40 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<List<MediaItemDto>>.Ok(dtos));
         }
 
+        /// <summary>People credited on this title -- the mirror of PeopleController.GetCredits
+        /// (which walks person -> titles; this walks title -> people). Only resolved credits
+        /// (PersonMediaItemId != null) are returned, since an unresolved credit has no person
+        /// detail page to link a card to. One row per distinct resolved person, even if they
+        /// hold multiple credits here (e.g. director + writer) -- Roles collects every distinct
+        /// role they're credited with on this title. Ordered by billing order (nulls -- crew
+        /// roles typically have none -- sort after cast), same "unknown sorts last" convention
+        /// used throughout PeopleController.</summary>
+        [HttpGet("{id:int}/people")]
+        public async Task<IActionResult> GetPeople(int id, CancellationToken ct)
+        {
+            var credits = await _context.MediaCredits
+                .Where(c => c.MediaItemId == id && c.PersonMediaItemId != null)
+                .Include(c => c.PersonMediaItem)
+                .ToListAsync(ct);
+
+            var dtos = credits
+                .Where(c => c.PersonMediaItem != null)
+                .GroupBy(c => c.PersonMediaItemId!.Value)
+                .Select(g => new
+                {
+                    Person = g.First().PersonMediaItem!,
+                    Roles = g.Select(c => c.Role).Distinct().OrderBy(r => r).ToList(),
+                    BillingOrder = g.Min(c => c.BillingOrder ?? int.MaxValue),
+                })
+                .OrderBy(x => x.BillingOrder)
+                .ThenBy(x => x.Person.Name)
+                .Select(x => new PersonListItemDto(
+                    x.Person.Id, x.Person.Name, x.Person.PosterUrl, x.Person.BirthDate, x.Person.DeathDate, x.Roles))
+                .ToList();
+
+            return Ok(ApiResponse<List<PersonListItemDto>>.Ok(dtos));
+        }
+
         [HttpPatch("{id:int}")]
         public async Task<IActionResult> Update(int id, [FromBody] UpdateMediaItemRequest request)
         {

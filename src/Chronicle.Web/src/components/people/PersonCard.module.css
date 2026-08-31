@@ -16,6 +16,24 @@
 
 .poster {
   position: relative;
+  /* Fixed aspect ratio -- deterministic row heights for PeopleLibraryPage's virtualized
+     grid (PersonCard's own image otherwise sizes to its natural aspect ratio, which
+     react-virtual can't know ahead of measuring). Structural selectors below (not a
+     PosterImage class name, which is itself hashed by CSS Modules) make PosterImage's
+     root + <img> fill this fixed-ratio box instead of sizing to the image's own ratio. */
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+}
+
+.poster > div {
+  height: 100%;
+}
+
+.poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .deceasedBar {
@@ -40,9 +58,15 @@
 
 .name {
   font-weight: 600;
-  white-space: nowrap;
+  line-height: 1.25;
+  /* Up to 2 lines before truncating -- per-user request (2026-08-30), long names ("'Fast'
+     Eddie Clark") were getting cut off after a few characters on a single forced line.
+     Row height in PeopleLibraryPage's virtualized grid (CARD_INFO_HEIGHT) accounts for
+     this being 2 lines now, not 1 -- keep the two in sync if this changes again. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .positions {

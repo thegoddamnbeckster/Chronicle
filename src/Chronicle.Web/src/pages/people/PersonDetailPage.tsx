@@ -1,4 +1,5 @@
-import { Link, useParams } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Link, useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, setMediaOverride, clearMediaOverride } from '@/api/media'
 import { getPersonCredits, getPersonHeadshots } from '@/api/people'
@@ -25,6 +26,39 @@ export default function PersonDetailPage() {
   const { id } = useParams<{ id: string }>()
   const personId = Number(id)
   const qc = useQueryClient()
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // "↑ People" + Prev/Next nav -- per-user request (2026-08-30): "movie details have an up
+  // library button... I need that same kind of thing for people. also next and previous
+  // buttons." Same listIds/sessionStorage pattern as MediaDetailPage's own list nav: state
+  // arrives via router state when navigating from a card (PersonCard's navState prop), and
+  // falls back to sessionStorage so the Prev/Next links (which themselves only carry state,
+  // no fresh navigation from a list) and a hard refresh don't lose it.
+  const navState = (location.state as { listIds?: number[]; listLabel?: string } | null) ?? null
+
+  useEffect(() => {
+    if (navState?.listIds?.length) {
+      try {
+        sessionStorage.setItem(`chronicle.listNav.person.${personId}`, JSON.stringify(navState))
+      } catch {
+        // Quota exceeded — silently skip, same tradeoff as MediaDetailPage's own guard.
+      }
+    }
+  }, [personId, navState])
+
+  const effectiveNavState = (() => {
+    if (navState?.listIds?.length) return navState
+    try {
+      const stored = sessionStorage.getItem(`chronicle.listNav.person.${personId}`)
+      return stored ? JSON.parse(stored) as { listIds: number[]; listLabel?: string } : null
+    } catch { return null }
+  })()
+
+  const listIds = effectiveNavState?.listIds ?? []
+  const currentIndex = listIds.indexOf(personId)
+  const prevId = currentIndex > 0 ? listIds[currentIndex - 1] : null
+  const nextId = currentIndex < listIds.length - 1 ? listIds[currentIndex + 1] : null
 
   const { data: person, isLoading } = useQuery({
     queryKey: ['media', personId],
@@ -73,6 +107,29 @@ export default function PersonDetailPage() {
 
   return (
     <div className={styles.page}>
+      <div className={styles.topNav}>
+        <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
+        <Link to="/people" className={styles.upBtn}>↑ People</Link>
+        {listIds.length > 0 && (
+          <div className={styles.listNav}>
+            {prevId != null ? (
+              <Link to={`/people/${prevId}`} state={effectiveNavState} className={styles.navBtn}>‹ Prev</Link>
+            ) : (
+              <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>‹ Prev</span>
+            )}
+            <span className={styles.navPos}>
+              {effectiveNavState?.listLabel && <span className={styles.navLabel}>{effectiveNavState.listLabel} · </span>}
+              {currentIndex + 1} / {listIds.length}
+            </span>
+            {nextId != null ? (
+              <Link to={`/people/${nextId}`} state={effectiveNavState} className={styles.navBtn}>Next ›</Link>
+            ) : (
+              <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>Next ›</span>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className={styles.hero}>
         <div className={styles.posterWrap}>
           <PosterImage posterUrl={person.posterUrl} name={person.name} />

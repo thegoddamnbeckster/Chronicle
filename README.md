@@ -9,7 +9,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 ## Project Status
 
 **Current Phase:** Active development
-**Current Version:** v0.8.0
+**Current Version:** v0.10.0
 **Target v1.0:** Q4 2026
 
 ---
@@ -73,7 +73,8 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 ### React Frontend (20+ pages)
 - **Sonarr/Radarr aesthetic** — Dark teal/green theme
 - **Library** — Grouped by media type, Prev/Next pagination, physical-file vs metadata-only icons
-- **Media Detail** — Plugin metadata boxes (collapsible, server-persisted fold state), breadcrumb navigation, credits, fix-match panel
+- **People** — Catalog-wide, virtualized cast/crew directory with A-Z jump rail, filtering, and a person detail page (credits grouped by role, headshot picker, ↑ Library / Prev-Next navigation)
+- **Media Detail** — Plugin metadata boxes (collapsible, server-persisted fold state), breadcrumb navigation, cast/crew section, credits, fix-match panel
 - **File Scan wizard** — 3-step: configure → preview (grouped cards with confidence badges, series/author display) → import
 - **Background Tasks** — Visual cron editor, Run Now, grouped by plugin, live running state
 - **Settings** — App settings, service status, Metadata Assignment (per-type per-field plugin priority), plugin management
@@ -142,8 +143,8 @@ src/
 └── Chronicle.Web/        # React 18 + TypeScript frontend
 
 tests/
-├── Chronicle.Tests.Unit/         # 410 passing
-└── Chronicle.Tests.Integration/  # 181 passing
+├── Chronicle.Tests.Unit/         # 529 passing
+└── Chronicle.Tests.Integration/  # 185 passing
 ```
 
 ---
@@ -167,6 +168,7 @@ tests/
 - ✅ Fanart.tv plugin
 - ✅ Kodi scraper/scrobbler integration ([Chronicle_Scraper](https://github.com/thegoddamnbeckster/Chronicle_Scraper), [Chronicle_Scrobbler](https://github.com/thegoddamnbeckster/Chronicle_Scrobbler)) — movie/TV metadata, collection art sync, bidirectional watch-history/rating sync
 - ✅ User management — profiles, contacts, admin controls
+- ✅ People catalog — cast/crew directory, per-title people section, person detail pages
 - 🔲 Plugin update notifications
 
 ### Phase 3: Advanced Features

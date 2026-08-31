@@ -4,6 +4,81 @@
   color: var(--text-muted);
 }
 
+/* ── Top nav: Back / ↑ People / Prev-Next -- mirrors MediaDetailPage's own topNav/upBtn/
+   listNav (per-user request, 2026-08-30: "same kind of thing for people... next and
+   previous buttons") ── */
+
+.topNav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.backBtn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.backBtn:hover { color: var(--text-primary); }
+
+.upBtn {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.upBtn:hover { color: var(--text-primary); border-color: var(--accent); }
+
+.listNav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.navBtn {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
+
+.navBtnDisabled {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+
+.navPos {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.navLabel {
+  color: var(--text-secondary);
+}
+
 .page {
   display: flex;
   flex-direction: column;

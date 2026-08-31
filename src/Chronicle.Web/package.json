@@ -14,6 +14,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@tanstack/react-query": "^5.51.1",
+    "@tanstack/react-virtual": "^3.14.10",
     "axios": "^1.16.0",
     "clsx": "^2.1.1",
     "react": "^18.3.1",

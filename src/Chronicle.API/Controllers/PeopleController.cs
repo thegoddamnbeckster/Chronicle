@@ -30,6 +30,16 @@ namespace Chronicle.API.Controllers
             [FromQuery] string? sort = "name",
             [FromQuery] string? role = null,
             [FromQuery] bool? deceased = null,
+            // Jumps straight to the first name alphabetically >= this value instead of
+            // walking forward page-by-page from the start -- per-user request (2026-08-30):
+            // "let me jump into a mid point of the list of people as I need to without
+            // having to reload the entire list." Backs both the A-Z rail (single letters)
+            // and the jump-search box (arbitrary typed text) on the frontend -- both are the
+            // exact same "start from here" query, just different input granularity. Only
+            // meaningful for sort=name (the only sort with a stable, typeable "where would
+            // this sit" ordering); silently ignored for other sorts, same as an out-of-range
+            // page number already silently returns empty rather than erroring.
+            [FromQuery] string? jumpTo = null,
             [FromQuery] int page = 1,
             [FromQuery] int perPage = 60,
             CancellationToken ct = default)
@@ -45,6 +55,17 @@ namespace Chronicle.API.Controllers
 
             if (!string.IsNullOrWhiteSpace(role))
                 query = query.Where(m => _context.MediaCredits.Any(c => c.PersonMediaItemId == m.Id && c.Role == role));
+
+            if (!string.IsNullOrWhiteSpace(jumpTo) && sort == "name")
+            {
+                // Case-insensitive on both sides (ToUpper, not a StringComparison flag) so this
+                // translates to plain SQL and doesn't depend on the column's collation --
+                // confirmed live against SQLite: a jump target typed/tapped in either case
+                // must land the same place regardless of how existing names happen to be cased.
+                var target = jumpTo.Trim().ToUpper();
+                query = query.Where(m => m.Name.ToUpper().CompareTo(target) >= 0);
+                page = 1; // a jump always starts a fresh window at the target, never mid-page
+            }
 
             query = sort switch
             {
@@ -113,6 +134,10 @@ namespace Chronicle.API.Controllers
                         c.MediaItemId, c.MediaItem.Name, c.MediaItem.PosterUrl, c.MediaItem.Year,
                         c.MediaItem.MediaType?.Name ?? string.Empty, c.CharacterName))
                      .DistinctBy(c => c.MediaItemId)
+                     // Most recent first, per-user request (2026-08-30) -- a credit with no
+                     // known year sorts last (Year ?? int.MinValue), same "unknown sorts to
+                     // the end" convention GetPeople's own birthDate sort already uses above.
+                     .OrderByDescending(c => c.Year ?? int.MinValue)
                      .ToList()
                 )).ToList();
 

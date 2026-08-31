@@ -5,6 +5,9 @@ export interface GetPeopleParams {
   sort?: 'name' | 'birthDate' | 'createdAt'
   role?: string
   deceased?: boolean
+  /** Jumps straight to the first name alphabetically >= this value -- only meaningful when
+   * sort is 'name' (see PeopleController.GetPeople). */
+  jumpTo?: string
   page?: number
   perPage?: number
 }

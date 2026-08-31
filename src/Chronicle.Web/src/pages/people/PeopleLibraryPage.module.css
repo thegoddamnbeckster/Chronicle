@@ -2,6 +2,8 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* Room for the fixed AlphabetRail so it never sits on top of the last column of cards. */
+  padding-right: 28px;
 }
 
 .header {
@@ -12,17 +14,72 @@
   gap: 12px;
 }
 
-.controls {
-  display: flex;
-  gap: 8px;
-}
-
 .select {
   background: var(--bg-secondary);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 6px 10px;
+}
+
+/* Filter/sort rows -- same treatment as LibraryPage's own filterRow/sortRow, per-user
+   request (2026-08-30): "I need the same kinds of controls that the library has." */
+.filterRow,
+.sortRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sortRow {
+  gap: 16px;
+}
+
+.rowLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  min-width: 72px;
+}
+
+.filterBtns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sortGroup,
+.pageSizeGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter,
+.filterActive {
+  padding: 3px 11px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.filter:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.filterActive {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
 }
 
 .roleChips {
@@ -48,10 +105,19 @@
   border-color: var(--accent);
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: 14px;
+.roleChipToggle {
+  border-radius: 99px;
+  padding: 4px 12px;
+  font-size: 0.85em;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.roleChipToggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .empty {
@@ -60,21 +126,31 @@
   text-align: center;
 }
 
-.loadMoreRow {
+.jumpRow {
   display: flex;
-  justify-content: center;
-  padding: 16px 0;
+  align-items: center;
+  gap: 6px;
 }
 
-.loadMoreButton {
+.jumpInput {
   background: var(--bg-secondary);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 20px;
-  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 13px;
+  width: 200px;
 }
 
-.loadMoreButton:hover {
+.jumpInput:focus {
   border-color: var(--accent);
+  outline: none;
+}
+
+.loadingMore,
+.endOfList {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 16px 0;
+  font-size: 0.85em;
 }

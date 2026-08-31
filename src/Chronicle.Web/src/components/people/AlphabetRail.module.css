@@ -1,0 +1,50 @@
+.rail {
+  position: fixed;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 6px 3px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  z-index: 20;
+  /* touch-action: none -- this element owns vertical drag gestures (scrubbing), it must
+     not also trigger the page's own touch-scroll on mobile. */
+  touch-action: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+.letter,
+.letterActive {
+  font-size: 10px;
+  line-height: 1;
+  width: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  border-radius: 4px;
+}
+
+.letterActive {
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  font-weight: 700;
+}
+
+/* Smaller/tighter on narrow viewports so the rail doesn't eat too much screen width on a
+   phone -- per-user request (2026-08-30): "let my phone scroll through the people". */
+@media (max-width: 480px) {
+  .rail {
+    padding: 4px 2px;
+    right: 2px;
+  }
+  .letter,
+  .letterActive {
+    font-size: 9px;
+    width: 13px;
+  }
+}
