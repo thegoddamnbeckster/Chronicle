@@ -87,8 +87,15 @@ namespace Chronicle.Tests.Integration
             response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
         }
 
+        // ScrobbleService.GetHistoryAsync collapses consecutive same-item scrobbles into a
+        // single "session" row (a gap over 30 minutes starts a new one) -- per-user confirmed
+        // report (2026-08-29): a single ~20-minute episode was showing as a dozen near-
+        // duplicate history rows, one per raw progress tick. These two scrobbles land well
+        // within the same session, so history correctly reports one row (the session's
+        // latest/highest progress), not two -- this test previously asserted the pre-fix
+        // one-row-per-scrobble behavior.
         [Fact]
-        public async Task GetHistory_ReturnsScrobbles()
+        public async Task GetHistory_CollapsesSameSessionScrobblesIntoOneRow()
         {
             var (client, mediaId) = await SetupAsync();
 
@@ -100,7 +107,9 @@ namespace Chronicle.Tests.Integration
 
             var body = await response.Content.ReadAsStringAsync();
             var doc = JsonDocument.Parse(body).RootElement;
-            doc.GetProperty("data").GetArrayLength().Should().Be(2);
+            var data = doc.GetProperty("data");
+            data.GetArrayLength().Should().Be(1);
+            data[0].GetProperty("progressPercent").GetDouble().Should().Be(85.0);
         }
     }
 }
