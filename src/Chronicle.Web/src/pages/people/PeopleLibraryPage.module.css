@@ -52,13 +52,6 @@
 }
 
 .sortGroup,
-.pageSizeGroup {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
 .filter,
 .filterActive {
   padding: 3px 11px;

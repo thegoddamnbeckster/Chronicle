@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { getPeople, getPersonRoles } from '@/api/people'
@@ -6,13 +6,19 @@ import { PersonCard } from '@/components/people/PersonCard'
 import { AlphabetRail } from '@/components/people/AlphabetRail'
 import { MainScrollContext } from '@/components/layout/Layout'
 import {
-  loadPeoplePrefs, savePeoplePrefs, PEOPLE_PAGE_SIZES, type PeopleLibraryPrefs,
+  loadPeoplePrefs, savePeoplePrefs, type PeopleLibraryPrefs,
 } from '@/utils/peopleLibraryPrefs'
 import styles from './PeopleLibraryPage.module.css'
 
 type SortOption = PeopleLibraryPrefs['sort']
 type DeceasedFilter = PeopleLibraryPrefs['deceased']
-type PageSizePreset = PeopleLibraryPrefs['pageSizePreset']
+
+// Fixed infinite-scroll page size -- per-user request (2026-08-31): "limiting the block
+// to few, medium or many is not smart... remove those in favour of just using infinite
+// scroll." A user-chosen preset added a filter/prefs dimension without adding any real
+// control (infinite scroll keeps fetching regardless of the starting page size). One
+// fixed size, not user-configurable.
+const PEOPLE_PAGE_SIZE = 40
 
 // Credit roles span every job title TMDB/Hardcover/etc. have ever supplied (hundreds --
 // "'A' Camera Operator" through "Writers' Production") -- per-user request (2026-08-30):
@@ -30,12 +36,6 @@ const DECEASED_OPTIONS: { value: DeceasedFilter; label: string }[] = [
   { value: 'living', label: 'Living' },
   { value: 'deceased', label: 'Deceased' },
 ]
-
-const PAGE_SIZE_LABELS: Record<PageSizePreset, string> = {
-  minimal: 'Few (6)',
-  medium: 'Medium (24)',
-  maximal: 'Many (100)',
-}
 
 // Virtualized grid geometry -- matches the previous plain-CSS-grid's own
 // `minmax(170px, 1fr)` / 14px gap so the visual result is identical, just windowed.
@@ -116,31 +116,30 @@ export default function PeopleLibraryPage() {
         return head
       })()
 
-  const perPage = PEOPLE_PAGE_SIZES[prefs.pageSizePreset]
   // jumpTo is only meaningful for sort=name -- the server silently ignores it otherwise
   // (PeopleController.GetPeople), so there's no point sending it and no point keying the
   // query by it either in that case (avoids a pointless extra query-key identity).
   const effectiveJumpTo = prefs.sort === 'name' ? jumpTarget : null
 
   // Real server-side pagination with client-side accumulation across pages -- the queryKey
-  // is filters + page size + jump target, never the accumulated page count itself, so
-  // auto-loading the next page appends onto data.pages without ever invalidating what's
-  // already rendered, while an actual filter/sort/page-size/jump change correctly starts a
-  // fresh query from page 1 (at the jump target, if any).
+  // is filters + jump target, never the accumulated page count itself, so auto-loading the
+  // next page appends onto data.pages without ever invalidating what's already rendered,
+  // while an actual filter/sort/jump change correctly starts a fresh query from page 1 (at
+  // the jump target, if any).
   const {
     data,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
   } = useInfiniteQuery({
-    queryKey: ['people', prefs.sort, primaryRole, prefs.deceased, perPage, effectiveJumpTo],
+    queryKey: ['people', prefs.sort, primaryRole, prefs.deceased, effectiveJumpTo],
     queryFn: ({ pageParam }) => getPeople({
       sort: prefs.sort,
       role: primaryRole,
       deceased: prefs.deceased === 'either' ? undefined : prefs.deceased === 'deceased',
       jumpTo: effectiveJumpTo ?? undefined,
       page: pageParam,
-      perPage,
+      perPage: PEOPLE_PAGE_SIZE,
     }),
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {
@@ -148,7 +147,7 @@ export default function PeopleLibraryPage() {
       if (lastPage.total != null && fetchedSoFar >= lastPage.total) return undefined
       // total absent (shouldn't happen in practice, but stay safe): a short page means
       // there's nothing left to fetch.
-      if (lastPage.items.length < perPage) return undefined
+      if (lastPage.items.length < PEOPLE_PAGE_SIZE) return undefined
       return allPages.length + 1
     },
   })
@@ -177,6 +176,14 @@ export default function PeopleLibraryPage() {
   // below needs to know which mode produced the current cardWidth to pick `1fr` vs a literal
   // px track size.
   const [stretchMode, setStretchMode] = useState(true)
+  // gridRef's own height changes every time a new page of people loads (it's sized to
+  // virtualizer.getTotalSize(), which grows with the list) -- ResizeObserver fires on ANY
+  // size change, height included, so without this guard every page load during infinite
+  // scroll was re-running the column/width logic and calling virtualizer.measure() even
+  // though the width never moved. Confirmed root cause (2026-08-31) of a real stutter:
+  // "it keeps repeating that block of 24" while scrolling -- each auto-loaded page forced
+  // a virtualizer remeasure mid-scroll.
+  const lastWidthRef = useRef<number | null>(null)
 
   useEffect(() => {
     const el = gridRef.current
@@ -184,6 +191,8 @@ export default function PeopleLibraryPage() {
     const observer = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width
       if (!width) return
+      if (width === lastWidthRef.current) return
+      lastWidthRef.current = width
       // Same two-mode rule as MediaDetailPage's people section (per-user request,
       // 2026-08-30 -- "similar rules apply to the people list"): on mobile, exactly
       // MIN_COLUMNS cards stretched to fill the row; on desktop, a fixed card size with
@@ -218,9 +227,21 @@ export default function PeopleLibraryPage() {
   const rowHeight = cardWidth * 1.5 + CARD_INFO_HEIGHT
   const rowCount = Math.ceil(people.length / columnsPerRow)
 
+  // Confirmed root cause (2026-08-31) of "it keeps repeating that block of 24": this
+  // component re-renders on every fetched page/loading-state change (routine for an
+  // infinite-scroll page), and an inline `() => mainScrollRef.current` is a NEW function
+  // identity every render. @tanstack/react-virtual tears down and re-attaches its scroll
+  // listener whenever getScrollElement's identity changes -- so during active scrolling
+  // (which itself triggers re-renders via isFetchingNextPage) it was resubscribing
+  // constantly and never retaining a stable read on the real scroll offset, leaving the
+  // virtualizer stuck rendering rows near the top regardless of actual scrollTop.
+  // useCallback keeps the function itself stable across renders; it still always reads
+  // the CURRENT mainScrollRef.current at call time, so this loses nothing.
+  const getScrollElement = useCallback(() => mainScrollRef.current, [mainScrollRef])
+
   const virtualizer = useVirtualizer({
     count: rowCount,
-    getScrollElement: () => mainScrollRef.current,
+    getScrollElement,
     estimateSize: () => rowHeight + GRID_GAP,
     overscan: 4,
   })
@@ -280,8 +301,9 @@ export default function PeopleLibraryPage() {
         </div>
       </div>
 
-      {/* Sort + page size row -- same sortRow/sortGroup/pageSizeGroup treatment as
-          LibraryPage's own sort + "Per section" row. */}
+      {/* Sort row -- same sortRow/sortGroup treatment as LibraryPage's own. No page-size
+          picker here (removed per-user request 2026-08-31) -- infinite scroll alone decides
+          how much is loaded. */}
       <div className={styles.sortRow}>
         <div className={styles.sortGroup}>
           <span className={styles.rowLabel}>Sort</span>
@@ -294,19 +316,6 @@ export default function PeopleLibraryPage() {
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
-        </div>
-        <div className={styles.pageSizeGroup}>
-          <span className={styles.rowLabel}>Per page</span>
-          {(Object.keys(PEOPLE_PAGE_SIZES) as PageSizePreset[]).map(preset => (
-            <button
-              key={preset}
-              type="button"
-              className={prefs.pageSizePreset === preset ? styles.filterActive : styles.filter}
-              onClick={() => setPrefs({ pageSizePreset: preset })}
-            >
-              {PAGE_SIZE_LABELS[preset]}
-            </button>
-          ))}
         </div>
       </div>
 

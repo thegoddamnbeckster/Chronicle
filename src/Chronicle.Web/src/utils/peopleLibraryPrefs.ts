@@ -4,18 +4,15 @@
  * save-on-every-change semantics) per-user request (2026-08-30): "I need the same
  * kinds of controls that the library has. similar filtering and the ability to save."
  *
- * "All" is deliberately NOT one of the page-size presets here the way it is on
- * Library's PAGE_SIZES: Library's "All" is nearly free because it slices an
- * already-fully-fetched, typically small in-memory array. The People catalog is
- * two orders of magnitude larger (183k+ records, 32k+ even filtered to one role) --
- * fetching and rendering "all" of it as a single page would hang the tab. Per-user
- * decision (2026-08-30, asked directly): drop "All", keep Few/Medium/Many, each
- * still paginating for real via Load More (see PeopleLibraryPage's useInfiniteQuery).
+ * No page-size preset here (Library has one) -- per-user request (2026-08-31): "it
+ * keeps repeating that block of 24... limiting the block to few, medium or many is
+ * not smart. Can you remove those in favour of just using infinite scroll please?"
+ * PeopleLibraryPage now fetches a single fixed page size (PEOPLE_PAGE_SIZE) and grows
+ * the list purely via infinite scroll, with nothing user-configurable to key off.
  */
 
 type SortOption = 'name' | 'birthDate' | 'createdAt'
 type DeceasedFilter = 'either' | 'living' | 'deceased'
-type PageSizePreset = 'minimal' | 'medium' | 'maximal'
 
 export interface PeopleLibraryPrefs {
   sort: SortOption
@@ -25,13 +22,6 @@ export interface PeopleLibraryPrefs {
   // PeopleLibraryPage's toggleRole/primaryRole).
   role: string
   deceased: DeceasedFilter
-  pageSizePreset: PageSizePreset
-}
-
-export const PEOPLE_PAGE_SIZES: Record<PageSizePreset, number> = {
-  minimal: 6,
-  medium: 24,
-  maximal: 100,
 }
 
 export const PEOPLE_PREFS_KEY = 'chronicle_people_prefs'
@@ -42,7 +32,6 @@ export const DEFAULT_PEOPLE_PREFS: PeopleLibraryPrefs = {
   // as noise when writers/directors/crew are all mixed in by default.
   role: 'Actor',
   deceased: 'either',
-  pageSizePreset: 'medium',
 }
 
 export function loadPeoplePrefs(): PeopleLibraryPrefs {
