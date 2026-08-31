@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Chronicle.Core.Helpers;
 
 namespace Chronicle.Services.Scan
 {
@@ -59,24 +60,28 @@ namespace Chronicle.Services.Scan
             foreach (var folder in signal.FolderNames)
             {
                 var sm = _seasonFolderRegex.Match(folder);
-                if (sm.Success) signal.DetectedSeason = int.Parse(sm.Groups[1].Value);
+                if (sm.Success && DigitParsingHelper.TryParseDigits(sm.Groups[1].Value, out var season))
+                    signal.DetectedSeason = season;
 
                 var dm = _discRegex.Match(folder);
-                if (dm.Success) signal.DetectedDiscNumber = int.Parse(dm.Groups[1].Value);
+                if (dm.Success && DigitParsingHelper.TryParseDigits(dm.Groups[1].Value, out var disc))
+                    signal.DetectedDiscNumber = disc;
             }
 
             // Episode from filename
             var em = _episodeRegex.Match(signal.FileName);
-            if (em.Success)
+            if (em.Success
+                && DigitParsingHelper.TryParseDigits(em.Groups[1].Value, out var epSeason)
+                && DigitParsingHelper.TryParseDigits(em.Groups[2].Value, out var episode))
             {
-                signal.DetectedSeason ??= int.Parse(em.Groups[1].Value);
-                signal.DetectedEpisode = int.Parse(em.Groups[2].Value);
+                signal.DetectedSeason ??= epSeason;
+                signal.DetectedEpisode = episode;
             }
 
             // Track number from filename
             var tm = _trackRegex.Match(signal.FileName);
-            if (tm.Success)
-                signal.DetectedTrackNumber = int.Parse(tm.Groups[1].Value);
+            if (tm.Success && DigitParsingHelper.TryParseDigits(tm.Groups[1].Value, out var track))
+                signal.DetectedTrackNumber = track;
 
             return signal;
         }

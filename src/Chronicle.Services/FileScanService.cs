@@ -1046,6 +1046,12 @@ namespace Chronicle.Services
             new(@"\s*[\(\[]\d{4}[\)\]]$",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
 
+        // Matches any trailing parenthetical, e.g. " (film)", " (TV series)" -- see
+        // FindByTitleAsync's deparenthesized variant.
+        private static readonly System.Text.RegularExpressions.Regex _trailingParenthetical =
+            new(@"\s*\([^)]+\)$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
         // Compiled regex used by ParseAudiobookFolderName to locate a "(YYYY)" segment.
         private static readonly System.Text.RegularExpressions.Regex _yearSegmentRegex =
             new(@"^\((\d{4})\)$", System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -1089,6 +1095,34 @@ namespace Chronicle.Services
                 var strippedDash  = stripped.Replace(": ", " - ");
 
                 foreach (var variant in new[] { stripped, strippedColon, strippedDash }.Distinct(StringComparer.Ordinal))
+                {
+                    var variantLower = variant.ToLowerInvariant();
+                    var hit = await _context.MediaItems.FirstOrDefaultAsync(
+                        m => m.MediaTypeId == mediaTypeId
+                          && m.HierarchyLevel == 0
+                          && (year == null || m.Year == year)
+                          && m.Name.ToLower() == variantLower, ct);
+                    if (hit is not null) return hit;
+                }
+            }
+
+            // Strip a trailing parenthetical disambiguator (e.g. "Dogma (film)", "Chosen (TV
+            // series)") and retry all three variants. Root-caused a real duplicate (2026-08-30):
+            // Wikipedia's own article title for a movie is often its disambiguated form ("Dogma"
+            // is a disambiguation page there; the film's article is "Dogma (film)"), which never
+            // matched the already-catalogued "Dogma" and created a second MediaItem instead of
+            // reusing it. Deliberately generic (any trailing "(...)", not a hardcoded list of
+            // known disambiguator words) so it isn't a Wikipedia-specific patch -- same technique
+            // as the trailing-year strip above, just one token class wider. Still scoped to the
+            // same media type + year as every other variant here, which keeps the false-positive
+            // risk in line with the colon/dash variants already tried.
+            var deparenthesized = _trailingParenthetical.Replace(title, string.Empty).Trim();
+            if (deparenthesized != title && deparenthesized.Length > 0)
+            {
+                var deparenColon = deparenthesized.Replace(" - ", ": ");
+                var deparenDash  = deparenthesized.Replace(": ", " - ");
+
+                foreach (var variant in new[] { deparenthesized, deparenColon, deparenDash }.Distinct(StringComparer.Ordinal))
                 {
                     var variantLower = variant.ToLowerInvariant();
                     var hit = await _context.MediaItems.FirstOrDefaultAsync(
@@ -1192,6 +1226,26 @@ namespace Chronicle.Services
 
             if (!exists)
             {
+                // Root-caused a real duplicate (2026-08-30, "Dogma" / "Dogma (film)"): two
+                // MediaItems ended up carrying the identical (source, externalId) pair because
+                // nothing ever checked whether another item already owned it before writing.
+                // If one does, this item is (almost certainly) a duplicate of that one -- don't
+                // silently attach the same identity to both; that's what let the pair sit
+                // unflagged. Skip the write and log loudly enough to find in server logs rather
+                // than deciding FOR the user whether to merge or delete.
+                var ownedByOther = await _context.MediaExternalIds
+                    .Include(e => e.MediaItem)
+                    .Where(e => e.Source == source && e.ExternalId == extId && e.MediaItemId != mediaItemId)
+                    .FirstOrDefaultAsync(ct);
+                if (ownedByOther is not null)
+                {
+                    _log.Warning(
+                        "Skipped attaching external id {Source}:{ExternalId} to media item {MediaItemId} -- " +
+                        "already owned by media item {OtherMediaItemId} ({OtherName}). Likely duplicate.",
+                        source, extId, mediaItemId, ownedByOther.MediaItemId, ownedByOther.MediaItem?.Name);
+                    return;
+                }
+
                 _context.MediaExternalIds.Add(new MediaExternalId
                 {
                     MediaItemId = mediaItemId,
@@ -1994,8 +2048,8 @@ namespace Chronicle.Services
             for (int i = 0; i < raw.Length; i++)
             {
                 var m = _yearSegmentRegex.Match(raw[i]);
-                if (!m.Success) continue;
-                year   = int.Parse(m.Groups[1].Value);
+                if (!m.Success || !DigitParsingHelper.TryParseDigits(m.Groups[1].Value, out var parsedYear)) continue;
+                year   = parsedYear;
                 yearIdx = i;
                 break;
             }

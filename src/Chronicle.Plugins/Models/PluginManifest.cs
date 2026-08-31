@@ -73,4 +73,19 @@ public class PluginManifest
     /// </summary>
     [JsonPropertyName("background_tasks")]
     public List<PluginTaskManifest>? BackgroundTasks { get; set; }
+
+    /// <summary>
+    /// How many enrichment items MetadataEnrichmentService.EnrichPendingAsync may process
+    /// concurrently for this plugin, each on its own DB scope. Defaults to 1 (today's
+    /// existing strictly-sequential behaviour) -- a plugin only needs to raise this if it has
+    /// no rate limiter of its own AND its upstream API can genuinely take concurrent requests
+    /// (e.g. TMDB, which has no self-imposed throttle at all). Raising this for a plugin that
+    /// already enforces its own request-interval limiter (e.g. Wikipedia's WikipediaRateLimiter,
+    /// a single shared gate) buys nothing -- every concurrent worker just queues up behind that
+    /// same gate, so such plugins should leave this at the default rather than set it. Per-user
+    /// request (2026-08-30): "is it possible to have multiple instances or threads working
+    /// against each one?" -- yes, but only worth it where the plugin itself declares it's safe.
+    /// </summary>
+    [JsonPropertyName("max_enrichment_concurrency")]
+    public int MaxEnrichmentConcurrency { get; set; } = 1;
 }

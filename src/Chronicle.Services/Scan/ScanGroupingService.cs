@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models.Scan;
 
 namespace Chronicle.Services.Scan
@@ -146,15 +147,16 @@ namespace Chronicle.Services.Scan
                 // "Star Trek, Enterprise (2001)"), fall back to extracting it from the raw
                 // folder name on disk.
                 int? level0Year;
-                if (yearMatch.Success)
+                if (yearMatch.Success && DigitParsingHelper.TryParseDigits(yearMatch.Groups[1].Value, out var parsedLevel0Year))
                 {
-                    level0Year = int.Parse(yearMatch.Groups[1].Value);
+                    level0Year = parsedLevel0Year;
                 }
                 else
                 {
                     var folderYearMatch = _yearSuffixRe.Match(folderSignal.FolderNames[0]);
                     level0Year = folderYearMatch.Success
-                        ? int.Parse(folderYearMatch.Groups[1].Value)
+                        && DigitParsingHelper.TryParseDigits(folderYearMatch.Groups[1].Value, out var parsedFolderYear)
+                        ? parsedFolderYear
                         : (int?)null;
                 }
 
@@ -365,8 +367,8 @@ namespace Chronicle.Services.Scan
         private static int? ResolveLevel1Number(string level1Name, FolderSignal folder)
         {
             var m = _seasonNumRe.Match(level1Name);
-            if (m.Success)
-                return int.Parse(m.Groups[1].Value);
+            if (m.Success && DigitParsingHelper.TryParseDigits(m.Groups[1].Value, out var seasonNum))
+                return seasonNum;
 
             if (folder.DetectedSeason.HasValue)
                 return folder.DetectedSeason;

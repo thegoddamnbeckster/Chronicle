@@ -93,6 +93,70 @@ public class MetadataEnrichmentServiceTests : IDisposable
         updated.RetryCount.Should().Be(3);
     }
 
+    // ── ResolveItemConcurrency: per-user request (2026-08-30) "is it possible to have
+    // multiple instances or threads working against each one?" -- plugin-declared (not
+    // hardcoded) enrichment concurrency, read from PluginManifest.MaxEnrichmentConcurrency.
+
+    [Fact]
+    public void ResolveItemConcurrency_PluginDeclaresHigherValue_ReturnsIt()
+    {
+        var manifests = new[]
+        {
+            new PluginManifest { PluginId = "chronicle.plugin.tmdb", MaxEnrichmentConcurrency = 8 },
+            new PluginManifest { PluginId = "chronicle.plugin.wikipedia", MaxEnrichmentConcurrency = 1 },
+        };
+
+        MetadataEnrichmentService.ResolveItemConcurrency(manifests, "chronicle.plugin.tmdb")
+            .Should().Be(8);
+    }
+
+    [Fact]
+    public void ResolveItemConcurrency_PluginNotDeclared_DefaultsToOne()
+    {
+        // Wikipedia's own manifest never sets max_enrichment_concurrency -- its default C#
+        // property value (1) applies, matching today's existing strictly-sequential behaviour.
+        var manifests = new[]
+        {
+            new PluginManifest { PluginId = "chronicle.plugin.wikipedia" },
+        };
+
+        MetadataEnrichmentService.ResolveItemConcurrency(manifests, "chronicle.plugin.wikipedia")
+            .Should().Be(1);
+    }
+
+    [Fact]
+    public void ResolveItemConcurrency_PluginNotFoundAtAll_DefaultsToOne()
+    {
+        MetadataEnrichmentService.ResolveItemConcurrency([], "chronicle.plugin.unknown")
+            .Should().Be(1);
+    }
+
+    [Fact]
+    public void ResolveItemConcurrency_PluginIdMatchIsCaseInsensitive()
+    {
+        var manifests = new[]
+        {
+            new PluginManifest { PluginId = "Chronicle.Plugin.TMDB", MaxEnrichmentConcurrency = 8 },
+        };
+
+        MetadataEnrichmentService.ResolveItemConcurrency(manifests, "chronicle.plugin.tmdb")
+            .Should().Be(8);
+    }
+
+    [Fact]
+    public void ResolveItemConcurrency_NeverReturnsLessThanOne()
+    {
+        // A malformed/malicious manifest (e.g. max_enrichment_concurrency: 0 or negative)
+        // must never disable enrichment entirely or throw when used to size a SemaphoreSlim.
+        var manifests = new[]
+        {
+            new PluginManifest { PluginId = "chronicle.plugin.bad", MaxEnrichmentConcurrency = 0 },
+        };
+
+        MetadataEnrichmentService.ResolveItemConcurrency(manifests, "chronicle.plugin.bad")
+            .Should().Be(1);
+    }
+
     // ── Consolidation regression tests: the batch path (EnrichPendingAsync) and the
     // single-item path (EnrichItemAsync/Fix Match) now share one implementation. These
     // guard the safety checks that previously existed only on the single-item path and

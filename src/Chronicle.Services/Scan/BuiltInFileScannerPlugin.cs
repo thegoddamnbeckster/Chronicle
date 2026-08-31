@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Chronicle.Core.Helpers;
 using Chronicle.Plugins;
 using Chronicle.Plugins.Models;
 
@@ -350,12 +351,12 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
     private static (string title, int? year) ParseTitleYear(string fileName)
     {
         var m = _titleYearClean.Match(fileName);
-        if (m.Success)
-            return (NormaliseTitle(m.Groups[1].Value), int.Parse(m.Groups[2].Value));
+        if (m.Success && DigitParsingHelper.TryParseDigits(m.Groups[2].Value, out var year1))
+            return (NormaliseTitle(m.Groups[1].Value), year1);
 
         var md = _titleYearDotted.Match(fileName);
-        if (md.Success)
-            return (NormaliseTitle(md.Groups[1].Value), int.Parse(md.Groups[2].Value));
+        if (md.Success && DigitParsingHelper.TryParseDigits(md.Groups[2].Value, out var year2))
+            return (NormaliseTitle(md.Groups[1].Value), year2);
 
         return (NormaliseTitle(fileName), null);
     }

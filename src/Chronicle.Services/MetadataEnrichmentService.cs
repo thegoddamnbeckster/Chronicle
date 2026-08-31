@@ -145,6 +145,13 @@ public class MetadataEnrichmentService(
             return;
         }
 
+        // Plugin-declared, not hardcoded: only a plugin that says (via its own manifest.json)
+        // it has no rate limiter of its own and can genuinely take concurrent requests gets
+        // more than 1 -- see PluginManifest.MaxEnrichmentConcurrency's own doc for why a
+        // plugin with a self-imposed limiter (e.g. Wikipedia) gains nothing from this.
+        var itemConcurrency = ResolveItemConcurrency(
+            (registry.GetLoadedPlugins() ?? []).Select(p => p.Manifest), pluginId);
+
         // Build a snapshot of all providers so stub creation can seed enrichment rows for every plugin.
         var allProviders = (registry.GetMetadataProviderEntries() ?? [])
             .Select(e => (e.PluginId, (IMetadataProvider)e.Provider))
@@ -258,17 +265,69 @@ public class MetadataEnrichmentService(
 
             passNumber++;
             logger.LogInformation(
-                "EnrichPendingAsync pass {Pass}: enriching {Count} items for plugin {PluginId}",
-                passNumber, rows.Count, pluginId);
+                "EnrichPendingAsync pass {Pass}: enriching {Count} items for plugin {PluginId} " +
+                "(concurrency {Concurrency})",
+                passNumber, rows.Count, pluginId, itemConcurrency);
 
-            foreach (var row in rows)
+            if (itemConcurrency <= 1)
             {
-                ct.ThrowIfCancellationRequested();
-                // Cascade: false — this loop already walks the full hierarchy itself via its
-                // own parent-then-child ordered passes, so recursing into cascade too would
-                // process every child twice.
-                await EnrichItemCoreAsync(db, provider, pluginId, row,
-                    new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                // Unchanged from before this feature existed -- every plugin that doesn't
+                // declare max_enrichment_concurrency in its manifest still runs exactly this
+                // strictly-sequential path, sharing the outer db/ChangeTracker as always.
+                foreach (var row in rows)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    // Cascade: false — this loop already walks the full hierarchy itself via
+                    // its own parent-then-child ordered passes, so recursing into cascade too
+                    // would process every child twice.
+                    await EnrichItemCoreAsync(db, provider, pluginId, row,
+                        new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                }
+            }
+            else
+            {
+                // EF Core's DbContext is not thread-safe, so each concurrent worker gets its
+                // own scope/DbContext (and re-fetches its own row through it -- `row` as loaded
+                // above is tracked by the OUTER db, not safe to hand to a different context)
+                // rather than sharing the outer `db` used for this pass's own queries.
+                var gate = new SemaphoreSlim(itemConcurrency);
+                var tasks = rows.Select(async row =>
+                {
+                    await gate.WaitAsync(ct);
+                    try
+                    {
+                        await using var itemScope = scopeFactory.CreateAsyncScope();
+                        var itemDb = itemScope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+                        var freshRow = await itemDb.MediaEnrichments
+                            .Include(x => x.MediaItem)
+                                .ThenInclude(m => m!.MediaType)
+                            .Include(x => x.MediaItem)
+                                .ThenInclude(m => m!.Parent)
+                                    .ThenInclude(p => p!.Parent)
+                            .FirstOrDefaultAsync(x => x.Id == row.Id, ct);
+                        // Row (or its MediaItem) could have been deleted/merged concurrently
+                        // between the outer query above and this re-fetch -- skip, not an error.
+                        if (freshRow?.MediaItem is null) return;
+
+                        await EnrichItemCoreAsync(itemDb, provider, pluginId, freshRow,
+                            new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        // Matches EnrichItemCoreLockedAsync's own per-item failure handling --
+                        // one item's exception must not take down the other in-flight workers
+                        // or the rest of this pass.
+                        logger.LogWarning(ex,
+                            "EnrichPendingAsync (concurrent): item {ItemId} failed for plugin {PluginId}",
+                            row.MediaItemId, pluginId);
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                });
+                await Task.WhenAll(tasks);
             }
 
             // All items in this pass have been saved. Clear the change tracker so that
@@ -896,6 +955,17 @@ public class MetadataEnrichmentService(
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// How many enrichment items EnrichPendingAsync may process concurrently for this plugin
+    /// -- see PluginManifest.MaxEnrichmentConcurrency's own doc. Always >= 1. Takes plain
+    /// manifests (not LoadedPlugin, which needs a real assembly path to construct) so this is
+    /// directly unit-testable without standing up a whole plugin load.
+    /// </summary>
+    internal static int ResolveItemConcurrency(IEnumerable<PluginManifest> manifests, string pluginId) =>
+        Math.Max(1, manifests
+            .FirstOrDefault(m => string.Equals(m.PluginId, pluginId, StringComparison.OrdinalIgnoreCase))
+            ?.MaxEnrichmentConcurrency ?? 1);
+
     // Per-(item, plugin) lock: prevents a batch pass and a single-item refresh/Fix-Match
     // from racing on the exact same enrichment row. The per-plugin semaphore above only
     // stops two batch runs from overlapping; it does nothing for a single-item call that
@@ -997,17 +1067,11 @@ public class MetadataEnrichmentService(
                     if (item.HierarchyLevel >= 2 && item.Parent is not null)
                     {
                         int? seasonNum = item.Parent.Number;
-                        if (seasonNum is null && item.Parent.Name is { } pn)
-                        {
-                            var m2 = System.Text.RegularExpressions.Regex.Match(pn, @"\d+");
-                            if (m2.Success) seasonNum = int.Parse(m2.Value);
-                        }
+                        if (seasonNum is null && item.Parent.Name is { } pn && DigitParsingHelper.TryParseLeadingNumber(pn, out var parsedSeasonNum))
+                            seasonNum = parsedSeasonNum;
                         int? epNum = item.Number;
-                        if (epNum is null && item.Name is { } en)
-                        {
-                            var m3 = System.Text.RegularExpressions.Regex.Match(en, @"\d+");
-                            if (m3.Success) epNum = int.Parse(m3.Value);
-                        }
+                        if (epNum is null && item.Name is { } en && DigitParsingHelper.TryParseLeadingNumber(en, out var parsedEpNum))
+                            epNum = parsedEpNum;
                         if (seasonNum.HasValue && epNum.HasValue)
                         {
                             resolvedId = $"tv:{showTmdbId}/season:{seasonNum}/episode:{epNum}";
@@ -1019,11 +1083,8 @@ public class MetadataEnrichmentService(
                     else if (item.HierarchyLevel == 1)
                     {
                         int? seasonNum = item.Number;
-                        if (seasonNum is null && item.Name is { } sn)
-                        {
-                            var m2 = System.Text.RegularExpressions.Regex.Match(sn, @"\d+");
-                            if (m2.Success) seasonNum = int.Parse(m2.Value);
-                        }
+                        if (seasonNum is null && item.Name is { } sn && DigitParsingHelper.TryParseLeadingNumber(sn, out var parsedSeasonNum))
+                            seasonNum = parsedSeasonNum;
                         if (seasonNum.HasValue)
                         {
                             resolvedId = $"tv:{showTmdbId}/season:{seasonNum}";
@@ -1217,12 +1278,8 @@ public class MetadataEnrichmentService(
 
                 // Use the item's Number field; fallback: parse from the name ("Season 01" → 1)
                 int? itemNumber = row.MediaItem.Number;
-                if (itemNumber is null && row.MediaItem.Name is { } nm)
-                {
-                    var numMatch = System.Text.RegularExpressions.Regex.Match(nm, @"\d+");
-                    if (numMatch.Success)
-                        itemNumber = int.Parse(numMatch.Value);
-                }
+                if (itemNumber is null && row.MediaItem.Name is { } nm && DigitParsingHelper.TryParseLeadingNumber(nm, out var parsedItemNumber))
+                    itemNumber = parsedItemNumber;
 
                 if (parentItem?.ParentId is not null)
                 {
@@ -1239,12 +1296,8 @@ public class MetadataEnrichmentService(
                         var showTmdbId = showExternalId.Split(':', 2)[1];
 
                         int? seasonNumber = parentItem.Number;
-                        if (seasonNumber is null && parentItem.Name is { } pnm)
-                        {
-                            var snm = System.Text.RegularExpressions.Regex.Match(pnm, @"\d+");
-                            if (snm.Success)
-                                seasonNumber = int.Parse(snm.Value);
-                        }
+                        if (seasonNumber is null && parentItem.Name is { } pnm && DigitParsingHelper.TryParseLeadingNumber(pnm, out var parsedSeasonNumber))
+                            seasonNumber = parsedSeasonNumber;
                         if (itemNumber.HasValue && seasonNumber.HasValue)
                         {
                             row.ExternalId = $"tv:{showTmdbId}/season:{seasonNumber}/episode:{itemNumber}";
@@ -2703,6 +2756,30 @@ public class MetadataEnrichmentService(
         {
             // Fallback for callers that don't identify themselves (legacy/test paths).
             (source, extId) = ParseExternalId(rawExternalId);
+        }
+
+        // Root-caused a real duplicate (2026-08-30, "Dogma" / "Dogma (film)"): two MediaItems
+        // ended up carrying the identical (source, externalId) pair because nothing checked
+        // whether another item already owned it before writing. If one does, this item is
+        // (almost certainly) a duplicate of that one -- don't silently attach the same
+        // identity to both, which is exactly what let the pair sit unflagged. Skip the write
+        // and log loudly enough to find rather than deciding FOR the user whether to merge or
+        // delete.
+        var ownedByOther = await db.MediaExternalIds
+            .Include(e => e.MediaItem)
+            .Where(e => e.Source == source && e.ExternalId == extId && e.MediaItemId != mediaItemId)
+            .FirstOrDefaultAsync(ct);
+        if (ownedByOther is not null)
+        {
+            logger.LogWarning(
+                "Skipped attaching external id {Source}:{ExternalId} to media item {MediaItemId} -- " +
+                "already owned by media item {OtherMediaItemId} ({OtherName}). Likely duplicate.",
+                source, extId, mediaItemId, ownedByOther.MediaItemId, ownedByOther.MediaItem?.Name);
+            // Still flush -- the caller may have already staged unrelated changes on `item`
+            // (Name/Year/Overview/etc.) on this same db context before calling here, expecting
+            // this method's own SaveChangesAsync to be the commit point.
+            await db.SaveChangesAsync(ct);
+            return;
         }
 
         var existing = await db.MediaExternalIds
