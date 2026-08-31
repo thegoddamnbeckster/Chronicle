@@ -36,20 +36,22 @@
   display: block;
 }
 
-/* A small marker-style tick, not a face-covering wedge: a thin line rooted at the bottom
-   center of the photo, rotated up and to the right at 45deg. transform-origin is the
-   element's own bottom-center, which -- since the element is already 2px wide and
-   horizontally centered via left:50%/translateX(-50%) -- lands exactly on the poster's
-   bottom-center point, so rotation swings the top end up-right without shifting the anchor. */
+/* A small marker-style tick on the right side of the photo, not a face-covering wedge and
+   not touching the card's border: a thin line rotated up and to the right at 45deg around
+   its own bottom-center (transform-origin). Rotating clockwise swings the top end further
+   right and up from its base, so right/bottom are inset well past the line's own length
+   (poster's aspect-ratio is a fixed 2/3, so this holds at any rendered size) -- close in and
+   the rotated tip pokes past the poster's own overflow:hidden edge, visibly cutting across
+   .personCard's outer border rather than sitting inside it. */
 .deceasedBar {
   position: absolute;
-  left: 50%;
-  bottom: 0;
-  width: 2px;
+  right: 26%;
+  bottom: 8%;
+  width: 10px;
   height: 22%;
   background: rgba(0, 0, 0, 0.85);
   transform-origin: 50% 100%;
-  transform: translateX(-50%) rotate(45deg);
+  transform: rotate(45deg);
 }
 
 .info {
