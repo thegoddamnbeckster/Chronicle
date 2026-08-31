@@ -1,4 +1,5 @@
 using Chronicle.Core.Models;
+using Chronicle.Services;
 
 namespace Chronicle.API.Helpers;
 
@@ -13,9 +14,12 @@ namespace Chronicle.API.Helpers;
 /// could coincidentally collide on the same digits). Confirmed live (2026-08-31): a stray
 /// non-tmdb row whose ExternalId happened to equal "movie:11649" (TMDB's real id for the 1987
 /// Masters of the Universe) made the 1987 search result's "In Library" badge resolve to an
-/// unrelated 2026 remake that owned that row under a different Source. The candidate's own
-/// (non-contributing) id is therefore matched on (Source, ExternalId) together, never
-/// ExternalId alone.
+/// unrelated 2026 remake that owned that row under a different Source. Every id -- the
+/// candidate's own primary id AND each contributing id from other providers -- is therefore
+/// matched on (Source, ExternalId) together, never ExternalId alone. Contributing ids carry
+/// their own Source explicitly (set at search-merge time in FileScanService.SearchMetadataAsync,
+/// from the actual provider that returned them) rather than one being guessed from the id
+/// string's prefix convention.
 /// </summary>
 public static class LibraryItemResolver
 {
@@ -28,17 +32,15 @@ public static class LibraryItemResolver
     /// different Source that merely shares the same ExternalId string is never accepted here.</param>
     /// <param name="contributing">Other providers' ids for the same real-world item (already
     /// title+year-validated by FileScanService.SearchMetadataAsync's own dedup pass before
-    /// reaching here). These carry no per-id Source label in the DTO, so -- unlike
-    /// <paramref name="primaryId"/> -- they're matched by ExternalId alone; a lower-risk
-    /// tradeoff given the upstream title+year agreement, not a full fix for the same class of
-    /// collision. See docs/plans note in FileScanController.SearchMetadata for the full
-    /// tradeoff if this needs closing too (would require ContributingExternalIds to carry a
-    /// Source per entry instead of a flat string list).</param>
+    /// reaching here), each carrying its own Source. Matched the same (Source, ExternalId) way
+    /// as <paramref name="primaryId"/> -- a row under a different Source than the one that
+    /// actually returned this contributing id is never accepted, closing the same collision
+    /// class for these ids too.</param>
     public static int? Resolve(
         IReadOnlyDictionary<string, List<MediaExternalId>> libraryByExternalId,
         string primaryId,
         string? primarySource,
-        IReadOnlyList<string>? contributing)
+        IReadOnlyList<ContributingExternalId>? contributing)
     {
         if (libraryByExternalId.TryGetValue(primaryId, out var rows))
         {
@@ -48,8 +50,12 @@ public static class LibraryItemResolver
         }
 
         foreach (var c in contributing ?? [])
-            if (libraryByExternalId.TryGetValue(c, out var cRows) && cRows.Count > 0)
-                return cRows[0].MediaItemId;
+        {
+            if (!libraryByExternalId.TryGetValue(c.ExternalId, out var cRows)) continue;
+            var sourceMatch = cRows.FirstOrDefault(
+                r => string.Equals(r.Source, c.Source, StringComparison.OrdinalIgnoreCase));
+            if (sourceMatch is not null) return sourceMatch.MediaItemId;
+        }
 
         return null;
     }

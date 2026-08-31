@@ -8,6 +8,7 @@ import type {
   IdentifyResult,
   ImportSummary,
   MetadataSearchResult,
+  ContributingExternalId,
   MediaItem,
   ScanGroupResult,
   ImportGroupPayload,
@@ -175,7 +176,7 @@ export async function searchMetadata(
 export async function addFromSearch(
   externalId: string,
   mediaTypeId: number,
-  contributingExternalIds?: string[],
+  contributingExternalIds?: ContributingExternalId[],
 ): Promise<MediaItem> {
   const { data } = await client.post<ApiResponse<MediaItem>>('/scan/add',
     { externalId, mediaTypeId, contributingExternalIds })

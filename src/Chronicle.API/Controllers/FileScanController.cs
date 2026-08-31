@@ -171,7 +171,8 @@ public class FileScanController : ControllerBase
                         r.File.ConfidenceScore, r.File.SuggestedExternalId, r.File.MediaTypeHint),
                     r.Candidates.Select(c => new MetadataCandidateDto(
                         c.ExternalId, c.Title, c.Year, c.PosterUrl,
-                        c.Overview, c.Rating, c.MatchScore, c.Source, c.Genres, c.Cast, c.Sources, c.ContributingExternalIds
+                        c.Overview, c.Rating, c.MatchScore, c.Source, c.Genres, c.Cast, c.Sources,
+                        c.ContributingExternalIds?.Select(x => new ContributingExternalIdDto(x.Source, x.ExternalId)).ToList()
                     )).ToList()
                 )).ToList()
             );
@@ -206,7 +207,7 @@ public class FileScanController : ControllerBase
             if (int.TryParse(userIdStr, out var userId) && results.Count > 0)
             {
                 var allExternalIds = results
-                    .SelectMany(r => (r.ContributingExternalIds ?? []).Prepend(r.ExternalId))
+                    .SelectMany(r => (r.ContributingExternalIds ?? []).Select(c => c.ExternalId).Prepend(r.ExternalId))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
@@ -233,7 +234,8 @@ public class FileScanController : ControllerBase
             }
 
             var dtos = results
-                .Select(r => new MetadataCandidateDto(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, r.MatchScore, r.Source, r.Genres, r.Cast, r.Sources, r.ContributingExternalIds,
+                .Select(r => new MetadataCandidateDto(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, r.MatchScore, r.Source, r.Genres, r.Cast, r.Sources,
+                    r.ContributingExternalIds?.Select(x => new ContributingExternalIdDto(x.Source, x.ExternalId)).ToList(),
                     LibraryItemId: LibraryItemResolver.Resolve(libraryByExternalId, r.ExternalId, r.Source, r.ContributingExternalIds)))
                 .ToList();
             return Ok(ApiResponse<List<MetadataCandidateDto>>.Ok(dtos));
@@ -261,7 +263,7 @@ public class FileScanController : ControllerBase
         try
         {
             var item = await _scanService.AddFromSearchAsync(dto.ExternalId, dto.MediaTypeId, userId, ct,
-                dto.ContributingExternalIds);
+                dto.ContributingExternalIds?.Select(x => new ContributingExternalId(x.Source, x.ExternalId)).ToList());
 
             var fs = ParseFileScannerMeta(item.MetadataJson);
             var itemDto = new MediaItemDto(

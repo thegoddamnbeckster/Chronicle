@@ -400,6 +400,13 @@ export interface MediaTypeOption {
 }
 
 // ── Metadata search ───────────────────────────────────────────────────────────
+// Carries the contributing provider's own source alongside its id -- a bare id string is not
+// guaranteed unique across different providers' own id spaces (see LibraryItemResolver.cs).
+export interface ContributingExternalId {
+  source: string
+  externalId: string
+}
+
 export interface MetadataSearchResult {
   externalId: string
   title: string
@@ -412,7 +419,7 @@ export interface MetadataSearchResult {
   genres: string[] | null
   cast: string[] | null
   sources: string[] | null
-  contributingExternalIds: string[] | null
+  contributingExternalIds: ContributingExternalId[] | null
   libraryItemId: number | null
 }
 

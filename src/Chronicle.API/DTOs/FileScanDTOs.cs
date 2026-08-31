@@ -55,6 +55,11 @@ namespace Chronicle.API.DTOs
         [Required] int MediaTypeId
     );
 
+    /// <summary>API-layer mirror of Chronicle.Services.ContributingExternalId (see its own docs)
+    /// -- carries the contributing provider's own Source alongside its id rather than leaving
+    /// the frontend, or a later /scan/add call, to guess it from the id string.</summary>
+    public record ContributingExternalIdDto(string Source, string ExternalId);
+
     public record MetadataCandidateDto(
         string ExternalId,
         string Title,
@@ -67,7 +72,7 @@ namespace Chronicle.API.DTOs
         List<string>? Genres = null,
         List<string>? Cast = null,
         List<string>? Sources = null,
-        List<string>? ContributingExternalIds = null,
+        List<ContributingExternalIdDto>? ContributingExternalIds = null,
         int? LibraryItemId = null
     );
 
@@ -129,7 +134,7 @@ namespace Chronicle.API.DTOs
         /// Each will be pre-seeded as an enrichment row so the provider uses the known
         /// ID directly instead of running a text search.
         /// </summary>
-        List<string>? ContributingExternalIds = null
+        List<ContributingExternalIdDto>? ContributingExternalIds = null
     );
 
     // ── Scan progress ──────────────────────────────────────────────────────────

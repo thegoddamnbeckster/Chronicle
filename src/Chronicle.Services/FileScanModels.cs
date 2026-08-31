@@ -50,6 +50,14 @@ namespace Chronicle.Services
         int MediaTypeId
     );
 
+    /// <summary>
+    /// One other provider's own id for the same real-world item, discovered during search-time
+    /// dedup (see FileScanService.SearchMetadataAsync). Carries its own Source explicitly rather
+    /// than leaving callers to re-derive it from the id string's prefix convention -- see
+    /// LibraryItemResolver's docs for the collision this was added to close.
+    /// </summary>
+    public record ContributingExternalId(string Source, string ExternalId);
+
     public record MetadataCandidate(
         string ExternalId,
         string Title,
@@ -62,7 +70,7 @@ namespace Chronicle.Services
         List<string>? Genres = null,
         List<string>? Cast = null,
         List<string>? Sources = null,
-        List<string>? ContributingExternalIds = null
+        List<ContributingExternalId>? ContributingExternalIds = null
     );
 
     public record FileIdentification(

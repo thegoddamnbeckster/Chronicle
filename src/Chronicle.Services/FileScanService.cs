@@ -1448,7 +1448,7 @@ namespace Chronicle.Services
 
                 // Collect sources and external IDs from all providers that matched this result.
                 var sources              = new List<string>();
-                var contribExternalIds   = new List<string>();
+                var contribExternalIds   = new List<ContributingExternalId>();
                 if (!string.IsNullOrEmpty(m.Source)) sources.Add(m.Source);
                 foreach (var (_, other) in allCandidates)
                 {
@@ -1457,8 +1457,12 @@ namespace Chronicle.Services
                     if (otherTk is null || otherTk != tk) continue;
                     if (!string.IsNullOrEmpty(other.Metadata.Source) && !sources.Contains(other.Metadata.Source))
                         sources.Add(other.Metadata.Source);
-                    if (!string.IsNullOrEmpty(other.Metadata.ExternalId))
-                        contribExternalIds.Add(other.Metadata.ExternalId);
+                    // Source is carried alongside the id itself -- not re-derived later from the
+                    // id string's prefix convention -- so downstream consumers (LibraryItemResolver,
+                    // AddFromSearchAsync's enrichment pre-seeding) can require it to match instead
+                    // of trusting a bare id string that another provider could coincidentally share.
+                    if (!string.IsNullOrEmpty(other.Metadata.ExternalId) && !string.IsNullOrEmpty(other.Metadata.Source))
+                        contribExternalIds.Add(new ContributingExternalId(other.Metadata.Source, other.Metadata.ExternalId));
                 }
 
                 merged.Add(new MetadataCandidate(
@@ -1476,7 +1480,7 @@ namespace Chronicle.Services
 
         public async Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(
             string externalId, int mediaTypeId, int userId, CancellationToken ct = default,
-            List<string>? contributingExternalIds = null)
+            List<ContributingExternalId>? contributingExternalIds = null)
         {
             var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == mediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {mediaTypeId} not found.");
@@ -1628,10 +1632,15 @@ namespace Chronicle.Services
                     // Pre-seed enrichment rows for providers that contributed a matching result
                     // during search (e.g. TVMaze matched the same show by title+year). Their IDs
                     // aren't in the primary provider's cross-ref data so must be passed explicitly.
-                    foreach (var contribId in contributingExternalIds ?? [])
+                    foreach (var contrib in contributingExternalIds ?? [])
                     {
-                        var (cSource, _) = ParseSuggestedExternalId(contribId);
-                        var cPluginId = SourceToPluginId(cSource);
+                        var contribId = contrib.ExternalId;
+                        // The contributing provider's own Source travels with the id (set at
+                        // search-merge time in SearchMetadataAsync) rather than being re-derived
+                        // here from the id string's prefix convention -- see ContributingExternalId's
+                        // and LibraryItemResolver's docs for the cross-provider id collision that
+                        // made re-deriving it unsafe.
+                        var cPluginId = SourceToPluginId(contrib.Source);
                         if (cPluginId is null || cPluginId == pluginId) continue;
 
                         // Only seed if this contributing plugin actually supports the item's media
