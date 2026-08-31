@@ -114,6 +114,15 @@ Start-Sleep -Milliseconds 500
 # Plugins live in sibling directories and share Chronicle.Plugins via ProjectReference.
 # They must be rebuilt whenever Chronicle.Plugins changes (e.g. interface updates)
 # so that the deployed DLLs match the host's interface contract.
+#
+# Trakt was removed from this list on purpose (2026-08-30): the API's own
+# AutoRegisterBundledPluginsAsync auto-registers (IsEnabled=true) any plugin whose
+# manifest.json it finds under plugins/ and that has no DB row yet -- so every restart
+# was silently re-registering Trakt right after the user uninstalled it, regardless of
+# what this script did. Since it's no longer rebuilt/redeployed here, the "prune stale
+# plugin directories" step below removes its leftover plugins/chronicle.plugin.trakt/
+# folder on the next run, closing that loop. Re-add the entry (see the other plugins'
+# shape below) if Trakt needs to be installed again.
 $PluginsDir   = Join-Path $ApiDir "plugins"
 $PluginProjects = @(
     @{
@@ -145,11 +154,6 @@ $PluginProjects = @(
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Simkl\Chronicle.Plugin.Simkl.csproj"
         DllName    = "Chronicle.Plugin.Simkl.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.simkl"
-    },
-    @{
-        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Trakt\Chronicle.Plugin.Trakt.csproj"
-        DllName    = "Chronicle.Plugin.Trakt.dll"
-        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.trakt"
     },
     @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Hardcover\Chronicle.Plugin.Hardcover.csproj"

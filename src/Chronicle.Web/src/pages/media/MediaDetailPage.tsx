@@ -1191,6 +1191,20 @@ export default function MediaDetailPage() {
             ]
             return pluginIds.map(pluginId => {
               const plugin = plugins.find(p => p.pluginId === pluginId)
+              // Skip plugins that are installed but currently disabled -- per-user request
+              // (2026-08-30, bug report): "if a plugin is removed, I expect it to be gone from
+              // all of the possible locations" (confirmed case: a disabled plugin, e.g. Trakt,
+              // still rendering its box here). Historical pluginMetadata/enrichmentStatuses
+              // rows are deliberately kept forever on disable/uninstall (so a re-enable/
+              // reinstall doesn't redo the work), but that's a reason to keep the DATA, not a
+              // reason to keep rendering a box for a plugin that isn't currently active.
+              // NOTE: `!plugin` (id not found in the registry at all) is deliberately NOT
+              // filtered here -- pluginIds like "scraperResolvedFile" and
+              // "chronicle_scraper.legacy_nfo" are legitimate non-plugin metadata source tags
+              // (written by the Kodi scraper's NFO ingestion, never registered as a plugin)
+              // and must keep showing; there's no reliable way from here to tell those apart
+              // from an actually-uninstalled plugin's leftover id.
+              if (plugin && !plugin.isEnabled) return null
               // Skip plugins that don't support this item's media type.
               // This prevents e.g. a TMDB "No match" box from appearing on Music items.
               // Use mediaTypeInternalName (canonical DB name like "tv") for comparison since

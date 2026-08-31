@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
@@ -208,11 +210,55 @@ public class PluginService : IPluginService
             ?? throw new InvalidOperationException($"Plugin with id {id} not found.");
 
         _registry.UnloadPlugin(id);
+
+        // Purge every holdover this plugin left behind -- per-user request (2026-08-30):
+        // "if it's uninstalled, it means there are no holdovers allowed." Previously
+        // media_enrichment/media_external_ids rows and the plugin's own MetadataJson
+        // partition were deliberately kept "for a future reinstall" -- but that meant a
+        // fully-removed plugin's data (and its per-item metadata box on MediaDetailPage)
+        // lingered forever, indistinguishable from a still-installed plugin's data. A
+        // reinstall now just re-seeds from scratch like installing a brand-new plugin would.
+        var enrichmentRows = await _db.MediaEnrichments
+            .Where(e => e.PluginId == plugin.PluginId)
+            .ToListAsync();
+        var affectedItemIds = enrichmentRows.Select(e => e.MediaItemId).Distinct().ToList();
+        if (enrichmentRows.Count > 0)
+            _db.MediaEnrichments.RemoveRange(enrichmentRows);
+
+        var sourceKey = PluginIdHelper.ToSource(plugin.PluginId);
+        var externalIdRows = await _db.MediaExternalIds
+            .Where(e => e.Source == sourceKey)
+            .ToListAsync();
+        if (externalIdRows.Count > 0)
+            _db.MediaExternalIds.RemoveRange(externalIdRows);
+
+        // Strip this plugin's own top-level key from MetadataJson on every item it ever
+        // wrote to (MediaEnrichments and the JSON blob are always written together by
+        // EnrichItemCoreAsync, so affectedItemIds above is the exact, correctly-scoped set --
+        // no need to scan every MediaItem in the catalog).
+        if (affectedItemIds.Count > 0)
+        {
+            var items = await _db.MediaItems
+                .Where(m => affectedItemIds.Contains(m.Id) && m.MetadataJson != null)
+                .ToListAsync();
+            foreach (var item in items)
+            {
+                try
+                {
+                    var root = JsonNode.Parse(item.MetadataJson!)?.AsObject();
+                    if (root is not null && root.Remove(plugin.PluginId))
+                        item.MetadataJson = root.ToJsonString();
+                }
+                catch (JsonException)
+                {
+                    // Malformed JSON on this row predates this cleanup -- leave it alone
+                    // rather than risk losing whatever else is in it.
+                }
+            }
+        }
+
         _db.Plugins.Remove(plugin);
 
-        // Remove background tasks seeded by this plugin.  Enrichment rows in
-        // media_enrichment are intentionally kept — they record historical data and
-        // safe INSERT-IF-MISSING seeding on reinstall will skip them.
         var tasks = await _db.BackgroundTasks
             .Where(t => t.PluginId == plugin.PluginId)
             .ToListAsync();
@@ -221,7 +267,10 @@ public class PluginService : IPluginService
 
         await _db.SaveChangesAsync();
 
-        _log.Information("Uninstalled plugin {PluginId} (db id {Id})", plugin.PluginId, id);
+        _log.Information(
+            "Uninstalled plugin {PluginId} (db id {Id}) -- purged {EnrichmentCount} enrichment rows, " +
+            "{ExternalIdCount} external ids, metadata JSON on {ItemCount} items",
+            plugin.PluginId, id, enrichmentRows.Count, externalIdRows.Count, affectedItemIds.Count);
     }
 
     public Task<bool> UnloadFromRegistryAsync(string pluginId)
