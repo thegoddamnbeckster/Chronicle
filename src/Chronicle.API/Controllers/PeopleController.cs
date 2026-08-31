@@ -78,7 +78,16 @@ namespace Chronicle.API.Controllers
                 ordered = ordered
                     .SkipWhile(m => string.Compare(m.Key, target, StringComparison.OrdinalIgnoreCase) < 0)
                     .ToList();
-                page = 1; // a jump always starts a fresh window at the target, never mid-page
+                // Deliberately NOT forcing page back to 1 here. The frontend's infinite-scroll
+                // sends the same jumpTo on every page as it loads more (jumpTarget is fixed for
+                // the life of one jump), incrementing `page` itself as it goes -- forcing page=1
+                // on every one of those requests re-served the same first window forever once
+                // the visible letter ran out, instead of continuing into the next letter or
+                // genuinely reaching the end of the list. Confirmed root cause (2026-08-31) of
+                // "it just wraps the current letter instead of stopping or moving on." A brand
+                // new jump (A-Z rail click / jump-search submit) already lands on page 1 on its
+                // own, since it's a fresh query with initialPageParam: 1 -- nothing here needs
+                // to force that.
             }
 
             var total = ordered.Count;

@@ -202,5 +202,59 @@ namespace Chronicle.Tests.Integration
             names.Should().Contain("Alice Zephyr");
             names.Should().NotContain("Zoe Anders");
         }
+
+        // Per-user request (2026-08-31): "if you run out of people for a particular letter
+        // either stop or scroll through the next letter. Don't just wrap the existing
+        // letter." Root cause: GetPeople used to force page back to 1 on every request that
+        // carried a jumpTo, including infinite-scroll's own page-2/3/... follow-ups (which
+        // resend the same jumpTo throughout one jump session) -- so "load more" kept
+        // re-serving the same first window forever instead of ever advancing.
+        [Fact]
+        public async Task GetPeople_JumpTo_Page2_ContinuesPastTheJumpLetter_NotRepeatingPage1()
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+            var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
+                ?? (await db.MediaTypes.AddAsync(new MediaType
+                {
+                    Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                    InteractionVerb = "viewed", ProgressUnit = "percent",
+                    IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
+                })).Entity;
+            await db.SaveChangesAsync();
+
+            // Three last-name-B people (alphabetically: Banner, Barker, Brooks) and two
+            // last-name-C people (Combs, Cross) -- perPage=2 means page 1 is exactly the B's
+            // that fit, and page 2 must spill into C rather than repeating page 1's B's.
+            var people = new[]
+            {
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bea Banner", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bob Barker", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bill Brooks", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Cara Combs", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Cody Cross", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+            };
+            db.MediaItems.AddRange(people);
+            await db.SaveChangesAsync();
+
+            var client = await AuthedClientAsync();
+
+            var page1Resp = await client.GetAsync("/api/v1/people?perPage=2&jumpTo=B");
+            page1Resp.EnsureSuccessStatusCode();
+            var page1Names = JsonDocument.Parse(await page1Resp.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("data").EnumerateArray()
+                .Select(i => i.GetProperty("name").GetString()).ToList();
+
+            var page2Resp = await client.GetAsync("/api/v1/people?perPage=2&jumpTo=B&page=2");
+            page2Resp.EnsureSuccessStatusCode();
+            var page2Names = JsonDocument.Parse(await page2Resp.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("data").EnumerateArray()
+                .Select(i => i.GetProperty("name").GetString()).ToList();
+
+            page1Names.Should().Equal("Bea Banner", "Bob Barker");
+            // The bug: this used to equal page1Names again (page forced back to 1 server-side).
+            page2Names.Should().Equal("Bill Brooks", "Cara Combs");
+        }
     }
 }
