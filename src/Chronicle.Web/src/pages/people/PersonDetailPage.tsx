@@ -109,7 +109,14 @@ export default function PersonDetailPage() {
     <div className={styles.page}>
       <div className={styles.topNav}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
-        <Link to="/people" className={styles.upBtn}>↑ People</Link>
+        {/* Jumps PeopleLibraryPage straight back to this person's spot in the (Name A-Z)
+            list via its existing jumpTarget mechanism (the same one the A-Z rail and jump
+            search box use) -- a bare `to="/people"` was landing at the top of the list every
+            time, losing whatever section/scroll position the user came from. Only takes
+            effect there when sort=name (jumpTo is otherwise ignored server-side, same as
+            every other jump entry point in that page); for other sorts this no-ops rather
+            than erroring. */}
+        <Link to="/people" state={{ jumpTo: person.name }} className={styles.upBtn}>↑ People</Link>
         {listIds.length > 0 && (
           <div className={styles.listNav}>
             {prevId != null ? (

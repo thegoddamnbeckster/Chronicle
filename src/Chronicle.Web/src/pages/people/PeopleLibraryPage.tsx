@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { getPeople, getPersonRoles } from '@/api/people'
@@ -69,12 +70,18 @@ const CARD_INFO_HEIGHT = 84
  * the entire list." New pages auto-load as the virtualized window approaches the end of
  * what's already fetched -- no manual "Load More" click needed any more. */
 export default function PeopleLibraryPage() {
+  const location = useLocation()
   const [prefs, setPrefsState] = useState<PeopleLibraryPrefs>(loadPeoplePrefs)
   const [rolesExpanded, setRolesExpanded] = useState(false)
   // Ephemeral, not persisted -- a jump is a "go here now" action, not a sticky preference;
   // reloading the page should land wherever the persisted sort/filter/page-size normally
-  // puts you, not stuck mid-jump from last time.
-  const [jumpTarget, setJumpTarget] = useState<string | null>(null)
+  // puts you, not stuck mid-jump from last time. Initialized from PersonDetailPage's "↑
+  // People" link (state: { jumpTo }), when present, so returning from a person's page lands
+  // back near them instead of at the top of the list -- same idea as MediaDetailPage's own
+  // "↑ Library" anchor, just via this page's jump mechanism instead of a URL hash (this grid
+  // is virtualized, so an off-screen item isn't in the DOM for the browser to scroll to).
+  const [jumpTarget, setJumpTarget] = useState<string | null>(
+    () => (location.state as { jumpTo?: string } | null)?.jumpTo ?? null)
   const [jumpInput, setJumpInput] = useState('')
 
   function setPrefs(updates: Partial<PeopleLibraryPrefs>) {
