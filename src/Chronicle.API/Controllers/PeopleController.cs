@@ -1,4 +1,5 @@
 using Chronicle.API.DTOs;
+using Chronicle.Core.Helpers;
 using Chronicle.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -27,18 +28,14 @@ namespace Chronicle.API.Controllers
 
         [HttpGet]
         public async Task<IActionResult> GetPeople(
-            [FromQuery] string? sort = "name",
             [FromQuery] string? role = null,
             [FromQuery] bool? deceased = null,
-            // Jumps straight to the first name alphabetically >= this value instead of
-            // walking forward page-by-page from the start -- per-user request (2026-08-30):
-            // "let me jump into a mid point of the list of people as I need to without
-            // having to reload the entire list." Backs both the A-Z rail (single letters)
-            // and the jump-search box (arbitrary typed text) on the frontend -- both are the
-            // exact same "start from here" query, just different input granularity. Only
-            // meaningful for sort=name (the only sort with a stable, typeable "where would
-            // this sit" ordering); silently ignored for other sorts, same as an out-of-range
-            // page number already silently returns empty rather than erroring.
+            // Jumps straight to the first person (in last-name order) alphabetically >= this
+            // value instead of walking forward page-by-page from the start -- per-user request
+            // (2026-08-30): "let me jump into a mid point of the list of people as I need to
+            // without having to reload the entire list." Backs both the A-Z rail (single
+            // letters) and the jump-search box (arbitrary typed text) on the frontend -- both
+            // are the exact same "start from here" query, just different input granularity.
             [FromQuery] string? jumpTo = null,
             [FromQuery] int page = 1,
             [FromQuery] int perPage = 60,
@@ -56,27 +53,41 @@ namespace Chronicle.API.Controllers
             if (!string.IsNullOrWhiteSpace(role))
                 query = query.Where(m => _context.MediaCredits.Any(c => c.PersonMediaItemId == m.Id && c.Role == role));
 
-            if (!string.IsNullOrWhiteSpace(jumpTo) && sort == "name")
+            // Sorted by last name -- per-user request (2026-08-31): "delete the sorting and
+            // keep it alphabetical by last name." There's no separate first/last-name column
+            // (a person is just a MediaItem with one Name field), and deriving a "last name"
+            // from free text (particles like "del"/"van", generational suffixes) isn't
+            // reliably expressible as translatable SQL across both supported providers
+            // (SQLite/PostgreSQL) -- so the ordering key is computed in memory via
+            // PersonNameHelper, the same helper applied to `jumpTo` below so the two compare
+            // on the same key space. Only Id+Name is projected for this pass (cheap even for a
+            // large catalog); the current page's full rows are fetched separately below.
+            var idsAndNames = await query
+                .Select(m => new { m.Id, m.Name })
+                .ToListAsync(ct);
+
+            var ordered = idsAndNames
+                .Select(m => new { m.Id, m.Name, Key = PersonNameHelper.ToLastNameFirstSortKey(m.Name) })
+                .OrderBy(m => m.Key, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(m => m.Id)
+                .ToList();
+
+            if (!string.IsNullOrWhiteSpace(jumpTo))
             {
-                // Case-insensitive on both sides (ToUpper, not a StringComparison flag) so this
-                // translates to plain SQL and doesn't depend on the column's collation --
-                // confirmed live against SQLite: a jump target typed/tapped in either case
-                // must land the same place regardless of how existing names happen to be cased.
-                var target = jumpTo.Trim().ToUpper();
-                query = query.Where(m => m.Name.ToUpper().CompareTo(target) >= 0);
+                var target = PersonNameHelper.ToLastNameFirstSortKey(jumpTo);
+                ordered = ordered
+                    .SkipWhile(m => string.Compare(m.Key, target, StringComparison.OrdinalIgnoreCase) < 0)
+                    .ToList();
                 page = 1; // a jump always starts a fresh window at the target, never mid-page
             }
 
-            query = sort switch
-            {
-                // Nulls-last: an unknown birth date shouldn't sort as "earliest ever born".
-                "birthDate" => query.OrderBy(m => m.BirthDate == null).ThenBy(m => m.BirthDate),
-                "createdAt" => query.OrderByDescending(m => m.CreatedAt),
-                _           => query.OrderBy(m => m.Name),
-            };
+            var total = ordered.Count;
+            var pageIds = ordered.Skip((page - 1) * perPage).Take(perPage).Select(m => m.Id).ToList();
 
-            var total = await query.CountAsync(ct);
-            var items = await query.Skip((page - 1) * perPage).Take(perPage).ToListAsync(ct);
+            var itemsById = await _context.MediaItems
+                .Where(m => pageIds.Contains(m.Id))
+                .ToDictionaryAsync(m => m.Id, ct);
+            var items = pageIds.Where(itemsById.ContainsKey).Select(id => itemsById[id]).ToList();
 
             var itemIds = items.Select(i => i.Id).ToList();
             var rolesByPerson = await _context.MediaCredits
@@ -135,8 +146,7 @@ namespace Chronicle.API.Controllers
                         c.MediaItem.MediaType?.Name ?? string.Empty, c.CharacterName))
                      .DistinctBy(c => c.MediaItemId)
                      // Most recent first, per-user request (2026-08-30) -- a credit with no
-                     // known year sorts last (Year ?? int.MinValue), same "unknown sorts to
-                     // the end" convention GetPeople's own birthDate sort already uses above.
+                     // known year sorts last (Year ?? int.MinValue) rather than as "earliest".
                      .OrderByDescending(c => c.Year ?? int.MinValue)
                      .ToList()
                 )).ToList();

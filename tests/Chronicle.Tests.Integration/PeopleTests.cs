@@ -109,5 +109,98 @@ namespace Chronicle.Tests.Integration
                 names.Should().Equal("New Movie", "Mid Movie", "Old Movie", "Unknown Year Movie");
             }
         }
+
+        // Per-user request (2026-08-31): "delete the sorting and keep it alphabetical by
+        // last name." PeopleController.GetPeople no longer takes a sort parameter -- it's
+        // always ordered by a last-name-first key (PersonNameHelper), which jumpTo also
+        // compares against.
+        [Fact]
+        public async Task GetPeople_OrdersByLastName_NotByFullNameOrFirstName()
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+            var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
+                ?? (await db.MediaTypes.AddAsync(new MediaType
+                {
+                    Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                    InteractionVerb = "viewed", ProgressUnit = "percent",
+                    IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
+                })).Entity;
+            await db.SaveChangesAsync();
+
+            // First names deliberately in the OPPOSITE order of their last names, so a
+            // last-name sort and a full-name/first-name sort disagree on ordering -- proves
+            // which key the endpoint actually uses.
+            var zoeAnders = new MediaItem
+            {
+                MediaTypeId = peopleType.Id, Name = "Zoe Anders", HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            var aliceZephyr = new MediaItem
+            {
+                MediaTypeId = peopleType.Id, Name = "Alice Zephyr", HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.MediaItems.AddRange(zoeAnders, aliceZephyr);
+            await db.SaveChangesAsync();
+
+            var client = await AuthedClientAsync();
+            var resp = await client.GetAsync("/api/v1/people?perPage=200");
+            resp.EnsureSuccessStatusCode();
+
+            var body = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var names = body.RootElement.GetProperty("data").EnumerateArray()
+                .Select(i => i.GetProperty("name").GetString())
+                .ToList();
+
+            // "Zoe Anders" (last name Anders) must sort before "Alice Zephyr" (last name
+            // Zephyr) -- the reverse of both full-name order ("Alice" < "Zoe") and any
+            // by-first-name order.
+            names.IndexOf("Zoe Anders").Should().BeLessThan(names.IndexOf("Alice Zephyr"));
+        }
+
+        [Fact]
+        public async Task GetPeople_JumpTo_MatchesAgainstLastName()
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+            var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
+                ?? (await db.MediaTypes.AddAsync(new MediaType
+                {
+                    Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                    InteractionVerb = "viewed", ProgressUnit = "percent",
+                    IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
+                })).Entity;
+            await db.SaveChangesAsync();
+
+            var zoeAnders = new MediaItem
+            {
+                MediaTypeId = peopleType.Id, Name = "Zoe Anders", HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            var aliceZephyr = new MediaItem
+            {
+                MediaTypeId = peopleType.Id, Name = "Alice Zephyr", HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.MediaItems.AddRange(zoeAnders, aliceZephyr);
+            await db.SaveChangesAsync();
+
+            var client = await AuthedClientAsync();
+            // Jumping to "Z" should land on the last-name-Z person (Alice Zephyr), not the
+            // first-name-Z one (Zoe Anders, last name Anders, which sorts before "Z").
+            var resp = await client.GetAsync("/api/v1/people?perPage=200&jumpTo=Z");
+            resp.EnsureSuccessStatusCode();
+
+            var body = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var names = body.RootElement.GetProperty("data").EnumerateArray()
+                .Select(i => i.GetProperty("name").GetString())
+                .ToList();
+
+            names.Should().Contain("Alice Zephyr");
+            names.Should().NotContain("Zoe Anders");
+        }
     }
 }

@@ -14,26 +14,13 @@
   gap: 12px;
 }
 
-.select {
-  background: var(--bg-secondary);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-}
-
-/* Filter/sort rows -- same treatment as LibraryPage's own filterRow/sortRow, per-user
-   request (2026-08-30): "I need the same kinds of controls that the library has." */
-.filterRow,
-.sortRow {
+/* Filter row -- same treatment as LibraryPage's own filterRow, per-user request
+   (2026-08-30): "I need the same kinds of controls that the library has." */
+.filterRow {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.sortRow {
-  gap: 16px;
 }
 
 .rowLabel {
@@ -51,7 +38,6 @@
   gap: 4px;
 }
 
-.sortGroup,
 .filter,
 .filterActive {
   padding: 3px 11px;

@@ -11,7 +11,6 @@ import {
 } from '@/utils/peopleLibraryPrefs'
 import styles from './PeopleLibraryPage.module.css'
 
-type SortOption = PeopleLibraryPrefs['sort']
 type DeceasedFilter = PeopleLibraryPrefs['deceased']
 
 // Fixed infinite-scroll page size -- per-user request (2026-08-31): "limiting the block
@@ -25,12 +24,6 @@ const PEOPLE_PAGE_SIZE = 40
 // "'A' Camera Operator" through "Writers' Production") -- per-user request (2026-08-30):
 // too many to show at once, so collapsed by default to this many chips.
 const VISIBLE_ROLE_COUNT = 20
-
-const SORT_OPTIONS: { value: SortOption; label: string }[] = [
-  { value: 'name', label: 'Name A–Z' },
-  { value: 'birthDate', label: 'Birth Date' },
-  { value: 'createdAt', label: 'Recently Added' },
-]
 
 const DECEASED_OPTIONS: { value: DeceasedFilter; label: string }[] = [
   { value: 'either', label: 'All' },
@@ -57,10 +50,15 @@ const CARD_INFO_HEIGHT = 84
 /** Catalog-wide People grid -- every person credited on something in Chronicle, or added
  * directly, regardless of any single user's library (docs/plans/2026-08-28-people-section-
  * design.md Section 5). Not a fork of LibraryPage: no watch-status concept applies to a
- * person, so this mirrors that page's general shape only -- except for filters/sort/page-size
+ * person, so this mirrors that page's general shape only -- except for filters/page-size
  * controls, which now deliberately DO mirror LibraryPage's own (utils/peopleLibraryPrefs.ts),
  * per-user request (2026-08-30): "I need the same kinds of controls that the library has.
  * similar filtering and the ability to save."
+ *
+ * Always sorted alphabetically by last name (PersonNameHelper.ToLastNameFirstSortKey,
+ * PeopleController.GetPeople) -- per-user request (2026-08-31): "delete the sorting and keep
+ * it alphabetical by last name." There used to be a Name/Birth Date/Recently Added picker;
+ * removed rather than kept alongside the one fixed order.
  *
  * Virtualized (only on-screen + a small overscan buffer ever exist as real DOM nodes) and
  * jump-to-letter (an A-Z rail plus a jump-search box, both backed by the server's own
@@ -123,28 +121,22 @@ export default function PeopleLibraryPage() {
         return head
       })()
 
-  // jumpTo is only meaningful for sort=name -- the server silently ignores it otherwise
-  // (PeopleController.GetPeople), so there's no point sending it and no point keying the
-  // query by it either in that case (avoids a pointless extra query-key identity).
-  const effectiveJumpTo = prefs.sort === 'name' ? jumpTarget : null
-
   // Real server-side pagination with client-side accumulation across pages -- the queryKey
   // is filters + jump target, never the accumulated page count itself, so auto-loading the
   // next page appends onto data.pages without ever invalidating what's already rendered,
-  // while an actual filter/sort/jump change correctly starts a fresh query from page 1 (at
-  // the jump target, if any).
+  // while an actual filter/jump change correctly starts a fresh query from page 1 (at the
+  // jump target, if any).
   const {
     data,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
   } = useInfiniteQuery({
-    queryKey: ['people', prefs.sort, primaryRole, prefs.deceased, effectiveJumpTo],
+    queryKey: ['people', primaryRole, prefs.deceased, jumpTarget],
     queryFn: ({ pageParam }) => getPeople({
-      sort: prefs.sort,
       role: primaryRole,
       deceased: prefs.deceased === 'either' ? undefined : prefs.deceased === 'deceased',
-      jumpTo: effectiveJumpTo ?? undefined,
+      jumpTo: jumpTarget ?? undefined,
       page: pageParam,
       perPage: PEOPLE_PAGE_SIZE,
     }),
@@ -272,23 +264,21 @@ export default function PeopleLibraryPage() {
         <h1>People</h1>
       </div>
 
-      {prefs.sort === 'name' && (
-        <form className={styles.jumpRow} onSubmit={submitJumpSearch}>
-          <input
-            type="text"
-            className={styles.jumpInput}
-            placeholder="Jump to name…"
-            value={jumpInput}
-            onChange={e => setJumpInput(e.target.value)}
-          />
-          <button type="submit" className={styles.filter}>Jump</button>
-          {jumpTarget && (
-            <button type="button" className={styles.filter} onClick={clearJump}>
-              Clear jump ({jumpTarget})
-            </button>
-          )}
-        </form>
-      )}
+      <form className={styles.jumpRow} onSubmit={submitJumpSearch}>
+        <input
+          type="text"
+          className={styles.jumpInput}
+          placeholder="Jump to name…"
+          value={jumpInput}
+          onChange={e => setJumpInput(e.target.value)}
+        />
+        <button type="submit" className={styles.filter}>Jump</button>
+        {jumpTarget && (
+          <button type="button" className={styles.filter} onClick={clearJump}>
+            Clear jump ({jumpTarget})
+          </button>
+        )}
+      </form>
 
       {/* Deceased filter row -- same filterRow/filter/filterActive treatment as
           LibraryPage's own status filter. */}
@@ -305,24 +295,6 @@ export default function PeopleLibraryPage() {
               {o.label}
             </button>
           ))}
-        </div>
-      </div>
-
-      {/* Sort row -- same sortRow/sortGroup treatment as LibraryPage's own. No page-size
-          picker here (removed per-user request 2026-08-31) -- infinite scroll alone decides
-          how much is loaded. */}
-      <div className={styles.sortRow}>
-        <div className={styles.sortGroup}>
-          <span className={styles.rowLabel}>Sort</span>
-          <select
-            className={styles.select}
-            value={prefs.sort}
-            onChange={e => { setPrefs({ sort: e.target.value as SortOption }); setJumpTarget(null) }}
-          >
-            {SORT_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
         </div>
       </div>
 
@@ -389,9 +361,7 @@ export default function PeopleLibraryPage() {
         <div className={styles.endOfList}>— end of list —</div>
       )}
 
-      {prefs.sort === 'name' && (
-        <AlphabetRail activeLetter={jumpTarget} onJump={jumpToLetter} />
-      )}
+      <AlphabetRail activeLetter={jumpTarget} onJump={jumpToLetter} />
     </div>
   )
 }

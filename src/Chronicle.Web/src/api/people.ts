@@ -2,11 +2,10 @@ import client from './client'
 import type { ApiResponse, PersonListItem, PersonCreditGroup, PersonHeadshot } from '@/types'
 
 export interface GetPeopleParams {
-  sort?: 'name' | 'birthDate' | 'createdAt'
   role?: string
   deceased?: boolean
-  /** Jumps straight to the first name alphabetically >= this value -- only meaningful when
-   * sort is 'name' (see PeopleController.GetPeople). */
+  /** Jumps straight to the first person (in last-name order) alphabetically >= this value
+   * (see PeopleController.GetPeople). */
   jumpTo?: string
   page?: number
   perPage?: number
