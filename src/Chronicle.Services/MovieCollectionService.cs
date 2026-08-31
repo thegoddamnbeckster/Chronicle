@@ -1065,11 +1065,11 @@ public class MovieCollectionService(
     }
 
     /// <summary>
-    /// If a real (non-stub) item matching this collection part already exists elsewhere in the
-    /// library -- by ExternalId, or by normalized title+year when no ExternalId match exists --
-    /// reparents it into <paramref name="collection"/> (unless already correctly parented there)
-    /// and returns true so the caller skips creating a duplicate stub. Returns false when no
-    /// existing item was found, meaning the caller should create a new stub instead.
+    /// If an item matching this collection part already exists elsewhere in the library -- by
+    /// ExternalId, or by normalized title+year when no ExternalId match exists -- reparents it
+    /// into <paramref name="collection"/> (unless already correctly parented there) and returns
+    /// true so the caller skips creating a duplicate stub. Returns false when no existing item
+    /// was found, meaning the caller should create a new stub instead.
     ///
     /// Confirmed directly (2026-08-03): before this existed, both the ExternalId match and the
     /// title+year match below only ever skipped stub *creation* — neither actually moved the
@@ -1078,12 +1078,20 @@ public class MovieCollectionService(
     /// already enriched (and thus already has the matching ExternalId/title) before this
     /// collection was even discovered. The visible symptom was a collection missing a movie the
     /// user definitely had a file for, sitting correctly-matched but un-reparented elsewhere.
+    ///
+    /// Root-caused a second, real duplicate (2026-08-31, "A Christmas Story" / "A Christmas
+    /// Story Collection"): this used to only match a REAL (non-stub) existing item, on the
+    /// theory that a stub isn't trustworthy enough to reparent. But a stub is exactly what's
+    /// sitting here when e.g. a PRIOR partial/interrupted collection build already created one
+    /// for this same part -- excluding stubs meant that case could never be found, so a second
+    /// stub got created for the identical ExternalId instead of just moving the first one.
+    /// Matching stubs too is strictly safer than the alternative (an actual duplicate).
     /// </summary>
     private async Task<bool> ReparentExistingMemberIfNeededAsync(
         ChronicleDbContext db, MediaItem collection, MediaMetadata part, int mediaTypeId, CancellationToken ct)
     {
         var existing = await db.MediaItems
-            .Where(m => m.MediaTypeId == mediaTypeId && !m.IsStub)
+            .Where(m => m.MediaTypeId == mediaTypeId)
             .Where(m => db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId == part.ExternalId))
             .FirstOrDefaultAsync(ct);
 
@@ -1093,7 +1101,7 @@ public class MovieCollectionService(
             if (!string.IsNullOrEmpty(normalizedPartTitle))
             {
                 var sameYearCandidates = await db.MediaItems
-                    .Where(m => m.MediaTypeId == mediaTypeId && m.Year == part.Year && !m.IsStub)
+                    .Where(m => m.MediaTypeId == mediaTypeId && m.Year == part.Year)
                     .ToListAsync(ct);
                 existing = sameYearCandidates.FirstOrDefault(
                     m => MediaItemNormalizer.NormalizeName(m.Name) == normalizedPartTitle);

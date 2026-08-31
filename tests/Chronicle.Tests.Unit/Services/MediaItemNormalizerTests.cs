@@ -18,4 +18,21 @@ public class MediaItemNormalizerTests
     {
         MediaItemNormalizer.NormalizeName(input).Should().Be(expected);
     }
+
+    // Root-caused a real duplicate (2026-08-31): NormalizeName's own doc comment already
+    // documents these three as producing DIFFERENT results, which is exactly what let two
+    // MediaItems for the same audiobook author ("James S. A. Corey" vs "James S.A. Corey")
+    // coexist. NormalizeNameLoose is the additional, stricter fallback comparison that
+    // collapses all three variants to the same string.
+    [Theory]
+    [InlineData("James S. A. Corey",  "jamessacorey")]
+    [InlineData("James S.A. Corey",   "jamessacorey")]
+    [InlineData("James S.A.Corey",    "jamessacorey")]
+    [InlineData("Brandon Sanderson",  "brandonsanderson")]
+    [InlineData("",                   "")]
+    [InlineData(null,                 "")]
+    public void NormalizeNameLoose_CollapsesSpacingAroundInitials(string? input, string expected)
+    {
+        MediaItemNormalizer.NormalizeNameLoose(input).Should().Be(expected);
+    }
 }

@@ -2331,6 +2331,30 @@ namespace Chronicle.Services
                 return aliasedItem;
             }
 
+            // Still no match -- try a loose, whitespace-insensitive comparison before giving up
+            // and creating a new item. Root-caused a real duplicate (2026-08-31): "James S. A.
+            // Corey" vs "James S.A. Corey" are the same author, spaced differently around their
+            // initials, and the exact-lowercase check above treats them as different names.
+            var looseTarget = MediaItemNormalizer.NormalizeNameLoose(name);
+            if (!string.IsNullOrEmpty(looseTarget))
+            {
+                var siblingCandidates = await _context.MediaItems
+                    .Where(m => m.MediaTypeId == mediaTypeId && m.ParentId == parentId && m.HierarchyLevel == hierarchyLevel)
+                    .ToListAsync(ct);
+                var looseMatch = siblingCandidates.FirstOrDefault(
+                    m => MediaItemNormalizer.NormalizeNameLoose(m.Name) == looseTarget);
+                if (looseMatch is not null)
+                {
+                    _log.Information(
+                        "FindOrCreateParentAsync: '{Name}' loosely matches existing item {Id} ('{ExistingName}') " +
+                        "-- resolving instead of creating a duplicate",
+                        name, looseMatch.Id, looseMatch.Name);
+                    if (folderPath is not null)
+                        SetContainerFolderPathIfMissing(looseMatch, folderPath);
+                    return looseMatch;
+                }
+            }
+
             var item = new MediaItem
             {
                 Name           = name,

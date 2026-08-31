@@ -491,11 +491,29 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         // ── Level 0: Author ───────────────────────────────────────────────────
         var authorName = evt.AuthorName ?? "Unknown";
+        var authorNameLower = authorName.ToLowerInvariant();
         var author = await db.MediaItems
             .FirstOrDefaultAsync(i => i.MediaTypeId == mediaType.Id
                 && i.HierarchyLevel == 0
-                && i.Name == authorName
+                && i.Name.ToLower() == authorNameLower
                 && i.ParentId == null, ct);
+
+        // Still no match -- try a loose, whitespace-insensitive comparison before creating a
+        // new author. Root-caused a real duplicate (2026-08-31): "James S. A. Corey" vs "James
+        // S.A. Corey" are the same author, spaced differently around their initials, and even
+        // the case-insensitive exact check above treats them as different names.
+        if (author is null)
+        {
+            var looseTarget = MediaItemNormalizer.NormalizeNameLoose(authorName);
+            if (!string.IsNullOrEmpty(looseTarget))
+            {
+                var rootAuthors = await db.MediaItems
+                    .Where(i => i.MediaTypeId == mediaType.Id && i.HierarchyLevel == 0 && i.ParentId == null)
+                    .ToListAsync(ct);
+                author = rootAuthors.FirstOrDefault(
+                    i => MediaItemNormalizer.NormalizeNameLoose(i.Name) == looseTarget);
+            }
+        }
         if (author is null)
         {
             author = new MediaItem
