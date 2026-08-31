@@ -36,16 +36,20 @@
   display: block;
 }
 
+/* A small marker-style tick, not a face-covering wedge: a thin line rooted at the bottom
+   center of the photo, rotated up and to the right at 45deg. transform-origin is the
+   element's own bottom-center, which -- since the element is already 2px wide and
+   horizontally centered via left:50%/translateX(-50%) -- lands exactly on the poster's
+   bottom-center point, so rotation swings the top end up-right without shifting the anchor. */
 .deceasedBar {
   position: absolute;
+  left: 50%;
   bottom: 0;
-  right: 0;
-  width: 56%;
-  height: 14%;
-  background: rgba(0, 0, 0, 0.82);
-  transform-origin: bottom right;
-  transform: rotate(-8deg) translate(8%, 8%);
-  clip-path: polygon(0 40%, 100% 0, 100% 100%, 0 100%);
+  width: 2px;
+  height: 22%;
+  background: rgba(0, 0, 0, 0.85);
+  transform-origin: 50% 100%;
+  transform: translateX(-50%) rotate(45deg);
 }
 
 .info {
