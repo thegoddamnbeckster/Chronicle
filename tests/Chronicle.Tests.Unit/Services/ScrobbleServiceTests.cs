@@ -392,6 +392,21 @@ namespace Chronicle.Tests.Unit.Services
             (await _context.MediaItems.CountAsync()).Should().Be(before); // never creates a stub
         }
 
+        [Fact]
+        public async Task RateAsync_StampsUserRatingUpdatedAt()
+        {
+            // So a later Trakt/Simkl sync's own most-recent-wins guard
+            // (SyncOrchestrationService.UpsertRatingAsync) can tell a live rating apart
+            // from a stale provider one instead of always losing to it (a missing stored
+            // timestamp always loses in that guard).
+            var before = DateTime.UtcNow;
+            await _service.RateAsync(1, new RateRequest(1, 8));
+            var after = DateTime.UtcNow;
+
+            var entry = await _context.UserLibraries.FirstAsync(l => l.UserId == 1 && l.MediaItemId == 1);
+            entry.UserRatingUpdatedAt.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
+        }
+
         // ── GetActiveSessionsAsync ──────────────────────────────────────────────
 
         [Fact]

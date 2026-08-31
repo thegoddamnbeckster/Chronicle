@@ -84,7 +84,17 @@ namespace Chronicle.API.DTOs
         /// instead). When present, this is a verified fact about the actual file, not a
         /// re-derived title+year guess -- see movie_art_sync.py's find_movie_location(), which
         /// tries an exact match on this filename before falling back to title/year matching.</summary>
-        string? KnownFileName
+        string? KnownFileName,
+        /// <summary>The calling user's own 1-10 rating for this item in Chronicle, if any --
+        /// always pushed to Kodi as-is (see progress_sync.py's module doc: Kodi has no
+        /// per-rating timestamp, so there's no safe "which side is newer" comparison to make
+        /// here, unlike ResumePositionPercent below).</summary>
+        int? UserRating = null,
+        /// <summary>The calling user's resume position for this item in Chronicle, 0-100.
+        /// Genuinely bidirectional: the scraper compares this against Kodi's own local
+        /// lastplayed/resume and reconciles in whichever direction is more recent.</summary>
+        double? ResumePositionPercent = null,
+        DateTime? ResumeUpdatedAt = null
     );
 
     public record ScraperShowDetailsDto(
@@ -106,7 +116,10 @@ namespace Chronicle.API.DTOs
         string? TrailerUrl,
         ScraperExternalIdsDto? ExternalIds,
         Dictionary<string, List<ScraperArtworkCandidateDto>>? Artwork,
-        List<ScraperSeasonDto>? Seasons
+        List<ScraperSeasonDto>? Seasons,
+        /// <summary>See ScraperMovieDetailsDto.UserRating -- shows have no resume concept
+        /// (Kodi tracks that per-episode only), so only rating applies here.</summary>
+        int? UserRating = null
     );
 
     public record ScraperEpisodeSummaryDto(int Id, int Season, int Episode, string? Title);
@@ -127,6 +140,11 @@ namespace Chronicle.API.DTOs
         // The parent show's own title/year -- not this episode's -- so the Kodi addon can locate
         // the show's own folder on disk for this episode (see ScraperController.GetEpisodeDetails).
         string? ShowTitle,
-        int? ShowYear
+        int? ShowYear,
+        /// <summary>See ScraperMovieDetailsDto.UserRating/ResumePositionPercent -- episodes
+        /// carry both, same as movies.</summary>
+        int? UserRating = null,
+        double? ResumePositionPercent = null,
+        DateTime? ResumeUpdatedAt = null
     );
 }

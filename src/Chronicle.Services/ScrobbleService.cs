@@ -282,8 +282,14 @@ namespace Chronicle.Services
                 _context.UserLibraries.Add(entry);
             }
 
-            entry.UserRating = request.Rating;
-            entry.UpdatedAt  = DateTime.UtcNow;
+            // Stamped so a later Trakt/Simkl sync's own "most recent wins" guard
+            // (SyncOrchestrationService.UpsertRatingAsync) correctly treats a rating set
+            // live, right now, as newer than a provider rating from before it -- previously
+            // left null here, which meant a stale provider re-sync could silently overwrite
+            // a fresh live rating (a missing stored timestamp always loses in that guard).
+            entry.UserRating          = request.Rating;
+            entry.UserRatingUpdatedAt = DateTime.UtcNow;
+            entry.UpdatedAt           = DateTime.UtcNow;
             await _context.SaveChangesAsync(ct);
 
             return new RateResult(mediaItemId, request.Rating);

@@ -9,6 +9,7 @@ using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using System.Text.Json;
 
 namespace Chronicle.API.Controllers;
@@ -53,6 +54,20 @@ public class ScraperController : ControllerBase
         _collections = collections;
         _registry   = registry;
         _logger     = logger;
+    }
+
+    private int GetUserId() =>
+        int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+    /// <summary>The caller's own UserLibrary row for an item, if any -- the rating/resume
+    /// source for the three getdetails handlers below. Null for an item the caller hasn't
+    /// scrobbled/rated yet, which every BuildXDetails method already treats as "nothing to
+    /// reconcile" via the lib?. null-conditional pattern.</summary>
+    private async Task<UserLibrary?> GetCallerLibraryEntryAsync(int mediaItemId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        return await _context.UserLibraries
+            .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
     }
 
     // ── Movies ──────────────────────────────────────────────────────────────
@@ -264,7 +279,9 @@ public class ScraperController : ControllerBase
             }
         }
 
-        var dto = BuildMovieDetails(item, collection);
+        var lib = await GetCallerLibraryEntryAsync(id, ct);
+
+        var dto = BuildMovieDetails(item, collection, lib);
         dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
 
         var artworkSummary = dto.Artwork is null
@@ -335,7 +352,9 @@ public class ScraperController : ControllerBase
             .Select(m => new ScraperSeasonDto(m.Id, m.Number ?? 0, m.Name, m.PosterUrl))
             .ToListAsync(ct);
 
-        var dto = BuildShowDetails(item, seasons);
+        var lib = await GetCallerLibraryEntryAsync(id, ct);
+
+        var dto = BuildShowDetails(item, seasons, lib);
         dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
         return Ok(ApiResponse<ScraperShowDetailsDto>.Ok(dto));
     }
@@ -646,7 +665,9 @@ public class ScraperController : ControllerBase
             }
         }
 
-        var dto = BuildEpisodeDetails(item, season, showTitle, showYear);
+        var lib = await GetCallerLibraryEntryAsync(id, ct);
+
+        var dto = BuildEpisodeDetails(item, season, showTitle, showYear, lib);
         dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
         return Ok(ApiResponse<ScraperEpisodeDetailsDto>.Ok(dto));
     }
@@ -878,7 +899,7 @@ public class ScraperController : ControllerBase
 
     // ── DTO builders ─────────────────────────────────────────────────────────
 
-    private static ScraperMovieDetailsDto BuildMovieDetails(MediaItem item, ScraperCollectionDto? collection)
+    private static ScraperMovieDetailsDto BuildMovieDetails(MediaItem item, ScraperCollectionDto? collection, UserLibrary? lib)
     {
         using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
         var root = doc.RootElement;
@@ -903,11 +924,14 @@ public class ScraperController : ControllerBase
             ExternalIds:    CollectExternalIds(root),
             Artwork:        CollectArtwork(root, core),
             Collection:     collection,
-            KnownFileName:  TryGetScannedFileName(item.MetadataJson)
+            KnownFileName:  TryGetScannedFileName(item.MetadataJson),
+            UserRating:            lib?.UserRating,
+            ResumePositionPercent: lib?.ResumePositionPercent,
+            ResumeUpdatedAt:       lib?.ResumeUpdatedAt
         );
     }
 
-    private static ScraperShowDetailsDto BuildShowDetails(MediaItem item, List<ScraperSeasonDto> seasons)
+    private static ScraperShowDetailsDto BuildShowDetails(MediaItem item, List<ScraperSeasonDto> seasons, UserLibrary? lib)
     {
         using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
         var root = doc.RootElement;
@@ -932,11 +956,12 @@ public class ScraperController : ControllerBase
             TrailerUrl: FirstExtended(root, ext => TryGetString(ext, "trailer")),
             ExternalIds: CollectExternalIds(root),
             Artwork:    CollectArtwork(root, core),
-            Seasons:    seasons
+            Seasons:    seasons,
+            UserRating: lib?.UserRating
         );
     }
 
-    private static ScraperEpisodeDetailsDto BuildEpisodeDetails(MediaItem item, int season, string? showTitle, int? showYear)
+    private static ScraperEpisodeDetailsDto BuildEpisodeDetails(MediaItem item, int season, string? showTitle, int? showYear, UserLibrary? lib)
     {
         using var doc = JsonDocument.Parse(string.IsNullOrEmpty(item.MetadataJson) ? "{}" : item.MetadataJson);
         var root = doc.RootElement;
@@ -956,7 +981,10 @@ public class ScraperController : ControllerBase
             ThumbUrl:       core?.PosterUrl ?? item.PosterUrl,
             ExternalIds:    CollectExternalIds(root),
             ShowTitle:      showTitle,
-            ShowYear:       showYear
+            ShowYear:       showYear,
+            UserRating:            lib?.UserRating,
+            ResumePositionPercent: lib?.ResumePositionPercent,
+            ResumeUpdatedAt:       lib?.ResumeUpdatedAt
         );
     }
 
