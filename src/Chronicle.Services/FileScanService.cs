@@ -22,13 +22,12 @@ namespace Chronicle.Services
         private readonly ScanProgressService _progress;
         private readonly ImportProgressService _importProgress;
         private readonly IScanGroupingService _groupingService;
-        private readonly NfoSignalExtractor _nfoExtractor;
         private readonly ILogger _log = Log.ForContext<FileScanService>();
 
         public FileScanService(ChronicleDbContext context, IPluginRegistry registry,
             IPluginSettingsProtector protector,
             ScanProgressService progress, ImportProgressService importProgress,
-            IScanGroupingService groupingService, NfoSignalExtractor nfoExtractor)
+            IScanGroupingService groupingService)
         {
             _context = context;
             _registry = registry;
@@ -36,23 +35,94 @@ namespace Chronicle.Services
             _progress = progress;
             _importProgress = importProgress;
             _groupingService = groupingService;
-            _nfoExtractor = nfoExtractor;
         }
 
         /// <summary>
-        /// Locates and losslessly reads an .nfo sidecar for <paramref name="filePath"/>, for
-        /// import paths (ImportApprovedAsync, ImportDirectAsync/ImportSingleFileAsync) that only
-        /// ever receive a bare file path with no upstream ScannedFile/ScanGroup already carrying
-        /// a resolved NfoPath (unlike the grouped-scan and Identify flows, which compute it once
-        /// up front and thread it through). Same sidecar-lookup rule as scan time
-        /// (NfoSignalExtractor.FindSidecar), so an item found this way and one found via a
-        /// grouped scan agree on which .nfo file belongs to it.
+        /// Locates and losslessly reads a sidecar for <paramref name="filePath"/>, for import
+        /// paths (ImportApprovedAsync, ImportDirectAsync/ImportSingleFileAsync) that only ever
+        /// receive a bare file path with no upstream ScannedFile/ScanGroup already carrying a
+        /// resolved NfoPath (unlike the grouped-scan and Identify flows, which compute it once
+        /// up front and thread it through). Asks every loaded <see cref="ISidecarFormatPlugin"/>
+        /// in turn (Kodi's .nfo today) -- same rule ScanGroupingService/ApplyNfoSignals use, so
+        /// an item found this way and one found via a grouped scan agree on which sidecar
+        /// belongs to it.
         /// </summary>
         private (string? path, string? raw, JsonElement? parsed) LookupNfo(string filePath)
         {
-            var nfoPath = _nfoExtractor.FindSidecar(filePath);
-            var raw = TryReadNfoRaw(nfoPath);
-            return (nfoPath, raw, XmlToJsonConverter.ToJson(raw));
+            foreach (var plugin in _registry.GetSidecarFormatPlugins())
+            {
+                var nfoPath = plugin.FindSidecar(filePath);
+                if (nfoPath is null) continue;
+                var capture = plugin.CaptureLossless(nfoPath);
+                return (nfoPath, capture?.RawText, capture?.Parsed);
+            }
+            return (null, null, null);
+        }
+
+        /// <summary>
+        /// Captures a sidecar already located at <paramref name="sidecarPath"/> losslessly, by
+        /// asking every loaded <see cref="ISidecarFormatPlugin"/> in turn until one recognizes
+        /// it. Used where the path is already known (e.g. ScannedFile.NfoPath, ScanGroup.NfoPath)
+        /// and only the raw+parsed capture is still needed.
+        /// </summary>
+        private SidecarCapture? CaptureSidecar(string? sidecarPath)
+        {
+            if (sidecarPath is null) return null;
+            foreach (var plugin in _registry.GetSidecarFormatPlugins())
+            {
+                var capture = plugin.CaptureLossless(sidecarPath);
+                if (capture is not null) return capture;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Overlays sidecar-format-plugin (e.g. Kodi .nfo) signal onto raw scanner results.
+        /// BuiltInFileScannerPlugin itself cannot do this: plugins are instantiated via bare
+        /// Activator.CreateInstance (see PluginRegistry.DiscoverAndInstantiate) with no DI, so
+        /// it can never receive IPluginRegistry to look up installed ISidecarFormatPlugins. This
+        /// is the compensating step, run once against every ScanDirectoryAsync result, that
+        /// reproduces exactly what BuiltInFileScannerPlugin's own ParseFile used to do directly
+        /// against the old NfoSignalExtractor -- same field-priority rules (sidecar wins over
+        /// tag/filename-derived values when present), now driven through the plugin registry.
+        /// </summary>
+        private void ApplyNfoSignals(IEnumerable<Chronicle.Plugins.Models.ScannedFile> files)
+        {
+            var sidecarPlugins = _registry.GetSidecarFormatPlugins();
+            if (sidecarPlugins.Count == 0) return;
+
+            foreach (var file in files)
+            {
+                string? nfoPath = null;
+                SidecarSignal? nfo = null;
+                foreach (var plugin in sidecarPlugins)
+                {
+                    var candidate = plugin.FindSidecar(file.FilePath);
+                    if (candidate is null) continue;
+                    nfoPath = candidate;
+                    nfo = plugin.ExtractSignal(candidate);
+                    break;
+                }
+                if (nfoPath is null) continue;
+
+                file.NfoPath = nfoPath;
+                if (nfo is null) continue;
+
+                if (nfo.Title is not null)     file.ParsedTitle         = nfo.Title;
+                if (nfo.Year.HasValue)         file.ParsedYear          = nfo.Year;
+                file.SuggestedExternalId       = nfo.ExternalId;
+                file.NfoPosterUrl              = nfo.PosterUrl;
+                file.ShowTitle                 = nfo.ShowTitle;
+                if (nfo.Season.HasValue)       file.SeasonNumber        = nfo.Season;
+                if (nfo.Episode.HasValue)      file.EpisodeNumber       = nfo.Episode;
+
+                if (nfo.ExternalId is not null)
+                    file.ConfidenceScore = 100;
+                else if (nfo.Title is not null && nfo.Year.HasValue)
+                    file.ConfidenceScore = 85;
+                else if (nfo.Title is not null)
+                    file.ConfidenceScore = 78;
+            }
         }
 
         public async Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync()
@@ -103,6 +173,7 @@ namespace Chronicle.Services
                 request.Path, request.Recursive, threshold, mediaType.Name);
 
             var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
+            ApplyNfoSignals(scannedFiles);
 
             // Audiobooks: each book folder is one library entry regardless of how many
             // audio files (parts) or support files (covers, extras) it contains.
@@ -327,6 +398,7 @@ namespace Chronicle.Services
                         throw new DirectoryNotFoundException(
                             $"Scan path is not accessible: {request.Path}.{hint}", dnfe);
                     }
+                    ApplyNfoSignals(fallback);
                     _progress.Complete();
                     return BuildPreview(fallback);
                 }
@@ -354,6 +426,7 @@ namespace Chronicle.Services
             }
 
             _progress.Complete();
+            ApplyNfoSignals(allFiles);
 
             _log.Information("Preview complete: {Count} files found across {Dirs} directories",
                 allFiles.Count, dirsToScan.Count);
@@ -2485,17 +2558,6 @@ namespace Chronicle.Services
             string? NfoRaw = null,
             JsonElement? NfoParsed = null);
 
-        /// <summary>Reads an .nfo sidecar's raw text for lossless storage, or null if it's
-        /// missing/unreadable (permissions, a race with a concurrent file move, etc.) --
-        /// never lets a bad sidecar fail the whole import, same convention as every other
-        /// scan-time file read in this codebase (NfoSignalExtractor.Extract, TagSignalExtractor.Extract).</summary>
-        private static string? TryReadNfoRaw(string? nfoPath)
-        {
-            if (nfoPath is null) return null;
-            try { return System.IO.File.Exists(nfoPath) ? System.IO.File.ReadAllText(nfoPath) : null; }
-            catch { return null; }
-        }
-
         private sealed record MediaMetaJsonRoot(TmdbMetaJson? Tmdb, FileScannerMetaJson? FileScanner);
 
         /// <summary>
@@ -2505,7 +2567,7 @@ namespace Chronicle.Services
         /// pair it with <paramref name="scannerNfoPath"/>/Raw/Parsed (see LookupNfo) when the caller
         /// resolved a sidecar for that path itself, since a bare path alone carries no NFO signal.
         /// </summary>
-        private static string SerializeMetadata(
+        private string SerializeMetadata(
             Chronicle.Plugins.Models.MediaMetadata? tmdbMeta = null,
             string? existingJson = null,
             Chronicle.Plugins.Models.ScannedFile? scannedFile = null,
@@ -2530,7 +2592,7 @@ namespace Chronicle.Services
             if (scannedFile is not null)
             {
                 var author = scannedFile.AudioAlbumArtist ?? scannedFile.AudioArtist;
-                var nfoRaw = TryReadNfoRaw(scannedFile.NfoPath);
+                var nfoCapture = CaptureSidecar(scannedFile.NfoPath);
                 fsData = new FileScannerMetaJson(
                     [scannedFile.FilePath],
                     scannedFile.LocalPosterPath,
@@ -2539,8 +2601,8 @@ namespace Chronicle.Services
                     Series: scannedFile.AudioGrouping,
                     FolderPath: Path.GetDirectoryName(scannedFile.FilePath),
                     NfoPath: scannedFile.NfoPath,
-                    NfoRaw: nfoRaw,
-                    NfoParsed: XmlToJsonConverter.ToJson(nfoRaw));
+                    NfoRaw: nfoCapture?.RawText,
+                    NfoParsed: nfoCapture?.Parsed);
             }
 
             // Override with a plain file path (direct import without full ScannedFile).
@@ -2632,6 +2694,7 @@ namespace Chronicle.Services
             _progress.UpdateFolder(request.Path, 1, 0);
 
             var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
+            ApplyNfoSignals(scannedFiles);
             var collapsed    = CollapseAudiobooksToFolders(scannedFiles, request.Path);
 
             _progress.Complete();
@@ -3020,8 +3083,9 @@ namespace Chronicle.Services
             // its path. Every hierarchy level that can carry an NfoPath goes through this one
             // method (shows, seasons, episodes, and flat/movie-shaped groups alike), so this
             // single read covers all of them rather than needing a per-level special case.
-            var nfoRaw    = TryReadNfoRaw(group.NfoPath);
-            var nfoParsed = XmlToJsonConverter.ToJson(nfoRaw);
+            var nfoCapture = CaptureSidecar(group.NfoPath);
+            var nfoRaw     = nfoCapture?.RawText;
+            var nfoParsed  = nfoCapture?.Parsed;
 
             if (existing is not null)
             {

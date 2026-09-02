@@ -1,8 +1,86 @@
+using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Chronicle.Core.Models.Scan;
+using Chronicle.Plugins;
+using Chronicle.Plugins.Models;
+using Chronicle.Services.Plugins;
 using Chronicle.Services.Scan;
 using FluentAssertions;
+using Moq;
 
 namespace Chronicle.Tests.Unit.Services;
+
+/// <summary>
+/// Minimal ISidecarFormatPlugin test double replicating just enough of Kodi's real .nfo
+/// FindSidecar/ExtractSignal behavior (the real implementation lives in the separate
+/// Chronicle.Plugin.Kodi.NFO repo, not referenced by this test project) for
+/// ScanGroupingService's registry-based sidecar lookup to behave the same as the old
+/// hardcoded NfoSignalExtractor it replaced. Never asserted on directly -- exists only so
+/// ScanGroupingServiceTests can construct a real IPluginRegistry.
+/// </summary>
+file sealed class FakeNfoSidecarPlugin : ISidecarFormatPlugin
+{
+    private static readonly Regex SeasonOrShowNfo =
+        new(@"^(tvshow|season(-specials|-all)?\d*)\.nfo$", RegexOptions.IgnoreCase);
+
+    public string PluginId => "test.fake.nfo";
+    public string Name => "Fake NFO";
+    public string Version => "0.0.0";
+    public string Author => "test";
+
+    public MediaTypeSupport[] GetSupportedMediaTypes() => [];
+    public PluginSettingsSchema GetSettingsSchema() => new() { Settings = [] };
+    public void Configure(IReadOnlyDictionary<string, string> settings) { }
+
+    public string? FindSidecar(string mediaFilePath)
+    {
+        var dir  = Path.GetDirectoryName(mediaFilePath);
+        var stem = Path.GetFileNameWithoutExtension(mediaFilePath);
+        if (dir is null) return null;
+
+        var adjacent = Path.Combine(dir, stem + ".nfo");
+        if (File.Exists(adjacent)) return adjacent;
+
+        try
+        {
+            return Directory.EnumerateFiles(dir, "*.nfo")
+                .FirstOrDefault(f => !SeasonOrShowNfo.IsMatch(Path.GetFileName(f)));
+        }
+        catch { return null; }
+    }
+
+    public SidecarSignal? ExtractSignal(string sidecarPath)
+    {
+        if (!File.Exists(sidecarPath)) return null;
+        try
+        {
+            var doc  = XDocument.Parse(File.ReadAllText(sidecarPath).Trim());
+            var root = doc.Root;
+            if (root is null) return null;
+
+            string? Get(string name) =>
+                root.Element(name)?.Value?.Trim() is { Length: > 0 } v ? v : null;
+            int? GetInt(string name) => int.TryParse(Get(name), out var n) ? n : null;
+
+            return new SidecarSignal(
+                Title: Get("title"),
+                Year: GetInt("year"),
+                Season: GetInt("season"),
+                Episode: GetInt("episode"),
+                ShowTitle: Get("showtitle"),
+                ExternalId: null,
+                PosterUrl: Get("thumb"),
+                Artist: Get("artist"),
+                Album: Get("album"));
+        }
+        catch { return null; }
+    }
+
+    public SidecarCapture? CaptureLossless(string sidecarPath) => null;
+
+    public Task<byte[]> BuildAsync(SidecarBuildRequest request, CancellationToken ct = default) =>
+        throw new NotImplementedException();
+}
 
 public class ScanGroupModelTests
 {
@@ -137,7 +215,15 @@ public class ScanGroupingServiceTests
     private readonly ScanGroupingService _svc = new(
         new FolderSignalExtractor(),
         new TagSignalExtractor(),
-        new NfoSignalExtractor());
+        CreateRegistryWithFakeNfoPlugin());
+
+    private static IPluginRegistry CreateRegistryWithFakeNfoPlugin()
+    {
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetSidecarFormatPlugins())
+            .Returns([new FakeNfoSidecarPlugin()]);
+        return registry.Object;
+    }
 
     [Fact]
     public void Group_FlatMusicFiles_BuildsArtistAlbumTree()

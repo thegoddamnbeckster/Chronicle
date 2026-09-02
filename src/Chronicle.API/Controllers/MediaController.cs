@@ -23,7 +23,6 @@ namespace Chronicle.API.Controllers
         private readonly IMergeService _mergeService;
         private readonly IMovieCollectionService _movieCollectionService;
         private readonly IPluginRegistry _pluginRegistry;
-        private readonly Chronicle.Services.Scan.NfoDetailParser _nfoDetailParser;
         private readonly IMetadataResolutionService _resolutionService;
         private readonly OverrideResetProgressService _overrideResetProgress;
 
@@ -31,7 +30,7 @@ namespace Chronicle.API.Controllers
             IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
             ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
-            IPluginRegistry pluginRegistry, Chronicle.Services.Scan.NfoDetailParser nfoDetailParser,
+            IPluginRegistry pluginRegistry,
             IMetadataResolutionService resolutionService, OverrideResetProgressService overrideResetProgress)
         {
             _mediaService            = mediaService;
@@ -42,7 +41,6 @@ namespace Chronicle.API.Controllers
             _movieCollectionService  = movieCollectionService;
             _pluginRegistry          = pluginRegistry;
             _mergeService    = mergeService;
-            _nfoDetailParser = nfoDetailParser;
             _resolutionService = resolutionService;
             _overrideResetProgress = overrideResetProgress;
         }
@@ -152,9 +150,11 @@ namespace Chronicle.API.Controllers
 
         /// <summary>
         /// Parses the rich display fields (plot, cast, genres, rating, etc.) from the
-        /// .nfo sidecar found alongside the item's media file by the file scanner.
-        /// The path comes from the database (never from user input) and is validated
-        /// to exist on disk and end in .nfo before being parsed.
+        /// sidecar found alongside the item's media file by the file scanner. The path comes
+        /// from the database (never from user input) and is validated to exist on disk.
+        /// Delegates the actual field extraction to whichever loaded
+        /// <see cref="Chronicle.Plugins.ISidecarFormatPlugin"/> recognizes it (Kodi's .nfo
+        /// today) -- this endpoint has no sidecar-schema knowledge of its own.
         /// </summary>
         [HttpGet("{id:int}/nfo")]
         public async Task<IActionResult> GetNfoDetail(int id, CancellationToken ct)
@@ -166,14 +166,17 @@ namespace Chronicle.API.Controllers
             var nfoPath = fs?.NfoPath;
 
             if (string.IsNullOrEmpty(nfoPath)) return NotFound();
-            if (!string.Equals(Path.GetExtension(nfoPath), ".nfo", StringComparison.OrdinalIgnoreCase))
-                return NotFound();
             if (!System.IO.File.Exists(nfoPath)) return NotFound();
 
-            var detail = _nfoDetailParser.Parse(nfoPath);
+            System.Text.Json.JsonElement? detail = null;
+            foreach (var plugin in _pluginRegistry.GetSidecarFormatPlugins())
+            {
+                detail = plugin.ExtractCuratedFields(nfoPath);
+                if (detail is not null) break;
+            }
             if (detail is null) return NotFound();
 
-            return Ok(ApiResponse<Chronicle.Services.Scan.NfoDetail>.Ok(detail));
+            return Ok(ApiResponse<System.Text.Json.JsonElement?>.Ok(detail));
         }
 
         [HttpGet("{id:int}/children")]

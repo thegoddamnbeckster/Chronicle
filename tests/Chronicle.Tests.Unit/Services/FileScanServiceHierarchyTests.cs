@@ -176,7 +176,7 @@ public class FileScanServiceHierarchyTests
         });
         await context.SaveChangesAsync();
 
-        var service = new FileScanService(context, null!, null!, null!, null!, null!, null!);
+        var service = new FileScanService(context, null!, null!, null!, null!, null!);
 
         // A fresh scan re-derives the exact merged-away tag string from the audiobook's
         // own ID3 AudioAlbumArtist tag -- no MediaItem has that literal Name any more.
@@ -215,7 +215,7 @@ public class FileScanServiceHierarchyTests
         context.MediaTypes.Add(mediaType);
         await context.SaveChangesAsync();
 
-        var service = new FileScanService(context, null!, null!, null!, null!, null!, null!);
+        var service = new FileScanService(context, null!, null!, null!, null!, null!);
 
         var collapsed = new List<ScannedFile>
         {
@@ -269,7 +269,7 @@ public class FileScanServiceHierarchyTests
         await context.SaveChangesAsync();
 
         var service = new FileScanService(
-            context, null!, null!, null!, new ImportProgressService(), null!, null!);
+            context, null!, null!, null!, new ImportProgressService(), null!);
 
         var request = new ImportGroupsRequest(
             [
@@ -307,7 +307,7 @@ public class FileScanServiceHierarchyTests
         registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
 
         var service = new FileScanService(
-            context, registry.Object, null!, null!, new ImportProgressService(), null!, null!);
+            context, registry.Object, null!, null!, new ImportProgressService(), null!);
 
         var request = new ImportGroupsRequest(
             [
