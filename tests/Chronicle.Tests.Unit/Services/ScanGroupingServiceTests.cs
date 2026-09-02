@@ -79,8 +79,8 @@ public class FolderSignalExtractorTests
     private readonly FolderSignalExtractor _extractor = new();
 
     [Theory]
-    [InlineData(@"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3", @"C:\Music", 3, "Metallica", "Black Album", "01 Enter Sandman")]
-    [InlineData(@"C:\Music\Metallica\01 Enter Sandman.mp3", @"C:\Music", 2, "Metallica", null, "01 Enter Sandman")]
+    [InlineData(@"C:/Music/Metallica/Black Album/01 Enter Sandman.mp3", @"C:/Music", 3, "Metallica", "Black Album", "01 Enter Sandman")]
+    [InlineData(@"C:/Music/Metallica/01 Enter Sandman.mp3", @"C:/Music", 2, "Metallica", null, "01 Enter Sandman")]
     public void Extract_ReturnsCorrectHierarchyLevels(
         string filePath, string scanRoot, int expectedHierarchyLevels,
         string expectedLevel0, string? expectedLevel1, string expectedLeaf)
@@ -95,12 +95,12 @@ public class FolderSignalExtractorTests
     }
 
     [Theory]
-    [InlineData(@"C:\TV\Breaking Bad\Season 1\S01E01 Pilot.mkv", "Breaking Bad", 1, 1)]
-    [InlineData(@"C:\TV\Breaking Bad\Season 5\S05E14 Ozymandias.mkv", "Breaking Bad", 5, 14)]
+    [InlineData(@"C:/TV/Breaking Bad/Season 1/S01E01 Pilot.mkv", "Breaking Bad", 1, 1)]
+    [InlineData(@"C:/TV/Breaking Bad/Season 5/S05E14 Ozymandias.mkv", "Breaking Bad", 5, 14)]
     public void Extract_DetectsSeasonAndEpisodeFromFilename(
         string filePath, string showName, int season, int episode)
     {
-        var result = _extractor.Extract(filePath, @"C:\TV");
+        var result = _extractor.Extract(filePath, @"C:/TV");
 
         result.FolderNames[0].Should().Be(showName);
         result.DetectedSeason.Should().Be(season);
@@ -114,7 +114,7 @@ public class TagSignalExtractorTests
     public void Extract_ReturnsEmpty_ForNonAudioFile()
     {
         var extractor = new TagSignalExtractor();
-        var result = extractor.Extract(@"C:\Music\Metallica\cover.jpg");
+        var result = extractor.Extract(@"C:/Music/Metallica/cover.jpg");
         result.Should().BeNull();
     }
 
@@ -122,7 +122,7 @@ public class TagSignalExtractorTests
     public void Extract_ReturnsNull_WhenFileDoesNotExist()
     {
         var extractor = new TagSignalExtractor();
-        var result = extractor.Extract(@"C:\nonexistent\file.mp3");
+        var result = extractor.Extract(@"C:/nonexistent/file.mp3");
         result.Should().BeNull();
     }
 }
@@ -154,12 +154,12 @@ public class ScanGroupingServiceTests
         // Three files: same artist, same album, different tracks — folder layout
         var files = new[]
         {
-            @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
-            @"C:\Music\Metallica\Black Album\02 Sad But True.mp3",
-            @"C:\Music\Metallica\Black Album\03 Holier Than Thou.mp3",
+            @"C:/Music/Metallica/Black Album/01 Enter Sandman.mp3",
+            @"C:/Music/Metallica/Black Album/02 Sad But True.mp3",
+            @"C:/Music/Metallica/Black Album/03 Holier Than Thou.mp3",
         };
 
-        var result = _svc.Group(files, scanRoot: @"C:\Music", hierarchyLevels: 3);
+        var result = _svc.Group(files, scanRoot: @"C:/Music", hierarchyLevels: 3);
 
         result.Groups.Should().HaveCount(1);
         var artist = result.Groups[0];
@@ -181,12 +181,12 @@ public class ScanGroupingServiceTests
         // Audiobook: many chapter files in one folder, HierarchyLevels=1
         var files = new[]
         {
-            @"C:\Audiobooks\The Hobbit\Part1.mp3",
-            @"C:\Audiobooks\The Hobbit\Part2.mp3",
-            @"C:\Audiobooks\The Hobbit\Part3.mp3",
+            @"C:/Audiobooks/The Hobbit/Part1.mp3",
+            @"C:/Audiobooks/The Hobbit/Part2.mp3",
+            @"C:/Audiobooks/The Hobbit/Part3.mp3",
         };
 
-        var result = _svc.Group(files, scanRoot: @"C:\Audiobooks", hierarchyLevels: 1);
+        var result = _svc.Group(files, scanRoot: @"C:/Audiobooks", hierarchyLevels: 1);
 
         result.Groups.Should().HaveCount(1);
         var book = result.Groups[0];
@@ -206,11 +206,11 @@ public class ScanGroupingServiceTests
         // ".metathumb" < ".mp4"), so it displayed as the item's "own" file in the UI.
         var files = new[]
         {
-            @"H:\Movies\The Fate of the Furious (2017)\The Fate of the Furious (2017).metathumb",
-            @"H:\Movies\The Fate of the Furious (2017)\The Fate of the Furious (2017).mp4",
+            @"H:/Movies/The Fate of the Furious (2017)/The Fate of the Furious (2017).metathumb",
+            @"H:/Movies/The Fate of the Furious (2017)/The Fate of the Furious (2017).mp4",
         };
 
-        var result = _svc.Group(files, scanRoot: @"H:\Movies", hierarchyLevels: 1);
+        var result = _svc.Group(files, scanRoot: @"H:/Movies", hierarchyLevels: 1);
 
         result.Groups.Should().HaveCount(1);
         result.Groups[0].Files.Should().ContainSingle()
@@ -222,11 +222,11 @@ public class ScanGroupingServiceTests
     {
         var files = new[]
         {
-            @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
-            @"C:\Music\Nirvana\Nevermind\01 Smells Like Teen Spirit.mp3",
+            @"C:/Music/Metallica/Black Album/01 Enter Sandman.mp3",
+            @"C:/Music/Nirvana/Nevermind/01 Smells Like Teen Spirit.mp3",
         };
 
-        var result = _svc.Group(files, scanRoot: @"C:\Music", hierarchyLevels: 3);
+        var result = _svc.Group(files, scanRoot: @"C:/Music", hierarchyLevels: 3);
 
         result.Groups.Should().HaveCount(2);
         result.Groups.Select(g => g.Name).Should().Contain(["Metallica", "Nirvana"]);
@@ -237,12 +237,12 @@ public class ScanGroupingServiceTests
     {
         var files = new[]
         {
-            @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
-            @"C:\Music\Metallica\Black Album\cover.jpg",
-            @"C:\Music\Metallica\Black Album\fanart.png",
+            @"C:/Music/Metallica/Black Album/01 Enter Sandman.mp3",
+            @"C:/Music/Metallica/Black Album/cover.jpg",
+            @"C:/Music/Metallica/Black Album/fanart.png",
         };
 
-        var result = _svc.Group(files, scanRoot: @"C:\Music", hierarchyLevels: 3);
+        var result = _svc.Group(files, scanRoot: @"C:/Music", hierarchyLevels: 3);
 
         var album = result.Groups[0].Children[0];
         // Image files don't become leaf items — only the audio track does
@@ -255,12 +255,12 @@ public class ScanGroupingServiceTests
     {
         var files = new[]
         {
-            @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
-            @"C:\Music\Metallica\Black Album\album.nfo",
-            @"C:\Music\Metallica\Black Album\cover.jpg",
+            @"C:/Music/Metallica/Black Album/01 Enter Sandman.mp3",
+            @"C:/Music/Metallica/Black Album/album.nfo",
+            @"C:/Music/Metallica/Black Album/cover.jpg",
         };
 
-        var result = _svc.Group(files, scanRoot: @"C:\Music", hierarchyLevels: 3);
+        var result = _svc.Group(files, scanRoot: @"C:/Music", hierarchyLevels: 3);
 
         result.Ungrouped.Should().BeEmpty();
     }
@@ -275,10 +275,10 @@ public class ScanGroupingServiceTests
         // File is directly inside the show folder — no "Season 1" subdirectory
         var files = new[]
         {
-            @"C:\TV\Breaking Bad\Breaking.Bad.S01E01.Pilot.mkv",
+            @"C:/TV/Breaking Bad/Breaking.Bad.S01E01.Pilot.mkv",
         };
 
-        var result = _svc.Group(files, scanRoot: @"C:\TV", hierarchyLevels: 3);
+        var result = _svc.Group(files, scanRoot: @"C:/TV", hierarchyLevels: 3);
 
         result.Groups.Should().HaveCount(1);
 
@@ -305,12 +305,12 @@ public class ScanGroupingServiceTests
     {
         var files = new[]
         {
-            @"C:\TV\Breaking Bad\Breaking.Bad.S01E01.mkv",
-            @"C:\TV\Breaking Bad\Breaking.Bad.S01E02.mkv",
-            @"C:\TV\Breaking Bad\Breaking.Bad.S02E01.mkv",
+            @"C:/TV/Breaking Bad/Breaking.Bad.S01E01.mkv",
+            @"C:/TV/Breaking Bad/Breaking.Bad.S01E02.mkv",
+            @"C:/TV/Breaking Bad/Breaking.Bad.S02E01.mkv",
         };
 
-        var result = _svc.Group(files, scanRoot: @"C:\TV", hierarchyLevels: 3);
+        var result = _svc.Group(files, scanRoot: @"C:/TV", hierarchyLevels: 3);
 
         result.Groups.Should().HaveCount(1);
         var show = result.Groups[0];
@@ -332,12 +332,12 @@ public class ScanGroupingServiceTests
     {
         var files = new[]
         {
-            @"C:\TV\Breaking Bad\Breaking.Bad.S01E01.mkv",   // real episode
-            @"C:\TV\Breaking Bad\theme.mp3",                  // theme music — supplemental
-            @"C:\TV\Breaking Bad\trailer.mp4",                // trailer — supplemental
+            @"C:/TV/Breaking Bad/Breaking.Bad.S01E01.mkv",   // real episode
+            @"C:/TV/Breaking Bad/theme.mp3",                  // theme music — supplemental
+            @"C:/TV/Breaking Bad/trailer.mp4",                // trailer — supplemental
         };
 
-        var result = _svc.Group(files, scanRoot: @"C:\TV", hierarchyLevels: 3);
+        var result = _svc.Group(files, scanRoot: @"C:/TV", hierarchyLevels: 3);
 
         result.Groups.Should().HaveCount(1);
         var show = result.Groups[0];

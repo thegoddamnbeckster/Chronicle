@@ -16,15 +16,15 @@ public class FileScanServiceHierarchyTests
     [Fact]
     public void CollapseAudiobooksToFolders_SumsDurationsAcrossGroup()
     {
-        var root       = @"C:\Books\Brandon Sanderson";
-        var bookFolder = root + @"\Stormlight - 1 - (2010) - The Way of Kings";
+        var root       = @"C:/Books/Brandon Sanderson";
+        var bookFolder = root + @"/Stormlight - 1 - (2010) - The Way of Kings";
         var files = new List<ScannedFile>
         {
-            new() { FilePath = bookFolder + @"\01.mp3", DurationSeconds = 1800,
+            new() { FilePath = bookFolder + @"/01.mp3", DurationSeconds = 1800,
                     AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
-            new() { FilePath = bookFolder + @"\02.mp3", DurationSeconds = 2100,
+            new() { FilePath = bookFolder + @"/02.mp3", DurationSeconds = 2100,
                     AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
-            new() { FilePath = bookFolder + @"\03.mp3", DurationSeconds = 900,
+            new() { FilePath = bookFolder + @"/03.mp3", DurationSeconds = 900,
                     AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
         };
 
@@ -37,10 +37,10 @@ public class FileScanServiceHierarchyTests
     [Fact]
     public void CollapseAudiobooksToFolders_SingleRootLevelFile_SetsTotal()
     {
-        var root = @"C:\Books";
+        var root = @"C:/Books";
         var files = new List<ScannedFile>
         {
-            new() { FilePath = root + @"\Elantris.mp3", DurationSeconds = 3600 },
+            new() { FilePath = root + @"/Elantris.mp3", DurationSeconds = 3600 },
         };
 
         var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, root);
@@ -52,12 +52,12 @@ public class FileScanServiceHierarchyTests
     [Fact]
     public void CollapseAudiobooksToFolders_BookFolderUnderAuthor_SetsAuthorFolderPath()
     {
-        var libraryRoot = @"C:\Books";
-        var authorFolder = libraryRoot + @"\Brandon Sanderson";
-        var bookFolder    = authorFolder + @"\Stormlight - 1 - (2010) - The Way of Kings";
+        var libraryRoot = @"C:/Books";
+        var authorFolder = libraryRoot + @"/Brandon Sanderson";
+        var bookFolder    = authorFolder + @"/Stormlight - 1 - (2010) - The Way of Kings";
         var files = new List<ScannedFile>
         {
-            new() { FilePath = bookFolder + @"\01.mp3", DurationSeconds = 1800,
+            new() { FilePath = bookFolder + @"/01.mp3", DurationSeconds = 1800,
                     AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
         };
 
@@ -70,11 +70,11 @@ public class FileScanServiceHierarchyTests
     [Fact]
     public void CollapseAudiobooksToFolders_BookFolderAtScanRoot_LeavesAuthorFolderPathNull()
     {
-        var root       = @"C:\Books\Brandon Sanderson";
+        var root       = @"C:/Books/Brandon Sanderson";
         var bookFolder = root; // book folder IS the scan root — no author level above it
         var files = new List<ScannedFile>
         {
-            new() { FilePath = bookFolder + @"\01.mp3", DurationSeconds = 1800 },
+            new() { FilePath = bookFolder + @"/01.mp3", DurationSeconds = 1800 },
         };
 
         var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, root);
@@ -90,13 +90,13 @@ public class FileScanServiceHierarchyTests
     {
         var files = new List<ScannedFile>
         {
-            new() { FilePath = @"C:\Books\B Sanderson\SA-1-(2010)-Way",
+            new() { FilePath = @"C:/Books/B Sanderson/SA-1-(2010)-Way",
                     ParsedTitle = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson",
                     AudioGrouping = "Stormlight Archive", ParsedYear = 2010, TotalDurationSeconds = 3600 },
-            new() { FilePath = @"C:\Books\B Sanderson\SA-2-(2014)-Words",
+            new() { FilePath = @"C:/Books/B Sanderson/SA-2-(2014)-Words",
                     ParsedTitle = "Words of Radiance", AudioAlbumArtist = "Brandon Sanderson",
                     AudioGrouping = "Stormlight Archive", ParsedYear = 2014, TotalDurationSeconds = 4200 },
-            new() { FilePath = @"C:\Books\B Sanderson\(2005)-Elantris",
+            new() { FilePath = @"C:/Books/B Sanderson/(2005)-Elantris",
                     ParsedTitle = "Elantris", AudioAlbumArtist = "Brandon Sanderson",
                     AudioGrouping = null, ParsedYear = 2005, TotalDurationSeconds = 1800 },
         };
@@ -127,16 +127,16 @@ public class FileScanServiceHierarchyTests
     {
         var files = new List<ScannedFile>
         {
-            new() { FilePath = @"C:\Books\B Sanderson\SA-1-(2010)-Way",
+            new() { FilePath = @"C:/Books/B Sanderson/SA-1-(2010)-Way",
                     ParsedTitle = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson",
                     AudioGrouping = "Stormlight Archive", ParsedYear = 2010,
-                    AuthorFolderPath = @"C:\Books\B Sanderson" },
+                    AuthorFolderPath = @"C:/Books/B Sanderson" },
         };
 
         var groups = FileScanService.GroupAudiobooksByAuthorAndSeriesForTest(files);
 
         Assert.Single(groups);
-        Assert.Equal(@"C:\Books\B Sanderson", groups[0].FolderPath);
+        Assert.Equal(@"C:/Books/B Sanderson", groups[0].FolderPath);
     }
 
     // ── FindOrCreateParentAsync merge-alias resolution ────────────────────────
@@ -184,7 +184,7 @@ public class FileScanServiceHierarchyTests
         {
             new()
             {
-                FilePath = @"C:\Books\James Hunter\Rebel Bounty Hunter - 1 - (2020) - Fringe World",
+                FilePath = @"C:/Books/James Hunter/Rebel Bounty Hunter - 1 - (2020) - Fringe World",
                 ParsedTitle = "Fringe World", AudioAlbumArtist = "James Hunter, eden Hudson",
                 ParsedYear = 2020, TotalDurationSeconds = 3600,
             },
@@ -221,7 +221,7 @@ public class FileScanServiceHierarchyTests
         {
             new()
             {
-                FilePath = @"C:\Books\Brand New Author\Some Book",
+                FilePath = @"C:/Books/Brand New Author/Some Book",
                 ParsedTitle = "Some Book", AudioAlbumArtist = "Brand New Author",
                 ParsedYear = 2022, TotalDurationSeconds = 1800,
             },
@@ -275,7 +275,7 @@ public class FileScanServiceHierarchyTests
             [
                 new ScanGroupImport(
                     Name: "Domagoj Kurmaić", Year: null, PosterPath: null,
-                    Children: [], Files: [], FolderPath: @"E:\Audio Books\Domagoj Kurmaić"),
+                    Children: [], Files: [], FolderPath: @"E:/Audio Books/Domagoj Kurmaić"),
             ],
             MediaTypeId: 1);
 
@@ -313,7 +313,7 @@ public class FileScanServiceHierarchyTests
             [
                 new ScanGroupImport(
                     Name: "Brand New Author", Year: null, PosterPath: null,
-                    Children: [], Files: [], FolderPath: @"E:\Audio Books\Brand New Author"),
+                    Children: [], Files: [], FolderPath: @"E:/Audio Books/Brand New Author"),
             ],
             MediaTypeId: 1);
 
@@ -329,7 +329,7 @@ public class FileScanServiceHierarchyTests
     {
         var files = new List<ScannedFile>
         {
-            new() { FilePath = @"C:\Books\Mystery\(2020)-Unknown Book",
+            new() { FilePath = @"C:/Books/Mystery/(2020)-Unknown Book",
                     ParsedTitle = "Unknown Book", AudioAlbumArtist = null,
                     AudioGrouping = null, ParsedYear = 2020 },
         };
