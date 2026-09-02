@@ -740,10 +740,64 @@ public class PluginsController : ControllerBase
         // 12 plugins as of v0.7.0 and this catalog only had 4. Confirmed directly against each
         // repo's actual latest GitHub release (tag + attached asset name + SHA-256 digest) before
         // adding -- not guessed. Still missing from this catalog and deliberately NOT added:
-        // MoviesRemastered, Trakt, and Hardcover each have a GitHub release but NO zip asset
-        // attached to it (InstallFromCatalog would 502 ASSET_NOT_FOUND); TheTVDB and TVMaze have
-        // no release at all. Adding entries for those would put a broken "Install" button in the
-        // UI -- fix the underlying releases first, then add their entries the same way.
+        // TheTVDB and TVMaze have no release at all -- adding entries for those would put a
+        // broken "Install" button in the UI. Create their releases first, then add entries the
+        // same way.
+        //
+        // MoviesRemastered, Trakt, and Hardcover (below) had the same problem -- a GitHub release
+        // with no zip asset attached -- as of 2026-09-02. Built, tested, and packaged locally from
+        // each repo's current buildable code, then handed the zips to the repo owner to attach as
+        // release assets (this session cannot push tags or create/attach GitHub releases -- see
+        // the Kodi.NFO precedent). AssetName/Sha256/Version below match those handed-off zips
+        // exactly, so installs will work as soon as the matching asset lands on the matching
+        // release tag. Trakt's zip is v1.2.0 (built from HEAD) even though its last tagged release
+        // is v1.1.0 -- that old tag's code no longer compiles against current
+        // Chronicle.Plugins.Models (CastMember/CrewMember refactor), so v1.1.0 is not a buildable
+        // target anymore. Hardcover has the same drift (release v1.1.3 vs HEAD v1.2.0); its
+        // manifest.json's plugin_id is "hardcover", not "chronicle.plugin.hardcover" -- that's the
+        // authoritative id per Chronicle's plugin-loading convention. If a new release tag
+        // (v1.2.0/v1.1.0) is created instead of reusing the old one, update GithubRepo's implied
+        // "latest release" lookup needs no change (it always resolves "latest"), but re-verify the
+        // asset name and SHA-256 still match.
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.moviesremastered",
+            Name:        "Movies Remastered (MRDb)",
+            Description: "Fetches fan edit metadata from the Movies Remastered Database (moviesremastered.com / MRDb), a community fanedit archive. No account required. Please use responsibly — a minimum 1-second delay between requests is enforced.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PHJlY3Qgd2lkdGg9JzI0JyBoZWlnaHQ9JzI0JyByeD0nMycgZmlsbD0nI0ZGMDAwMCcvPjxwYXRoIGQ9J001IDhoMnYySDV6bTEyIDBoMnYyaC0yek01IDE0aDJ2Mkg1em0xMiAwaDJ2MmgtMnonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjYnLz48cGF0aCBkPSdNOCA2aDh2MTJIOHonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjknLz48cGF0aCBkPSdNMTAgOWg0TTEwIDEyaDRNMTAgMTVoMycgc3Ryb2tlPScjRkYwMDAwJyBzdHJva2Utd2lkdGg9JzEuMicgc3Ryb2tlLWxpbmVjYXA9J3JvdW5kJy8+PC9zdmc+",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered",
+            AssetName:   "chronicle.plugin.moviesremastered-v1.0.0.zip",
+            DllName:     "Chronicle.Plugin.MoviesRemastered.dll",
+            Tags:        ["movies", "fanedits", "metadata"],
+            Sha256:      "8d647f5a2496ae322514ab102e1b417a3807eb2182142bbff4365eff2852c87f",
+            Version:     "1.0.0"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.trakt",
+            Name:        "Trakt",
+            Description: "Import watch history, ratings, watchlist, and in-progress playback position from Trakt.tv into Chronicle. Requires a Trakt API application (Settings → Your API Apps on trakt.tv) — as of 2026, creating one requires a paid Trakt VIP membership, so a free account cannot obtain a client_id at all.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "https://trakt.tv/favicon.ico",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Trakt",
+            AssetName:   "chronicle.plugin.trakt-v1.2.0.zip",
+            DllName:     "Chronicle.Plugin.Trakt.dll",
+            Tags:        ["movies", "tv", "scrobbling", "sync"],
+            Sha256:      "9cb0b48d53be17d127402051ac8bad442f02055ecac23ec8cda27d5b0ed172a8",
+            Version:     "1.2.0"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "hardcover",
+            Name:        "Hardcover",
+            Description: "Book and audiobook metadata from Hardcover.app, plus reading history import.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PHJlY3QgeD0nMycgeT0nMycgd2lkdGg9JzE4JyBoZWlnaHQ9JzE4JyByeD0nMicgZmlsbD0nIzdjM2FlZCcvPjxwYXRoIGZpbGw9J3doaXRlJyBkPSdNNyA3aDEwdjJIN3ptMCA0aDEwdjJIN3ptMCA0aDd2Mkg3eicvPjwvc3ZnPg==",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Hardcover",
+            AssetName:   "chronicle.plugin.hardcover-v1.2.0.zip",
+            DllName:     "Chronicle.Plugin.Hardcover.dll",
+            Tags:        ["books", "audiobooks", "metadata", "sync"],
+            Sha256:      "717ee1b81c78a896cda72c1ce8c7692ac2f667e0871290c098d7b0c12c635fa2",
+            Version:     "1.2.0"
+        ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.fanedit",
             Name:        "FanEdit",
