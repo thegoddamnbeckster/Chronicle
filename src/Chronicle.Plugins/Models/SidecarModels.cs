@@ -18,7 +18,13 @@ public record SidecarSignal(
     int? Episode = null,
     string? ShowTitle = null,
     string? ExternalId = null,
-    string? PosterUrl = null);
+    string? PosterUrl = null,
+    /// <summary>Music-type signal -- the old Chronicle.Services.Scan.NfoSignal this record
+    /// replaces carried these too, and ScanGroupingService's own music (Artist/Album level-0/
+    /// level-1) grouping logic actually reads them. Not every sidecar format has an artist/
+    /// album concept (Kodi's own movie/tvshow/episode NFOs never do) -- null there.</summary>
+    string? Artist = null,
+    string? Album = null);
 
 /// <summary>
 /// Full lossless capture of a sidecar file, for storage. RawText is the actual
