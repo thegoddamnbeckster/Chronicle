@@ -734,6 +734,71 @@ public class PluginsController : ControllerBase
             Sha256:      "98b9943b24cad8bfd0c60bfd8cec2e2398d0cc99b23461b89fbc4255a7197fce",
             Version:     "1.0.0"
         ),
+        // The five plugins below this comment (FanEdit, Simkl, FanartTV, Themes.Default --
+        // and Kodi.NFO once it has a release, see docs/plans/2026-09-02-kodi-nfo-plugin-design.md)
+        // were added 2026-09-02 after discovering this array was badly stale: CLAUDE.md lists
+        // 12 plugins as of v0.7.0 and this catalog only had 4. Confirmed directly against each
+        // repo's actual latest GitHub release (tag + attached asset name + SHA-256 digest) before
+        // adding -- not guessed. Still missing from this catalog and deliberately NOT added:
+        // MoviesRemastered, Trakt, and Hardcover each have a GitHub release but NO zip asset
+        // attached to it (InstallFromCatalog would 502 ASSET_NOT_FOUND); TheTVDB and TVMaze have
+        // no release at all. Adding entries for those would put a broken "Install" button in the
+        // UI -- fix the underlying releases first, then add their entries the same way.
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.fanedit",
+            Name:        "FanEdit",
+            Description: "Fetches fanedit metadata from the Internet Fan Edit Database (fanedit.org). Requires a registered fanedit.org account. Please use responsibly — a minimum 1-second delay between requests is enforced.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PHJlY3Qgd2lkdGg9JzI0JyBoZWlnaHQ9JzI0JyByeD0nMycgZmlsbD0nI2MyNDEwYycvPjxwYXRoIGQ9J001IDhoMnYySDV6bTEyIDBoMnYyaC0yek01IDE0aDJ2Mkg1em0xMiAwaDJ2MmgtMnonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjYnLz48cGF0aCBkPSdNOCA2aDh2MTJIOHonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjknLz48cGF0aCBkPSdNMTAgOWg0TTEwIDEyaDRNMTAgMTVoMycgc3Ryb2tlPScjYzI0MTBjJyBzdHJva2Utd2lkdGg9JzEuMicgc3Ryb2tlLWxpbmVjYXA9J3JvdW5kJy8+PC9zdmc+",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.FanEdit",
+            AssetName:   "chronicle.plugin.fanedit-v1.0.0.zip",
+            DllName:     "Chronicle.Plugin.FanEdit.dll",
+            Tags:        ["movies", "fanedits", "metadata"],
+            Sha256:      "eb559c681d9f2fd5edddc8981fbea5a106bd4931f713d221aff703b039a44117",
+            Version:     "1.0.0"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.simkl",
+            Name:        "SIMKL",
+            Description: "Metadata for Movies, TV, and Anime from SIMKL. Requires a free SIMKL API Client ID.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "https://simkl.com/favicon.ico",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Simkl",
+            AssetName:   "chronicle.plugin.simkl-v1.1.0.zip",
+            DllName:     "Chronicle.Plugin.Simkl.dll",
+            Tags:        ["movies", "tv", "anime", "metadata"],
+            Sha256:      "0be5da25f81a5a58cc42a0a0c6574a5070e5b1006448a8720046c3aab0535869",
+            // The latest GitHub release (the version actually installable through this catalog)
+            // is v1.1.0 -- the repo's own HEAD manifest.json has moved on to 1.4.0 since, but
+            // that newer code has no attached release asset yet. Bump this once it does.
+            Version:     "1.1.0"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.fanarttv",
+            Name:        "Fanart.tv",
+            Description: "Fetches high-quality artwork from Fanart.tv — posters, backgrounds, logos, disc art, clearart, and banners for movies, TV, and music. Requires a free Fanart.tv API key.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "https://fanart.tv/favicon.ico",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.FanartTV",
+            AssetName:   "chronicle.plugin.fanarttv-v1.0.0.zip",
+            DllName:     "Chronicle.Plugin.FanartTV.dll",
+            Tags:        ["movies", "tv", "music", "artwork", "metadata"],
+            Sha256:      "449ebf8b1905d349dcc51bcb8e2708267d6e53e006b7001ed63d6e15d3fce532",
+            Version:     "1.0.0"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.themes.default",
+            Name:        "Default Themes",
+            Description: "Provides the four built-in Chronicle themes: Light, Dark, Navy & Pink, and Dark Teal. Install additional theme plugins to expand the available theme list.",
+            Author:      "Chronicle",
+            IconUrl:     null,
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Themes.Default",
+            AssetName:   "chronicle.plugin.themes.default-v1.0.0.zip",
+            DllName:     "Chronicle.Plugin.Themes.Default.dll",
+            Tags:        ["themes", "ui"],
+            Sha256:      "1bdf6ae1c4a109c946629baf7787aef8b3d9555127888d0182cb9b6b58cf7079",
+            Version:     "1.0.0"
+        ),
     ];
 
     // ── GET /api/v1/plugins/catalog ───────────────────────────────────────────
