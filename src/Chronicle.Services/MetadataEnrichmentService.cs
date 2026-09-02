@@ -8,7 +8,6 @@ using Chronicle.Data;
 using Chronicle.Plugins;
 using Chronicle.Plugins.Models;
 using Chronicle.Services.Plugins;
-using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -24,7 +23,6 @@ public class MetadataEnrichmentService(
     ILogger<MetadataEnrichmentService> logger) : IMetadataEnrichmentService
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
-    private static readonly NfoSignalExtractor _nfoExtractor = new();
 
     // Camelcase options used when serialising MediaMetadata objects into metadata_json plugin
     // blobs.  MetadataResolutionService.FieldMap and MediaController._resolved reads all use
@@ -2338,20 +2336,34 @@ public class MetadataEnrichmentService(
     /// <summary>
     /// Looks for tvshow.nfo / movie.nfo (and any *.nfo as fallback) in
     /// <paramref name="folderPath"/> and returns the numeric TMDB ID from
-    /// &lt;uniqueid type="tmdb"&gt; if present.
+    /// &lt;uniqueid type="tmdb"&gt; if present. Delegates the actual sidecar-format knowledge
+    /// to whichever loaded <see cref="ISidecarFormatPlugin"/> recognizes the file (Kodi's
+    /// .nfo today) instead of the hardcoded NfoSignalExtractor this used to call directly --
+    /// see docs/plans/2026-09-02-kodi-nfo-plugin-design.md for why. This is the one caller in
+    /// this class that needs a specific WELL-KNOWN FILENAME rather than "the sidecar next to
+    /// this exact media file", so it probes each candidate name through the plugin's own
+    /// FindSidecar convention (e.g. Kodi's FindSidecar("tvshow.nfo") resolves to itself via
+    /// its own stem-match rule) rather than reimplementing that convention here.
     /// </summary>
-    private static string? TryReadNfoTmdbId(string folderPath)
+    private string? TryReadNfoTmdbId(string folderPath)
     {
         if (!Directory.Exists(folderPath)) return null;
         try
         {
+            using var scope = scopeFactory.CreateScope();
+            var sidecarPlugins = scope.ServiceProvider.GetRequiredService<IPluginRegistry>()
+                .GetSidecarFormatPlugins();
+            if (sidecarPlugins.Count == 0) return null;
+
             // Prefer well-known names (Kodi/Jellyfin convention)
             foreach (var name in new[] { "tvshow.nfo", "movie.nfo" })
             {
-                var path = Path.Combine(folderPath, name);
-                if (File.Exists(path))
+                var probePath = Path.Combine(folderPath, name);
+                foreach (var plugin in sidecarPlugins)
                 {
-                    var id = _nfoExtractor.Extract(path)?.ExternalId;
+                    var sidecarPath = plugin.FindSidecar(probePath);
+                    if (sidecarPath is null) continue;
+                    var id = plugin.ExtractSignal(sidecarPath)?.ExternalId;
                     if (!string.IsNullOrEmpty(id)) return id;
                 }
             }
@@ -2359,8 +2371,11 @@ public class MetadataEnrichmentService(
             var any = Directory.EnumerateFiles(folderPath, "*.nfo").FirstOrDefault();
             if (any is not null)
             {
-                var id = _nfoExtractor.Extract(any)?.ExternalId;
-                if (!string.IsNullOrEmpty(id)) return id;
+                foreach (var plugin in sidecarPlugins)
+                {
+                    var id = plugin.ExtractSignal(any)?.ExternalId;
+                    if (!string.IsNullOrEmpty(id)) return id;
+                }
             }
         }
         catch { /* I/O error — network drive unavailable etc. */ }

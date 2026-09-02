@@ -1,13 +1,37 @@
 # Chronicle.Plugin.Kodi.NFO — Design
 
 **Date:** 2026-09-02
-**Status:** In progress — read side + core rewiring landed, one dependency remains (see
-Progress checkpoint below) before the old classes can be deleted. Write side
-(`BuildAsync`/scraper integration) not started.
+**Status:** Read side + core rewiring done, including the `MetadataEnrichmentService`
+dependency (see Progress checkpoint below) — `NfoSignalExtractor`/`NfoDetailParser` are
+deleted. Write side (`BuildAsync`/scraper integration, phased-rollout steps 3-6) not started.
 
 ---
 
-## Progress checkpoint (2026-09-02)
+## Progress checkpoint (2026-09-02, updated)
+
+**Update:** the one remaining blocker noted below — `MetadataEnrichmentService.TryReadNfoTmdbId`'s
+direct `NfoSignalExtractor` dependency — is now fixed. Rather than threading `IPluginRegistry`
+down through the `EnrichItemCoreAsync` → `EnrichItemCoreLockedAsync` call chain as originally
+planned, the actual fix turned out smaller: `MetadataEnrichmentService` already captures
+`IServiceScopeFactory scopeFactory` as a primary-constructor parameter and already uses the
+`scopeFactory.CreateScope()`/`CreateAsyncScope()` → resolve-from-scope idiom throughout this
+file (it's a scoped service pulled in on demand because `IPluginRegistry` is itself scoped and
+this class needs fresh instances across long-running background batches). `TryReadNfoTmdbId`
+now just does the same thing locally — `using var scope = scopeFactory.CreateScope();` then
+`scope.ServiceProvider.GetRequiredService<IPluginRegistry>().GetSidecarFormatPlugins()` — with
+no change needed anywhere in the call chain above it. It probes each well-known filename
+(`tvshow.nfo`, `movie.nfo`) through each plugin's own `FindSidecar` convention (recommendation
+1 from the original write-up below: `plugin.FindSidecar(Path.Combine(folderPath, "tvshow.nfo"))`
+resolves to itself via Kodi's own stem-match rule) rather than reimplementing that convention
+in this file.
+
+With that closed out, `Chronicle.Services.Scan.NfoSignalExtractor`/`NfoDetailParser` had no
+remaining callers anywhere in `src/` and were deleted, along with their direct tests
+(`NfoSignalExtractorTests`, `NfoDetailParserTests.cs` — coverage already existed in the
+`Chronicle.Plugin.Kodi.NFO` repo's own `KodiNfoReaderTests.cs`). Phased-rollout step 2 (below)
+is now fully done.
+
+### Original checkpoint (superseded by the update above, kept for the full trail)
 
 What's actually done, as of this checkpoint, so a later session doesn't have to re-derive it
 by diffing:
@@ -345,7 +369,7 @@ Everything else Kodi-specific moves out:
 
 1. ✅ **Done.** Add `ISidecarFormatPlugin` to `Chronicle.Plugins`, registry plumbing in
    `Chronicle.Services.Plugins` — additive, no behavior change yet (nothing implements it).
-2. **Mostly done — one dependency left, see Progress checkpoint above.**
+2. ✅ **Done.**
    - ✅ Scaffold `Chronicle.Plugin.Kodi.NFO`: port `NfoSignalExtractor`/`NfoDetailParser`'s
      read side (`KodiNfoReader`).
    - ✅ Wire `ScanGroupingService`/`FileScanService` to go through the registry;
@@ -353,12 +377,10 @@ Everything else Kodi-specific moves out:
      `ApplyNfoSignals` post-scan pass in `FileScanService` (it can't reach the registry
      itself — see Progress checkpoint for why).
    - ✅ Wire `MediaController.GetNfoDetail` through the registry.
-   - ❌ **Not done:** `MetadataEnrichmentService.TryReadNfoTmdbId` still depends on
-     `NfoSignalExtractor` directly (undiscovered until this pass — see Progress checkpoint
-     for the exact fix).
-   - ❌ **Not done:** delete `Chronicle.Services.Scan.NfoSignalExtractor`/`NfoDetailParser`
-     and their direct tests (`NfoSignalExtractorTests`/`NfoDetailParserTests`) — blocked on
-     the item above; these classes still have one real caller.
+   - ✅ `MetadataEnrichmentService.TryReadNfoTmdbId` rewired to resolve sidecar plugins via
+     `scopeFactory.CreateScope()` (see the update at the top of the Progress checkpoint).
+   - ✅ `Chronicle.Services.Scan.NfoSignalExtractor`/`NfoDetailParser` and their direct tests
+     (`NfoSignalExtractorTests`, `NfoDetailParserTests.cs`) deleted — no remaining callers.
 3. Add `BuildAsync` (the write side) to the same plugin, plus the new `ScraperController`
    endpoint(s). **Not started** — `KodiNfoBuilder.BuildAsync` exists in the plugin repo and
    is unit-tested in isolation, but nothing in the main Chronicle repo calls it yet: no
