@@ -1,7 +1,126 @@
 # Chronicle.Plugin.Kodi.NFO — Design
 
 **Date:** 2026-09-02
-**Status:** Proposed
+**Status:** In progress — read side + core rewiring landed, one dependency remains (see
+Progress checkpoint below) before the old classes can be deleted. Write side
+(`BuildAsync`/scraper integration) not started.
+
+---
+
+## Progress checkpoint (2026-09-02)
+
+What's actually done, as of this checkpoint, so a later session doesn't have to re-derive it
+by diffing:
+
+**`Chronicle.Plugin.Kodi.NFO`** (separate repo, `thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO`,
+branch `main`) — scaffolded and implements the read side in full: `KodiNfoReader`
+(`FindSidecar`, `ExtractSignal`, `CaptureLossless`, `ExtractCuratedFields`) and `KodiNfoBuilder`
+(`BuildAsync` for movie/show/episode) both exist and are unit-tested. This is further along
+than the interface sketch below shows — see that repo directly for the real, current
+`ISidecarFormatPlugin` implementation rather than trusting the code blocks in this doc, which
+were written before implementation and have drifted in small ways (e.g. `SidecarSignal` also
+carries `Artist`/`Album` for music-type grouping, `BuildAsync` takes a single
+`SidecarBuildRequest` whose `ExtraFields` init property carries the streamdetails bag rather
+than a separate parameter).
+
+**Main `Chronicle` repo, PR #10** — the plugin/registry plumbing (`ISidecarFormatPlugin`,
+`SidecarModels.cs`, `PluginRegistry`/`IPluginRegistry`/`LoadedPlugin` wiring — step 1 below)
+and the rewiring of everything that's real, DI-registered and can reach `IPluginRegistry` —
+step 2 below — are both done:
+
+- `ScanGroupingService` — constructor takes `IPluginRegistry`; per-file sidecar lookup goes
+  through `GetSidecarFormatPlugins()`.
+- `FileScanService` — `LookupNfo`, a new `CaptureSidecar` helper, and `UpsertGroupItemAsync`
+  all resolve sidecars through the registry instead of the old hardcoded classes. A new
+  `ApplyNfoSignals` method is a **compensating post-scan pass**: `BuiltInFileScannerPlugin`
+  is instantiated via bare `Activator.CreateInstance` (see
+  `PluginRegistry.DiscoverAndInstantiate`) with **no DI**, so it can never itself hold an
+  `IPluginRegistry` reference to look up sidecar plugins. `ApplyNfoSignals` runs once against
+  every `ScanDirectoryAsync` result (4 call sites) and reproduces exactly the field-priority
+  rules `BuiltInFileScannerPlugin.ParseFile` used to apply directly against the old
+  `NfoSignalExtractor`.
+- `BuiltInFileScannerPlugin` — no longer touches any sidecar class; produces tag/filename-only
+  fields and leaves sidecar fields null for `ApplyNfoSignals` to fill in.
+- `MediaController.GetNfoDetail` — delegates to whichever loaded `ISidecarFormatPlugin`'s
+  `ExtractCuratedFields` recognizes the path, returns `JsonElement` (same JSON shape the
+  frontend's `NfoDetail` TS interface already expects) instead of the removed dependency on a
+  typed `Chronicle.Services.Scan.NfoDetail`.
+- `Program.cs` — the `NfoSignalExtractor`/`NfoDetailParser` DI registrations are removed
+  (nothing above needs them anymore).
+- Tests updated to match: `ScanGroupingServiceTests` gained a `FakeNfoSidecarPlugin` test
+  double (file-scoped, in that test file) since the real Kodi logic lives in the separate
+  plugin repo this test project can't reference; `FileScanServiceHierarchyTests`' four direct
+  `FileScanService(...)` construction sites lost the arg the retired constructor parameter
+  needed.
+
+**What's NOT done — the one remaining blocker before `NfoSignalExtractor.cs`/
+`NfoDetailParser.cs` can be deleted:**
+
+`Chronicle.Services.MetadataEnrichmentService` has its own, independent, previously
+undiscovered direct dependency:
+
+```csharp
+private static readonly NfoSignalExtractor _nfoExtractor = new();
+```
+
+used by `TryReadNfoTmdbId(string folderPath)` (private static, ~line 2343), which hardcodes
+Kodi's own well-known filenames (`tvshow.nfo`, `movie.nfo`, falling back to the first `*.nfo`
+in the folder) and calls `_nfoExtractor.Extract(path)?.ExternalId` to pull a TMDB id straight
+out of a local sidecar as a fallback match strategy before falling back to a name search (see
+the surrounding comment at ~line 1343, "NFO sidecar fallback (root items only, TMDB-style
+plugins)"). This is exactly the same kind of hardcoded-Kodi-knowledge-in-core problem the rest
+of this doc is about — it was simply never surfaced until this rewiring pass actually grepped
+for every real caller of `NfoSignalExtractor`.
+
+Unlike `BuiltInFileScannerPlugin`, `MetadataEnrichmentService` **is** a real DI-registered
+service (`AddScoped<IMetadataEnrichmentService, MetadataEnrichmentService>` in `Program.cs`)
+and already resolves `IPluginRegistry` in several places via
+`scope.ServiceProvider.GetRequiredService<IPluginRegistry>()` (a scoped-background-job
+pattern, not constructor injection, because this service runs enrichment batches outside a
+normal request scope). So this is fixable the same way as everything above — it just wasn't
+done in this pass because it surfaced late and threading a registry reference down to
+`TryReadNfoTmdbId` touches a call chain, not a single method:
+
+- `TryReadNfoTmdbId(folderPath)` is called from `EnrichItemCoreLockedAsync` (~line 1356),
+  which has no `IPluginRegistry` in its parameter list today (`db, provider, pluginId, row,
+  options, ct, allProviders`).
+- `EnrichItemCoreLockedAsync` is called from `EnrichItemCoreAsync` (~line 1015) — **note
+  there are two distinct `EnrichItemCoreAsync` overloads/definitions in this file** (~line
+  992 and ~line 2489); the second appears to be part of a separate cascade-to-children path
+  (`CascadeToChildrenAsync`, ~line 2535) and needs the same treatment independently — check
+  whether it also reaches `EnrichItemCoreLockedAsync` or has its own parallel logic before
+  assuming one fix covers both.
+- `EnrichItemCoreAsync` in turn has ~4-5 callers across the file (grep `EnrichItemCoreAsync(`
+  for the current list — lines drift as the file changes), each of which already resolves
+  `registry` locally via the `scope.ServiceProvider.GetRequiredService<IPluginRegistry>()`
+  pattern for its own purposes.
+
+**The fix, mechanically:** thread an `IPluginRegistry registry` parameter (or just the
+resolved `IReadOnlyList<ISidecarFormatPlugin>`, to keep the signature smaller) down through
+`EnrichItemCoreAsync` → `EnrichItemCoreLockedAsync` → `TryReadNfoTmdbId`, at every call site
+listed above, then rewrite `TryReadNfoTmdbId` to loop over the sidecar plugins the same way
+`ScanGroupingService.FindSidecarSignal`/`FileScanService.LookupNfo` do — except this one looks
+in a folder for a set of **well-known filenames** rather than next to a specific media file,
+which `ISidecarFormatPlugin.FindSidecar(mediaFilePath)` doesn't directly support. Two
+reasonable options, pick one when doing this:
+1. Call `plugin.FindSidecar(Path.Combine(folderPath, "tvshow.nfo"))` (or `"movie.nfo"`) as a
+   synthetic "media file path" — works today because Kodi's own `FindSidecar` just does
+   stem-based lookup (`tvshow.nfo` → looks for `tvshow.nfo`, finds itself) but is a slightly
+   abusive use of the contract and only happens to work for this one plugin's
+   implementation.
+2. Add a small folder-scoped lookup to the interface (e.g. `string?
+   FindWellKnownSidecar(string folderPath, string[] candidateNames)`) — cleaner, but touches
+   the interface again, meaning the plugin repo needs a follow-up release too.
+Recommendation: option 1 to start (no interface/plugin-repo change needed, ships in this repo
+alone), revisit option 2 only if a second sidecar-format plugin ever needs the same
+well-known-filename pattern and the abuse becomes uncomfortable.
+
+Once that's done: delete `TryReadNfoTmdbId`'s dependency on `NfoSignalExtractor`, then check
+system-wide (`grep -rn "NfoSignalExtractor\|NfoDetailParser"` across `src/` and `tests/`) —
+at that point only the two class definitions themselves and `NfoSignalExtractorTests`/
+`NfoDetailParserTests` (which test them directly, and can be deleted alongside) should remain,
+and steps 2's final "delete the old classes" sub-step (see Phased rollout below) can actually
+happen.
 
 ---
 
@@ -224,19 +343,32 @@ Everything else Kodi-specific moves out:
 
 ## Phased rollout (so this isn't one unreviewable cross-repo change)
 
-1. Add `ISidecarFormatPlugin` to `Chronicle.Plugins`, registry plumbing in
+1. ✅ **Done.** Add `ISidecarFormatPlugin` to `Chronicle.Plugins`, registry plumbing in
    `Chronicle.Services.Plugins` — additive, no behavior change yet (nothing implements it).
-2. Scaffold `Chronicle.Plugin.Kodi.NFO`: port `NfoSignalExtractor`/`NfoDetailParser`'s read
-   side first (lower risk — same behavior Chronicle already has, just relocated). Wire
-   `ScanGroupingService`/`BuiltInFileScannerPlugin`/`FileScanService` to go through the
-   registry. Delete the old `Chronicle.Services.Scan` NFO classes once this plugin is the
-   sole caller.
+2. **Mostly done — one dependency left, see Progress checkpoint above.**
+   - ✅ Scaffold `Chronicle.Plugin.Kodi.NFO`: port `NfoSignalExtractor`/`NfoDetailParser`'s
+     read side (`KodiNfoReader`).
+   - ✅ Wire `ScanGroupingService`/`FileScanService` to go through the registry;
+     `BuiltInFileScannerPlugin` stripped of direct sidecar knowledge with a compensating
+     `ApplyNfoSignals` post-scan pass in `FileScanService` (it can't reach the registry
+     itself — see Progress checkpoint for why).
+   - ✅ Wire `MediaController.GetNfoDetail` through the registry.
+   - ❌ **Not done:** `MetadataEnrichmentService.TryReadNfoTmdbId` still depends on
+     `NfoSignalExtractor` directly (undiscovered until this pass — see Progress checkpoint
+     for the exact fix).
+   - ❌ **Not done:** delete `Chronicle.Services.Scan.NfoSignalExtractor`/`NfoDetailParser`
+     and their direct tests (`NfoSignalExtractorTests`/`NfoDetailParserTests`) — blocked on
+     the item above; these classes still have one real caller.
 3. Add `BuildAsync` (the write side) to the same plugin, plus the new `ScraperController`
-   endpoint(s).
+   endpoint(s). **Not started** — `KodiNfoBuilder.BuildAsync` exists in the plugin repo and
+   is unit-tested in isolation, but nothing in the main Chronicle repo calls it yet: no
+   `ScraperController` endpoint exists to resolve an item's data and invoke it.
 4. Update `Chronicle_Scraper` (movie addon) to call the new endpoint instead of
    `nfo_writer.py`'s local builder; verify against a real library before touching TV.
-5. Same for `tv_addon`.
+   **Not started** (depends on step 3).
+5. Same for `tv_addon`. **Not started.**
 6. Delete the now-dead Chronicle-data functions from `lib/nfo_common.py` in both addons.
+   **Not started.**
 
 Each step is independently shippable and revertible; nothing requires steps 4-6 to land in
 the same PR as 1-3.
