@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Chronicle.Plugins.Models;
 
 namespace Chronicle.Plugins;
@@ -65,6 +66,16 @@ public interface ISidecarFormatPlugin
     /// Returns null if the sidecar is missing or unreadable -- never throws.
     /// </summary>
     SidecarCapture? CaptureLossless(string sidecarPath);
+
+    /// <summary>
+    /// Extracts a curated, display-oriented subset of fields from a sidecar -- e.g. plot,
+    /// genres, rating for a dedicated UI card -- as opposed to <see cref="CaptureLossless"/>'s
+    /// fully generic tree. The exact field set/shape is entirely up to the plugin; Chronicle's
+    /// API layer passes the result through verbatim without knowing what's in it. Default
+    /// implementation returns null, for a sidecar-format plugin with no curated view worth
+    /// giving special UI treatment beyond the generic capture. Never throws.
+    /// </summary>
+    JsonElement? ExtractCuratedFields(string sidecarPath) => null;
 
     // ── Write side (on demand, via API) ──────────────────────────────────────
 
