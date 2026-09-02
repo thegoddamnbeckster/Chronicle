@@ -657,7 +657,7 @@ public class PluginsController : ControllerBase
         try
         {
             var result = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                t => loaded.MetadataProviders[0].GetByIdAsync(externalId, t),
+                async t => (MediaMetadata?)await loaded.MetadataProviders[0].GetByIdAsync(externalId, t),
                 loaded.Manifest.PluginId, "GetByIdAsync", null,
                 msg => _logger.LogWarning("{Msg}", msg), msg => _logger.LogError("{Msg}", msg), ct);
             if (result is null)

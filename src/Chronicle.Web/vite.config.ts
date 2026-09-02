@@ -51,6 +51,24 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Splits third-party libraries into their own chunks so the app's own code isn't
+        // bundled into one >500kB file with everything else -- these change far less often
+        // than app code, so browsers cache them across deploys instead of re-downloading on
+        // every release. Grouped by how independently each is actually used, not just by
+        // package.json section: recharts is only pulled in by a handful of dashboard/report
+        // pages, so keeping it out of the main chunk means most navigations never fetch it.
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-charts': ['recharts'],
+          'vendor-query': ['@tanstack/react-query', '@tanstack/react-virtual'],
+          'vendor-dnd': ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
+        },
+      },
+    },
+  },
   server: {
     port: webPort,
     host: true,

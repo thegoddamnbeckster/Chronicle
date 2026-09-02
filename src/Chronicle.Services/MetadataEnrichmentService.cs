@@ -1094,7 +1094,7 @@ public class MetadataEnrichmentService(
                 }
 
                 result = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                    t => provider.GetByIdAsync(resolvedId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
+                    async t => (MediaMetadata?)await provider.GetByIdAsync(resolvedId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
             }
 
             // Force mode (user-triggered Refresh / Refresh All): don't trust a previously
@@ -1227,7 +1227,7 @@ public class MetadataEnrichmentService(
                     try
                     {
                         result = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                            t => provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
+                            async t => (MediaMetadata?)await provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
                     }
                     catch (ArgumentException ex)
                     {
@@ -1335,7 +1335,7 @@ public class MetadataEnrichmentService(
                 // If we derived an ID, call the provider now
                 if (hierarchyDerivedId && !string.IsNullOrEmpty(row.ExternalId))
                     result = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                        t => provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
+                        async t => (MediaMetadata?)await provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
             }
 
             // ── NFO sidecar fallback (root items only, TMDB-style plugins) ─────────
@@ -1364,7 +1364,7 @@ public class MetadataEnrichmentService(
                         try
                         {
                             var nfoResult = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                                t => provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
+                                async t => (MediaMetadata?)await provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
 
                             // Sanity-check against the item's ORIGINAL scanned title (derived from
                             // the file scanner's folder path), NOT row.MediaItem.Name. A local NFO
@@ -1716,7 +1716,7 @@ public class MetadataEnrichmentService(
                         try
                         {
                             var fullResult = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                                t => provider.GetByIdAsync(result.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
+                                async t => (MediaMetadata?)await provider.GetByIdAsync(result.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
                             if (fullResult is not null && !string.IsNullOrEmpty(fullResult.ExternalId))
                                 result = fullResult;
                         }

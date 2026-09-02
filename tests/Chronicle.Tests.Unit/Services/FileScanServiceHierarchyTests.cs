@@ -16,15 +16,19 @@ public class FileScanServiceHierarchyTests
     [Fact]
     public void CollapseAudiobooksToFolders_SumsDurationsAcrossGroup()
     {
-        var root       = @"C:/Books/Brandon Sanderson";
-        var bookFolder = root + @"/Stormlight - 1 - (2010) - The Way of Kings";
+        // Path.Combine (not a hardcoded "/") throughout this file: FileScanService derives
+        // AuthorFolderPath via Path.GetDirectoryName, which normalizes to the OS-native
+        // separator -- a hardcoded "/" fixture only round-trips unchanged on Linux (where CI
+        // runs) and fails on Windows, where the real, correct output uses "\".
+        var root       = Path.Combine("C:", "Books", "Brandon Sanderson");
+        var bookFolder = Path.Combine(root, "Stormlight - 1 - (2010) - The Way of Kings");
         var files = new List<ScannedFile>
         {
-            new() { FilePath = bookFolder + @"/01.mp3", DurationSeconds = 1800,
+            new() { FilePath = Path.Combine(bookFolder, "01.mp3"), DurationSeconds = 1800,
                     AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
-            new() { FilePath = bookFolder + @"/02.mp3", DurationSeconds = 2100,
+            new() { FilePath = Path.Combine(bookFolder, "02.mp3"), DurationSeconds = 2100,
                     AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
-            new() { FilePath = bookFolder + @"/03.mp3", DurationSeconds = 900,
+            new() { FilePath = Path.Combine(bookFolder, "03.mp3"), DurationSeconds = 900,
                     AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
         };
 
@@ -37,10 +41,10 @@ public class FileScanServiceHierarchyTests
     [Fact]
     public void CollapseAudiobooksToFolders_SingleRootLevelFile_SetsTotal()
     {
-        var root = @"C:/Books";
+        var root = Path.Combine("C:", "Books");
         var files = new List<ScannedFile>
         {
-            new() { FilePath = root + @"/Elantris.mp3", DurationSeconds = 3600 },
+            new() { FilePath = Path.Combine(root, "Elantris.mp3"), DurationSeconds = 3600 },
         };
 
         var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, root);
@@ -52,12 +56,12 @@ public class FileScanServiceHierarchyTests
     [Fact]
     public void CollapseAudiobooksToFolders_BookFolderUnderAuthor_SetsAuthorFolderPath()
     {
-        var libraryRoot = @"C:/Books";
-        var authorFolder = libraryRoot + @"/Brandon Sanderson";
-        var bookFolder    = authorFolder + @"/Stormlight - 1 - (2010) - The Way of Kings";
+        var libraryRoot   = Path.Combine("C:", "Books");
+        var authorFolder  = Path.Combine(libraryRoot, "Brandon Sanderson");
+        var bookFolder    = Path.Combine(authorFolder, "Stormlight - 1 - (2010) - The Way of Kings");
         var files = new List<ScannedFile>
         {
-            new() { FilePath = bookFolder + @"/01.mp3", DurationSeconds = 1800,
+            new() { FilePath = Path.Combine(bookFolder, "01.mp3"), DurationSeconds = 1800,
                     AudioAlbum = "The Way of Kings", AudioAlbumArtist = "Brandon Sanderson" },
         };
 
@@ -70,11 +74,11 @@ public class FileScanServiceHierarchyTests
     [Fact]
     public void CollapseAudiobooksToFolders_BookFolderAtScanRoot_LeavesAuthorFolderPathNull()
     {
-        var root       = @"C:/Books/Brandon Sanderson";
+        var root       = Path.Combine("C:", "Books", "Brandon Sanderson");
         var bookFolder = root; // book folder IS the scan root — no author level above it
         var files = new List<ScannedFile>
         {
-            new() { FilePath = bookFolder + @"/01.mp3", DurationSeconds = 1800 },
+            new() { FilePath = Path.Combine(bookFolder, "01.mp3"), DurationSeconds = 1800 },
         };
 
         var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, root);
@@ -322,6 +326,53 @@ public class FileScanServiceHierarchyTests
         var authorItems = await context.MediaItems.Where(m => m.HierarchyLevel == 0).ToListAsync();
         Assert.Single(authorItems);
         Assert.Equal("Brand New Author", authorItems[0].Name);
+    }
+
+    [Fact]
+    public async Task ImportGroupsAsync_FolderPathMatchesItemOfDifferentMediaType_CreatesSeparateItemNotCrossType()
+    {
+        // Regression test: confirmed live (2026-09-02) -- a music library folder literally
+        // named "Dogma" (E:\Music\Dogma\) matched the Secondary (folder-path) tier against an
+        // existing MOVIE named "Dogma" that happened to share that exact fileScanner.folderPath
+        // string, silently attaching a music album as the movie's child instead of creating (or
+        // finding) a "Dogma" music artist. The folder-path tier is only reached for container
+        // groups with no files of their own (Files: [] here) -- exactly a music artist folder.
+        await using var context = NewInMemoryContext();
+
+        var movieType = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        var musicType = new MediaType { Id = 2, Name = "music", DisplayName = "Music", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
+        context.MediaTypes.AddRange(movieType, musicType);
+
+        var movie = new MediaItem
+        {
+            Id = 500, MediaTypeId = 1, Name = "Dogma", HierarchyLevel = 0,
+            MetadataJson = """{"fileScanner":{"folderPath":"E:\\Music\\Dogma","filePaths":["E:\\Movies\\Dogma\\Dogma.mkv"]}}""",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        context.MediaItems.Add(movie);
+        await context.SaveChangesAsync();
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var request = new ImportGroupsRequest(
+            [
+                new ScanGroupImport(
+                    Name: "Dogma", Year: null, PosterPath: null,
+                    Children: [], Files: [], FolderPath: @"E:\Music\Dogma"),
+            ],
+            MediaTypeId: 2);
+
+        await service.ImportGroupsAsync(request, userIds: [1], manageProgress: false);
+
+        // A NEW music-type root was created -- the movie was never touched or reused as a parent.
+        var musicRoots = await context.MediaItems.Where(m => m.MediaTypeId == 2 && m.HierarchyLevel == 0).ToListAsync();
+        Assert.Single(musicRoots);
+        Assert.NotEqual(movie.Id, musicRoots[0].Id);
+
+        var untouchedMovie = await context.MediaItems.FindAsync(movie.Id);
+        Assert.Equal(1, untouchedMovie!.MediaTypeId);
     }
 
     [Fact]

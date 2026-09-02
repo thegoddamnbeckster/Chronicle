@@ -495,7 +495,7 @@ namespace Chronicle.Services
                     if (file.SuggestedExternalId is not null && file.ConfidenceScore >= 85)
                     {
                         var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                            t => provider.GetByIdAsync(file.SuggestedExternalId, t), provider.PluginId, "GetByIdAsync",
+                            async t => (MediaMetadata?)await provider.GetByIdAsync(file.SuggestedExternalId, t), provider.PluginId, "GetByIdAsync",
                             null, msg => _log.Warning(msg), msg => _log.Error(msg), ct);
                         if (meta is not null)
                         {
@@ -570,7 +570,7 @@ namespace Chronicle.Services
                 try
                 {
                     var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                        t => provider.GetByIdAsync(approval.ExternalId, t), provider.PluginId, "GetByIdAsync",
+                        async t => (MediaMetadata?)await provider.GetByIdAsync(approval.ExternalId, t), provider.PluginId, "GetByIdAsync",
                         null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
                         ?? throw new InvalidOperationException(
                             $"Provider {provider.PluginId} did not return metadata for {approval.ExternalId}");
@@ -1278,7 +1278,7 @@ namespace Chronicle.Services
                     try
                     {
                         var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                            t => provider.GetByIdAsync(file.SuggestedExternalId, t), provider.PluginId, "GetByIdAsync",
+                            async t => (MediaMetadata?)await provider.GetByIdAsync(file.SuggestedExternalId, t), provider.PluginId, "GetByIdAsync",
                             null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
                             ?? throw new InvalidOperationException(
                                 $"Provider {provider.PluginId} did not return metadata for {file.SuggestedExternalId}");
@@ -1607,7 +1607,7 @@ namespace Chronicle.Services
                 ?? throw new InvalidOperationException("No metadata provider is loaded.");
 
             var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                t => provider.GetByIdAsync(externalId, t), provider.PluginId, "GetByIdAsync",
+                async t => (MediaMetadata?)await provider.GetByIdAsync(externalId, t), provider.PluginId, "GetByIdAsync",
                 null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
                 ?? throw new InvalidOperationException(
                     $"Provider {provider.PluginId} did not return metadata for {externalId}");
@@ -2990,10 +2990,21 @@ namespace Chronicle.Services
             // Secondary: exact folder path match — only reached for groups with no files of
             // their own (pure hierarchy containers: a Show or Season/Author folder). There is
             // no file-level signal available for those, so the folder path is the best we have.
+            // Scoped by mediaTypeId (unlike Primary above): a container-level match has no
+            // per-file evidence to fall back on, so a bare folder-path string collision is the
+            // ONLY signal here — and an unscoped one can match a container of a completely
+            // different type. Confirmed live (2026-09-02): a music library folder literally
+            // named "Dogma" (E:\Music\Dogma\) matched this tier against an existing MOVIE named
+            // "Dogma" (no music item shared that folder path yet), silently attaching two
+            // Crown the Empire / other albums as children of the film instead of the real
+            // "Dogma" band artist item that already existed. Primary intentionally stays
+            // type-unscoped (see its own comment: an exact file path is strong enough evidence
+            // to survive a manual "Change Type"), but a folder path alone isn't that strong.
             if (existing is null && group.Files.Count == 0 && !string.IsNullOrEmpty(group.FolderPath))
             {
                 var fpCandidates = await _context.MediaItems
-                    .Where(m => m.MetadataJson != null
+                    .Where(m => m.MediaTypeId == mediaTypeId
+                             && m.MetadataJson != null
                              && EF.Functions.Like(m.MetadataJson, "%folderPath%"))
                     .ToListAsync(ct);
 

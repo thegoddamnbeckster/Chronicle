@@ -863,7 +863,7 @@ public class MovieCollectionService(
         try
         {
             collectionMeta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                t => provider.GetByIdAsync(collectionExtId.ExternalId, t), collectionPluginId, "GetByIdAsync", null,
+                async t => (MediaMetadata?)await provider.GetByIdAsync(collectionExtId.ExternalId, t), collectionPluginId, "GetByIdAsync", null,
                 msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

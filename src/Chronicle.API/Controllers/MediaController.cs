@@ -1124,10 +1124,14 @@ namespace Chronicle.API.Controllers
         /// OTHER providers' cross-reference lookups (see ClearArtworkOnlyProviderDataAsync)
         /// with stale IDs from the item's previous identity, indefinitely.
         /// </summary>
-        private async Task RemoveExternalIdsForUnsupportedTypeAsync(Chronicle.Core.Models.MediaItem item, CancellationToken ct)
+        // Not async: every step here is synchronous EF change-tracking / in-memory JSON work --
+        // the caller's own SaveChangesAsync is what actually persists it. Kept Task-returning
+        // (Task.CompletedTask at each exit) rather than void so call sites can keep awaiting it
+        // uniformly alongside the genuinely-async helpers around it.
+        private Task RemoveExternalIdsForUnsupportedTypeAsync(Chronicle.Core.Models.MediaItem item, CancellationToken ct)
         {
             var mediaTypeName = item.MediaType?.Name;
-            if (string.IsNullOrWhiteSpace(mediaTypeName) || item.ExternalIds.Count == 0) return;
+            if (string.IsNullOrWhiteSpace(mediaTypeName) || item.ExternalIds.Count == 0) return Task.CompletedTask;
 
             var installedProviders = _pluginRegistry.GetMetadataProviderEntries();
             var supportedSources = installedProviders
@@ -1142,16 +1146,16 @@ namespace Chronicle.API.Controllers
             var orphaned = item.ExternalIds
                 .Where(e => e.ExternalId != "__suppress__" && !supportedSources.Contains(e.Source))
                 .ToList();
-            if (orphaned.Count == 0) return;
+            if (orphaned.Count == 0) return Task.CompletedTask;
 
             _context.MediaExternalIds.RemoveRange(orphaned);
 
-            if (string.IsNullOrWhiteSpace(item.MetadataJson)) return;
+            if (string.IsNullOrWhiteSpace(item.MetadataJson)) return Task.CompletedTask;
             try
             {
                 var root = System.Text.Json.JsonSerializer.Deserialize<
                     System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
-                if (root is null) return;
+                if (root is null) return Task.CompletedTask;
 
                 var changed = false;
                 foreach (var e in orphaned)
@@ -1167,6 +1171,8 @@ namespace Chronicle.API.Controllers
                     item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
             }
             catch { /* malformed JSON — leave as-is */ }
+
+            return Task.CompletedTask;
         }
 
         /// <summary>

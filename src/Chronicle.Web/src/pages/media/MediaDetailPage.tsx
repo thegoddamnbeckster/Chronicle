@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree } from '@/api/media'
+import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
@@ -316,7 +316,6 @@ export default function MediaDetailPage() {
     queryKey: ['addToCollectionSearch', addToCollectionQuery],
     queryFn: async () => {
       if (!addToCollectionQuery.trim()) return []
-      const { searchMedia } = await import('@/api/media')
       return searchMedia(addToCollectionQuery)
     },
     enabled: addToCollectionQuery.trim().length >= 2,
@@ -384,7 +383,6 @@ export default function MediaDetailPage() {
     queryKey: ['mergeSearch', mergeSearchQuery],
     queryFn: async () => {
       if (!mergeSearchQuery.trim()) return []
-      const { searchMedia } = await import('@/api/media')
       return searchMedia(mergeSearchQuery)
     },
     enabled: mergeSearchQuery.trim().length >= 2,
