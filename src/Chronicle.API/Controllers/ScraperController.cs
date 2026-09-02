@@ -211,11 +211,26 @@ public class ScraperController : ControllerBase
     [HttpGet("movies/details")]
     public async Task<IActionResult> GetMovieDetails([FromQuery] int id, CancellationToken ct)
     {
+        var dto = await BuildMovieDetailsDtoAsync(id, ct);
+        if (dto is null)
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+        return Ok(ApiResponse<ScraperMovieDetailsDto>.Ok(dto));
+    }
+
+    /// <summary>
+    /// Resolves and assembles the full ScraperMovieDetailsDto for one item -- shared by
+    /// GetMovieDetails (JSON, for Kodi's getdetails step) and GetMovieSidecar (raw sidecar
+    /// bytes, for the addon's NFO-rebuild flow) so collection/artwork resolution isn't
+    /// duplicated between the two. Null if the item doesn't exist.
+    /// </summary>
+    private async Task<ScraperMovieDetailsDto?> BuildMovieDetailsDtoAsync(int id, CancellationToken ct)
+    {
         var item = await _context.MediaItems.FindAsync([id], ct);
         if (item is null)
         {
             _logger.LogWarning("scraper/movies/details: item {ItemId} not found", id);
-            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+            return null;
         }
 
         ScraperCollectionDto? collection = null;
@@ -296,7 +311,7 @@ public class ScraperController : ControllerBase
                 "scraper/movies/details: item {ItemId} \"{Title}\" has NO poster candidates at all -- " +
                 "Kodi will show a blank/title-only thumbnail for this movie", id, dto.Title);
 
-        return Ok(ApiResponse<ScraperMovieDetailsDto>.Ok(dto));
+        return dto;
     }
 
     // ── TV shows ────────────────────────────────────────────────────────────
@@ -342,9 +357,19 @@ public class ScraperController : ControllerBase
     [HttpGet("tv/details")]
     public async Task<IActionResult> GetShowDetails([FromQuery] int id, CancellationToken ct)
     {
-        var item = await _context.MediaItems.FindAsync([id], ct);
-        if (item is null)
+        var dto = await BuildShowDetailsDtoAsync(id, ct);
+        if (dto is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+        return Ok(ApiResponse<ScraperShowDetailsDto>.Ok(dto));
+    }
+
+    /// <summary>Shared by GetShowDetails and GetShowSidecar -- see BuildMovieDetailsDtoAsync's
+    /// own doc for why this is factored out. Null if the item doesn't exist.</summary>
+    private async Task<ScraperShowDetailsDto?> BuildShowDetailsDtoAsync(int id, CancellationToken ct)
+    {
+        var item = await _context.MediaItems.FindAsync([id], ct);
+        if (item is null) return null;
 
         var seasons = await _context.MediaItems
             .Where(m => m.ParentId == id && m.HierarchyLevel == 1)
@@ -355,8 +380,7 @@ public class ScraperController : ControllerBase
         var lib = await GetCallerLibraryEntryAsync(id, ct);
 
         var dto = BuildShowDetails(item, seasons, lib);
-        dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
-        return Ok(ApiResponse<ScraperShowDetailsDto>.Ok(dto));
+        return dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
     }
 
     /// <summary>
@@ -633,9 +657,20 @@ public class ScraperController : ControllerBase
     [HttpGet("tv/episode-details")]
     public async Task<IActionResult> GetEpisodeDetails([FromQuery] int id, CancellationToken ct)
     {
-        var item = await _context.MediaItems.FindAsync([id], ct);
-        if (item is null)
+        var dto = await BuildEpisodeDetailsDtoAsync(id, ct);
+        if (dto is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+        return Ok(ApiResponse<ScraperEpisodeDetailsDto>.Ok(dto));
+    }
+
+    /// <summary>Shared by GetEpisodeDetails and GetEpisodeSidecar -- see
+    /// BuildMovieDetailsDtoAsync's own doc for why this is factored out. Null if the item
+    /// doesn't exist.</summary>
+    private async Task<ScraperEpisodeDetailsDto?> BuildEpisodeDetailsDtoAsync(int id, CancellationToken ct)
+    {
+        var item = await _context.MediaItems.FindAsync([id], ct);
+        if (item is null) return null;
 
         var season = 1;
         string? showTitle = null;
@@ -668,8 +703,7 @@ public class ScraperController : ControllerBase
         var lib = await GetCallerLibraryEntryAsync(id, ct);
 
         var dto = BuildEpisodeDetails(item, season, showTitle, showYear, lib);
-        dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
-        return Ok(ApiResponse<ScraperEpisodeDetailsDto>.Ok(dto));
+        return dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
     }
 
     // ── Shared resolve-or-create ────────────────────────────────────────────
@@ -987,6 +1021,176 @@ public class ScraperController : ControllerBase
             ResumeUpdatedAt:       lib?.ResumeUpdatedAt
         );
     }
+
+    // ── Sidecar building (write side) ───────────────────────────────────────
+    // Kodi-native NFO XML built server-side from exactly the same resolved data the JSON
+    // getdetails endpoints above already assemble, via whichever ISidecarFormatPlugin is
+    // installed (Chronicle.Plugin.Kodi.NFO today). The addon fetches this, splices in its own
+    // <fileinfo><streamdetails> probe -- data Chronicle's server structurally cannot obtain,
+    // see SidecarBuildRequest.ExtraFields' own doc -- and any local-art fallback, then writes
+    // the result to disk. See docs/plans/2026-09-02-kodi-nfo-plugin-design.md for the full
+    // design and why this table exists instead of the addon building XML itself.
+
+    /// <summary>Resolves the ISidecarFormatPlugin to build with: the caller's explicit choice
+    /// if given and installed, otherwise the first one loaded. Null if none is installed at
+    /// all (a deployment that hasn't set up a sidecar-format plugin).</summary>
+    private ISidecarFormatPlugin? ResolveSidecarPlugin(string? pluginId)
+    {
+        var plugins = _registry.GetSidecarFormatPlugins();
+        return pluginId is not null
+            ? plugins.FirstOrDefault(p => string.Equals(p.PluginId, pluginId, StringComparison.OrdinalIgnoreCase))
+            : plugins.FirstOrDefault();
+    }
+
+    /// <summary>Kodi's NFO-rebuild flow for movies: same resolved data as GetMovieDetails,
+    /// built into raw sidecar bytes by the installed ISidecarFormatPlugin instead of returned
+    /// as JSON.</summary>
+    [HttpGet("movies/sidecar")]
+    public async Task<IActionResult> GetMovieSidecar(
+        [FromQuery] int id, [FromQuery] string? pluginId, CancellationToken ct)
+    {
+        var plugin = ResolveSidecarPlugin(pluginId);
+        if (plugin is null)
+            return NotFound(ApiResponse<object>.Fail("NO_SIDECAR_PLUGIN", "No sidecar format plugin is installed."));
+
+        var dto = await BuildMovieDetailsDtoAsync(id, ct);
+        if (dto is null)
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+        var data = new ResolvedMovieData(
+            Title:          dto.Title,
+            Overview:       dto.Overview,
+            Tagline:        dto.Tagline,
+            Year:           dto.Year,
+            Premiered:      dto.Premiered,
+            Mpaa:           dto.Mpaa,
+            Country:        dto.Country,
+            Studio:         dto.Studio,
+            RuntimeMinutes: dto.RuntimeMinutes,
+            Genres:         dto.Genres,
+            Cast:           MapCast(dto.Cast),
+            Crew:           MapCrew(dto.Crew),
+            Tags:           dto.Tags,
+            Ratings:        MapRatings(dto.Ratings),
+            TrailerUrl:     dto.TrailerUrl,
+            ExternalIds:    MapExternalIds(dto.ExternalIds),
+            Artwork:        MapArtwork(dto.Artwork),
+            Collection:     MapCollection(dto.Collection),
+            UserRating:            dto.UserRating,
+            ResumePositionPercent: dto.ResumePositionPercent,
+            ResumeUpdatedAt:       dto.ResumeUpdatedAt);
+
+        var bytes = await plugin.BuildAsync(new MovieSidecarBuildRequest(data), ct);
+        return File(bytes, "application/octet-stream");
+    }
+
+    /// <summary>Kodi's NFO-rebuild flow for TV shows -- see GetMovieSidecar's own doc.</summary>
+    [HttpGet("tv/sidecar")]
+    public async Task<IActionResult> GetShowSidecar(
+        [FromQuery] int id, [FromQuery] string? pluginId, CancellationToken ct)
+    {
+        var plugin = ResolveSidecarPlugin(pluginId);
+        if (plugin is null)
+            return NotFound(ApiResponse<object>.Fail("NO_SIDECAR_PLUGIN", "No sidecar format plugin is installed."));
+
+        var dto = await BuildShowDetailsDtoAsync(id, ct);
+        if (dto is null)
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+        var data = new ResolvedShowData(
+            Title:          dto.Title,
+            Overview:       dto.Overview,
+            Tagline:        dto.Tagline,
+            Year:           dto.Year,
+            Premiered:      dto.Premiered,
+            Mpaa:           dto.Mpaa,
+            Country:        dto.Country,
+            Studio:         dto.Studio,
+            Status:         dto.Status,
+            RuntimeMinutes: dto.RuntimeMinutes,
+            Genres:         dto.Genres,
+            Cast:           MapCast(dto.Cast),
+            Crew:           MapCrew(dto.Crew),
+            Tags:           dto.Tags,
+            Ratings:        MapRatings(dto.Ratings),
+            TrailerUrl:     dto.TrailerUrl,
+            ExternalIds:    MapExternalIds(dto.ExternalIds),
+            Artwork:        MapArtwork(dto.Artwork),
+            Seasons:        MapSeasons(dto.Seasons),
+            UserRating:     dto.UserRating);
+
+        var bytes = await plugin.BuildAsync(new ShowSidecarBuildRequest(data), ct);
+        return File(bytes, "application/octet-stream");
+    }
+
+    /// <summary>Kodi's NFO-rebuild flow for episodes -- see GetMovieSidecar's own doc.</summary>
+    [HttpGet("tv/episode-sidecar")]
+    public async Task<IActionResult> GetEpisodeSidecar(
+        [FromQuery] int id, [FromQuery] string? pluginId, CancellationToken ct)
+    {
+        var plugin = ResolveSidecarPlugin(pluginId);
+        if (plugin is null)
+            return NotFound(ApiResponse<object>.Fail("NO_SIDECAR_PLUGIN", "No sidecar format plugin is installed."));
+
+        var dto = await BuildEpisodeDetailsDtoAsync(id, ct);
+        if (dto is null)
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+
+        var data = new ResolvedEpisodeData(
+            Title:          dto.Title,
+            Overview:       dto.Overview,
+            Season:         dto.Season,
+            Episode:        dto.Episode,
+            Year:           dto.Year,
+            Aired:          dto.Aired,
+            RuntimeMinutes: dto.RuntimeMinutes,
+            Cast:           MapCast(dto.Cast),
+            Crew:           MapCrew(dto.Crew),
+            Ratings:        MapRatings(dto.Ratings),
+            ThumbUrl:       dto.ThumbUrl,
+            ExternalIds:    MapExternalIds(dto.ExternalIds),
+            ShowTitle:      dto.ShowTitle,
+            ShowYear:       dto.ShowYear,
+            UserRating:            dto.UserRating,
+            ResumePositionPercent: dto.ResumePositionPercent,
+            ResumeUpdatedAt:       dto.ResumeUpdatedAt);
+
+        var bytes = await plugin.BuildAsync(new EpisodeSidecarBuildRequest(data), ct);
+        return File(bytes, "application/octet-stream");
+    }
+
+    // ── Scraper DTO -> plugin resolved-data mapping ─────────────────────────
+    // The scraper DTOs (Chronicle.API.DTOs) and the plugin's resolved-data models
+    // (Chronicle.Plugins.Models) are deliberately separate types in separate assemblies --
+    // the API layer shouldn't force every ISidecarFormatPlugin implementation to take a
+    // dependency on Chronicle.API.DTOs just to build a sidecar. These are the only place the
+    // two shapes meet.
+
+    private static List<CastMember>? MapCast(List<CastMemberDto>? cast) =>
+        cast?.Select(c => new CastMember(c.Name, c.Role, ExternalPersonId: null, ProfileImageUrl: c.ThumbUrl)).ToList();
+
+    private static List<CrewMember>? MapCrew(List<CrewMemberDto>? crew) =>
+        crew?.Select(c => new CrewMember(c.Name, c.Job)).ToList();
+
+    private static Dictionary<string, ResolvedRating>? MapRatings(Dictionary<string, ScraperRatingDto>? ratings) =>
+        ratings?.ToDictionary(kv => kv.Key, kv => new ResolvedRating(kv.Value.Rating, kv.Value.Votes));
+
+    private static ResolvedExternalIds? MapExternalIds(ScraperExternalIdsDto? ids) =>
+        ids is null ? null : new ResolvedExternalIds(ids.Imdb, ids.Tvdb, ids.Tmdb, ids.Trakt);
+
+    private static Dictionary<string, List<ResolvedArtworkCandidate>>? MapArtwork(
+        Dictionary<string, List<ScraperArtworkCandidateDto>>? artwork) =>
+        artwork?.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.Select(a => new ResolvedArtworkCandidate(a.Url, a.Source)).ToList());
+
+    private static ResolvedCollection? MapCollection(ScraperCollectionDto? c) =>
+        c is null ? null : new ResolvedCollection(
+            c.Name, c.Overview, c.PosterUrl, c.BackdropUrl,
+            c.LogoUrl, c.BannerUrl, c.ClearartUrl, c.DiscUrl, c.ThumbUrl);
+
+    private static List<ResolvedSeason>? MapSeasons(List<ScraperSeasonDto>? seasons) =>
+        seasons?.Select(s => new ResolvedSeason(s.Number, s.Name, s.PosterUrl)).ToList();
 
     // ── Cross-provider aggregation ───────────────────────────────────────────
     // Every chronicle.plugin.* partition in MetadataJson is a candidate. Fields are

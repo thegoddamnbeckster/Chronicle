@@ -1,9 +1,11 @@
 # Chronicle.Plugin.Kodi.NFO — Design
 
 **Date:** 2026-09-02
-**Status:** Read side + core rewiring done, including the `MetadataEnrichmentService`
-dependency (see Progress checkpoint below) — `NfoSignalExtractor`/`NfoDetailParser` are
-deleted. Write side (`BuildAsync`/scraper integration, phased-rollout steps 3-6) not started.
+**Status:** Read side + core rewiring done (`NfoSignalExtractor`/`NfoDetailParser` deleted).
+Write side done on the Chronicle side: `ScraperController` now has sidecar-building
+endpoints (phased-rollout step 3). Steps 4-6 -- updating the two `Chronicle_Scraper` Kodi
+addons to actually call them -- are not started; that work lives in a separate repo not
+available to this session.
 
 ---
 
@@ -381,16 +383,34 @@ Everything else Kodi-specific moves out:
      `scopeFactory.CreateScope()` (see the update at the top of the Progress checkpoint).
    - ✅ `Chronicle.Services.Scan.NfoSignalExtractor`/`NfoDetailParser` and their direct tests
      (`NfoSignalExtractorTests`, `NfoDetailParserTests.cs`) deleted — no remaining callers.
-3. Add `BuildAsync` (the write side) to the same plugin, plus the new `ScraperController`
-   endpoint(s). **Not started** — `KodiNfoBuilder.BuildAsync` exists in the plugin repo and
-   is unit-tested in isolation, but nothing in the main Chronicle repo calls it yet: no
-   `ScraperController` endpoint exists to resolve an item's data and invoke it.
+3. ✅ **Done.** `KodiNfoBuilder.BuildAsync` already existed in the plugin repo, unit-tested in
+   isolation; `ScraperController` now has the endpoints that resolve an item's data and
+   invoke it:
+   - `GET /api/v1/scraper/movies/sidecar?id={id}&pluginId={pluginId}`
+   - `GET /api/v1/scraper/tv/sidecar?id={id}&pluginId={pluginId}`
+   - `GET /api/v1/scraper/tv/episode-sidecar?id={id}&pluginId={pluginId}`
+   (query-param style, `pluginId` optional — matches this controller's existing
+   `movies/details`/`tv/details`/`tv/episode-details` convention rather than the path-segment
+   sketch in the original write-up above; `pluginId` defaults to the first loaded
+   `ISidecarFormatPlugin` when omitted.) Each endpoint reuses the exact same resolved-data
+   assembly the JSON `*/details` endpoints already had (`GetMovieDetails`/`GetShowDetails`/
+   `GetEpisodeDetails` were refactored to share `BuildMovieDetailsDtoAsync`/
+   `BuildShowDetailsDtoAsync`/`BuildEpisodeDetailsDtoAsync` with the new sidecar endpoints,
+   rather than duplicating collection/season/artwork resolution a second time), then maps the
+   `Chronicle.API.DTOs` shapes to `Chronicle.Plugins.Models`' `Resolved*Data` shapes (the two
+   are deliberately separate types in separate assemblies -- see `ScraperController`'s own
+   "Scraper DTO -> plugin resolved-data mapping" section) and calls
+   `ISidecarFormatPlugin.BuildAsync`, returning the raw bytes as
+   `application/octet-stream` (deliberately not `application/xml` -- the controller has no
+   business assuming every future sidecar plugin is XML-shaped). No `ExtraFields`/
+   streamdetails handling here: per the design above, the addon splices those in itself
+   client-side after fetching the built XML, so this endpoint never needs them.
 4. Update `Chronicle_Scraper` (movie addon) to call the new endpoint instead of
    `nfo_writer.py`'s local builder; verify against a real library before touching TV.
-   **Not started** (depends on step 3).
-5. Same for `tv_addon`. **Not started.**
+   **Not started** — lives in a separate repo not available to this session.
+5. Same for `tv_addon`. **Not started** (same reason).
 6. Delete the now-dead Chronicle-data functions from `lib/nfo_common.py` in both addons.
-   **Not started.**
+   **Not started** (same reason).
 
 Each step is independently shippable and revertible; nothing requires steps 4-6 to land in
 the same PR as 1-3.
