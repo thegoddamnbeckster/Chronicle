@@ -26,6 +26,13 @@ export interface FileScannerMeta {
   nfoPosterUrl: string | null
   importedAt: string | null
   nfoPath: string | null
+  /** Raw .nfo sidecar text, captured verbatim at import time -- the actual
+   *  lossless-ingestion guarantee. Present for movies, fan edits, and every level
+   *  of a TV hierarchy (shows, seasons, episodes) that had a matched sidecar. */
+  nfoRaw?: string | null
+  /** Generic, complete structured view of the same sidecar (every element and
+   *  attribute) -- a display convenience over nfoRaw, not a replacement for it. */
+  nfoParsed?: unknown | null
 }
 
 export interface NfoActor {

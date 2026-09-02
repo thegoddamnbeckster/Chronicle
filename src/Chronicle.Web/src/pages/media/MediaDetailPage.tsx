@@ -11,6 +11,7 @@ import { getMyPreferences, updateMyPreferences } from '@/api/users'
 import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
+import { JsonTree } from '@/components/JsonTree'
 import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
 import { SlotGalleryModal } from '@/components/SlotGalleryModal'
@@ -1406,6 +1407,23 @@ export default function MediaDetailPage() {
                         .map(a => a.role ? `${a.name} (${a.role})` : a.name)
                         .join(', ')}
                     </span>
+                  </div>
+                )}
+                {/* Full, unfiltered capture of the .nfo sidecar -- every element and attribute,
+                    not just the curated fields above. Collapsed by default (native <details>,
+                    no extra state needed): this exists so nothing the sidecar actually contains
+                    is ever silently invisible, not as a replacement for the curated rows above. */}
+                {item.fileScannerMeta?.nfoParsed != null && (
+                  <div className={styles.tmdbRow}>
+                    <span className={styles.tmdbLabel}>Full NFO Data</span>
+                    <details>
+                      <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>
+                        Every field found in the .nfo file
+                      </summary>
+                      <div className={styles.tmdbValue} style={{ marginTop: '0.5rem' }}>
+                        <JsonTree data={item.fileScannerMeta.nfoParsed} depth={0} />
+                      </div>
+                    </details>
                   </div>
                 )}
               </div>

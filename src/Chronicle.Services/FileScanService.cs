@@ -22,12 +22,13 @@ namespace Chronicle.Services
         private readonly ScanProgressService _progress;
         private readonly ImportProgressService _importProgress;
         private readonly IScanGroupingService _groupingService;
+        private readonly NfoSignalExtractor _nfoExtractor;
         private readonly ILogger _log = Log.ForContext<FileScanService>();
 
         public FileScanService(ChronicleDbContext context, IPluginRegistry registry,
             IPluginSettingsProtector protector,
             ScanProgressService progress, ImportProgressService importProgress,
-            IScanGroupingService groupingService)
+            IScanGroupingService groupingService, NfoSignalExtractor nfoExtractor)
         {
             _context = context;
             _registry = registry;
@@ -35,6 +36,23 @@ namespace Chronicle.Services
             _progress = progress;
             _importProgress = importProgress;
             _groupingService = groupingService;
+            _nfoExtractor = nfoExtractor;
+        }
+
+        /// <summary>
+        /// Locates and losslessly reads an .nfo sidecar for <paramref name="filePath"/>, for
+        /// import paths (ImportApprovedAsync, ImportDirectAsync/ImportSingleFileAsync) that only
+        /// ever receive a bare file path with no upstream ScannedFile/ScanGroup already carrying
+        /// a resolved NfoPath (unlike the grouped-scan and Identify flows, which compute it once
+        /// up front and thread it through). Same sidecar-lookup rule as scan time
+        /// (NfoSignalExtractor.FindSidecar), so an item found this way and one found via a
+        /// grouped scan agree on which .nfo file belongs to it.
+        /// </summary>
+        private (string? path, string? raw, JsonElement? parsed) LookupNfo(string filePath)
+        {
+            var nfoPath = _nfoExtractor.FindSidecar(filePath);
+            var raw = TryReadNfoRaw(nfoPath);
+            return (nfoPath, raw, XmlToJsonConverter.ToJson(raw));
         }
 
         public async Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync()
@@ -535,6 +553,16 @@ namespace Chronicle.Services
                         }
                         else
                         {
+                            // Record the approved file's own path (and any .nfo sidecar next
+                            // to it) the same way every other import path does -- this branch
+                            // previously called SerializeMetadata(tmdbMeta: meta) with no
+                            // scanner data at all, so a brand-new item created here had no
+                            // fileScanner section whatsoever: no file path, no NFO, nothing,
+                            // even though approval.FilePath was right here. Confirmed gap
+                            // (2026-09-02) while closing out NFO lossless-ingestion coverage --
+                            // not previously about NFO specifically, this item's own file path
+                            // was never tracked either.
+                            var (nfoPath, nfoRaw, nfoParsed) = LookupNfo(approval.FilePath);
                             mediaItem = new MediaItem
                             {
                                 MediaTypeId    = request.MediaTypeId,
@@ -543,7 +571,9 @@ namespace Chronicle.Services
                                 Overview       = meta.Overview,
                                 PosterUrl      = meta.PosterUrl,
                                 RuntimeMinutes = meta.RuntimeMinutes,
-                                MetadataJson   = SerializeMetadata(tmdbMeta: meta),
+                                MetadataJson   = SerializeMetadata(tmdbMeta: meta,
+                                    scannerFilePath: approval.FilePath,
+                                    scannerNfoPath: nfoPath, scannerNfoRaw: nfoRaw, scannerNfoParsed: nfoParsed),
                                 HierarchyLevel = 0,
                                 CreatedAt      = DateTime.UtcNow,
                                 UpdatedAt      = DateTime.UtcNow,
@@ -629,6 +659,11 @@ namespace Chronicle.Services
                         continue;
                     }
 
+                    // DirectImportFileDto never carried an NfoPath from the client (the scanner
+                    // resolved one at scan-preview time, but ImportDirectAsync only ever receives
+                    // title/year/filePath back) -- look it up fresh the same way scan time did, so
+                    // this flow's items get the same lossless NFO capture as every other import path.
+                    var (nfoPath, nfoRaw, nfoParsed) = LookupNfo(file.FilePath);
                     var item = new MediaItem
                     {
                         Name           = file.ParsedTitle,
@@ -637,7 +672,8 @@ namespace Chronicle.Services
                         HierarchyLevel = 0,
                         Year           = file.ParsedYear,
                         Number         = file.EpisodeNumber ?? file.AudioTrackNumber,
-                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
+                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath,
+                            scannerNfoPath: nfoPath, scannerNfoRaw: nfoRaw, scannerNfoParsed: nfoParsed),
                         CreatedAt      = DateTime.UtcNow,
                         UpdatedAt      = DateTime.UtcNow,
                     };
@@ -926,6 +962,10 @@ namespace Chronicle.Services
                 return false;
             }
 
+            // Same NFO lookup as ImportDirectAsync's flat branch and for the same reason --
+            // this covers TV episodes (this method is also the leaf-item creator for the
+            // hierarchical/Direct-import path) and audiobook chapters alike.
+            var (nfoPath, nfoRaw, nfoParsed) = LookupNfo(file.FilePath);
             var item = new MediaItem
             {
                 Name           = file.ParsedTitle,
@@ -934,7 +974,8 @@ namespace Chronicle.Services
                 HierarchyLevel = hierarchyLevel,
                 Year           = file.ParsedYear,
                 Number         = file.EpisodeNumber ?? file.AudioTrackNumber,
-                MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
+                MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath,
+                    scannerNfoPath: nfoPath, scannerNfoRaw: nfoRaw, scannerNfoParsed: nfoParsed),
                 CreatedAt      = DateTime.UtcNow,
                 UpdatedAt      = DateTime.UtcNow,
             };
@@ -2435,20 +2476,43 @@ namespace Chronicle.Services
         private sealed record FileScannerMetaJson(
             List<string>? FilePaths, string? LocalPosterPath, string? NfoPosterUrl,
             string? Author = null, string? Series = null, string? FolderPath = null,
-            string? NfoPath = null);
+            string? NfoPath = null,
+            /// <summary>Raw .nfo sidecar text, captured verbatim at import time -- the
+            /// lossless-ingestion guarantee itself. NfoParsed (a generic structured view
+            /// of the same content, via XmlToJsonConverter) is a convenience for display/
+            /// querying; NfoRaw is what makes this immune to that converter ever missing a
+            /// tag, and to the source .nfo file being edited, moved, or deleted later.</summary>
+            string? NfoRaw = null,
+            JsonElement? NfoParsed = null);
+
+        /// <summary>Reads an .nfo sidecar's raw text for lossless storage, or null if it's
+        /// missing/unreadable (permissions, a race with a concurrent file move, etc.) --
+        /// never lets a bad sidecar fail the whole import, same convention as every other
+        /// scan-time file read in this codebase (NfoSignalExtractor.Extract, TagSignalExtractor.Extract).</summary>
+        private static string? TryReadNfoRaw(string? nfoPath)
+        {
+            if (nfoPath is null) return null;
+            try { return System.IO.File.Exists(nfoPath) ? System.IO.File.ReadAllText(nfoPath) : null; }
+            catch { return null; }
+        }
 
         private sealed record MediaMetaJsonRoot(TmdbMetaJson? Tmdb, FileScannerMetaJson? FileScanner);
 
         /// <summary>
         /// Builds the MetadataJson blob for a MediaItem.
         /// Pass <paramref name="existingJson"/> to preserve the other provider's data when only one changes.
-        /// Pass <paramref name="scannerFilePath"/> to record a plain file path without a full ScannedFile.
+        /// Pass <paramref name="scannerFilePath"/> to record a plain file path without a full ScannedFile;
+        /// pair it with <paramref name="scannerNfoPath"/>/Raw/Parsed (see LookupNfo) when the caller
+        /// resolved a sidecar for that path itself, since a bare path alone carries no NFO signal.
         /// </summary>
         private static string SerializeMetadata(
             Chronicle.Plugins.Models.MediaMetadata? tmdbMeta = null,
             string? existingJson = null,
             Chronicle.Plugins.Models.ScannedFile? scannedFile = null,
-            string? scannerFilePath = null)
+            string? scannerFilePath = null,
+            string? scannerNfoPath = null,
+            string? scannerNfoRaw = null,
+            JsonElement? scannerNfoParsed = null)
         {
             // Preserve existing filescanner section when refreshing TMDB only
             FileScannerMetaJson? fsData = null;
@@ -2466,6 +2530,7 @@ namespace Chronicle.Services
             if (scannedFile is not null)
             {
                 var author = scannedFile.AudioAlbumArtist ?? scannedFile.AudioArtist;
+                var nfoRaw = TryReadNfoRaw(scannedFile.NfoPath);
                 fsData = new FileScannerMetaJson(
                     [scannedFile.FilePath],
                     scannedFile.LocalPosterPath,
@@ -2473,7 +2538,9 @@ namespace Chronicle.Services
                     Author: string.IsNullOrWhiteSpace(author) ? null : author,
                     Series: scannedFile.AudioGrouping,
                     FolderPath: Path.GetDirectoryName(scannedFile.FilePath),
-                    NfoPath: scannedFile.NfoPath);
+                    NfoPath: scannedFile.NfoPath,
+                    NfoRaw: nfoRaw,
+                    NfoParsed: XmlToJsonConverter.ToJson(nfoRaw));
             }
 
             // Override with a plain file path (direct import without full ScannedFile).
@@ -2481,7 +2548,8 @@ namespace Chronicle.Services
             // identifying path — don't derive FolderPath here, it would be wrong for the
             // folder case.
             if (scannerFilePath is not null)
-                fsData = new FileScannerMetaJson([scannerFilePath], null, null);
+                fsData = new FileScannerMetaJson([scannerFilePath], null, null,
+                    NfoPath: scannerNfoPath, NfoRaw: scannerNfoRaw, NfoParsed: scannerNfoParsed);
 
             var tmdbData = tmdbMeta is null ? null : new TmdbMetaJson(
                 tmdbMeta.Rating,
@@ -2947,6 +3015,14 @@ namespace Chronicle.Services
                         group.Name, existing.Id, existing.Name);
             }
 
+            // Read once, used by whichever branch below actually needs it -- lossless
+            // ingestion of the sidecar itself (see FileScannerMetaJson's own doc), not just
+            // its path. Every hierarchy level that can carry an NfoPath goes through this one
+            // method (shows, seasons, episodes, and flat/movie-shaped groups alike), so this
+            // single read covers all of them rather than needing a per-level special case.
+            var nfoRaw    = TryReadNfoRaw(group.NfoPath);
+            var nfoParsed = XmlToJsonConverter.ToJson(nfoRaw);
+
             if (existing is not null)
             {
                 existing.UpdatedAt   = DateTime.UtcNow;
@@ -2957,7 +3033,10 @@ namespace Chronicle.Services
                 var existingNode = System.Text.Json.Nodes.JsonNode.Parse(existing.MetadataJson ?? "{}")
                     as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
                 existingNode["fileScanner"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(
-                    new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath, nfoPath = group.NfoPath }));
+                    new {
+                        importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath,
+                        nfoPath = group.NfoPath, nfoRaw, nfoParsed,
+                    }));
                 existing.MetadataJson = existingNode.ToJsonString();
                 return (existing, false);
             }
@@ -2973,7 +3052,10 @@ namespace Chronicle.Services
                 PosterUrl      = group.PosterPath,
                 MetadataJson   = JsonSerializer.Serialize(new
                 {
-                    fileScanner = new { importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath, nfoPath = group.NfoPath }
+                    fileScanner = new {
+                        importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath,
+                        nfoPath = group.NfoPath, nfoRaw, nfoParsed,
+                    }
                 }),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,

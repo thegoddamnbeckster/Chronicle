@@ -1311,7 +1311,7 @@ namespace Chronicle.API.Controllers
                 // such as a MusicBee push that reported size/bitrate/duration but no local path).
                 var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
                              fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null ||
-                             fs?.Fingerprint is not null)
+                             fs?.Fingerprint is not null || fs?.NfoRaw is not null)
                     ? fs : null;
 
                 // All non-fileScanner keys are plugin metadata — pass raw JsonElements so
@@ -1415,6 +1415,20 @@ namespace Chronicle.API.Controllers
                     if (sect.TryGetProperty("nfoPath", out var np))
                         nfoPath = np.GetString();
 
+                    // NfoRaw/NfoParsed -- the lossless-ingestion fields (see
+                    // FileScanService.FileScannerMetaJson's own doc). Read here the same way
+                    // as every other hierarchical-format field in this method: this fallback
+                    // exists BECAUSE a straight Deserialize<FileScannerMetaDto> against this
+                    // shape comes back all-null (property names don't match the flat format),
+                    // so anything not explicitly re-extracted here is silently lost for every
+                    // TV show/season/episode, even though FileScanService already stored it.
+                    string? nfoRaw = null;
+                    if (sect.TryGetProperty("nfoRaw", out var nr) && nr.ValueKind == System.Text.Json.JsonValueKind.String)
+                        nfoRaw = nr.GetString();
+                    System.Text.Json.JsonElement? nfoParsed = null;
+                    if (sect.TryGetProperty("nfoParsed", out var npEl) && npEl.ValueKind != System.Text.Json.JsonValueKind.Null)
+                        nfoParsed = npEl.Clone();
+
                     // Leaf items (episodes/tracks): first entry in filePaths array
                     if (sect.TryGetProperty("filePaths", out var arr) &&
                         arr.ValueKind == System.Text.Json.JsonValueKind.Array)
@@ -1423,7 +1437,8 @@ namespace Chronicle.API.Controllers
                         {
                             var path = el.GetString();
                             if (!string.IsNullOrEmpty(path))
-                                return new FileScannerMetaDto(path, null, null, importedAt, NfoPath: nfoPath);
+                                return new FileScannerMetaDto(path, null, null, importedAt,
+                                    NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
                         }
                     }
 
@@ -1433,13 +1448,15 @@ namespace Chronicle.API.Controllers
                     {
                         var folderPath = fp.GetString();
                         if (!string.IsNullOrEmpty(folderPath))
-                            return new FileScannerMetaDto(folderPath, null, null, importedAt, NfoPath: nfoPath);
+                            return new FileScannerMetaDto(folderPath, null, null, importedAt,
+                                NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
                     }
 
                     // fileScanner section exists but no path recorded yet (older import).
                     // Still return a non-null DTO so the File Scanner card is shown.
-                    if (importedAt.HasValue || nfoPath is not null)
-                        return new FileScannerMetaDto(null, null, null, importedAt, NfoPath: nfoPath);
+                    if (importedAt.HasValue || nfoPath is not null || nfoRaw is not null)
+                        return new FileScannerMetaDto(null, null, null, importedAt,
+                            NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
                 }
             }
             catch { /* ignore malformed JSON */ }
