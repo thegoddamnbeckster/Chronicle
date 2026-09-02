@@ -36,22 +36,33 @@
   display: block;
 }
 
-/* A small marker-style tick on the right side of the photo, not a face-covering wedge and
-   not touching the card's border: a thin line rotated up and to the right at 45deg around
-   its own bottom-center (transform-origin). Rotating clockwise swings the top end further
-   right and up from its base, so right/bottom are inset well past the line's own length
-   (poster's aspect-ratio is a fixed 2/3, so this holds at any rendered size) -- close in and
-   the rotated tip pokes past the poster's own overflow:hidden edge, visibly cutting across
-   .personCard's outer border rather than sitting inside it. */
-.deceasedBar {
+/* A thin diagonal sash spanning the photo corner to corner (bottom-left to top-right),
+   clipped flush by .poster's own overflow:hidden -- it reads as sitting on top of the image,
+   inside the tile, never crossing into the card's outer border/background.
+   .poster's aspect-ratio is a fixed 2/3 (width:height), so its diagonal is exactly
+   sqrt(1 + 1.5^2) = sqrt(3.25) ~= 1.8028x the box width, at atan(1.5) ~= 56.31deg off
+   horizontal -- both hardcoded below rather than derived, since they only hold for this
+   fixed ratio. The bar is built horizontal, centered on the box center via top/left 50% +
+   translate(-50%,-50%), then rotated around that same center point so its ends land exactly
+   on the two opposite corners at any rendered size.
+   Selector is `.poster > .deceasedBar`, not just `.deceasedBar`: .poster > div (above) sets
+   height:100% for PosterImage's own wrapper and has higher specificity (class+type beats a
+   single class) than a plain .deceasedBar rule would, which silently forced this bar to full
+   height regardless of the height set here -- outrank it or the 10px thickness below is
+   ignored and the bar covers the whole tile.
+   box-shadow (not a second element) draws the white outline visible on dark photos -- it
+   wraps the bar's own rotated rectangle, including both end caps, and gets clipped flush by
+   .poster's overflow:hidden right at the corners instead of poking past them. */
+.poster > .deceasedBar {
   position: absolute;
-  right: 26%;
-  bottom: 8%;
-  width: 10px;
-  height: 22%;
+  top: 50%;
+  left: 50%;
+  width: 180.28%;
+  height: 10px;
   background: rgba(0, 0, 0, 0.85);
-  transform-origin: 50% 100%;
-  transform: rotate(45deg);
+  box-shadow: 0 0 0 2px #fff;
+  transform-origin: center;
+  transform: translate(-50%, -50%) rotate(-56.31deg);
 }
 
 .info {
