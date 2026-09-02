@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-using System.Xml.Linq;
 using Chronicle.Core.Models.Scan;
 using Chronicle.Plugins;
 using Chronicle.Plugins.Models;
@@ -11,17 +9,24 @@ using Moq;
 namespace Chronicle.Tests.Unit.Services;
 
 /// <summary>
-/// Minimal ISidecarFormatPlugin test double replicating just enough of Kodi's real .nfo
-/// FindSidecar/ExtractSignal behavior (the real implementation lives in the separate
-/// Chronicle.Plugin.Kodi.NFO repo, not referenced by this test project) for
-/// ScanGroupingService's registry-based sidecar lookup to behave the same as the old
-/// hardcoded NfoSignalExtractor it replaced. Never asserted on directly -- exists only so
-/// ScanGroupingServiceTests can construct a real IPluginRegistry.
+/// Minimal ISidecarFormatPlugin test double for ScanGroupingServiceTests -- exists only so
+/// the class can construct a real IPluginRegistry, never asserted on directly. Deliberately a
+/// pre-configured lookup table rather than a real filesystem-scanning implementation: the
+/// real Kodi FindSidecar/ExtractSignal convention (stem-based .nfo matching, tvshow.nfo/
+/// season*.nfo exclusion, XML field parsing) lives in the separate Chronicle.Plugin.Kodi.NFO
+/// repo and is already covered by that repo's own tests -- this double only needs to prove
+/// ScanGroupingService correctly threads whatever a sidecar plugin returns through its own
+/// grouping logic, not re-verify Kodi's file-finding convention a second time. Also sidesteps
+/// CodeQL's cs/path-injection query, which (confirmed against two different real fixes, an
+/// inline lgtm[] suppression and an absolute-path containment check, on 2026-09-02) flags any
+/// FindSidecar-shaped method that touches the filesystem with a parameter-derived path, no
+/// matter how it's guarded -- a lookup table has no such sink at all.
 /// </summary>
-file sealed class FakeNfoSidecarPlugin : ISidecarFormatPlugin
+file sealed class FakeNfoSidecarPlugin(IReadOnlyDictionary<string, string>? sidecarsByMediaPath = null)
+    : ISidecarFormatPlugin
 {
-    private static readonly Regex SeasonOrShowNfo =
-        new(@"^(tvshow|season(-specials|-all)?\d*)\.nfo$", RegexOptions.IgnoreCase);
+    private readonly IReadOnlyDictionary<string, string> _sidecarsByMediaPath =
+        sidecarsByMediaPath ?? new Dictionary<string, string>();
 
     public string PluginId => "test.fake.nfo";
     public string Name => "Fake NFO";
@@ -32,61 +37,13 @@ file sealed class FakeNfoSidecarPlugin : ISidecarFormatPlugin
     public PluginSettingsSchema GetSettingsSchema() => new() { Settings = [] };
     public void Configure(IReadOnlyDictionary<string, string> settings) { }
 
-    public string? FindSidecar(string mediaFilePath)
-    {
-        var dir  = Path.GetDirectoryName(mediaFilePath);
-        var stem = Path.GetFileNameWithoutExtension(mediaFilePath);
-        if (dir is null) return null;
+    public string? FindSidecar(string mediaFilePath) =>
+        _sidecarsByMediaPath.TryGetValue(mediaFilePath, out var sidecarPath) ? sidecarPath : null;
 
-        // Resolve to absolute paths and confirm every candidate stays inside the media
-        // file's own directory before touching the filesystem -- the CodeQL-recognized
-        // cs/path-injection barrier (resolve, then verify containment in the expected
-        // directory), even though mediaFilePath is never externally influenced here: this
-        // is a file-scoped test double (see class doc) whose only caller,
-        // ScanGroupingServiceTests, passes only hardcoded literal paths or paths built from
-        // Directory.CreateTempSubdirectory().
-        var safeDir = Path.GetFullPath(dir) + Path.DirectorySeparatorChar;
-
-        var adjacent = Path.GetFullPath(Path.Combine(dir, stem + ".nfo"));
-        if (adjacent.StartsWith(safeDir, StringComparison.Ordinal) && File.Exists(adjacent))
-            return adjacent;
-
-        try
-        {
-            return Directory.EnumerateFiles(dir, "*.nfo")
-                .Select(Path.GetFullPath)
-                .Where(f => f.StartsWith(safeDir, StringComparison.Ordinal))
-                .FirstOrDefault(f => !SeasonOrShowNfo.IsMatch(Path.GetFileName(f)));
-        }
-        catch { return null; }
-    }
-
-    public SidecarSignal? ExtractSignal(string sidecarPath)
-    {
-        if (!File.Exists(sidecarPath)) return null;
-        try
-        {
-            var doc  = XDocument.Parse(File.ReadAllText(sidecarPath).Trim());
-            var root = doc.Root;
-            if (root is null) return null;
-
-            string? Get(string name) =>
-                root.Element(name)?.Value?.Trim() is { Length: > 0 } v ? v : null;
-            int? GetInt(string name) => int.TryParse(Get(name), out var n) ? n : null;
-
-            return new SidecarSignal(
-                Title: Get("title"),
-                Year: GetInt("year"),
-                Season: GetInt("season"),
-                Episode: GetInt("episode"),
-                ShowTitle: Get("showtitle"),
-                ExternalId: null,
-                PosterUrl: Get("thumb"),
-                Artist: Get("artist"),
-                Album: Get("album"));
-        }
-        catch { return null; }
-    }
+    // Not exercised by any current ScanGroupingServiceTests assertion (they only check
+    // NfoPath threading, not parsed signal content) -- see class doc for why a real XML
+    // parse isn't needed here.
+    public SidecarSignal? ExtractSignal(string sidecarPath) => null;
 
     public SidecarCapture? CaptureLossless(string sidecarPath) => null;
 
@@ -447,9 +404,10 @@ public class ScanGroupingServiceTests
     /// gated on (see MediaDetailPage.tsx's nfoDetail query), so it never rendered for TV
     /// episodes even when a real, correctly-matched sidecar existed on disk. The flat
     /// (movies) branch always set this correctly; this was the one hierarchical leaf path
-    /// that didn't. Needs a real file on disk since NfoSignalExtractor.FindSidecar does
-    /// actual file-system lookups (unlike the synthetic C:\... paths other tests use, which
-    /// resolve to "no sidecar found" harmlessly).
+    /// that didn't. Uses its own locally-scoped ScanGroupingService (not the shared _svc)
+    /// with a FakeNfoSidecarPlugin pre-configured to resolve this test's specific
+    /// videoPath -> nfoPath -- see that class's doc for why it's a lookup table rather than
+    /// a real filesystem-scanning double.
     /// </summary>
     [Fact]
     public void Group_EpisodeWithNfoSidecar_CarriesNfoPathOntoEpisodeGroup()
@@ -463,7 +421,13 @@ public class ScanGroupingServiceTests
             File.WriteAllText(videoPath, "");
             File.WriteAllText(nfoPath, "<episodedetails><title>Pilot</title><aired>2008-01-20</aired></episodedetails>");
 
-            var result = _svc.Group([videoPath], scanRoot: dir.FullName, hierarchyLevels: 3);
+            var registry = new Mock<IPluginRegistry>();
+            registry.Setup(r => r.GetSidecarFormatPlugins())
+                .Returns([new FakeNfoSidecarPlugin(new Dictionary<string, string> { [videoPath] = nfoPath })]);
+            var svc = new ScanGroupingService(
+                new FolderSignalExtractor(), new TagSignalExtractor(), registry.Object);
+
+            var result = svc.Group([videoPath], scanRoot: dir.FullName, hierarchyLevels: 3);
 
             var show = result.Groups.Should().ContainSingle().Which;
             var season = show.Children.Should().ContainSingle().Which;
