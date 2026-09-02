@@ -340,4 +340,41 @@ public class ScanGroupingServiceTests
         season.Name.Should().Be("Season 1");
         season.Children.Should().HaveCount(1);
     }
+
+    /// <summary>
+    /// Regression test (2026-09-01): a per-episode .nfo sidecar was found and parsed for
+    /// signal purposes (title/season/episode) but its path was never carried onto the
+    /// episode's own ScanGroup, so UpsertGroupItemAsync always persisted a null
+    /// fileScanner.nfoPath for episodes -- which the frontend's NFO-details panel is
+    /// gated on (see MediaDetailPage.tsx's nfoDetail query), so it never rendered for TV
+    /// episodes even when a real, correctly-matched sidecar existed on disk. The flat
+    /// (movies) branch always set this correctly; this was the one hierarchical leaf path
+    /// that didn't. Needs a real file on disk since NfoSignalExtractor.FindSidecar does
+    /// actual file-system lookups (unlike the synthetic C:\... paths other tests use, which
+    /// resolve to "no sidecar found" harmlessly).
+    /// </summary>
+    [Fact]
+    public void Group_EpisodeWithNfoSidecar_CarriesNfoPathOntoEpisodeGroup()
+    {
+        var dir = Directory.CreateTempSubdirectory("chronicle_scangroup_test_");
+        try
+        {
+            var showDir = Directory.CreateDirectory(Path.Combine(dir.FullName, "Breaking Bad"));
+            var videoPath = Path.Combine(showDir.FullName, "Breaking.Bad.S01E01.mkv");
+            var nfoPath = Path.Combine(showDir.FullName, "Breaking.Bad.S01E01.nfo");
+            File.WriteAllText(videoPath, "");
+            File.WriteAllText(nfoPath, "<episodedetails><title>Pilot</title><aired>2008-01-20</aired></episodedetails>");
+
+            var result = _svc.Group([videoPath], scanRoot: dir.FullName, hierarchyLevels: 3);
+
+            var show = result.Groups.Should().ContainSingle().Which;
+            var season = show.Children.Should().ContainSingle().Which;
+            var episode = season.Children.Should().ContainSingle().Which;
+            episode.NfoPath.Should().Be(nfoPath);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
 }

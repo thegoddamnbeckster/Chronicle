@@ -236,6 +236,17 @@ namespace Chronicle.Services.Scan
                                 ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
                                 SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 2),
                                 Files           = [path],
+                                // Per-episode sidecar (e.g. "S01E01.nfo" next to the video file) --
+                                // without this, UpsertGroupItemAsync never receives an NfoPath for
+                                // ANY episode, so the item's persisted fileScanner.nfoPath stays
+                                // null even when a real, correctly-matched sidecar exists on disk.
+                                // The frontend's NFO-details panel is gated on that field being
+                                // non-null (see MediaDetailPage.tsx), so episodes never showed it
+                                // at all -- confirmed root cause (2026-09-01) of "TV episodes are
+                                // not showing NFO details like the movies are". The flat (movies,
+                                // hierarchyLevels==1) branch above already sets this correctly;
+                                // this was the one hierarchical leaf that didn't.
+                                NfoPath         = nfoPath,
                             });
                         }
                         else if (hierarchyLevels < 3)
@@ -250,6 +261,7 @@ namespace Chronicle.Services.Scan
                                 ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
                                 SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 1),
                                 Files           = [path],
+                                NfoPath         = nfoPath,
                             });
                         }
                         // else: 3-level type (TV/music), file is directly in the root folder with no
@@ -295,6 +307,7 @@ namespace Chronicle.Services.Scan
                         SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 2),
                         Year            = tagSignal?.Year.HasValue == true ? (int?)tagSignal.Year.Value : null,
                         Files           = [path],
+                        NfoPath         = nfoPath,
                     });
                 }
             }

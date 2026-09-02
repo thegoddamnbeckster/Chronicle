@@ -69,7 +69,12 @@ namespace Chronicle.Services.Scan
                     Mpaa           = Get("mpaa"),
                     Studio         = Get("studio"),
                     RuntimeMinutes = GetInt("runtime"),
-                    Premiered      = Get("premiered"),
+                    // Movie/tvshow NFOs (Kodi's movie.nfo / tvshow.nfo) use <premiered> for the
+                    // release/premiere date; episode NFOs (episodedetails.nfo) use <aired>
+                    // instead -- confirmed against Kodi's own NFO schema. Without this fallback,
+                    // Premiered was always null for every episode, even with a fully populated
+                    // sidecar, since <premiered> simply never appears in that schema.
+                    Premiered      = Get("premiered") ?? Get("aired"),
                     Director       = Get("director"),
                     Rating         = ParseRating(root),
                 };

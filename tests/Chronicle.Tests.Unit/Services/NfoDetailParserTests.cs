@@ -151,6 +151,42 @@ public class NfoDetailParserTests
         detail.Should().BeNull();
     }
 
+    /// <summary>
+    /// Regression test (2026-09-01): Kodi's episodedetails.nfo schema uses &lt;aired&gt; for
+    /// an episode's air date, not &lt;premiered&gt; (that tag only appears in movie.nfo/
+    /// tvshow.nfo). Without this fallback, Premiered was always null for every TV episode
+    /// NFO, even a fully populated one -- part of "TV episodes are not showing NFO details
+    /// like the movies are (air date...)".
+    /// </summary>
+    [Fact]
+    public void ParseXml_EpisodeNfo_ReadsAiredAsPremiered()
+    {
+        var parser = new NfoDetailParser();
+        const string xml = """
+            <episodedetails>
+              <title>Pilot</title>
+              <showtitle>Breaking Bad</showtitle>
+              <aired>2008-01-20</aired>
+              <runtime>58</runtime>
+            </episodedetails>
+            """;
+
+        var detail = parser.ParseXml(xml);
+
+        detail!.Premiered.Should().Be("2008-01-20");
+    }
+
+    [Fact]
+    public void ParseXml_PremieredPresent_PreferredOverAired()
+    {
+        var parser = new NfoDetailParser();
+        const string xml = "<movie><title>Both Tags</title><premiered>2003-06-05</premiered><aired>2003-06-01</aired></movie>";
+
+        var detail = parser.ParseXml(xml);
+
+        detail!.Premiered.Should().Be("2003-06-05");
+    }
+
     [Fact]
     public void ParseXml_MinimalMovie_NoOptionalFieldsPresent()
     {
