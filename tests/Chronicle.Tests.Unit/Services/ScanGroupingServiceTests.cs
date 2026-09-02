@@ -39,7 +39,14 @@ file sealed class FakeNfoSidecarPlugin : ISidecarFormatPlugin
         if (dir is null) return null;
 
         var adjacent = Path.Combine(dir, stem + ".nfo");
-        if (File.Exists(adjacent)) return adjacent;
+        // CodeQL flags this as path injection (cs/path-injection) because mediaFilePath is a
+        // method parameter it can't prove is safe. It's a false positive here: this is a
+        // file-scoped test double (see class doc) whose only caller is
+        // ScanGroupingServiceTests, which only ever passes hardcoded literal paths or paths
+        // built from Directory.CreateTempSubdirectory() -- there is no attacker-reachable
+        // input anywhere in this call chain, unlike a real path-injection sink reachable from
+        // e.g. an HTTP request.
+        if (File.Exists(adjacent)) return adjacent; // lgtm[cs/path-injection]
 
         try
         {
