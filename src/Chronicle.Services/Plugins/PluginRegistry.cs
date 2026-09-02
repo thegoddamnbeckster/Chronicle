@@ -101,6 +101,23 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<ISidecarFormatPlugin> GetSidecarFormatPlugins()
+    {
+        lock (_lock)
+            return _plugins.Values.SelectMany(p => p.SidecarFormatPlugins).ToList();
+    }
+
+    /// <inheritdoc/>
+    public ISidecarFormatPlugin? GetSidecarFormatPlugin(string pluginId)
+    {
+        lock (_lock)
+            return _plugins.Values
+                .Where(p => string.Equals(p.Manifest.PluginId, pluginId, StringComparison.OrdinalIgnoreCase))
+                .SelectMany(p => p.SidecarFormatPlugins)
+                .FirstOrDefault();
+    }
+
+    /// <inheritdoc/>
     public IReadOnlyList<LoadedPlugin> GetLoadedPlugins()
     {
         lock (_lock)
@@ -173,6 +190,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         var reportPlugins   = DiscoverAndInstantiate<IReportPlugin>(assembly, _log);
         var fileScanners    = DiscoverAndInstantiate<IFileScannerPlugin>(assembly, _log);
         var themePlugins    = DiscoverAndInstantiate<IThemePlugin>(assembly, _log);
+        var sidecarPlugins  = DiscoverAndInstantiate<ISidecarFormatPlugin>(assembly, _log);
 
         // Configure all providers with the supplied settings
         foreach (var provider in providers)
@@ -214,8 +232,21 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             }
         }
 
+        foreach (var sc in sidecarPlugins)
+        {
+            try
+            {
+                sc.Configure(settings);
+                _log.Information("Configured sidecar format plugin {PluginId}", sc.PluginId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "Failed to configure sidecar format plugin {PluginId}", sc.PluginId);
+            }
+        }
+
         var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets,
-            importProviders, reportPlugins, fileScanners, themePlugins);
+            importProviders, reportPlugins, fileScanners, themePlugins, sidecarPlugins);
 
         LoadedPlugin? evicted;
         lock (_lock)
@@ -232,9 +263,9 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         }
 
         _log.Information(
-            "Plugin loaded: {Name} v{Version} — {Providers} metadata, {Widgets} widget(s), {Import} import, {Reports} report(s), {Scanners} scanner(s), {Themes} theme(s)",
+            "Plugin loaded: {Name} v{Version} — {Providers} metadata, {Widgets} widget(s), {Import} import, {Reports} report(s), {Scanners} scanner(s), {Themes} theme(s), {Sidecars} sidecar format(s)",
             manifest.Name, manifest.Version, providers.Count, widgets.Count,
-            importProviders.Count, reportPlugins.Count, fileScanners.Count, themePlugins.Count);
+            importProviders.Count, reportPlugins.Count, fileScanners.Count, themePlugins.Count, sidecarPlugins.Count);
 
         return loaded;
         } // end try
