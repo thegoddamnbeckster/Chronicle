@@ -330,6 +330,28 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 await GraftExternalIdAsync(db, existing.Id, pluginId, evt.ExternalId, ct);
                 return existing;
             }
+
+            // Retry with a trailing disambiguator parenthetical stripped (e.g. "Dogma (film)"
+            // -> "Dogma") -- a metadata source's own title can carry one even though the
+            // already-catalogued row doesn't, which would otherwise create a duplicate stub
+            // instead of matching it. See MediaItemNormalizer.StripTrailingParenthetical.
+            var deparenthesized = MediaItemNormalizer.StripTrailingParenthetical(stubTitle);
+            if (deparenthesized.Length > 0 && deparenthesized != stubTitle)
+            {
+                var deparenNormalized = MediaItemNormalizer.NormalizeName(deparenthesized);
+                if (!string.IsNullOrEmpty(deparenNormalized) && deparenNormalized != normalizedTitle)
+                {
+                    existing = await db.MediaItems
+                        .FirstOrDefaultAsync(m => m.MediaTypeId == mediaType.Id
+                                               && m.Year == stubYear
+                                               && m.NormalizedName == deparenNormalized, ct);
+                    if (existing is not null)
+                    {
+                        await GraftExternalIdAsync(db, existing.Id, pluginId, evt.ExternalId, ct);
+                        return existing;
+                    }
+                }
+            }
         }
 
         var item = new MediaItem

@@ -1,6 +1,9 @@
+using System.Text.Json;
 using Chronicle.API.DTOs;
 using Chronicle.Core.Helpers;
 using Chronicle.Data;
+using Chronicle.Plugins.Models;
+using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -20,10 +23,12 @@ namespace Chronicle.API.Controllers
     public class PeopleController : ControllerBase
     {
         private readonly ChronicleDbContext _context;
+        private readonly IPersonResolutionService _personResolutionService;
 
-        public PeopleController(ChronicleDbContext context)
+        public PeopleController(ChronicleDbContext context, IPersonResolutionService personResolutionService)
         {
             _context = context;
+            _personResolutionService = personResolutionService;
         }
 
         [HttpGet]
@@ -187,5 +192,124 @@ namespace Chronicle.API.Controllers
 
         private async Task<int?> GetPeopleMediaTypeIdAsync(CancellationToken ct) =>
             await _context.MediaTypes.Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
+
+        /// <summary>
+        /// Re-resolves any credit whose person link was cleared (PersonMediaItemId == null) --
+        /// e.g. after deleting a Person record that had wrongly conflated multiple real people
+        /// under one shared name (see PersonResolutionService.ResolvePersonOnlyAsync's
+        /// same-source-conflict guard, added to stop this happening for NEW credits; this
+        /// endpoint is what re-derives the ones already sitting orphaned from before the guard
+        /// existed). Re-derives fresh from each affected item's already-cached per-plugin
+        /// metadata_json cast/crew array -- pure local reprocessing, no live provider re-fetch,
+        /// same technique PluginHostService.BackfillCreditsFromCachedMetadataAsync uses for its
+        /// own one-time historical backfill. Clears and re-inserts the FULL credit set for each
+        /// affected (item, source) pair (not just the orphaned rows) so a partially-resolved
+        /// pair can't end up with duplicate rows once re-derived. Admin only: maintenance
+        /// operation, not something a regular user triggers.
+        /// </summary>
+        [HttpPost("reprocess-orphaned-credits")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> ReprocessOrphanedCredits(CancellationToken ct)
+        {
+            var affectedItemIds = await _context.MediaCredits
+                .Where(c => c.PersonMediaItemId == null)
+                .Select(c => c.MediaItemId)
+                .Distinct()
+                .ToListAsync(ct);
+
+            int itemsProcessed = 0, pairsReprocessed = 0, creditsResolved = 0;
+
+            foreach (var itemId in affectedItemIds)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var item = await _context.MediaItems
+                    .Where(m => m.Id == itemId)
+                    .Select(m => new { m.Id, m.MetadataJson })
+                    .FirstOrDefaultAsync(ct);
+                if (item?.MetadataJson is null) continue;
+
+                // Only (item, source) pairs that currently have an orphaned credit get cleared
+                // and re-derived -- a pair with no orphaned credit is left untouched.
+                var orphanedSources = await _context.MediaCredits
+                    .Where(c => c.MediaItemId == itemId && c.PersonMediaItemId == null)
+                    .Select(c => c.Source)
+                    .Distinct()
+                    .ToListAsync(ct);
+                if (orphanedSources.Count == 0) continue;
+
+                Dictionary<string, JsonElement>? blobs;
+                try { blobs = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson); }
+                catch (JsonException) { continue; }
+                if (blobs is null) continue;
+
+                itemsProcessed++;
+
+                foreach (var (pluginId, blob) in blobs)
+                {
+                    if (pluginId is "_resolved" or "_overrides") continue;
+                    if (blob.ValueKind != JsonValueKind.Object) continue;
+
+                    var source = PluginIdHelper.ToSource(pluginId);
+                    if (!orphanedSources.Contains(source)) continue;
+
+                    // Clear the FULL existing set for this pair first -- re-deriving from the
+                    // cached blob recreates it completely, so leaving old rows in place would
+                    // duplicate whichever credits were already correctly resolved.
+                    var existing = await _context.MediaCredits
+                        .Where(c => c.MediaItemId == itemId && c.Source == source)
+                        .ToListAsync(ct);
+                    _context.MediaCredits.RemoveRange(existing);
+                    pairsReprocessed++;
+
+                    var hasCast = blob.TryGetProperty("cast", out var castEl) && castEl.ValueKind == JsonValueKind.Array && castEl.GetArrayLength() > 0;
+                    var hasCrew = blob.TryGetProperty("crew", out var crewEl) && crewEl.ValueKind == JsonValueKind.Array && crewEl.GetArrayLength() > 0;
+
+                    if (hasCast)
+                    {
+                        List<CastMember>? cast = null;
+                        try { cast = JsonSerializer.Deserialize<List<CastMember>>(castEl.GetRawText()); }
+                        catch (JsonException) { }
+
+                        var billingOrder = 0;
+                        foreach (var c in cast ?? [])
+                        {
+                            if (string.IsNullOrWhiteSpace(c.Name)) continue;
+                            await _personResolutionService.ResolveAndRecordCreditAsync(
+                                _context, itemId, c.Name, c.ExternalPersonId, source, c.ProfileImageUrl,
+                                role: "Actor", characterName: c.Role, billingOrder: billingOrder++, ct);
+                            creditsResolved++;
+                        }
+                    }
+
+                    if (hasCrew)
+                    {
+                        List<CrewMember>? crew = null;
+                        try { crew = JsonSerializer.Deserialize<List<CrewMember>>(crewEl.GetRawText()); }
+                        catch (JsonException) { }
+
+                        foreach (var c in crew ?? [])
+                        {
+                            if (string.IsNullOrWhiteSpace(c.Name)) continue;
+                            await _personResolutionService.ResolveAndRecordCreditAsync(
+                                _context, itemId, c.Name, c.ExternalPersonId, source, c.ProfileImageUrl,
+                                role: c.Job ?? "Crew", characterName: null, billingOrder: null, ct);
+                            creditsResolved++;
+                        }
+                    }
+                }
+
+                await _context.SaveChangesAsync(ct);
+                // Same reason PluginHostService.BackfillCreditsFromCachedMetadataAsync clears
+                // after every page: this request can touch thousands of items in one call, and
+                // an EF change tracker that never gets reset keeps accumulating every entity
+                // it's ever seen, making each subsequent SaveChangesAsync's diff progressively
+                // slower -- confirmed live, this endpoint dropped from ~220 credits/min to
+                // ~17/min over its first ~8 minutes before this fix.
+                _context.ChangeTracker.Clear();
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { itemsProcessed, pairsReprocessed, creditsResolved }));
+        }
     }
 }

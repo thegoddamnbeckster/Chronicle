@@ -1,3 +1,4 @@
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
@@ -139,6 +140,15 @@ public static class MediaItemMatcher
         var dashWithYear  = year.HasValue ? $"{dashTitle} ({year.Value})" : null;
         var colonWithYear = year.HasValue ? $"{colonTitle} ({year.Value})" : null;
 
+        // A trailing disambiguator parenthetical (e.g. "Dogma (film)") on the incoming title
+        // with none on the already-catalogued row would otherwise miss every variant above and
+        // fall through to stub creation instead of matching. Null (not the unchanged title)
+        // when there's nothing to strip, so it can't duplicate the plain `title` check above it.
+        // Same technique as FileScanService.FindByTitleAsync's own deparenthesized retry.
+        var deparenthesizedRaw = MediaItemNormalizer.StripTrailingParenthetical(title);
+        var deparenthesized    = deparenthesizedRaw.Length > 0 && deparenthesizedRaw != title
+            ? deparenthesizedRaw : null;
+
         // Excludes collection containers from candidates -- confirmed live (2026-08-29,
         // "Robot Jox Collection"): a sync event whose own title happens to exactly match
         // one of Chronicle's own movie-set container names (Simkl tracks "collections" as
@@ -168,7 +178,8 @@ public static class MediaItemMatcher
             (!year.HasValue || m.Year == year) &&
             (m.Name == title      || m.Name == nameWithYear  ||
              m.Name == dashTitle  || m.Name == dashWithYear  ||
-             m.Name == colonTitle || m.Name == colonWithYear) &&
+             m.Name == colonTitle || m.Name == colonWithYear ||
+             m.Name == deparenthesized) &&
             !db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId.StartsWith("collection:")),
             ct);
     }

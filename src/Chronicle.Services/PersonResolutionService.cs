@@ -15,9 +15,13 @@ namespace Chronicle.Services;
 ///
 /// Known limitation, stated plainly (per the design doc): name-only resolution (steps 2-3, when
 /// no ExternalPersonId is available) carries a real, accepted common-name collision risk -- two
-/// different real people with the same name and no external ID on either credit will merge into
-/// one person item. Mitigated, not eliminated, by preferring ID-based resolution wherever a
-/// plugin supplies one.
+/// different real people with the same name and no external ID on EITHER credit will still merge
+/// into one person item; there's no way to catch that case without an id on at least one side.
+/// Mitigated, not eliminated, by preferring ID-based resolution wherever a plugin supplies one,
+/// and (see the same-source-conflict check in ResolvePersonOnlyAsync's Step 2) by refusing a
+/// name-only match when the credit's own source already has a DIFFERENT id on file for that
+/// name -- the confirmed failure mode found live in production (four unrelated real people
+/// named "Brian Johnson" collapsed onto one person item this way).
 /// </summary>
 public class PersonResolutionService(
     IPluginRegistry pluginRegistry,
@@ -168,8 +172,33 @@ public class PersonResolutionService(
         var normalized = MediaItemNormalizer.NormalizeName(personName);
 
         // Step 2: name lookup, scoped to people-type items.
-        person ??= await db.MediaItems.FirstOrDefaultAsync(
-            m => m.MediaTypeId == peopleTypeId && m.NormalizedName == normalized, ct);
+        if (person is null)
+        {
+            var nameMatch = await db.MediaItems.FirstOrDefaultAsync(
+                m => m.MediaTypeId == peopleTypeId && m.NormalizedName == normalized, ct);
+
+            // Before trusting a name-only match, check whether this credit's own SOURCE
+            // already has a DIFFERENT external id recorded against the name-matched person --
+            // e.g. it already carries tmdb:9402 and this credit brings tmdb:84008. Two
+            // different ids from the same source for what's supposedly one real person is the
+            // exact signature of a same-name collision, not routine multi-source enrichment:
+            // confirmed live, "Brian Johnson" merged 4 unrelated real people this way (a VFX
+            // artist, the AC/DC singer, and two more) purely because none of their early
+            // credits carried an id yet to catch it on -- and once the first stray id got
+            // welded on via Step 4 below, every later credit for THAT id kept reinforcing the
+            // same wrong person. When a same-source conflict is found, don't attach -- fall
+            // through to Step 3 and create a new person instead, even though this means two
+            // credits with no id at all for what might genuinely be the same real person can
+            // now land on separate stubs. That's the safer failure direction: a wrongly-split
+            // person is visible and fixable (a thin duplicate stub); a wrongly-merged person
+            // silently corrupts another real person's page and is easy to never notice.
+            var hasConflictingSourceId = nameMatch is not null && !string.IsNullOrWhiteSpace(externalPersonId) &&
+                await db.MediaExternalIds.AnyAsync(x =>
+                    x.MediaItemId == nameMatch.Id && x.Source == source && x.ExternalId != externalPersonId, ct);
+
+            if (!hasConflictingSourceId)
+                person = nameMatch;
+        }
 
         // Step 3: create a new stub.
         if (person is null)

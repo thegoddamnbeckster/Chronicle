@@ -8,6 +8,8 @@ public static class MediaItemNormalizer
         new(@"[.\-,':!?()]", RegexOptions.Compiled);
     private static readonly Regex _spaces =
         new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex _trailingParenthetical =
+        new(@"\s*\([^)]+\)$", RegexOptions.Compiled);
 
     /// <summary>
     /// Produces a canonical lowercase string for duplicate detection.
@@ -42,5 +44,28 @@ public static class MediaItemNormalizer
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
         var stripped = _strip.Replace(name, string.Empty);
         return _spaces.Replace(stripped, string.Empty).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Strips a trailing disambiguator parenthetical, e.g. "Dogma (film)" -> "Dogma",
+    /// "Chosen (TV series)" -> "Chosen". Returns the input unchanged if there's no trailing
+    /// "(...)" to strip. Deliberately generic (any trailing "(...)", not a hardcoded list of
+    /// known disambiguator words) rather than provider-specific, since any metadata source
+    /// could in principle emit a disambiguated title -- Wikipedia is just the one that
+    /// actually did (root-caused 2026-08-30/2026-09-02: "Dogma"/"Dogma (film)" and similar
+    /// created duplicate MediaItems instead of matching the existing row). This is the same
+    /// technique FileScanService.FindByTitleAsync already used for its own matcher (see
+    /// _trailingParenthetical there); kept here too so SyncOrchestrationService.CreateStubAsync
+    /// and MediaItemMatcher.FindByTitleYearAsync -- which don't share FileScanService's
+    /// private matcher -- get the same protection instead of only the file-scan path having it.
+    /// NOT folded into NormalizeName itself: that method's current (less aggressive) behavior
+    /// is already depended on by other existing call sites, and NormalizedName is a stored,
+    /// indexed column -- widening what it strips would need a backfill migration, not just a
+    /// method-body change. Call this BEFORE NormalizeName when you want the extra strip.
+    /// </summary>
+    public static string StripTrailingParenthetical(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+        return _trailingParenthetical.Replace(name, string.Empty).Trim();
     }
 }

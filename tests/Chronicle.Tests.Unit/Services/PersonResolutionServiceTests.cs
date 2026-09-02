@@ -74,6 +74,46 @@ public class PersonResolutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolvePersonOnlyAsync_SameSourceConflictingId_CreatesSeparatePersonInsteadOfMerging()
+    {
+        // Regression test for a confirmed live incident: "Brian Johnson" the VFX artist
+        // (tmdb:9402) and "Brian Johnson" the AC/DC singer (tmdb:84008) are two different real
+        // people who share an exact name. The singer's credit has no id on file yet for this
+        // name, so it would fall through to a name-only match -- but it DOES carry its own tmdb
+        // id, which conflicts with the id already recorded against the name match. That's the
+        // signal: don't merge, create a separate person.
+        var artist = await _svc.ResolvePersonOnlyAsync(_db, "Brian Johnson", "tmdb:9402", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        var singer = await _svc.ResolvePersonOnlyAsync(_db, "Brian Johnson", "tmdb:84008", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        singer.Id.Should().NotBe(artist.Id);
+        (await _db.MediaItems.CountAsync(m => m.MediaTypeId == 1)).Should().Be(2);
+
+        var singerExtId = await _db.MediaExternalIds.SingleAsync(x => x.MediaItemId == singer.Id);
+        singerExtId.ExternalId.Should().Be("tmdb:84008");
+    }
+
+    [Fact]
+    public async Task ResolvePersonOnlyAsync_NewIdFromDifferentSource_StillMergesIntoNameMatch()
+    {
+        // The conflict check is scoped to the SAME source as the incoming credit -- a person
+        // enriched via TMDB first, then later credited via a source that's never supplied an id
+        // for them before (e.g. Wikipedia), is routine multi-source enrichment, not a collision.
+        // Must keep resolving onto the existing person, not fragment it.
+        var person = await _svc.ResolvePersonOnlyAsync(_db, "Anson Mount", "tmdb:12345", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        var again = await _svc.ResolvePersonOnlyAsync(_db, "Anson Mount", "wikipedia:en:Anson_Mount", "wikipedia", default);
+        await _db.SaveChangesAsync();
+
+        again.Id.Should().Be(person.Id);
+        (await _db.MediaItems.CountAsync(m => m.MediaTypeId == 1)).Should().Be(1);
+        (await _db.MediaExternalIds.CountAsync(x => x.MediaItemId == person.Id)).Should().Be(2);
+    }
+
+    [Fact]
     public async Task ResolvePersonOnlyAsync_ExternalIdScopedToPeopleType_IgnoresNonPersonMatch()
     {
         // A movie happens to share the exact same (source, externalId) pair as a person would --
