@@ -734,31 +734,28 @@ public class PluginsController : ControllerBase
             Sha256:      "98b9943b24cad8bfd0c60bfd8cec2e2398d0cc99b23461b89fbc4255a7197fce",
             Version:     "1.0.0"
         ),
-        // The five plugins below this comment (FanEdit, Simkl, FanartTV, Themes.Default --
-        // and Kodi.NFO once it has a release, see docs/plans/2026-09-02-kodi-nfo-plugin-design.md)
-        // were added 2026-09-02 after discovering this array was badly stale: CLAUDE.md lists
-        // 12 plugins as of v0.7.0 and this catalog only had 4. Confirmed directly against each
-        // repo's actual latest GitHub release (tag + attached asset name + SHA-256 digest) before
-        // adding -- not guessed. Still missing from this catalog and deliberately NOT added:
-        // TheTVDB and TVMaze have no release at all -- adding entries for those would put a
-        // broken "Install" button in the UI. Create their releases first, then add entries the
-        // same way.
-        //
-        // MoviesRemastered, Trakt, and Hardcover (below) had the same problem -- a GitHub release
-        // with no zip asset attached -- as of 2026-09-02. Built, tested, and packaged locally from
-        // each repo's current buildable code, then handed the zips to the repo owner to attach as
-        // release assets (this session cannot push tags or create/attach GitHub releases -- see
-        // the Kodi.NFO precedent). AssetName/Sha256/Version below match those handed-off zips
-        // exactly, so installs will work as soon as the matching asset lands on the matching
-        // release tag. Trakt's zip is v1.2.0 (built from HEAD) even though its last tagged release
-        // is v1.1.0 -- that old tag's code no longer compiles against current
-        // Chronicle.Plugins.Models (CastMember/CrewMember refactor), so v1.1.0 is not a buildable
-        // target anymore. Hardcover has the same drift (release v1.1.3 vs HEAD v1.2.0); its
-        // manifest.json's plugin_id is "hardcover", not "chronicle.plugin.hardcover" -- that's the
-        // authoritative id per Chronicle's plugin-loading convention. If a new release tag
-        // (v1.2.0/v1.1.0) is created instead of reusing the old one, update GithubRepo's implied
-        // "latest release" lookup needs no change (it always resolves "latest"), but re-verify the
-        // asset name and SHA-256 still match.
+        // The five plugins below this comment (FanEdit, Simkl, FanartTV, Themes.Default,
+        // and MoviesRemastered/Trakt/Hardcover/TheTVDB/TVMaze/Kodi.NFO further below) were
+        // added/completed 2026-09-02 after discovering this array was badly stale: CLAUDE.md
+        // lists 12 plugins as of v0.7.0 and this catalog only had 4. All six of
+        // MoviesRemastered/Trakt/Hardcover/TheTVDB/TVMaze/Kodi.NFO now have a real GitHub
+        // release with a packaged zip asset attached, tagged/pushed/created directly against
+        // each repo (verified with `gh release view` + a local SHA-256 recompute of the
+        // uploaded asset, not guessed). Notes on drift encountered along the way:
+        // MoviesRemastered picked up an uncommitted field-name fix (certificate/releaseDate ->
+        // certification/released) so it shipped as v1.0.1, not v1.0.0. Trakt's last prior tag
+        // (v1.1.0) no longer compiled against current Chronicle.Plugins.Models
+        // (CastMember/CrewMember refactor) so it shipped fresh as v1.2.0 from HEAD. Hardcover
+        // had the same drift plus a csproj/manifest version mismatch (fixed to agree at 1.2.0
+        // before building); its manifest.json's plugin_id is "hardcover", not
+        // "chronicle.plugin.hardcover" -- that's the authoritative id per Chronicle's
+        // plugin-loading convention. TheTVDB and TVMaze both needed the same CastMember/
+        // CrewMember migration (uncommitted locally, now committed and pushed) before they'd
+        // compile; TVMaze's repo additionally had leftover unpackaged v1.0.0/v1.0.1 tags from
+        // an earlier session, so its real first packaged release is v1.0.2. Kodi.NFO depends on
+        // ISidecarFormatPlugin (src/Chronicle.Plugins/ISidecarFormatPlugin.cs), which only
+        // exists on this branch -- its catalog entry works once this PR merges to main, not
+        // before.
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.moviesremastered",
             Name:        "Movies Remastered (MRDb)",
@@ -766,11 +763,11 @@ public class PluginsController : ControllerBase
             Author:      "Chronicle Contributors",
             IconUrl:     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PHJlY3Qgd2lkdGg9JzI0JyBoZWlnaHQ9JzI0JyByeD0nMycgZmlsbD0nI0ZGMDAwMCcvPjxwYXRoIGQ9J001IDhoMnYySDV6bTEyIDBoMnYyaC0yek01IDE0aDJ2Mkg1em0xMiAwaDJ2MmgtMnonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjYnLz48cGF0aCBkPSdNOCA2aDh2MTJIOHonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjknLz48cGF0aCBkPSdNMTAgOWg0TTEwIDEyaDRNMTAgMTVoMycgc3Ryb2tlPScjRkYwMDAwJyBzdHJva2Utd2lkdGg9JzEuMicgc3Ryb2tlLWxpbmVjYXA9J3JvdW5kJy8+PC9zdmc+",
             GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered",
-            AssetName:   "chronicle.plugin.moviesremastered-v1.0.0.zip",
+            AssetName:   "chronicle.plugin.moviesremastered-v1.0.1.zip",
             DllName:     "Chronicle.Plugin.MoviesRemastered.dll",
             Tags:        ["movies", "fanedits", "metadata"],
-            Sha256:      "8d647f5a2496ae322514ab102e1b417a3807eb2182142bbff4365eff2852c87f",
-            Version:     "1.0.0"
+            Sha256:      "b0e36023fc2e4ae2ebb3ee6147052518a6432e46538497322f49953e9e2a6468",
+            Version:     "1.0.1"
         ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.trakt",
@@ -782,7 +779,7 @@ public class PluginsController : ControllerBase
             AssetName:   "chronicle.plugin.trakt-v1.2.0.zip",
             DllName:     "Chronicle.Plugin.Trakt.dll",
             Tags:        ["movies", "tv", "scrobbling", "sync"],
-            Sha256:      "9cb0b48d53be17d127402051ac8bad442f02055ecac23ec8cda27d5b0ed172a8",
+            Sha256:      "9c37b4198c66406a6438669adeeaaf3296011fefbcd04f30492819aaf7efa4a0",
             Version:     "1.2.0"
         ),
         new PluginCatalogEntry(
@@ -795,8 +792,47 @@ public class PluginsController : ControllerBase
             AssetName:   "chronicle.plugin.hardcover-v1.2.0.zip",
             DllName:     "Chronicle.Plugin.Hardcover.dll",
             Tags:        ["books", "audiobooks", "metadata", "sync"],
-            Sha256:      "717ee1b81c78a896cda72c1ce8c7692ac2f667e0871290c098d7b0c12c635fa2",
+            Sha256:      "da6272a877ad0b94dc95a37cfc81ab140b588a199922a556a6667ad0d1ca543b",
             Version:     "1.2.0"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.thetvdb",
+            Name:        "TheTVDB",
+            Description: "Metadata for TV series, seasons, and episodes from TheTVDB — the community standard used by Sonarr, Plex, Kodi, Trakt, and SIMKL.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAIuSURBVHhe7ZlhccMwDIUHYARGoARKYAiKoAzKYBRGYRhKoiwGRt69u7qnvcqJY7u1eqfvZyIl0bPkyPbbWxAEQRAEQRAENaSU9mkAInIWkYtx/YPfWaLXv4nBAhyN60d+pwUCNXwvbDecwQI0B1EQ78B2wxkpAJ7XmsaWX0rpne2eioic+IvYhimM5GIZFDLnh+2eTqMAVjCLZWCJllL6ZLun0yIAwOix31IZWOnPNlPoEODAfqUyKGTMN9tNoVUATF7sVyoDK/1FZMd2U2gVANSWAae/iPyyzTQ6BVgtg0L6n7TNVHoEAOzLZVBI/7ssmUavAJjM2F8HaKS/OU9Mo1cA/MvZP5dBIf0f3/puoVcAwP55lK1nT299Gesj2WaNUhlgtqdr81tfZoQA1mLLEsVF68uMEADwaFuwjwsGCvDFz9G4aX2ZgQLs+DkaN60vM0oAUCoDV60vM1gAswxctb7MYAHuGh/gqvUNgiAIgiDIWI2Q5rrzu9/qB+Drdg2QqQkE8Gqu1g+4FmFLIHpDY4ufy52gDAXyL9UxcvrwQ6/qlvwAb5byfTesBQL0Mjenc6XfORvwPTdUBnI73FBb3ot+5ONzNwisBQL0pmde22+cA/wuhx8twHWTxNdZgObRAgB3x2GaGgEa5wD8QW7ngu6OxDJrgQA9m2/5C1iZ446lQK7HW019gOH7EgKs0dQJArftcG0gmM1b/MAr9QF3dK4GL24nvyAIgiB4Tf4A7zKb1dPc3rkAAAAASUVORK5CYII=",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.TheTVDB",
+            AssetName:   "chronicle.plugin.thetvdb-v1.0.0.zip",
+            DllName:     "Chronicle.Plugin.TheTVDB.dll",
+            Tags:        ["tv", "metadata"],
+            Sha256:      "d8f5dae46d518264f292e0f070b3aa2bd53bfc6f1a138d04fe587d317edf9aef",
+            Version:     "1.0.0"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.tvmaze",
+            Name:        "TVMaze",
+            Description: "TV series, season, and episode metadata from TVMaze. No API key or account required.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAKcSURBVHhe7ZpNkoIwEIU5HgfiONyFI7icpSzdsXSZqSiG7vcaDQiVzCSpelVOS376y2sQmObSNK5kNRgoTRUABkpTBYCB0lQBYGCLfvrR7W5D727Qfep4DlI36E5j737wmA1KCKDj/kNHc6CukH8UtDdKCuDS9u6ug+5qzLOoc9Om4z8rLYCm3VYGaP8Ix3zSVwBsYVLvd4kgvknqaPt7JQcQXwbH298rPQA6fmVnT7C/VwYA4srgDPt7ZQGAyoCu7efY3ysPANRndLdWfI+ADIfsVSYAuAzufbv63VH298oGAO1yKIOd40UqHwDUby4DACOdcYQyAsBW98nqGJwbDlBWAHC33Ti4SeWPV4fvlRcA6qvb0fb3ygwAl8HSjre/V3YAqAxe7QT7e+UHgPo/2xn298oQgFUG59jf6wQAf0sVAAZKUwWAgdJUAWCgNFUAGChNFQAGSlMlgIHSFAkAXkwY9+Z4B8ePrmEM89k+vgAx2mPuiOPMNbD2AaDbU7wFNibHd3s0hjWP0fIAAA8ojKc4OHl4tyf+NSb+IYcADABwnq3aDOA+zisRFg72H8cAQi9ML3g5nkvJknwx+hw3JYC+nz8vT3peC5z6xQlqYcH+c5/gGKsMtDh5vZ4EANolYbUbg7uKUpALW+z/co2wtHkyhH5ULlyS1CLdtQtA2FG/ePnZBGDv1nLVsJ8ZyqsKnytSAwiJDm6a89dxkSyd/bmhjdUl1XSIDXWP9gGgyx6/yHwuDI9baTJJCcxMXq8nEQDYpZfdEID4m20sx5gBRiWv15MMgJkcAKAEcVw1Rhfnlsc5I+IcsAIdtR+AtQsKAP54wTG95DHwJni1JQHwf1UBYKA0VQAYKE0VAAZKUwWAgdJUAWCgNBUP4BeYI+ijz8zs7AAAAABJRU5ErkJggg==",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.TVMaze",
+            AssetName:   "chronicle.plugin.tvmaze-v1.0.2.zip",
+            DllName:     "Chronicle.Plugin.TVMaze.dll",
+            Tags:        ["tv", "metadata"],
+            Sha256:      "b8095c5a3db7de0af26c67942bcc7fadec982c0badca57f6797a19fd7324c9c3",
+            Version:     "1.0.2"
+        ),
+        new PluginCatalogEntry(
+            PluginId:    "chronicle.plugin.kodi.nfo",
+            Name:        "Kodi NFO",
+            Description: "Reads and writes Kodi's .nfo sidecar files — lossless local capture during a file scan, and building fresh NFOs from Chronicle's own resolved data on demand for Chronicle_Scraper's movie and TV addons.",
+            Author:      "Chronicle Contributors",
+            IconUrl:     "https://kodi.tv/favicon.ico",
+            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO",
+            AssetName:   "chronicle.plugin.kodi.nfo-v1.0.0.zip",
+            DllName:     "Chronicle.Plugin.Kodi.NFO.dll",
+            Tags:        ["movies", "tv", "kodi", "nfo", "local"],
+            Sha256:      "cc17f6b6f40a5a0828548d462c75638f3c16b225c64e3fe79d75d0785b285a00",
+            Version:     "1.0.0"
         ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.fanedit",
