@@ -36,16 +36,22 @@
   display: block;
 }
 
+/* A small marker-style tick on the right side of the photo, not a face-covering wedge and
+   not touching the card's border: a thin line rotated up and to the right at 45deg around
+   its own bottom-center (transform-origin). Rotating clockwise swings the top end further
+   right and up from its base, so right/bottom are inset well past the line's own length
+   (poster's aspect-ratio is a fixed 2/3, so this holds at any rendered size) -- close in and
+   the rotated tip pokes past the poster's own overflow:hidden edge, visibly cutting across
+   .personCard's outer border rather than sitting inside it. */
 .deceasedBar {
   position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 56%;
-  height: 14%;
-  background: rgba(0, 0, 0, 0.82);
-  transform-origin: bottom right;
-  transform: rotate(-8deg) translate(8%, 8%);
-  clip-path: polygon(0 40%, 100% 0, 100% 100%, 0 100%);
+  right: 26%;
+  bottom: 8%;
+  width: 10px;
+  height: 22%;
+  background: rgba(0, 0, 0, 0.85);
+  transform-origin: 50% 100%;
+  transform: rotate(45deg);
 }
 
 .info {

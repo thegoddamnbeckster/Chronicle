@@ -34,6 +34,9 @@ public sealed class LoadedPlugin : IDisposable
     /// <summary>All <see cref="IThemePlugin"/> instances discovered in the assembly.</summary>
     public IReadOnlyList<IThemePlugin> ThemePlugins { get; }
 
+    /// <summary>All <see cref="ISidecarFormatPlugin"/> instances discovered in the assembly.</summary>
+    public IReadOnlyList<ISidecarFormatPlugin> SidecarFormatPlugins { get; }
+
     public LoadedPlugin(
         PluginLoadContext loadContext,
         int dbId,
@@ -43,7 +46,8 @@ public sealed class LoadedPlugin : IDisposable
         IReadOnlyList<IImportProvider>? importProviders = null,
         IReadOnlyList<IReportPlugin>? reportPlugins = null,
         IReadOnlyList<IFileScannerPlugin>? fileScannerPlugins = null,
-        IReadOnlyList<IThemePlugin>? themePlugins = null)
+        IReadOnlyList<IThemePlugin>? themePlugins = null,
+        IReadOnlyList<ISidecarFormatPlugin>? sidecarFormatPlugins = null)
     {
         LoadContext = loadContext;
         DbId = dbId;
@@ -54,6 +58,7 @@ public sealed class LoadedPlugin : IDisposable
         ReportPlugins = reportPlugins ?? [];
         FileScannerPlugins = fileScannerPlugins ?? [];
         ThemePlugins = themePlugins ?? [];
+        SidecarFormatPlugins = sidecarFormatPlugins ?? [];
     }
 
     /// <summary>Unloads the plugin's <see cref="AssemblyLoadContext"/>.</summary>

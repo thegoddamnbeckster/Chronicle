@@ -26,6 +26,13 @@ export interface FileScannerMeta {
   nfoPosterUrl: string | null
   importedAt: string | null
   nfoPath: string | null
+  /** Raw .nfo sidecar text, captured verbatim at import time -- the actual
+   *  lossless-ingestion guarantee. Present for movies, fan edits, and every level
+   *  of a TV hierarchy (shows, seasons, episodes) that had a matched sidecar. */
+  nfoRaw?: string | null
+  /** Generic, complete structured view of the same sidecar (every element and
+   *  attribute) -- a display convenience over nfoRaw, not a replacement for it. */
+  nfoParsed?: unknown | null
 }
 
 export interface NfoActor {
@@ -400,6 +407,13 @@ export interface MediaTypeOption {
 }
 
 // ── Metadata search ───────────────────────────────────────────────────────────
+// Carries the contributing provider's own source alongside its id -- a bare id string is not
+// guaranteed unique across different providers' own id spaces (see LibraryItemResolver.cs).
+export interface ContributingExternalId {
+  source: string
+  externalId: string
+}
+
 export interface MetadataSearchResult {
   externalId: string
   title: string
@@ -412,7 +426,7 @@ export interface MetadataSearchResult {
   genres: string[] | null
   cast: string[] | null
   sources: string[] | null
-  contributingExternalIds: string[] | null
+  contributingExternalIds: ContributingExternalId[] | null
   libraryItemId: number | null
 }
 

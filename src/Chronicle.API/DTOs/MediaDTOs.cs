@@ -82,7 +82,16 @@ namespace Chronicle.API.DTOs
         int? SampleRateHz = null,
         int? DurationSeconds = null,
         string? FileType = null,
-        string? NfoPath = null
+        string? NfoPath = null,
+        /// <summary>Raw .nfo sidecar text, captured verbatim at import time -- the actual
+        /// lossless-ingestion guarantee (see FileScanService.FileScannerMetaJson's own doc).
+        /// Present for movies, fan edits, and every level of a TV hierarchy (shows, seasons,
+        /// episodes) that had a matched sidecar at import time.</summary>
+        string? NfoRaw = null,
+        /// <summary>Generic, complete structured view of the same sidecar (every element and
+        /// attribute, via XmlToJsonConverter) -- a display/query convenience over NfoRaw, not
+        /// a replacement for it.</summary>
+        JsonElement? NfoParsed = null
     );
 
     public record RefreshLogDto(

@@ -23,7 +23,6 @@ namespace Chronicle.API.Controllers
         private readonly IMergeService _mergeService;
         private readonly IMovieCollectionService _movieCollectionService;
         private readonly IPluginRegistry _pluginRegistry;
-        private readonly Chronicle.Services.Scan.NfoDetailParser _nfoDetailParser;
         private readonly IMetadataResolutionService _resolutionService;
         private readonly OverrideResetProgressService _overrideResetProgress;
 
@@ -31,7 +30,7 @@ namespace Chronicle.API.Controllers
             IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
             ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
-            IPluginRegistry pluginRegistry, Chronicle.Services.Scan.NfoDetailParser nfoDetailParser,
+            IPluginRegistry pluginRegistry,
             IMetadataResolutionService resolutionService, OverrideResetProgressService overrideResetProgress)
         {
             _mediaService            = mediaService;
@@ -42,7 +41,6 @@ namespace Chronicle.API.Controllers
             _movieCollectionService  = movieCollectionService;
             _pluginRegistry          = pluginRegistry;
             _mergeService    = mergeService;
-            _nfoDetailParser = nfoDetailParser;
             _resolutionService = resolutionService;
             _overrideResetProgress = overrideResetProgress;
         }
@@ -152,9 +150,11 @@ namespace Chronicle.API.Controllers
 
         /// <summary>
         /// Parses the rich display fields (plot, cast, genres, rating, etc.) from the
-        /// .nfo sidecar found alongside the item's media file by the file scanner.
-        /// The path comes from the database (never from user input) and is validated
-        /// to exist on disk and end in .nfo before being parsed.
+        /// sidecar found alongside the item's media file by the file scanner. The path comes
+        /// from the database (never from user input) and is validated to exist on disk.
+        /// Delegates the actual field extraction to whichever loaded
+        /// <see cref="Chronicle.Plugins.ISidecarFormatPlugin"/> recognizes it (Kodi's .nfo
+        /// today) -- this endpoint has no sidecar-schema knowledge of its own.
         /// </summary>
         [HttpGet("{id:int}/nfo")]
         public async Task<IActionResult> GetNfoDetail(int id, CancellationToken ct)
@@ -166,14 +166,17 @@ namespace Chronicle.API.Controllers
             var nfoPath = fs?.NfoPath;
 
             if (string.IsNullOrEmpty(nfoPath)) return NotFound();
-            if (!string.Equals(Path.GetExtension(nfoPath), ".nfo", StringComparison.OrdinalIgnoreCase))
-                return NotFound();
             if (!System.IO.File.Exists(nfoPath)) return NotFound();
 
-            var detail = _nfoDetailParser.Parse(nfoPath);
+            System.Text.Json.JsonElement? detail = null;
+            foreach (var plugin in _pluginRegistry.GetSidecarFormatPlugins())
+            {
+                detail = plugin.ExtractCuratedFields(nfoPath);
+                if (detail is not null) break;
+            }
             if (detail is null) return NotFound();
 
-            return Ok(ApiResponse<Chronicle.Services.Scan.NfoDetail>.Ok(detail));
+            return Ok(ApiResponse<System.Text.Json.JsonElement?>.Ok(detail));
         }
 
         [HttpGet("{id:int}/children")]
@@ -1311,7 +1314,7 @@ namespace Chronicle.API.Controllers
                 // such as a MusicBee push that reported size/bitrate/duration but no local path).
                 var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
                              fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null ||
-                             fs?.Fingerprint is not null)
+                             fs?.Fingerprint is not null || fs?.NfoRaw is not null)
                     ? fs : null;
 
                 // All non-fileScanner keys are plugin metadata — pass raw JsonElements so
@@ -1415,6 +1418,20 @@ namespace Chronicle.API.Controllers
                     if (sect.TryGetProperty("nfoPath", out var np))
                         nfoPath = np.GetString();
 
+                    // NfoRaw/NfoParsed -- the lossless-ingestion fields (see
+                    // FileScanService.FileScannerMetaJson's own doc). Read here the same way
+                    // as every other hierarchical-format field in this method: this fallback
+                    // exists BECAUSE a straight Deserialize<FileScannerMetaDto> against this
+                    // shape comes back all-null (property names don't match the flat format),
+                    // so anything not explicitly re-extracted here is silently lost for every
+                    // TV show/season/episode, even though FileScanService already stored it.
+                    string? nfoRaw = null;
+                    if (sect.TryGetProperty("nfoRaw", out var nr) && nr.ValueKind == System.Text.Json.JsonValueKind.String)
+                        nfoRaw = nr.GetString();
+                    System.Text.Json.JsonElement? nfoParsed = null;
+                    if (sect.TryGetProperty("nfoParsed", out var npEl) && npEl.ValueKind != System.Text.Json.JsonValueKind.Null)
+                        nfoParsed = npEl.Clone();
+
                     // Leaf items (episodes/tracks): first entry in filePaths array
                     if (sect.TryGetProperty("filePaths", out var arr) &&
                         arr.ValueKind == System.Text.Json.JsonValueKind.Array)
@@ -1423,7 +1440,8 @@ namespace Chronicle.API.Controllers
                         {
                             var path = el.GetString();
                             if (!string.IsNullOrEmpty(path))
-                                return new FileScannerMetaDto(path, null, null, importedAt, NfoPath: nfoPath);
+                                return new FileScannerMetaDto(path, null, null, importedAt,
+                                    NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
                         }
                     }
 
@@ -1433,13 +1451,15 @@ namespace Chronicle.API.Controllers
                     {
                         var folderPath = fp.GetString();
                         if (!string.IsNullOrEmpty(folderPath))
-                            return new FileScannerMetaDto(folderPath, null, null, importedAt, NfoPath: nfoPath);
+                            return new FileScannerMetaDto(folderPath, null, null, importedAt,
+                                NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
                     }
 
                     // fileScanner section exists but no path recorded yet (older import).
                     // Still return a non-null DTO so the File Scanner card is shown.
-                    if (importedAt.HasValue || nfoPath is not null)
-                        return new FileScannerMetaDto(null, null, null, importedAt, NfoPath: nfoPath);
+                    if (importedAt.HasValue || nfoPath is not null || nfoRaw is not null)
+                        return new FileScannerMetaDto(null, null, null, importedAt,
+                            NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
                 }
             }
             catch { /* ignore malformed JSON */ }

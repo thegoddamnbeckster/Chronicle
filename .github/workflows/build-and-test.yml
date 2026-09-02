@@ -1,0 +1,65 @@
+name: Build and Test
+
+# Nothing in this repo previously ran `dotnet build`/`dotnet test` (or the frontend's
+# lint/type-check/build) in CI -- only CodeQL's own security-scanning build, which doesn't
+# execute any test. That let 19 real test failures land unnoticed (see the commit that added
+# this workflow). This is the missing piece: an ordinary build+test gate.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: build-and-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dotnet:
+    name: .NET build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore src/Chronicle.sln
+
+      - name: Build
+        run: dotnet build src/Chronicle.sln --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test src/Chronicle.sln --no-build --configuration Release --logger "console;verbosity=normal"
+
+  frontend:
+    name: Web lint, type-check & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/Chronicle.Web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: src/Chronicle.Web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Build
+        run: npm run build

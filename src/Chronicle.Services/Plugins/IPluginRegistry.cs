@@ -45,6 +45,14 @@ public interface IPluginRegistry
     /// <summary>Returns all loaded <see cref="IThemePlugin"/> instances across all plugins.</summary>
     IReadOnlyList<IThemePlugin> GetThemePlugins();
 
+    /// <summary>Returns all loaded <see cref="ISidecarFormatPlugin"/> instances across all plugins.</summary>
+    IReadOnlyList<ISidecarFormatPlugin> GetSidecarFormatPlugins();
+
+    /// <summary>
+    /// Returns the <see cref="ISidecarFormatPlugin"/> whose <b>manifest</b> plugin ID matches, or <c>null</c>.
+    /// </summary>
+    ISidecarFormatPlugin? GetSidecarFormatPlugin(string pluginId);
+
     /// <summary>Returns all currently loaded plugins.</summary>
     IReadOnlyList<LoadedPlugin> GetLoadedPlugins();
 

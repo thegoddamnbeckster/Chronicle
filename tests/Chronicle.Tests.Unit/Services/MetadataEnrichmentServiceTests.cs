@@ -205,7 +205,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
             Name = "Alien - Darksteel Cut (2023)",
             MediaTypeId = mt.Id,
             HierarchyLevel = 0,
-            MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"E:\\\\Movies\\\\Alien - Darksteel Cut (2023)\\\\file.mkv\"]}}",
+            MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"E:/Movies/Alien - Darksteel Cut (2023)/file.mkv\"]}}",
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
         };
         _db.MediaItems.Add(item);
@@ -251,7 +251,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
             Name = "Alien (1979)",
             MediaTypeId = mt.Id,
             HierarchyLevel = 0,
-            MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"E:\\\\Movies\\\\Alien (1979)\\\\file.mkv\"]}}",
+            MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"E:/Movies/Alien (1979)/file.mkv\"]}}",
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
         };
         _db.MediaItems.Add(item);
@@ -897,19 +897,19 @@ public class MetadataEnrichmentServiceTests : IDisposable
         var track1 = new MediaItem
         {
             Name = "SHUTDOWN", HierarchyLevel = 2, ParentId = album.Id, MediaTypeId = mt.Id,
-            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\3TEETH\\shutdown.exe\\01 - SHUTDOWN.mp3"],"duration":210}}""",
+            MetadataJson = """{"fileScanner":{"filePaths":["E:/Music/3TEETH/shutdown.exe/01 - SHUTDOWN.mp3"],"duration":210}}""",
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
         };
         var track2 = new MediaItem
         {
             Name = "VOIDSONG", HierarchyLevel = 2, ParentId = album.Id, MediaTypeId = mt.Id,
-            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\3TEETH\\shutdown.exe\\02 - VOIDSONG.mp3"],"duration":253}}""",
+            MetadataJson = """{"fileScanner":{"filePaths":["E:/Music/3TEETH/shutdown.exe/02 - VOIDSONG.mp3"],"duration":253}}""",
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
         };
         var track3 = new MediaItem
         {
             Name = "Eradication", HierarchyLevel = 2, ParentId = album.Id, MediaTypeId = mt.Id,
-            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\3TEETH\\shutdown.exe\\03 - Eradication.mp3"],"duration":195}}""",
+            MetadataJson = """{"fileScanner":{"filePaths":["E:/Music/3TEETH/shutdown.exe/03 - Eradication.mp3"],"duration":195}}""",
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
         };
         _db.MediaItems.AddRange(track1, track2, track3);
@@ -980,7 +980,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         var item = new Chronicle.Core.Models.MediaItem
         {
             Name = "Track",
-            MetadataJson = $"{{\"fileScanner\":{{\"filePaths\":[\"E:\\\\Music\\\\Album\\\\{fileName}\"]}}}}"
+            MetadataJson = $"{{\"fileScanner\":{{\"filePaths\":[\"E:/Music/Album/{fileName}\"]}}}}"
         };
         var result = MetadataEnrichmentService.BuildSubItemMetadataTier1(item);
         result.ItemNumber.Should().Be(expectedTrack);
@@ -992,7 +992,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         var item = new Chronicle.Core.Models.MediaItem
         {
             Name = "Song",
-            MetadataJson = """{"fileScanner":{"filePaths":["E:\\Music\\Artist\\Album\\Disc 2\\01 - Song.mp3"],"folderPath":"E:\\Music\\Artist\\Album\\Disc 2"}}"""
+            MetadataJson = """{"fileScanner":{"filePaths":["E:/Music/Artist/Album/Disc 2/01 - Song.mp3"],"folderPath":"E:/Music/Artist/Album/Disc 2"}}"""
         };
         var result = MetadataEnrichmentService.BuildSubItemMetadataTier1(item);
         result.DiscNumber.Should().Be(2);

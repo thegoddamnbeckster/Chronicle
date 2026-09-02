@@ -11,11 +11,9 @@
  * the list purely via infinite scroll, with nothing user-configurable to key off.
  */
 
-type SortOption = 'name' | 'birthDate' | 'createdAt'
 type DeceasedFilter = 'either' | 'living' | 'deceased'
 
 export interface PeopleLibraryPrefs {
-  sort: SortOption
   // Single active role filter, '' meaning "no filter" -- a plain string (not a Set)
   // since this has to round-trip through JSON.stringify for localStorage; the page's
   // own role-chip UI already only ever supports one active role at a time (see
@@ -27,7 +25,6 @@ export interface PeopleLibraryPrefs {
 export const PEOPLE_PREFS_KEY = 'chronicle_people_prefs'
 
 export const DEFAULT_PEOPLE_PREFS: PeopleLibraryPrefs = {
-  sort: 'name',
   // Defaults to "Actor" -- per-user request (2026-08-30): a catalog this size reads
   // as noise when writers/directors/crew are all mixed in by default.
   role: 'Actor',

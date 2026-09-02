@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models.Scan;
+using Chronicle.Plugins.Models;
+using Chronicle.Services.Plugins;
 
 namespace Chronicle.Services.Scan
 {
@@ -39,16 +41,32 @@ namespace Chronicle.Services.Scan
 
         private readonly FolderSignalExtractor _folder;
         private readonly TagSignalExtractor _tags;
-        private readonly NfoSignalExtractor _nfo;
+        private readonly IPluginRegistry _pluginRegistry;
 
         public ScanGroupingService(
             FolderSignalExtractor folder,
             TagSignalExtractor tags,
-            NfoSignalExtractor nfo)
+            IPluginRegistry pluginRegistry)
         {
-            _folder = folder;
-            _tags   = tags;
-            _nfo    = nfo;
+            _folder         = folder;
+            _tags           = tags;
+            _pluginRegistry = pluginRegistry;
+        }
+
+        /// <summary>
+        /// Finds the sidecar (if any) belonging to <paramref name="path"/> by asking every
+        /// loaded <see cref="ISidecarFormatPlugin"/> in turn -- Kodi's .nfo today, potentially
+        /// other sidecar formats later. First plugin to recognize a sidecar wins.
+        /// </summary>
+        private (string? Path, SidecarSignal? Signal) FindSidecarSignal(string path)
+        {
+            foreach (var plugin in _pluginRegistry.GetSidecarFormatPlugins())
+            {
+                var sidecarPath = plugin.FindSidecar(path);
+                if (sidecarPath is null) continue;
+                return (sidecarPath, plugin.ExtractSignal(sidecarPath));
+            }
+            return (null, null);
         }
 
         public ScanGroupResult Group(
@@ -80,9 +98,11 @@ namespace Chronicle.Services.Scan
                 if (!isSidecar && !MediaFileExtensions.Recognized.Contains(ext))
                     continue;
                 // Skip expensive tag/nfo extraction for files we've already classified as sidecars.
-                var tagSignal    = isSidecar ? null : _tags.Extract(path);
-                var nfoPath      = isSidecar ? null : _nfo.FindSidecar(path);
-                var nfoSignal    = nfoPath != null ? _nfo.Extract(nfoPath) : null;
+                var tagSignal = isSidecar ? null : _tags.Extract(path);
+                string? nfoPath = null;
+                SidecarSignal? nfoSignal = null;
+                if (!isSidecar)
+                    (nfoPath, nfoSignal) = FindSidecarSignal(path);
 
                 // For flat-grouped types (movies etc.), all files in the same
                 // immediate folder = one item.  Sidecars are still silently absorbed.
@@ -236,6 +256,17 @@ namespace Chronicle.Services.Scan
                                 ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
                                 SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 2),
                                 Files           = [path],
+                                // Per-episode sidecar (e.g. "S01E01.nfo" next to the video file) --
+                                // without this, UpsertGroupItemAsync never receives an NfoPath for
+                                // ANY episode, so the item's persisted fileScanner.nfoPath stays
+                                // null even when a real, correctly-matched sidecar exists on disk.
+                                // The frontend's NFO-details panel is gated on that field being
+                                // non-null (see MediaDetailPage.tsx), so episodes never showed it
+                                // at all -- confirmed root cause (2026-09-01) of "TV episodes are
+                                // not showing NFO details like the movies are". The flat (movies,
+                                // hierarchyLevels==1) branch above already sets this correctly;
+                                // this was the one hierarchical leaf that didn't.
+                                NfoPath         = nfoPath,
                             });
                         }
                         else if (hierarchyLevels < 3)
@@ -250,6 +281,7 @@ namespace Chronicle.Services.Scan
                                 ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
                                 SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 1),
                                 Files           = [path],
+                                NfoPath         = nfoPath,
                             });
                         }
                         // else: 3-level type (TV/music), file is directly in the root folder with no
@@ -295,6 +327,7 @@ namespace Chronicle.Services.Scan
                         SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 2),
                         Year            = tagSignal?.Year.HasValue == true ? (int?)tagSignal.Year.Value : null,
                         Files           = [path],
+                        NfoPath         = nfoPath,
                     });
                 }
             }
@@ -328,7 +361,7 @@ namespace Chronicle.Services.Scan
             s.Trim().ToLowerInvariant();
 
         private static string ResolveLevel0Name(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo, int levels)
+            FolderSignal folder, TagSignal? tag, SidecarSignal? nfo, int levels)
         {
             // Tag: prefer AlbumArtist over Artist for level-0 when music
             if (tag?.AlbumArtist is not null) return tag.AlbumArtist;
@@ -338,7 +371,7 @@ namespace Chronicle.Services.Scan
         }
 
         private static string ResolveLeafName(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo)
+            FolderSignal folder, TagSignal? tag, SidecarSignal? nfo)
         {
             if (tag?.Title is not null) return tag.Title;
             if (nfo?.Title is not null) return nfo.Title;
@@ -378,7 +411,7 @@ namespace Chronicle.Services.Scan
         }
 
         private static double ComputeRootConfidence(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo)
+            FolderSignal folder, TagSignal? tag, SidecarSignal? nfo)
         {
             double score = 0.55; // folder name alone
             if (tag?.AlbumArtist is not null || tag?.Artist is not null) score += 0.20;
@@ -404,7 +437,7 @@ namespace Chronicle.Services.Scan
         /// determines what gets auto-imported; these values should not be chosen to
         /// artificially pass any particular threshold.
         /// </summary>
-        private static double ComputeFlatConfidence(string groupName, NfoSignal? nfo)
+        private static double ComputeFlatConfidence(string groupName, SidecarSignal? nfo)
         {
             if (nfo?.ExternalId is not null)              return 1.00; // NFO has exact external ID
             if (nfo?.Title is not null && nfo.Year.HasValue) return 0.90; // NFO title + year
@@ -417,7 +450,7 @@ namespace Chronicle.Services.Scan
         }
 
         private static double ComputeLeafConfidence(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo)
+            FolderSignal folder, TagSignal? tag, SidecarSignal? nfo)
         {
             double score = 0.5;
             if (tag?.Title is not null) score += 0.25;
@@ -441,7 +474,7 @@ namespace Chronicle.Services.Scan
         }
 
         private static List<string> BuildSources(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo, int level)
+            FolderSignal folder, TagSignal? tag, SidecarSignal? nfo, int level)
         {
             var sources = new List<string> { "folder" };
             if (tag is not null) sources.Add("tags");

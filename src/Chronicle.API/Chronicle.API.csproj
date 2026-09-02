@@ -14,6 +14,14 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.3" />
     <PackageReference Include="QRCoder" Version="1.*" />
     <PackageReference Include="Svg.Skia" Version="2.*" />
+    <!-- Svg.Skia pulls in SkiaSharp transitively, which only bundles native binaries for
+         Windows/macOS by default. Linux needs this explicit reference, or
+         DeviceAuthController.GetQr (SkiaSharp based PNG re-encode, see its own comment for why)
+         throws DllNotFoundException on any Linux deployment (confirmed directly 2026-09-02:
+         self-hosted Chronicle runs via docker-compose.yml, i.e. on Linux, where this was missing
+         entirely). NoDependencies avoids requiring libfontconfig/libX11 inside a minimal
+         container image. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.*" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.*" />
   </ItemGroup>

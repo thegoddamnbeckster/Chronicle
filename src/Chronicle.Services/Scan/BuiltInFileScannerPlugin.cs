@@ -7,9 +7,16 @@ namespace Chronicle.Services.Scan;
 
 /// <summary>
 /// Built-in implementation of <see cref="IFileScannerPlugin"/> that ships with Chronicle.
-/// Uses local file system enumeration combined with <see cref="FolderSignalExtractor"/>,
-/// <see cref="TagSignalExtractor"/>, and <see cref="NfoSignalExtractor"/> to produce
-/// rich <see cref="ScannedFile"/> results without any external API calls.
+/// Uses local file system enumeration combined with <see cref="FolderSignalExtractor"/> and
+/// <see cref="TagSignalExtractor"/> to produce <see cref="ScannedFile"/> results without any
+/// external API calls. Deliberately does NOT read sidecar files (e.g. Kodi's .nfo) itself:
+/// plugins are instantiated via bare Activator.CreateInstance (see
+/// PluginRegistry.DiscoverAndInstantiate) with no DI, so this class can never be given
+/// IPluginRegistry to look up an installed ISidecarFormatPlugin -- knowing a sidecar's schema
+/// at all would mean hardcoding one format's knowledge into core, the exact thing
+/// Chronicle.Plugin.Kodi.NFO exists to avoid. FileScanService.ApplyNfoSignals runs as a
+/// compensating step against every ScanDirectoryAsync result instead, since FileScanService
+/// (a real DI-registered service) can reach the registry.
 /// </summary>
 public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
 {
@@ -34,7 +41,6 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
 
     private static readonly FolderSignalExtractor _folderExtractor = new();
     private static readonly TagSignalExtractor    _tagExtractor    = new();
-    private static readonly NfoSignalExtractor    _nfoExtractor    = new();
 
     // Filename patterns ────────────────────────────────────────────────────────
 
@@ -270,43 +276,39 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
         // 1. Folder signal — structure, episode/track numbers
         var folderSig = _folderExtractor.Extract(filePath, scanRoot);
 
-        // 2. NFO sidecar — highest quality metadata
-        var nfoPath = _nfoExtractor.FindSidecar(filePath);
-        NfoSignal? nfoSig = nfoPath is not null ? _nfoExtractor.Extract(nfoPath) : null;
-
-        // 3. Embedded tags (audio / container)
+        // 2. Embedded tags (audio / container)
         var tagSig = _tagExtractor.Extract(filePath);
 
-        // 4. Filename-based parsing as fallback
+        // 3. Filename-based parsing as fallback
         var fileName = folderSig.FileName; // no extension
         var (fnTitle, fnYear) = ParseTitleYear(fileName);
 
-        // ── Populate ScannedFile from signals (priority: NFO > tag > filename) ────
+        // ── Populate ScannedFile from signals (priority: tag > filename) ──────────
+        // Sidecar (e.g. Kodi .nfo) signal is NOT applied here -- this class has no way to
+        // reach a loaded ISidecarFormatPlugin (see class doc). FileScanService.ApplyNfoSignals
+        // overlays it onto every field below afterward, same priority as before (sidecar wins
+        // when present).
 
         // Title
-        scanned.ParsedTitle =
-            nfoSig?.Title
-            ?? tagSig?.Title
-            ?? fnTitle;
+        scanned.ParsedTitle = tagSig?.Title ?? fnTitle;
 
         // Year
         scanned.ParsedYear =
-            nfoSig?.Year
-            ?? (tagSig?.Year.HasValue == true ? (int?)tagSig.Year.Value : null)
+            (tagSig?.Year.HasValue == true ? (int?)tagSig.Year.Value : null)
             ?? fnYear;
 
-        // External ID from NFO
-        scanned.SuggestedExternalId = nfoSig?.ExternalId;
+        // External ID (sidecar-only signal; left for ApplyNfoSignals to fill in)
+        scanned.SuggestedExternalId = null;
 
         // Poster URLs
-        scanned.NfoPosterUrl    = nfoSig?.PosterUrl;
+        scanned.NfoPosterUrl    = null;
         scanned.LocalPosterPath = FindLocalPoster(filePath);
-        scanned.NfoPath         = nfoPath;
+        scanned.NfoPath         = null;
 
         // TV fields
-        scanned.ShowTitle     = nfoSig?.ShowTitle;
-        scanned.SeasonNumber  = nfoSig?.Season  ?? folderSig.DetectedSeason;
-        scanned.EpisodeNumber = nfoSig?.Episode ?? folderSig.DetectedEpisode;
+        scanned.ShowTitle     = null;
+        scanned.SeasonNumber  = folderSig.DetectedSeason;
+        scanned.EpisodeNumber = folderSig.DetectedEpisode;
 
         // Detect episode title from filename after SxxExx code
         if (scanned.EpisodeNumber.HasValue)
@@ -339,8 +341,9 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
         // Media type hint
         scanned.MediaTypeHint = InferMediaTypeHint(scanned, folderSig);
 
-        // Confidence score
-        scanned.ConfidenceScore = ComputeConfidence(scanned, nfoSig, tagSig);
+        // Confidence score (sidecar-aware scoring is layered on afterward by
+        // FileScanService.ApplyNfoSignals -- see that method's own doc)
+        scanned.ConfidenceScore = ComputeConfidence(scanned, tagSig);
 
         return scanned;
     }
@@ -396,18 +399,15 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
     }
 
     /// <summary>
-    /// Assigns a confidence score reflecting how much structural signal was found.
-    /// Mirrors the scoring levels documented in <see cref="ScannedFile.ConfidenceScore"/>.
+    /// Assigns a confidence score reflecting how much structural signal was found from
+    /// tags/filename alone. Mirrors the scoring levels documented in
+    /// <see cref="ScannedFile.ConfidenceScore"/> minus the sidecar tiers (100/85/78) --
+    /// FileScanService.ApplyNfoSignals raises the score into those tiers afterward when a
+    /// sidecar is present, exactly reproducing what this method used to do directly against
+    /// NfoSignal before sidecar knowledge moved out of core.
     /// </summary>
-    private static int ComputeConfidence(ScannedFile f, NfoSignal? nfo, TagSignal? tag)
+    private static int ComputeConfidence(ScannedFile f, TagSignal? tag)
     {
-        if (nfo != null)
-        {
-            if (nfo.ExternalId != null)                  return 100;
-            if (nfo.Title != null && nfo.Year.HasValue)  return 85;
-            if (nfo.Title != null)                       return 78;
-        }
-
         if (tag != null)
         {
             if (tag.Title != null && tag.Year.HasValue)  return 82;
