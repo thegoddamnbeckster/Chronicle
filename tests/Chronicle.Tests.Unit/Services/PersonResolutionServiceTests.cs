@@ -74,6 +74,44 @@ public class PersonResolutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolvePersonOnlyAsync_WhitespaceOnlyNameDifference_FallsBackToLooseNormalizedNameMatch()
+    {
+        // Regression test for a real production duplicate (2026-09-03): "Cee Lo Green" (from
+        // one plugin) and "CeeLo Green" (from another) are the same real person, but Step 2's
+        // exact NormalizedName match treats "cee lo green" and "ceelo green" as different
+        // strings -- NormalizeName collapses whitespace runs to a single space, it never
+        // removes it. NormalizeNameLoose already existed for exactly this class of gap (added
+        // for "James S. A. Corey" vs "James S.A. Corey") but was never wired into this general
+        // resolution path, so every plugin that spaces a name differently than an earlier one
+        // created a fresh duplicate stub instead of matching the existing person.
+        var first = await _svc.ResolvePersonOnlyAsync(_db, "CeeLo Green", null, "wikipedia", default);
+        await _db.SaveChangesAsync();
+
+        var second = await _svc.ResolvePersonOnlyAsync(_db, "Cee Lo Green", null, "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        second.Id.Should().Be(first.Id);
+        (await _db.MediaItems.CountAsync(m => m.MediaTypeId == 1)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ResolvePersonOnlyAsync_LooseMatchSameSourceConflictingId_CreatesSeparatePersonInsteadOfMerging()
+    {
+        // The Step 2b loose-name fallback must carry the exact same same-source-conflict guard
+        // as Step 2's exact match -- otherwise it would just be a second, easier way to
+        // reproduce the Brian Johnson conflation (two different real people who happen to share
+        // a name, differing only in whitespace, must not be silently merged).
+        var first = await _svc.ResolvePersonOnlyAsync(_db, "CeeLo Green", "tmdb:111", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        var second = await _svc.ResolvePersonOnlyAsync(_db, "Cee Lo Green", "tmdb:222", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        second.Id.Should().NotBe(first.Id);
+        (await _db.MediaItems.CountAsync(m => m.MediaTypeId == 1)).Should().Be(2);
+    }
+
+    [Fact]
     public async Task ResolvePersonOnlyAsync_SameSourceConflictingId_CreatesSeparatePersonInsteadOfMerging()
     {
         // Regression test for a confirmed live incident: "Brian Johnson" the VFX artist

@@ -24,6 +24,11 @@ namespace Chronicle.Data
         // gap), this keeps it in sync centrally: any MediaItem that's Added or Modified
         // gets NormalizedName recomputed from its current Name right before the write
         // actually happens, no matter which service/controller/plugin touched it.
+        //
+        // NormalizedNameLoose (2026-09-03) rides along on the exact same hook and for the
+        // exact same reason — PersonResolutionService.ResolvePersonOnlyAsync's loose-name
+        // fallback (added to catch "Cee Lo Green" vs. "CeeLo Green") needs it kept in sync
+        // for every MediaItem, not just people, without a second call-site hunt.
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
         {
             SyncNormalizedNames();
@@ -46,6 +51,10 @@ namespace Chronicle.Data
                 var normalized = MediaItemNormalizer.NormalizeName(entry.Entity.Name);
                 if (entry.Entity.NormalizedName != normalized)
                     entry.Entity.NormalizedName = normalized;
+
+                var normalizedLoose = MediaItemNormalizer.NormalizeNameLoose(entry.Entity.Name);
+                if (entry.Entity.NormalizedNameLoose != normalizedLoose)
+                    entry.Entity.NormalizedNameLoose = normalizedLoose;
             }
         }
 
@@ -451,6 +460,8 @@ namespace Chronicle.Data
             {
                 e.Property(x => x.NormalizedName).HasColumnName("normalized_name");
                 e.HasIndex(x => x.NormalizedName).HasDatabaseName("idx_media_items_normalized_name");
+                e.Property(x => x.NormalizedNameLoose).HasColumnName("normalized_name_loose");
+                e.HasIndex(x => x.NormalizedNameLoose).HasDatabaseName("idx_media_items_normalized_name_loose");
             });
 
             modelBuilder.Entity<MediaItemAlias>(e =>

@@ -200,6 +200,35 @@ public class PersonResolutionService(
                 person = nameMatch;
         }
 
+        // Step 2b: loose name lookup (whitespace-insensitive), scoped to people-type items.
+        // Confirmed live (2026-09-03): "Cee Lo Green" (from one plugin) and "CeeLo Green" (from
+        // another) are the same real person, but Step 2's exact NormalizedName match treats
+        // "cee lo green" and "ceelo green" as different strings -- NormalizeName collapses
+        // whitespace runs to a single space, it never removes it, so a plugin that spaces a
+        // name differently than an earlier one always creates a fresh duplicate stub instead of
+        // matching the existing person. Queries the persisted NormalizedNameLoose column
+        // directly (kept in sync by ChronicleDbContext.SyncNormalizedNames on every write path)
+        // rather than stripping spaces from NormalizedName at query time, so this stays a plain
+        // indexed-equality lookup with one source of truth for what "loose" means. Same
+        // same-source-conflict guard as Step 2 -- this must never become a second way to
+        // blindly merge two different real people.
+        if (person is null)
+        {
+            var looseNormalized = MediaItemNormalizer.NormalizeNameLoose(personName);
+            if (looseNormalized.Length > 0)
+            {
+                var looseMatch = await db.MediaItems.FirstOrDefaultAsync(
+                    m => m.MediaTypeId == peopleTypeId && m.NormalizedNameLoose == looseNormalized, ct);
+
+                var hasConflictingSourceIdLoose = looseMatch is not null && !string.IsNullOrWhiteSpace(externalPersonId) &&
+                    await db.MediaExternalIds.AnyAsync(x =>
+                        x.MediaItemId == looseMatch.Id && x.Source == source && x.ExternalId != externalPersonId, ct);
+
+                if (!hasConflictingSourceIdLoose)
+                    person = looseMatch;
+            }
+        }
+
         // Step 3: create a new stub.
         if (person is null)
         {

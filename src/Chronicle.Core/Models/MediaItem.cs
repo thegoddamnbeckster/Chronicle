@@ -13,6 +13,18 @@ namespace Chronicle.Core.Models
         /// Populated at creation/update time by MediaItemNormalizer.NormalizeName().
         /// </summary>
         public string? NormalizedName { get; set; }
+
+        /// <summary>
+        /// Same as NormalizedName but with ALL whitespace removed too (not just collapsed) --
+        /// MediaItemNormalizer.NormalizeNameLoose(). A second, whitespace-insensitive matching
+        /// tier so a name spaced differently by different sources ("Cee Lo Green" vs. "CeeLo
+        /// Green", "James S. A. Corey" vs. "James S.A. Corey") is still recognized as the same
+        /// name. Persisted (rather than computed at query time) so PersonResolutionService's
+        /// loose-name fallback can do a plain indexed-equality lookup instead of a
+        /// query-time string transform on every row -- kept in sync by the same central
+        /// ChronicleDbContext.SaveChanges hook that maintains NormalizedName.
+        /// </summary>
+        public string? NormalizedNameLoose { get; set; }
         public int? Year { get; set; }
         public string? Overview { get; set; }
         public string? PosterUrl { get; set; }

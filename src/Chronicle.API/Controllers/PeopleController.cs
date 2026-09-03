@@ -361,6 +361,40 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
+        /// One-time backfill for MediaItem.NormalizedNameLoose (added 2026-09-03 alongside
+        /// PersonResolutionService's Step 2b loose-name fallback -- see the doc comment there).
+        /// ChronicleDbContext.SyncNormalizedNames keeps this column current for every write from
+        /// here on, but a migration only adds the column -- it doesn't compute values for the
+        /// existing rows, and Step 2b's query would silently match nothing against pre-existing
+        /// people until each one happens to be re-saved for an unrelated reason. Scoped to all
+        /// MediaItems, not just people, since the column lives on MediaItem generally and the
+        /// same central hook maintains it for every media type.
+        /// </summary>
+        [HttpPost("backfill-normalized-name-loose")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> BackfillNormalizedNameLoose(CancellationToken ct)
+        {
+            var items = await _context.MediaItems
+                .Select(m => new { m.Id, m.Name, m.NormalizedNameLoose })
+                .ToListAsync(ct);
+
+            int updated = 0;
+            foreach (var item in items)
+            {
+                ct.ThrowIfCancellationRequested();
+                var correct = MediaItemNormalizer.NormalizeNameLoose(item.Name);
+                if (correct == item.NormalizedNameLoose) continue;
+
+                await _context.MediaItems
+                    .Where(m => m.Id == item.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.NormalizedNameLoose, correct), ct);
+                updated++;
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { updated }));
+        }
+
+        /// <summary>
         /// Companion to dedupe-tmdb-duplicates below, and must run BEFORE it (or before any
         /// fresh credit reprocessing): rewrites every remaining "person:N"-format MediaExternalId
         /// (Source="tmdb") on a "people" item to the "tmdb:N" format every other code path
