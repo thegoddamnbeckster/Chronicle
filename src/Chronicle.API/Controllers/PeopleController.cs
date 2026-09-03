@@ -330,6 +330,15 @@ namespace Chronicle.API.Controllers
 
         private static readonly Regex TmdbPersonExternalIdRe = new(@"^(?:person|tmdb):(\d+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        // Matches a wikipedia external id built from a disambiguated page title -- e.g.
+        // "wikipedia:en:Michael_Lerner_(actor)" -- regardless of when it was recorded. Records
+        // enriched since chronicle.plugin.wikipedia v1.0.8 also carry an explicit
+        // pluginMetadata.chronicle.plugin.wikipedia.extendedData.disambiguator field for the
+        // same signal, but this regex is what still works for everything enriched before that
+        // (see GetWikipediaCollisionCandidates's own doc for why this signal matters).
+        private static readonly Regex DisambiguatedWikipediaExternalIdRe =
+            new(@"_\([^)]*\)$", RegexOptions.Compiled);
+
         /// <summary>
         /// One-time historical backfill for a real production bug (fixed in
         /// MediaItemNormalizer.NormalizeName, 2026-09-03): the stored NormalizedName column
@@ -624,6 +633,65 @@ namespace Chronicle.API.Controllers
 
             await _context.SaveChangesAsync(ct);
             return Ok(ApiResponse<object>.Ok(new { groupsProcessed, deleted }));
+        }
+
+        /// <summary>
+        /// Read-only scan for the Michael Lerner failure shape (confirmed live 2026-09-03):
+        /// two DIFFERENT real people happen to share a name (one a stuntman credited only via
+        /// TMDB, the other a famous actor with his own Wikipedia page), and the STUB WITHOUT a
+        /// real Wikipedia page of its own got matched onto the OTHER person's disambiguated
+        /// article anyway -- WikipediaScoring's name/type-keyword scoring has no way to know
+        /// two same-named Chronicle items are actually different people. Wikipedia only
+        /// disambiguates a title when some OTHER article shares the bare name, so a
+        /// disambiguated match landing on a person who shares a normalized name with ANOTHER
+        /// Chronicle person is exactly the at-risk shape -- not proof of a wrong match (most
+        /// disambiguated matches are entirely correct), just the narrow candidate set worth a
+        /// human/AI look, the same way this one was actually found. Makes no changes; every
+        /// candidate here needs the same manual bio-vs-credits comparison this endpoint's own
+        /// doc comment describes, not an automated verdict.
+        /// </summary>
+        [HttpGet("wikipedia-collision-candidates")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetWikipediaCollisionCandidates(CancellationToken ct)
+        {
+            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
+            if (peopleTypeId is null)
+                return Ok(ApiResponse<object>.Ok(new { count = 0, candidates = Array.Empty<object>() }));
+
+            var wikipediaExtIds = await _context.MediaExternalIds
+                .Where(e => e.Source == "wikipedia")
+                .Select(e => new { e.MediaItemId, e.ExternalId })
+                .ToListAsync(ct);
+            var disambiguatedPersonIds = wikipediaExtIds
+                .Where(e => DisambiguatedWikipediaExternalIdRe.IsMatch(e.ExternalId))
+                .Select(e => e.MediaItemId)
+                .ToHashSet();
+
+            if (disambiguatedPersonIds.Count == 0)
+                return Ok(ApiResponse<object>.Ok(new { count = 0, candidates = Array.Empty<object>() }));
+
+            var people = await _context.MediaItems
+                .Where(m => m.MediaTypeId == peopleTypeId.Value)
+                .Select(m => new { m.Id, m.Name, m.NormalizedNameLoose })
+                .ToListAsync(ct);
+
+            var candidates = people
+                .Where(p => !string.IsNullOrEmpty(p.NormalizedNameLoose))
+                .GroupBy(p => p.NormalizedNameLoose)
+                .Where(g => g.Count() > 1 && g.Any(p => disambiguatedPersonIds.Contains(p.Id)))
+                .Select(g => new
+                {
+                    normalizedName = g.Key,
+                    people = g.Select(p => new
+                    {
+                        p.Id,
+                        p.Name,
+                        hasDisambiguatedWikipediaMatch = disambiguatedPersonIds.Contains(p.Id),
+                    }).ToList(),
+                })
+                .ToList();
+
+            return Ok(ApiResponse<object>.Ok(new { count = candidates.Count, candidates }));
         }
     }
 }
