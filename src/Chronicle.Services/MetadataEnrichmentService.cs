@@ -1105,10 +1105,19 @@ public class MetadataEnrichmentService(
             // attempt below finds nothing, the original ID/Completed status is restored
             // in the not-found branch rather than downgrading a working match to NotFound.
             var forceRefreshOriginalId = options.Mode == EnrichmentMode.Force ? row.ExternalId : null;
+            // A stored id only counts as "a working match worth preserving" if it's actually
+            // type-valid for this item (see IsRootLevelIdTypeValid) -- otherwise Force mode's
+            // own "keep/re-fetch the previous match on search failure" safety net would just
+            // keep re-fetching and re-applying the SAME wrong data forever, since Step 1 below
+            // never gets a chance to run and discard it (it only inspects row.ExternalId, which
+            // this block would otherwise have already cleared).
+            var forceRefreshOriginalIdTypeValid = row.MediaItem?.ParentId is not null || IsRootLevelIdTypeValid(
+                forceRefreshOriginalId, NormalizeMediaTypeName(row.MediaItem?.MediaType?.Name ?? string.Empty));
             var forceRefreshHadMatch = options.Mode == EnrichmentMode.Force
                 && options.IdOverride is null
                 && row.Status == EnrichmentStatus.Completed
-                && !string.IsNullOrEmpty(row.ExternalId);
+                && !string.IsNullOrEmpty(row.ExternalId)
+                && forceRefreshOriginalIdTypeValid;
             if (forceRefreshHadMatch)
                 row.ExternalId = null;
 
@@ -1138,8 +1147,19 @@ public class MetadataEnrichmentService(
 
                     if (isTmdbOrMusicBrainzFormat && row.MediaItem.ParentId == null)
                     {
-                        // Root item — TMDB/MusicBrainz format: must be artist, movie, or show-level tv:N
-                        idIsValid = entityType is "artist" or "movie" or "tv";
+                        // Root item — TMDB/MusicBrainz format: the entity type must match what
+                        // this item's OWN media type actually is, not just be "some root-level
+                        // TMDB/MusicBrainz shape". Checking hierarchy level alone let a stale or
+                        // mis-seeded id from a COMPLETELY different media type validate as fine
+                        // purely because both are root-level formats -- confirmed live: a
+                        // "people" item (Will Brill, a real actor correctly linked via Wikipedia)
+                        // also carried a "movie:N" id belonging to an unrelated film, and that
+                        // film's title/overview/poster got silently promoted onto the person's
+                        // own record. Every future refresh kept calling the bad id "valid" and
+                        // reusing it, since level-only validation had no way to catch the
+                        // media-type mismatch. See IsRootLevelIdTypeValid.
+                        idIsValid = IsRootLevelIdTypeValid(
+                            row.ExternalId, NormalizeMediaTypeName(row.MediaItem.MediaType?.Name ?? string.Empty));
                     }
                     else if (isTmdbOrMusicBrainzFormat)
                     {
@@ -2016,6 +2036,37 @@ public class MetadataEnrichmentService(
     /// </summary>
     private static string NormalizeMediaTypeName(string name) =>
         name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
+
+    /// <summary>
+    /// For a ROOT-level TMDB/MusicBrainz-format id ("movie:N", "tv:N", "artist:N", ...),
+    /// checks that the entity type actually matches what <paramref name="normalizedMediaTypeName"/>
+    /// (already run through <see cref="NormalizeMediaTypeName"/>) is. Returns true for anything
+    /// that isn't a recognized TMDB/MusicBrainz root-level shape (plugin-specific ids like
+    /// "hardcover:*" are trusted as-is) or for a null/empty id (nothing to validate).
+    /// Shared by the Force-refresh "was there a working match worth preserving" check and by
+    /// Step 1's stored-id validation below, so a stale id from a completely different media
+    /// type — e.g. a "movie:N" id belonging to an unrelated film seeded onto a "people" item —
+    /// is judged the same way regardless of which code path is looking at it.
+    /// </summary>
+    private static bool IsRootLevelIdTypeValid(string? externalId, string normalizedMediaTypeName)
+    {
+        if (string.IsNullOrEmpty(externalId)) return true;
+        var sep = externalId.IndexOf(':');
+        if (sep <= 0) return true;
+        var entityType = externalId[..sep];
+        bool isTmdbOrMusicBrainzFormat =
+            entityType is "movie" or "tv" or "artist" or "release-group" or "release"
+                        or "season" or "album" or "recording" or "episode";
+        if (!isTmdbOrMusicBrainzFormat) return true;
+
+        return entityType switch
+        {
+            "artist" => normalizedMediaTypeName is "music",
+            "movie"  => normalizedMediaTypeName is "movie" or "fanedits" or "anime",
+            "tv"     => normalizedMediaTypeName is "tv",
+            _        => false, // release-group/season/album/recording/episode are never root-level
+        };
+    }
 
     /// <summary>
     /// Returns all raw DB name variants that <see cref="NormalizeMediaTypeName"/> would map to

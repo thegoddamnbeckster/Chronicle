@@ -809,6 +809,46 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichItemAsync_Force_StoredIdBelongsToWrongMediaType_DiscardsRatherThanRefetches()
+    {
+        // Regression test for a real production bug: a "people" item's TMDB enrichment row
+        // ended up storing a "movie:N" id belonging to a completely unrelated film (mis-seeded
+        // by an earlier bug, root cause unconfirmed) -- and every "Refresh" from then on kept
+        // re-fetching and re-applying that FILM's title/overview/poster onto the PERSON's own
+        // record, because the old validation only checked hierarchy level (root vs child), not
+        // whether the entity type actually matched this item's media type. A "movie:" id must
+        // never be treated as "a working match worth preserving" for a "people" item.
+        var peopleType = new MediaType
+        {
+            Name = "people", DisplayName = "People", HierarchyLevels = 1,
+            HierarchyLabels = "Person", InteractionVerb = "viewed", ProgressUnit = "percent",
+        };
+        _db.MediaTypes.Add(peopleType);
+        await _db.SaveChangesAsync();
+        var item = new MediaItem
+        {
+            Name = "The Burrell Files 2", MediaTypeId = peopleType.Id,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", "movie:1136135", EnrichmentStatus.Completed);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "people");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>());
+
+        var opts = new EnrichmentOptions(EnrichmentMode.Force, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        // Must never re-fetch the wrong movie's data again.
+        provider.Verify(p => p.GetByIdAsync("movie:1136135", It.IsAny<CancellationToken>()), Times.Never);
+        var row = await _db.MediaEnrichments.FirstAsync(e => e.MediaItemId == item.Id);
+        row.ExternalId.Should().BeNullOrEmpty();
+        row.Status.Should().Be(EnrichmentStatus.NotFound);
+    }
+
+    [Fact]
     public async Task EnrichItemAsync_SearchesWhenNoStoredId()
     {
         var item = await SeedRootItem("Blade Runner", 1982);
