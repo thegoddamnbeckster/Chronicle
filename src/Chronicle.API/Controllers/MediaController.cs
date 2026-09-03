@@ -384,14 +384,20 @@ namespace Chronicle.API.Controllers
                 .Where(e => string.Equals(e.Source, shortSource, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            if (toRemove.Count == 0)
-                return NoContent(); // already absent — idempotent
-
-            _context.MediaExternalIds.RemoveRange(toRemove);
-
-            // Strip the provider's block from MetadataJson so stale data doesn't linger.
-            // MetadataJson is keyed by full plugin ID; also try the short source name for
-            // items stored under the old flat format.
+            // Strip the provider's block from MetadataJson so stale data doesn't linger. Matches
+            // every blob by its OWN internal "source" property (falling back to a dictionary-key
+            // match for a blob with no "source" of its own) rather than only the caller's exact
+            // key-naming convention. Computed BEFORE the early-return below and gated on its own
+            // result, not on whether an ExternalIds row existed -- confirmed live (2026-09-03),
+            // two compounding gaps: (1) matching only by dictionary key silently did nothing when
+            // a caller passed the short source name for a blob stored under the full plugin ID
+            // key, so the block survived even though the external ID row WAS removed; (2) once
+            // that row was gone from an earlier (silently-incomplete) call, a later retry hit
+            // `toRemove.Count == 0` and returned early before ever reaching the blob-removal code
+            // at all, EVEN with fix (1) applied. Left a person's stale -- in one case actively
+            // WRONG, a different real person's bio and photo -- Wikipedia data resolving
+            // indefinitely after what looked like two successful clears in a row.
+            var keysToRemove = new List<string>();
             if (!string.IsNullOrWhiteSpace(item.MetadataJson))
             {
                 try
@@ -400,13 +406,21 @@ namespace Chronicle.API.Controllers
                         System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
                     if (root is not null)
                     {
-                        root.Remove(source.ToLowerInvariant());      // full plugin ID key
-                        root.Remove(shortSource.ToLowerInvariant()); // short source key
-                        item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+                        keysToRemove = Chronicle.Core.Helpers.PluginIdHelper.FindProviderBlobKeys(root, source);
+                        if (keysToRemove.Count > 0)
+                        {
+                            foreach (var key in keysToRemove) root.Remove(key);
+                            item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+                        }
                     }
                 }
                 catch { /* malformed JSON — leave as-is */ }
             }
+
+            if (toRemove.Count == 0 && keysToRemove.Count == 0)
+                return NoContent(); // already fully absent — idempotent
+
+            _context.MediaExternalIds.RemoveRange(toRemove);
 
             // The external ID that just disappeared may be the only thing an "artwork-only"
             // provider (e.g. Fanart.tv) had to cross-reference — its own blob/enrichment row
