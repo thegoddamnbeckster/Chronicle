@@ -776,6 +776,39 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichItemAsync_Force_SearchScoresTooLow_RefetchesDataByOriginalId()
+    {
+        // Regression test for a real production bug: a Force refresh on an item whose
+        // fresh name search comes back empty (or every candidate scores below the match
+        // threshold -- common for short/mononym names re-searched against their own,
+        // already-correct, page) restored the OLD ExternalId but never re-fetched data by
+        // it, so the item's Name/Overview/etc. stayed frozen at whatever they were before
+        // the refresh -- confirmed live: a title-formatting fix (stripping a disambiguation
+        // suffix) never took effect for this class of item no matter how many times
+        // "Refresh" was clicked. A Force refresh must still pick up upstream data changes
+        // for a previously-working match even when the search step can't re-confirm it.
+        var item = await SeedRootItem("Blade Runner (film)", 1982);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", "movie:78", EnrichmentStatus.Completed);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>());
+        provider.Setup(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:78" });
+
+        var opts = new EnrichmentOptions(EnrichmentMode.Force, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        // The old behavior stopped at "keep the existing ExternalId" and never called
+        // GetByIdAsync at all, so the item's data (Title/Overview/etc.) stayed frozen at
+        // whatever it was before the refresh no matter how many times it ran.
+        provider.Verify(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()), Times.Once);
+        var row = await _db.MediaEnrichments.FirstAsync(e => e.MediaItemId == item.Id);
+        row.ExternalId.Should().Be("movie:78");
+        row.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
     public async Task EnrichItemAsync_SearchesWhenNoStoredId()
     {
         var item = await SeedRootItem("Blade Runner", 1982);

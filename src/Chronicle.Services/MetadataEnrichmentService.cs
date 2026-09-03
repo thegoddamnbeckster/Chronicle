@@ -1738,12 +1738,37 @@ public class MetadataEnrichmentService(
             {
                 if (forceRefreshHadMatch && !string.IsNullOrEmpty(forceRefreshOriginalId))
                 {
-                    // Fresh re-derivation/re-search found nothing better — keep the
-                    // previously-working match rather than downgrading it to NotFound.
+                    // Fresh re-derivation/re-search found nothing that met the match
+                    // threshold -- common for short/mononym names where every candidate
+                    // title only partially overlaps (e.g. a one-word stage name scoring
+                    // just under the cutoff against its own, already-correct, Wikipedia
+                    // page). Don't downgrade a previously-working match to NotFound, but
+                    // don't leave the item's data stale either -- re-fetch by the known-good
+                    // id directly so a Refresh still picks up upstream data/formatting
+                    // changes (confirmed live: a disambiguation-suffix-stripping fix never
+                    // took effect for exactly this class of item until this direct re-fetch
+                    // was added) even when the search step can't re-confirm the match itself.
                     logger.LogInformation(
-                        "Force refresh found no new match for item {ItemId} (plugin={Plugin}); keeping existing match {ExternalId}",
+                        "Force refresh found no new match for item {ItemId} (plugin={Plugin}); " +
+                        "re-fetching previously-working match {ExternalId} directly",
                         row.MediaItemId, provider.PluginId, forceRefreshOriginalId);
-                    row.ExternalId = forceRefreshOriginalId;
+                    try
+                    {
+                        result = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                            async t => (MediaMetadata?)await provider.GetByIdAsync(forceRefreshOriginalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(
+                            "Re-fetch of previously-working match {ExternalId} failed for item {ItemId}: {ErrorMessage}",
+                            forceRefreshOriginalId, row.MediaItemId, ex.Message);
+                    }
+
+                    // Whether or not the re-fetch produced fresh data, keep the known-good id
+                    // on the row rather than leaving it cleared -- the success block below
+                    // overwrites this with result.ExternalId when the re-fetch did succeed.
+                    row.ExternalId = result?.ExternalId ?? forceRefreshOriginalId;
                 }
                 else
                 {
@@ -1754,7 +1779,8 @@ public class MetadataEnrichmentService(
                     row.Status = EnrichmentStatus.NotFound;
                 }
             }
-            else
+
+            if (result is not null && !string.IsNullOrEmpty(result.ExternalId))
             {
                 row.ExternalId      = result.ExternalId;
                 row.Status          = EnrichmentStatus.Completed;
