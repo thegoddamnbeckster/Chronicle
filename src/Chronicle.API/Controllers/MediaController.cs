@@ -7,6 +7,7 @@ using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace Chronicle.API.Controllers
 {
@@ -438,6 +439,112 @@ namespace Chronicle.API.Controllers
             return NoContent();
         }
 
+        // Matches a wikipedia external id built from a disambiguated page title whose
+        // disambiguator is specifically an acting occupation -- "wikipedia:en:X_(actor)",
+        // "..._(actress)", "..._(British_actor)". Word-bounded so "..._(arts_benefactor)"
+        // (real disambiguator seen live) doesn't false-match on "actor" as a mere substring of
+        // "benefactor". See FixWrongActorWikipediaMatches's own doc for what this feeds into.
+        private static readonly Regex ActorDisambiguatedWikipediaExternalIdRe =
+            new(@"_\(([^)]*\b(?:actor|actress)\b[^)]*)\)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private static readonly HashSet<string> ActingRoleNames = new(StringComparer.OrdinalIgnoreCase)
+            { "Actor", "Actress", "Self", "Voice Actor", "Narrator", "Host" };
+
+        /// <summary>
+        /// Batch fix for the Michael Lerner failure shape (confirmed live 2026-09-03, found via
+        /// GET /people/wikipedia-collision-candidates + manual bio-vs-credits review): a person
+        /// item was matched onto a Wikipedia article disambiguated as an actor/actress ("Michael
+        /// Lerner (actor)"), but every one of that item's OWN credits (from TMDB or any other
+        /// non-Wikipedia source) is a CREW role -- Gaffer, Grip, Composer, Editor, Producer,
+        /// Stunts, VFX Supervisor, etc. -- never an acting role. Confirmed a clean, reliable
+        /// signal across manual review of 123 real candidates in this catalog: every single one
+        /// was a crew member of some kind who plainly never acted, wearing a same-named
+        /// stranger's actor biography. Reuses ClearExternalId's own clearing sequence (now fixed
+        /// -- PluginIdHelper.FindProviderBlobKeys) on each confirmed item, restoring it to
+        /// whatever its remaining (correct) provider data resolves to. Deliberately does NOT
+        /// touch a person who has ANY acting-type credit alongside crew ones (a legitimate
+        /// actor-who-also-produced case would show both) -- only zero-acting-credit crew people
+        /// get cleared.
+        /// </summary>
+        [HttpPost("fix-wrong-actor-wikipedia-matches")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> FixWrongActorWikipediaMatches(CancellationToken ct)
+        {
+            var peopleTypeId = await _context.MediaTypes
+                .Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
+            if (peopleTypeId is null)
+                return Ok(ApiResponse<object>.Ok(new { checkedCount = 0, fixedCount = 0 }));
+
+            var candidateExtIds = await _context.MediaExternalIds
+                .Where(x => x.Source == "wikipedia")
+                .Select(x => new { x.MediaItemId, x.ExternalId })
+                .ToListAsync(ct);
+            var actorMatchedIds = candidateExtIds
+                .Where(x => ActorDisambiguatedWikipediaExternalIdRe.IsMatch(x.ExternalId))
+                .Select(x => x.MediaItemId)
+                .ToHashSet();
+            if (actorMatchedIds.Count == 0)
+                return Ok(ApiResponse<object>.Ok(new { checkedCount = 0, fixedCount = 0 }));
+
+            var rolesByPerson = await _context.MediaCredits
+                .Where(c => c.PersonMediaItemId != null && actorMatchedIds.Contains(c.PersonMediaItemId.Value))
+                .Select(c => new { PersonId = c.PersonMediaItemId!.Value, c.Role })
+                .ToListAsync(ct);
+            var rolesLookup = rolesByPerson.GroupBy(x => x.PersonId).ToDictionary(g => g.Key, g => g.Select(x => x.Role).ToList());
+
+            var toFix = actorMatchedIds
+                .Where(id => rolesLookup.TryGetValue(id, out var roles) && roles.Count > 0 &&
+                             !roles.Any(r => ActingRoleNames.Contains(r)))
+                .ToList();
+
+            int fixedCount = 0;
+            foreach (var id in toFix)
+            {
+                ct.ThrowIfCancellationRequested();
+                var item = await _context.MediaItems
+                    .Include(m => m.ExternalIds).Include(m => m.MediaType)
+                    .FirstOrDefaultAsync(m => m.Id == id, ct);
+                if (item is null) continue;
+
+                var toRemove = item.ExternalIds
+                    .Where(e => string.Equals(e.Source, "wikipedia", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                _context.MediaExternalIds.RemoveRange(toRemove);
+
+                if (!string.IsNullOrWhiteSpace(item.MetadataJson))
+                {
+                    try
+                    {
+                        var root = System.Text.Json.JsonSerializer.Deserialize<
+                            System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
+                        if (root is not null)
+                        {
+                            foreach (var key in Chronicle.Core.Helpers.PluginIdHelper.FindProviderBlobKeys(root, "wikipedia"))
+                                root.Remove(key);
+                            item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
+                        }
+                    }
+                    catch { /* malformed JSON — leave as-is */ }
+                }
+
+                await RemoveExternalIdsForUnsupportedTypeAsync(item, ct);
+                await ClearArtworkOnlyProviderDataAsync(item, ct);
+                ClearProviderMetadata(item);
+                item.UpdatedAt = DateTime.UtcNow;
+                await _resolutionService.ResolveAsync(item, _context, ct);
+                fixedCount++;
+
+                if (fixedCount % 50 == 0)
+                {
+                    await _context.SaveChangesAsync(ct);
+                    _context.ChangeTracker.Clear();
+                }
+            }
+
+            await _context.SaveChangesAsync(ct);
+            return Ok(ApiResponse<object>.Ok(new { checkedCount = actorMatchedIds.Count, fixedCount }));
+        }
+
         /// <summary>
         /// Pins a manually-chosen value for one canonical field (e.g. "poster_url") on this
         /// item — it wins over the plugin-priority resolution walk in every future
@@ -662,7 +769,11 @@ namespace Chronicle.API.Controllers
                 .ToList();
             _context.MediaExternalIds.RemoveRange(existing);
 
-            // Also strip cached metadata for this provider.
+            // Also strip cached metadata for this provider. Same fix as ClearExternalId
+            // (2026-09-03): matching only by exact dictionary-key equality silently did nothing
+            // for a blob stored under a different key-naming convention than the caller passed --
+            // PluginIdHelper.FindProviderBlobKeys matches each blob by its own internal "source"
+            // property instead.
             if (!string.IsNullOrWhiteSpace(item.MetadataJson))
             {
                 try
@@ -671,8 +782,8 @@ namespace Chronicle.API.Controllers
                         System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
                     if (root is not null)
                     {
-                        root.Remove(source.ToLowerInvariant());
-                        root.Remove(shortSource.ToLowerInvariant());
+                        foreach (var key in Chronicle.Core.Helpers.PluginIdHelper.FindProviderBlobKeys(root, source))
+                            root.Remove(key);
                         item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
                     }
                 }
