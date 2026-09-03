@@ -329,7 +329,14 @@ export default function PeopleLibraryPage() {
     if (jumpTarget == null || !jumpPositionQuery.data) return
     if (scrolledForJumpRef.current === jumpTarget) return
     if (!itemsByIndex.has(jumpPositionQuery.data.index) && jumpPositionQuery.data.index < total) return
-    const rowIndex = Math.floor(jumpPositionQuery.data.index / columnsPerRow)
+    // Clamp to the last real item: a jump target that sorts past everyone (e.g. "Zzz" in a
+    // catalog with no matching last name) resolves to index === total, which is one past the
+    // last valid absolute index. Caught in code review (2026-09-03): when total happens to be
+    // an exact multiple of columnsPerRow, Math.floor(total / columnsPerRow) equals rowCount
+    // itself -- one row past the last one that exists -- so scrollToIndex needs the clamped
+    // index, not the raw (possibly out-of-bounds) one from GetJumpPosition.
+    const clampedIndex = Math.min(jumpPositionQuery.data.index, Math.max(total - 1, 0))
+    const rowIndex = Math.floor(clampedIndex / columnsPerRow)
     virtualizer.scrollToIndex(rowIndex, { align: 'start' })
     scrolledForJumpRef.current = jumpTarget
     // itemsByIndex.size (not the map itself, a new object every render) is what actually

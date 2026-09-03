@@ -63,6 +63,23 @@ public class PluginIdHelperTests
     }
 
     [Fact]
+    public void FindProviderBlobKeys_ShortSourceCallerBlobKeyedByFullIdWithNoSourceProperty_StillMatches()
+    {
+        // Regression test for a gap found in code review (2026-09-03) in the FIRST fix above:
+        // that fix's own fallback still compared the dictionary key against the caller's
+        // argument VERBATIM (`kv.Key == pluginIdOrSource || kv.Key == shortSource`), so a
+        // legacy blob with no internal "source" property, stored under the FULL key
+        // ("chronicle.plugin.wikipedia"), still matched nothing when the caller passed the
+        // SHORT form ("wikipedia") -- neither string ever equalled "chronicle.plugin.wikipedia".
+        // Fixed by comparing the key's own derived short form instead of the raw key.
+        var blobs = ParseBlobs("""{"chronicle.plugin.wikipedia": {"title": "Wrong Match"}}""");
+
+        var keys = PluginIdHelper.FindProviderBlobKeys(blobs, "wikipedia");
+
+        keys.Should().BeEquivalentTo(["chronicle.plugin.wikipedia"]);
+    }
+
+    [Fact]
     public void FindProviderBlobKeys_NoMatchingProvider_ReturnsEmpty()
     {
         var blobs = ParseBlobs("""{"chronicle.plugin.tmdb": {"source": "tmdb"}}""");

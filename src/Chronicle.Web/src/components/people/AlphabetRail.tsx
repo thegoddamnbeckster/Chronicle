@@ -13,9 +13,10 @@ interface AlphabetRailProps {
  * (2026-08-30): "let me jump into a mid point of the list of people as I need to... let my
  * phone scroll through the people as I want to scroll." "#" covers names that don't start
  * with a letter (Chronicle's people catalog has plenty: "!DelaDap", "$NOT", "1 in Five") --
- * backed by the exact same jumpTo=... query the letters use (PeopleController.GetPeople),
- * just sent as a single non-letter character; ASCII punctuation/digits all sort before 'A'
- * so ToUpper().CompareTo() on the server still orders it correctly against real names. */
+ * backed by the same jump-position resolution every other jump target uses
+ * (PeopleController.GetJumpPosition), just sent as a single non-letter character; ASCII
+ * punctuation/digits all sort before 'A' so ToUpper().CompareTo() on the server still orders
+ * it correctly against real names. */
 export function AlphabetRail({ activeLetter, onJump }: AlphabetRailProps) {
   const railRef = useRef<HTMLDivElement>(null)
   const isPressedRef = useRef(false)

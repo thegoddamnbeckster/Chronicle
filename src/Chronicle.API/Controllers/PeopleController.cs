@@ -494,9 +494,21 @@ namespace Chronicle.API.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> NormalizeTmdbPersonIds(CancellationToken ct)
         {
+            var (renamed, deletedRedundant) = await NormalizeTmdbPersonIdsCoreAsync(ct);
+            return Ok(ApiResponse<object>.Ok(new { renamed, deletedRedundant }));
+        }
+
+        /// <summary>Core of NormalizeTmdbPersonIds, factored out so DedupeTmdbDuplicates can run
+        /// it as an unconditional first step (found in code review 2026-09-03: the two
+        /// endpoints' "must run BEFORE it" ordering was documentation-only, nothing enforced it,
+        /// and NormalizeTmdbPersonIds is cheap/idempotent -- a no-op ExecuteUpdate/ExecuteDelete
+        /// pair when there's nothing left to normalize -- so there's no reason to leave a caller
+        /// able to get the order wrong).</summary>
+        private async Task<(int Renamed, int DeletedRedundant)> NormalizeTmdbPersonIdsCoreAsync(CancellationToken ct)
+        {
             var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
             if (peopleTypeId is null)
-                return Ok(ApiResponse<object>.Ok(new { renamed = 0, deletedRedundant = 0 }));
+                return (0, 0);
 
             // Pure SQL-side bulk operations (ExecuteDelete/ExecuteUpdate), not tracked-entity
             // mutation -- a first version of this endpoint loaded every "person:"-format row
@@ -524,7 +536,7 @@ namespace Chronicle.API.Controllers
                          && _context.MediaItems.Any(m => m.Id == e.MediaItemId && m.MediaTypeId == peopleTypeId.Value))
                 .ExecuteUpdateAsync(s => s.SetProperty(e => e.ExternalId, e => "tmdb:" + e.ExternalId.Substring(7)), ct);
 
-            return Ok(ApiResponse<object>.Ok(new { renamed, deletedRedundant }));
+            return (renamed, deletedRedundant);
         }
 
         /// <summary>
@@ -551,6 +563,10 @@ namespace Chronicle.API.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DedupeTmdbDuplicates(CancellationToken ct)
         {
+            // Unconditional first step, not just documentation -- see NormalizeTmdbPersonIdsCoreAsync's
+            // own doc for why a caller getting this ordering wrong manufactures fresh duplicates.
+            await NormalizeTmdbPersonIdsCoreAsync(ct);
+
             var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
             if (peopleTypeId is null)
                 return Ok(ApiResponse<object>.Ok(new { groupsProcessed = 0, deleted = 0 }));
@@ -672,10 +688,19 @@ namespace Chronicle.API.Controllers
 
             var people = await _context.MediaItems
                 .Where(m => m.MediaTypeId == peopleTypeId.Value)
-                .Select(m => new { m.Id, m.Name, m.NormalizedNameLoose })
+                .Select(m => new { m.Id, m.Name })
                 .ToListAsync(ct);
 
+            // Computed in-memory from Name, not read from the NormalizedNameLoose column --
+            // found in code review (2026-09-03) that trusting the column silently under-reports
+            // every candidate on a catalog where BackfillNormalizedNameLoose hasn't run yet (the
+            // column would be null for every row, so the `!string.IsNullOrEmpty` filter drops
+            // everyone before grouping even starts), with no error and no hint in the response
+            // that anything was skipped. Same normalizer the column itself is kept in sync with
+            // (ChronicleDbContext.SyncNormalizedNames), just computed fresh instead of assuming
+            // the persisted value is current.
             var candidates = people
+                .Select(p => new { p.Id, p.Name, NormalizedNameLoose = MediaItemNormalizer.NormalizeNameLoose(p.Name) })
                 .Where(p => !string.IsNullOrEmpty(p.NormalizedNameLoose))
                 .GroupBy(p => p.NormalizedNameLoose)
                 .Where(g => g.Count() > 1 && g.Any(p => disambiguatedPersonIds.Contains(p.Id)))

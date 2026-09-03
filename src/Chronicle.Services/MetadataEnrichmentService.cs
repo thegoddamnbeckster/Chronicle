@@ -1788,7 +1788,12 @@ public class MetadataEnrichmentService(
                     // Whether or not the re-fetch produced fresh data, keep the known-good id
                     // on the row rather than leaving it cleared -- the success block below
                     // overwrites this with result.ExternalId when the re-fetch did succeed.
-                    row.ExternalId = result?.ExternalId ?? forceRefreshOriginalId;
+                    // IsNullOrEmpty, not a bare null-coalesce (caught in code review 2026-09-03):
+                    // a provider returning a non-null MediaMetadata with an EMPTY ExternalId
+                    // (rather than throwing or returning null) would otherwise silently wipe the
+                    // known-good id with "" instead of falling back to it -- `??` only triggers
+                    // on null, not on an empty-but-non-null string.
+                    row.ExternalId = !string.IsNullOrEmpty(result?.ExternalId) ? result!.ExternalId : forceRefreshOriginalId;
                 }
                 else
                 {

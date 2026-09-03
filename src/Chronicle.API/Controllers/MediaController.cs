@@ -439,13 +439,28 @@ namespace Chronicle.API.Controllers
             return NoContent();
         }
 
-        // Matches a wikipedia external id built from a disambiguated page title whose
-        // disambiguator is specifically an acting occupation -- "wikipedia:en:X_(actor)",
-        // "..._(actress)", "..._(British_actor)". Word-bounded so "..._(arts_benefactor)"
-        // (real disambiguator seen live) doesn't false-match on "actor" as a mere substring of
-        // "benefactor". See FixWrongActorWikipediaMatches's own doc for what this feeds into.
-        private static readonly Regex ActorDisambiguatedWikipediaExternalIdRe =
-            new(@"_\(([^)]*\b(?:actor|actress)\b[^)]*)\)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        // Captures the disambiguator segment of a wikipedia external id -- "actor" from
+        // "wikipedia:en:X_(actor)", "British_actor" from "..._(British_actor)".
+        private static readonly Regex DisambiguatorCaptureRe = new(@"_\(([^)]*)\)$", RegexOptions.Compiled);
+
+        // Word-bounded acting-occupation check, applied to the captured disambiguator AFTER
+        // normalizing its underscores to spaces. Confirmed live (2026-09-03): the original
+        // single-regex version (`_\(([^)]*\b(?:actor|actress)\b[^)]*)\)$` matched against the
+        // raw, still-underscored external id) missed every compound disambiguator --
+        // "British_actor", "voice_actor" -- because .NET regex treats `_` as a word character,
+        // so `\bactor\b` never found a boundary between "British_" and "actor". Left "John
+        // Heffernan" (a screenwriter, zero acting credits) still wearing a wrong "(British
+        // actor)"-disambiguated bio even after a full batch-fix run. Word-bounded (not a bare
+        // substring check) so "arts_benefactor" -> "arts benefactor" still correctly does NOT
+        // match on "actor" as a mere substring of "benefactor".
+        private static readonly Regex ActingOccupationWordRe =
+            new(@"\bactor\b|\bactress\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private static bool IsActorDisambiguatedWikipediaExternalId(string externalId)
+        {
+            var match = DisambiguatorCaptureRe.Match(externalId);
+            return match.Success && ActingOccupationWordRe.IsMatch(match.Groups[1].Value.Replace('_', ' '));
+        }
 
         private static readonly HashSet<string> ActingRoleNames = new(StringComparer.OrdinalIgnoreCase)
             { "Actor", "Actress", "Self", "Voice Actor", "Narrator", "Host" };
@@ -480,7 +495,7 @@ namespace Chronicle.API.Controllers
                 .Select(x => new { x.MediaItemId, x.ExternalId })
                 .ToListAsync(ct);
             var actorMatchedIds = candidateExtIds
-                .Where(x => ActorDisambiguatedWikipediaExternalIdRe.IsMatch(x.ExternalId))
+                .Where(x => IsActorDisambiguatedWikipediaExternalId(x.ExternalId))
                 .Select(x => x.MediaItemId)
                 .ToHashSet();
             if (actorMatchedIds.Count == 0)
@@ -1282,15 +1297,17 @@ namespace Chronicle.API.Controllers
                     System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
                 if (root is null) return Task.CompletedTask;
 
+                // Same fix as ClearExternalId/SuppressMatch/FixWrongActorWikipediaMatches
+                // (found in code review 2026-09-03: this method still had the original
+                // exact-dictionary-key-only bug those three were already fixed for) --
+                // PluginIdHelper.FindProviderBlobKeys matches each blob by its own internal
+                // "source" property, not just the caller's exact key-naming guess.
                 var changed = false;
                 foreach (var e in orphaned)
                 {
-                    changed |= root.Remove(e.Source);
-                    var fullId = installedProviders.FirstOrDefault(p =>
-                        string.Equals(Chronicle.Core.Helpers.PluginIdHelper.ToSource(p.PluginId), e.Source,
-                            StringComparison.OrdinalIgnoreCase)).PluginId;
-                    if (fullId is not null)
-                        changed |= root.Remove(fullId);
+                    var keys = Chronicle.Core.Helpers.PluginIdHelper.FindProviderBlobKeys(root, e.Source);
+                    foreach (var key in keys)
+                        changed |= root.Remove(key);
                 }
                 if (changed)
                     item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
@@ -1365,9 +1382,17 @@ namespace Chronicle.API.Controllers
                     System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
                 if (root is null) return;
 
+                // Same fix as ClearExternalId/SuppressMatch/FixWrongActorWikipediaMatches/
+                // RemoveExternalIdsForUnsupportedTypeAsync (found in code review 2026-09-03) --
+                // PluginIdHelper.FindProviderBlobKeys matches each blob by its own internal
+                // "source" property, not just an exact dictionary-key guess.
                 var changed = false;
                 foreach (var pluginId in artworkPluginIds)
-                    changed |= root.Remove(pluginId);
+                {
+                    var keys = Chronicle.Core.Helpers.PluginIdHelper.FindProviderBlobKeys(root, pluginId);
+                    foreach (var key in keys)
+                        changed |= root.Remove(key);
+                }
 
                 if (changed)
                     item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
