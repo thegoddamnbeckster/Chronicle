@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Chronicle.API.DTOs;
 using Chronicle.Core.Helpers;
 using Chronicle.Data;
@@ -310,6 +311,116 @@ namespace Chronicle.API.Controllers
             }
 
             return Ok(ApiResponse<object>.Ok(new { itemsProcessed, pairsReprocessed, creditsResolved }));
+        }
+
+        private static readonly Regex TmdbPersonExternalIdRe = new(@"^(?:person|tmdb):(\d+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// One-time historical cleanup for a real production bug (fixed in
+        /// MetadataEnrichmentService.UpsertExternalIdForEnrichmentAsync, 2026-09-03): TMDB
+        /// person ids were written under two different (Source="tmdb", ExternalId=...) shapes
+        /// -- "person:N" from direct TMDB enrichment vs "tmdb:N" from credit-derived stub
+        /// creation -- which defeated the "is this id already owned by another item" duplicate
+        /// check and let a second Person stub get created for essentially every person touched
+        /// by both paths. Confirmed live: 39,000+ duplicate groups across the catalog.
+        ///
+        /// Groups every "people" item by its underlying TMDB numeric person id (regardless of
+        /// which prefix it's stored under) and, for any group spanning more than one MediaItem,
+        /// keeps exactly one and deletes the rest -- per [[feedback_chronicle_dedup_delete_not_merge]],
+        /// delete rather than merge. Winner priority: a pinned artwork override beats
+        /// everything (never discard a user's own customization); then a Wikipedia link (the
+        /// richer record); then more resolved credits; then the lowest id as a stable
+        /// tiebreak. Deleting a loser unlinks (not destroys) its MediaCredit rows via the
+        /// existing DeleteBehavior.SetNull FK -- run reprocess-orphaned-credits afterward to
+        /// re-resolve them onto the surviving record. Admin only: maintenance operation, not
+        /// something a regular user triggers.
+        /// </summary>
+        [HttpPost("dedupe-tmdb-duplicates")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> DedupeTmdbDuplicates(CancellationToken ct)
+        {
+            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
+            if (peopleTypeId is null)
+                return Ok(ApiResponse<object>.Ok(new { groupsProcessed = 0, deleted = 0 }));
+
+            // Load everything needed to make every group's winner decision up front, in bulk --
+            // 39,000+ per-group queries would make this endpoint take hours instead of minutes.
+            var peopleIds = await _context.MediaItems
+                .Where(m => m.MediaTypeId == peopleTypeId.Value)
+                .Select(m => m.Id)
+                .ToListAsync(ct);
+            var peopleIdSet = peopleIds.ToHashSet();
+
+            var tmdbExtIds = await _context.MediaExternalIds
+                .Where(e => e.Source == "tmdb")
+                .Select(e => new { e.MediaItemId, e.ExternalId })
+                .ToListAsync(ct);
+
+            var byNumericId = new Dictionary<string, HashSet<int>>();
+            foreach (var e in tmdbExtIds)
+            {
+                if (!peopleIdSet.Contains(e.MediaItemId)) continue;
+                var m = TmdbPersonExternalIdRe.Match(e.ExternalId);
+                if (!m.Success) continue;
+                var numId = m.Groups[1].Value;
+                if (!byNumericId.TryGetValue(numId, out var set)) byNumericId[numId] = set = [];
+                set.Add(e.MediaItemId);
+            }
+
+            var dupeGroups = byNumericId.Values.Where(set => set.Count > 1).ToList();
+            if (dupeGroups.Count == 0)
+                return Ok(ApiResponse<object>.Ok(new { groupsProcessed = 0, deleted = 0 }));
+
+            var allDupeItemIds = dupeGroups.SelectMany(s => s).Distinct().ToHashSet();
+
+            var itemsWithOverride = (await _context.MediaItems
+                .Where(m => allDupeItemIds.Contains(m.Id) && m.MetadataJson != null && m.MetadataJson.Contains("\"_overrides\""))
+                .Select(m => m.Id)
+                .ToListAsync(ct)).ToHashSet();
+
+            var itemsWithWikipedia = (await _context.MediaExternalIds
+                .Where(e => e.Source == "wikipedia" && allDupeItemIds.Contains(e.MediaItemId))
+                .Select(e => e.MediaItemId)
+                .ToListAsync(ct)).ToHashSet();
+
+            var creditCounts = (await _context.MediaCredits
+                .Where(c => c.PersonMediaItemId != null && allDupeItemIds.Contains(c.PersonMediaItemId.Value))
+                .GroupBy(c => c.PersonMediaItemId!.Value)
+                .Select(g => new { Id = g.Key, Count = g.Count() })
+                .ToListAsync(ct)).ToDictionary(x => x.Id, x => x.Count);
+
+            int groupsProcessed = 0, deleted = 0;
+
+            foreach (var group in dupeGroups)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var ordered = group
+                    .OrderByDescending(id => itemsWithOverride.Contains(id))
+                    .ThenByDescending(id => itemsWithWikipedia.Contains(id))
+                    .ThenByDescending(id => creditCounts.GetValueOrDefault(id, 0))
+                    .ThenBy(id => id)
+                    .ToList();
+
+                var loserIds = ordered.Skip(1).ToList();
+                var losers = await _context.MediaItems.Where(m => loserIds.Contains(m.Id)).ToListAsync(ct);
+                _context.MediaItems.RemoveRange(losers);
+                deleted += losers.Count;
+                groupsProcessed++;
+
+                if (groupsProcessed % 200 == 0)
+                {
+                    await _context.SaveChangesAsync(ct);
+                    // Same reason ReprocessOrphanedCredits and PluginHostService's own backfill
+                    // clear periodically: an EF change tracker that never resets across 39,000+
+                    // groups in one request keeps accumulating every entity it's ever seen,
+                    // making each subsequent SaveChangesAsync progressively slower.
+                    _context.ChangeTracker.Clear();
+                }
+            }
+
+            await _context.SaveChangesAsync(ct);
+            return Ok(ApiResponse<object>.Ok(new { groupsProcessed, deleted }));
         }
     }
 }
