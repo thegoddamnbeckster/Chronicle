@@ -1215,6 +1215,51 @@ public class MetadataEnrichmentServiceTests : IDisposable
         mbRow.Status.Should().Be(EnrichmentStatus.Completed);
     }
 
+    [Fact]
+    public async Task EnrichPendingAsync_TmdbPersonEnrichment_NormalizesExternalIdToTmdbPrefix()
+    {
+        // Regression test for a real production bug that produced 39,000+ duplicate Person
+        // records: TMDB's GetByIdAsync returns "person:N" for a "people" item (the same
+        // entity-type-prefix convention "movie:"/"tv:"/"collection:" use to dispatch the
+        // right lookup), but every CastMember/CrewMember.ExternalPersonId this same plugin
+        // writes when a person shows up in a movie/show's credits uses "tmdb:N" instead. A
+        // person enriched via BOTH paths (nearly everyone, eventually) ended up with two
+        // different (Source="tmdb", ExternalId=...) rows -- "person:12898" from this
+        // enrichment path and "tmdb:12898" from credit-derived stub creation -- so the
+        // "is this id already owned by another item" duplicate check could never match them,
+        // and a second stub for the exact same real person got created every time.
+        var peopleType = new MediaType
+        {
+            Name = "people", DisplayName = "People", HierarchyLevels = 1,
+            HierarchyLabels = "Person", InteractionVerb = "viewed", ProgressUnit = "percent",
+        };
+        _db.MediaTypes.Add(peopleType);
+        await _db.SaveChangesAsync();
+        var item = new MediaItem
+        {
+            Name = "Tim Allen", MediaTypeId = peopleType.Id,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "people");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Tim Allen", ExternalId = "person:12898" }, Score: 80),
+            });
+        provider.Setup(p => p.GetByIdAsync("person:12898", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Tim Allen", ExternalId = "person:12898" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.tmdb");
+
+        var extId = await _db.MediaExternalIds
+            .FirstAsync(e => e.MediaItemId == item.Id && e.Source == "tmdb");
+        extId.ExternalId.Should().Be("tmdb:12898");
+    }
+
     private static IServiceScopeFactory BuildScopeFactory(ChronicleDbContext db, IPluginRegistry registry)
     {
         var services = new ServiceCollection();

@@ -2843,6 +2843,19 @@ public class MetadataEnrichmentService(
             //   "hardcover"                    → "hardcover"
             source = PluginIdHelper.ToSource(excludePluginId);
             extId = rawExternalId;
+
+            // TMDB's own "person:N" entity-type prefix (used to dispatch GetByIdAsync the same
+            // way "movie:"/"tv:"/"collection:" are) is NOT the convention this Source="tmdb" row
+            // is supposed to hold for a person -- every CastMember/CrewMember.ExternalPersonId
+            // this same plugin writes elsewhere uses "tmdb:N" (see TmdbMetadataProvider's
+            // ExtractPersonTmdbId doc comment). Writing "person:N" here meant a person enriched
+            // via direct TMDB lookup got a DIFFERENT (source, externalId) pair than the same real
+            // person credited on a movie/show, so the "is this id already owned by another item"
+            // check just below could never catch it -- confirmed live: 39,000+ duplicate Person
+            // records, one half of each pair carrying "person:N" and the other "tmdb:N" for the
+            // identical TMDB numeric id (Tim Allen, Alan Alda, etc.).
+            if (source == "tmdb" && extId.StartsWith("person:", StringComparison.OrdinalIgnoreCase))
+                extId = "tmdb:" + extId["person:".Length..];
         }
         else
         {
