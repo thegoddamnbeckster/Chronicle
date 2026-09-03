@@ -2,7 +2,8 @@ import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { getPeople, getPersonRoles } from '@/api/people'
+import { getPeople, getPersonRoles, getJumpPosition } from '@/api/people'
+import type { PersonListItem } from '@/types'
 import { PersonCard } from '@/components/people/PersonCard'
 import { AlphabetRail } from '@/components/people/AlphabetRail'
 import { MainScrollContext } from '@/components/layout/Layout'
@@ -61,12 +62,22 @@ const CARD_INFO_HEIGHT = 84
  * removed rather than kept alongside the one fixed order.
  *
  * Virtualized (only on-screen + a small overscan buffer ever exist as real DOM nodes) and
- * jump-to-letter (an A-Z rail plus a jump-search box, both backed by the server's own
- * jumpTo= parameter -- PeopleController.GetPeople) per a further request the same day:
+ * jump-to-letter (an A-Z rail plus a jump-search box) per a further request the same day:
  * "let whatever will let my phone scroll through the people as I want to scroll and will
  * let me jump into a mid point of the list of people as I need to without having to reload
- * the entire list." New pages auto-load as the virtualized window approaches the end of
- * what's already fetched -- no manual "Load More" click needed any more. */
+ * the entire list." New pages auto-load as the virtualized window approaches either end of
+ * what's already fetched -- no manual "Load More" click needed any more, in either direction.
+ *
+ * A jump resolves via PeopleController.GetJumpPosition to a 0-based index into the FULL
+ * ordered list, then opens the infinite-scroll list on whichever page that index falls on --
+ * both earlier and later pages load from there via ordinary forward/backward auto-load, same
+ * as a plain (non-jump) visit. Per-user request (2026-09-03): "what is the possibility of
+ * having the ability to scroll up when you click up people from a person's detail page...
+ * it just sticks that person at the top." GetPeople itself used to truncate the ordered list
+ * down to "target and everything after" on a jump, so nothing before the jumped-to person was
+ * ever loaded and scrolling up literally had nothing to scroll into -- see GetJumpPosition's
+ * own doc for the full story. Page numbers now always index into the FULL list (page 1 is
+ * always the true start of the alphabet); a jump only changes which page the list *opens* on. */
 export default function PeopleLibraryPage() {
   const location = useLocation()
   const [prefs, setPrefsState] = useState<PeopleLibraryPrefs>(loadPeoplePrefs)
@@ -81,6 +92,12 @@ export default function PeopleLibraryPage() {
   const [jumpTarget, setJumpTarget] = useState<string | null>(
     () => (location.state as { jumpTo?: string } | null)?.jumpTo ?? null)
   const [jumpInput, setJumpInput] = useState('')
+  // Tracks which jumpTarget the virtualizer has already been scrolled to, so the scroll-to-
+  // target effect (below) fires exactly once per jump instead of re-scrolling on every
+  // subsequent page load/re-render while that jump is still active. Cleared up front by every
+  // jump action so re-jumping to the SAME letter/name twice in a row still scrolls the second
+  // time too, rather than silently no-op'ing because the ref already equals that value.
+  const scrolledForJumpRef = useRef<string | null>(null)
 
   function setPrefs(updates: Partial<PeopleLibraryPrefs>) {
     const next = { ...prefs, ...updates }
@@ -89,13 +106,17 @@ export default function PeopleLibraryPage() {
   }
 
   function jumpToLetter(letter: string) {
+    scrolledForJumpRef.current = null
     setJumpTarget(letter)
     setJumpInput('')
   }
 
   function submitJumpSearch(e: React.FormEvent) {
     e.preventDefault()
-    if (jumpInput.trim()) setJumpTarget(jumpInput.trim())
+    if (jumpInput.trim()) {
+      scrolledForJumpRef.current = null
+      setJumpTarget(jumpInput.trim())
+    }
   }
 
   function clearJump() {
@@ -121,42 +142,74 @@ export default function PeopleLibraryPage() {
         return head
       })()
 
-  // Real server-side pagination with client-side accumulation across pages -- the queryKey
-  // is filters + jump target, never the accumulated page count itself, so auto-loading the
-  // next page appends onto data.pages without ever invalidating what's already rendered,
-  // while an actual filter/jump change correctly starts a fresh query from page 1 (at the
-  // jump target, if any).
-  const {
-    data,
-    isFetchingNextPage,
-    hasNextPage,
-    fetchNextPage,
-  } = useInfiniteQuery({
-    queryKey: ['people', primaryRole, prefs.deceased, jumpTarget],
-    queryFn: ({ pageParam }) => getPeople({
-      role: primaryRole,
-      deceased: prefs.deceased === 'either' ? undefined : prefs.deceased === 'deceased',
-      jumpTo: jumpTarget ?? undefined,
-      page: pageParam,
-      perPage: PEOPLE_PAGE_SIZE,
-    }),
-    initialPageParam: 1,
-    getNextPageParam: (lastPage, allPages) => {
-      const fetchedSoFar = allPages.reduce((sum, page) => sum + page.items.length, 0)
-      if (lastPage.total != null && fetchedSoFar >= lastPage.total) return undefined
-      // total absent (shouldn't happen in practice, but stay safe): a short page means
-      // there's nothing left to fetch.
-      if (lastPage.items.length < PEOPLE_PAGE_SIZE) return undefined
-      return allPages.length + 1
-    },
+  const deceasedParam = prefs.deceased === 'either' ? undefined : prefs.deceased === 'deceased'
+
+  // Resolves jumpTarget to a 0-based index into the FULL ordered list (see GetJumpPosition's
+  // own doc) -- only runs for an actual jump; a plain visit skips straight to the bidirectional
+  // query below with its default initialPageParam of 1.
+  const jumpPositionQuery = useQuery({
+    queryKey: ['people-jump-position', jumpTarget, primaryRole, deceasedParam],
+    queryFn: () => getJumpPosition({ jumpTo: jumpTarget!, role: primaryRole, deceased: deceasedParam }),
+    enabled: jumpTarget != null,
   })
 
-  const people = data?.pages.flatMap(page => page.items) ?? []
-  const isInitialLoading = data === undefined
+  // Which GetPeople page the list should OPEN on: page 1 for a plain visit, or whichever page
+  // the jump target's index falls on once jumpPositionQuery resolves. Null while a jump is
+  // still resolving -- gates the query below via `enabled` rather than guessing a wrong
+  // starting page and having to correct it after the fact.
+  const initialPage = jumpTarget == null
+    ? 1
+    : jumpPositionQuery.data
+      ? Math.floor(jumpPositionQuery.data.index / PEOPLE_PAGE_SIZE) + 1
+      : null
+
+  // Bidirectional server-side pagination: pages are keyed by their own absolute page number
+  // (GetPeople's page/perPage always index into the FULL list now, jump or not), so
+  // fetchNextPage/fetchPreviousPage extend the loaded window in either direction from
+  // wherever it opened without ever needing to shift already-rendered rows -- see the
+  // absolute-index item lookup below.
+  const peopleQuery = useInfiniteQuery({
+    queryKey: ['people', primaryRole, deceasedParam, jumpTarget],
+    queryFn: ({ pageParam }) => getPeople({
+      role: primaryRole, deceased: deceasedParam, page: pageParam, perPage: PEOPLE_PAGE_SIZE,
+    }),
+    initialPageParam: initialPage ?? 1,
+    enabled: initialPage != null,
+    getNextPageParam: (lastPage, _allPages, lastPageParam) => {
+      const maxPage = Math.max(1, Math.ceil((lastPage.total ?? 0) / PEOPLE_PAGE_SIZE))
+      return lastPageParam < maxPage ? lastPageParam + 1 : undefined
+    },
+    getPreviousPageParam: (_firstPage, _allPages, firstPageParam) =>
+      firstPageParam > 1 ? firstPageParam - 1 : undefined,
+  })
+
+  const total = peopleQuery.data?.pages[0]?.total ?? jumpPositionQuery.data?.total ?? 0
+
+  // Loaded items placed at their true absolute position in the full list -- gaps (pages not
+  // yet fetched, above or below whatever's currently loaded) are simply absent from the map
+  // rather than shifting anything, which is what lets fetchPreviousPage prepend without any
+  // scroll-position correction: a row's absolute index never changes once assigned.
+  const itemsByIndex = new Map<number, PersonListItem>()
+  const pageParams = (peopleQuery.data?.pageParams ?? []) as number[]
+  peopleQuery.data?.pages.forEach((page, i) => {
+    const pageNum = pageParams[i]
+    page.items.forEach((item, j) => itemsByIndex.set((pageNum - 1) * PEOPLE_PAGE_SIZE + j, item))
+  })
+
+  const isInitialLoading = jumpTarget != null
+    ? (jumpPositionQuery.isLoading || (initialPage != null && peopleQuery.data === undefined))
+    : peopleQuery.data === undefined
+  const hasAnyLoaded = itemsByIndex.size > 0
+
   // Carried as router state into PersonDetailPage so its "↑ People" / Prev / Next nav
-  // (mirrors MediaDetailPage's own "↑ Library" + list nav) knows the full list currently
-  // loaded here, same idea as LibraryPage's per-section listIds/listLabel.
-  const peopleNavState = { listIds: people.map(p => p.id), listLabel: 'People' }
+  // (mirrors MediaDetailPage's own "↑ Library" + list nav) knows the list currently loaded
+  // here, same idea as LibraryPage's per-section listIds/listLabel. Only the densely-loaded
+  // (no gaps) window, in true list order -- exactly what was already fetched, same as before.
+  const loadedIndices = Array.from(itemsByIndex.keys()).sort((a, b) => a - b)
+  const peopleNavState = {
+    listIds: loadedIndices.map(i => itemsByIndex.get(i)!.id),
+    listLabel: 'People',
+  }
 
   function toggleRole(role: string) {
     setPrefs({ role: prefs.role === role ? '' : role })
@@ -215,16 +268,16 @@ export default function PeopleLibraryPage() {
     })
     observer.observe(el)
     return () => observer.disconnect()
-    // people.length > 0: the grid <div ref={gridRef}> only exists once there's something to
-    // show it (it's behind the isInitialLoading/empty conditional below) -- an effect with
-    // [] deps would run once on mount, find gridRef.current still null at that point, and
+    // hasAnyLoaded: the grid <div ref={gridRef}> only exists once there's something to show
+    // it (it's behind the isInitialLoading/empty conditional below) -- an effect with []
+    // deps would run once on mount, find gridRef.current still null at that point, and
     // silently never attach the observer at all once the div actually appears. Re-running
     // this effect whenever that flips true (first load, OR a filter change that goes from
     // zero results to some) is what lets it find the real element.
-  }, [people.length > 0])
+  }, [hasAnyLoaded])
 
   const rowHeight = cardWidth * 1.5 + CARD_INFO_HEIGHT
-  const rowCount = Math.ceil(people.length / columnsPerRow)
+  const rowCount = Math.ceil(total / columnsPerRow)
 
   // Confirmed root cause (2026-08-31) of "it keeps repeating that block of 24": this
   // component re-renders on every fetched page/loading-state change (routine for an
@@ -247,16 +300,42 @@ export default function PeopleLibraryPage() {
 
   const virtualRows = virtualizer.getVirtualItems()
 
-  // Auto-load the next page as the virtualized window approaches the end of what's already
-  // fetched -- per-user request (2026-08-30): "automatically loads new items as I need
-  // them." No manual "Load More" click any more.
+  // Auto-load the next OR previous page as the virtualized window approaches either end of
+  // what's already fetched -- per-user request (2026-08-30, extended 2026-09-03 to cover
+  // backward loading too): "automatically loads new items as I need them." No manual "Load
+  // More" click in either direction.
   useEffect(() => {
+    const firstRow = virtualRows[0]
     const lastRow = virtualRows[virtualRows.length - 1]
-    if (!lastRow) return
-    if (lastRow.index >= rowCount - 3 && hasNextPage && !isFetchingNextPage) {
-      fetchNextPage()
+    if (!firstRow || !lastRow) return
+    if (lastRow.index >= rowCount - 3 && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
+      peopleQuery.fetchNextPage()
     }
-  }, [virtualRows, rowCount, hasNextPage, isFetchingNextPage, fetchNextPage])
+    if (firstRow.index <= 2 && peopleQuery.hasPreviousPage && !peopleQuery.isFetchingPreviousPage) {
+      peopleQuery.fetchPreviousPage()
+    }
+  }, [
+    virtualRows, rowCount,
+    peopleQuery.hasNextPage, peopleQuery.isFetchingNextPage, peopleQuery.fetchNextPage,
+    peopleQuery.hasPreviousPage, peopleQuery.isFetchingPreviousPage, peopleQuery.fetchPreviousPage,
+  ])
+
+  // Scrolls the virtualized window to the jumped-to person's row exactly once per jump --
+  // the whole point of GetJumpPosition (see its own doc): without this, the list would open
+  // on the right PAGE but still visually start scrolled to wherever the viewport already was.
+  // Waits for the initial page to actually be loaded (itemsByIndex has the jump target's row)
+  // so there's real content to scroll to, not just an empty virtualized placeholder area.
+  useEffect(() => {
+    if (jumpTarget == null || !jumpPositionQuery.data) return
+    if (scrolledForJumpRef.current === jumpTarget) return
+    if (!itemsByIndex.has(jumpPositionQuery.data.index) && jumpPositionQuery.data.index < total) return
+    const rowIndex = Math.floor(jumpPositionQuery.data.index / columnsPerRow)
+    virtualizer.scrollToIndex(rowIndex, { align: 'start' })
+    scrolledForJumpRef.current = jumpTarget
+    // itemsByIndex.size (not the map itself, a new object every render) is what actually
+    // needs to trigger a re-check here: a fresh page landing is the only thing that can flip
+    // the has()/index<total guard above from false to true after the initial bail-out.
+  }, [jumpTarget, jumpPositionQuery.data, itemsByIndex.size, total, columnsPerRow])
 
   return (
     <div className={styles.page}>
@@ -324,13 +403,16 @@ export default function PeopleLibraryPage() {
 
       {isInitialLoading ? (
         <div className={styles.empty}>Loading…</div>
-      ) : people.length === 0 ? (
+      ) : total === 0 ? (
         <div className={styles.empty}>No people found.</div>
       ) : (
         <div ref={gridRef} style={{ position: 'relative', height: virtualizer.getTotalSize() }}>
           {virtualRows.map(virtualRow => {
             const rowStart = virtualRow.index * columnsPerRow
-            const rowPeople = people.slice(rowStart, rowStart + columnsPerRow)
+            // A row this far from what's loaded so far is a gap -- the auto-load effect above
+            // will fetch the page it belongs to; until then it renders as empty space rather
+            // than a card, same idea as the row itself being absolutely positioned.
+            const rowPeople = Array.from({ length: columnsPerRow }, (_, col) => itemsByIndex.get(rowStart + col))
             return (
               <div
                 key={virtualRow.key}
@@ -347,17 +429,20 @@ export default function PeopleLibraryPage() {
                   gap: GRID_GAP,
                 }}
               >
-                {rowPeople.map(person => (
-                  <PersonCard key={person.id} person={person} navState={peopleNavState} />
-                ))}
+                {rowPeople.map((person, col) =>
+                  person
+                    ? <PersonCard key={person.id} person={person} navState={peopleNavState} />
+                    : <div key={`empty-${rowStart + col}`} />
+                )}
               </div>
             )
           })}
         </div>
       )}
 
-      {isFetchingNextPage && <div className={styles.loadingMore}>Loading more…</div>}
-      {!hasNextPage && people.length > 0 && (
+      {peopleQuery.isFetchingPreviousPage && <div className={styles.loadingMore}>Loading earlier…</div>}
+      {peopleQuery.isFetchingNextPage && <div className={styles.loadingMore}>Loading more…</div>}
+      {!peopleQuery.hasNextPage && total > 0 && (
         <div className={styles.endOfList}>— end of list —</div>
       )}
 

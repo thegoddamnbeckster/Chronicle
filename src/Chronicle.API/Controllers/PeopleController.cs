@@ -32,17 +32,43 @@ namespace Chronicle.API.Controllers
             _personResolutionService = personResolutionService;
         }
 
+        /// <summary>Shared ordering/filtering pass behind both GetPeople and GetJumpPosition --
+        /// the full people-type catalog (after role/deceased filters), sorted by last name.
+        /// Sorted by last name -- per-user request (2026-08-31): "delete the sorting and keep
+        /// it alphabetical by last name." There's no separate first/last-name column (a person
+        /// is just a MediaItem with one Name field), and deriving a "last name" from free text
+        /// (particles like "del"/"van", generational suffixes) isn't reliably expressible as
+        /// translatable SQL across both supported providers (SQLite/PostgreSQL) -- so the
+        /// ordering key is computed in memory via PersonNameHelper, the same helper applied to
+        /// a jump target so the two compare on the same key space. Only Id+Name is projected
+        /// for this pass (cheap even for a large catalog); callers fetch full rows for just
+        /// their page separately.</summary>
+        private async Task<List<(int Id, string Key)>> GetOrderedPeopleAsync(
+            int peopleTypeId, string? role, bool? deceased, CancellationToken ct)
+        {
+            var query = _context.MediaItems.Where(m => m.MediaTypeId == peopleTypeId);
+
+            if (deceased == true) query = query.Where(m => m.DeathDate != null);
+            else if (deceased == false) query = query.Where(m => m.DeathDate == null);
+
+            if (!string.IsNullOrWhiteSpace(role))
+                query = query.Where(m => _context.MediaCredits.Any(c => c.PersonMediaItemId == m.Id && c.Role == role));
+
+            var idsAndNames = await query
+                .Select(m => new { m.Id, m.Name })
+                .ToListAsync(ct);
+
+            return idsAndNames
+                .Select(m => (m.Id, Key: PersonNameHelper.ToLastNameFirstSortKey(m.Name)))
+                .OrderBy(m => m.Key, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(m => m.Id)
+                .ToList();
+        }
+
         [HttpGet]
         public async Task<IActionResult> GetPeople(
             [FromQuery] string? role = null,
             [FromQuery] bool? deceased = null,
-            // Jumps straight to the first person (in last-name order) alphabetically >= this
-            // value instead of walking forward page-by-page from the start -- per-user request
-            // (2026-08-30): "let me jump into a mid point of the list of people as I need to
-            // without having to reload the entire list." Backs both the A-Z rail (single
-            // letters) and the jump-search box (arbitrary typed text) on the frontend -- both
-            // are the exact same "start from here" query, just different input granularity.
-            [FromQuery] string? jumpTo = null,
             [FromQuery] int page = 1,
             [FromQuery] int perPage = 60,
             CancellationToken ct = default)
@@ -51,51 +77,7 @@ namespace Chronicle.API.Controllers
             if (peopleTypeId is null)
                 return Ok(ApiResponse<List<PersonListItemDto>>.Ok([], new PaginationInfo(page, perPage, 0)));
 
-            var query = _context.MediaItems.Where(m => m.MediaTypeId == peopleTypeId.Value);
-
-            if (deceased == true) query = query.Where(m => m.DeathDate != null);
-            else if (deceased == false) query = query.Where(m => m.DeathDate == null);
-
-            if (!string.IsNullOrWhiteSpace(role))
-                query = query.Where(m => _context.MediaCredits.Any(c => c.PersonMediaItemId == m.Id && c.Role == role));
-
-            // Sorted by last name -- per-user request (2026-08-31): "delete the sorting and
-            // keep it alphabetical by last name." There's no separate first/last-name column
-            // (a person is just a MediaItem with one Name field), and deriving a "last name"
-            // from free text (particles like "del"/"van", generational suffixes) isn't
-            // reliably expressible as translatable SQL across both supported providers
-            // (SQLite/PostgreSQL) -- so the ordering key is computed in memory via
-            // PersonNameHelper, the same helper applied to `jumpTo` below so the two compare
-            // on the same key space. Only Id+Name is projected for this pass (cheap even for a
-            // large catalog); the current page's full rows are fetched separately below.
-            var idsAndNames = await query
-                .Select(m => new { m.Id, m.Name })
-                .ToListAsync(ct);
-
-            var ordered = idsAndNames
-                .Select(m => new { m.Id, m.Name, Key = PersonNameHelper.ToLastNameFirstSortKey(m.Name) })
-                .OrderBy(m => m.Key, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(m => m.Id)
-                .ToList();
-
-            if (!string.IsNullOrWhiteSpace(jumpTo))
-            {
-                var target = PersonNameHelper.ToLastNameFirstSortKey(jumpTo);
-                ordered = ordered
-                    .SkipWhile(m => string.Compare(m.Key, target, StringComparison.OrdinalIgnoreCase) < 0)
-                    .ToList();
-                // Deliberately NOT forcing page back to 1 here. The frontend's infinite-scroll
-                // sends the same jumpTo on every page as it loads more (jumpTarget is fixed for
-                // the life of one jump), incrementing `page` itself as it goes -- forcing page=1
-                // on every one of those requests re-served the same first window forever once
-                // the visible letter ran out, instead of continuing into the next letter or
-                // genuinely reaching the end of the list. Confirmed root cause (2026-08-31) of
-                // "it just wraps the current letter instead of stopping or moving on." A brand
-                // new jump (A-Z rail click / jump-search submit) already lands on page 1 on its
-                // own, since it's a fresh query with initialPageParam: 1 -- nothing here needs
-                // to force that.
-            }
-
+            var ordered = await GetOrderedPeopleAsync(peopleTypeId.Value, role, deceased, ct);
             var total = ordered.Count;
             var pageIds = ordered.Skip((page - 1) * perPage).Take(perPage).Select(m => m.Id).ToList();
 
@@ -120,6 +102,39 @@ namespace Chronicle.API.Controllers
             )).ToList();
 
             return Ok(ApiResponse<List<PersonListItemDto>>.Ok(dtos, new PaginationInfo(page, perPage, total)));
+        }
+
+        /// <summary>
+        /// Resolves a jump-to-name target (the A-Z rail or the jump-search box) to its 0-based
+        /// position within the FULL ordered list (plus that list's total count), instead of
+        /// GetPeople itself truncating the list down to "target and everything after" the way
+        /// it originally did. That truncation made `total` only ever cover the remainder, so the
+        /// People page's infinite-scroll list had nothing loaded before the jumped-to person and
+        /// could never scroll back up past them -- per-user request (2026-09-03): "what is the
+        /// possibility of having the ability to scroll up when you click up people from a
+        /// person's detail page... it just sticks that person at the top." The frontend uses the
+        /// returned index to compute which GetPeople page to open on (index / perPage + 1) and
+        /// where within that page the target sits, then pages both forward and backward from
+        /// there via GetPeople's own ordinary page/perPage -- GetPeople no longer needs to know
+        /// about jumping at all.
+        /// </summary>
+        [HttpGet("jump-position")]
+        public async Task<IActionResult> GetJumpPosition(
+            [FromQuery] string jumpTo,
+            [FromQuery] string? role = null,
+            [FromQuery] bool? deceased = null,
+            CancellationToken ct = default)
+        {
+            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
+            if (peopleTypeId is null)
+                return Ok(ApiResponse<object>.Ok(new { index = 0, total = 0 }));
+
+            var ordered = await GetOrderedPeopleAsync(peopleTypeId.Value, role, deceased, ct);
+            var target = PersonNameHelper.ToLastNameFirstSortKey(jumpTo);
+            var index = ordered.FindIndex(m => string.Compare(m.Key, target, StringComparison.OrdinalIgnoreCase) >= 0);
+            if (index < 0) index = ordered.Count; // past the end of the list -- lands at the bottom
+
+            return Ok(ApiResponse<object>.Ok(new { index, total = ordered.Count }));
         }
 
         /// <summary>Distinct role values across every resolved credit -- feeds the People page's

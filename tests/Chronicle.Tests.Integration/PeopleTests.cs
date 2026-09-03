@@ -161,7 +161,7 @@ namespace Chronicle.Tests.Integration
         }
 
         [Fact]
-        public async Task GetPeople_JumpTo_MatchesAgainstLastName()
+        public async Task GetJumpPosition_MatchesAgainstLastName()
         {
             using var scope = _factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
@@ -189,28 +189,39 @@ namespace Chronicle.Tests.Integration
             await db.SaveChangesAsync();
 
             var client = await AuthedClientAsync();
-            // Jumping to "Z" should land on the last-name-Z person (Alice Zephyr), not the
+
+            // Ground truth: this person's own absolute position in the full ordered list.
+            var allResp = await client.GetAsync("/api/v1/people?perPage=1000");
+            allResp.EnsureSuccessStatusCode();
+            var allNames = JsonDocument.Parse(await allResp.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("data").EnumerateArray()
+                .Select(i => i.GetProperty("name").GetString()).ToList();
+            var zephyrIndex = allNames.IndexOf("Alice Zephyr");
+            var andersIndex = allNames.IndexOf("Zoe Anders");
+
+            // Jumping to "Z" should resolve to the last-name-Z person (Alice Zephyr), not the
             // first-name-Z one (Zoe Anders, last name Anders, which sorts before "Z").
-            var resp = await client.GetAsync("/api/v1/people?perPage=200&jumpTo=Z");
-            resp.EnsureSuccessStatusCode();
+            var jumpResp = await client.GetAsync("/api/v1/people/jump-position?jumpTo=Z");
+            jumpResp.EnsureSuccessStatusCode();
+            var jumpData = JsonDocument.Parse(await jumpResp.Content.ReadAsStringAsync()).RootElement.GetProperty("data");
 
-            var body = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-            var names = body.RootElement.GetProperty("data").EnumerateArray()
-                .Select(i => i.GetProperty("name").GetString())
-                .ToList();
-
-            names.Should().Contain("Alice Zephyr");
-            names.Should().NotContain("Zoe Anders");
+            jumpData.GetProperty("index").GetInt32().Should().Be(zephyrIndex);
+            zephyrIndex.Should().BeGreaterThan(andersIndex);
         }
 
         // Per-user request (2026-08-31): "if you run out of people for a particular letter
         // either stop or scroll through the next letter. Don't just wrap the existing
-        // letter." Root cause: GetPeople used to force page back to 1 on every request that
-        // carried a jumpTo, including infinite-scroll's own page-2/3/... follow-ups (which
-        // resend the same jumpTo throughout one jump session) -- so "load more" kept
-        // re-serving the same first window forever instead of ever advancing.
+        // letter." Original root cause: GetPeople used to force page back to 1 on every
+        // request that carried a jumpTo. Re-architected (2026-09-03, per-user request: "what
+        // is the possibility of having the ability to scroll up" -- jumping used to permanently
+        // truncate the list, so nothing before the jump target was ever loaded and scrolling
+        // up had nothing to scroll into): GetJumpPosition now only resolves a starting index
+        // into the FULL list; GetPeople's own page/perPage always paginate that full list, jump
+        // or not, so paging forward from wherever a jump opened naturally continues instead of
+        // ever repeating -- and paging backward from there works too, which a truncating jumpTo
+        // could never support.
         [Fact]
-        public async Task GetPeople_JumpTo_Page2_ContinuesPastTheJumpLetter_NotRepeatingPage1()
+        public async Task GetPeople_PagingForwardFromAJumpPosition_ContinuesPastTheJumpLetter_NotRepeatingSamePage()
         {
             using var scope = _factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
@@ -224,37 +235,45 @@ namespace Chronicle.Tests.Integration
                 })).Entity;
             await db.SaveChangesAsync();
 
-            // Three last-name-B people (alphabetically: Banner, Barker, Brooks) and two
-            // last-name-C people (Combs, Cross) -- perPage=2 means page 1 is exactly the B's
-            // that fit, and page 2 must spill into C rather than repeating page 1's B's.
+            // Distinctive last names (Banzhaf/Barkowicz/Broznik) unlikely to collide with other
+            // tests' seeded people sharing this same in-memory database (IClassFixture keeps it
+            // alive across every [Fact] in this class) -- IndexOf against the live full list
+            // below is what makes the assertions robust to that shared state either way.
             var people = new[]
             {
-                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bea Banner", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
-                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bob Barker", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
-                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bill Brooks", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
-                new MediaItem { MediaTypeId = peopleType.Id, Name = "Cara Combs", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
-                new MediaItem { MediaTypeId = peopleType.Id, Name = "Cody Cross", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bea Banzhaf", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bob Barkowicz", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Bill Broznik", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+                new MediaItem { MediaTypeId = peopleType.Id, Name = "Cara Combzik", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
             };
             db.MediaItems.AddRange(people);
             await db.SaveChangesAsync();
 
             var client = await AuthedClientAsync();
 
-            var page1Resp = await client.GetAsync("/api/v1/people?perPage=2&jumpTo=B");
-            page1Resp.EnsureSuccessStatusCode();
-            var page1Names = JsonDocument.Parse(await page1Resp.Content.ReadAsStringAsync())
+            var allResp = await client.GetAsync("/api/v1/people?perPage=1000");
+            var allNames = JsonDocument.Parse(await allResp.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("data").EnumerateArray()
+                .Select(i => i.GetProperty("name").GetString()).ToList();
+            var banzhafIndex = allNames.IndexOf("Bea Banzhaf");
+
+            const int perPage = 2;
+            var page = banzhafIndex / perPage + 1;
+
+            var pageAResp = await client.GetAsync($"/api/v1/people?perPage={perPage}&page={page}");
+            var pageANames = JsonDocument.Parse(await pageAResp.Content.ReadAsStringAsync())
                 .RootElement.GetProperty("data").EnumerateArray()
                 .Select(i => i.GetProperty("name").GetString()).ToList();
 
-            var page2Resp = await client.GetAsync("/api/v1/people?perPage=2&jumpTo=B&page=2");
-            page2Resp.EnsureSuccessStatusCode();
-            var page2Names = JsonDocument.Parse(await page2Resp.Content.ReadAsStringAsync())
+            var pageBResp = await client.GetAsync($"/api/v1/people?perPage={perPage}&page={page + 1}");
+            var pageBNames = JsonDocument.Parse(await pageBResp.Content.ReadAsStringAsync())
                 .RootElement.GetProperty("data").EnumerateArray()
                 .Select(i => i.GetProperty("name").GetString()).ToList();
 
-            page1Names.Should().Equal("Bea Banner", "Bob Barker");
-            // The bug: this used to equal page1Names again (page forced back to 1 server-side).
-            page2Names.Should().Equal("Bill Brooks", "Cara Combs");
+            pageANames.Should().Equal(allNames.Skip((page - 1) * perPage).Take(perPage));
+            // The original bug: this used to equal pageANames again (page forced back to 1).
+            pageBNames.Should().Equal(allNames.Skip(page * perPage).Take(perPage));
+            pageANames.Should().NotIntersectWith(pageBNames);
         }
     }
 }
