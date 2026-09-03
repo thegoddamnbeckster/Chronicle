@@ -112,6 +112,38 @@ public class PersonResolutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolvePersonOnlyAsync_ConcurrentCallsSameName_DoNotCreateDuplicateStubs()
+    {
+        // Regression test for a real production duplicate (2026-09-03): TMDB's and Wikipedia's
+        // own enrichment passes for the same title ("Connect") each resolved "Jung Hae-in"
+        // independently, 82ms apart, on separate DbContexts -- two different plugins enriching
+        // the same title concurrently, neither able to see the other's not-yet-committed insert.
+        // Reproduces that shape here: two separate DbContexts against the same underlying
+        // in-memory database (mirrors two separate scoped contexts in production), calling
+        // ResolvePersonOnlyAsync for the exact same name at the same time via Task.WhenAll, with
+        // a source/external id on only ONE side (as one side genuinely was live -- Wikipedia
+        // never supplies an id) so the same-source-conflict guard can't be what saves this.
+        var dbName = Guid.NewGuid().ToString();
+        var opts = new DbContextOptionsBuilder<ChronicleDbContext>().UseInMemoryDatabase(dbName).Options;
+        using var dbA = new ChronicleDbContext(opts);
+        using var dbB = new ChronicleDbContext(opts);
+        dbA.MediaTypes.Add(new MediaType { Id = 1, Name = "people", DisplayName = "People", CreatedAt = DateTime.UtcNow });
+        await dbA.SaveChangesAsync();
+
+        var svcA = new PersonResolutionService(_registry.Object, Mock.Of<IMetadataResolutionService>(), Mock.Of<ILogger<PersonResolutionService>>());
+        var svcB = new PersonResolutionService(_registry.Object, Mock.Of<IMetadataResolutionService>(), Mock.Of<ILogger<PersonResolutionService>>());
+
+        var taskA = svcA.ResolvePersonOnlyAsync(dbA, "Jung Hae-in", null, "wikipedia", default);
+        var taskB = svcB.ResolvePersonOnlyAsync(dbB, "Jung Hae-in", "tmdb:1470763", "tmdb", default);
+        var results = await Task.WhenAll(taskA, taskB);
+        await dbA.SaveChangesAsync();
+        await dbB.SaveChangesAsync();
+
+        results[0].Id.Should().Be(results[1].Id);
+        (await dbA.MediaItems.CountAsync(m => m.MediaTypeId == 1)).Should().Be(1);
+    }
+
+    [Fact]
     public async Task ResolvePersonOnlyAsync_SameSourceConflictingId_CreatesSeparatePersonInsteadOfMerging()
     {
         // Regression test for a confirmed live incident: "Brian Johnson" the VFX artist

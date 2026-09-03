@@ -360,6 +360,62 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<object>.Ok(new { updated }));
         }
 
+        // Mirrors WikipediaScoring.StripDisambiguationSuffix's own regex exactly (that plugin
+        // project isn't referenced here) -- see the backfill endpoint just below for why this
+        // needs a one-time pass over already-written rows, not just the plugin-side fix.
+        private static readonly System.Text.RegularExpressions.Regex DisambiguationSuffixRe =
+            new(@"\s*\([^)]*\)\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// One-time cleanup for person names still carrying a Wikipedia disambiguation
+        /// parenthetical -- "Aaron Douglas (actor)" instead of "Aaron Douglas". The plugin-side
+        /// fix (chronicle.plugin.wikipedia v1.0.4, 2026-09-02: WikipediaScoring.
+        /// StripDisambiguationSuffix) already stops this for every enrichment from here on, but
+        /// it doesn't retroactively fix a person whose Name was already overwritten by an
+        /// enrichment pass that ran BEFORE that fix landed -- confirmed live (2026-09-03):
+        /// "Aaron Douglas (actor)"'s own UpdatedAt (2026-08-31) predates the fix (2026-09-02).
+        /// Scoped to people with a recorded wikipedia external id, since that parenthetical is a
+        /// Wikipedia-specific convention -- a non-Wikipedia-sourced name that happens to contain
+        /// parentheses for some other legitimate reason must never be touched.
+        /// </summary>
+        [HttpPost("strip-wikipedia-disambiguation-suffix")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> StripWikipediaDisambiguationSuffix(CancellationToken ct)
+        {
+            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
+            if (peopleTypeId is null)
+                return Ok(ApiResponse<object>.Ok(new { updated = 0 }));
+
+            var wikipediaPersonIds = await _context.MediaExternalIds
+                .Where(x => x.Source == "wikipedia")
+                .Select(x => x.MediaItemId)
+                .Distinct()
+                .ToListAsync(ct);
+
+            var people = await _context.MediaItems
+                .Where(m => m.MediaTypeId == peopleTypeId.Value && wikipediaPersonIds.Contains(m.Id))
+                .Select(m => new { m.Id, m.Name })
+                .ToListAsync(ct);
+
+            int updated = 0;
+            foreach (var p in people)
+            {
+                ct.ThrowIfCancellationRequested();
+                var stripped = DisambiguationSuffixRe.Replace(p.Name, string.Empty);
+                if (stripped == p.Name || stripped.Length == 0) continue;
+
+                await _context.MediaItems
+                    .Where(m => m.Id == p.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(m => m.Name, stripped)
+                        .SetProperty(m => m.NormalizedName, MediaItemNormalizer.NormalizeName(stripped))
+                        .SetProperty(m => m.NormalizedNameLoose, MediaItemNormalizer.NormalizeNameLoose(stripped)), ct);
+                updated++;
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { updated }));
+        }
+
         /// <summary>
         /// One-time backfill for MediaItem.NormalizedNameLoose (added 2026-09-03 alongside
         /// PersonResolutionService's Step 2b loose-name fallback -- see the doc comment there).

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -28,6 +29,15 @@ public class PersonResolutionService(
     IMetadataResolutionService resolutionService,
     ILogger<PersonResolutionService> logger) : IPersonResolutionService
 {
+    // Per-(peopleTypeId, loose-normalized-name) lock guarding ResolvePersonOnlyAsync's Steps
+    // 2/2b/3 -- see the doc comment at that lock's acquisition site for what this prevents
+    // (two different plugins concurrently resolving the same person name, each missing the
+    // other's uncommitted insert). Same static-ConcurrentDictionary-of-SemaphoreSlim pattern as
+    // MetadataEnrichmentService's own per-plugin/per-(item,plugin) locks.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> _personNameLocks = new();
+    private static readonly TimeSpan NameLockTimeout = TimeSpan.FromSeconds(40);
+
+
     public async Task ResolveAndRecordCreditAsync(
         ChronicleDbContext db,
         int titleMediaItemId,
@@ -170,66 +180,127 @@ public class PersonResolutionService(
 
         var peopleTypeId = await GetPeopleMediaTypeIdAsync(db, ct);
         var normalized = MediaItemNormalizer.NormalizeName(personName);
+        var looseNormalized = MediaItemNormalizer.NormalizeNameLoose(personName);
 
-        // Step 2: name lookup, scoped to people-type items.
-        if (person is null)
+        // Steps 2/2b/3 (name lookup, loose-name lookup, create-stub) run under a per-name lock.
+        // Confirmed live (2026-09-03): TMDB's and Wikipedia's own enrichment passes for the same
+        // title ("Connect") each resolved "Jung Hae-in" independently, 82ms apart, on separate
+        // DbContexts -- two DIFFERENT plugins enriching the SAME title concurrently, neither
+        // able to see the other's not-yet-committed insert, so Step 2's exact-match SELECT found
+        // nothing on both sides and both created a stub. MetadataEnrichmentService's own
+        // per-(item,plugin) and per-plugin locks don't cover this: they only stop the SAME
+        // plugin racing itself, not two different plugins touching the same item at once. This
+        // is a genuinely different failure mode from the same-name-different-real-person case
+        // Step 2's own conflict guard protects against just below (that's about two DIFFERENT
+        // real people who happen to share a name; this is one real person resolved twice at
+        // once) -- so it needs a different fix: serialize the check-then-insert instead of
+        // trying to detect the collision after the fact. Keyed on the loose-normalized name (not
+        // the exact one) so a same-instant race between differently-spaced spellings of the same
+        // name -- the exact scenario NormalizedNameLoose/Step 2b exists for -- also serializes
+        // against itself, not just the identical-spelling case.
+        if (person is null && looseNormalized.Length > 0)
         {
-            var nameMatch = await db.MediaItems.FirstOrDefaultAsync(
-                m => m.MediaTypeId == peopleTypeId && m.NormalizedName == normalized, ct);
-
-            // Before trusting a name-only match, check whether this credit's own SOURCE
-            // already has a DIFFERENT external id recorded against the name-matched person --
-            // e.g. it already carries tmdb:9402 and this credit brings tmdb:84008. Two
-            // different ids from the same source for what's supposedly one real person is the
-            // exact signature of a same-name collision, not routine multi-source enrichment:
-            // confirmed live, "Brian Johnson" merged 4 unrelated real people this way (a VFX
-            // artist, the AC/DC singer, and two more) purely because none of their early
-            // credits carried an id yet to catch it on -- and once the first stray id got
-            // welded on via Step 4 below, every later credit for THAT id kept reinforcing the
-            // same wrong person. When a same-source conflict is found, don't attach -- fall
-            // through to Step 3 and create a new person instead, even though this means two
-            // credits with no id at all for what might genuinely be the same real person can
-            // now land on separate stubs. That's the safer failure direction: a wrongly-split
-            // person is visible and fixable (a thin duplicate stub); a wrongly-merged person
-            // silently corrupts another real person's page and is easy to never notice.
-            var hasConflictingSourceId = nameMatch is not null && !string.IsNullOrWhiteSpace(externalPersonId) &&
-                await db.MediaExternalIds.AnyAsync(x =>
-                    x.MediaItemId == nameMatch.Id && x.Source == source && x.ExternalId != externalPersonId, ct);
-
-            if (!hasConflictingSourceId)
-                person = nameMatch;
-        }
-
-        // Step 2b: loose name lookup (whitespace-insensitive), scoped to people-type items.
-        // Confirmed live (2026-09-03): "Cee Lo Green" (from one plugin) and "CeeLo Green" (from
-        // another) are the same real person, but Step 2's exact NormalizedName match treats
-        // "cee lo green" and "ceelo green" as different strings -- NormalizeName collapses
-        // whitespace runs to a single space, it never removes it, so a plugin that spaces a
-        // name differently than an earlier one always creates a fresh duplicate stub instead of
-        // matching the existing person. Queries the persisted NormalizedNameLoose column
-        // directly (kept in sync by ChronicleDbContext.SyncNormalizedNames on every write path)
-        // rather than stripping spaces from NormalizedName at query time, so this stays a plain
-        // indexed-equality lookup with one source of truth for what "loose" means. Same
-        // same-source-conflict guard as Step 2 -- this must never become a second way to
-        // blindly merge two different real people.
-        if (person is null)
-        {
-            var looseNormalized = MediaItemNormalizer.NormalizeNameLoose(personName);
-            if (looseNormalized.Length > 0)
+            var lockKey = $"{peopleTypeId}|{looseNormalized}";
+            var nameSem = _personNameLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
+            var acquired = await nameSem.WaitAsync(NameLockTimeout, ct);
+            if (!acquired)
             {
-                var looseMatch = await db.MediaItems.FirstOrDefaultAsync(
-                    m => m.MediaTypeId == peopleTypeId && m.NormalizedNameLoose == looseNormalized, ct);
+                logger.LogWarning(
+                    "PersonResolutionService: couldn't acquire name lock for \"{Name}\" within {TimeoutS}s -- " +
+                    "proceeding without it (may create a duplicate stub; dedupe endpoints can clean it up later)",
+                    personName, NameLockTimeout.TotalSeconds);
+            }
+            try
+            {
+                // Step 2: name lookup, scoped to people-type items.
+                var nameMatch = await db.MediaItems.FirstOrDefaultAsync(
+                    m => m.MediaTypeId == peopleTypeId && m.NormalizedName == normalized, ct);
 
-                var hasConflictingSourceIdLoose = looseMatch is not null && !string.IsNullOrWhiteSpace(externalPersonId) &&
+                // Before trusting a name-only match, check whether this credit's own SOURCE
+                // already has a DIFFERENT external id recorded against the name-matched person --
+                // e.g. it already carries tmdb:9402 and this credit brings tmdb:84008. Two
+                // different ids from the same source for what's supposedly one real person is the
+                // exact signature of a same-name collision, not routine multi-source enrichment:
+                // confirmed live, "Brian Johnson" merged 4 unrelated real people this way (a VFX
+                // artist, the AC/DC singer, and two more) purely because none of their early
+                // credits carried an id yet to catch it on -- and once the first stray id got
+                // welded on via Step 4 below, every later credit for THAT id kept reinforcing the
+                // same wrong person. When a same-source conflict is found, don't attach -- fall
+                // through to Step 3 and create a new person instead, even though this means two
+                // credits with no id at all for what might genuinely be the same real person can
+                // now land on separate stubs. That's the safer failure direction: a wrongly-split
+                // person is visible and fixable (a thin duplicate stub); a wrongly-merged person
+                // silently corrupts another real person's page and is easy to never notice.
+                var hasConflictingSourceId = nameMatch is not null && !string.IsNullOrWhiteSpace(externalPersonId) &&
                     await db.MediaExternalIds.AnyAsync(x =>
-                        x.MediaItemId == looseMatch.Id && x.Source == source && x.ExternalId != externalPersonId, ct);
+                        x.MediaItemId == nameMatch.Id && x.Source == source && x.ExternalId != externalPersonId, ct);
 
-                if (!hasConflictingSourceIdLoose)
-                    person = looseMatch;
+                if (!hasConflictingSourceId)
+                    person = nameMatch;
+
+                // Step 2b: loose name lookup (whitespace-insensitive), scoped to people-type
+                // items. Confirmed live (2026-09-03): "Cee Lo Green" (from one plugin) and
+                // "CeeLo Green" (from another) are the same real person, but Step 2's exact
+                // NormalizedName match treats "cee lo green" and "ceelo green" as different
+                // strings -- NormalizeName collapses whitespace runs to a single space, it never
+                // removes it, so a plugin that spaces a name differently than an earlier one
+                // always creates a fresh duplicate stub instead of matching the existing person.
+                // Queries the persisted NormalizedNameLoose column directly (kept in sync by
+                // ChronicleDbContext.SyncNormalizedNames on every write path) rather than
+                // stripping spaces from NormalizedName at query time, so this stays a plain
+                // indexed-equality lookup with one source of truth for what "loose" means. Same
+                // same-source-conflict guard as Step 2 -- this must never become a second way to
+                // blindly merge two different real people.
+                if (person is null)
+                {
+                    var looseMatch = await db.MediaItems.FirstOrDefaultAsync(
+                        m => m.MediaTypeId == peopleTypeId && m.NormalizedNameLoose == looseNormalized, ct);
+
+                    var hasConflictingSourceIdLoose = looseMatch is not null && !string.IsNullOrWhiteSpace(externalPersonId) &&
+                        await db.MediaExternalIds.AnyAsync(x =>
+                            x.MediaItemId == looseMatch.Id && x.Source == source && x.ExternalId != externalPersonId, ct);
+
+                    if (!hasConflictingSourceIdLoose)
+                        person = looseMatch;
+                }
+
+                // Step 3: create a new stub. Still inside the lock -- the whole point is that
+                // no other caller's Step 2/2b can run (and miss this insert) between the lookup
+                // above and this create-and-commit.
+                if (person is null)
+                {
+                    person = new MediaItem
+                    {
+                        MediaTypeId    = peopleTypeId,
+                        Name           = personName,
+                        NormalizedName = normalized,
+                        HierarchyLevel = 0,
+                        IsStub         = true,
+                        CreatedAt      = DateTime.UtcNow,
+                        UpdatedAt      = DateTime.UtcNow,
+                    };
+                    db.MediaItems.Add(person);
+                    await db.SaveChangesAsync(ct); // need the id before seeding enrichment rows / recording the external id
+
+                    await SeedEnrichmentRowsAsync(db, person.Id, ct);
+
+                    logger.LogInformation(
+                        "PersonResolutionService: created new person stub {PersonId} \"{Name}\" (first credited via {Source})",
+                        person.Id, personName, source);
+                }
+            }
+            finally
+            {
+                if (acquired) nameSem.Release();
             }
         }
 
-        // Step 3: create a new stub.
+        // Fallback create, unlocked: only reachable when personName normalizes down to an empty
+        // loose form (pure punctuation/whitespace, e.g. "..."), so the locked Steps 2/2b/3 block
+        // above never ran at all -- there's no meaningful name to look up or race on in that
+        // case, just create the stub directly. ResolveAndRecordCreditAsync already rejects a
+        // blank personName before calling this method, so this is a rare edge case, not the
+        // normal path.
         if (person is null)
         {
             person = new MediaItem
