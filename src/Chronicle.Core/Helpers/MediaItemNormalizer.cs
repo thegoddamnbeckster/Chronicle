@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Chronicle.Core.Helpers;
@@ -17,11 +18,19 @@ public static class MediaItemNormalizer
     /// "James S. A. Corey" → "james s a corey"
     /// "James S.A. Corey"  → "james sa corey"
     /// "James S.A.Corey"   → "james sacorey"
+    ///
+    /// Unicode-normalizes to FormC first: the same visible character can arrive as either a
+    /// single precomposed codepoint ("ö" = U+00F6) or a base letter plus a combining mark
+    /// ("o" + U+0308) depending on which source produced the string, and plain ToLowerInvariant
+    /// does not reconcile the two -- they hash and compare as completely different strings.
+    /// Confirmed live (2026-09-03): "Björgvin Arnarson" arrived from two different providers in
+    /// the two different forms, so PersonResolutionService's own NormalizedName lookup could
+    /// never recognize them as the same person and created a duplicate stub every time.
     /// </summary>
     public static string NormalizeName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
-        var stripped = _strip.Replace(name, string.Empty);
+        var stripped = _strip.Replace(name.Normalize(NormalizationForm.FormC), string.Empty);
         var collapsed = _spaces.Replace(stripped, " ").Trim().ToLowerInvariant();
         return collapsed;
     }
@@ -42,7 +51,7 @@ public static class MediaItemNormalizer
     public static string NormalizeNameLoose(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
-        var stripped = _strip.Replace(name, string.Empty);
+        var stripped = _strip.Replace(name.Normalize(NormalizationForm.FormC), string.Empty);
         return _spaces.Replace(stripped, string.Empty).ToLowerInvariant();
     }
 

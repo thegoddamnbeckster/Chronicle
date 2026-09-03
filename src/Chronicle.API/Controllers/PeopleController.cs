@@ -316,6 +316,59 @@ namespace Chronicle.API.Controllers
         private static readonly Regex TmdbPersonExternalIdRe = new(@"^(?:person|tmdb):(\d+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
+        /// Companion to dedupe-tmdb-duplicates below, and must run BEFORE it (or before any
+        /// fresh credit reprocessing): rewrites every remaining "person:N"-format MediaExternalId
+        /// (Source="tmdb") on a "people" item to the "tmdb:N" format every other code path
+        /// already expects for that column. Discovered live (2026-09-03) running
+        /// reprocess-orphaned-credits AFTER dedupe-tmdb-duplicates: PersonResolutionService's own
+        /// same-name-match safety check (added for the Brian Johnson conflation fix) sees
+        /// "person:1851642" vs a fresh credit's "tmdb:1851642" as a same-source CONFLICT --
+        /// exactly the signature it's designed to catch for two different real people sharing a
+        /// name -- and creates a brand-new duplicate stub rather than reusing the existing
+        /// record. Every surviving "person:N" row is a live landmine for this: the very fix that
+        /// stops blind merges was, via this formatting mismatch, actively manufacturing fresh
+        /// duplicates (confirmed: Sheila Atim and others) every time credits got reprocessed.
+        /// When an item already carries both formats (harmless leftover from before either fix),
+        /// the redundant "person:N" row is deleted rather than renamed onto a collision.
+        /// </summary>
+        [HttpPost("normalize-tmdb-person-ids")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> NormalizeTmdbPersonIds(CancellationToken ct)
+        {
+            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
+            if (peopleTypeId is null)
+                return Ok(ApiResponse<object>.Ok(new { renamed = 0, deletedRedundant = 0 }));
+
+            // Pure SQL-side bulk operations (ExecuteDelete/ExecuteUpdate), not tracked-entity
+            // mutation -- a first version of this endpoint loaded every "person:"-format row
+            // into the change tracker up front, then mutated each one in a loop that called
+            // ChangeTracker.Clear() every 500 rows for throughput. That's exactly wrong for
+            // direct property mutation (unlike Remove(), which re-attaches on demand): once an
+            // entity is detached by Clear(), setting a property on it does nothing EF will ever
+            // persist. Confirmed live (2026-09-03): the endpoint reported 75,145 "renamed" but
+            // only the first batch actually reached the database -- Sheila Atim's own record
+            // was silently left as "person:1851642", which is exactly what let a fresh
+            // duplicate get created for her moments later. ExecuteUpdate/ExecuteDelete compile
+            // to plain SQL statements and have no such tracking-lifetime pitfall.
+            var deletedRedundant = await _context.MediaExternalIds
+                .Where(e => e.Source == "tmdb"
+                         && e.ExternalId.StartsWith("person:")
+                         && _context.MediaItems.Any(m => m.Id == e.MediaItemId && m.MediaTypeId == peopleTypeId.Value)
+                         && _context.MediaExternalIds.Any(o => o.MediaItemId == e.MediaItemId
+                                                             && o.Source == "tmdb"
+                                                             && o.ExternalId.StartsWith("tmdb:")))
+                .ExecuteDeleteAsync(ct);
+
+            var renamed = await _context.MediaExternalIds
+                .Where(e => e.Source == "tmdb"
+                         && e.ExternalId.StartsWith("person:")
+                         && _context.MediaItems.Any(m => m.Id == e.MediaItemId && m.MediaTypeId == peopleTypeId.Value))
+                .ExecuteUpdateAsync(s => s.SetProperty(e => e.ExternalId, e => "tmdb:" + e.ExternalId.Substring(7)), ct);
+
+            return Ok(ApiResponse<object>.Ok(new { renamed, deletedRedundant }));
+        }
+
+        /// <summary>
         /// One-time historical cleanup for a real production bug (fixed in
         /// MetadataEnrichmentService.UpsertExternalIdForEnrichmentAsync, 2026-09-03): TMDB
         /// person ids were written under two different (Source="tmdb", ExternalId=...) shapes

@@ -35,4 +35,32 @@ public class MediaItemNormalizerTests
     {
         MediaItemNormalizer.NormalizeNameLoose(input).Should().Be(expected);
     }
+
+    // Regression test for a real production duplicate (2026-09-03): the same visible name can
+    // arrive as either a single precomposed codepoint ("o with diaeresis", NFC) or a base
+    // letter plus a combining diaeresis mark (NFD) depending on which provider produced the
+    // string -- visually and semantically identical, but plain ToLowerInvariant treats them as
+    // completely different strings. "Bjorgvin Arnarson" arrived in both forms from two
+    // different sources and got two separate Person records because of exactly this gap.
+    // Built from explicit \u escapes rather than a typed literal: a source file can't reliably
+    // preserve the byte-level distinction between the two forms once it round-trips through an
+    // editor/encoding, so both are spelled out with codepoints here instead.
+    private const string PrecomposedName = "Björgvin Arnarson";   // "o with diaeresis" as one codepoint (NFC)
+    private const string DecomposedName  = "Björgvin Arnarson";  // "o" + combining diaeresis (NFD)
+
+    [Fact]
+    public void NormalizeName_SameCharacterDifferentUnicodeComposition_ProducesSameResult()
+    {
+        PrecomposedName.Should().NotBe(DecomposedName, "the two raw strings really are byte-different");
+
+        MediaItemNormalizer.NormalizeName(PrecomposedName)
+            .Should().Be(MediaItemNormalizer.NormalizeName(DecomposedName));
+    }
+
+    [Fact]
+    public void NormalizeNameLoose_SameCharacterDifferentUnicodeComposition_ProducesSameResult()
+    {
+        MediaItemNormalizer.NormalizeNameLoose(PrecomposedName)
+            .Should().Be(MediaItemNormalizer.NormalizeNameLoose(DecomposedName));
+    }
 }
