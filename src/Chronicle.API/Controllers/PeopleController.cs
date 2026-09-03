@@ -316,6 +316,51 @@ namespace Chronicle.API.Controllers
         private static readonly Regex TmdbPersonExternalIdRe = new(@"^(?:person|tmdb):(\d+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>
+        /// One-time historical backfill for a real production bug (fixed in
+        /// MediaItemNormalizer.NormalizeName, 2026-09-03): the stored NormalizedName column
+        /// was computed without Unicode-normalizing the input first, so the same visible name
+        /// arriving in two different Unicode composition forms (a precomposed accented letter
+        /// vs. a base letter plus a combining mark) produced two different NormalizedName
+        /// values and could never be recognized as the same person by
+        /// PersonResolutionService's own name-lookup. This recomputes NormalizedName for every
+        /// "people" item using the now-fixed logic; only rows whose value actually changes are
+        /// written. Doesn't touch anything else -- run dedupe-by-name cleanup separately (and
+        /// carefully: unlike a shared external id, a shared normalized name alone is NOT proof
+        /// of the same real person, see the Brian Johnson/Jesse James/Jonathan Lee cases this
+        /// session -- corroborate with matching credits or another external id before deleting
+        /// anything found this way). Admin only: maintenance operation, not something a
+        /// regular user triggers.
+        /// </summary>
+        [HttpPost("backfill-normalized-names")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> BackfillNormalizedNames(CancellationToken ct)
+        {
+            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
+            if (peopleTypeId is null)
+                return Ok(ApiResponse<object>.Ok(new { updated = 0 }));
+
+            var people = await _context.MediaItems
+                .Where(m => m.MediaTypeId == peopleTypeId.Value)
+                .Select(m => new { m.Id, m.Name, m.NormalizedName })
+                .ToListAsync(ct);
+
+            int updated = 0;
+            foreach (var p in people)
+            {
+                ct.ThrowIfCancellationRequested();
+                var correct = MediaItemNormalizer.NormalizeName(p.Name);
+                if (correct == p.NormalizedName) continue;
+
+                await _context.MediaItems
+                    .Where(m => m.Id == p.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.NormalizedName, correct), ct);
+                updated++;
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { updated }));
+        }
+
+        /// <summary>
         /// Companion to dedupe-tmdb-duplicates below, and must run BEFORE it (or before any
         /// fresh credit reprocessing): rewrites every remaining "person:N"-format MediaExternalId
         /// (Source="tmdb") on a "people" item to the "tmdb:N" format every other code path
