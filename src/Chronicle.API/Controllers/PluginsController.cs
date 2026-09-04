@@ -679,217 +679,8 @@ public class PluginsController : ControllerBase
     }
 
     // ── Static plugin catalog ─────────────────────────────────────────────────
-
-    private static readonly PluginCatalogEntry[] PluginCatalog =
-    [
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.tmdb",
-            Name:        "TMDB",
-            Description: "Fetches movie and TV metadata from The Movie Database (TMDB). Requires a free TMDB API key.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "https://www.themoviedb.org/favicon.ico",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.TMDB",
-            AssetName:   "Chronicle.Plugin.TMDB.zip",
-            DllName:     "Chronicle.Plugin.TMDB.dll",
-            Tags:        ["movies", "tv", "metadata"],
-            Sha256:      "",     // cleared — recalculate after each plugin release
-            Version:     "1.0.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.musicbrainz",
-            Name:        "MusicBrainz",
-            Description: "Fetches comprehensive music metadata from MusicBrainz (artist, album, track) and cover art from the Cover Art Archive. No API key required.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "https://musicbrainz.org/favicon.ico",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MusicBrainz",
-            AssetName:   "Chronicle.Plugin.MusicBrainz.zip",
-            DllName:     "Chronicle.Plugin.MusicBrainz.dll",
-            Tags:        ["music", "audio", "metadata"],
-            Sha256:      "dc34647a59f0974154f1d3a50bc4872143475b5be6f9af609a1b575fb755ea3b",
-            Version:     "1.0.2"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.filescanner",
-            Name:        "File Scanner",
-            Description: "Scans local directories for media files. Parses NFO sidecars and filenames to extract title, year, and media type. Supports TV hierarchy (SxxExx), audio files (MP3/FLAC/OGG/etc.), and embedded tag reading via TagLib#.",
-            Author:      "Chronicle",
-            IconUrl:     null,
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.FileScanner",
-            AssetName:   "Chronicle.Plugin.FileScanner.zip",
-            DllName:     "Chronicle.Plugin.FileScanner.dll",
-            Tags:        ["movies", "tv", "audio", "filescanner", "local"],
-            Sha256:      "30f7996b2b3edd47f57084c1c774aa87d137fabdee50ffd3e0a185c2bef730e9",
-            Version:     "1.2.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.wikipedia",
-            Name:        "Wikipedia",
-            Description: "Broad fallback summaries, full article sections, and images from Wikipedia for any media type — including People. No API key required.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "https://en.wikipedia.org/static/apple-touch/wikipedia.png",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Wikipedia",
-            AssetName:   "Chronicle.Plugin.Wikipedia.zip",
-            DllName:     "Chronicle.Plugin.Wikipedia.dll",
-            Tags:        ["movies", "tv", "music", "books", "games", "people", "metadata"],
-            Sha256:      "98b9943b24cad8bfd0c60bfd8cec2e2398d0cc99b23461b89fbc4255a7197fce",
-            Version:     "1.0.0"
-        ),
-        // The five plugins below this comment (FanEdit, Simkl, FanartTV, Themes.Default,
-        // and MoviesRemastered/Trakt/Hardcover/TheTVDB/TVMaze/Kodi.NFO further below) were
-        // added/completed 2026-09-02 after discovering this array was badly stale: CLAUDE.md
-        // lists 12 plugins as of v0.7.0 and this catalog only had 4. All six of
-        // MoviesRemastered/Trakt/Hardcover/TheTVDB/TVMaze/Kodi.NFO now have a real GitHub
-        // release with a packaged zip asset attached, tagged/pushed/created directly against
-        // each repo (verified with `gh release view` + a local SHA-256 recompute of the
-        // uploaded asset, not guessed). Notes on drift encountered along the way:
-        // MoviesRemastered picked up an uncommitted field-name fix (certificate/releaseDate ->
-        // certification/released) so it shipped as v1.0.1, not v1.0.0. Trakt's last prior tag
-        // (v1.1.0) no longer compiled against current Chronicle.Plugins.Models
-        // (CastMember/CrewMember refactor) so it shipped fresh as v1.2.0 from HEAD. Hardcover
-        // had the same drift plus a csproj/manifest version mismatch (fixed to agree at 1.2.0
-        // before building); its manifest.json's plugin_id is "hardcover", not
-        // "chronicle.plugin.hardcover" -- that's the authoritative id per Chronicle's
-        // plugin-loading convention. TheTVDB and TVMaze both needed the same CastMember/
-        // CrewMember migration (uncommitted locally, now committed and pushed) before they'd
-        // compile; TVMaze's repo additionally had leftover unpackaged v1.0.0/v1.0.1 tags from
-        // an earlier session, so its real first packaged release is v1.0.2. Kodi.NFO depends on
-        // ISidecarFormatPlugin (src/Chronicle.Plugins/ISidecarFormatPlugin.cs), which only
-        // exists on this branch -- its catalog entry works once this PR merges to main, not
-        // before.
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.moviesremastered",
-            Name:        "Movies Remastered (MRDb)",
-            Description: "Fetches fan edit metadata from the Movies Remastered Database (moviesremastered.com / MRDb), a community fanedit archive. No account required. Please use responsibly — a minimum 1-second delay between requests is enforced.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PHJlY3Qgd2lkdGg9JzI0JyBoZWlnaHQ9JzI0JyByeD0nMycgZmlsbD0nI0ZGMDAwMCcvPjxwYXRoIGQ9J001IDhoMnYySDV6bTEyIDBoMnYyaC0yek01IDE0aDJ2Mkg1em0xMiAwaDJ2MmgtMnonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjYnLz48cGF0aCBkPSdNOCA2aDh2MTJIOHonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjknLz48cGF0aCBkPSdNMTAgOWg0TTEwIDEyaDRNMTAgMTVoMycgc3Ryb2tlPScjRkYwMDAwJyBzdHJva2Utd2lkdGg9JzEuMicgc3Ryb2tlLWxpbmVjYXA9J3JvdW5kJy8+PC9zdmc+",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered",
-            AssetName:   "chronicle.plugin.moviesremastered-v1.0.1.zip",
-            DllName:     "Chronicle.Plugin.MoviesRemastered.dll",
-            Tags:        ["movies", "fanedits", "metadata"],
-            Sha256:      "b0e36023fc2e4ae2ebb3ee6147052518a6432e46538497322f49953e9e2a6468",
-            Version:     "1.0.1"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.trakt",
-            Name:        "Trakt",
-            Description: "Import watch history, ratings, watchlist, and in-progress playback position from Trakt.tv into Chronicle. Requires a Trakt API application (Settings → Your API Apps on trakt.tv) — as of 2026, creating one requires a paid Trakt VIP membership, so a free account cannot obtain a client_id at all.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "https://trakt.tv/favicon.ico",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Trakt",
-            AssetName:   "chronicle.plugin.trakt-v1.2.0.zip",
-            DllName:     "Chronicle.Plugin.Trakt.dll",
-            Tags:        ["movies", "tv", "scrobbling", "sync"],
-            Sha256:      "9c37b4198c66406a6438669adeeaaf3296011fefbcd04f30492819aaf7efa4a0",
-            Version:     "1.2.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "hardcover",
-            Name:        "Hardcover",
-            Description: "Book and audiobook metadata from Hardcover.app, plus reading history import.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PHJlY3QgeD0nMycgeT0nMycgd2lkdGg9JzE4JyBoZWlnaHQ9JzE4JyByeD0nMicgZmlsbD0nIzdjM2FlZCcvPjxwYXRoIGZpbGw9J3doaXRlJyBkPSdNNyA3aDEwdjJIN3ptMCA0aDEwdjJIN3ptMCA0aDd2Mkg3eicvPjwvc3ZnPg==",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Hardcover",
-            AssetName:   "chronicle.plugin.hardcover-v1.2.0.zip",
-            DllName:     "Chronicle.Plugin.Hardcover.dll",
-            Tags:        ["books", "audiobooks", "metadata", "sync"],
-            Sha256:      "da6272a877ad0b94dc95a37cfc81ab140b588a199922a556a6667ad0d1ca543b",
-            Version:     "1.2.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.thetvdb",
-            Name:        "TheTVDB",
-            Description: "Metadata for TV series, seasons, and episodes from TheTVDB — the community standard used by Sonarr, Plex, Kodi, Trakt, and SIMKL.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAIuSURBVHhe7ZlhccMwDIUHYARGoARKYAiKoAzKYBRGYRhKoiwGRt69u7qnvcqJY7u1eqfvZyIl0bPkyPbbWxAEQRAEQRAENaSU9mkAInIWkYtx/YPfWaLXv4nBAhyN60d+pwUCNXwvbDecwQI0B1EQ78B2wxkpAJ7XmsaWX0rpne2eioic+IvYhimM5GIZFDLnh+2eTqMAVjCLZWCJllL6ZLun0yIAwOix31IZWOnPNlPoEODAfqUyKGTMN9tNoVUATF7sVyoDK/1FZMd2U2gVANSWAae/iPyyzTQ6BVgtg0L6n7TNVHoEAOzLZVBI/7ssmUavAJjM2F8HaKS/OU9Mo1cA/MvZP5dBIf0f3/puoVcAwP55lK1nT299Gesj2WaNUhlgtqdr81tfZoQA1mLLEsVF68uMEADwaFuwjwsGCvDFz9G4aX2ZgQLs+DkaN60vM0oAUCoDV60vM1gAswxctb7MYAHuGh/gqvUNgiAIgiDIWI2Q5rrzu9/qB+Drdg2QqQkE8Gqu1g+4FmFLIHpDY4ufy52gDAXyL9UxcvrwQ6/qlvwAb5byfTesBQL0Mjenc6XfORvwPTdUBnI73FBb3ot+5ONzNwisBQL0pmde22+cA/wuhx8twHWTxNdZgObRAgB3x2GaGgEa5wD8QW7ngu6OxDJrgQA9m2/5C1iZ446lQK7HW019gOH7EgKs0dQJArftcG0gmM1b/MAr9QF3dK4GL24nvyAIgiB4Tf4A7zKb1dPc3rkAAAAASUVORK5CYII=",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.TheTVDB",
-            AssetName:   "chronicle.plugin.thetvdb-v1.0.0.zip",
-            DllName:     "Chronicle.Plugin.TheTVDB.dll",
-            Tags:        ["tv", "metadata"],
-            Sha256:      "d8f5dae46d518264f292e0f070b3aa2bd53bfc6f1a138d04fe587d317edf9aef",
-            Version:     "1.0.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.tvmaze",
-            Name:        "TVMaze",
-            Description: "TV series, season, and episode metadata from TVMaze. No API key or account required.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAKcSURBVHhe7ZpNkoIwEIU5HgfiONyFI7icpSzdsXSZqSiG7vcaDQiVzCSpelVOS376y2sQmObSNK5kNRgoTRUABkpTBYCB0lQBYGCLfvrR7W5D727Qfep4DlI36E5j737wmA1KCKDj/kNHc6CukH8UtDdKCuDS9u6ug+5qzLOoc9Om4z8rLYCm3VYGaP8Ix3zSVwBsYVLvd4kgvknqaPt7JQcQXwbH298rPQA6fmVnT7C/VwYA4srgDPt7ZQGAyoCu7efY3ysPANRndLdWfI+ADIfsVSYAuAzufbv63VH298oGAO1yKIOd40UqHwDUby4DACOdcYQyAsBW98nqGJwbDlBWAHC33Ti4SeWPV4fvlRcA6qvb0fb3ygwAl8HSjre/V3YAqAxe7QT7e+UHgPo/2xn298oQgFUG59jf6wQAf0sVAAZKUwWAgdJUAWCgNFUAGChNFQAGSlMlgIHSFAkAXkwY9+Z4B8ePrmEM89k+vgAx2mPuiOPMNbD2AaDbU7wFNibHd3s0hjWP0fIAAA8ojKc4OHl4tyf+NSb+IYcADABwnq3aDOA+zisRFg72H8cAQi9ML3g5nkvJknwx+hw3JYC+nz8vT3peC5z6xQlqYcH+c5/gGKsMtDh5vZ4EANolYbUbg7uKUpALW+z/co2wtHkyhH5ULlyS1CLdtQtA2FG/ePnZBGDv1nLVsJ8ZyqsKnytSAwiJDm6a89dxkSyd/bmhjdUl1XSIDXWP9gGgyx6/yHwuDI9baTJJCcxMXq8nEQDYpZfdEID4m20sx5gBRiWv15MMgJkcAKAEcVw1Rhfnlsc5I+IcsAIdtR+AtQsKAP54wTG95DHwJni1JQHwf1UBYKA0VQAYKE0VAAZKUwWAgdJUAWCgNBUP4BeYI+ijz8zs7AAAAABJRU5ErkJggg==",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.TVMaze",
-            AssetName:   "chronicle.plugin.tvmaze-v1.0.2.zip",
-            DllName:     "Chronicle.Plugin.TVMaze.dll",
-            Tags:        ["tv", "metadata"],
-            Sha256:      "b8095c5a3db7de0af26c67942bcc7fadec982c0badca57f6797a19fd7324c9c3",
-            Version:     "1.0.2"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.kodi.nfo",
-            Name:        "Kodi NFO",
-            Description: "Reads and writes Kodi's .nfo sidecar files — lossless local capture during a file scan, and building fresh NFOs from Chronicle's own resolved data on demand for Chronicle_Scraper's movie and TV addons.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "https://kodi.tv/favicon.ico",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO",
-            AssetName:   "chronicle.plugin.kodi.nfo-v1.0.0.zip",
-            DllName:     "Chronicle.Plugin.Kodi.NFO.dll",
-            Tags:        ["movies", "tv", "kodi", "nfo", "local"],
-            Sha256:      "cc17f6b6f40a5a0828548d462c75638f3c16b225c64e3fe79d75d0785b285a00",
-            Version:     "1.0.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.fanedit",
-            Name:        "FanEdit",
-            Description: "Fetches fanedit metadata from the Internet Fan Edit Database (fanedit.org). Requires a registered fanedit.org account. Please use responsibly — a minimum 1-second delay between requests is enforced.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PHJlY3Qgd2lkdGg9JzI0JyBoZWlnaHQ9JzI0JyByeD0nMycgZmlsbD0nI2MyNDEwYycvPjxwYXRoIGQ9J001IDhoMnYySDV6bTEyIDBoMnYyaC0yek01IDE0aDJ2Mkg1em0xMiAwaDJ2MmgtMnonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjYnLz48cGF0aCBkPSdNOCA2aDh2MTJIOHonIGZpbGw9J3doaXRlJyBvcGFjaXR5PScwLjknLz48cGF0aCBkPSdNMTAgOWg0TTEwIDEyaDRNMTAgMTVoMycgc3Ryb2tlPScjYzI0MTBjJyBzdHJva2Utd2lkdGg9JzEuMicgc3Ryb2tlLWxpbmVjYXA9J3JvdW5kJy8+PC9zdmc+",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.FanEdit",
-            AssetName:   "chronicle.plugin.fanedit-v1.0.0.zip",
-            DllName:     "Chronicle.Plugin.FanEdit.dll",
-            Tags:        ["movies", "fanedits", "metadata"],
-            Sha256:      "eb559c681d9f2fd5edddc8981fbea5a106bd4931f713d221aff703b039a44117",
-            Version:     "1.0.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.simkl",
-            Name:        "SIMKL",
-            Description: "Metadata for Movies, TV, and Anime from SIMKL. Requires a free SIMKL API Client ID.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "https://simkl.com/favicon.ico",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Simkl",
-            AssetName:   "chronicle.plugin.simkl-v1.1.0.zip",
-            DllName:     "Chronicle.Plugin.Simkl.dll",
-            Tags:        ["movies", "tv", "anime", "metadata"],
-            Sha256:      "0be5da25f81a5a58cc42a0a0c6574a5070e5b1006448a8720046c3aab0535869",
-            // The latest GitHub release (the version actually installable through this catalog)
-            // is v1.1.0 -- the repo's own HEAD manifest.json has moved on to 1.4.0 since, but
-            // that newer code has no attached release asset yet. Bump this once it does.
-            Version:     "1.1.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.fanarttv",
-            Name:        "Fanart.tv",
-            Description: "Fetches high-quality artwork from Fanart.tv — posters, backgrounds, logos, disc art, clearart, and banners for movies, TV, and music. Requires a free Fanart.tv API key.",
-            Author:      "Chronicle Contributors",
-            IconUrl:     "https://fanart.tv/favicon.ico",
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.FanartTV",
-            AssetName:   "chronicle.plugin.fanarttv-v1.0.0.zip",
-            DllName:     "Chronicle.Plugin.FanartTV.dll",
-            Tags:        ["movies", "tv", "music", "artwork", "metadata"],
-            Sha256:      "449ebf8b1905d349dcc51bcb8e2708267d6e53e006b7001ed63d6e15d3fce532",
-            Version:     "1.0.0"
-        ),
-        new PluginCatalogEntry(
-            PluginId:    "chronicle.plugin.themes.default",
-            Name:        "Default Themes",
-            Description: "Provides the four built-in Chronicle themes: Light, Dark, Navy & Pink, and Dark Teal. Install additional theme plugins to expand the available theme list.",
-            Author:      "Chronicle",
-            IconUrl:     null,
-            GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Themes.Default",
-            AssetName:   "chronicle.plugin.themes.default-v1.0.0.zip",
-            DllName:     "Chronicle.Plugin.Themes.Default.dll",
-            Tags:        ["themes", "ui"],
-            Sha256:      "1bdf6ae1c4a109c946629baf7787aef8b3d9555127888d0182cb9b6b58cf7079",
-            Version:     "1.0.0"
-        ),
-    ];
+    // Moved to Chronicle.Services.Plugins.PluginCatalog (2026-09-04) so the Services-layer
+    // scheduled update-check task can read the same data these endpoints use.
 
     // ── GET /api/v1/plugins/catalog ───────────────────────────────────────────
 
@@ -901,7 +692,7 @@ public class PluginsController : ControllerBase
         var installed = await _pluginService.GetAllPluginsAsync();
         var installedIds = installed.Select(p => p.PluginId).ToHashSet();
 
-        var entries = PluginCatalog
+        var entries = PluginCatalog.Entries
             .Select(e => e with { IsInstalled = installedIds.Contains(e.PluginId) })
             .ToList();
 
@@ -918,11 +709,94 @@ public class PluginsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> InstallFromCatalog(string pluginId, CancellationToken ct)
     {
-        var entry = Array.Find(PluginCatalog, e => e.PluginId == pluginId);
+        var entry = Array.Find(PluginCatalog.Entries, e => e.PluginId == pluginId);
         if (entry is null)
             return NotFound(ApiResponse<object>.Fail("CATALOG_ENTRY_NOT_FOUND",
                 $"No catalog entry found for plugin '{pluginId}'."));
 
+        var (dllPath, error) = await DownloadAndExtractCatalogAssetAsync(entry, requireHashMatch: true, ct);
+        if (error is not null) return error;
+
+        try
+        {
+            var plugin = await _pluginService.InstallPluginAsync(dllPath!);
+            return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
+        }
+        catch (FileNotFoundException ex)
+        {
+            return BadRequest(ApiResponse<PluginDto>.Fail("DLL_NOT_FOUND", ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<PluginDto>.Fail("ALREADY_INSTALLED", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error installing catalog plugin {PluginId}", pluginId);
+            return StatusCode(500, ApiResponse<PluginDto>.Fail("INSTALL_FAILED", ex.Message));
+        }
+    }
+
+    // ── POST /api/v1/plugins/catalog/{pluginId}/update ────────────────────────
+
+    /// <summary>
+    /// Downloads the latest GitHub release for an ALREADY-installed plugin and reloads it
+    /// in place -- the explicit "install on approval" half of the scheduled update check
+    /// (PluginUpdateCheckService only ever flags LatestVersionAvailable, never installs
+    /// anything itself). Per-user request (2026-09-04).
+    /// </summary>
+    [HttpPost("catalog/{pluginId}/update")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> UpdateFromCatalog(string pluginId, CancellationToken ct)
+    {
+        var entry = Array.Find(PluginCatalog.Entries, e => e.PluginId == pluginId);
+        if (entry is null)
+            return NotFound(ApiResponse<object>.Fail("CATALOG_ENTRY_NOT_FOUND",
+                $"No catalog entry found for plugin '{pluginId}'."));
+
+        var existing = await _pluginService.GetAllPluginsAsync();
+        var plugin = existing.FirstOrDefault(p => p.PluginId == pluginId);
+        if (plugin is null)
+            return NotFound(ApiResponse<object>.Fail("NOT_INSTALLED",
+                $"Plugin '{pluginId}' is not installed -- use install, not update."));
+
+        // The catalog's own Sha256 is pinned to entry.Version (see PluginCatalog.cs's own
+        // doc), which lags behind whatever GitHub's "latest release" actually returns --
+        // that gap is exactly what this endpoint exists to close. Enforcing the pinned
+        // hash against a release it was never computed for would reject every real update.
+        // Falls back to GitHub's own TLS as the trust boundary for the update case, same
+        // as npm/apt trust their registry's transport when no lockfile hash is pinned.
+        var (dllPath, error) = await DownloadAndExtractCatalogAssetAsync(entry, requireHashMatch: false, ct);
+        if (error is not null) return error;
+
+        try
+        {
+            System.IO.File.Copy(dllPath!, plugin.DllPath, overwrite: true);
+            await _pluginService.ReloadPluginAsync(pluginId, ct);
+            var updated = await _pluginService.MarkUpdatedAsync(pluginId, ct);
+
+            _logger.LogInformation("Updated plugin {PluginId} to version {Version}", pluginId, updated.Version);
+            return Ok(ApiResponse<PluginDto>.Ok(ToDto(updated)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error updating catalog plugin {PluginId}", pluginId);
+            return StatusCode(500, ApiResponse<PluginDto>.Fail("UPDATE_FAILED", ex.Message));
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Shared download+verify+extract step behind both InstallFromCatalog and
+    /// UpdateFromCatalog: resolves the latest GitHub release's matching asset, downloads
+    /// it, optionally checks its SHA-256 against the catalog's pinned digest, and extracts
+    /// it to {ContentRoot}/plugins/{pluginId}/. Returns the extracted DLL's path, or an
+    /// IActionResult describing what went wrong (caller returns it as-is).
+    /// </summary>
+    private async Task<(string? DllPath, IActionResult? Error)> DownloadAndExtractCatalogAssetAsync(
+        PluginCatalogEntry entry, bool requireHashMatch, CancellationToken ct)
+    {
         // Resolve download URL from the latest GitHub release
         string downloadUrl;
         try
@@ -932,8 +806,8 @@ public class PluginsController : ControllerBase
             using var releaseResponse = await github.GetAsync(apiUrl, ct);
 
             if (!releaseResponse.IsSuccessStatusCode)
-                return StatusCode(502, ApiResponse<object>.Fail("GITHUB_ERROR",
-                    $"GitHub returned HTTP {(int)releaseResponse.StatusCode} for the releases API."));
+                return (null, StatusCode(502, ApiResponse<object>.Fail("GITHUB_ERROR",
+                    $"GitHub returned HTTP {(int)releaseResponse.StatusCode} for the releases API.")));
 
             await using var releaseStream = await releaseResponse.Content.ReadAsStreamAsync(ct);
             using var doc = await JsonDocument.ParseAsync(releaseStream, cancellationToken: ct);
@@ -952,14 +826,14 @@ public class PluginsController : ControllerBase
             }
 
             if (string.IsNullOrEmpty(downloadUrl))
-                return StatusCode(502, ApiResponse<object>.Fail("ASSET_NOT_FOUND",
-                    $"Asset '{entry.AssetName}' not found in the latest release."));
+                return (null, StatusCode(502, ApiResponse<object>.Fail("ASSET_NOT_FOUND",
+                    $"Asset '{entry.AssetName}' not found in the latest release.")));
         }
-        catch (OperationCanceledException) { return StatusCode(504); }
+        catch (OperationCanceledException) { return (null, StatusCode(504)); }
         catch (HttpRequestException)
         {
-            return StatusCode(502, ApiResponse<object>.Fail("GITHUB_UNREACHABLE",
-                "Could not contact GitHub. Check the server's internet connection."));
+            return (null, StatusCode(502, ApiResponse<object>.Fail("GITHUB_UNREACHABLE",
+                "Could not contact GitHub. Check the server's internet connection.")));
         }
 
         // Download the ZIP archive
@@ -973,22 +847,24 @@ public class PluginsController : ControllerBase
             req.Headers.Accept.ParseAdd("application/octet-stream");
             using var resp = await github.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
             if (!resp.IsSuccessStatusCode)
-                return StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
-                    $"Failed to download the plugin archive (HTTP {(int)resp.StatusCode})."));
+                return (null, StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
+                    $"Failed to download the plugin archive (HTTP {(int)resp.StatusCode}).")));
             zipBytes = await resp.Content.ReadAsByteArrayAsync(ct);
         }
-        catch (OperationCanceledException) { return StatusCode(504); }
+        catch (OperationCanceledException) { return (null, StatusCode(504)); }
         catch (HttpRequestException)
         {
-            return StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
-                "Failed to download the plugin archive from GitHub."));
+            return (null, StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
+                "Failed to download the plugin archive from GitHub.")));
         }
 
         // ── SHA-256 integrity check ───────────────────────────────────────────
         // The catalog entry carries the expected digest computed from the
         // locally built and inspected ZIP.  Reject the download if it doesn't
         // match — this catches a compromised GitHub release or a MITM attack.
-        if (!string.IsNullOrEmpty(entry.Sha256))
+        // Skipped for an update to a version the catalog was never pinned against
+        // (requireHashMatch: false) -- see UpdateFromCatalog's own comment.
+        if (requireHashMatch && !string.IsNullOrEmpty(entry.Sha256))
         {
             var actualHash = Convert.ToHexString(
                 System.Security.Cryptography.SHA256.HashData(zipBytes)
@@ -996,15 +872,15 @@ public class PluginsController : ControllerBase
 
             if (actualHash != entry.Sha256.ToLowerInvariant())
             {
-                return StatusCode(502, ApiResponse<object>.Fail("HASH_MISMATCH",
+                return (null, StatusCode(502, ApiResponse<object>.Fail("HASH_MISMATCH",
                     $"Downloaded archive failed integrity check. " +
                     $"Expected SHA-256 {entry.Sha256}, got {actualHash}. " +
-                    "The file may have been tampered with. Installation aborted."));
+                    "The file may have been tampered with. Installation aborted.")));
             }
         }
 
         // Extract to {ContentRoot}/plugins/{pluginId}/
-        var pluginDir = Path.Combine(_environment.ContentRootPath, "plugins", pluginId);
+        var pluginDir = Path.Combine(_environment.ContentRootPath, "plugins", entry.PluginId);
         Directory.CreateDirectory(pluginDir);
 
         using (var zipStream = new MemoryStream(zipBytes))
@@ -1016,33 +892,11 @@ public class PluginsController : ControllerBase
         // Locate the DLL (search recursively in case the ZIP has a root folder)
         var dllMatches = Directory.GetFiles(pluginDir, entry.DllName, SearchOption.AllDirectories);
         if (dllMatches.Length == 0)
-            return StatusCode(502, ApiResponse<object>.Fail("DLL_NOT_FOUND",
-                $"'{entry.DllName}' was not found after extracting the archive."));
+            return (null, StatusCode(502, ApiResponse<object>.Fail("DLL_NOT_FOUND",
+                $"'{entry.DllName}' was not found after extracting the archive.")));
 
-        var dllPath = dllMatches[0];
-
-        // Install via the plugin service
-        try
-        {
-            var plugin = await _pluginService.InstallPluginAsync(dllPath);
-            return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
-        }
-        catch (FileNotFoundException ex)
-        {
-            return BadRequest(ApiResponse<PluginDto>.Fail("DLL_NOT_FOUND", ex.Message));
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Conflict(ApiResponse<PluginDto>.Fail("ALREADY_INSTALLED", ex.Message));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Unexpected error installing catalog plugin {PluginId}", pluginId);
-            return StatusCode(500, ApiResponse<PluginDto>.Fail("INSTALL_FAILED", ex.Message));
-        }
+        return (dllMatches[0], null);
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private PluginDto ToDto(Chronicle.Core.Models.Plugin p)
     {
@@ -1066,7 +920,8 @@ public class PluginsController : ControllerBase
             .ToList() ?? [];
 
         return new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
-            p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint, supportedMediaTypes);
+            p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint, supportedMediaTypes,
+            p.LatestVersionAvailable, p.UpdateCheckedAt);
     }
 
     /// <summary>

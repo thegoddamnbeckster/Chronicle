@@ -54,6 +54,14 @@ public interface IPluginService
     Task ReloadPluginAsync(string pluginId, CancellationToken ct = default);
 
     /// <summary>
+    /// Call after overwriting an installed plugin's DLL with a newer version and reloading
+    /// it (see PluginsController.UpdateFromCatalog): re-reads the now-loaded manifest's
+    /// Version onto the DB row, clears LatestVersionAvailable (the update this was flagging
+    /// just happened), and stamps UpdateCheckedAt/UpdatedAt.
+    /// </summary>
+    Task<Chronicle.Core.Models.Plugin> MarkUpdatedAsync(string pluginId, CancellationToken ct = default);
+
+    /// <summary>
     /// Runs the health check for the loaded plugin matching the given database id.
     /// Returns null if the plugin is not loaded or exposes no checkable provider.
     /// The result includes an optional failure reason and a severity flag so the

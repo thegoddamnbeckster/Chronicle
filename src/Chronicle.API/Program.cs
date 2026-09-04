@@ -234,6 +234,10 @@ builder.Services.AddSingleton<TagMismatchRematchTask>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<TagMismatchRematchTask>());
 
+builder.Services.AddSingleton<PluginUpdateCheckService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<PluginUpdateCheckService>());
+
 builder.Services.AddSingleton<TaskSchedulerService>();
 builder.Services.AddSingleton<ITaskSchedulerService>(
     sp => sp.GetRequiredService<TaskSchedulerService>());

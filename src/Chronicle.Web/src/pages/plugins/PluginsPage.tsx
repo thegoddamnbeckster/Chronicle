@@ -16,6 +16,7 @@ import {
   healthCheckPlugin,
   listCatalog,
   installFromCatalog,
+  updatePluginFromCatalog,
   getPluginSettings,
   getPluginSettingsSchema,
   updatePluginSettings,
@@ -306,6 +307,18 @@ export default function PluginsPage() {
     }
   }
 
+  async function handleUpdate(pluginId: string, dbId: number) {
+    setBusy(dbId, true)
+    try {
+      const updated = await updatePluginFromCatalog(pluginId)
+      setPlugins(prev => prev.map(p => p.id === dbId ? updated : p))
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to update plugin.')
+    } finally {
+      setBusy(dbId, false)
+    }
+  }
+
   async function handleHealthCheck(id: number) {
     setHealthStates(prev => ({ ...prev, [id]: 'checking' }))
     try {
@@ -587,6 +600,14 @@ export default function PluginsPage() {
                       )}
                       <span className={styles.pluginName}>{plugin.name}</span>
                       <span className={styles.versionBadge}>v{plugin.version}</span>
+                      {plugin.latestVersionAvailable && (
+                        <span
+                          className={styles.badge}
+                          title={`Checked ${plugin.updateCheckedAt ? formatDate(plugin.updateCheckedAt) : 'recently'}`}
+                        >
+                          Update available: v{plugin.latestVersionAvailable}
+                        </span>
+                      )}
                       <span className={`${styles.badge} ${plugin.isEnabled ? styles.enabled : styles.disabled}`}>
                         {plugin.isEnabled ? 'Enabled' : 'Disabled'}
                       </span>
@@ -644,6 +665,17 @@ export default function PluginsPage() {
                           Enable
                         </button>
                       )
+                    )}
+
+                    {/* Update available */}
+                    {isAdmin && plugin.latestVersionAvailable && (
+                      <button
+                        className={`${styles.actionBtn} ${styles.enableBtn}`}
+                        onClick={() => handleUpdate(plugin.pluginId, plugin.id)}
+                        disabled={busy}
+                      >
+                        Update to v{plugin.latestVersionAvailable}
+                      </button>
                     )}
 
                     {/* Health check */}

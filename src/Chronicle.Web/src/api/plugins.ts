@@ -16,6 +16,9 @@ export interface PluginDto {
   fixMatchHint: string | null
   /** Media type names this plugin can enrich (e.g. ["TV", "Movies"]). Empty when not loaded. */
   supportedMediaTypes: string[] | null
+  /** Newer version found by the last scheduled update check. Null when up to date. */
+  latestVersionAvailable: string | null
+  updateCheckedAt: string | null
 }
 
 export async function listPlugins(): Promise<PluginDto[]> {
@@ -120,6 +123,12 @@ export async function listCatalog(): Promise<PluginCatalogEntry[]> {
 
 export async function installFromCatalog(pluginId: string): Promise<PluginDto> {
   const res = await client.post<{ data: PluginDto }>(`/plugins/catalog/${pluginId}/install`)
+  return res.data.data
+}
+
+/** Downloads and installs the latest GitHub release over an already-installed plugin. */
+export async function updatePluginFromCatalog(pluginId: string): Promise<PluginDto> {
+  const res = await client.post<{ data: PluginDto }>(`/plugins/catalog/${pluginId}/update`)
   return res.data.data
 }
 

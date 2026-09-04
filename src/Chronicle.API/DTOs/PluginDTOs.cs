@@ -26,7 +26,13 @@ public record PluginDto(
     /// Media type names this plugin can enrich (e.g. ["TV", "Movies"]).
     /// Empty list means the plugin is not loaded or has no providers.
     /// </summary>
-    IReadOnlyList<string>? SupportedMediaTypes = null
+    IReadOnlyList<string>? SupportedMediaTypes = null,
+    /// <summary>
+    /// Newer version found by the last scheduled update check (PluginUpdateCheckService),
+    /// or null when none is available. Drives the "Update available" badge.
+    /// </summary>
+    string? LatestVersionAvailable = null,
+    DateTime? UpdateCheckedAt = null
 );
 
 public record InstallPluginRequest(
@@ -44,23 +50,6 @@ public record UpdatePluginSettingsRequest(
 /// </param>
 public record PluginHealthDto(bool? Healthy, string? FailureReason = null, bool IsCritical = true);
 
-public record PluginCatalogEntry(
-    string PluginId,
-    string Name,
-    string Description,
-    string Author,
-    string? IconUrl,
-    string GithubRepo,
-    string AssetName,
-    string DllName,
-    string[] Tags,
-    bool IsInstalled = false,
-    /// <summary>
-    /// Expected SHA-256 hex digest of the ZIP asset (lowercase, no prefix).
-    /// When set, Chronicle will reject the download if the computed hash does not match,
-    /// protecting against a compromised GitHub release or a man-in-the-middle attack.
-    /// </summary>
-    string? Sha256 = null,
-    /// <summary>Version string from the plugin's manifest (e.g. "1.2.0").</summary>
-    string Version = ""
-);
+// PluginCatalogEntry moved to Chronicle.Core.Models (2026-09-04) so the Services-layer
+// scheduled update-check task can share the same catalog data as this API's own
+// catalog/install endpoints -- see Chronicle.Services.Plugins.PluginCatalog.

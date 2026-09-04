@@ -42,4 +42,16 @@ public class Plugin
 
     /// <summary>Short hint shown in the Fix Match panel. From manifest fixMatchHint.</summary>
     public string? FixMatchHint { get; set; }
+
+    /// <summary>
+    /// Newer version found on GitHub by the last scheduled update check, or null when
+    /// none is available (either genuinely up to date, no catalog entry to check against,
+    /// or the check itself hasn't run yet). Compared against <see cref="Version"/> to
+    /// decide whether to show an "Update available" badge -- set by
+    /// PluginUpdateCheckService, cleared once <see cref="Version"/> catches up to it.
+    /// </summary>
+    public string? LatestVersionAvailable { get; set; }
+
+    /// <summary>When the update check last ran for this plugin, regardless of outcome.</summary>
+    public DateTime? UpdateCheckedAt { get; set; }
 }
