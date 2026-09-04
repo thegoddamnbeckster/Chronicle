@@ -50,15 +50,13 @@ export function AdditionalImagesCard({ item, onOpenGallery }: AdditionalImagesCa
 
   return (
     <div className={boxStyles.box}>
-      <div className={boxStyles.header}>
-        <div className={boxStyles.brand}>
-          <span className={boxStyles.name}>Additional Images</span>
-          <p className={boxStyles.timestamp}>
-            Every image available across all sources for this item — click one to open it full
-            size, where you can set it as the poster, backdrop, thumb, disc art, and so on.
-          </p>
-        </div>
-      </div>
+      {/* No own title here — the surrounding PluginFold already renders "Additional Images"
+          as the fold header, matching how PluginMetadataBox (the plugin containers) never
+          render their own name either. */}
+      <p className={boxStyles.timestamp}>
+        Every image available across all sources for this item — click one to open it full
+        size, where you can set it as the poster, backdrop, thumb, disc art, and so on.
+      </p>
 
       <div className={boxStyles.grid}>
         {SLOT_ORDER.filter(slot => bySlot.has(slot)).map(slot => {

@@ -1246,25 +1246,26 @@ export default function MediaDetailPage() {
               original placement ("above the thumbnail and below the pills"); crew moves all
               the way down here, directly above Additional Images. */}
           {otherPeople.length > 0 && (
-            <>
-              <div className={styles.peopleGroupLabel}>Crew</div>
+            <PluginFold foldKey={`media.${mediaId}.crew`} label="Crew">
               <div className={styles.peopleRow}>
                 {otherPeople.map(person => (
                   <PersonCard key={person.id} person={person} />
                 ))}
               </div>
-            </>
+            </PluginFold>
           )}
 
           {/* Additional Images — every image available across all plugins for this item,
               grouped by the artwork type its source plugin reported. Browse-only: clicking a
               thumbnail opens it full size, which is the only place artwork can be assigned. */}
-          <AdditionalImagesCard
-            item={item}
-            onOpenGallery={(slot, slotLabel, images, startIndex) =>
-              setGallerySlot({ slot, slotLabel, images, startIndex })
-            }
-          />
+          <PluginFold foldKey={`media.${mediaId}.additionalImages`} label="Additional Images">
+            <AdditionalImagesCard
+              item={item}
+              onOpenGallery={(slot, slotLabel, images, startIndex) =>
+                setGallerySlot({ slot, slotLabel, images, startIndex })
+              }
+            />
+          </PluginFold>
 
           {/* File Scanner box — show whenever the item came from the scanner, OR
               whenever hasPhysicalFile says a file is tracked on disk. hasPhysicalFile
