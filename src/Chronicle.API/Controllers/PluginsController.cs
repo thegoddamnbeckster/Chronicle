@@ -25,6 +25,7 @@ public class PluginsController : ControllerBase
     private readonly IPluginRegistry               _registry;
     private readonly IPluginSettingsProtector      _protector;
     private readonly IHttpClientFactory            _httpClientFactory;
+    private readonly PluginCatalogService          _catalogService;
     private readonly IMemoryCache                  _cache;
     private readonly IWebHostEnvironment           _environment;
     private readonly ILogger<PluginsController>    _logger;
@@ -73,6 +74,7 @@ public class PluginsController : ControllerBase
         IPluginRegistry registry,
         IPluginSettingsProtector protector,
         IHttpClientFactory httpClientFactory,
+        PluginCatalogService catalogService,
         IMemoryCache cache,
         IWebHostEnvironment environment,
         ILogger<PluginsController> logger,
@@ -82,6 +84,7 @@ public class PluginsController : ControllerBase
         _registry          = registry;
         _protector         = protector;
         _httpClientFactory = httpClientFactory;
+        _catalogService    = catalogService;
         _cache             = cache;
         _environment       = environment;
         _logger            = logger;
@@ -678,21 +681,21 @@ public class PluginsController : ControllerBase
         }
     }
 
-    // ── Static plugin catalog ─────────────────────────────────────────────────
-    // Moved to Chronicle.Services.Plugins.PluginCatalog (2026-09-04) so the Services-layer
-    // scheduled update-check task can read the same data these endpoints use.
+    // ── Plugin catalog ─────────────────────────────────────────────────────────
+    // Resolved live from GitHub by PluginCatalogService (2026-09-04) instead of a static
+    // list baked into Chronicle's own code -- see PluginCatalogSeed's own doc for why.
 
     // ── GET /api/v1/plugins/catalog ───────────────────────────────────────────
 
     /// <summary>Lists all plugins available in the Chronicle plugin catalog.</summary>
     [HttpGet("catalog")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> GetCatalog()
+    public async Task<IActionResult> GetCatalog(CancellationToken ct)
     {
         var installed = await _pluginService.GetAllPluginsAsync();
         var installedIds = installed.Select(p => p.PluginId).ToHashSet();
 
-        var entries = PluginCatalog.Entries
+        var entries = (await _catalogService.GetCatalogAsync(ct))
             .Select(e => e with { IsInstalled = installedIds.Contains(e.PluginId) })
             .ToList();
 
@@ -709,12 +712,12 @@ public class PluginsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> InstallFromCatalog(string pluginId, CancellationToken ct)
     {
-        var entry = Array.Find(PluginCatalog.Entries, e => e.PluginId == pluginId);
+        var entry = await _catalogService.ResolveAsync(pluginId, ct);
         if (entry is null)
             return NotFound(ApiResponse<object>.Fail("CATALOG_ENTRY_NOT_FOUND",
-                $"No catalog entry found for plugin '{pluginId}'."));
+                $"No installable release found for plugin '{pluginId}'."));
 
-        var (dllPath, error) = await DownloadAndExtractCatalogAssetAsync(entry, requireHashMatch: true, ct);
+        var (dllPath, error) = await DownloadAndExtractCatalogAssetAsync(entry, ct);
         if (error is not null) return error;
 
         try
@@ -749,10 +752,10 @@ public class PluginsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> UpdateFromCatalog(string pluginId, CancellationToken ct)
     {
-        var entry = Array.Find(PluginCatalog.Entries, e => e.PluginId == pluginId);
+        var entry = await _catalogService.ResolveAsync(pluginId, ct);
         if (entry is null)
             return NotFound(ApiResponse<object>.Fail("CATALOG_ENTRY_NOT_FOUND",
-                $"No catalog entry found for plugin '{pluginId}'."));
+                $"No installable release found for plugin '{pluginId}'."));
 
         var existing = await _pluginService.GetAllPluginsAsync();
         var plugin = existing.FirstOrDefault(p => p.PluginId == pluginId);
@@ -760,13 +763,7 @@ public class PluginsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_INSTALLED",
                 $"Plugin '{pluginId}' is not installed -- use install, not update."));
 
-        // The catalog's own Sha256 is pinned to entry.Version (see PluginCatalog.cs's own
-        // doc), which lags behind whatever GitHub's "latest release" actually returns --
-        // that gap is exactly what this endpoint exists to close. Enforcing the pinned
-        // hash against a release it was never computed for would reject every real update.
-        // Falls back to GitHub's own TLS as the trust boundary for the update case, same
-        // as npm/apt trust their registry's transport when no lockfile hash is pinned.
-        var (dllPath, error) = await DownloadAndExtractCatalogAssetAsync(entry, requireHashMatch: false, ct);
+        var (dllPath, error) = await DownloadAndExtractCatalogAssetAsync(entry, ct);
         if (error is not null) return error;
 
         try
@@ -788,14 +785,22 @@ public class PluginsController : ControllerBase
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Shared download+verify+extract step behind both InstallFromCatalog and
-    /// UpdateFromCatalog: resolves the latest GitHub release's matching asset, downloads
-    /// it, optionally checks its SHA-256 against the catalog's pinned digest, and extracts
-    /// it to {ContentRoot}/plugins/{pluginId}/. Returns the extracted DLL's path, or an
+    /// Shared download+extract step behind both InstallFromCatalog and UpdateFromCatalog:
+    /// resolves the latest GitHub release's matching asset, downloads it, and extracts it
+    /// to {ContentRoot}/plugins/{pluginId}/. Returns the extracted DLL's path, or an
     /// IActionResult describing what went wrong (caller returns it as-is).
+    ///
+    /// No SHA-256 pinning here (removed 2026-09-04, per-user request "it all needs to come
+    /// from Github"): entry.AssetName itself now comes from a live GitHub lookup moments
+    /// earlier (PluginCatalogService), not a hash Chronicle's own code pre-computed and
+    /// baked in for one specific release -- pinning a hash against the very same live fetch
+    /// it was just derived from adds no real integrity guarantee, only staleness risk (see
+    /// the MusicBrainz/Hardcover/Wikipedia catalog drift this replaced). GitHub's TLS is the
+    /// trust boundary now, same as npm/apt trust their registry's transport absent a
+    /// separately-sourced lockfile hash.
     /// </summary>
     private async Task<(string? DllPath, IActionResult? Error)> DownloadAndExtractCatalogAssetAsync(
-        PluginCatalogEntry entry, bool requireHashMatch, CancellationToken ct)
+        PluginCatalogEntry entry, CancellationToken ct)
     {
         // Resolve download URL from the latest GitHub release
         string downloadUrl;
@@ -856,27 +861,6 @@ public class PluginsController : ControllerBase
         {
             return (null, StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
                 "Failed to download the plugin archive from GitHub.")));
-        }
-
-        // ── SHA-256 integrity check ───────────────────────────────────────────
-        // The catalog entry carries the expected digest computed from the
-        // locally built and inspected ZIP.  Reject the download if it doesn't
-        // match — this catches a compromised GitHub release or a MITM attack.
-        // Skipped for an update to a version the catalog was never pinned against
-        // (requireHashMatch: false) -- see UpdateFromCatalog's own comment.
-        if (requireHashMatch && !string.IsNullOrEmpty(entry.Sha256))
-        {
-            var actualHash = Convert.ToHexString(
-                System.Security.Cryptography.SHA256.HashData(zipBytes)
-            ).ToLowerInvariant();
-
-            if (actualHash != entry.Sha256.ToLowerInvariant())
-            {
-                return (null, StatusCode(502, ApiResponse<object>.Fail("HASH_MISMATCH",
-                    $"Downloaded archive failed integrity check. " +
-                    $"Expected SHA-256 {entry.Sha256}, got {actualHash}. " +
-                    "The file may have been tampered with. Installation aborted.")));
-            }
         }
 
         // Extract to {ContentRoot}/plugins/{pluginId}/

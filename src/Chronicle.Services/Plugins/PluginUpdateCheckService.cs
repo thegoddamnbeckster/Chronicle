@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,29 +6,24 @@ using Serilog;
 namespace Chronicle.Services.Plugins;
 
 /// <summary>
-/// Scheduled task: for every installed plugin that has a catalog entry (see PluginCatalog),
-/// checks GitHub's actual latest release tag against the installed Version and records
-/// whether a newer one is available. Per-user request (2026-09-04): "Chronicle needs to
-/// automatically update installed plugins from the catalog so it's always on the latest
-/// version" -- chose "check automatically, install on approval" over fully-silent
+/// Scheduled task: for every installed plugin that has a catalog entry, checks
+/// PluginCatalogService's live-resolved GitHub version against the installed Version and
+/// records whether a newer one is available. Per-user request (2026-09-04): "Chronicle
+/// needs to automatically update installed plugins from the catalog so it's always on the
+/// latest version" -- chose "check automatically, install on approval" over fully-silent
 /// auto-install, so this task only ever flags LatestVersionAvailable; the actual install
 /// step is a separate, explicit action (PluginsController's update-from-catalog endpoint).
-///
-/// Deliberately checks GitHub directly rather than trusting PluginCatalog's own static
-/// Version field: that field is Chronicle's OWN source code, manually bumped by whoever
-/// last synced the catalog (see PluginCatalog.cs's own doc and the SIMKL entry's comment
-/// about its Version lagging behind the real repo) -- it is not itself a live signal.
 /// </summary>
 public sealed class PluginUpdateCheckService : IScheduledTask
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly PluginCatalogService _catalogService;
     private readonly ILogger _log = Log.ForContext<PluginUpdateCheckService>();
 
-    public PluginUpdateCheckService(IServiceScopeFactory scopeFactory, IHttpClientFactory httpClientFactory)
+    public PluginUpdateCheckService(IServiceScopeFactory scopeFactory, PluginCatalogService catalogService)
     {
-        _scopeFactory      = scopeFactory;
-        _httpClientFactory = httpClientFactory;
+        _scopeFactory   = scopeFactory;
+        _catalogService = catalogService;
     }
 
     public string TaskId      => "plugin_update_check";
@@ -45,50 +39,30 @@ public sealed class PluginUpdateCheckService : IScheduledTask
         var installed = await db.Plugins.ToListAsync(ct);
         if (installed.Count == 0) return;
 
-        var github = _httpClientFactory.CreateClient("github");
+        // One batch of live GitHub lookups (cached briefly by PluginCatalogService) covers
+        // every installed plugin, rather than this task making its own separate release-API
+        // call per plugin.
+        var catalog = await _catalogService.GetCatalogAsync(ct);
+        var byPluginId = catalog.ToDictionary(e => e.PluginId, StringComparer.OrdinalIgnoreCase);
+
         int checkedCount = 0, updatesFound = 0;
 
         foreach (var plugin in installed)
         {
             ct.ThrowIfCancellationRequested();
 
-            var entry = Array.Find(PluginCatalog.Entries, e => e.PluginId == plugin.PluginId);
-            if (entry is null) continue; // not in the catalog (custom/local-only build) -- nothing to check against
+            if (!byPluginId.TryGetValue(plugin.PluginId, out var entry))
+                continue; // not in the catalog (custom/local-only build, or no usable release right now)
 
-            try
+            checkedCount++;
+            plugin.UpdateCheckedAt = DateTime.UtcNow;
+            var isNewer = IsNewerVersion(entry.Version, plugin.Version);
+            plugin.LatestVersionAvailable = isNewer ? entry.Version : null;
+            if (isNewer)
             {
-                var apiUrl = $"https://api.github.com/repos/{entry.GithubRepo}/releases/latest";
-                using var resp = await github.GetAsync(apiUrl, ct);
-                if (!resp.IsSuccessStatusCode)
-                {
-                    _log.Debug("Update check: GitHub returned {Status} for {Repo}", (int)resp.StatusCode, entry.GithubRepo);
-                    continue;
-                }
-
-                await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-                var tag = doc.RootElement.TryGetProperty("tag_name", out var tagEl) ? tagEl.GetString() : null;
-                var latestVersion = tag?.TrimStart('v', 'V');
-                if (string.IsNullOrWhiteSpace(latestVersion)) continue;
-
-                checkedCount++;
-                plugin.UpdateCheckedAt = DateTime.UtcNow;
-                var isNewer = IsNewerVersion(latestVersion, plugin.Version);
-                plugin.LatestVersionAvailable = isNewer ? latestVersion : null;
-                if (isNewer)
-                {
-                    updatesFound++;
-                    _log.Information("Update available for {PluginId}: {Installed} -> {Latest}",
-                        plugin.PluginId, plugin.Version, latestVersion);
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                // One plugin's GitHub call failing (rate limit, network blip, repo renamed)
-                // must not stop the rest of the batch -- same reasoning as every other
-                // per-item loop in this codebase that logs and continues.
-                _log.Warning(ex, "Update check failed for plugin {PluginId}", plugin.PluginId);
+                updatesFound++;
+                _log.Information("Update available for {PluginId}: {Installed} -> {Latest}",
+                    plugin.PluginId, plugin.Version, entry.Version);
             }
         }
 
