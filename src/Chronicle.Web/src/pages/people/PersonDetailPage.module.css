@@ -128,6 +128,142 @@
   white-space: pre-wrap;
 }
 
+/* ── Merge with… / Remove -- mirrors MediaDetailPage's own deleteArea/changeTypeBtn/
+   deleteBtn/mergeSearch treatment (same admin-only entity actions, just scoped to people). ── */
+
+.actionsRow {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.actionBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.actionBtn:hover {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.deleteBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.deleteBtn:hover {
+  color: var(--status-danger-fg, #e05555);
+  border-color: var(--status-danger-fg, #e05555);
+}
+
+.deleteConfirmStrip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: rgba(224, 85, 85, 0.08);
+  border: 1px solid rgba(224, 85, 85, 0.35);
+  width: 100%;
+}
+
+.deleteConfirmText { font-size: 13px; flex: 1; }
+
+.deleteConfirmCancel {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.deleteConfirmCancel:hover { color: var(--text-primary); }
+
+.deleteConfirmOk {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  background: var(--status-danger-fg, #e05555);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.deleteConfirmOk:hover:not(:disabled) { opacity: 0.85; }
+.deleteConfirmOk:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.mergeSearch {
+  margin: 8px 0 0;
+  position: relative;
+  --bg-card:      var(--bg-primary);
+  --bg-secondary: var(--bg-primary);
+}
+
+.mergeSearchInput {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.mergeSearchResults {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-primary, #1a1f2e);
+  border: 1px solid var(--accent, #5c9eff);
+  border-radius: 6px;
+  z-index: 200;
+  max-height: 300px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.mergeSearchResult {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mergeSearchResult:last-child { border-bottom: none; }
+.mergeSearchResult:hover { background: var(--bg-hover); }
+.mergeResultPoster { width: 28px; height: 42px; object-fit: cover; border-radius: 2px; flex-shrink: 0; }
+.mergeResultText { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mergeResultName { font-size: 0.9rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 .photos {
   display: flex;
   flex-direction: column;

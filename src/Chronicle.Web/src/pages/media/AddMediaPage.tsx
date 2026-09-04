@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getMediaTypes } from '@/api/media'
 import { searchMetadata, addFromSearch } from '@/api/scan'
@@ -80,6 +80,7 @@ function loadStoredSearchState(): StoredSearchState | null {
 
 export default function AddMediaPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const restoredRef = useRef(loadStoredSearchState())
 
@@ -107,11 +108,18 @@ export default function AddMediaPage() {
 
   useEffect(() => {
     if (mediaTypes.length === 0 || selectedType !== null) return
+    // A nav link (e.g. Add > Person) can pin the type via ?type=<mediaTypeName> --
+    // takes priority over a restored session, since following a specific link is a more
+    // explicit signal than whatever type was last searched.
+    const preselectName = searchParams.get('type')
+    const preselectType = preselectName
+      ? mediaTypes.find(t => t.name.toLowerCase() === preselectName.toLowerCase())
+      : undefined
     const restoredType = restoredRef.current
       ? mediaTypes.find(t => t.id === restoredRef.current!.mediaTypeId)
       : undefined
-    setSelectedType(restoredType ?? mediaTypes[0])
-  }, [mediaTypes, selectedType])
+    setSelectedType(preselectType ?? restoredType ?? mediaTypes[0])
+  }, [mediaTypes, selectedType, searchParams])
 
   // Persist on every change so a mid-typing Back (or a click that navigates away) doesn't
   // lose anything — cheap enough to just always write rather than debounce the write itself.

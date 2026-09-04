@@ -95,8 +95,22 @@ export default function Layout() {
               People
             </NavLink>
             <NavGroup label="Add" storageKey="nav_group_add" defaultOpen={false}>
-              <NavLink to="/media/add" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              {/* Media and Person both route to AddMediaPage's own type-selector (it already
+                  lists every media_types row, "people" included) -- the query string just
+                  pins which one is preselected. isActive is checked against location.search
+                  too, since NavLink's default match ignores it and both links share the same
+                  pathname. */}
+              <NavLink
+                to="/media/add"
+                className={() => (location.pathname === '/media/add' && !location.search) ? styles.activeLink : styles.link}
+              >
                 Media
+              </NavLink>
+              <NavLink
+                to="/media/add?type=people"
+                className={() => (location.pathname === '/media/add' && location.search === '?type=people') ? styles.activeLink : styles.link}
+              >
+                Person
               </NavLink>
               <NavLink to="/media/add-collection" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
                 Collection

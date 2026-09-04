@@ -1,9 +1,11 @@
-import { useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, setMediaOverride, clearMediaOverride } from '@/api/media'
+import { getMedia, setMediaOverride, clearMediaOverride, deleteMedia, searchMedia } from '@/api/media'
 import { getPersonCredits, getPersonHeadshots } from '@/api/people'
 import { PosterImage } from '@/components/PosterImage'
+import { useAuth } from '@/hooks/useAuth'
+import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import styles from './PersonDetailPage.module.css'
 
 function formatDate(iso: string | null | undefined): string | null {
@@ -20,14 +22,22 @@ function formatDate(iso: string | null | undefined): string | null {
 /** Person detail page -- reuses the generic GET /media/:id endpoint for the person's own
  * data (a person is a MediaItem, no separate detail endpoint needed) plus a dedicated
  * role-grouped credits section. Deliberately a separate component from MediaDetailPage, not
- * a variant of it: no change-type/merge/library-status/children-grid sections apply to a
- * person (docs/plans/2026-08-28-people-section-design.md Section 6). */
+ * a variant of it: no change-type/library-status/children-grid sections apply to a person
+ * (docs/plans/2026-08-28-people-section-design.md Section 6).
+ *
+ * Merge/Remove DO apply here (per-user request, 2026-09-04, after a corrupted person record
+ * had to be cleaned up by hand via raw SQL): MergeService and the generic DELETE /media/:id
+ * endpoint are already type-agnostic, so both actions below reuse them exactly as
+ * MediaDetailPage does, just scoped to the "people" media type for the merge search so an
+ * admin can't accidentally merge a person into an unrelated movie/show. */
 export default function PersonDetailPage() {
   const { id } = useParams<{ id: string }>()
   const personId = Number(id)
   const qc = useQueryClient()
   const navigate = useNavigate()
   const location = useLocation()
+  const { user } = useAuth()
+  const isAdmin = user?.isAdmin ?? false
 
   // "↑ People" + Prev/Next nav -- per-user request (2026-08-30): "movie details have an up
   // library button... I need that same kind of thing for people. also next and previous
@@ -97,6 +107,30 @@ export default function PersonDetailPage() {
     },
   })
 
+  // ── Remove ────────────────────────────────────────────────────────────────
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+
+  const deleteMut = useMutation({
+    mutationFn: () => deleteMedia(personId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['people'] })
+      navigate('/people')
+    },
+  })
+
+  // ── Merge with… ──────────────────────────────────────────────────────────
+  // Scoped to this person's own mediaTypeId (rather than an unfiltered search like
+  // MediaDetailPage's) so the dropdown only ever offers other people to merge with.
+  const [mergeSearchOpen, setMergeSearchOpen] = useState(false)
+  const [mergeSearchQuery, setMergeSearchQuery] = useState('')
+  const [mergeTarget, setMergeTarget] = useState<MergeItem | null>(null)
+
+  const { data: mergeSearchResults = [] } = useQuery({
+    queryKey: ['personMergeSearch', mergeSearchQuery, person?.mediaTypeId],
+    queryFn: () => searchMedia(mergeSearchQuery, person!.mediaTypeId),
+    enabled: mergeSearchQuery.trim().length >= 2 && person != null,
+  })
+
   if (isLoading || !person) {
     return <div className={styles.loading}>Loading…</div>
   }
@@ -154,6 +188,80 @@ export default function PersonDetailPage() {
             </div>
           )}
           {bio && <p className={styles.bio}>{bio}</p>}
+
+          {isAdmin && (
+            <div className={styles.actionsRow}>
+              <button
+                className={styles.actionBtn}
+                onClick={() => setMergeSearchOpen(o => !o)}
+              >
+                {mergeSearchOpen ? 'Cancel Merge' : 'Merge with…'}
+              </button>
+              {!deleteConfirm ? (
+                <button className={styles.deleteBtn} onClick={() => setDeleteConfirm(true)}>
+                  Remove
+                </button>
+              ) : (
+                <div className={styles.deleteConfirmStrip}>
+                  <span className={styles.deleteConfirmText}>
+                    Remove <strong>{person.name}</strong>? This cannot be undone.
+                  </span>
+                  <button className={styles.deleteConfirmCancel} onClick={() => setDeleteConfirm(false)}>
+                    Cancel
+                  </button>
+                  <button
+                    className={styles.deleteConfirmOk}
+                    onClick={() => deleteMut.mutate()}
+                    disabled={deleteMut.isPending}
+                  >
+                    {deleteMut.isPending ? 'Removing…' : 'Remove'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {mergeSearchOpen && (
+            <div className={styles.mergeSearch}>
+              <input
+                className={styles.mergeSearchInput}
+                type="text"
+                placeholder="Search for a person to merge with…"
+                value={mergeSearchQuery}
+                onChange={e => setMergeSearchQuery(e.target.value)}
+                autoFocus
+              />
+              {mergeSearchResults.length > 0 && (
+                <div className={styles.mergeSearchResults}>
+                  {mergeSearchResults.filter(r => r.id !== personId).slice(0, 8).map(result => (
+                    <button
+                      key={result.id}
+                      className={styles.mergeSearchResult}
+                      onClick={() => {
+                        setMergeTarget({
+                          id: result.id,
+                          name: result.name,
+                          posterUrl: result.posterUrl,
+                          mediaTypeName: result.mediaTypeName,
+                          year: result.year,
+                          overview: result.overview,
+                        })
+                        setMergeSearchOpen(false)
+                        setMergeSearchQuery('')
+                      }}
+                    >
+                      {result.posterUrl && (
+                        <img src={result.posterUrl} alt="" className={styles.mergeResultPoster} />
+                      )}
+                      <span className={styles.mergeResultText}>
+                        <span className={styles.mergeResultName}>{result.name}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -213,6 +321,26 @@ export default function PersonDetailPage() {
           ))
         )}
       </div>
+
+      {mergeTarget && (
+        <MergeModal
+          itemA={{
+            id: person.id,
+            name: person.name,
+            posterUrl: person.posterUrl,
+            mediaTypeName: person.mediaTypeName,
+            year: person.year,
+            overview: person.overview,
+          }}
+          itemB={mergeTarget}
+          onClose={() => setMergeTarget(null)}
+          onMerged={(winnerId) => {
+            setMergeTarget(null)
+            qc.invalidateQueries({ queryKey: ['media', String(winnerId)] })
+            navigate(`/people/${winnerId}`, { replace: true })
+          }}
+        />
+      )}
     </div>
   )
 }
