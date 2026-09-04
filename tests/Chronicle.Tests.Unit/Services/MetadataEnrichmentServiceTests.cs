@@ -809,6 +809,83 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichPendingAsync_MatchedExternalIdOwnedByAnotherItem_RejectsRatherThanMerges()
+    {
+        // Regression test for a real production bug (2026-09-02, "Quinn Martin"/"Martin Quinn" --
+        // a name-reordering false-positive match from a different plugin's own scoring bug, but
+        // the failure mode this exercises is generic: any plugin match onto an external id
+        // already owned by a DIFFERENT media item). The conflict was correctly detected and
+        // logged, but only at write time -- AFTER MergeMetadata/ResolveAsync had already applied
+        // the wrong title/overview to this item and committed them. The match must be rejected
+        // before anything is merged, not merely have its id attachment skipped afterward.
+        var owner = await SeedRootItem("Some Other Movie", 1999);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = owner.Id, Source = "tmdb", ExternalId = "movie:78" });
+        await _db.SaveChangesAsync();
+
+        var item = await SeedRootItem("Blade Runner", 1982);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Some Other Movie", ExternalId = "movie:78" }, Score: 70),
+            });
+        provider.Setup(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Some Other Movie", ExternalId = "movie:78" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.tmdb");
+
+        var row = await _db.MediaEnrichments
+            .FirstAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.tmdb");
+        row.Status.Should().Be(EnrichmentStatus.NotFound);
+        row.ErrorMessage.Should().Contain("already belongs to a different item");
+
+        // The wrong title must never have been merged onto this item.
+        var unchanged = await _db.MediaItems.FindAsync(item.Id);
+        unchanged!.Name.Should().Be("Blade Runner");
+
+        // Nor should this item have picked up the already-claimed external id.
+        (await _db.MediaExternalIds.AnyAsync(e => e.MediaItemId == item.Id && e.Source == "tmdb"))
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EnrichItemAsync_Force_FallbackRefetchIdOwnedByAnotherItem_RejectsRatherThanMerges()
+    {
+        // Regression test: the conflict check above must also catch a match that only
+        // materializes through the Force-refresh fallback path (fresh search finds nothing,
+        // so the previously-stored id is re-fetched directly by GetByIdAsync) -- not only the
+        // primary search/GetByIdAsync path. An earlier version of this fix checked `result`
+        // BEFORE that fallback ran, so a rejected result with a still-conflicting id sailed
+        // straight through the fallback's own re-fetch-and-merge with nothing to catch it.
+        var owner = await SeedRootItem("Someone Else", 2000);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = owner.Id, Source = "tmdb", ExternalId = "movie:78" });
+        await _db.SaveChangesAsync();
+
+        var item = await SeedRootItem("Blade Runner", 1982);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", "movie:78", EnrichmentStatus.Completed);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        // Fresh search finds nothing -- triggers the "re-fetch by the previously-stored id"
+        // fallback, whose id (movie:78) now belongs to a different item.
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>());
+        provider.Setup(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Someone Else", ExternalId = "movie:78" });
+
+        var opts = new EnrichmentOptions(EnrichmentMode.Force, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        var row = await _db.MediaEnrichments.FirstAsync(e => e.MediaItemId == item.Id);
+        row.Status.Should().Be(EnrichmentStatus.NotFound);
+        row.ErrorMessage.Should().Contain("already belongs to a different item");
+
+        var unchanged = await _db.MediaItems.FindAsync(item.Id);
+        unchanged!.Name.Should().Be("Blade Runner");
+    }
+
+    [Fact]
     public async Task EnrichItemAsync_Force_StoredIdBelongsToWrongMediaType_DiscardsRatherThanRefetches()
     {
         // Regression test for a real production bug: a "people" item's TMDB enrichment row

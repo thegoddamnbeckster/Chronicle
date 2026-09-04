@@ -1841,7 +1841,42 @@ public class MetadataEnrichmentService(
                 }
             }
 
-            if (result is not null && !string.IsNullOrEmpty(result.ExternalId))
+            // Checked HERE -- right at the merge gate, after the force-refresh fallback above has
+            // had its own chance to reassign `result` -- not earlier in the method. An earlier
+            // attempt at this same check ran before the fallback block and was provably bypassed
+            // by it: a rejected result with forceRefreshHadMatch=true falls into the fallback,
+            // which re-fetches forceRefreshOriginalId (the SAME id that just conflicted) via
+            // GetByIdAsync and reassigns `result` again, with nothing downstream re-checking it.
+            // Placing the check at the single point every path converges on before merging closes
+            // that gap. See FindExternalIdOwnerConflictAsync's own doc comment for why this needs
+            // to run before MergeMetadata/ResolveAsync at all, not only at write time.
+            MediaItem? conflictOwner = result is not null && !string.IsNullOrEmpty(result.ExternalId)
+                ? await FindExternalIdOwnerConflictAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId)
+                : null;
+
+            if (conflictOwner is not null)
+            {
+                // Applies to every path that can reach this point, including Fix Match's manual
+                // IdOverride (Step 0 above) -- an explicit user override still isn't safe to merge
+                // when the chosen id is already claimed by a different item; silently attaching
+                // this item's whole identity (title/overview/photo) to that id while skipping only
+                // the media_external_ids write (the old write-time-only behavior) left the item
+                // "Completed" with data that didn't actually belong to it and no external id to
+                // show why. Rejecting the match outright and reporting why (rather than leaving
+                // the reason to a server-log line the user never sees) is the safer, clearer
+                // failure mode for both the automatic and manual-override paths.
+                logger.LogWarning(
+                    "Enrichment match rejected for item {ItemId} '{ItemName}' (plugin={Plugin}): " +
+                    "matched external id {ExternalId} is already owned by media item {OtherId} " +
+                    "('{OtherName}') -- likely a duplicate. Leaving unmatched instead of merging.",
+                    row.MediaItemId, row.MediaItem?.Name, row.PluginId, result!.ExternalId,
+                    conflictOwner.Id, conflictOwner.Name);
+                row.Status       = EnrichmentStatus.NotFound;
+                row.ErrorMessage =
+                    $"Matched external id {result.ExternalId} already belongs to a different item " +
+                    $"({conflictOwner.Id}, \"{conflictOwner.Name}\") -- likely a duplicate. Not merged.";
+            }
+            else if (result is not null && !string.IsNullOrEmpty(result.ExternalId))
             {
                 row.ExternalId      = result.ExternalId;
                 row.Status          = EnrichmentStatus.Completed;
@@ -1872,8 +1907,12 @@ public class MetadataEnrichmentService(
                 }
                 // Keep media_external_ids in sync with the enrichment result so that
                 // Fix Match (which calls this path with an IdOverride) actually persists
-                // the new TMDB ID — not just the enrichment tracking row.
-                await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId);
+                // the new TMDB ID — not just the enrichment tracking row. skipConflictCheck: true
+                // because conflictOwner is already known to be null here -- re-running the same
+                // query UpsertExternalIdForEnrichmentAsync would otherwise do is redundant work
+                // on every successful match, not just the rare conflicting one.
+                await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId,
+                    skipConflictCheck: true);
                 // Cascade cross-ref IDs from this enrichment result to any other installed plugin
                 // that declares it can accept that ID format. This ensures, for example, that a
                 // successful TMDB enrichment seeds SIMKL and Trakt rows with the TMDB ID so they
@@ -2040,6 +2079,14 @@ public class MetadataEnrichmentService(
 
             var failureReason = row.Status switch
             {
+                // A matched-but-rejected-as-a-duplicate result (see the conflictOwner branch
+                // above) already carries its own specific, accurate row.ErrorMessage -- checked
+                // first so it isn't shadowed by the generic candidate-count messages below, which
+                // would otherwise claim "no candidates met the threshold" (false: one did, and
+                // "Use Fix Match" is actively bad advice here since Fix Match hits the identical
+                // rejection) or "no results returned" (also false: the provider returned a real
+                // result) for a case that is neither.
+                EnrichmentStatus.NotFound when !string.IsNullOrEmpty(row.ErrorMessage) => row.ErrorMessage,
                 // "No results" is only true when the provider genuinely returned nothing --
                 // rawCandidates.Count > 0 means candidates DID come back but were rejected by
                 // the confidence gate or title-overlap check further up. Reporting both cases
@@ -2912,14 +2959,13 @@ public class MetadataEnrichmentService(
     }
 
     /// <summary>
-    /// Upserts a <see cref="MediaExternalId"/> row so the <c>media_external_ids</c> table
-    /// always reflects the current enrichment match.  Unlike the insert-if-missing helper
-    /// in FileScanService, this replaces an existing row for the same source because Fix
-    /// Match can legitimately change an item from one TMDB entry to another.
+    /// Derives the (source, externalId) pair a given raw plugin external id upserts under --
+    /// shared by <see cref="FindExternalIdOwnerConflictAsync"/> and
+    /// <see cref="UpsertExternalIdForEnrichmentAsync"/> so the two can never drift apart and
+    /// disagree about what a given raw id normalizes to (which would silently defeat the
+    /// conflict check one of them is there to enforce).
     /// </summary>
-    private async Task UpsertExternalIdForEnrichmentAsync(
-        ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct,
-        string? excludePluginId = null)
+    private (string Source, string ExtId) DeriveExternalIdSourceAndId(string rawExternalId, string? excludePluginId)
     {
         // Derive the source from the calling plugin's short ID so each plugin writes to
         // its own row in media_external_ids. The old ParseExternalId fallback mapped every
@@ -2965,6 +3011,58 @@ public class MetadataEnrichmentService(
             (source, extId) = ParseExternalId(rawExternalId);
         }
 
+        return (source, extId);
+    }
+
+    /// <summary>
+    /// True (and returns the owner) when <paramref name="rawExternalId"/> already belongs to a
+    /// DIFFERENT media item than <paramref name="mediaItemId"/> -- meant to be called BEFORE any
+    /// metadata from this match is merged onto the item, not only at write time.
+    /// UpsertExternalIdForEnrichmentAsync below already detects this same collision, but only
+    /// at the point it writes the external-id row, which every caller invokes AFTER
+    /// MergeMetadata/ResolveAsync have already applied the (wrong) matched fields to the item --
+    /// its own SaveChangesAsync then commits those fields regardless, since by design it must
+    /// flush whatever the caller staged earlier on the same DbContext. Confirmed live
+    /// (2026-09-02, "Quinn Martin"/"Martin Quinn"): the collision was logged correctly and the
+    /// external id correctly withheld, but the wrong bio/photo/name had already been merged and
+    /// saved by the time that happened. Calling this FIRST lets the caller skip the merge
+    /// entirely instead of only skipping the id attachment after the damage is done.
+    /// </summary>
+    private async Task<MediaItem?> FindExternalIdOwnerConflictAsync(
+        ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct,
+        string? excludePluginId)
+    {
+        var (source, extId) = DeriveExternalIdSourceAndId(rawExternalId, excludePluginId);
+        // No .Include() needed -- Select projects the navigation property directly, which EF
+        // Core already joins to materialize on its own.
+        return await db.MediaExternalIds
+            .Where(e => e.Source == source && e.ExternalId == extId && e.MediaItemId != mediaItemId)
+            .Select(e => e.MediaItem)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// Upserts a <see cref="MediaExternalId"/> row so the <c>media_external_ids</c> table
+    /// always reflects the current enrichment match.  Unlike the insert-if-missing helper
+    /// in FileScanService, this replaces an existing row for the same source because Fix
+    /// Match can legitimately change an item from one TMDB entry to another.
+    /// </summary>
+    /// <param name="skipConflictCheck">
+    /// Pass true when the caller already ran <see cref="FindExternalIdOwnerConflictAsync"/> on
+    /// this exact (mediaItemId, rawExternalId, excludePluginId) and confirmed no conflict --
+    /// EnrichPendingAsync's own merge gate does this immediately before calling here, so
+    /// re-running the identical query would just repeat a DB round trip whose answer is already
+    /// known, on every successful match. Defaults to false so <see cref="SeedCrossRefEnrichmentRowsAsync"/>
+    /// -- the only caller that does NOT pre-check (it upserts a cascaded cross-ref id for a
+    /// DIFFERENT plugin than the one that just matched, never having gone through the early
+    /// gate for that id) -- keeps its own real protection.
+    /// </param>
+    private async Task UpsertExternalIdForEnrichmentAsync(
+        ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct,
+        string? excludePluginId = null, bool skipConflictCheck = false)
+    {
+        var (source, extId) = DeriveExternalIdSourceAndId(rawExternalId, excludePluginId);
+
         // Root-caused a real duplicate (2026-08-30, "Dogma" / "Dogma (film)"): two MediaItems
         // ended up carrying the identical (source, externalId) pair because nothing checked
         // whether another item already owned it before writing. If one does, this item is
@@ -2972,21 +3070,24 @@ public class MetadataEnrichmentService(
         // identity to both, which is exactly what let the pair sit unflagged. Skip the write
         // and log loudly enough to find rather than deciding FOR the user whether to merge or
         // delete.
-        var ownedByOther = await db.MediaExternalIds
-            .Include(e => e.MediaItem)
-            .Where(e => e.Source == source && e.ExternalId == extId && e.MediaItemId != mediaItemId)
-            .FirstOrDefaultAsync(ct);
-        if (ownedByOther is not null)
+        if (!skipConflictCheck)
         {
-            logger.LogWarning(
-                "Skipped attaching external id {Source}:{ExternalId} to media item {MediaItemId} -- " +
-                "already owned by media item {OtherMediaItemId} ({OtherName}). Likely duplicate.",
-                source, extId, mediaItemId, ownedByOther.MediaItemId, ownedByOther.MediaItem?.Name);
-            // Still flush -- the caller may have already staged unrelated changes on `item`
-            // (Name/Year/Overview/etc.) on this same db context before calling here, expecting
-            // this method's own SaveChangesAsync to be the commit point.
-            await db.SaveChangesAsync(ct);
-            return;
+            var ownedByOther = await db.MediaExternalIds
+                .Include(e => e.MediaItem)
+                .Where(e => e.Source == source && e.ExternalId == extId && e.MediaItemId != mediaItemId)
+                .FirstOrDefaultAsync(ct);
+            if (ownedByOther is not null)
+            {
+                logger.LogWarning(
+                    "Skipped attaching external id {Source}:{ExternalId} to media item {MediaItemId} -- " +
+                    "already owned by media item {OtherMediaItemId} ({OtherName}). Likely duplicate.",
+                    source, extId, mediaItemId, ownedByOther.MediaItemId, ownedByOther.MediaItem?.Name);
+                // Still flush -- the caller may have already staged unrelated changes on `item`
+                // (Name/Year/Overview/etc.) on this same db context before calling here, expecting
+                // this method's own SaveChangesAsync to be the commit point.
+                await db.SaveChangesAsync(ct);
+                return;
+            }
         }
 
         var existing = await db.MediaExternalIds
