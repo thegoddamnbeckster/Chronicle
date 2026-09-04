@@ -69,6 +69,21 @@ namespace Chronicle.Services.Scan
             return (null, null);
         }
 
+        /// <summary>
+        /// Per-file results of the expensive, I/O-bound work (tag reads, .nfo sidecar lookups)
+        /// that <see cref="Group"/> needs before it can build the group tree. Computed in
+        /// parallel across files ahead of time, since each file's extraction is independent of
+        /// every other file's -- unlike the tree-building loop itself, which mutates a shared
+        /// dictionary/list structure and must stay sequential.
+        /// </summary>
+        private sealed record PerFileSignals(
+            bool IsJunk,
+            bool IsSidecar,
+            FolderSignal Folder,
+            TagSignal? Tag,
+            string? NfoPath,
+            SidecarSignal? Nfo);
+
         public ScanGroupResult Group(
             IEnumerable<string> filePaths, string scanRoot, int hierarchyLevels)
         {
@@ -76,10 +91,15 @@ namespace Chronicle.Services.Scan
             // root key → ScanGroup
             var rootGroups = new Dictionary<string, ScanGroup>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var path in filePaths)
-            {
-                result.TotalFiles++;
+            var pathList = filePaths as IReadOnlyList<string> ?? filePaths.ToList();
+            var signals  = new PerFileSignals[pathList.Count];
 
+            // Parallel pass: tag extraction and .nfo sidecar lookup are pure, per-file disk
+            // reads with no shared state, and dominate scan time on large libraries (thousands
+            // of files scanned one at a time was the actual bottleneck, not directory listing).
+            System.Threading.Tasks.Parallel.For(0, pathList.Count, i =>
+            {
+                var path = pathList[i];
                 var ext = Path.GetExtension(path);
                 bool isSidecar = _sidecarExtensions.Contains(ext);
 
@@ -95,14 +115,39 @@ namespace Chronicle.Services.Scan
                 // to "not a sidecar, so it must be media" (confirmed bug 2026-08-29: a stray
                 // ".metathumb" file sitting next to a real .mp4 got imported as the movie's own
                 // file, and picked ahead of the real file whenever paths were sorted/read back).
-                if (!isSidecar && !MediaFileExtensions.Recognized.Contains(ext))
-                    continue;
-                // Skip expensive tag/nfo extraction for files we've already classified as sidecars.
-                var tagSignal = isSidecar ? null : _tags.Extract(path);
+                bool isJunk = !isSidecar && !MediaFileExtensions.Recognized.Contains(ext);
+
+                // Skip expensive tag/nfo extraction for files we've already classified as
+                // sidecars or junk.
+                TagSignal? tagSignal = null;
                 string? nfoPath = null;
                 SidecarSignal? nfoSignal = null;
-                if (!isSidecar)
+                if (!isSidecar && !isJunk)
+                {
+                    tagSignal = _tags.Extract(path);
                     (nfoPath, nfoSignal) = FindSidecarSignal(path);
+                }
+
+                signals[i] = new PerFileSignals(isJunk, isSidecar, folderSignal, tagSignal, nfoPath, nfoSignal);
+            });
+
+            // Sequential pass: build the group tree in original file order using the
+            // precomputed signals -- identical logic/output to before, just no longer doing
+            // the disk I/O itself.
+            for (int fi = 0; fi < pathList.Count; fi++)
+            {
+                var path = pathList[fi];
+                var sig  = signals[fi];
+                result.TotalFiles++;
+
+                if (sig.IsJunk)
+                    continue;
+
+                bool isSidecar = sig.IsSidecar;
+                var folderSignal = sig.Folder;
+                var tagSignal = sig.Tag;
+                var nfoPath = sig.NfoPath;
+                var nfoSignal = sig.Nfo;
 
                 // For flat-grouped types (movies etc.), all files in the same
                 // immediate folder = one item.  Sidecars are still silently absorbed.
@@ -303,7 +348,7 @@ namespace Chronicle.Services.Scan
                     level1Group = new ScanGroup
                     {
                         GroupKey        = level1Key,
-                        Name            = level1Name,
+                        Name            = ResolveLevel1Name(level1Name, folderSignal),
                         Number          = ResolveLevel1Number(level1Name, folderSignal),
                         HierarchyLevel  = 1,
                         ConfidenceScore = 0.75,
@@ -391,6 +436,19 @@ namespace Chronicle.Services.Scan
             if (folder.DetectedTrackNumber.HasValue)
                 return folder.DetectedTrackNumber;
             return null;
+        }
+
+        /// <summary>
+        /// Normalizes a real on-disk level-1 folder name for display: "Season 04", "season4",
+        /// "S4" all become "Season 4" (and season 0 becomes "Specials"), matching the synthesized
+        /// season branch above. Non-season folders (e.g. music albums) pass through unchanged.
+        /// </summary>
+        private static string ResolveLevel1Name(string level1Name, FolderSignal folder)
+        {
+            var m = _seasonNumRe.Match(level1Name);
+            if (m.Success && DigitParsingHelper.TryParseDigits(m.Groups[1].Value, out var seasonNum))
+                return seasonNum == 0 ? "Specials" : $"Season {seasonNum}";
+            return level1Name;
         }
 
         /// <summary>

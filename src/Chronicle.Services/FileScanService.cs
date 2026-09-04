@@ -2780,6 +2780,12 @@ namespace Chronicle.Services
             // after each batch commit rather than re-scanning the whole list every time.
             int lastSeededIndex = 0;
 
+            // Built once for the whole run and threaded through every UpsertGroupItemAsync call
+            // below (root + PersistChildGroupsAsync's recursion) instead of each call re-querying
+            // the whole table -- see BuildFilePathIndexAsync's doc for why that mattered.
+            var filePathIndex   = await BuildFilePathIndexAsync(ct);
+            var folderPathIndex = await BuildFolderPathIndexAsync(request.MediaTypeId, ct);
+
             if (manageProgress)
                 _importProgress.Start(total);
 
@@ -2794,7 +2800,7 @@ namespace Chronicle.Services
                 {
                     var (rootItem, rootIsNew) = await UpsertGroupItemAsync(
                         rootGroup, request.MediaTypeId, parentId: null,
-                        hierarchyLevel: 0, ct);
+                        hierarchyLevel: 0, filePathIndex, folderPathIndex, ct);
 
                     if (rootIsNew)
                         createdItemIds.Add(rootItem.Id);
@@ -2831,7 +2837,8 @@ namespace Chronicle.Services
 
                     // Persist children recursively — no library entries
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
-                        rootItem.Id, hierarchyLevel: 1, createdItemIds, ct);
+                        rootItem.Id, hierarchyLevel: 1, createdItemIds,
+                        filePathIndex, folderPathIndex, ct);
 
                     pendingInBatch++;
 
@@ -2896,16 +2903,21 @@ namespace Chronicle.Services
 
         private async Task PersistChildGroupsAsync(
             List<ScanGroupImport> children, int mediaTypeId,
-            int parentId, int hierarchyLevel, List<int> createdItemIds, CancellationToken ct)
+            int parentId, int hierarchyLevel, List<int> createdItemIds,
+            Dictionary<string, MediaItem> filePathIndex,
+            Dictionary<string, MediaItem> folderPathIndex,
+            CancellationToken ct)
         {
             foreach (var child in children)
             {
-                var (item, isNew) = await UpsertGroupItemAsync(child, mediaTypeId, parentId, hierarchyLevel, ct);
+                var (item, isNew) = await UpsertGroupItemAsync(
+                    child, mediaTypeId, parentId, hierarchyLevel, filePathIndex, folderPathIndex, ct);
                 if (isNew)
                     createdItemIds.Add(item.Id);
                 if (child.Children.Count > 0)
                     await PersistChildGroupsAsync(child.Children, mediaTypeId,
-                        item.Id, hierarchyLevel + 1, createdItemIds, ct);
+                        item.Id, hierarchyLevel + 1, createdItemIds,
+                        filePathIndex, folderPathIndex, ct);
             }
         }
 
@@ -2957,9 +2969,73 @@ namespace Chronicle.Services
                 updated, candidates.Count);
         }
 
+        /// <summary>
+        /// Builds the Primary-tier lookup for <see cref="UpsertGroupItemAsync"/> once per
+        /// import run: exact file path -> owning MediaItem, across every item with recorded
+        /// file paths (global, not scoped by type -- see that method's own doc on why).
+        ///
+        /// Previously this same query (minus the indexing) ran INSIDE UpsertGroupItemAsync,
+        /// once per group -- i.e. once per show/season/episode/track being imported. Loading
+        /// and linear-scanning every file-scanned item in the library on every single call
+        /// is O(library size) per item and O(library size × import size) overall; on a
+        /// 300k-item library importing tens of thousands of files this made each item take
+        /// longer than the last and turned a scan into a many-hour crawl. Building the index
+        /// once up front and doing O(1) dictionary lookups after is the same matching logic,
+        /// just no longer repeating the full-table read for every item.
+        /// </summary>
+        private async Task<Dictionary<string, MediaItem>> BuildFilePathIndexAsync(CancellationToken ct)
+        {
+            var candidates = await _context.MediaItems
+                .Where(m => m.MetadataJson != null
+                         && EF.Functions.Like(m.MetadataJson, "%filePaths%"))
+                .ToListAsync(ct);
+
+            var index = new Dictionary<string, MediaItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in candidates)
+                foreach (var path in Chronicle.Services.Scan.FileIdentityJson.ExtractFilePaths(item.MetadataJson))
+                    index[path] = item; // last-write-wins on a genuine collision, same as the old FirstOrDefault scan order was arbitrary anyway
+
+            return index;
+        }
+
+        /// <summary>
+        /// Builds the Secondary-tier lookup for <see cref="UpsertGroupItemAsync"/> once per
+        /// import run: folder path -> owning MediaItem, scoped to <paramref name="mediaTypeId"/>
+        /// (mirrors that tier's own type-scoping). Same rationale as
+        /// <see cref="BuildFilePathIndexAsync"/> -- avoids re-reading every container item of
+        /// this type on every single call.
+        /// </summary>
+        private async Task<Dictionary<string, MediaItem>> BuildFolderPathIndexAsync(int mediaTypeId, CancellationToken ct)
+        {
+            var candidates = await _context.MediaItems
+                .Where(m => m.MediaTypeId == mediaTypeId
+                         && m.MetadataJson != null
+                         && EF.Functions.Like(m.MetadataJson, "%folderPath%"))
+                .ToListAsync(ct);
+
+            var index = new Dictionary<string, MediaItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in candidates)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(item.MetadataJson!);
+                    if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
+                        fs.TryGetProperty("folderPath", out var fp) &&
+                        fp.GetString() is { } folderPath)
+                        index[folderPath] = item;
+                }
+                catch (JsonException) { }
+            }
+
+            return index;
+        }
+
         private async Task<(MediaItem Item, bool IsNew)> UpsertGroupItemAsync(
             ScanGroupImport group, int mediaTypeId,
-            int? parentId, int hierarchyLevel, CancellationToken ct)
+            int? parentId, int hierarchyLevel,
+            Dictionary<string, MediaItem> filePathIndex,
+            Dictionary<string, MediaItem> folderPathIndex,
+            CancellationToken ct)
         {
             MediaItem? existing = null;
 
@@ -2976,15 +3052,19 @@ namespace Chronicle.Services
             // distinct releases landing under similarly-computed paths can collide) and using
             // it as the primary signal is what let unrelated items (e.g. a movie and an
             // unrelated fan edit) get silently attached to the wrong DB row in the past.
+            //
+            // Looked up against the pre-built filePathIndex (see BuildFilePathIndexAsync) rather
+            // than re-querying the whole table here -- see that method's doc for why.
             if (group.Files.Count > 0)
             {
-                var fpsCandidates = await _context.MediaItems
-                    .Where(m => m.MetadataJson != null
-                             && EF.Functions.Like(m.MetadataJson, "%filePaths%"))
-                    .ToListAsync(ct);
-
-                existing = fpsCandidates.FirstOrDefault(m =>
-                    Chronicle.Services.Scan.FileIdentityJson.ContainsAnyFilePath(m.MetadataJson, group.Files));
+                foreach (var f in group.Files)
+                {
+                    if (filePathIndex.TryGetValue(f, out var match))
+                    {
+                        existing = match;
+                        break;
+                    }
+                }
             }
 
             // Secondary: exact folder path match — only reached for groups with no files of
@@ -3002,25 +3082,36 @@ namespace Chronicle.Services
             // to survive a manual "Change Type"), but a folder path alone isn't that strong.
             if (existing is null && group.Files.Count == 0 && !string.IsNullOrEmpty(group.FolderPath))
             {
-                var fpCandidates = await _context.MediaItems
-                    .Where(m => m.MediaTypeId == mediaTypeId
-                             && m.MetadataJson != null
-                             && EF.Functions.Like(m.MetadataJson, "%folderPath%"))
-                    .ToListAsync(ct);
+                folderPathIndex.TryGetValue(group.FolderPath, out existing);
+            }
 
-                existing = fpCandidates.FirstOrDefault(m =>
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(m.MetadataJson!);
-                        if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
-                            fs.TryGetProperty("folderPath", out var fp))
-                            return string.Equals(fp.GetString(), group.FolderPath,
-                                                 StringComparison.OrdinalIgnoreCase);
-                    }
-                    catch (JsonException) { }
-                    return false;
-                });
+            // Tertiary-and-a-half: match a sync-created STUB by season/episode/track Number
+            // within the same parent. Closes a real gap the two tiers above can't: an episode
+            // created by a sync provider (TMDB/SIMKL episode-list import, before the file
+            // scanner ever saw the actual file) has no fileScanner data at all -- Primary can't
+            // match it -- and is named plainly ("S04E01"), while this scan's parsed name is the
+            // full filename ("Reacher - S04E01 - City of Brotherly Love"), which the name-only
+            // Tertiary tier below also can't match. Confirmed live (2026-09-04): every one of
+            // Reacher's 5 already-tracked S4 episodes (sync-created stubs with real TMDB/TVMaze
+            // metadata and watch history, but no fileScanner data) got a freshly-created
+            // duplicate under this exact mismatch the first time a scan's performance fix let it
+            // actually reach that season.
+            //
+            // Deliberately restricted to candidates with NO fileScanner data yet (a real stub,
+            // never claimed by any file) -- NOT a general "same number = same item" rule.
+            // Checked directly against this same library (2026-09-04): one season alone had 17
+            // genuinely different, already-file-scanned episodes sharing episode number 5 (an
+            // unreliably-parsed clip-show/reality series), each with its own real file and its
+            // own real identity. Matching on Number alone there would have silently attached a
+            // brand-new file's data onto a random unrelated episode. Requiring the existing side
+            // to still be file-less makes that impossible: a real, already-scanned episode is
+            // never a match target here, no matter what its Number is.
+            if (existing is null && group.Number.HasValue && hierarchyLevel >= 1)
+            {
+                existing = await _context.MediaItems.FirstOrDefaultAsync(m =>
+                    m.MediaTypeId == mediaTypeId && m.ParentId == parentId &&
+                    m.HierarchyLevel == hierarchyLevel && m.Number == group.Number.Value &&
+                    (m.MetadataJson == null || !EF.Functions.Like(m.MetadataJson, "%fileScanner%")), ct);
             }
 
             // Tertiary: match by name (covers items where neither filePaths nor folderPath matched).
@@ -3113,6 +3204,15 @@ namespace Chronicle.Services
                         nfoPath = group.NfoPath, nfoRaw, nfoParsed,
                     }));
                 existing.MetadataJson = existingNode.ToJsonString();
+
+                // Keep the in-memory indices in sync with what was just written so a later
+                // group in this same import run (e.g. a sibling episode) sees this item too,
+                // rather than only picking up file/folder paths recorded before the run began.
+                foreach (var f in group.Files)
+                    filePathIndex[f] = existing;
+                if (!string.IsNullOrEmpty(group.FolderPath))
+                    folderPathIndex[group.FolderPath] = existing;
+
                 return (existing, false);
             }
 
@@ -3137,6 +3237,12 @@ namespace Chronicle.Services
             };
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct); // need the ID for children
+
+            foreach (var f in group.Files)
+                filePathIndex[f] = item;
+            if (!string.IsNullOrEmpty(group.FolderPath))
+                folderPathIndex[group.FolderPath] = item;
+
             return (item, true);
         }
 
