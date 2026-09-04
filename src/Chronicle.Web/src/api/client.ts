@@ -62,7 +62,18 @@ client.interceptors.response.use(
     if (apiMessage && status) {
       return Promise.reject(new ApiError(apiMessage, status, apiCode))
     }
-    return Promise.reject(err)
+
+    // No structured envelope on this error — either the request never reached Chronicle
+    // at all (network error, no `status`) or it hit something in front of it that doesn't
+    // speak Chronicle's response shape (e.g. Vite's dev proxy returning its own bare 500/502
+    // when the API is down mid-restart). Axios's own message for these ("Network Error",
+    // "Request failed with status code 500") is accurate but reads like the app itself is
+    // broken. Since a real Chronicle-side failure always carries the envelope and is handled
+    // above, anything reaching here is a connectivity problem — say so plainly instead.
+    return Promise.reject(new ApiError(
+      'Unable to reach the Chronicle server. It may be restarting — please try again in a moment.',
+      status ?? 0,
+    ))
   },
 )
 
