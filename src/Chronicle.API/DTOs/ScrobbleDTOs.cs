@@ -71,6 +71,22 @@ namespace Chronicle.API.DTOs
         int Rating
     );
 
+    /// <summary>Same identifying shape as RateRequestDto minus Rating -- a client looking up
+    /// its current rating for an item supplies whatever it would've supplied to rate it.</summary>
+    public record RatingLookupRequestDto(
+        int? MediaItemId,
+        Dictionary<string, string>? ExternalIds = null,
+        string? Title = null,
+        int? Year = null,
+        string? MediaType = null
+    );
+
+    /// <summary>Rating is null when the item resolved but the caller has never rated it.</summary>
+    public record RatingLookupResponseDto(
+        int MediaItemId,
+        int? Rating
+    );
+
     /// <summary>One currently-live playback session for the "Now Playing" banner — see
     /// ScrobbleService.GetActiveSessionsAsync for how "actively playing" is inferred.</summary>
     public record ActiveSessionDto(

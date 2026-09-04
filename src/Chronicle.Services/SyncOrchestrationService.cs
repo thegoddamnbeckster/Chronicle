@@ -775,6 +775,37 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             .Where(e => e.Source == source && e.ExternalId == rating.ExternalId)
             .Select(e => e.MediaItemId)
             .FirstOrDefaultAsync(ct);
+
+        // Fall back to AdditionalIds (TMDB/IMDB/TVDB/etc, carried on every ImportedRating --
+        // see e.g. SimklImportProvider.GetRatingsAsync's own BuildIds call) the same way
+        // MatchOrCreateItemAsync's own Stage 2 already does for watch events. Confirmed real
+        // gap (2026-09-04, per-user report "SIMKL ratings aren't trickling down"): a rating
+        // was previously dropped SILENTLY whenever the item wasn't matched to this exact
+        // provider's own ExternalId -- which happens whenever the item was originally
+        // identified through a different plugin (e.g. TMDB enrichment matched it, but SIMKL's
+        // own identification never separately ran or failed) even though the two providers'
+        // shared TMDB/IMDB id proves it's unambiguously the same title. Unlike watch events,
+        // this deliberately does NOT fall through to a title/year fuzzy match or create a
+        // stub -- a bare rating with no other evidence isn't reason enough to add a new
+        // catalog item, only to attach to one that demonstrably already exists.
+        if (mediaItemId == 0)
+        {
+            foreach (var (addlSource, addlId) in rating.AdditionalIds)
+            {
+                mediaItemId = await db.MediaExternalIds
+                    .Where(e => e.Source == addlSource && e.ExternalId == addlId)
+                    .Select(e => e.MediaItemId)
+                    .FirstOrDefaultAsync(ct);
+                if (mediaItemId != 0)
+                {
+                    // Graft this provider's own ExternalId so Stage 1 finds this item directly
+                    // on the next sync, same as the watch-event matcher already does.
+                    await GraftExternalIdAsync(db, mediaItemId, pluginId, rating.ExternalId, ct);
+                    break;
+                }
+            }
+        }
+
         if (mediaItemId == 0) return;
 
         var lib = await db.UserLibraries
@@ -812,6 +843,21 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         lib.UserRating          = rating.Rating;
         lib.UserRatingUpdatedAt = rating.RatedAt.UtcDateTime;
+
+        // Same "a rating is itself strong evidence the item was watched" reasoning the
+        // brand-new-row branch above already applies -- previously only honored when this
+        // upsert happened to CREATE the row. An item auto-tracked earlier for some other
+        // reason (e.g. a plain library-status sync with no rating yet) kept an existing
+        // Unwatched/PlanToWatch row forever, even after a real rating arrived, which is what
+        // made "I rated this on Simkl" look like it hadn't synced at all in Chronicle's UI.
+        // Never downgrades a more specific in-progress state (Watching/Dropped) the user or
+        // Kodi has already set.
+        if (lib.Status is LibraryStatus.Unwatched or LibraryStatus.PlanToWatch)
+        {
+            lib.Status      = LibraryStatus.Completed;
+            lib.CompletedAt ??= DateTime.UtcNow;
+        }
+
         await db.SaveChangesAsync(ct);
     }
 

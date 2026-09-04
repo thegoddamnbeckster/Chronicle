@@ -96,6 +96,23 @@ namespace Chronicle.Services
     public record RateResult(int MediaItemId, int Rating);
 
     /// <summary>
+    /// Identifies an item to look up the caller's current rating for, the same way a
+    /// <see cref="RateRequest"/> identifies one to rate -- MediaItemId when already known,
+    /// otherwise ExternalIds/Title/Year/MediaType to resolve it. Never creates a stub if
+    /// nothing matches (same as <see cref="ResumeLookupRequest"/>).
+    /// </summary>
+    public record RatingLookupRequest(
+        int? MediaItemId,
+        IReadOnlyDictionary<string, string>? ExternalIds = null,
+        string? Title = null,
+        int? Year = null,
+        string? MediaType = null
+    );
+
+    /// <summary>Null Rating means the item resolved but the caller has never rated it.</summary>
+    public record CurrentRating(int MediaItemId, int? Rating);
+
+    /// <summary>
     /// One currently-live playback session, inferred from scrobble recency rather than any
     /// explicit start/stop signal (the scrobble protocol has none — see ScrobbleService's own
     /// doc on GetActiveSessionsAsync for why a staleness window is the correct proxy).
@@ -148,6 +165,15 @@ namespace Chronicle.Services
         /// can't be resolved, ArgumentException if Rating is outside 1-10.
         /// </summary>
         Task<RateResult> RateAsync(int userId, RateRequest request, CancellationToken ct = default);
+
+        /// <summary>
+        /// Read-only counterpart to <see cref="RateAsync"/> -- resolves the item the same way
+        /// (never creating a stub) and returns its current UserRating, or null if the item
+        /// can't be resolved at all. Used by the rating add-on's post-playback prompt so the
+        /// star dialog opens pre-filled with whatever rating is already on file, the same way
+        /// SIMKL's own Kodi rating tool does, instead of always starting from "no stars".
+        /// </summary>
+        Task<CurrentRating?> GetCurrentRatingAsync(int userId, RatingLookupRequest request, CancellationToken ct = default);
 
         /// <summary>
         /// One entry per device currently believed to be actively playing something for this

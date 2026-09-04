@@ -296,6 +296,36 @@ namespace Chronicle.Services
         }
 
         /// <summary>
+        /// Read-only counterpart to RateAsync -- same resolution (MediaItemId when known,
+        /// else external-id/title/year match, never a stub), just returns the current
+        /// UserRating instead of setting one. Returns null only when the item itself can't
+        /// be resolved; a resolved item the caller has never rated returns a CurrentRating
+        /// with Rating == null, so callers can tell "no such item" apart from "no rating yet".
+        /// </summary>
+        public async Task<CurrentRating?> GetCurrentRatingAsync(int userId, RatingLookupRequest request, CancellationToken ct = default)
+        {
+            int mediaItemId;
+            if (request.MediaItemId.HasValue)
+            {
+                mediaItemId = request.MediaItemId.Value;
+            }
+            else
+            {
+                var item = await TryFindMediaItemAsync(
+                    request.Title, request.Year, request.MediaType,
+                    request.ExternalIds ?? new Dictionary<string, string>(), ct);
+                if (item is null)
+                    return null;
+                mediaItemId = item.Id;
+            }
+
+            var entry = await _context.UserLibraries.AsNoTracking()
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+
+            return new CurrentRating(mediaItemId, entry?.UserRating);
+        }
+
+        /// <summary>
         /// The scrobble protocol has no explicit "playback started/stopped" signal — every
         /// call is just a periodic percent-progress ping (see InteractionEvent's fields; there
         /// is no EventType/IsPlaying anywhere in this model). "Actively playing right now" is

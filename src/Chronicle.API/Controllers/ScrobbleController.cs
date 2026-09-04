@@ -185,6 +185,34 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
+        /// Read-only counterpart to POST rating — the rating add-on's post-playback prompt
+        /// calls this before showing its star dialog so it can pre-fill whatever rating is
+        /// already on file, the same way SIMKL's own Kodi rating tool does. POST (not GET)
+        /// for the same reason as /resume: ExternalIds is a dictionary body. success:true
+        /// with data:null when the item can't be resolved at all (routine "no", not an
+        /// error) — a resolved item with no rating yet still returns 200 with Rating: null,
+        /// which the caller distinguishes from "no such item" by MediaItemId being present.
+        /// </summary>
+        [HttpPost("rating/lookup")]
+        public async Task<IActionResult> GetCurrentRating([FromBody] RatingLookupRequestDto request)
+        {
+            var userId = GetUserId();
+            var current = await _scrobbleService.GetCurrentRatingAsync(userId, new RatingLookupRequest(
+                request.MediaItemId,
+                request.ExternalIds,
+                request.Title,
+                request.Year,
+                request.MediaType
+            ), HttpContext.RequestAborted);
+
+            if (current is null)
+                return Ok(ApiResponse<RatingLookupResponseDto>.Ok(null!));
+
+            return Ok(ApiResponse<RatingLookupResponseDto>.Ok(
+                new RatingLookupResponseDto(current.MediaItemId, current.Rating)));
+        }
+
+        /// <summary>
         /// One entry per device the caller currently has actively playing — powers the
         /// "Now Playing" banner. Polled by the frontend on a short interval; see
         /// ScrobbleService.GetActiveSessionsAsync for how "actively playing" is inferred
