@@ -3,6 +3,8 @@ using Chronicle.Data;
 using Chronicle.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.InMemory.Infrastructure.Internal;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
@@ -20,10 +22,32 @@ public class TaskSchedulerServiceTests
         return new ChronicleDbContext(opts);
     }
 
+    /// <summary>
+    /// Was `services.AddSingleton(db)` -- every scope this factory hands out got the literal
+    /// SAME ChronicleDbContext instance, not an independent one the way real ASP.NET Core
+    /// scoping works. TaskSchedulerService fires background work via un-awaited `Task.Run`
+    /// (TickAsync/TriggerNowAsync), so its own `SaveChangesAsync` and a background
+    /// RunTaskAsync's `PersistRunResultAsync` `SaveChangesAsync` could both land on that one
+    /// shared instance from two different threads at once -- EF Core DbContexts aren't
+    /// thread-safe, and this threw "a second operation was started on this context instance"
+    /// intermittently (confirmed flaky in CI, unrelated to whatever else was being tested at
+    /// the time). Deriving the shared EF Core InMemory store name from `db` and registering a
+    /// real scoped DbContext means every scope gets its own instance pointed at the same
+    /// underlying store -- same data visible to `db` and to every scope, but no two threads
+    /// ever touch one instance concurrently, matching how the real DI container behaves.
+    /// </summary>
     private static IServiceScopeFactory MakeScopeFactory(ChronicleDbContext db)
     {
+        // EF1001: InMemoryOptionsExtension is an internal API, but reading back the store name
+        // an existing context was built with is a standard, widely-used pattern for exactly
+        // this "share one in-memory store across independent DbContext instances" scenario --
+        // there's no public API for it. Test-only code; accepted tradeoff.
+#pragma warning disable EF1001
+        var storeName = db.GetService<IDbContextOptions>()
+            .FindExtension<InMemoryOptionsExtension>()!.StoreName;
+#pragma warning restore EF1001
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        services.AddDbContext<ChronicleDbContext>(opts => opts.UseInMemoryDatabase(storeName));
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 
@@ -39,6 +63,26 @@ public class TaskSchedulerServiceTests
         mock.Setup(t => t.ExecuteAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return mock;
+    }
+
+    /// <summary>
+    /// Replaces a fixed `await Task.Delay(N)` guess for "the fire-and-forget background work
+    /// TickAsync/TriggerNowAsync dispatches via un-awaited Task.Run must be done by now" -- a
+    /// fixed delay is either too short (flaky under load) or wastefully long, and one of these
+    /// (RunTask_ExceptionPersistsErrorAndDoesNotThrow) started failing outright, not just
+    /// flaking, once MakeScopeFactory stopped handing out one shared DbContext instance (see
+    /// that method's own doc comment) -- the real background write now takes a hair longer than
+    /// 200ms did, wrong on the same instance regardless. Polls `condition` instead of guessing.
+    /// </summary>
+    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 2000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException($"Condition not met within {timeoutMs}ms.");
+            await Task.Delay(10);
+        }
     }
 
     // ── Seeding ───────────────────────────────────────────────────────────────
@@ -106,7 +150,7 @@ public class TaskSchedulerServiceTests
         var svc = new TaskSchedulerService(new[] { task.Object }, scopeFactory);
 
         await svc.TickAsync(CancellationToken.None);
-        await Task.Delay(200);
+        await WaitForAsync(() => !svc.IsRunning("test_task"));
 
         task.Verify(t => t.ExecuteAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -130,7 +174,7 @@ public class TaskSchedulerServiceTests
         var svc = new TaskSchedulerService(new[] { task.Object }, scopeFactory);
 
         await svc.TickAsync(CancellationToken.None);
-        await Task.Delay(200);
+        await WaitForAsync(() => !svc.IsRunning("test_task"));
 
         task.Verify(t => t.ExecuteAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -161,14 +205,19 @@ public class TaskSchedulerServiceTests
         var scopeFactory = MakeScopeFactory(db);
         var svc = new TaskSchedulerService(new[] { task.Object }, scopeFactory);
 
+        // TickAsync's per-row _running.TryAdd runs synchronously before it ever dispatches the
+        // background Task.Run, so IsRunning is already true (and stays true -- the task is
+        // deliberately blocked on `tcs`, unresolved until tcs.SetResult() below) the moment
+        // this first call returns -- no wait needed before the second Tick.
         await svc.TickAsync(CancellationToken.None);
-        await Task.Delay(50);
 
         db.BackgroundTasks.First().NextRunAt = DateTime.UtcNow.AddMinutes(-1);
         await db.SaveChangesAsync();
 
+        // The second TickAsync's "already running, skip" decision happens synchronously inside
+        // the awaited call itself (the _running.TryAdd check), not in the background dispatch --
+        // no further wait is needed once it returns.
         await svc.TickAsync(CancellationToken.None);
-        await Task.Delay(100);
 
         task.Verify(t => t.ExecuteAsync(It.IsAny<CancellationToken>()), Times.Once);
         tcs.SetResult();
@@ -227,8 +276,10 @@ public class TaskSchedulerServiceTests
 
         var svc = new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db));
 
+        // TriggerNowAsync's _running.TryAdd runs synchronously before it ever dispatches the
+        // background Task.Run, so IsRunning is already true the moment this first call
+        // returns -- no wait needed before checking that a second trigger sees it as running.
         await svc.TriggerNowAsync("test_task");
-        await Task.Delay(50);
 
         var second = await svc.TriggerNowAsync("test_task");
         second.Should().Be(TriggerResult.AlreadyRunning);
@@ -265,7 +316,7 @@ public class TaskSchedulerServiceTests
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
 
         await svc.TickAsync(CancellationToken.None);
-        await Task.Delay(200);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.musicbrainz:fetch-missing-metadata"));
 
         runner.Verify(r => r.RunAsync(
             "chronicle.plugin.musicbrainz",
@@ -302,7 +353,7 @@ public class TaskSchedulerServiceTests
         var result = await svc.TriggerNowAsync("chronicle.plugin.tmdb:resync-all-metadata");
         result.Should().Be(TriggerResult.Started);
 
-        await Task.Delay(200);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.tmdb:resync-all-metadata"));
 
         runner.Verify(r => r.RunAsync(
             "chronicle.plugin.tmdb",
@@ -334,9 +385,13 @@ public class TaskSchedulerServiceTests
         var svc = new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db));
 
         await svc.TriggerNowAsync("failing_task");
-        await Task.Delay(200);
+        await WaitForAsync(() => !svc.IsRunning("failing_task"));
 
-        var row = await db.BackgroundTasks.FindAsync("failing_task");
+        // FindAsync would return db's own already-tracked local copy of this row (added via
+        // `db` a few lines up) without re-querying the store -- it can never see the background
+        // task's write, which landed through a DIFFERENT DbContext instance sharing the same
+        // in-memory store. AsNoTracking forces a genuine read from the shared store instead.
+        var row = await db.BackgroundTasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == "failing_task");
         row!.LastRunSucceeded.Should().BeFalse();
         row.LastErrorMessage.Should().Be("Something broke.");
         svc.IsRunning("failing_task").Should().BeFalse();
