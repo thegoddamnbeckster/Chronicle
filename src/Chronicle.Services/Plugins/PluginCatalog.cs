@@ -33,11 +33,16 @@ public static class PluginCatalog
             Author:      "Chronicle Contributors",
             IconUrl:     "https://musicbrainz.org/favicon.ico",
             GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.MusicBrainz",
-            AssetName:   "Chronicle.Plugin.MusicBrainz.zip",
+            // Confirmed live (2026-09-04, `gh release view`): the actual latest release is
+            // v1.2.0, asset "chronicle.plugin.musicbrainz-v1.2.0.zip" (lowercase, versioned --
+            // this entry's old AssetName/Sha256/Version were pinned to a stale v1.0.2 build
+            // that the repo has since moved past, causing "Asset ... not found in the latest
+            // release" for both fresh installs and the new update-from-catalog action).
+            AssetName:   "chronicle.plugin.musicbrainz-v1.2.0.zip",
             DllName:     "Chronicle.Plugin.MusicBrainz.dll",
             Tags:        ["music", "audio", "metadata"],
-            Sha256:      "dc34647a59f0974154f1d3a50bc4872143475b5be6f9af609a1b575fb755ea3b",
-            Version:     "1.0.2"
+            Sha256:      "afe7855d272565b41c6b9400518e35cfc0c2ab1771d576dc2ff5f35eea698fb2",
+            Version:     "1.2.0"
         ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.filescanner",
@@ -62,8 +67,11 @@ public static class PluginCatalog
             AssetName:   "Chronicle.Plugin.Wikipedia.zip",
             DllName:     "Chronicle.Plugin.Wikipedia.dll",
             Tags:        ["movies", "tv", "music", "books", "games", "people", "metadata"],
-            Sha256:      "98b9943b24cad8bfd0c60bfd8cec2e2398d0cc99b23461b89fbc4255a7197fce",
-            Version:     "1.0.0"
+            // Confirmed live (2026-09-04, downloaded + hashed the real asset): repo has moved
+            // to v1.0.7 since this entry was last synced at v1.0.0 -- asset name unchanged,
+            // only Version/Sha256 were stale.
+            Sha256:      "afbcd783a5d6cdcd5f093d738a967c97ae0211e880b31eef5811838105b73a4f",
+            Version:     "1.0.7"
         ),
         // The five plugins below this comment (FanEdit, Simkl, FanartTV, Themes.Default,
         // and MoviesRemastered/Trakt/Hardcover/TheTVDB/TVMaze/Kodi.NFO further below) were
@@ -120,11 +128,17 @@ public static class PluginCatalog
             Author:      "Chronicle Contributors",
             IconUrl:     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAyNCAyNCc+PHJlY3QgeD0nMycgeT0nMycgd2lkdGg9JzE4JyBoZWlnaHQ9JzE4JyByeD0nMicgZmlsbD0nIzdjM2FlZCcvPjxwYXRoIGZpbGw9J3doaXRlJyBkPSdNNyA3aDEwdjJIN3ptMCA0aDEwdjJIN3ptMCA0aDd2Mkg3eicvPjwvc3ZnPg==",
             GithubRepo:  "thegoddamnbeckster/Chronicle.Plugin.Hardcover",
-            AssetName:   "chronicle.plugin.hardcover-v1.2.0.zip",
+            // Confirmed live (2026-09-04): repo moved to v1.2.1 with a differently-named
+            // asset ("Chronicle.Plugin.Hardcover.zip", PascalCase/no version suffix) than
+            // the v1.2.0 release this entry was pinned to ("chronicle.plugin.hardcover-
+            // v1.2.0.zip", lowercase/versioned) -- the naming convention isn't even
+            // consistent release-to-release within this one repo. Re-synced to what's
+            // actually attached to the real latest release now.
+            AssetName:   "Chronicle.Plugin.Hardcover.zip",
             DllName:     "Chronicle.Plugin.Hardcover.dll",
             Tags:        ["books", "audiobooks", "metadata", "sync"],
-            Sha256:      "da6272a877ad0b94dc95a37cfc81ab140b588a199922a556a6667ad0d1ca543b",
-            Version:     "1.2.0"
+            Sha256:      "8c1ee3f43c677d265aa052910e5f3297cf8f6305d363a5542639aedfd3d49da9",
+            Version:     "1.2.1"
         ),
         new PluginCatalogEntry(
             PluginId:    "chronicle.plugin.thetvdb",
