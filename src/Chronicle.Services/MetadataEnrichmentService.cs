@@ -267,6 +267,12 @@ public class MetadataEnrichmentService(
                 "(concurrency {Concurrency})",
                 passNumber, rows.Count, pluginId, itemConcurrency);
 
+            // Set by either loop below when EnrichItemCoreLockedAsync signals the provider is
+            // currently rate-limited (see ProviderUnavailableException's own doc). Checked after
+            // both branches to break the outer while(true) instead of starting another pass that
+            // would just hit the same wall for every remaining item.
+            bool providerUnavailable = false;
+
             if (itemConcurrency <= 1)
             {
                 // Unchanged from before this feature existed -- every plugin that doesn't
@@ -275,11 +281,21 @@ public class MetadataEnrichmentService(
                 foreach (var row in rows)
                 {
                     ct.ThrowIfCancellationRequested();
-                    // Cascade: false — this loop already walks the full hierarchy itself via
-                    // its own parent-then-child ordered passes, so recursing into cascade too
-                    // would process every child twice.
-                    await EnrichItemCoreAsync(db, provider, pluginId, row,
-                        new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                    try
+                    {
+                        // Cascade: false — this loop already walks the full hierarchy itself via
+                        // its own parent-then-child ordered passes, so recursing into cascade too
+                        // would process every child twice.
+                        await EnrichItemCoreAsync(db, provider, pluginId, row,
+                            new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                    }
+                    catch (ProviderUnavailableException)
+                    {
+                        // Every remaining row in `rows` would hit this exact same wall -- stop
+                        // burning through them one doomed call at a time.
+                        providerUnavailable = true;
+                        break;
+                    }
                 }
             }
             else
@@ -311,6 +327,12 @@ public class MetadataEnrichmentService(
                             new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
                     }
                     catch (OperationCanceledException) { throw; }
+                    catch (ProviderUnavailableException)
+                    {
+                        // Benign race if more than one concurrent worker hits this in the same
+                        // instant -- they all agree on the same outcome, so a plain bool is fine.
+                        providerUnavailable = true;
+                    }
                     catch (Exception ex)
                     {
                         // Matches EnrichItemCoreLockedAsync's own per-item failure handling --
@@ -335,6 +357,20 @@ public class MetadataEnrichmentService(
             // For a 38k-item music library processed in 3 passes this would otherwise
             // hold ~114k entities in memory by the time the last pass completes.
             db.ChangeTracker.Clear();
+
+            if (providerUnavailable)
+            {
+                // Stop this whole run for this plugin rather than looping back into another
+                // pass that would just re-query the same still-Pending rows and hit the same
+                // wall again (rate limit or network outage). The next scheduled
+                // EnrichPendingAsync invocation for this plugin (or a manual retry) picks these
+                // rows back up once the provider's cooldown clears or connectivity returns --
+                // nothing was marked Failed/Exhausted, so nothing was lost.
+                logger.LogInformation(
+                    "EnrichPendingAsync: stopping for plugin {PluginId} this run — provider is unavailable (rate-limited or unreachable)",
+                    pluginId);
+                break;
+            }
         }
 
         // ── Post-run diagnostics and cleanup ─────────────────────────────────────
@@ -1926,6 +1962,51 @@ public class MetadataEnrichmentService(
                 row.Status       = EnrichmentStatus.Skipped;
                 row.ErrorMessage = ex.Message;
             }
+            else if (ex is HttpRequestException rateLimitEx &&
+                     rateLimitEx.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                // The provider itself is rate-limited right now -- this item did nothing wrong,
+                // so don't touch Status/RetryCount (a rate-limit hit must never count toward
+                // MaxRetries -- three of these in a row would otherwise push a perfectly fine
+                // item to Exhausted forever, purely from bad timing). Reset LastAttemptedAt so
+                // this row is immediately eligible again once the provider's cooldown clears,
+                // rather than waiting out RetryWindow like a real failure would.
+                // Rethrown (not swallowed here, unlike every branch above) specifically so
+                // EnrichPendingAsync's batch loop can catch ProviderUnavailableException and
+                // stop calling this plugin for the rest of the pass -- otherwise every other
+                // queued item behind this one in the same 429 window would hit this exact
+                // branch too, one doomed call at a time, for no benefit.
+                logger.LogInformation(
+                    "Enrichment paused for plugin {PluginId}: rate-limited ({ErrorMessage}) -- " +
+                    "item {ItemId} left as Pending, stopping this pass",
+                    row.PluginId, ex.Message, row.MediaItemId);
+                row.LastAttemptedAt = null;
+                throw new ProviderUnavailableException(row.PluginId, ex.Message);
+            }
+            else if (ex is HttpRequestException networkEx && networkEx.StatusCode is null)
+            {
+                // No HTTP response was ever received -- StatusCode is only populated from an
+                // actual response, so null here means the request failed at the transport level:
+                // DNS resolution ("No such host is known"), connection refused, TLS handshake
+                // failure, etc. Confirmed live (2026-09-04): a brief DNS outage right around a
+                // server restart failed TMDB, TVMaze, and Wikipedia enrichment simultaneously for
+                // the same newly-scanned episode, each with an unrelated host but the identical
+                // "No such host is known" error -- proof it was the machine's own resolver, not
+                // three providers coincidentally going down at once.
+                //
+                // Per-user request (2026-09-04): "if there is network trouble, I would rather
+                // that the pending items stay pending so we don't lose the ability to scan them."
+                // Handled exactly like the 429 branch above and for the same reason -- this is
+                // not the item's fault or even necessarily this plugin's fault, so it must not
+                // burn RetryCount toward Exhausted, and there is no point grinding through the
+                // rest of this pass's items one identical connection failure at a time.
+                logger.LogInformation(
+                    "Enrichment paused for plugin {PluginId}: network error reaching provider " +
+                    "({ErrorMessage}) -- item {ItemId} left as Pending, stopping this pass",
+                    row.PluginId, ex.Message, row.MediaItemId);
+                row.LastAttemptedAt = null;
+                throw new ProviderUnavailableException(row.PluginId, ex.Message);
+            }
             else
             {
                 // Include stack trace only for unexpected errors; HTTP/timeout errors are self-describing.
@@ -2012,6 +2093,22 @@ public class MetadataEnrichmentService(
     private sealed class ProviderNotFoundException : Exception
     {
         public ProviderNotFoundException(string message, Exception inner) : base(message, inner) { }
+    }
+
+    /// <summary>
+    /// Thrown only by EnrichItemCoreLockedAsync's own 429/network-error branches to signal "this
+    /// plugin is unreachable right now (rate-limited or a connectivity failure), stop calling it
+    /// for the rest of this pass" -- caught exclusively by EnrichPendingAsync's batch loops,
+    /// which break out of the current pass without treating it as a per-item failure. See those
+    /// branches' own doc for why neither case may count toward an item's RetryCount.
+    /// </summary>
+    private sealed class ProviderUnavailableException : Exception
+    {
+        public string PluginId { get; }
+        public ProviderUnavailableException(string pluginId, string message) : base(message)
+        {
+            PluginId = pluginId;
+        }
     }
 
     private static EnrichScannerSignals? ReadScannerSignals(MediaItem? item)
