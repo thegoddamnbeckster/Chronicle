@@ -81,9 +81,19 @@ if (-not $ApiOnly) {
 }
 
 if (-not $ApiOnly -and -not $WebOnly -and -not $NoAbsBridge) {
-    # Kill the ABS metadata-provider bridge (python service.py)
+    # Kill the ABS metadata-provider bridge (python service.py). python.exe's own
+    # CommandLine is just `python.exe service.py` -- it never carries the working
+    # directory, so matching it against $AbsBridgeDir can never succeed and this step
+    # was a silent no-op (leaving one more orphaned python.exe + wrapper window behind
+    # on every run). The wrapper pwsh window's `cd '$AbsBridgeDir'; python service.py`
+    # command DOES carry the path, so find that window first and kill its python.exe
+    # child by PID instead.
+    $AbsWrapperPids = Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match [regex]::Escape($AbsBridgeDir) } |
+        ForEach-Object { $_.ProcessId }
+
     Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -match "Chronicle\.Service\.MetadataProvider\.Audiobookshelf" } |
+        Where-Object { $AbsWrapperPids -contains $_.ParentProcessId } |
         ForEach-Object { Write-Host "  Stopping ABS bridge PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 

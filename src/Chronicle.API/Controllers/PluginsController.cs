@@ -763,12 +763,26 @@ public class PluginsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_INSTALLED",
                 $"Plugin '{pluginId}' is not installed -- use install, not update."));
 
+        // Release the currently-loaded assembly before the download/extract step below
+        // writes into the plugin's own install directory. Same pattern the standalone
+        // /unload endpoint documents for hot deploys.
+        await _pluginService.UnloadFromRegistryAsync(pluginId);
+
         var (dllPath, error) = await DownloadAndExtractCatalogAssetAsync(entry, ct);
         if (error is not null) return error;
 
         try
         {
-            System.IO.File.Copy(dllPath!, plugin.DllPath, overwrite: true);
+            // DownloadAndExtractCatalogAssetAsync extracts straight into the plugin's own
+            // install directory, so dllPath is normally plugin.DllPath itself already --
+            // copying a file onto itself throws a Windows sharing-violation IOException
+            // ("used by another process"), which is what every prior attempt at this
+            // endpoint actually failed on (confirmed via the stack trace landing on this
+            // Copy call, not on the extraction). Only copy when the release's DLL landed
+            // somewhere else, e.g. nested in a subfolder inside the archive.
+            if (!string.Equals(Path.GetFullPath(dllPath!), Path.GetFullPath(plugin.DllPath), StringComparison.OrdinalIgnoreCase))
+                System.IO.File.Copy(dllPath!, plugin.DllPath, overwrite: true);
+
             await _pluginService.ReloadPluginAsync(pluginId, ct);
             var updated = await _pluginService.MarkUpdatedAsync(pluginId, ct);
 
@@ -778,6 +792,15 @@ public class PluginsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error updating catalog plugin {PluginId}", pluginId);
+
+            // Best-effort: bring the old DLL back into memory so a failed update doesn't
+            // leave the plugin dark until the next full restart.
+            try { await _pluginService.ReloadPluginAsync(pluginId, ct); }
+            catch (Exception reloadEx)
+            {
+                _logger.LogError(reloadEx, "Failed to reload plugin {PluginId} after a failed update", pluginId);
+            }
+
             return StatusCode(500, ApiResponse<PluginDto>.Fail("UPDATE_FAILED", ex.Message));
         }
     }
