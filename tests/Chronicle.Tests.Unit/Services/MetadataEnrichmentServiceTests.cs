@@ -59,8 +59,13 @@ public class MetadataEnrichmentServiceTests : IDisposable
         mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
         mockProvider.Setup(p => p.GetSupportedMediaTypes())
             .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        // A genuine per-item failure -- NOT an HttpRequestException with a null status code
+        // (transport-level: DNS/connection-refused/TLS) or a 429 (both special-cased to leave
+        // the row Pending instead, see the two tests immediately following this one), a 404
+        // (NotFound), or an InvalidOperationException (Skipped -- "plugin misconfigured", not a
+        // per-item failure). A 500 falls through to the generic failure path this test covers.
         mockProvider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("Connection refused"));
+            .ThrowsAsync(new HttpRequestException("Internal server error.", null, System.Net.HttpStatusCode.InternalServerError));
         _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
             .Returns(mockProvider.Object);
 
@@ -69,7 +74,61 @@ public class MetadataEnrichmentServiceTests : IDisposable
         var updated = await _db.MediaEnrichments.FindAsync(status.Id);
         updated!.Status.Should().Be(EnrichmentStatus.Failed);
         updated.RetryCount.Should().Be(1);
-        updated.ErrorMessage.Should().Contain("Connection refused");
+        updated.ErrorMessage.Should().Contain("Internal server error.");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_TransportLevelNetworkError_LeavesPendingWithoutBurningRetryBudget()
+    {
+        // Regression test for a real production behavior change (2026-09-04, per-user request:
+        // "if there is network trouble, I would rather that the pending items stay pending so we
+        // don't lose the ability to scan them"): a transport-level failure (DNS, connection
+        // refused, TLS -- HttpRequestException.StatusCode is null because no response was ever
+        // received) must not count against RetryCount/Exhausted like a real per-item failure
+        // does. Confirmed live: a brief DNS outage failed TMDB, TVMaze, and Wikipedia enrichment
+        // simultaneously for the same item, each with an unrelated host but the identical error.
+        var (item, status) = await SeedItemWithStatus(null, EnrichmentStatus.Pending);
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        mockProvider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("No such host is known."));
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
+            .Returns(mockProvider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.Pending);
+        updated.RetryCount.Should().Be(0);
+        updated.LastAttemptedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_RateLimited_LeavesPendingWithoutBurningRetryBudget()
+    {
+        // Sibling of the transport-level-error test above -- a 429 is the same "not this item's
+        // fault, don't burn retry budget toward Exhausted" case, just from the provider actively
+        // responding rather than being unreachable.
+        var (item, status) = await SeedItemWithStatus(null, EnrichmentStatus.Pending);
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        mockProvider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Too many requests.", null, System.Net.HttpStatusCode.TooManyRequests));
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
+            .Returns(mockProvider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.Pending);
+        updated.RetryCount.Should().Be(0);
+        updated.LastAttemptedAt.Should().BeNull();
     }
 
     [Fact]
