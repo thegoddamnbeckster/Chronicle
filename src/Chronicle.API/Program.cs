@@ -260,6 +260,10 @@ builder.Services.AddSingleton<MissingSourceReconciliationService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<MissingSourceReconciliationService>());
 
+builder.Services.AddSingleton<TitleSanitizationService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<TitleSanitizationService>());
+
 builder.Services.AddSingleton<PluginCatalogService>();
 
 builder.Services.AddSingleton<PluginUpdateCheckService>();
