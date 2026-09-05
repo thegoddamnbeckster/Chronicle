@@ -1,11 +1,14 @@
 # Chronicle.Plugin.Kodi.NFO — Design
 
 **Date:** 2026-09-02
-**Status:** Read side + core rewiring done (`NfoSignalExtractor`/`NfoDetailParser` deleted).
-Write side done on the Chronicle side: `ScraperController` now has sidecar-building
-endpoints (phased-rollout step 3). Steps 4-6 -- updating the two `Chronicle_Scraper` Kodi
-addons to actually call them -- are not started; that work lives in a separate repo not
-available to this session.
+**Status:** Done, all six phased-rollout steps. Read side + core rewiring done
+(`NfoSignalExtractor`/`NfoDetailParser` deleted). Write side done on the Chronicle side:
+`ScraperController` has the three sidecar-building endpoints (step 3). Steps 4-6 -- updating
+both `Chronicle_Scraper` Kodi addons to call them and deleting the now-dead Python NFO
+builders -- landed 2026-09-05 (verified live against Chronicle's own dev API: fetched the
+real F9 sidecar, spliced in streamdetails and a gap-filling local-art file with a Python
+script exercising the actual `nfo_common.py` functions, confirmed Chronicle's own art
+candidates were preserved untouched and the final document re-parses as valid XML).
 
 ---
 
@@ -405,12 +408,17 @@ Everything else Kodi-specific moves out:
    business assuming every future sidecar plugin is XML-shaped). No `ExtraFields`/
    streamdetails handling here: per the design above, the addon splices those in itself
    client-side after fetching the built XML, so this endpoint never needs them.
-4. Update `Chronicle_Scraper` (movie addon) to call the new endpoint instead of
-   `nfo_writer.py`'s local builder; verify against a real library before touching TV.
-   **Not started** — lives in a separate repo not available to this session.
-5. Same for `tv_addon`. **Not started** (same reason).
-6. Delete the now-dead Chronicle-data functions from `lib/nfo_common.py` in both addons.
-   **Not started** (same reason).
+4. ✅ **Done (2026-09-05).** `Chronicle_Scraper` (movie addon)'s `sync_movie_nfo()` now calls
+   `GET .../movies/sidecar` (via a new `ChronicleClient.fetch_movie_sidecar`) instead of
+   building XML locally, then splices in streamdetails and local-art fallback via the parsed
+   `ElementTree`.
+5. ✅ **Done (2026-09-05).** Same for `tv_addon`'s `sync_show_nfo()`/`sync_episode_nfo()`
+   (`fetch_show_sidecar`/`fetch_episode_sidecar`).
+6. ✅ **Done (2026-09-05).** `add_actors`/`add_directors_and_writers`/`add_uniqueids`/
+   `add_ratings` and the remote-candidate half of `build_art_block` deleted from both addons'
+   `lib/nfo_common.py`; `build_art_block` itself replaced with `splice_local_art_fallback`
+   (gap-fill only -- never overrides a slot Chronicle's own sidecar already populated).
 
 Each step is independently shippable and revertible; nothing requires steps 4-6 to land in
-the same PR as 1-3.
+the same PR as 1-3. Local-art-file fallback discovery (the naming-convention gap noted in
+"Not solved here" above) is still explicitly deferred -- untouched by this rollout.
