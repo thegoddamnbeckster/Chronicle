@@ -1020,7 +1020,9 @@ public class ScraperController : ControllerBase
             ShowYear:       showYear,
             UserRating:            lib?.UserRating,
             ResumePositionPercent: lib?.ResumePositionPercent,
-            ResumeUpdatedAt:       lib?.ResumeUpdatedAt
+            ResumeUpdatedAt:       lib?.ResumeUpdatedAt,
+            IsWatched:             lib?.Status == LibraryStatus.Completed,
+            LastWatchedAt:         lib?.CompletedAt
         );
     }
 
@@ -1410,11 +1412,26 @@ public class ScraperController : ControllerBase
             .Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
         if (peopleTypeId is null) return cast;
 
-        var thumbsByName = await _context.MediaItems
+        // GroupBy + pick one, not ToDictionaryAsync directly -- the "people" catalog can
+        // legitimately hold more than one real individual sharing a common name (confirmed
+        // 2026-09-05: this DB alone has 3733 same-normalized-name groups, the large majority
+        // genuinely different real people, e.g. minor crew credits), and a duplicate stub
+        // pair like the "Dave Matthews" one that crashed this exact endpoint live is only one
+        // cause among several. ToDictionaryAsync throws ArgumentException on ANY second row
+        // with the same key -- taking down the entire movie/episode details response (a 500,
+        // not just a missing thumbnail) for a name collision that has nothing to do with the
+        // item actually being scraped. Picking the first (by Id, so which one wins is at
+        // least stable across requests rather than query-plan-dependent) degrades gracefully
+        // to "some" headshot instead of none -- correct behavior for the true-duplicate case,
+        // and a same-name-different-person case is no worse off than before this endpoint's
+        // headshot enrichment existed at all.
+        var thumbsByName = (await _context.MediaItems
             .Where(m => m.MediaTypeId == peopleTypeId.Value && m.NormalizedName != null
                         && normalizedNames.Contains(m.NormalizedName))
-            .Select(m => new { m.NormalizedName, m.PosterUrl })
-            .ToDictionaryAsync(m => m.NormalizedName!, m => m.PosterUrl, ct);
+            .Select(m => new { m.Id, m.NormalizedName, m.PosterUrl })
+            .ToListAsync(ct))
+            .GroupBy(m => m.NormalizedName!)
+            .ToDictionary(g => g.Key, g => g.OrderBy(m => m.Id).First().PosterUrl);
 
         return cast.Select(c =>
         {

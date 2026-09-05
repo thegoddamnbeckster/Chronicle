@@ -158,6 +158,10 @@ namespace Chronicle.API.DTOs
         /// carry both, same as movies.</summary>
         int? UserRating = null,
         double? ResumePositionPercent = null,
-        DateTime? ResumeUpdatedAt = null
+        DateTime? ResumeUpdatedAt = null,
+        /// <summary>See ScraperMovieDetailsDto.IsWatched/LastWatchedAt -- same reasoning,
+        /// per episode rather than per movie.</summary>
+        bool IsWatched = false,
+        DateTime? LastWatchedAt = null
     );
 }
