@@ -301,21 +301,35 @@ export default function PeopleLibraryPage() {
   const virtualRows = virtualizer.getVirtualItems()
 
   // Auto-load the next OR previous page as the virtualized window approaches either end of
-  // what's already fetched -- per-user request (2026-08-30, extended 2026-09-03 to cover
-  // backward loading too): "automatically loads new items as I need them." No manual "Load
-  // More" click in either direction.
+  // what's ALREADY BEEN FETCHED -- not the end of the full dataset. Confirmed live (2026-09-05)
+  // as the actual cause of "infinite scroll stops populating tiles partway down": this used to
+  // compare against `rowCount` (derived from `total`, the FULL list size), so for any library
+  // bigger than one page -- e.g. 28,629 people at 40/page is ~9,500 rows -- the trigger
+  // (`lastRow.index >= rowCount - 3`) only ever fires within the last few rows of the ENTIRE
+  // list, which normal scrolling never reaches. Page 1 loads, and everything past its own last
+  // row renders as permanently blank placeholder cards because fetchNextPage() is never called.
+  // Comparing against the highest/lowest currently LOADED page (pageParams, already tracked by
+  // useInfiniteQuery) instead of the dataset total is what actually fixes it. Per-user request
+  // (2026-08-30, extended 2026-09-03 to cover backward loading too): "automatically loads new
+  // items as I need them." No manual "Load More" click in either direction.
   useEffect(() => {
     const firstRow = virtualRows[0]
     const lastRow = virtualRows[virtualRows.length - 1]
     if (!firstRow || !lastRow) return
-    if (lastRow.index >= rowCount - 3 && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
+
+    const maxLoadedPage = pageParams.length > 0 ? Math.max(...pageParams) : (initialPage ?? 1)
+    const minLoadedPage = pageParams.length > 0 ? Math.min(...pageParams) : (initialPage ?? 1)
+    const maxLoadedRow = Math.floor((maxLoadedPage * PEOPLE_PAGE_SIZE - 1) / columnsPerRow)
+    const minLoadedRow = Math.floor(((minLoadedPage - 1) * PEOPLE_PAGE_SIZE) / columnsPerRow)
+
+    if (lastRow.index >= maxLoadedRow - 3 && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
       peopleQuery.fetchNextPage()
     }
-    if (firstRow.index <= 2 && peopleQuery.hasPreviousPage && !peopleQuery.isFetchingPreviousPage) {
+    if (firstRow.index <= minLoadedRow + 2 && peopleQuery.hasPreviousPage && !peopleQuery.isFetchingPreviousPage) {
       peopleQuery.fetchPreviousPage()
     }
   }, [
-    virtualRows, rowCount,
+    virtualRows, columnsPerRow, pageParams, initialPage,
     peopleQuery.hasNextPage, peopleQuery.isFetchingNextPage, peopleQuery.fetchNextPage,
     peopleQuery.hasPreviousPage, peopleQuery.isFetchingPreviousPage, peopleQuery.fetchPreviousPage,
   ])
