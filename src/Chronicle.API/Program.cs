@@ -49,6 +49,11 @@ if (Environment.GetEnvironmentVariable("EF_DESIGN_TIME") != "1" &&
     !builder.Environment.IsEnvironment("Testing"))
     PortManager.CheckPort(portConfig.Api);
 builder.WebHost.UseUrls($"http://0.0.0.0:{portConfig.Api}");
+// Injectable so KodiDeviceController can refuse to register a "device" at Chronicle's own
+// port -- see that controller's own doc for why (SSRF guard: an authenticated caller could
+// otherwise register 127.0.0.1:<this port> and have NfoPushService's later pushes attack
+// Chronicle's own API on a schedule the attacker doesn't even need to trigger themselves).
+builder.Services.AddSingleton(portConfig);
 
 // ── Serilog ───────────────────────────────────────────────────────────────────
 // Reads retention from appsettings.json ("Serilog:RetainedLogDays").
@@ -145,6 +150,9 @@ builder.Services.AddSingleton<TagMismatchRematchQueue>();
 builder.Services.AddScoped<ISyncOrchestrationService, SyncOrchestrationService>();
 builder.Services.AddSingleton<ISyncJobTracker, SyncJobTracker>();
 builder.Services.AddScoped<IPluginTaskRunner, PluginTaskRunner>();
+builder.Services.AddScoped<IKodiDeviceService, KodiDeviceService>();
+builder.Services.AddScoped<IKodiRpcClient, KodiRpcClient>();
+builder.Services.AddScoped<INfoPushService, NfoPushService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();
@@ -187,6 +195,20 @@ builder.Services.AddHttpClient("github", c =>
         c.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", githubToken);
 });
+
+// ── Named HttpClient for NfoPushService's internal loopback call to its own sidecar
+// endpoints (see NfoPushService's own doc for why a loopback call, not a shared-code refactor).
+builder.Services.AddHttpClient("internal-loopback", c =>
+{
+    c.BaseAddress = new Uri($"http://localhost:{portConfig.Api}");
+    c.Timeout = TimeSpan.FromSeconds(15);
+});
+
+// ── Named HttpClient for pushing VideoLibrary.Refresh* to a registered Kodi device's own
+// remote-control endpoint (KodiRpcClient sets Timeout per-call and BaseAddress per-device, since
+// every device has a different host/port -- this registration exists only so the named client
+// is a distinct instance from "internal-loopback" above, not for any shared config).
+builder.Services.AddHttpClient(nameof(Chronicle.Services.KodiRpcClient));
 
 // ── Data Protection (plugin settings encryption) ──────────────────────────────
 // Keys are persisted under ContentRootPath (project root in dev, publish dir in

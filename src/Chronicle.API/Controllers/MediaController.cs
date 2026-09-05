@@ -7,6 +7,7 @@ using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using System.Text.RegularExpressions;
 
 namespace Chronicle.API.Controllers
@@ -26,13 +27,15 @@ namespace Chronicle.API.Controllers
         private readonly IPluginRegistry _pluginRegistry;
         private readonly IMetadataResolutionService _resolutionService;
         private readonly OverrideResetProgressService _overrideResetProgress;
+        private readonly IServiceScopeFactory _scopeFactory;
 
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
             IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
             ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
             IPluginRegistry pluginRegistry,
-            IMetadataResolutionService resolutionService, OverrideResetProgressService overrideResetProgress)
+            IMetadataResolutionService resolutionService, OverrideResetProgressService overrideResetProgress,
+            IServiceScopeFactory scopeFactory)
         {
             _mediaService            = mediaService;
             _fileScanService         = fileScanService;
@@ -44,6 +47,7 @@ namespace Chronicle.API.Controllers
             _mergeService    = mergeService;
             _resolutionService = resolutionService;
             _overrideResetProgress = overrideResetProgress;
+            _scopeFactory = scopeFactory;
         }
 
         [HttpGet("types")]
@@ -251,6 +255,32 @@ namespace Chronicle.API.Controllers
             {
                 var item = await _mediaService.UpdateAsync(id, new Chronicle.Services.UpdateMediaRequest(
                     request.Name, request.Year, request.Overview, request.PosterUrl, request.RuntimeMinutes), HttpContext.RequestAborted);
+
+                // Fire-and-forget, on its own DI scope and its own CancellationToken (never
+                // HttpContext.RequestAborted -- that fires the instant THIS response is sent,
+                // which would cancel the push before it ever gets a chance to run). Runs on a
+                // background thread rather than being awaited inline: NfoPushService does a
+                // loopback HTTP round-trip, a file write, and one JSON-RPC call per registered
+                // Kodi device, none of which this save should make the editing user wait on --
+                // confirmed live (2026-09-05) this could otherwise add 15s+ per unreachable
+                // device to an ordinary rename. A fresh scope is required, not just a fresh
+                // Task: this request's own _context/other scoped services are disposed the
+                // moment the response is sent, so the background work needs services resolved
+                // from a scope that outlives it (same pattern MissingSourceReconciliationService
+                // already uses for its own background DB work).
+                var editingUserId = GetCurrentUserId();
+                if (editingUserId is int uid)
+                {
+                    var itemId = item.Id;
+                    var scopeFactory = _scopeFactory;
+                    _ = Task.Run(async () =>
+                    {
+                        using var scope = scopeFactory.CreateScope();
+                        var nfoPush = scope.ServiceProvider.GetRequiredService<INfoPushService>();
+                        await nfoPush.PushAsync(itemId, uid, CancellationToken.None);
+                    });
+                }
+
                 return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item)));
             }
             catch (MediaNotFoundException ex)

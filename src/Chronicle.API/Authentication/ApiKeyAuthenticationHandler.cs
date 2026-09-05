@@ -17,6 +17,14 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
     public const string SchemeName = "ApiKey";
     private const string ApiKeyHeader = "X-API-Key";
 
+    /// <summary>Carries the calling ApiToken's own Id -- distinct from the user id every other
+    /// claim here already carries, since one user can have several API keys/devices (e.g. two
+    /// Shields) and some features (KodiDevice registration) need to know exactly which device
+    /// is calling, not just which user owns it. Absent on a JWT-authenticated request (the web
+    /// UI has no single "device" to attribute); callers that need this must be reached only via
+    /// an API key, same as every other scraper/device-facing endpoint already is.</summary>
+    public const string ApiTokenIdClaimType = "chronicle:api_token_id";
+
     private readonly IApiTokenService _tokenService;
 
     public ApiKeyAuthenticationHandler(
@@ -52,6 +60,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Name, user.Username),
+            new(ApiTokenIdClaimType, token.Id.ToString()),
         };
 
         if (user.IsAdmin)

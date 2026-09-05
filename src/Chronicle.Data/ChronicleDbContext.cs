@@ -80,6 +80,8 @@ namespace Chronicle.Data
         public DbSet<MediaItemDuplicateCandidate> MediaItemDuplicateCandidates { get; set; } = null!;
         public DbSet<MediaItemDuplicateDismissal> MediaItemDuplicateDismissals { get; set; } = null!;
         public DbSet<PersonHeadshot> PersonHeadshots { get; set; } = null!;
+        public DbSet<KodiDevice> KodiDevices { get; set; } = null!;
+        public DbSet<KodiLibraryId> KodiLibraryIds { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -533,6 +535,49 @@ namespace Chronicle.Data
                 e.HasOne<MediaItem>().WithMany().HasForeignKey(x => x.ItemAId)
                     .OnDelete(DeleteBehavior.Cascade);
                 e.HasOne<MediaItem>().WithMany().HasForeignKey(x => x.ItemBId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<KodiDevice>(e =>
+            {
+                e.ToTable("kodi_devices");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+                e.Property(x => x.UserId).HasColumnName("user_id").IsRequired();
+                e.Property(x => x.ApiTokenId).HasColumnName("api_token_id").IsRequired();
+                e.Property(x => x.Name).HasColumnName("name").IsRequired();
+                e.Property(x => x.Host).HasColumnName("host").IsRequired();
+                e.Property(x => x.Port).HasColumnName("port").IsRequired();
+                e.Property(x => x.Username).HasColumnName("username");
+                e.Property(x => x.Password).HasColumnName("password");
+                e.Property(x => x.LastSeenAt).HasColumnName("last_seen_at");
+                e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+                // One device row per registering API token -- re-registration (a periodic
+                // heartbeat, or a changed LAN IP) upserts this same row rather than growing a
+                // new one every time. Cascades with the token so a revoked/deleted pairing
+                // doesn't leave a stale, unreachable device Chronicle keeps trying to push to.
+                e.HasIndex(x => x.ApiTokenId).IsUnique().HasDatabaseName("idx_kodi_devices_api_token");
+                e.HasOne<ApiToken>().WithMany().HasForeignKey(x => x.ApiTokenId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<KodiLibraryId>(e =>
+            {
+                e.ToTable("kodi_library_ids");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+                e.Property(x => x.KodiDeviceId).HasColumnName("kodi_device_id").IsRequired();
+                e.Property(x => x.MediaItemId).HasColumnName("media_item_id").IsRequired();
+                e.Property(x => x.Kind).HasColumnName("kind").IsRequired();
+                e.Property(x => x.KodiId).HasColumnName("kodi_id").IsRequired();
+                e.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+                e.HasIndex(x => new { x.KodiDeviceId, x.MediaItemId }).IsUnique()
+                    .HasDatabaseName("idx_kodi_library_ids_unique");
+                e.HasOne<KodiDevice>().WithMany().HasForeignKey(x => x.KodiDeviceId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                e.HasOne<MediaItem>().WithMany().HasForeignKey(x => x.MediaItemId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
         }
