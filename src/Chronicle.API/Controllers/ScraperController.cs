@@ -961,7 +961,9 @@ public class ScraperController : ControllerBase
             KnownFileName:  TryGetScannedFileName(item.MetadataJson),
             UserRating:            lib?.UserRating,
             ResumePositionPercent: lib?.ResumePositionPercent,
-            ResumeUpdatedAt:       lib?.ResumeUpdatedAt
+            ResumeUpdatedAt:       lib?.ResumeUpdatedAt,
+            IsWatched:             lib?.Status == LibraryStatus.Completed,
+            LastWatchedAt:         lib?.CompletedAt
         );
     }
 

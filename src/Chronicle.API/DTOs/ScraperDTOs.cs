@@ -94,7 +94,20 @@ namespace Chronicle.API.DTOs
         /// Genuinely bidirectional: the scraper compares this against Kodi's own local
         /// lastplayed/resume and reconciles in whichever direction is more recent.</summary>
         double? ResumePositionPercent = null,
-        DateTime? ResumeUpdatedAt = null
+        DateTime? ResumeUpdatedAt = null,
+        /// <summary>True when the calling user's UserLibrary row for this item is Completed.
+        /// Deliberately separate from ResumePositionPercent/ResumeUpdatedAt above -- those are
+        /// cleared to null the moment an item is marked watched (nothing left to "resume"),
+        /// which meant a fully-completed watch carried no signal at all for the scraper to
+        /// reconcile onto a Kodi instance that has never played the item. Confirmed live
+        /// (2026-09-05): a movie completed on one Shield stayed permanently unwatched on
+        /// another, since resolve_progress_direction() saw ResumePositionPercent=null and had
+        /// nothing to compare. IsWatched/LastWatchedAt read UserLibrary.Status/CompletedAt
+        /// instead, which are never cleared, giving the addon a genuine "when was this
+        /// finished" signal to compare against Kodi's own lastplayed the same way it already
+        /// compares resume timestamps.</summary>
+        bool IsWatched = false,
+        DateTime? LastWatchedAt = null
     );
 
     public record ScraperShowDetailsDto(
