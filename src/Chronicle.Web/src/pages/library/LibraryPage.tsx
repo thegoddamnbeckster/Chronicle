@@ -563,6 +563,11 @@ export default function LibraryPage() {
                         {entry.mediaItem.hasMetadataOnly && (
                           <div className={styles.stubBadge}>Missing</div>
                         )}
+                        {entry.mediaItem.deathDate && (
+                          <div className={styles.deceasedBadge} title={`Deceased ${new Date(entry.mediaItem.deathDate).getUTCFullYear()}`}>
+                            Deceased
+                          </div>
+                        )}
                       </div>
                       {selectedIds.has(entry.mediaItem.id) && (
                         <div className={styles.selectOverlay}>✓</div>
@@ -582,6 +587,11 @@ export default function LibraryPage() {
                         )}
                         {entry.mediaItem.hasMetadataOnly && (
                           <div className={styles.stubBadge}>Missing</div>
+                        )}
+                        {entry.mediaItem.deathDate && (
+                          <div className={styles.deceasedBadge} title={`Deceased ${new Date(entry.mediaItem.deathDate).getUTCFullYear()}`}>
+                            Deceased
+                          </div>
                         )}
                       </div>
                     </Link>

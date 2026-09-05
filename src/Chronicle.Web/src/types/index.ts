@@ -136,7 +136,8 @@ export interface MediaItem {
     pinnedAt: string
     pinnedByUserId?: number | null
   }> | null
-  /** Promoted canonical fields for mediaTypeName == "people" -- null for every other type. */
+  /** Promoted canonical fields -- populated for "people" items (Wikipedia) and solo music
+   *  artists (MusicBrainz's own life-span data); null for every other type/item. */
   birthDate?: string | null
   deathDate?: string | null
 }

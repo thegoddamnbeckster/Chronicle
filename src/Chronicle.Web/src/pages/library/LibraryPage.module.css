@@ -304,6 +304,25 @@
   padding: 2px 6px;
   border-radius: 3px;
   pointer-events: none;
+}
+
+/* Top-left corner, since bottom-left/bottom-right are already .collectionBadge/.stubBadge --
+   same small-caps pill treatment as those, for a solo artist (or any other media item) whose
+   DeathDate got promoted from a plugin's own life-span data (MusicBrainz for music artists,
+   Wikipedia for "people" items). */
+.deceasedBadge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0,0,0,0.6);
+  color: var(--text-muted, #888);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  pointer-events: none;
   border: 1px solid rgba(255,255,255,0.15);
 }
 
