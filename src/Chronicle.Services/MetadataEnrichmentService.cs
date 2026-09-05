@@ -174,6 +174,7 @@ public class MetadataEnrichmentService(
         // provider), since those rows can never become eligible and the cleanup that would
         // clear them out was unreachable code after a loop that never exits.
         await MarkUnsupportedPendingAsSkippedAsync(db, pluginId, supportedRawTypes, ct);
+        await MarkCollectionContainersPendingAsSkippedAsync(db, pluginId, ct);
 
         var cutoff = DateTime.UtcNow - RetryWindow;
 
@@ -220,7 +221,15 @@ public class MetadataEnrichmentService(
                             // Restrict to supported media types in SQL.
                             (supportedRawTypes.Count == 0 ||
                              (x.MediaItem!.MediaType != null &&
-                              supportedRawTypes.Contains(x.MediaItem!.MediaType!.Name))))
+                              supportedRawTypes.Contains(x.MediaItem!.MediaType!.Name))) &&
+                            // A collection container can never be enriched the normal way (see
+                            // MarkCollectionContainersPendingAsSkippedAsync's own doc) -- checked
+                            // here too, not just in that pre/post sweep, because a NEW collection
+                            // can be created mid-run (EnsureCollectionStubsAsync, called from
+                            // this same per-item loop for an unrelated movie) and seed a fresh
+                            // Pending row that the sweep above already ran past this pass.
+                            !db.MediaExternalIds.Any(e => e.MediaItemId == x.MediaItemId &&
+                                                           e.ExternalId.StartsWith("collection:")))
                 .OrderBy(x => x.MediaItem!.HierarchyLevel)
                 .Take(500)
                 .ToListAsync(ct);
@@ -379,6 +388,7 @@ public class MetadataEnrichmentService(
         // something this plugin doesn't support while this run was in progress. The real
         // guard against the infinite-loop case is the identical call before the main loop.
         await MarkUnsupportedPendingAsSkippedAsync(db, pluginId, supportedRawTypes, ct);
+        await MarkCollectionContainersPendingAsSkippedAsync(db, pluginId, ct);
 
         // 2. Diagnostic summary — log how many items are still Pending after the run
         //    and break them down by reason so the cause is visible in logs.
@@ -2243,6 +2253,55 @@ public class MetadataEnrichmentService(
     /// keep the batch loop's "Pending rows remain, do another pass" guard spinning forever —
     /// see the call site before that loop for why this must run first, not just after).
     /// </summary>
+    /// <summary>
+    /// Marks any Pending row for a KNOWN COLLECTION CONTAINER (identified the same way
+    /// SeedCrossRefEnrichmentRowsAsync already does -- a "collection:{id}" external id) as
+    /// Skipped, for every plugin uniformly. "A collection container can never be enriched the
+    /// normal way" (Chronicle/CLAUDE.md) was previously only true BY ACCIDENT for TMDB/
+    /// FanartTV -- their own id-format checks happen to reject a "collection:" prefixed
+    /// reference, so their generic per-item search never matched anything. Nothing stopped a
+    /// plugin with no such prefix check (Wikipedia) from running its normal name-based search
+    /// against a collection anyway, matching whatever real article scores best -- almost always
+    /// the FIRST individual work in the franchise, not the collection itself. Confirmed live
+    /// (2026-09-05): "The Fast and the Furious" collection (real TMDB identity "The Fast and
+    /// the Furious Collection", via the dedicated MovieCollectionService.EnsureCollectionStubsAsync
+    /// path, completely independent of this generic loop) had its own displayed Name overwritten
+    /// with Wikipedia's title for the 2001 film alone, "The Fast and the Furious (2001 film)" --
+    /// wrong twice over: the raw disambiguator, and the wrong article entirely for a container
+    /// representing 11+ films. No plugin's real collection data flows through this generic
+    /// per-item loop (TMDB's own genuine collection title/art arrives via EnsureCollectionStubsAsync
+    /// instead), so excluding collections here loses nothing.
+    /// </summary>
+    private async Task MarkCollectionContainersPendingAsSkippedAsync(
+        ChronicleDbContext db, string pluginId, CancellationToken ct)
+    {
+        var collectionItemIds = await db.MediaExternalIds
+            .Where(e => e.ExternalId.StartsWith("collection:"))
+            .Select(e => e.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+        if (collectionItemIds.Count == 0) return;
+
+        var pendingOnCollections = await db.MediaEnrichments
+            .Where(x => x.PluginId == pluginId &&
+                        x.Status == EnrichmentStatus.Pending &&
+                        collectionItemIds.Contains(x.MediaItemId))
+            .ToListAsync(ct);
+        if (pendingOnCollections.Count == 0) return;
+
+        foreach (var row in pendingOnCollections)
+        {
+            row.Status       = EnrichmentStatus.Skipped;
+            row.ErrorMessage = "This item is a collection container -- its identity and artwork " +
+                                "come from the collection-specific pipeline, not per-item enrichment.";
+        }
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation(
+            "EnrichPendingAsync: marked {Count} items as Skipped for {PluginId} -- known collection containers",
+            pendingOnCollections.Count, pluginId);
+        db.ChangeTracker.Clear();
+    }
+
     private async Task MarkUnsupportedPendingAsSkippedAsync(
         ChronicleDbContext db, string pluginId, HashSet<string> supportedRawTypes, CancellationToken ct)
     {

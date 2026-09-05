@@ -51,6 +51,43 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichPendingAsync_SkipsKnownCollectionContainer()
+    {
+        // Regression test for a real production bug (2026-09-05): a movie collection container
+        // already has its own genuine identity from MovieCollectionService.EnsureCollectionStubsAsync
+        // (a completely separate pipeline from this one) -- nothing here should ever attempt a
+        // normal name-based search against it. TMDB/FanartTV happened to reject a "collection:"
+        // prefixed reference on their own (wrong id format for what they expect), but nothing
+        // stopped a plugin with no such check from matching some unrelated real article and
+        // overwriting the collection's own correct name/art with it. Confirmed live: "The Fast
+        // and the Furious" collection (real identity "The Fast and the Furious Collection") had
+        // its Name overwritten with the Wikipedia article for the first film alone.
+        var (item, status) = await SeedItemWithStatus(null, EnrichmentStatus.Pending);
+        _db.MediaExternalIds.Add(new MediaExternalId
+        {
+            MediaItemId = item.Id, Source = "tmdb", ExternalId = "collection:9485"
+        });
+        await _db.SaveChangesAsync();
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        mockProvider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new ScoredCandidate(
+                new MediaMetadata { Title = "Wrong Match", ExternalId = "wikipedia:en:Wrong_Match" }, 100, "should never be called")]);
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
+            .Returns(mockProvider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        mockProvider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Never);
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.Skipped);
+        updated.ErrorMessage.Should().Contain("collection container");
+    }
+
+    [Fact]
     public async Task EnrichPendingAsync_IncrementsRetryCountOnFailure()
     {
         var (item, status) = await SeedItemWithStatus(null, EnrichmentStatus.Pending);
