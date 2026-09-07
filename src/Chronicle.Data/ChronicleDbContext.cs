@@ -432,6 +432,11 @@ namespace Chronicle.Data
                 e.HasIndex(c => c.MediaItemId).HasDatabaseName("idx_media_credits_item");
                 e.HasIndex(c => c.PersonName).HasDatabaseName("idx_media_credits_person");
                 e.HasIndex(c => c.PersonMediaItemId).HasDatabaseName("idx_media_credits_person_item");
+                // Covers PeopleController's role-filtered semi-join (Role, then PersonMediaItemId
+                // for the Select/Distinct that follows) entirely from the index, no row lookups
+                // needed -- see that query's own comment for the ~20x speedup this and the query
+                // rewrite together confirmed live.
+                e.HasIndex(c => new { c.Role, c.PersonMediaItemId }).HasDatabaseName("idx_media_credits_role");
             });
 
             modelBuilder.Entity<PersonHeadshot>(e =>

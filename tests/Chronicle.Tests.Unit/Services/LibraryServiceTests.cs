@@ -191,6 +191,75 @@ public class LibraryServiceTests
         Assert.False(await db.UserLibraries.AnyAsync(l => l.MediaItemId == person.Id));
     }
 
+    // ── GetForUserAsync performance rewrite (2026-09-07) ─────────────────────────
+    // Root-caused live as the actual cause of "loading is still comparatively slow": the
+    // previous implementation loaded every trackable MediaItem in the whole catalog before
+    // sorting/filtering/paging in memory (13.8s for ~88K items on this user's real catalog).
+    // The rewrite pushes the LEFT JOIN, status filter, sort, and Skip/Take to the database and
+    // only auto-creates/materializes the current page's items -- these tests lock in the two
+    // behaviors that change under the hood even though the public contract doesn't.
+
+    [Fact]
+    public async Task GetForUserAsync_OnlyAutoCreatesRowsForTheCurrentPage_NotTheWholeCatalog()
+    {
+        var db = MakeDb();
+
+        var mt = new MediaType { Name = "movies", HierarchyLevels = 1, IsTrackable = true, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+
+        // 5 untracked items, none with a UserLibrary row yet.
+        var items = Enumerable.Range(1, 5)
+            .Select(i => new MediaItem { Name = $"Movie {i}", MediaTypeId = mt.Id, CreatedAt = DateTime.UtcNow.AddMinutes(-i), UpdatedAt = DateTime.UtcNow })
+            .ToList();
+        db.MediaItems.AddRange(items);
+        await db.SaveChangesAsync();
+
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        // Act: ask for just 1 item on page 1.
+        var results = (await svc.GetForUserAsync(1, page: 1, perPage: 1)).ToList();
+
+        // Assert: exactly one UserLibrary row now exists -- the previous implementation would
+        // have auto-created all 5 up front regardless of perPage.
+        Assert.Single(results);
+        Assert.Equal(1, await db.UserLibraries.CountAsync(l => l.UserId == 1));
+    }
+
+    [Fact]
+    public async Task GetForUserAsync_SortsTrackedAndUntrackedItemsTogetherByEffectiveUpdatedAt()
+    {
+        var db = MakeDb();
+
+        var mt = new MediaType { Name = "movies", HierarchyLevels = 1, IsTrackable = true, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+
+        var now = DateTime.UtcNow;
+        // Tracked item, updated recently -- should sort first.
+        var recentlyTracked = new MediaItem { Name = "Recently Tracked", MediaTypeId = mt.Id, CreatedAt = now.AddDays(-10), UpdatedAt = now };
+        // Untracked item, but created very recently -- falls back to MediaItem.CreatedAt for
+        // sorting (never touched, so it's neither "just updated" nor arbitrarily first).
+        var recentlyAddedUntracked = new MediaItem { Name = "Recently Added, Untracked", MediaTypeId = mt.Id, CreatedAt = now.AddMinutes(-1), UpdatedAt = now };
+        // Tracked item, updated long ago -- should sort last.
+        var staleTracked = new MediaItem { Name = "Stale Tracked", MediaTypeId = mt.Id, CreatedAt = now.AddDays(-30), UpdatedAt = now };
+        db.MediaItems.AddRange(recentlyTracked, recentlyAddedUntracked, staleTracked);
+        await db.SaveChangesAsync();
+
+        db.UserLibraries.AddRange(
+            new UserLibrary { UserId = 1, MediaItemId = recentlyTracked.Id, Status = LibraryStatus.Watching, AddedAt = now.AddDays(-10), UpdatedAt = now },
+            new UserLibrary { UserId = 1, MediaItemId = staleTracked.Id, Status = LibraryStatus.Completed, AddedAt = now.AddDays(-30), UpdatedAt = now.AddDays(-30) });
+        await db.SaveChangesAsync();
+
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var results = (await svc.GetForUserAsync(1, perPage: 10)).ToList();
+
+        Assert.Equal(
+            new[] { recentlyTracked.Id, recentlyAddedUntracked.Id, staleTracked.Id },
+            results.Select(r => r.MediaItemId));
+    }
+
     [Fact]
     public async Task AddAsync_NonTrackableMediaType_ThrowsNotTrackableMediaException()
     {

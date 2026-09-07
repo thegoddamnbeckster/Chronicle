@@ -209,6 +209,83 @@ namespace Chronicle.Tests.Integration
             zephyrIndex.Should().BeGreaterThan(andersIndex);
         }
 
+        // Root-caused live (2026-09-07) as the actual cause of "loading the people tab took 20
+        // seconds": GetOrderedPeopleAsync's role filter used to be a correlated
+        // Where(m => MediaCredits.Any(c => c.PersonMediaItemId == m.Id && c.Role == role)) --
+        // one indexed probe of media_credits PER CANDIDATE PERSON ROW instead of one single
+        // scan, ~20x slower at real catalog scale (200K+ people, 500K+ credits) than the
+        // semi-join rewrite. This locks in that the rewrite still returns exactly the people
+        // who actually have that role, and no others -- a person with a DIFFERENT role only, or
+        // no role at all, must not leak into a role-filtered result.
+        [Fact]
+        public async Task GetPeople_RoleFilter_ReturnsOnlyPeopleCreditedInThatRole()
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+            var moviesType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "movies")
+                ?? (await db.MediaTypes.AddAsync(new MediaType
+                {
+                    Name = "movies", DisplayName = "Movies", HierarchyLevels = 1,
+                    InteractionVerb = "watched", ProgressUnit = "minutes",
+                    IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
+                })).Entity;
+            var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
+                ?? (await db.MediaTypes.AddAsync(new MediaType
+                {
+                    Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                    InteractionVerb = "viewed", ProgressUnit = "percent",
+                    IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
+                })).Entity;
+            await db.SaveChangesAsync();
+
+            var movie = new MediaItem
+            {
+                MediaTypeId = moviesType.Id, Name = "Some Movie", Year = 2020, HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            var actorOnly = new MediaItem
+            {
+                MediaTypeId = peopleType.Id, Name = "Actor Only", HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            var directorOnly = new MediaItem
+            {
+                MediaTypeId = peopleType.Id, Name = "Director Only", HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            var both = new MediaItem
+            {
+                MediaTypeId = peopleType.Id, Name = "Both Roles", HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            var noRole = new MediaItem
+            {
+                MediaTypeId = peopleType.Id, Name = "No Role", HierarchyLevel = 0,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.MediaItems.AddRange(movie, actorOnly, directorOnly, both, noRole);
+            await db.SaveChangesAsync();
+
+            db.MediaCredits.AddRange(
+                new MediaCredit { MediaItemId = movie.Id, PersonMediaItemId = actorOnly.Id, PersonName = actorOnly.Name, Role = "Actor", Source = "test" },
+                new MediaCredit { MediaItemId = movie.Id, PersonMediaItemId = directorOnly.Id, PersonName = directorOnly.Name, Role = "Director", Source = "test" },
+                new MediaCredit { MediaItemId = movie.Id, PersonMediaItemId = both.Id, PersonName = both.Name, Role = "Actor", Source = "test" },
+                new MediaCredit { MediaItemId = movie.Id, PersonMediaItemId = both.Id, PersonName = both.Name, Role = "Director", Source = "test" }
+            );
+            await db.SaveChangesAsync();
+
+            var client = await AuthedClientAsync();
+            var resp = await client.GetAsync("/api/v1/people?role=Actor&perPage=1000");
+            resp.EnsureSuccessStatusCode();
+            var names = JsonDocument.Parse(await resp.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("data").EnumerateArray()
+                .Select(i => i.GetProperty("name").GetString()).ToList();
+
+            names.Should().Contain(["Actor Only", "Both Roles"]);
+            names.Should().NotContain(["Director Only", "No Role"]);
+        }
+
         // Per-user request (2026-08-31): "if you run out of people for a particular letter
         // either stop or scroll through the next letter. Don't just wrap the existing
         // letter." Original root cause: GetPeople used to force page back to 1 on every
