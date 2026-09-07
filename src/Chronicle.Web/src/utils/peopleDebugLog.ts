@@ -7,7 +7,7 @@
  * console, so this records events into memory continuously regardless of whether DevTools is
  * open, and exposes the buffer on window so it can be read AFTER a stall is noticed instead of
  * requiring the console to have been open and watched the whole time. */
-const MAX_ENTRIES = 300
+const MAX_ENTRIES = 2000
 
 export interface PeopleDebugEntry {
   t: number

@@ -123,6 +123,12 @@ export default function PeopleLibraryPage() {
   // jumpRequestId rather than jumpTarget precisely so a same-target re-jump (which bumps the id
   // even though the target string is unchanged) is never confused with "already handled."
   const scrolledForJumpRef = useRef<number | null>(null)
+  // Last backstop-tick signature actually written to peopleDebugLog -- root-caused live
+  // (2026-09-07): logging every 500ms tick unconditionally filled the ring buffer's whole
+  // 300-entry capacity with ~2.5 minutes of an idle, unchanging steady state, evicting the
+  // actual jump/drift sequence that caused the bug report before it could ever be read back.
+  // Logging only on an actual change lets the same buffer capacity span vastly more real time.
+  const lastBackstopTickRef = useRef<string | null>(null)
 
   function setPrefs(updates: Partial<PeopleLibraryPrefs>) {
     const next = { ...prefs, ...updates }
@@ -414,16 +420,21 @@ export default function PeopleLibraryPage() {
       const rowSpan = rowHeight + GRID_GAP
       const loadedBottomY = (maxLoadedRow + 1) * rowSpan
       const loadedTopY = minLoadedRow * rowSpan
-      // clientHeight/virtualizer.getTotalSize() are logged every tick (not just on a fetch
-      // decision) specifically to catch the "virtualizer thinks the container is much shorter
-      // than it really is, so it only ever renders one row's worth of virtualRows" theory --
-      // that failure mode produces no fetch decision at all (the visible range genuinely IS
-      // satisfied by the one loaded row), so it would otherwise leave no trace in this log.
-      logPeopleDebug('backstop-tick', {
+      // clientHeight/virtualizer.getTotalSize() are logged every CHANGED tick (not just on a
+      // fetch decision) specifically to catch the "virtualizer thinks the container is much
+      // shorter than it really is, so it only ever renders one row's worth of virtualRows"
+      // theory -- that failure mode produces no fetch decision at all (the visible range
+      // genuinely IS satisfied by the one loaded row), so it would otherwise leave no trace.
+      const tick = {
         scrollTop: main.scrollTop, clientHeight: main.clientHeight,
         totalSize: virtualizer.getTotalSize(), loadedBottomY, loadedTopY,
         hasNextPage: peopleQuery.hasNextPage, isFetchingNextPage: peopleQuery.isFetchingNextPage,
-      })
+      }
+      const tickKey = JSON.stringify(tick)
+      if (tickKey !== lastBackstopTickRef.current) {
+        lastBackstopTickRef.current = tickKey
+        logPeopleDebug('backstop-tick', tick)
+      }
 
       if (main.scrollTop + main.clientHeight >= loadedBottomY - rowSpan * 3
           && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
