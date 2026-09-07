@@ -107,4 +107,10 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
 
         return rows.Select(r => (r.device, r.mapping)).ToList();
     }
+
+    public async Task<int?> GetDeviceIdForApiTokenAsync(int apiTokenId, CancellationToken ct = default)
+    {
+        var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.ApiTokenId == apiTokenId, ct);
+        return device?.Id;
+    }
 }

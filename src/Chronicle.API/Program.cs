@@ -153,6 +153,7 @@ builder.Services.AddScoped<IPluginTaskRunner, PluginTaskRunner>();
 builder.Services.AddScoped<IKodiDeviceService, KodiDeviceService>();
 builder.Services.AddScoped<IKodiRpcClient, KodiRpcClient>();
 builder.Services.AddScoped<INfoPushService, NfoPushService>();
+builder.Services.AddScoped<INfoRebuildQueueService, NfoRebuildQueueService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();

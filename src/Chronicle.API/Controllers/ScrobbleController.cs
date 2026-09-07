@@ -6,6 +6,7 @@ using Chronicle.Data;
 using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.API.Controllers
 {
@@ -16,11 +17,36 @@ namespace Chronicle.API.Controllers
     {
         private readonly IScrobbleService _scrobbleService;
         private readonly ChronicleDbContext _context;
+        private readonly IServiceScopeFactory _scopeFactory;
 
-        public ScrobbleController(IScrobbleService scrobbleService, ChronicleDbContext context)
+        public ScrobbleController(IScrobbleService scrobbleService, ChronicleDbContext context, IServiceScopeFactory scopeFactory)
         {
             _scrobbleService = scrobbleService;
             _context         = context;
+            _scopeFactory    = scopeFactory;
+        }
+
+        /// <summary>
+        /// Fire-and-forget push to any Kodi device that already knows this item -- same
+        /// pattern as MediaController.Update/LibraryController.Update, see MediaController's
+        /// own comment for why a fresh scope/CancellationToken are required. Deliberately NOT
+        /// called from the plain progress-scrobble path in Scrobble() below: Chronicle_Scrobbler.
+        /// Kodi's default poll_interval is 30 SECONDS during active playback, and a live
+        /// VideoLibrary.Refresh* on every one of those would hammer every registered Kodi
+        /// device (NFO rewrite + JSON-RPC call) throughout an entire movie. Only called for the
+        /// genuinely rare, one-shot events -- a rating, or a watch marked complete -- where a
+        /// live push actually pays for itself. Continuous in-progress percentage still reaches
+        /// other devices eventually via the auto-rebuild-on-scan periodic catch-up instead.
+        /// </summary>
+        private void PushToKodiFireAndForget(int mediaItemId, int userId)
+        {
+            var scopeFactory = _scopeFactory;
+            _ = Task.Run(async () =>
+            {
+                using var scope = scopeFactory.CreateScope();
+                var nfoPush = scope.ServiceProvider.GetRequiredService<INfoPushService>();
+                await nfoPush.PushAsync(mediaItemId, userId, CancellationToken.None);
+            });
         }
 
         [HttpPost]
@@ -46,6 +72,12 @@ namespace Chronicle.API.Controllers
                     request.Episode,
                     request.EpisodeTitle
                 ), HttpContext.RequestAborted);
+
+                // Only the rare "this item just got marked fully watched" transition pushes
+                // live -- see PushToKodiFireAndForget's own doc for why the routine 30s-interval
+                // progress heartbeat deliberately does not.
+                if (result.Event.MarkedAsWatched)
+                    PushToKodiFireAndForget(result.Event.MediaItemId, userId);
 
                 return Ok(ApiResponse<ScrobbleResponseDto>.Ok(new ScrobbleResponseDto(
                     result.Event.Id,
@@ -170,6 +202,8 @@ namespace Chronicle.API.Controllers
                     request.Year,
                     request.MediaType
                 ), HttpContext.RequestAborted);
+
+                PushToKodiFireAndForget(result.MediaItemId, userId);
 
                 return Ok(ApiResponse<RateResponseDto>.Ok(
                     new RateResponseDto(result.MediaItemId, result.Rating)));

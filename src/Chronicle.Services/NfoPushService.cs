@@ -1,5 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
+using Chronicle.Core.Helpers;
+using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services.Security;
 using Microsoft.EntityFrameworkCore;
@@ -31,14 +33,18 @@ public sealed class NfoPushService(
     IKodiRpcClient rpc,
     ILogger<NfoPushService> logger) : INfoPushService
 {
-    private static readonly string[] MovieLikeTypeNames = ["movies", "fanedits", "anime_movies"];
-    private static readonly string[] ShowLikeTypeNames  = ["tv", "anime"];
+    /// <summary>Stable id this service's own row lives under in the shared background_tasks
+    /// table -- see RecordStatusAsync's own doc for why this reuses that table/UI rather than
+    /// building a separate one.</summary>
+    private const string StatusTaskId = "nfo-push";
 
     public async Task PushAsync(int mediaItemId, int userId, CancellationToken ct = default)
     {
         try
         {
-            await PushCoreAsync(mediaItemId, userId, ct);
+            var outcome = await PushCoreAsync(mediaItemId, userId, ct);
+            if (outcome.HasValue)
+                await RecordStatusAsync(outcome.Value, mediaItemId, null, ct);
         }
         catch (OperationCanceledException)
         {
@@ -54,45 +60,107 @@ public sealed class NfoPushService(
             logger.LogWarning(ex,
                 "NfoPushService: push failed for media item {Id} -- the next scheduled/manual " +
                 "NFO rebuild will still pick this up.", mediaItemId);
+            await RecordStatusAsync(false, mediaItemId, ex.Message, ct);
         }
     }
 
-    private async Task PushCoreAsync(int mediaItemId, int userId, CancellationToken ct)
+    /// <summary>
+    /// Surfaces this service's otherwise-invisible fire-and-forget activity in Chronicle's own
+    /// UI, by reusing the existing generic Background Tasks page/table (BackgroundTasksPage.tsx,
+    /// background_tasks) rather than building a separate live-activity channel from scratch --
+    /// per-edit/-rating/-watch pushes are far too frequent and short-lived to justify their own
+    /// UI, but a single rolling "last push" row lets a user actually SEE this is happening at
+    /// all, which was a real, reported gap (2026-09-06): "There is no obvious way that NFOs are
+    /// being written... this needs to be a background task."
+    ///
+    /// Deliberately NOT registered as an IScheduledTask: this isn't cron-scheduled or manually
+    /// re-runnable (there's nothing meaningful to "Run Now" -- a push only ever fires in
+    /// response to a real edit/rating/watch event), so IsEnabled/Schedulable are both false --
+    /// TaskSchedulerService's own tick loop filters on IsEnabled and so never touches this row,
+    /// and the frontend hides the Schedule button for Schedulable=false. The one known rough
+    /// edge: BackgroundTasksController still shows a "Run Now" button (nothing in the schema
+    /// distinguishes "exists but not manually triggerable" from "runnable"), which returns
+    /// TASK_NOT_FOUND if clicked since no IScheduledTask is registered under this id --
+    /// acceptable given how rarely anyone would click it on a row already showing live status.
+    ///
+    /// outcome=null (nothing recorded -- see PushCoreAsync's own doc) covers "nothing to push"
+    /// cases (item not found, unsupported kind, no known on-disk location yet) that aren't a
+    /// meaningful "did the background task run" signal and would just spam the Last Run
+    /// timestamp for events where nothing actually happened.
+    /// </summary>
+    private async Task RecordStatusAsync(bool succeeded, int mediaItemId, string? errorDetail, CancellationToken ct)
+    {
+        try
+        {
+            var row = await db.BackgroundTasks.FindAsync([StatusTaskId], ct);
+            var isNew = row is null;
+            row ??= new BackgroundTask
+            {
+                TaskId      = StatusTaskId,
+                DisplayName = "NFO Push",
+                Description = "Writes a fresh NFO and pushes a targeted library refresh to " +
+                              "every Kodi device that already knows an item, whenever that " +
+                              "item is edited, rated, or marked watched in Chronicle. Fires " +
+                              "automatically on those events -- not on a schedule, and " +
+                              "nothing to manually run here.",
+                CronExpression = "0 0 1 1 *", // never used: IsEnabled stays false, see class doc
+                IsEnabled      = false,
+                Schedulable    = false,
+            };
+            if (isNew) db.BackgroundTasks.Add(row);
+
+            row.LastRunAt        = DateTime.UtcNow;
+            row.LastRunSucceeded = succeeded;
+            row.LastErrorMessage = succeeded ? null : (errorDetail ?? $"Push failed for media item {mediaItemId} -- see server logs.");
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException) when (isNew)
+            {
+                // Lost a race with a concurrent push's own first-ever RecordStatusAsync call
+                // (e.g. a rating and an edit landing near-simultaneously, each on its own DI
+                // scope/DbContext) -- same shape and fix as KodiDeviceService.RegisterAsync's
+                // identical race on api_token_id. Detach our failed insert and update the row
+                // that won instead, rather than losing this call's status update entirely.
+                db.Entry(row).State = EntityState.Detached;
+                var existing = await db.BackgroundTasks.FirstAsync(t => t.TaskId == StatusTaskId, ct);
+                existing.LastRunAt        = DateTime.UtcNow;
+                existing.LastRunSucceeded = succeeded;
+                existing.LastErrorMessage = succeeded ? null : (errorDetail ?? $"Push failed for media item {mediaItemId} -- see server logs.");
+                await db.SaveChangesAsync(ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "NfoPushService: couldn't record push status for visibility.");
+        }
+    }
+
+    /// <summary>Returns null when there was genuinely nothing to push (item/type not found,
+    /// unsupported kind, no on-disk location known yet) -- these aren't a background-task
+    /// outcome worth recording, see RecordStatusAsync's own doc. Returns true/false once actual
+    /// push work was attempted (an NFO write, at minimum).</summary>
+    private async Task<bool?> PushCoreAsync(int mediaItemId, int userId, CancellationToken ct)
     {
         var item = await db.MediaItems.FindAsync([mediaItemId], ct);
-        if (item is null) return;
+        if (item is null) return null;
 
         var mediaType = await db.MediaTypes.FindAsync([item.MediaTypeId], ct);
-        if (mediaType is null) return;
+        if (mediaType is null) return null;
 
-        string kind, sidecarPath;
-        if (MovieLikeTypeNames.Contains(mediaType.Name))
+        var kind = NfoKindHelper.Classify(mediaType.Name, item.HierarchyLevel);
+        if (kind is null)
+            return null; // not a pushable kind: person, music, season container, collection, etc.
+
+        var sidecarPath = kind switch
         {
-            // No HierarchyLevel gate here, unlike the show cases below: a standalone movie
-            // sits at level 0, but a movie that belongs to a collection sits at level 1 (the
-            // collection container itself is level 0) -- confirmed directly against F9, a real
-            // member of "The Fast and the Furious Collection" (level 1), which this check
-            // originally excluded and silently no-opped for. A collection CONTAINER itself
-            // (also movie-typed, also potentially level 0) is harmless to fall through to here:
-            // it has no fileScanner location of its own, so the lookup below naturally finds
-            // nothing to push.
-            kind = "movie";
-            sidecarPath = $"/api/v1/scraper/movies/sidecar?id={mediaItemId}";
-        }
-        else if (ShowLikeTypeNames.Contains(mediaType.Name) && item.HierarchyLevel == 0)
-        {
-            kind = "tvshow";
-            sidecarPath = $"/api/v1/scraper/tv/sidecar?id={mediaItemId}";
-        }
-        else if (ShowLikeTypeNames.Contains(mediaType.Name) && item.HierarchyLevel == 2)
-        {
-            kind = "episode";
-            sidecarPath = $"/api/v1/scraper/tv/episode-sidecar?id={mediaItemId}";
-        }
-        else
-        {
-            return; // not a pushable kind: person, music, season container, collection, etc.
-        }
+            "movie"   => $"/api/v1/scraper/movies/sidecar?id={mediaItemId}",
+            "tvshow"  => $"/api/v1/scraper/tv/sidecar?id={mediaItemId}",
+            "episode" => $"/api/v1/scraper/tv/episode-sidecar?id={mediaItemId}",
+            _         => throw new InvalidOperationException($"Unhandled NFO kind '{kind}'.")
+        };
 
         var (folderPath, filePaths, nfoPath) = ReadFileScannerLocation(item.MetadataJson);
         var destPath = nfoPath ?? DeriveNfoPath(kind, folderPath, filePaths);
@@ -100,11 +168,11 @@ public sealed class NfoPushService(
         {
             logger.LogInformation(
                 "NfoPushService: item {Id} has no known on-disk location yet -- nothing to push.", mediaItemId);
-            return;
+            return null;
         }
 
         var user = await db.Users.FindAsync([userId], ct);
-        if (user is null) return;
+        if (user is null) return null;
         var token = jwt.GenerateToken(user);
 
         var client = httpClientFactory.CreateClient("internal-loopback");
@@ -120,14 +188,14 @@ public sealed class NfoPushService(
         {
             logger.LogWarning(ex,
                 "NfoPushService: couldn't reach Chronicle's own sidecar endpoint for item {Id}.", mediaItemId);
-            return;
+            return false;
         }
         if (!response.IsSuccessStatusCode)
         {
             logger.LogWarning(
                 "NfoPushService: sidecar build for item {Id} returned HTTP {Status}.",
                 mediaItemId, (int)response.StatusCode);
-            return;
+            return false;
         }
         var bytes = await response.Content.ReadAsByteArrayAsync(ct);
 
@@ -146,7 +214,7 @@ public sealed class NfoPushService(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "NfoPushService: couldn't write NFO for item {Id} to {Path}.", mediaItemId, destPath);
-            return;
+            return false;
         }
         logger.LogInformation("NfoPushService: wrote NFO for item {Id} to {Path}.", mediaItemId, destPath);
 
@@ -162,6 +230,12 @@ public sealed class NfoPushService(
                 "NfoPushService: refresh push to device {Device} ({Host}) for item {Id} -- {Result}.",
                 device.Name, device.Host, mediaItemId, ok ? "accepted" : "failed");
         }));
+
+        // The NFO write itself succeeding is the meaningful outcome here, even if targets is
+        // empty (this device has no Kodi devices registered against it yet -- e.g. before this
+        // item's first NFO-rebuild pass has ever run, see kodi_library_ids/report_kodi_id) --
+        // that's not a push failure, just nothing left to fan out to yet.
+        return true;
     }
 
     private static (string? FolderPath, List<string>? FilePaths, string? NfoPath) ReadFileScannerLocation(

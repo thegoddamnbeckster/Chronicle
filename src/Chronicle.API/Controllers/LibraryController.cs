@@ -9,6 +9,7 @@ using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.API.Controllers
 {
@@ -21,6 +22,7 @@ namespace Chronicle.API.Controllers
         private readonly ChronicleDbContext _context;
         private readonly IUserService _userService;
         private readonly IMovieCollectionService _movieCollectionService;
+        private readonly IServiceScopeFactory _scopeFactory;
 
         // Matches auto-generated placeholder episode names like "S01E01" or "S01E339" --
         // scanners/sync fall back to these when no real per-episode title is known.
@@ -29,12 +31,13 @@ namespace Chronicle.API.Controllers
                 | System.Text.RegularExpressions.RegexOptions.Compiled);
 
         public LibraryController(ILibraryService libraryService, ChronicleDbContext context, IUserService userService,
-            IMovieCollectionService movieCollectionService)
+            IMovieCollectionService movieCollectionService, IServiceScopeFactory scopeFactory)
         {
             _libraryService = libraryService;
             _context = context;
             _userService = userService;
             _movieCollectionService = movieCollectionService;
+            _scopeFactory = scopeFactory;
         }
 
         [HttpPost]
@@ -254,6 +257,30 @@ namespace Chronicle.API.Controllers
             try
             {
                 var entry = await _libraryService.UpdateAsync(userId, id, new UpdateLibraryRequest(parsedStatus, request.UserRating, request.Notes));
+
+                // Fire-and-forget push to any Kodi device that already knows this item -- same
+                // pattern as MediaController.Update, see that call site's own comment for why a
+                // fresh scope/CancellationToken are required. Without this, a rating or watched/
+                // watching status change made in Chronicle only ever reaches Kodi the next time
+                // something ELSE forces Kodi to re-invoke getdetails/getepisodedetails for this
+                // item (a brand-new file, or an explicit NFO-rebuild pass) -- Kodi never re-asks
+                // on its own once an item has any local NFO. Confirmed as a real, reported gap
+                // (2026-09-06): "the rating is still not trickling down from Chronicle to Kodi.
+                // Nor is the progress." Both are reconciled unconditionally inside
+                // get_details()/get_episode_details() (see progress_sync.py/tvshow_scraper.py),
+                // so simply getting Kodi to re-invoke that callback is the whole fix -- no
+                // separate rating/progress-specific push channel is needed, this is exactly what
+                // NfoPushService already does for a metadata edit, just triggered from a
+                // different write path.
+                var itemId = entry.MediaItemId;
+                var scopeFactory = _scopeFactory;
+                _ = Task.Run(async () =>
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var nfoPush = scope.ServiceProvider.GetRequiredService<INfoPushService>();
+                    await nfoPush.PushAsync(itemId, userId, CancellationToken.None);
+                });
+
                 var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
                 return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));
             }
