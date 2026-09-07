@@ -181,4 +181,27 @@ describe('PeopleLibraryPage', () => {
       expect(mockedGetPeople).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }))
     })
   })
+
+  it('still auto-loads the next page via the scroll-position backstop when no scroll event ever fires', async () => {
+    // Root-caused live (2026-09-07): a user reported infinite-scroll going permanently silent
+    // while genuinely scrolled to the bottom of what was loaded, and it started working again
+    // the instant they opened DevTools -- the fingerprint of a browser occasionally not
+    // delivering a 'scroll' event to @tanstack/react-virtual's own listener, the same failure
+    // mode already confirmed for the jump-to-target path elsewhere in this suite, just hitting
+    // ordinary scrolling too. This test reproduces exactly that: it moves the real scrollTop
+    // WITHOUT ever dispatching a 'scroll' event (the primary, virtualRows-driven auto-load
+    // effect has nothing to react to), and asserts the independent polling backstop still
+    // notices and fetches the next page within one interval tick.
+    const { main } = renderPeoplePage(<PeopleLibraryPage />, { initialEntries: ['/people'] })
+    await screen.findByText('Person 0000')
+
+    const callsBefore = mockedGetPeople.mock.calls.length
+
+    // Real scrollTop moves; deliberately no main.dispatchEvent(new Event('scroll')) call.
+    Object.defineProperty(main, 'scrollTop', { configurable: true, value: 20000 })
+
+    await waitFor(() => {
+      expect(mockedGetPeople.mock.calls.length).toBeGreaterThan(callsBefore)
+    }, { timeout: 2000 })
+  })
 })

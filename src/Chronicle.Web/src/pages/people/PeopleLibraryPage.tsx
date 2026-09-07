@@ -48,6 +48,20 @@ const MIN_COLUMNS = 3
 // strictly-single-line card would be. Keep in sync with PersonCard.module.css's own layout.
 const CARD_INFO_HEIGHT = 84
 
+/** The virtualized row range currently backed by real data, derived from which pages
+ * useInfiniteQuery has actually fetched -- shared by the auto-load effect and its raw-scroll
+ * backstop below (see that backstop's own doc) so the two can never disagree about what
+ * "loaded" means. Pure/module-level since it only needs PEOPLE_PAGE_SIZE plus its own
+ * arguments. */
+function loadedRowRange(pageParams: number[], initialPage: number | null, columnsPerRow: number) {
+  const maxLoadedPage = pageParams.length > 0 ? Math.max(...pageParams) : (initialPage ?? 1)
+  const minLoadedPage = pageParams.length > 0 ? Math.min(...pageParams) : (initialPage ?? 1)
+  return {
+    maxLoadedRow: Math.floor((maxLoadedPage * PEOPLE_PAGE_SIZE - 1) / columnsPerRow),
+    minLoadedRow: Math.floor(((minLoadedPage - 1) * PEOPLE_PAGE_SIZE) / columnsPerRow),
+  }
+}
+
 /** Catalog-wide People grid -- every person credited on something in Chronicle, or added
  * directly, regardless of any single user's library (docs/plans/2026-08-28-people-section-
  * design.md Section 5). Not a fork of LibraryPage: no watch-status concept applies to a
@@ -342,10 +356,7 @@ export default function PeopleLibraryPage() {
     // target string alone would miss it and stay stuck permanently true for that case.
     if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) return
 
-    const maxLoadedPage = pageParams.length > 0 ? Math.max(...pageParams) : (initialPage ?? 1)
-    const minLoadedPage = pageParams.length > 0 ? Math.min(...pageParams) : (initialPage ?? 1)
-    const maxLoadedRow = Math.floor((maxLoadedPage * PEOPLE_PAGE_SIZE - 1) / columnsPerRow)
-    const minLoadedRow = Math.floor(((minLoadedPage - 1) * PEOPLE_PAGE_SIZE) / columnsPerRow)
+    const { maxLoadedRow, minLoadedRow } = loadedRowRange(pageParams, initialPage, columnsPerRow)
 
     if (lastRow.index >= maxLoadedRow - 3 && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
       peopleQuery.fetchNextPage()
@@ -355,6 +366,54 @@ export default function PeopleLibraryPage() {
     }
   }, [
     virtualRows, columnsPerRow, pageParams, initialPage, jumpTarget, jumpRequestId,
+    peopleQuery.hasNextPage, peopleQuery.isFetchingNextPage, peopleQuery.fetchNextPage,
+    peopleQuery.hasPreviousPage, peopleQuery.isFetchingPreviousPage, peopleQuery.fetchPreviousPage,
+  ])
+
+  // Backstop for the auto-load effect above: it only re-checks when virtualRows changes, and
+  // virtualRows only updates when @tanstack/react-virtual's own internal scrollOffset does --
+  // which, as this file's other scroll-timing fixes already document, depends on the browser
+  // actually delivering a 'scroll' event to that library's listener. Root-caused live
+  // (2026-09-07): a user reported infinite-scroll going permanently silent -- no further pages,
+  // no "Loading more…" indicator, over a minute of nothing -- while scrolled to the bottom of
+  // what was loaded, and it started working again the instant they opened DevTools. That's a
+  // textbook fingerprint of a suppressed/coalesced browser event, not a slow server (the same
+  // request the UI needed took well under a second when issued directly), and matches the exact
+  // failure mode already confirmed for the jump-to-target path elsewhere in this file -- just
+  // triggered by ordinary scrolling instead of a programmatic scrollToIndex, and with no
+  // equivalent recovery in place for it.
+  //
+  // Rather than guess at which browser condition suppresses the event this time, this polls the
+  // real DOM scrollTop/clientHeight directly -- bypassing virtualRows and the virtualizer's own
+  // internal offset entirely -- so a stuck auto-load can never last longer than one poll
+  // interval, regardless of why a scroll event didn't arrive. Same loadedRowRange the primary
+  // effect uses (converted to pixels via rowHeight/GRID_GAP), so the two can never disagree
+  // about what "near the loaded edge" means; this is purely a second, independent way to notice
+  // it, not a second definition of it.
+  useEffect(() => {
+    if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) return
+
+    const id = setInterval(() => {
+      const main = mainScrollRef.current
+      if (!main) return
+      const { maxLoadedRow, minLoadedRow } = loadedRowRange(pageParams, initialPage, columnsPerRow)
+      const rowSpan = rowHeight + GRID_GAP
+      const loadedBottomY = (maxLoadedRow + 1) * rowSpan
+      const loadedTopY = minLoadedRow * rowSpan
+
+      if (main.scrollTop + main.clientHeight >= loadedBottomY - rowSpan * 3
+          && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
+        peopleQuery.fetchNextPage()
+      }
+      if (main.scrollTop <= loadedTopY + rowSpan * 2
+          && peopleQuery.hasPreviousPage && !peopleQuery.isFetchingPreviousPage) {
+        peopleQuery.fetchPreviousPage()
+      }
+    }, 500)
+
+    return () => clearInterval(id)
+  }, [
+    mainScrollRef, pageParams, initialPage, columnsPerRow, rowHeight, jumpTarget, jumpRequestId,
     peopleQuery.hasNextPage, peopleQuery.isFetchingNextPage, peopleQuery.fetchNextPage,
     peopleQuery.hasPreviousPage, peopleQuery.isFetchingPreviousPage, peopleQuery.fetchPreviousPage,
   ])
