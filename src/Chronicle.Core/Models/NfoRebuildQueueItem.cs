@@ -48,5 +48,21 @@ namespace Chronicle.Core.Models
         /// LibraryController/ScrobbleController); only an explicit "force full rebuild" clears
         /// this and re-seeds everything.</summary>
         public DateTime? CompletedAt { get; set; }
+
+        /// <summary>Who most recently gave up on this item via ReleaseAsync (e.g. "not found in
+        /// this device's own VideoLibrary"), and when. Root-caused live (2026-09-07): a device
+        /// whose local library is a strict subset of the shared catalog (e.g. one Kodi instance
+        /// with fewer movies mounted than another) would claim, fail to find, and release an
+        /// item -- which the claim-eligibility query then let THAT SAME DEVICE immediately
+        /// reclaim again on its very next batch, since a release fully clears
+        /// ClaimedByKodiDeviceId with no memory of who just tried and failed. For a device stuck
+        /// at the front of a long contiguous run of items it can never find locally, this spun
+        /// forever: its own on-screen "items attempted" counter climbed into the hundreds while
+        /// its real confirmed-completion count stayed near zero, because it kept re-claiming and
+        /// re-releasing the exact same handful of rows instead of ever reaching new ones (or
+        /// ceding them to a device that actually has the files). See ClaimBatchAsync's own doc
+        /// for how these two fields close that loop.</summary>
+        public int? LastReleasedByKodiDeviceId { get; set; }
+        public DateTime? LastReleasedAt { get; set; }
     }
 }

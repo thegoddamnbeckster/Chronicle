@@ -594,6 +594,8 @@ namespace Chronicle.Data
                 e.Property(x => x.ClaimedAt).HasColumnName("claimed_at");
                 e.Property(x => x.LeaseExpiresAt).HasColumnName("lease_expires_at");
                 e.Property(x => x.CompletedAt).HasColumnName("completed_at");
+                e.Property(x => x.LastReleasedByKodiDeviceId).HasColumnName("last_released_by_kodi_device_id");
+                e.Property(x => x.LastReleasedAt).HasColumnName("last_released_at");
                 // One outstanding row per item -- CompleteAsync marks CompletedAt rather than
                 // deleting, so this stays unique for the item's whole lifetime; a "force full
                 // rebuild" clears completed rows first (see NfoRebuildQueueService.ReseedAllAsync)
@@ -602,6 +604,11 @@ namespace Chronicle.Data
                 // Claim's own "what's eligible" query filters on exactly these three columns.
                 e.HasIndex(x => new { x.CompletedAt, x.ClaimedByKodiDeviceId, x.LeaseExpiresAt })
                     .HasDatabaseName("idx_nfo_rebuild_queue_claimable");
+                // Covers the additional "did I (this device) just release this one" filter
+                // ClaimBatchAsync now applies on top of the claimable index above -- see
+                // LastReleasedByKodiDeviceId's own doc for why that filter exists.
+                e.HasIndex(x => new { x.LastReleasedByKodiDeviceId, x.LastReleasedAt })
+                    .HasDatabaseName("idx_nfo_rebuild_queue_last_released");
                 e.HasOne<MediaItem>().WithMany().HasForeignKey(x => x.MediaItemId)
                     .OnDelete(DeleteBehavior.Cascade);
                 // Deliberately NO FK to KodiDevice for ClaimedByKodiDeviceId: a device can be

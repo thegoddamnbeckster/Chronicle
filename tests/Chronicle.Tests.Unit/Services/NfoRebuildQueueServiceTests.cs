@@ -174,6 +174,81 @@ public class NfoRebuildQueueServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ReleaseAsync_PreventsTheSameDeviceFromImmediatelyReclaimingTheReleasedItem()
+    {
+        // Root-caused live (2026-09-07): a device whose local library is a strict subset of the
+        // shared catalog would claim an item, fail to find it locally, release it -- and then
+        // immediately reclaim that SAME item on its very next batch, since a plain release fully
+        // clears ClaimedByKodiDeviceId with no memory of who just tried and failed. For a device
+        // stuck at the front of a long contiguous run of items it can never find, this spun
+        // forever on the same handful of rows instead of ever reaching new ones.
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+        await _svc.ReleaseAsync(claim.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        var reclaim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        reclaim.Items.Should().BeEmpty("the same device that just released this item must not immediately reclaim it");
+    }
+
+    [Fact]
+    public async Task ReleaseAsync_StillLetsADifferentDeviceClaimImmediately()
+    {
+        // The cooldown is specific to the device that released -- a device that actually HAS
+        // the file locally must not be made to wait out someone else's cooldown.
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+        await _svc.ReleaseAsync(claim.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        var otherDeviceClaim = await _svc.ClaimBatchAsync(kodiDeviceId: 2, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        otherDeviceClaim.Items.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ClaimBatchAsync_LetsTheSameDeviceReclaimOnceTheReleaseCooldownHasPassed()
+    {
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+        await _svc.ReleaseAsync(claim.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        // Back-dates the release past the cooldown window directly (rather than waiting or
+        // mocking the clock) -- simulates the device's library having had time to change (a
+        // rescan, a new mount) since it last gave up on this item.
+        var row = await _db.NfoRebuildQueue.FindAsync(claim.Items[0].QueueItemId);
+        row!.LastReleasedAt = DateTime.UtcNow.AddHours(-3);
+        await _db.SaveChangesAsync();
+
+        var reclaim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        reclaim.Items.Should().ContainSingle("the cooldown has elapsed, so the original device may try again");
+    }
+
+    [Fact]
+    public async Task ReseedAllAsync_ClearsAnyStandingReleaseCooldown()
+    {
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+        await _svc.ReleaseAsync(claim.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        // A force-reseed means "everyone retry everything" -- a standing cooldown from before
+        // the reseed must not keep blocking the device that hit it.
+        await _svc.ReseedAllAsync();
+
+        var reclaim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        reclaim.Items.Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task ClaimBatchAsync_NeverQueuesACollectionContainer()
     {
         // A collection container is movie-typed at HierarchyLevel 0, identical to a real
@@ -226,5 +301,137 @@ public class NfoRebuildQueueServiceTests : IDisposable
         pending.Should().Be(1);
         var reclaim = await _svc.ClaimBatchAsync(kodiDeviceId: 2, batchSize: 10, TimeSpan.FromMinutes(10));
         reclaim.Items.Should().ContainSingle("a force-reseed must make the already-completed item claimable again");
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_ReturnsOverallCounts()
+    {
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 102, MediaTypeId = MovieTypeId, Name = "Alien 3", Year = 1992, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+        claim.Items.Should().HaveCount(3);
+        await _svc.CompleteAsync(claim.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        var status = await _svc.GetStatusAsync();
+
+        status.TotalItems.Should().Be(3);
+        status.CompletedCount.Should().Be(1);
+        status.PendingCount.Should().Be(2);
+        status.ActiveClaimCount.Should().Be(2, "the other two items are still claimed with an active lease");
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_SeedsTheQueueItselfWithoutRequiringAPriorClaimCall()
+    {
+        // No ClaimBatchAsync call anywhere in this test -- simulates a fresh install, or one
+        // where no Kodi device has ever polled yet. A status check must still reflect the real
+        // library instead of reading as "nothing to rebuild" just because nobody's claimed
+        // anything.
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        var status = await _svc.GetStatusAsync();
+
+        status.TotalItems.Should().Be(1);
+        status.PendingCount.Should().Be(1);
+        status.CompletedCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_BreaksDownPerDeviceAndResolvesDeviceNames()
+    {
+        _db.KodiDevices.Add(new KodiDevice { Id = 1, UserId = 1, ApiTokenId = 1, Name = "Vision", Host = "10.0.0.162", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+        _db.KodiDevices.Add(new KodiDevice { Id = 2, UserId = 1, ApiTokenId = 2, Name = "Office", Host = "10.0.0.163", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        var claimVision = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 1, TimeSpan.FromMinutes(10));
+        await _svc.CompleteAsync(claimVision.Items[0].QueueItemId, kodiDeviceId: 1);
+        var claimOffice = await _svc.ClaimBatchAsync(kodiDeviceId: 2, batchSize: 1, TimeSpan.FromMinutes(10));
+
+        var status = await _svc.GetStatusAsync();
+
+        status.Devices.Should().HaveCount(2);
+        var vision = status.Devices.Should().ContainSingle(d => d.KodiDeviceId == 1).Subject;
+        vision.DeviceName.Should().Be("Vision");
+        vision.Host.Should().Be("10.0.0.162");
+        vision.CompletedCount.Should().Be(1);
+        vision.ActiveClaims.Should().Be(0);
+        var office = status.Devices.Should().ContainSingle(d => d.KodiDeviceId == 2).Subject;
+        office.DeviceName.Should().Be("Office");
+        office.Host.Should().Be("10.0.0.163");
+        office.CompletedCount.Should().Be(0);
+        office.ActiveClaims.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_DisambiguatesTwoDevicesThatShareTheSameSelfReportedName()
+    {
+        // Root-caused live (2026-09-07): KodiDevice.Name has no uniqueness constraint and is
+        // entirely self-reported by each Kodi instance's own addon settings -- a device
+        // mis-registered under a stale/copy-pasted name (here, Vision registering itself as
+        // "Kodi upstairs", the SAME name the real upstairs Shield already uses) looked, in the
+        // UI, indistinguishable from a bug ("this device is listed twice, and Vision is
+        // missing") rather than what it actually was. Host is what a caller needs to tell them
+        // apart even though DeviceName alone can't.
+        _db.KodiDevices.Add(new KodiDevice { Id = 1, UserId = 1, ApiTokenId = 1, Name = "Kodi upstairs", Host = "10.0.0.229", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+        _db.KodiDevices.Add(new KodiDevice { Id = 2, UserId = 1, ApiTokenId = 2, Name = "Kodi upstairs", Host = "10.0.0.162", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 1, TimeSpan.FromMinutes(10));
+        await _svc.ClaimBatchAsync(kodiDeviceId: 2, batchSize: 1, TimeSpan.FromMinutes(10));
+
+        var status = await _svc.GetStatusAsync();
+
+        status.Devices.Should().HaveCount(2, "these are two genuinely different devices, not one duplicated");
+        status.Devices.Should().OnlyHaveUniqueItems(d => d.KodiDeviceId);
+        status.Devices.Select(d => d.DeviceName).Should().AllBe("Kodi upstairs");
+        status.Devices.Select(d => d.Host).Should().BeEquivalentTo(["10.0.0.229", "10.0.0.162"],
+            "identical names must still be distinguishable by host");
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_DoesNotCountALapsedLeaseAsAnActiveClaim()
+    {
+        _db.KodiDevices.Add(new KodiDevice { Id = 1, UserId = 1, ApiTokenId = 1, Name = "Vision", Host = "10.0.0.162", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        // Negative lease = already expired -- simulates a device that claimed and vanished
+        // before completing or releasing, same setup as ClaimBatchAsync_ReclaimsAfterLeaseExpires.
+        await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromSeconds(-1));
+
+        var status = await _svc.GetStatusAsync();
+
+        status.ActiveClaimCount.Should().Be(0, "a lapsed lease is claimable again, not actively in-flight");
+        status.PendingCount.Should().Be(1, "the item is still outstanding overall, just not credited to anyone's active claim");
+        // Vision has neither an active claim nor a completion right now, so it's dropped from
+        // the per-device breakdown entirely (GetStatusAsync's own "nothing to show" filter) --
+        // rather than showing a device with two zero columns for no reason.
+        status.Devices.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_FallsBackToPlaceholderNameForADeletedDevice()
+    {
+        // No KodiDevices row for id 1 at all -- simulates a device deleted/re-registered after
+        // claiming (see the nfo_rebuild_queue table's own mapping comment on why there's
+        // deliberately no FK enforcing this can't happen).
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+        await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        var status = await _svc.GetStatusAsync();
+
+        var device = status.Devices.Should().ContainSingle().Subject;
+        device.DeviceName.Should().Be("(deleted device)");
+        device.Host.Should().BeNull();
+        device.ActiveClaims.Should().Be(1);
     }
 }

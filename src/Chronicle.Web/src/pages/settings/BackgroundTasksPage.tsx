@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import AdvancedToggle from '@/components/ui/AdvancedToggle'
+import { useAuth } from '@/hooks/useAuth'
 import {
   getBackgroundTasks,
   updateBackgroundTask,
@@ -13,6 +14,11 @@ import {
   runEnrichment,
   type EnrichmentStats,
 } from '@/api/enrichment'
+import {
+  getNfoRebuildQueueStatus,
+  reseedNfoRebuildQueue,
+  type NfoRebuildQueueStatus,
+} from '@/api/nfoRebuildQueue'
 import { getImportProgress, type ImportProgressState } from '@/api/scan'
 import {
   cronToParams,
@@ -301,6 +307,130 @@ return (
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── NFO rebuild queue status section ──────────────────────────────────────────
+// See NfoRebuildQueueItem/NfoRebuildQueueService's own docs (Chronicle.Core/Chronicle.Services)
+// for why this queue exists: multiple Kodi instances sharing one library divide up the work of
+// (re)confirming every item's local NFO instead of each independently re-walking and rewriting
+// the entire shared library on every scan. This section is the queue's only status display
+// anywhere in the app -- previously the only way to check progress was reading server logs.
+
+function NfoRebuildQueueSection({ isAdmin }: { isAdmin: boolean }) {
+  const [status, setStatus] = useState<NfoRebuildQueueStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [reseeding, setReseeding] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await getNfoRebuildQueueStatus())
+    } catch {
+      // silently ignore — section just won't render (see the loading/null-status guards below)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // Poll faster while devices are actively working through the queue, same idea as
+  // EnrichmentSection's own 2s/10s split -- slower here since a single NFO rebuild is a much
+  // longer-running background process than a metadata fetch, so there's less value in near-
+  // real-time updates and more value in keeping this section's API traffic low by default.
+  useEffect(() => {
+    const interval = status && status.activeClaimCount > 0 ? 5_000 : 20_000
+    const id = setInterval(load, interval)
+    return () => clearInterval(id)
+  }, [load, status])
+
+  async function handleReseed() {
+    if (!confirm(
+      'Force a full NFO rebuild? This resets every item back to pending — including ones ' +
+      'already confirmed — so every device will re-check its entire library from scratch on ' +
+      'its next pass.'
+    )) return
+    setReseeding(true)
+    try {
+      await reseedNfoRebuildQueue()
+      await load()
+    } catch (err) {
+      if (err instanceof Error) alert(err.message)
+    } finally {
+      setReseeding(false)
+    }
+  }
+
+  // Nothing to show while still loading, on a fetch error (getNfoRebuildQueueStatus swallows
+  // its own errors above), or when the queue is genuinely empty (no movies/shows/episodes in
+  // the catalog yet to rebuild NFOs for) -- unlike Enrichment Status, which always renders an
+  // explicit empty state, there's no standing plugin/config concept here worth surfacing when
+  // there's simply nothing queued.
+  if (loading || !status || status.totalItems === 0) return null
+
+  const pct = Math.round((status.completedCount / status.totalItems) * 100)
+
+  return (
+    <div className={styles.enrichmentSection}>
+      <div className={styles.sectionHeader}>
+        <h2 className={styles.sectionTitle}>NFO Rebuild Queue</h2>
+        {isAdmin && (
+          <button
+            className={styles.refreshBtn}
+            onClick={handleReseed}
+            disabled={reseeding}
+            title="Reset every item back to pending so every device re-checks its entire library"
+          >
+            {reseeding ? 'Reseeding…' : 'Force Full Rebuild'}
+          </button>
+        )}
+      </div>
+      <div className={styles.card}>
+        <div className={styles.scanProgressHeader}>
+          <span className={styles.scanProgressTitle}>
+            {status.completedCount.toLocaleString()} / {status.totalItems.toLocaleString()} confirmed
+            {status.activeClaimCount > 0 && ` · ${status.activeClaimCount.toLocaleString()} in progress`}
+          </span>
+          <span className={styles.scanProgressPct}>{pct}%</span>
+        </div>
+        <div className={styles.scanProgressTrack}>
+          <div className={styles.scanProgressFill} style={{ width: `${pct}%` }} />
+        </div>
+        {status.devices.length > 0 && (
+          <div className={styles.enrichTableWrap} style={{ marginTop: 14 }}>
+            <table className={styles.enrichTable}>
+              <thead>
+                <tr>
+                  <th className={styles.enrichTh}>Device</th>
+                  <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>In Progress</th>
+                  <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Completed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.devices.map(d => (
+                  <tr key={d.kodiDeviceId} className={styles.enrichRow}>
+                    <td className={styles.enrichTd}>
+                      {d.deviceName}
+                      {/* Host has no uniqueness constraint on the name alone -- shown here so two
+                          devices that happen to share a name (self-reported by each Kodi
+                          instance's own addon settings, confirmed live 2026-09-07 as a real
+                          mix-up) read as genuinely different devices instead of a duplicate row. */}
+                      {d.host && (
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>
+                          ({d.host})
+                        </span>
+                      )}
+                    </td>
+                    <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>{d.activeClaims.toLocaleString()}</td>
+                    <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>{d.completedCount.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -722,6 +852,8 @@ function EnrichmentCard({
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export default function BackgroundTasksPage() {
+  const { user } = useAuth()
+  const isAdmin = user?.isAdmin ?? false
   const [tasks, setTasks]     = useState<BackgroundTask[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
@@ -854,6 +986,9 @@ export default function BackgroundTasksPage() {
         onRunPlugin={handleRunEnrichment}
         runningPluginIds={runningPluginIds}
       />
+
+      {/* ── NFO Rebuild Queue — only renders once something's actually queued ── */}
+      <NfoRebuildQueueSection isAdmin={isAdmin} />
 
       {/* ── Scan progress banner — shown while a scan is running ─────── */}
       <ScanProgressBanner progress={scanProgress} />

@@ -46,6 +46,18 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
     /// Adequate for Chronicle's single-API-instance deployment model, same as _seedLock.</summary>
     private static readonly SemaphoreSlim _claimLock = new(1, 1);
 
+    // How long a device that just released an item is excluded from reclaiming that SAME item
+    // itself -- see NfoRebuildQueueItem.LastReleasedByKodiDeviceId's own doc for the exact
+    // failure this closes (a device whose local library is a strict subset of the shared
+    // catalog spinning forever on the same contiguous run of items it can never find). Long
+    // enough that it can't just immediately re-claim the row on its very next batch (the whole
+    // point), short enough that if the device's own library later grows to include the item
+    // (a rescan, a new mount), it naturally becomes eligible again without needing a manual
+    // force-reseed. Does not affect any OTHER device's ability to claim the row -- a device that
+    // actually has the file should be able to pick it up immediately, not wait out someone
+    // else's cooldown.
+    private static readonly TimeSpan ReleaseCooldown = TimeSpan.FromHours(2);
+
     /// <summary>Test-only: forces the next EnsureSeededAsync call to actually run, bypassing the
     /// throttle. Needed because the throttle is process-static (see its own comment above) --
     /// without this, a test running after any other test that already exercised claiming in the
@@ -63,8 +75,14 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         try
         {
             var now = DateTime.UtcNow;
+            var cooldownCutoff = now - ReleaseCooldown;
             candidates = await db.NfoRebuildQueue
                 .Where(q => q.CompletedAt == null && (q.ClaimedByKodiDeviceId == null || q.LeaseExpiresAt < now))
+                // Excludes only THIS device's own still-cooling-down releases -- see
+                // ReleaseCooldown's own doc. Any other device is unaffected by this clause
+                // (a row this device can't reclaim yet may still be claimed by someone else in
+                // the very same batch).
+                .Where(q => q.LastReleasedByKodiDeviceId != kodiDeviceId || q.LastReleasedAt < cooldownCutoff)
                 .OrderBy(q => q.Id)
                 .Take(batchSize)
                 .ToListAsync(ct);
@@ -113,6 +131,11 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         row.ClaimedByKodiDeviceId = null;
         row.ClaimedAt             = null;
         row.LeaseExpiresAt        = null;
+        // Recorded so ClaimBatchAsync's eligibility query can keep THIS device from immediately
+        // reclaiming the very row it just gave up on -- see LastReleasedByKodiDeviceId's own
+        // doc and ReleaseCooldown for why.
+        row.LastReleasedByKodiDeviceId = kodiDeviceId;
+        row.LastReleasedAt             = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
     }
 
@@ -130,10 +153,16 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         var all = await db.NfoRebuildQueue.ToListAsync(ct);
         foreach (var row in all)
         {
-            row.CompletedAt             = null;
-            row.ClaimedByKodiDeviceId   = null;
-            row.ClaimedAt               = null;
-            row.LeaseExpiresAt          = null;
+            row.CompletedAt                = null;
+            row.ClaimedByKodiDeviceId      = null;
+            row.ClaimedAt                  = null;
+            row.LeaseExpiresAt             = null;
+            // A force-reseed means "everyone retry everything" -- any standing release
+            // cooldown (see ReleaseCooldown's own doc) would otherwise keep blocking the
+            // device that hit it from claiming this row again for up to 2 more hours,
+            // defeating the whole point of an explicit force-rebuild.
+            row.LastReleasedByKodiDeviceId = null;
+            row.LastReleasedAt             = null;
         }
         await db.SaveChangesAsync(ct);
 
@@ -141,6 +170,60 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         await EnsureSeededAsync(ct);
 
         return await db.NfoRebuildQueue.CountAsync(q => q.CompletedAt == null, ct);
+    }
+
+    public async Task<NfoRebuildQueueStatusDto> GetStatusAsync(CancellationToken ct = default)
+    {
+        // Same lazy top-up ClaimBatchAsync already does (throttled, see EnsureSeededAsync's own
+        // doc) -- without it, a fresh install or one where no Kodi device has ever polled yet
+        // would show an empty queue and read as "nothing to rebuild" rather than "hasn't been
+        // seeded yet," even though the library itself has plenty of qualifying items.
+        await EnsureSeededAsync(ct);
+
+        var now = DateTime.UtcNow;
+
+        var totalItems = await db.NfoRebuildQueue.CountAsync(ct);
+        var completedCount = await db.NfoRebuildQueue.CountAsync(q => q.CompletedAt != null, ct);
+        var activeClaimCount = await db.NfoRebuildQueue.CountAsync(
+            q => q.CompletedAt == null && q.ClaimedByKodiDeviceId != null && q.LeaseExpiresAt >= now, ct);
+
+        // Grouped in the database (cheap even at tens of thousands of rows -- both filters hit
+        // idx_nfo_rebuild_queue_claimable), then joined to device names in memory: there's no FK
+        // from ClaimedByKodiDeviceId to KodiDevice (see this table's own mapping comment -- a
+        // device can be deleted/re-registered without this queue needing to cascade), so a
+        // straight SQL join could silently drop a device that's since gone away instead of still
+        // reporting the work it's credited with.
+        var perDeviceCounts = await db.NfoRebuildQueue
+            .Where(q => q.ClaimedByKodiDeviceId != null)
+            .GroupBy(q => q.ClaimedByKodiDeviceId!.Value)
+            .Select(g => new
+            {
+                KodiDeviceId = g.Key,
+                ActiveClaims = g.Count(q => q.CompletedAt == null && q.LeaseExpiresAt >= now),
+                CompletedCount = g.Count(q => q.CompletedAt != null),
+            })
+            .Where(g => g.ActiveClaims > 0 || g.CompletedCount > 0)
+            .ToListAsync(ct);
+
+        var deviceIds = perDeviceCounts.Select(d => d.KodiDeviceId).ToList();
+        var devicesById = await db.KodiDevices
+            .Where(d => deviceIds.Contains(d.Id))
+            .ToDictionaryAsync(d => d.Id, d => new { d.Name, d.Host }, ct);
+
+        var devices = perDeviceCounts
+            .Select(d =>
+            {
+                var found = devicesById.TryGetValue(d.KodiDeviceId, out var info);
+                return new NfoRebuildQueueDeviceStatusDto(
+                    d.KodiDeviceId, found ? info!.Name : "(deleted device)", found ? info!.Host : null,
+                    d.ActiveClaims, d.CompletedCount);
+            })
+            .OrderByDescending(d => d.CompletedCount)
+            .ThenByDescending(d => d.ActiveClaims)
+            .ToList();
+
+        return new NfoRebuildQueueStatusDto(
+            totalItems, completedCount, totalItems - completedCount, activeClaimCount, devices);
     }
 
     // ── Internals ────────────────────────────────────────────────────────────

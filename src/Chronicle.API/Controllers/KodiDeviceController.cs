@@ -171,4 +171,16 @@ public class KodiDeviceController(
         var pending = await rebuildQueue.ReseedAllAsync(ct);
         return Ok(ApiResponse<object>.Ok(new { pending }));
     }
+
+    /// <summary>GET /api/v1/scraper/nfo-rebuild-queue/status -- read-only snapshot for a status
+    /// display: overall completed/pending counts plus a per-device breakdown. Any authenticated
+    /// user can view this (unlike reseed-all, viewing progress isn't a destructive action); web
+    /// UI callers authenticate via JWT same as everywhere else, no API-key/registered-device
+    /// requirement the way the claim/complete/release endpoints above have.</summary>
+    [HttpGet("nfo-rebuild-queue/status")]
+    public async Task<IActionResult> GetRebuildQueueStatus(CancellationToken ct)
+    {
+        var status = await rebuildQueue.GetStatusAsync(ct);
+        return Ok(ApiResponse<NfoRebuildQueueStatusDto>.Ok(status));
+    }
 }

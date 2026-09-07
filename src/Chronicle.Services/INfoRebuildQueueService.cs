@@ -30,6 +30,33 @@ public record NfoRebuildQueueClaimDto(
 /// whole backlog" numbers instead of resetting to "X of 25" every single batch.</summary>
 public record NfoRebuildQueueClaimBatchDto(List<NfoRebuildQueueClaimDto> Items, int TotalPending);
 
+/// <summary>One device's share of the queue, as of the moment GetStatusAsync ran. CompletedCount
+/// is an approximation, not a ledger: the queue only ever records who currently/last CLAIMED a
+/// row (ClaimedByKodiDeviceId), not who specifically completed it, so a row is attributed to
+/// whichever device holds that claim at read time. Accurate for the overwhelmingly common case
+/// (one device claims a batch and finishes it), but a row that changed hands after a lapsed lease
+/// -- device A claimed it, its lease expired, device B claimed and finished it -- is attributed to
+/// B, the device that actually did the work, which is the more useful answer anyway.
+///
+/// Host is included alongside DeviceName specifically because Name has no uniqueness constraint
+/// and is entirely self-reported by each Kodi instance's own addon settings (KodiDevice's own
+/// doc) -- confirmed live (2026-09-07) that two genuinely different devices can end up sharing a
+/// name (one mis-registered under a stale/copy-pasted name), which without Host to disambiguate
+/// looks indistinguishable from a bug ("this device is listed twice") rather than what it
+/// actually is (a device that needs re-registering with the right name).</summary>
+public record NfoRebuildQueueDeviceStatusDto(
+    int KodiDeviceId, string DeviceName, string? Host, int ActiveClaims, int CompletedCount);
+
+/// <summary>Snapshot of the whole cross-device rebuild queue for a status display -- see
+/// NfoRebuildQueueItem's own doc for why the queue exists at all. PendingCount includes both
+/// ActiveClaimCount (currently claimed, lease not yet lapsed) and whatever's left unclaimed;
+/// TotalItems is CompletedCount + PendingCount, i.e. everything ever seeded, so a caller can
+/// render a simple completed/total progress bar without a separate query.</summary>
+public record NfoRebuildQueueStatusDto(
+    int TotalItems, int CompletedCount, int PendingCount, int ActiveClaimCount,
+    List<NfoRebuildQueueDeviceStatusDto> Devices
+);
+
 public interface INfoRebuildQueueService
 {
     /// <summary>Claims up to batchSize eligible items (never claimed, or a previous claim's
@@ -56,4 +83,9 @@ public interface INfoRebuildQueueService
     /// entire qualifying catalog from scratch, so the next round of claims covers everything
     /// again rather than only genuinely-new items. Returns how many rows are now pending.</summary>
     Task<int> ReseedAllAsync(CancellationToken ct = default);
+
+    /// <summary>Read-only snapshot of the whole queue for a status display -- overall
+    /// completed/pending/total counts plus a per-device breakdown. Does not seed or claim
+    /// anything; safe to call as often as a UI wants to poll it.</summary>
+    Task<NfoRebuildQueueStatusDto> GetStatusAsync(CancellationToken ct = default);
 }
