@@ -380,7 +380,20 @@ public class ScraperController : ControllerBase
         var lib = await GetCallerLibraryEntryAsync(id, ct);
 
         var dto = BuildShowDetails(item, seasons, lib);
-        return dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
+        dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
+
+        // Parity with BuildMovieDetailsDtoAsync's own warning just above: without this, a show
+        // with genuinely no poster candidates (e.g. a transient HTTP failure against Chronicle
+        // during a full-library Kodi rescan -- see tv_addon's apply_artwork(), which has no
+        // local-file fallback the way movies do) was invisible in Chronicle's own logs, only
+        // ever showing up as "Lucky has no poster options at all" on the Kodi side with nothing
+        // here to correlate it against.
+        if (dto.Artwork is null || !dto.Artwork.TryGetValue("poster", out var posterCandidates) || posterCandidates.Count == 0)
+            _logger.LogWarning(
+                "scraper/tv/details: item {ItemId} \"{Title}\" has NO poster candidates at all -- " +
+                "Kodi will show a blank/title-only thumbnail for this show", id, dto.Title);
+
+        return dto;
     }
 
     /// <summary>
@@ -422,11 +435,30 @@ public class ScraperController : ControllerBase
             .Where(m => seasonIds.Contains(m.Id))
             .ToDictionaryAsync(m => m.Id, m => m.Number ?? 0, ct);
 
-        var result = episodes.Select(e => new ScraperEpisodeSummaryDto(
-            e.Id,
-            Season: e.ParentId.HasValue && seasonNumberById.TryGetValue(e.ParentId.Value, out var sn) ? sn : 1,
-            Episode: e.Number ?? 0,
-            e.Name)).ToList();
+        // Episodes with no known episode number are excluded rather than reported as
+        // "episode 0" -- Kodi matches a local file to this list purely by season+episode
+        // number, so a `Number ?? 0` mask here doesn't just under-report; it can actively
+        // collide with (and get matched against) a real Special (season 0/episode 0),
+        // silently swapping in the wrong episode's file-independent metadata. Logged so a
+        // numberless episode row is discoverable instead of vanishing from both the list
+        // AND the logs at once -- see FolderSignalExtractor/ScanGroupingService for where
+        // a scanned file can end up with no resolved episode number in the first place.
+        var numberless = episodes.Where(e => e.Number is null).ToList();
+        if (numberless.Count > 0)
+        {
+            _logger.LogWarning(
+                "scraper/tv/episodes: show {ShowId} has {Count} episode(s) with no resolved episode " +
+                "number -- excluded from Kodi's episode list rather than reported as episode 0: {Ids}",
+                showId, numberless.Count, string.Join(", ", numberless.Select(e => e.Id)));
+        }
+
+        var result = episodes
+            .Where(e => e.Number.HasValue)
+            .Select(e => new ScraperEpisodeSummaryDto(
+                e.Id,
+                Season: e.ParentId.HasValue && seasonNumberById.TryGetValue(e.ParentId.Value, out var sn) ? sn : 1,
+                Episode: e.Number!.Value,
+                e.Name)).ToList();
 
         return Ok(ApiResponse<List<ScraperEpisodeSummaryDto>>.Ok(result));
     }

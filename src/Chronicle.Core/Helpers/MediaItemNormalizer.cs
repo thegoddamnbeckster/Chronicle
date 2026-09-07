@@ -13,6 +13,19 @@ public static class MediaItemNormalizer
         new(@"\s*\([^)]+\)$", RegexOptions.Compiled);
 
     /// <summary>
+    /// Matches a quoted nickname segment, straight or curly double quotes, e.g. the
+    /// `"Mike"` in `Michael "Mike" Smith`. Removed (not just its quote characters) before
+    /// <see cref="_strip"/> runs, since stripping only the quotes would leave the nickname
+    /// text itself in place ("michael mike smith"), which still wouldn't match the same
+    /// person's plain "Michael Smith" credit from another source. Deliberately double-quote
+    /// only, not single-quote: a single quote is also a real apostrophe in plenty of actual
+    /// names (O'Brien, D'Angelo), so treating `'...'` as a nickname delimiter would strip
+    /// real name content instead.
+    /// </summary>
+    private static readonly Regex _quotedNickname =
+        new("\\s*[\"\u201C][^\"\u201D]*[\"\u201D]\\s*", RegexOptions.Compiled);
+
+    /// <summary>
     /// Produces a canonical lowercase string for duplicate detection.
     /// Strips common punctuation to nothing, collapses whitespace, trims.
     /// "James S. A. Corey" → "james s a corey"
@@ -26,11 +39,18 @@ public static class MediaItemNormalizer
     /// Confirmed live (2026-09-03): "Björgvin Arnarson" arrived from two different providers in
     /// the two different forms, so PersonResolutionService's own NormalizedName lookup could
     /// never recognize them as the same person and created a duplicate stub every time.
+    ///
+    /// Also strips a quoted nickname before the punctuation strip runs, e.g.
+    /// `Michael "Mike" Smith` -> "michael smith" -- see <see cref="_quotedNickname"/>. Without
+    /// this, a source that includes the nickname and one that doesn't (for the same real
+    /// person) normalize to two different strings and PersonResolutionService's name-match
+    /// step creates a duplicate Person row instead of recognizing the existing one.
     /// </summary>
     public static string NormalizeName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
-        var stripped = _strip.Replace(name.Normalize(NormalizationForm.FormC), string.Empty);
+        var noNickname = _quotedNickname.Replace(name.Normalize(NormalizationForm.FormC), " ");
+        var stripped = _strip.Replace(noNickname, string.Empty);
         var collapsed = _spaces.Replace(stripped, " ").Trim().ToLowerInvariant();
         return collapsed;
     }
@@ -51,7 +71,8 @@ public static class MediaItemNormalizer
     public static string NormalizeNameLoose(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
-        var stripped = _strip.Replace(name.Normalize(NormalizationForm.FormC), string.Empty);
+        var noNickname = _quotedNickname.Replace(name.Normalize(NormalizationForm.FormC), " ");
+        var stripped = _strip.Replace(noNickname, string.Empty);
         return _spaces.Replace(stripped, string.Empty).ToLowerInvariant();
     }
 

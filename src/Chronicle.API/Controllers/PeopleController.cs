@@ -718,5 +718,103 @@ namespace Chronicle.API.Controllers
 
             return Ok(ApiResponse<object>.Ok(new { count = candidates.Count, candidates }));
         }
+
+        // Matches a quoted nickname, straight or curly double quotes -- same shape as
+        // MediaItemNormalizer's own private _quotedNickname regex (not shared: that one lives
+        // in Chronicle.Core and is intentionally an implementation detail of NormalizeName/
+        // NormalizeNameLoose, not a public helper). Used here only to tell "this raw Name
+        // actually carries a nickname" apart from an ordinary same-name collision, not to
+        // strip anything -- NormalizeName already does the stripping for the grouping key.
+        private static readonly Regex QuotedNicknameRe =
+            new("[\"“][^\"”]*[\"”]", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Read-only scan for the nickname-formatting duplicate shape (root-caused
+        /// 2026-09-06, fixed going forward in MediaItemNormalizer.NormalizeName): one source
+        /// credits a person as e.g. `Michael "Mike" Smith` and another credits the same real
+        /// person as plain `Michael Smith` -- before the normalizer fix, these hashed to
+        /// different NormalizedName values and PersonResolutionService's Step 2/2b name-match
+        /// created a second Person stub instead of reusing the existing one. The normalizer fix
+        /// stops this for every new credit from here on (after backfill-normalized-names has
+        /// re-run so the stored column reflects it), but does nothing for stubs already split
+        /// before the fix landed.
+        ///
+        /// Deliberately read-only, same caution as GetWikipediaCollisionCandidates just above:
+        /// a shared normalized name is NOT proof of the same real person on its own (see that
+        /// endpoint's own doc for the Brian Johnson/Jesse James/Jonathan Lee cases), so this
+        /// only surfaces candidates -- at least one member of the group must actually carry a
+        /// quoted nickname in its raw Name, narrowing this to the specific failure shape rather
+        /// than any two people who happen to share a name. Corroborating signals (external ids,
+        /// credit counts) are included so a human/AI reviewer can tell a real duplicate from a
+        /// coincidence before deleting anything, per
+        /// [[feedback_chronicle_dedup_delete_not_merge]] -- delete the loser via the normal
+        /// DELETE /api/v1/media/{id}, never merge.
+        /// </summary>
+        [HttpGet("nickname-duplicate-candidates")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetNicknameDuplicateCandidates(CancellationToken ct)
+        {
+            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
+            if (peopleTypeId is null)
+                return Ok(ApiResponse<object>.Ok(new { count = 0, candidates = Array.Empty<object>() }));
+
+            var people = await _context.MediaItems
+                .Where(m => m.MediaTypeId == peopleTypeId.Value)
+                .Select(m => new { m.Id, m.Name })
+                .ToListAsync(ct);
+
+            // Computed fresh from Name rather than trusting the stored NormalizedName column,
+            // same reasoning as GetWikipediaCollisionCandidates: a catalog that hasn't run
+            // backfill-normalized-names yet would otherwise silently under-report every
+            // candidate here.
+            var grouped = people
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    HasNickname = QuotedNicknameRe.IsMatch(p.Name),
+                    Normalized = MediaItemNormalizer.NormalizeName(p.Name),
+                })
+                .Where(p => !string.IsNullOrEmpty(p.Normalized))
+                .GroupBy(p => p.Normalized)
+                .Where(g => g.Count() > 1 && g.Any(p => p.HasNickname))
+                .ToList();
+
+            if (grouped.Count == 0)
+                return Ok(ApiResponse<object>.Ok(new { count = 0, candidates = Array.Empty<object>() }));
+
+            var groupedIds = grouped.SelectMany(g => g.Select(p => p.Id)).ToHashSet();
+
+            var externalIdsById = (await _context.MediaExternalIds
+                .Where(e => groupedIds.Contains(e.MediaItemId))
+                .Select(e => new { e.MediaItemId, e.Source, e.ExternalId })
+                .ToListAsync(ct))
+                .GroupBy(e => e.MediaItemId)
+                .ToDictionary(g => g.Key, g => g.Select(e => $"{e.Source}:{e.ExternalId}").ToList());
+
+            var creditCounts = (await _context.MediaCredits
+                .Where(c => c.PersonMediaItemId != null && groupedIds.Contains(c.PersonMediaItemId.Value))
+                .GroupBy(c => c.PersonMediaItemId!.Value)
+                .Select(g => new { Id = g.Key, Count = g.Count() })
+                .ToListAsync(ct))
+                .ToDictionary(x => x.Id, x => x.Count);
+
+            var candidates = grouped
+                .Select(g => new
+                {
+                    normalizedName = g.Key,
+                    people = g.Select(p => new
+                    {
+                        p.Id,
+                        p.Name,
+                        hasNickname = p.HasNickname,
+                        externalIds = externalIdsById.GetValueOrDefault(p.Id, []),
+                        creditCount = creditCounts.GetValueOrDefault(p.Id, 0),
+                    }).ToList(),
+                })
+                .ToList();
+
+            return Ok(ApiResponse<object>.Ok(new { count = candidates.Count, candidates }));
+        }
     }
 }

@@ -14,6 +14,12 @@ public class MediaItemNormalizerTests
     [InlineData("Abbey Road",         "abbey road")]
     [InlineData("",                   "")]
     [InlineData(null,                 "")]
+    // A quoted nickname must strip out entirely (not just its quote characters), so this
+    // matches the same person's plain "Michael Smith" credit from another source. See
+    // PersonResolutionServiceTests for the end-to-end dedup this backs.
+    [InlineData("Michael \"Mike\" Smith", "michael smith")]
+    [InlineData("Michael “Mike” Smith", "michael smith")] // curly quotes
+    [InlineData("O'Brien",            "obrien")] // apostrophe alone must NOT be treated as a nickname delimiter
     public void NormalizeName_VariousInputs_CorrectResult(string? input, string expected)
     {
         MediaItemNormalizer.NormalizeName(input).Should().Be(expected);
@@ -31,6 +37,7 @@ public class MediaItemNormalizerTests
     [InlineData("Brandon Sanderson",  "brandonsanderson")]
     [InlineData("",                   "")]
     [InlineData(null,                 "")]
+    [InlineData("Michael \"Mike\" Smith", "michaelsmith")]
     public void NormalizeNameLoose_CollapsesSpacingAroundInitials(string? input, string expected)
     {
         MediaItemNormalizer.NormalizeNameLoose(input).Should().Be(expected);
