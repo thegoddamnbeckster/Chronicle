@@ -431,6 +431,14 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 @media (min-width: 769px) {
   .peopleRow {
     grid-template-columns: repeat(auto-fill, 84px);
+    /* The -24px cancel-padding trick above is a mobile-only fix (see that rule's own comment,
+     * "phone screenshot") -- this media query only ever reset grid-template-columns, so on
+     * desktop the row kept the negative margin with nothing narrow to cancel, pulling its
+     * whole grid 24px further left/right than .metaBoxed's own content box. Per-user report
+     * (2026-09-07, desktop screenshot): the row's first column rendered clipped behind the
+     * sidebar because of exactly this -- it visually started under the sidebar's own opaque
+     * background rather than flush with the rest of the page's content edge. */
+    margin: 0 0 16px;
   }
 }
 
