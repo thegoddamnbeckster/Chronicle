@@ -123,6 +123,18 @@ export default function PeopleLibraryPage() {
   // jumpRequestId rather than jumpTarget precisely so a same-target re-jump (which bumps the id
   // even though the target string is unchanged) is never confused with "already handled."
   const scrolledForJumpRef = useRef<number | null>(null)
+  // Which columnsPerRow the jump above was actually scrolled for. Root-caused live
+  // (2026-09-07) via peopleDebugLog: columnsPerRow starts at MIN_COLUMNS (3) on mount --
+  // the ResizeObserver that measures the real column count (6 on a normal desktop width)
+  // only attaches once the grid element exists, so a jump's very first scrollToIndex often
+  // runs against the WRONG columnsPerRow. Once the observer corrects columnsPerRow moments
+  // later, rowHeight*rowIndex no longer means the same absolute item -- with columnsPerRow
+  // doubling from 3 to 6, the same pixel scrollTop now lands at roughly DOUBLE the original
+  // item's position (confirmed live: jumping to an index-2951 target measurably drifted
+  // toward an index ~5900 neighborhood once columns corrected). Without this, the scroll-to-
+  // jump effect's own scrolledForJumpRef guard treated the jump as permanently "done" the
+  // moment it first scrolled, even though the row math it used was already stale.
+  const scrolledForColumnsRef = useRef<number | null>(null)
   // Last backstop-tick signature actually written to peopleDebugLog -- root-caused live
   // (2026-09-07): logging every 500ms tick unconditionally filled the ring buffer's whole
   // 300-entry capacity with ~2.5 minutes of an idle, unchanging steady state, evicting the
@@ -138,6 +150,7 @@ export default function PeopleLibraryPage() {
 
   function jumpToLetter(letter: string) {
     scrolledForJumpRef.current = null
+    scrolledForColumnsRef.current = null
     logPeopleDebug('jump-start', { letter, prevRequestId: jumpRequestId })
     setJumpTarget(letter)
     setJumpRequestId(id => id + 1)
@@ -148,6 +161,7 @@ export default function PeopleLibraryPage() {
     e.preventDefault()
     if (jumpInput.trim()) {
       scrolledForJumpRef.current = null
+      scrolledForColumnsRef.current = null
       setJumpTarget(jumpInput.trim())
       setJumpRequestId(id => id + 1)
     }
@@ -362,8 +376,9 @@ export default function PeopleLibraryPage() {
     // itemsByIndex.size, which isn't one. Compared against jumpRequestId, not jumpTarget: a
     // same-target re-jump changes only the id (see jumpRequestId's own doc), so gating on the
     // target string alone would miss it and stay stuck permanently true for that case.
-    if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) {
-      logPeopleDebug('primary-effect-blocked-by-jump-guard', { jumpTarget, jumpRequestId })
+    if (jumpTarget != null
+        && (scrolledForJumpRef.current !== jumpRequestId || scrolledForColumnsRef.current !== columnsPerRow)) {
+      logPeopleDebug('primary-effect-blocked-by-jump-guard', { jumpTarget, jumpRequestId, columnsPerRow })
       return
     }
 
@@ -408,8 +423,9 @@ export default function PeopleLibraryPage() {
   // about what "near the loaded edge" means; this is purely a second, independent way to notice
   // it, not a second definition of it.
   useEffect(() => {
-    if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) {
-      logPeopleDebug('backstop-blocked-by-jump-guard', { jumpTarget, jumpRequestId })
+    if (jumpTarget != null
+        && (scrolledForJumpRef.current !== jumpRequestId || scrolledForColumnsRef.current !== columnsPerRow)) {
+      logPeopleDebug('backstop-blocked-by-jump-guard', { jumpTarget, jumpRequestId, columnsPerRow })
       return
     }
 
@@ -455,14 +471,15 @@ export default function PeopleLibraryPage() {
     peopleQuery.hasPreviousPage, peopleQuery.isFetchingPreviousPage, peopleQuery.fetchPreviousPage,
   ])
 
-  // Scrolls the virtualized window to the jumped-to person's row exactly once per jump --
+  // Scrolls the virtualized window to the jumped-to person's row exactly once per jump AND
+  // once per columnsPerRow it was scrolled under (see scrolledForColumnsRef's own doc) --
   // the whole point of GetJumpPosition (see its own doc): without this, the list would open
   // on the right PAGE but still visually start scrolled to wherever the viewport already was.
   // Waits for the initial page to actually be loaded (itemsByIndex has the jump target's row)
   // so there's real content to scroll to, not just an empty virtualized placeholder area.
   useEffect(() => {
     if (jumpTarget == null || !jumpPositionQuery.data) return
-    if (scrolledForJumpRef.current === jumpRequestId) return
+    if (scrolledForJumpRef.current === jumpRequestId && scrolledForColumnsRef.current === columnsPerRow) return
     if (!itemsByIndex.has(jumpPositionQuery.data.index) && jumpPositionQuery.data.index < total) {
       logPeopleDebug('jump-scroll-waiting-for-target-page', {
         jumpTarget, jumpRequestId, targetIndex: jumpPositionQuery.data.index,
@@ -485,6 +502,7 @@ export default function PeopleLibraryPage() {
     })
     virtualizer.scrollToIndex(rowIndex, { align: 'start' })
     scrolledForJumpRef.current = jumpRequestId
+    scrolledForColumnsRef.current = columnsPerRow
     // Root-caused live (2026-09-06) as the actual cause of "reload the people list and it gives
     // me a blank screen": a jump this deep opens the page already scrolled hundreds of rows down
     // (via scrollToIndex above), but @tanstack/react-virtual only learns the resulting scrollTop

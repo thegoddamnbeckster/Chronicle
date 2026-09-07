@@ -5,12 +5,15 @@ import PeopleLibraryPage from './PeopleLibraryPage'
 import { renderPeoplePage, stubViewportGeometry } from '@/test/people-test-utils'
 import type { PersonListItem } from '@/types'
 import * as peopleApi from '@/api/people'
+import { logPeopleDebug } from '@/utils/peopleDebugLog'
 
 vi.mock('@/api/people')
+vi.mock('@/utils/peopleDebugLog', () => ({ logPeopleDebug: vi.fn() }))
 
 const mockedGetPeople = vi.mocked(peopleApi.getPeople)
 const mockedGetJumpPosition = vi.mocked(peopleApi.getJumpPosition)
 const mockedGetPersonRoles = vi.mocked(peopleApi.getPersonRoles)
+const mockedLogPeopleDebug = vi.mocked(logPeopleDebug)
 
 const PAGE_SIZE = 40
 const TOTAL_PEOPLE = 1200 // 30 pages -- large enough that a jump target lands well past page 1
@@ -180,6 +183,63 @@ describe('PeopleLibraryPage', () => {
     await waitFor(() => {
       expect(mockedGetPeople).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }))
     })
+  })
+
+  it('re-scrolls to the jump target if columnsPerRow changes after the jump already scrolled', async () => {
+    // Root-caused live (2026-09-07) via peopleDebugLog: columnsPerRow starts at MIN_COLUMNS (3)
+    // on mount, since the ResizeObserver that measures the real column count only attaches once
+    // the grid element exists -- so a jump's first scrollToIndex often runs against a WRONG,
+    // placeholder columnsPerRow. Once the observer corrects it moments later (e.g. 3 -> 6 on a
+    // normal desktop width), the same pixel scrollTop suddenly means a completely different
+    // absolute item -- confirmed live as a jump to a "B" name drifting toward the "C"s with no
+    // user interaction. This reproduces that exact sequence: a jump scrolls once under the
+    // placeholder column count, then the observer reports a wider layout, and asserts a SECOND
+    // scroll happens to the recomputed (different) position instead of leaving the stale one.
+    const targetIndex = 400
+    mockedGetJumpPosition.mockResolvedValue({ index: targetIndex, total: TOTAL_PEOPLE })
+
+    const resizeCallbackBox: { current: ResizeObserverCallback | null } = { current: null }
+    const OriginalResizeObserver = globalThis.ResizeObserver
+    class CapturingResizeObserver {
+      constructor(cb: ResizeObserverCallback) { resizeCallbackBox.current = cb }
+      observe() { /* no-op -- this test drives the callback manually */ }
+      unobserve() {}
+      disconnect() {}
+    }
+    globalThis.ResizeObserver = CapturingResizeObserver as unknown as typeof ResizeObserver
+
+    // Counts OUR OWN "we decided to scroll to this row" log calls, not raw DOM scrollTo()
+    // invocations -- @tanstack/react-virtual's scrollToIndex can itself issue more than one
+    // underlying scrollTo() while it converges on a measured (rather than estimated) row
+    // position, which would make a raw DOM-level call count an unreliable signal for whether
+    // OUR effect actually decided to re-scroll.
+    function jumpScrollToIndexCalls() {
+      return mockedLogPeopleDebug.mock.calls
+        .filter(call => call[0] === 'jump-scroll-to-index')
+        .map(call => call[1]?.rowIndex)
+    }
+
+    try {
+      renderPeoplePage(<PeopleLibraryPage />, {
+        initialEntries: [{ pathname: '/people', state: { jumpTo: 'Person 0400' } }],
+      })
+
+      await screen.findByText('Person 0400')
+      expect(jumpScrollToIndexCalls()).toEqual([133]) // floor(400 / MIN_COLUMNS=3)
+
+      // Simulate the ResizeObserver correcting columnsPerRow from MIN_COLUMNS (3) to a wider
+      // desktop layout (6) after the grid already mounted and the jump already scrolled once.
+      resizeCallbackBox.current?.(
+        [{ contentRect: { width: 1200 } } as ResizeObserverEntry],
+        {} as ResizeObserver,
+      )
+
+      await waitFor(() => {
+        expect(jumpScrollToIndexCalls()).toEqual([133, 66]) // re-scrolled using floor(400 / 6)
+      })
+    } finally {
+      globalThis.ResizeObserver = OriginalResizeObserver
+    }
   })
 
   it('still auto-loads the next page via the scroll-position backstop when no scroll event ever fires', async () => {
