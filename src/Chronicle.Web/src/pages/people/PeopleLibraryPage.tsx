@@ -92,12 +92,22 @@ export default function PeopleLibraryPage() {
   const [jumpTarget, setJumpTarget] = useState<string | null>(
     () => (location.state as { jumpTo?: string } | null)?.jumpTo ?? null)
   const [jumpInput, setJumpInput] = useState('')
-  // Tracks which jumpTarget the virtualizer has already been scrolled to, so the scroll-to-
+  // Identifies a single jump ACTION, separately from jumpTarget's own value -- incremented on
+  // every jump, even a re-jump to the identical letter/name. Needed because jumpTarget alone
+  // can't reliably signal "a new jump happened": React bails out of re-rendering (and therefore
+  // re-running effects) on a same-value useState update, so re-submitting the SAME text in the
+  // jump-search form (submitJumpSearch doesn't clear jumpInput after a successful jump, so
+  // clicking "Jump" again with unchanged text is a real, easy-to-hit path) would otherwise never
+  // trigger a new render at all. Confirmed live (2026-09-06) as a real regression this caused:
+  // scrolledForJumpRef.current got reset to null with no following render to ever set it back,
+  // permanently stuck-blocking the auto-load effect's guard below for the rest of that jump.
+  const [jumpRequestId, setJumpRequestId] = useState(0)
+  // Tracks which jumpRequestId the virtualizer has already been scrolled to, so the scroll-to-
   // target effect (below) fires exactly once per jump instead of re-scrolling on every
-  // subsequent page load/re-render while that jump is still active. Cleared up front by every
-  // jump action so re-jumping to the SAME letter/name twice in a row still scrolls the second
-  // time too, rather than silently no-op'ing because the ref already equals that value.
-  const scrolledForJumpRef = useRef<string | null>(null)
+  // subsequent page load/re-render while that jump is still active. Compared against
+  // jumpRequestId rather than jumpTarget precisely so a same-target re-jump (which bumps the id
+  // even though the target string is unchanged) is never confused with "already handled."
+  const scrolledForJumpRef = useRef<number | null>(null)
 
   function setPrefs(updates: Partial<PeopleLibraryPrefs>) {
     const next = { ...prefs, ...updates }
@@ -108,6 +118,7 @@ export default function PeopleLibraryPage() {
   function jumpToLetter(letter: string) {
     scrolledForJumpRef.current = null
     setJumpTarget(letter)
+    setJumpRequestId(id => id + 1)
     setJumpInput('')
   }
 
@@ -116,6 +127,7 @@ export default function PeopleLibraryPage() {
     if (jumpInput.trim()) {
       scrolledForJumpRef.current = null
       setJumpTarget(jumpInput.trim())
+      setJumpRequestId(id => id + 1)
     }
   }
 
@@ -316,6 +328,19 @@ export default function PeopleLibraryPage() {
     const firstRow = virtualRows[0]
     const lastRow = virtualRows[virtualRows.length - 1]
     if (!firstRow || !lastRow) return
+    // While a jump's own initial scroll hasn't happened yet, virtualRows still reflect wherever
+    // the viewport was BEFORE the jump (usually row 0) -- comparing that against the page range
+    // the jump opened on (which can be far away) would walk every page back toward 1 before the
+    // real scroll position is ever known. Confirmed live (2026-09-06) as a contributor to the
+    // "reload the people list and it gives me a blank screen" bug: this effect runs in the same
+    // render pass as the scroll-to-jump effect below but is declared first, so it always sees
+    // one stale round of virtualRows on a jump's first render. The scroll-to-jump effect flips
+    // scrolledForJumpRef the moment it actually moves the viewport, which re-runs THIS effect too
+    // -- via virtualRows changing as a side effect of that scroll (already a dep below), not via
+    // itemsByIndex.size, which isn't one. Compared against jumpRequestId, not jumpTarget: a
+    // same-target re-jump changes only the id (see jumpRequestId's own doc), so gating on the
+    // target string alone would miss it and stay stuck permanently true for that case.
+    if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) return
 
     const maxLoadedPage = pageParams.length > 0 ? Math.max(...pageParams) : (initialPage ?? 1)
     const minLoadedPage = pageParams.length > 0 ? Math.min(...pageParams) : (initialPage ?? 1)
@@ -329,7 +354,7 @@ export default function PeopleLibraryPage() {
       peopleQuery.fetchPreviousPage()
     }
   }, [
-    virtualRows, columnsPerRow, pageParams, initialPage,
+    virtualRows, columnsPerRow, pageParams, initialPage, jumpTarget, jumpRequestId,
     peopleQuery.hasNextPage, peopleQuery.isFetchingNextPage, peopleQuery.fetchNextPage,
     peopleQuery.hasPreviousPage, peopleQuery.isFetchingPreviousPage, peopleQuery.fetchPreviousPage,
   ])
@@ -341,7 +366,7 @@ export default function PeopleLibraryPage() {
   // so there's real content to scroll to, not just an empty virtualized placeholder area.
   useEffect(() => {
     if (jumpTarget == null || !jumpPositionQuery.data) return
-    if (scrolledForJumpRef.current === jumpTarget) return
+    if (scrolledForJumpRef.current === jumpRequestId) return
     if (!itemsByIndex.has(jumpPositionQuery.data.index) && jumpPositionQuery.data.index < total) return
     // Clamp to the last real item: a jump target that sorts past everyone (e.g. "Zzz" in a
     // catalog with no matching last name) resolves to index === total, which is one past the
@@ -352,11 +377,43 @@ export default function PeopleLibraryPage() {
     const clampedIndex = Math.min(jumpPositionQuery.data.index, Math.max(total - 1, 0))
     const rowIndex = Math.floor(clampedIndex / columnsPerRow)
     virtualizer.scrollToIndex(rowIndex, { align: 'start' })
-    scrolledForJumpRef.current = jumpTarget
+    scrolledForJumpRef.current = jumpRequestId
+    // Root-caused live (2026-09-06) as the actual cause of "reload the people list and it gives
+    // me a blank screen": a jump this deep opens the page already scrolled hundreds of rows down
+    // (via scrollToIndex above), but @tanstack/react-virtual only learns the resulting scrollTop
+    // from the browser's own 'scroll' event -- confirmed via direct virtualizer inspection, that
+    // event does not reliably arrive for a programmatic scrollTo this early in the page's life.
+    // Without it, virtualizer.scrollOffset is stuck at its initial 0 forever: every row keeps
+    // rendering for the TOP of the list while the real scrollTop sits deep below them, so the
+    // visible viewport shows nothing -- and the auto-load effect above, which trusts those same
+    // rows, reads that as "still near the start" and walks every earlier page back to 1 fetching
+    // content nobody's looking at. scrollTo() with the default (non-smooth) behavior updates
+    // Element.scrollTop synchronously -- confirmed live, immediately after scrollToIndex returns
+    // -- so a synthetic 'scroll' dispatch recovers it regardless of why the native event didn't
+    // arrive. Deferred via setTimeout rather than fired inline: @tanstack/react-virtual's own
+    // scroll handler calls React's flushSync to stay perceptually instant during real scrolling,
+    // and flushSync throws if triggered synchronously from inside this effect (React is still
+    // mid-commit) -- confirmed live (2026-09-06) as its own "flushSync was called from inside a
+    // lifecycle method" console error. A macrotask escapes that window; unlike rAF, it isn't
+    // paused indefinitely for a backgrounded tab. A real subsequent scroll event, if one does
+    // land before this fires, just makes it a harmless no-op re-read of the same value.
+    // Deliberately not cancelled on cleanup: <main> (MainScrollContext, owned by Layout.tsx)
+    // outlives this component across route changes, so a timeout that still fires after a real
+    // unmount just dispatches a harmless extra 'scroll' re-read on a still-valid element -- but a
+    // returned `clearTimeout` would ALSO fire on React StrictMode's dev-only simulated
+    // mount-cleanup-remount, cancelling this run's timer with no later run to replace it (the
+    // guard above already blocks re-entry once scrolledForJumpRef is set), silently reintroducing
+    // the exact bug this effect exists to fix, in dev only.
+    setTimeout(() => {
+      mainScrollRef.current?.dispatchEvent(new Event('scroll'))
+    }, 0)
     // itemsByIndex.size (not the map itself, a new object every render) is what actually
     // needs to trigger a re-check here: a fresh page landing is the only thing that can flip
     // the has()/index<total guard above from false to true after the initial bail-out.
-  }, [jumpTarget, jumpPositionQuery.data, itemsByIndex.size, total, columnsPerRow])
+  }, [
+    jumpTarget, jumpRequestId, jumpPositionQuery.data, itemsByIndex.size, total, columnsPerRow,
+    mainScrollRef,
+  ])
 
   return (
     <div className={styles.page}>
