@@ -10,6 +10,7 @@ import { MainScrollContext } from '@/components/layout/Layout'
 import {
   loadPeoplePrefs, savePeoplePrefs, type PeopleLibraryPrefs,
 } from '@/utils/peopleLibraryPrefs'
+import { logPeopleDebug } from '@/utils/peopleDebugLog'
 import styles from './PeopleLibraryPage.module.css'
 
 type DeceasedFilter = PeopleLibraryPrefs['deceased']
@@ -131,6 +132,7 @@ export default function PeopleLibraryPage() {
 
   function jumpToLetter(letter: string) {
     scrolledForJumpRef.current = null
+    logPeopleDebug('jump-start', { letter, prevRequestId: jumpRequestId })
     setJumpTarget(letter)
     setJumpRequestId(id => id + 1)
     setJumpInput('')
@@ -354,14 +356,23 @@ export default function PeopleLibraryPage() {
     // itemsByIndex.size, which isn't one. Compared against jumpRequestId, not jumpTarget: a
     // same-target re-jump changes only the id (see jumpRequestId's own doc), so gating on the
     // target string alone would miss it and stay stuck permanently true for that case.
-    if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) return
+    if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) {
+      logPeopleDebug('primary-effect-blocked-by-jump-guard', { jumpTarget, jumpRequestId })
+      return
+    }
 
     const { maxLoadedRow, minLoadedRow } = loadedRowRange(pageParams, initialPage, columnsPerRow)
+    logPeopleDebug('primary-effect-check', {
+      firstRow: firstRow.index, lastRow: lastRow.index, maxLoadedRow, minLoadedRow,
+      hasNextPage: peopleQuery.hasNextPage, isFetchingNextPage: peopleQuery.isFetchingNextPage,
+    })
 
     if (lastRow.index >= maxLoadedRow - 3 && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
+      logPeopleDebug('primary-effect-fetch-next')
       peopleQuery.fetchNextPage()
     }
     if (firstRow.index <= minLoadedRow + 2 && peopleQuery.hasPreviousPage && !peopleQuery.isFetchingPreviousPage) {
+      logPeopleDebug('primary-effect-fetch-previous')
       peopleQuery.fetchPreviousPage()
     }
   }, [
@@ -391,7 +402,10 @@ export default function PeopleLibraryPage() {
   // about what "near the loaded edge" means; this is purely a second, independent way to notice
   // it, not a second definition of it.
   useEffect(() => {
-    if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) return
+    if (jumpTarget != null && scrolledForJumpRef.current !== jumpRequestId) {
+      logPeopleDebug('backstop-blocked-by-jump-guard', { jumpTarget, jumpRequestId })
+      return
+    }
 
     const id = setInterval(() => {
       const main = mainScrollRef.current
@@ -400,13 +414,25 @@ export default function PeopleLibraryPage() {
       const rowSpan = rowHeight + GRID_GAP
       const loadedBottomY = (maxLoadedRow + 1) * rowSpan
       const loadedTopY = minLoadedRow * rowSpan
+      // clientHeight/virtualizer.getTotalSize() are logged every tick (not just on a fetch
+      // decision) specifically to catch the "virtualizer thinks the container is much shorter
+      // than it really is, so it only ever renders one row's worth of virtualRows" theory --
+      // that failure mode produces no fetch decision at all (the visible range genuinely IS
+      // satisfied by the one loaded row), so it would otherwise leave no trace in this log.
+      logPeopleDebug('backstop-tick', {
+        scrollTop: main.scrollTop, clientHeight: main.clientHeight,
+        totalSize: virtualizer.getTotalSize(), loadedBottomY, loadedTopY,
+        hasNextPage: peopleQuery.hasNextPage, isFetchingNextPage: peopleQuery.isFetchingNextPage,
+      })
 
       if (main.scrollTop + main.clientHeight >= loadedBottomY - rowSpan * 3
           && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
+        logPeopleDebug('backstop-fetch-next')
         peopleQuery.fetchNextPage()
       }
       if (main.scrollTop <= loadedTopY + rowSpan * 2
           && peopleQuery.hasPreviousPage && !peopleQuery.isFetchingPreviousPage) {
+        logPeopleDebug('backstop-fetch-previous')
         peopleQuery.fetchPreviousPage()
       }
     }, 500)
@@ -426,7 +452,13 @@ export default function PeopleLibraryPage() {
   useEffect(() => {
     if (jumpTarget == null || !jumpPositionQuery.data) return
     if (scrolledForJumpRef.current === jumpRequestId) return
-    if (!itemsByIndex.has(jumpPositionQuery.data.index) && jumpPositionQuery.data.index < total) return
+    if (!itemsByIndex.has(jumpPositionQuery.data.index) && jumpPositionQuery.data.index < total) {
+      logPeopleDebug('jump-scroll-waiting-for-target-page', {
+        jumpTarget, jumpRequestId, targetIndex: jumpPositionQuery.data.index,
+        itemsByIndexSize: itemsByIndex.size, total,
+      })
+      return
+    }
     // Clamp to the last real item: a jump target that sorts past everyone (e.g. "Zzz" in a
     // catalog with no matching last name) resolves to index === total, which is one past the
     // last valid absolute index. Caught in code review (2026-09-03): when total happens to be
@@ -435,6 +467,11 @@ export default function PeopleLibraryPage() {
     // index, not the raw (possibly out-of-bounds) one from GetJumpPosition.
     const clampedIndex = Math.min(jumpPositionQuery.data.index, Math.max(total - 1, 0))
     const rowIndex = Math.floor(clampedIndex / columnsPerRow)
+    logPeopleDebug('jump-scroll-to-index', {
+      jumpTarget, jumpRequestId, rowIndex,
+      clientHeightBefore: mainScrollRef.current?.clientHeight,
+      scrollTopBefore: mainScrollRef.current?.scrollTop,
+    })
     virtualizer.scrollToIndex(rowIndex, { align: 'start' })
     scrolledForJumpRef.current = jumpRequestId
     // Root-caused live (2026-09-06) as the actual cause of "reload the people list and it gives
@@ -464,6 +501,11 @@ export default function PeopleLibraryPage() {
     // guard above already blocks re-entry once scrolledForJumpRef is set), silently reintroducing
     // the exact bug this effect exists to fix, in dev only.
     setTimeout(() => {
+      logPeopleDebug('jump-scroll-dispatch-synthetic-scroll', {
+        jumpRequestId,
+        scrollTopAfter: mainScrollRef.current?.scrollTop,
+        clientHeightAfter: mainScrollRef.current?.clientHeight,
+      })
       mainScrollRef.current?.dispatchEvent(new Event('scroll'))
     }, 0)
     // itemsByIndex.size (not the map itself, a new object every render) is what actually

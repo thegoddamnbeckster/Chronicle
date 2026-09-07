@@ -6,9 +6,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
-  padding: 6px 3px;
-  border-radius: 12px;
+  gap: 2px;
+  padding: 8px 4px;
+  border-radius: 14px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   z-index: 20;
@@ -19,32 +19,28 @@
   cursor: pointer;
 }
 
+/* AlphabetRail.tsx's own letterAtPoint() maps a tap/drag position to a letter by dividing
+   the rail's OVERALL rendered height evenly across all 27 entries (rail.height / 27) -- it
+   never looks at an individual .letter element's own box. So every letter's real tap target
+   is exactly this rail's total height / 27, regardless of what's set here; making letters
+   visually bigger (font-size, padding, gap) is what actually makes them easier to hit, not
+   just easier to read. Per-user request (2026-09-07): "nearly impossible to click on a phone
+   screen" -- sized against a 568px-tall viewport (the shortest realistic phone screen in
+   portrait) as the floor: 27 * (14px font + 4px padding + 2px gap) + 16px rail padding =
+   ~529px, comfortably inside that with room to spare. */
 .letter,
 .letterActive {
-  font-size: 10px;
+  font-size: 14px;
   line-height: 1;
-  width: 16px;
+  width: 26px;
+  padding: 2px 0;
   text-align: center;
   color: var(--text-muted);
-  border-radius: 4px;
+  border-radius: 5px;
 }
 
 .letterActive {
   background: var(--accent);
   color: var(--accent-fg, #fff);
   font-weight: 700;
-}
-
-/* Smaller/tighter on narrow viewports so the rail doesn't eat too much screen width on a
-   phone -- per-user request (2026-08-30): "let my phone scroll through the people". */
-@media (max-width: 480px) {
-  .rail {
-    padding: 4px 2px;
-    right: 2px;
-  }
-  .letter,
-  .letterActive {
-    font-size: 9px;
-    width: 13px;
-  }
 }
