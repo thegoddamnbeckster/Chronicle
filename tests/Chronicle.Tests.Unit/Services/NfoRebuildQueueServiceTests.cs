@@ -3,6 +3,8 @@ using Chronicle.Data;
 using Chronicle.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Moq;
 using Xunit;
 
 namespace Chronicle.Tests.Unit.Services;
@@ -20,7 +22,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
         var opts = new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
         _db = new ChronicleDbContext(opts);
-        _svc = new NfoRebuildQueueService(_db);
+        _svc = new NfoRebuildQueueService(_db, Mock.Of<ILogger<NfoRebuildQueueService>>());
 
         // Bypasses the process-static seed throttle -- see ResetSeedThrottleForTests' own doc.
         NfoRebuildQueueService.ResetSeedThrottleForTests();
@@ -169,6 +171,45 @@ public class NfoRebuildQueueServiceTests : IDisposable
         var deviceBClaim = await _svc.ClaimBatchAsync(kodiDeviceId: 2, batchSize: 10, TimeSpan.FromMinutes(10));
 
         deviceBClaim.Items.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ClaimBatchAsync_NeverQueuesACollectionContainer()
+    {
+        // A collection container is movie-typed at HierarchyLevel 0, identical to a real
+        // standalone movie by every column the type/level filter alone can see -- confirmed
+        // live (2026-09-06) that this leaked every container into the queue, where it could
+        // never resolve to a real local file. Identified the same way
+        // MetadataEnrichmentService.MarkCollectionContainersPendingAsSkippedAsync does: a
+        // "collection:" external id, not a real per-provider match.
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 300, MediaTypeId = MovieTypeId, Name = "Toy Story Collection", HierarchyLevel = 0 });
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = 300, Source = "chronicle", ExternalId = "collection:300" });
+        await _db.SaveChangesAsync();
+
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().ContainSingle();
+        claimed.Items[0].MediaItemId.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task ClaimBatchAsync_PrunesACollectionContainerAlreadyQueuedBeforeTheFix()
+    {
+        // Simulates a row that was seeded before the collection-container exclusion existed --
+        // EnsureSeededAsync's next throttled pass must clean it up, not just avoid adding new
+        // ones, so an already-installed deployment's existing backlog is also fixed.
+        _db.MediaItems.Add(new MediaItem { Id = 300, MediaTypeId = MovieTypeId, Name = "Toy Story Collection", HierarchyLevel = 0 });
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = 300, Source = "chronicle", ExternalId = "collection:300" });
+        _db.NfoRebuildQueue.Add(new NfoRebuildQueueItem { MediaItemId = 300, Kind = "movie", EnqueuedAt = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+
+        NfoRebuildQueueService.ResetSeedThrottleForTests();
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().BeEmpty();
+        claimed.TotalPending.Should().Be(0);
+        (await _db.NfoRebuildQueue.AnyAsync(q => q.MediaItemId == 300)).Should().BeFalse();
     }
 
     [Fact]

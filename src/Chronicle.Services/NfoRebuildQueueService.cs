@@ -3,6 +3,7 @@ using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Chronicle.Services;
 
@@ -26,7 +27,7 @@ namespace Chronicle.Services;
 /// _episodeResolutionLocks and this class's own _seedLock); CompleteAsync additionally no
 /// longer requires the caller to be the CURRENT claimant (see its own doc) as defense in depth.
 /// </summary>
-public sealed class NfoRebuildQueueService(ChronicleDbContext db) : INfoRebuildQueueService
+public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoRebuildQueueService> logger) : INfoRebuildQueueService
 {
 
     // Process-wide (not per-request) throttle on the expensive "scan for never-queued items"
@@ -166,12 +167,52 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db) : INfoRebuildQ
             var movieTypeIds = typesByName.Where(kv => NfoKindHelper.MovieLikeTypeNames.Contains(kv.Value)).Select(kv => kv.Key).ToList();
             var showTypeIds  = typesByName.Where(kv => NfoKindHelper.ShowLikeTypeNames.Contains(kv.Value)).Select(kv => kv.Key).ToList();
 
+            // Collection containers (e.g. "Toy Story Collection") are movie-typed and sit at
+            // HierarchyLevel 0 exactly like a standalone movie, so the type filter alone can't
+            // tell them apart -- confirmed live (2026-09-06): every collection container in the
+            // library was being queued here, and since a container has no video file/folder of
+            // its own, movie_art_sync.find_movie_location() can never resolve one, so the addon
+            // burned its full 60s wait timeout on every single one for nothing before releasing
+            // it. Same detection MetadataEnrichmentService.MarkCollectionContainersPendingAsSkippedAsync
+            // already uses: a container is identified by its own "collection:" external id, not
+            // by a real per-provider match.
+            var collectionContainerIds = (await db.MediaExternalIds
+                .Where(e => e.ExternalId.StartsWith("collection:"))
+                .Select(e => e.MediaItemId)
+                .Distinct()
+                .ToListAsync(ct)).ToHashSet();
+
+            // Prunes rows already queued for a container BEFORE this fix landed, not just new
+            // ones going forward -- otherwise every already-installed deployment's backlog would
+            // carry this dead weight until an admin ran ReseedAllAsync by hand. Deleted outright
+            // (not marked Skipped/CompletedAt) since a container can never legitimately appear
+            // here again to re-trigger this same check; unlike EnsureSeededAsync's own additive
+            // "top up" design, cleanup only ever needs to run once per stale row, and re-running
+            // this Where/Any query every throttle interval against an already-clean queue is
+            // cheap once the initial backlog is gone.
+            if (collectionContainerIds.Count > 0)
+            {
+                var staleContainerRows = await db.NfoRebuildQueue
+                    .Where(q => collectionContainerIds.Contains(q.MediaItemId))
+                    .ToListAsync(ct);
+                if (staleContainerRows.Count > 0)
+                {
+                    db.NfoRebuildQueue.RemoveRange(staleContainerRows);
+                    await db.SaveChangesAsync(ct);
+                    logger.LogInformation(
+                        "NfoRebuildQueueService: pruned {Count} stale collection-container row(s) " +
+                        "from the rebuild queue -- these can never resolve to a real local file",
+                        staleContainerRows.Count);
+                }
+            }
+
             // Id + HierarchyLevel only -- this can be tens of thousands of rows, no need to pull
             // full MediaItem entities just to classify them.
             var movieIds = await db.MediaItems
                 .Where(m => movieTypeIds.Contains(m.MediaTypeId))
                 .Select(m => m.Id)
                 .ToListAsync(ct);
+            movieIds.RemoveAll(collectionContainerIds.Contains);
 
             // Number != null on the episode side excludes a numberless episode (a scan/matching
             // gap upstream -- see ScraperController.GetEpisodes' own identical exclusion and its
