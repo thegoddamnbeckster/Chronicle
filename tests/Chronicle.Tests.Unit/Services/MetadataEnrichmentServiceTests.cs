@@ -88,6 +88,108 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichPendingAsync_SkipsHierarchyLevelThePluginDeclaresEmpty()
+    {
+        // Root-caused live (2026-09-08): Chronicle.Plugin.Simkl has no standalone season/episode
+        // search, so it already returns [] for those immediately (no API call) -- but the row
+        // sat Pending forever regardless, competing for a batch-pass slot a real rate-limit trip
+        // could strand alongside genuinely enrichable items, and inflating the visible Pending
+        // count. A plugin declares "nothing to offer at this level" via an EMPTY (not absent)
+        // LevelFields entry for that level; this should remove such rows from Pending for good,
+        // WITHOUT ever calling SearchAsync -- per-user report the same day: "If they are
+        // episodes and seasons, then they don't need to be in the queue at all."
+        var mediaType = await EnsureMediaTypeAsync("tv");
+        var season = new MediaItem
+        {
+            Name           = "Season 1",
+            MediaTypeId    = mediaType.Id,
+            HierarchyLevel = 1,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(season);
+        await _db.SaveChangesAsync();
+
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = season.Id,
+            PluginId    = "chronicle.plugin.simkl",
+            Status      = EnrichmentStatus.Pending,
+            MaxRetries  = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.simkl");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport
+            {
+                MediaTypeName = "tv",
+                LevelFields   = new() { [1] = [], [2] = [] },
+            }]);
+        mockProvider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new ScoredCandidate(
+                new MediaMetadata { Title = "Should never be called", ExternalId = "simkl:tv:1" }, 100, "n/a")]);
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.simkl")).Returns(mockProvider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.simkl");
+
+        mockProvider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Never);
+        var updated = await _db.MediaEnrichments.FindAsync(row.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.Skipped);
+        updated.ErrorMessage.Should().Contain("hierarchy level 1");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_StillSearchesRootLevel_WhenOnlySubLevelsAreDeclaredEmpty()
+    {
+        // The level check must be precise, not "this plugin declared ANY empty level for this
+        // type, so skip every row of that type" -- a root-level show (HierarchyLevel 0) is
+        // exactly what SIMKL's search DOES support; only levels 1/2 (season/episode) are empty.
+        var mediaType = await EnsureMediaTypeAsync("tv");
+        var show = new MediaItem
+        {
+            Name           = "Real Show",
+            MediaTypeId    = mediaType.Id,
+            HierarchyLevel = 0,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(show);
+        await _db.SaveChangesAsync();
+
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = show.Id,
+            PluginId    = "chronicle.plugin.simkl",
+            Status      = EnrichmentStatus.Pending,
+            MaxRetries  = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.simkl");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport
+            {
+                MediaTypeName = "tv",
+                LevelFields   = new() { [1] = [], [2] = [] },
+            }]);
+        mockProvider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new ScoredCandidate(
+                new MediaMetadata { Title = "Real Show", ExternalId = "simkl:tv:1" }, 100, "exact-title")]);
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.simkl")).Returns(mockProvider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.simkl");
+
+        mockProvider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        var updated = await _db.MediaEnrichments.FindAsync(row.Id);
+        updated!.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
     public async Task EnrichPendingAsync_IncrementsRetryCountOnFailure()
     {
         var (item, status) = await SeedItemWithStatus(null, EnrichmentStatus.Pending);

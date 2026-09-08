@@ -175,6 +175,7 @@ public class MetadataEnrichmentService(
         // clear them out was unreachable code after a loop that never exits.
         await MarkUnsupportedPendingAsSkippedAsync(db, pluginId, supportedRawTypes, ct);
         await MarkCollectionContainersPendingAsSkippedAsync(db, pluginId, ct);
+        await MarkHierarchyUnsupportedPendingAsSkippedAsync(db, pluginId, provider, ct);
 
         var cutoff = DateTime.UtcNow - RetryWindow;
 
@@ -389,6 +390,7 @@ public class MetadataEnrichmentService(
         // guard against the infinite-loop case is the identical call before the main loop.
         await MarkUnsupportedPendingAsSkippedAsync(db, pluginId, supportedRawTypes, ct);
         await MarkCollectionContainersPendingAsSkippedAsync(db, pluginId, ct);
+        await MarkHierarchyUnsupportedPendingAsSkippedAsync(db, pluginId, provider, ct);
 
         // 2. Diagnostic summary — log how many items are still Pending after the run
         //    and break them down by reason so the cause is visible in logs.
@@ -2328,6 +2330,75 @@ public class MetadataEnrichmentService(
             "EnrichPendingAsync: marked {Count} items as Skipped for {PluginId} — " +
             "media type not supported by this plugin",
             unsupportedPending.Count, pluginId);
+        db.ChangeTracker.Clear();
+    }
+
+    /// <summary>
+    /// Marks Pending rows Skipped when the plugin has explicitly declared it has nothing to
+    /// offer at that row's own hierarchy level -- <see cref="MediaTypeSupport.LevelFields"/>
+    /// present for that level but with an EMPTY field list, distinct from the key being absent
+    /// entirely (which just means "derive a default field set instead," per that property's own
+    /// doc). No plugin is named here — this reads purely from each plugin's own declared
+    /// capabilities, per this project's own "no hardcoding" convention (a mapping like "SIMKL
+    /// can't search seasons" belongs in SIMKL's own manifest/code, not baked into core).
+    ///
+    /// Root-caused live (2026-09-08): Chronicle.Plugin.Simkl has no standalone season/episode
+    /// search (SIMKL's API only supports whole movies/shows), so it already returns an
+    /// immediate, free, zero-API-call empty result for those rows -- but they still sat Pending
+    /// forever, occupying real slots in every future EnrichPendingAsync pass. Per-user report
+    /// the same day: a run that hit its own rate-limit backstop (see SimklClient's
+    /// EnterQuotaCooldown) partway through a pass threw ProviderUnavailableException, which the
+    /// batch loop above correctly treats as "stop calling this plugin for the rest of THIS
+    /// pass" -- but that abandoned thousands of season/episode rows later in the same pass that
+    /// would have resolved for free and were never actually blocked by the rate limit at all,
+    /// making the whole backlog look far slower than it actually is. Removing them from Pending
+    /// here, once, means they never compete for a pass slot that a real rate-limit trip could
+    /// strand -- and the Pending count becomes an accurate measure of remaining real work.
+    /// </summary>
+    private async Task MarkHierarchyUnsupportedPendingAsSkippedAsync(
+        ChronicleDbContext db, string pluginId, IMetadataProvider provider, CancellationToken ct)
+    {
+        var unsupportedLevelsByRawType = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var type in provider.GetSupportedMediaTypes())
+        {
+            if (type.LevelFields is null) continue;
+            var emptyLevels = type.LevelFields
+                .Where(kv => kv.Value.Count == 0)
+                .Select(kv => kv.Key)
+                .ToHashSet();
+            if (emptyLevels.Count == 0) continue;
+            foreach (var rawType in ExpandMediaTypeName(type.MediaTypeName))
+                unsupportedLevelsByRawType[rawType] = emptyLevels;
+        }
+        if (unsupportedLevelsByRawType.Count == 0) return;
+
+        var relevantRawTypes = unsupportedLevelsByRawType.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = await db.MediaEnrichments
+            .Include(x => x.MediaItem).ThenInclude(m => m!.MediaType)
+            .Where(x => x.PluginId == pluginId &&
+                        x.Status == EnrichmentStatus.Pending &&
+                        x.MediaItem!.MediaType != null &&
+                        relevantRawTypes.Contains(x.MediaItem!.MediaType!.Name))
+            .ToListAsync(ct);
+
+        var toSkip = candidates
+            .Where(x => unsupportedLevelsByRawType.TryGetValue(x.MediaItem!.MediaType!.Name, out var levels)
+                        && levels.Contains(x.MediaItem!.HierarchyLevel))
+            .ToList();
+        if (toSkip.Count == 0) return;
+
+        foreach (var row in toSkip)
+        {
+            row.Status       = EnrichmentStatus.Skipped;
+            row.ErrorMessage = $"'{pluginId}' does not support searching at hierarchy level " +
+                                $"{row.MediaItem!.HierarchyLevel} of media type " +
+                                $"'{row.MediaItem!.MediaType!.Name}'.";
+        }
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation(
+            "EnrichPendingAsync: marked {Count} items as Skipped for {PluginId} -- " +
+            "plugin declared no support at this hierarchy level",
+            toSkip.Count, pluginId);
         db.ChangeTracker.Clear();
     }
 
