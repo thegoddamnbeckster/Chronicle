@@ -34,12 +34,19 @@ public class NfoRebuildQueueServiceTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
+    // EnsureSeededAsync now requires a real physical file before it will queue anything (see its
+    // own doc, 2026-09-08) -- every seeded movie/episode in these tests needs this MetadataJson
+    // shape (Chronicle.Services.Scan.FileIdentityJson.HasKnownFile's own doc) or it's silently
+    // excluded, exactly as intended for a metadata-only stub.
+    private static string FileJson(string name) => "{\"fileScanner\":{\"filePaths\":[\"X:\\\\fake\\\\" + name + ".mkv\"]}}";
+
     [Fact]
     public async Task ClaimBatchAsync_SeedsAndClaimsAMovie()
     {
         _db.MediaItems.Add(new MediaItem
         {
             Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
         });
         await _db.SaveChangesAsync();
 
@@ -61,10 +68,10 @@ public class NfoRebuildQueueServiceTests : IDisposable
         // of episodes in a single run before this existed -- once Chronicle_Scraper's own
         // per-kind failure-streak tracking (nfo_rebuild.py) decides it can't resolve a kind this
         // run, it should stop being handed more of it.
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         _db.MediaItems.Add(new MediaItem { Id = 200, MediaTypeId = TvTypeId, Name = "Lanterns", Year = 2026, HierarchyLevel = 0 });
         _db.MediaItems.Add(new MediaItem { Id = 201, MediaTypeId = TvTypeId, Name = "Season 1", ParentId = 200, Number = 1, HierarchyLevel = 1 });
-        _db.MediaItems.Add(new MediaItem { Id = 202, MediaTypeId = TvTypeId, Name = "OutKast", ParentId = 201, Number = 3, HierarchyLevel = 2 });
+        _db.MediaItems.Add(new MediaItem { Id = 202, MediaTypeId = TvTypeId, Name = "OutKast", ParentId = 201, Number = 3, HierarchyLevel = 2, MetadataJson = FileJson("OutKast") });
         await _db.SaveChangesAsync();
 
         var claimed = await _svc.ClaimBatchAsync(
@@ -83,7 +90,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     {
         _db.MediaItems.Add(new MediaItem { Id = 200, MediaTypeId = TvTypeId, Name = "Lanterns", Year = 2026, HierarchyLevel = 0 });
         _db.MediaItems.Add(new MediaItem { Id = 201, MediaTypeId = TvTypeId, Name = "Season 1", ParentId = 200, Number = 1, HierarchyLevel = 1 });
-        _db.MediaItems.Add(new MediaItem { Id = 202, MediaTypeId = TvTypeId, Name = "OutKast", ParentId = 201, Number = 3, HierarchyLevel = 2 });
+        _db.MediaItems.Add(new MediaItem { Id = 202, MediaTypeId = TvTypeId, Name = "OutKast", ParentId = 201, Number = 3, HierarchyLevel = 2, MetadataJson = FileJson("OutKast") });
         await _db.SaveChangesAsync();
 
         var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
@@ -105,7 +112,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     [Fact]
     public async Task ClaimBatchAsync_DoesNotReturnAlreadyCompletedItems()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var firstBatch = await _svc.ClaimBatchAsync(1, 10, TimeSpan.FromMinutes(5));
@@ -120,7 +127,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     [Fact]
     public async Task ClaimBatchAsync_DoesNotDoubleClaimWithinAnotherDevicesActiveLease()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var deviceAClaim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -134,7 +141,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     [Fact]
     public async Task ClaimBatchAsync_ReclaimsAfterLeaseExpires()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         // Negative lease = already expired the instant it's set, simulating a device that
@@ -154,7 +161,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
         // late-but-genuine completion (e.g. this device's own lease lapsed and another device
         // re-claimed the same row in the meantime) must still be accepted rather than silently
         // discarded, which would leave a correctly-rebuilt item stuck being redone forever.
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -169,7 +176,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     [Fact]
     public async Task CompleteAsync_IsIdempotentOnceAlreadyCompleted()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -187,7 +194,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     [Fact]
     public async Task ReleaseAsync_MakesItemImmediatelyClaimableByAnotherDevice()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var deviceAClaim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -207,7 +214,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
         // clears ClaimedByKodiDeviceId with no memory of who just tried and failed. For a device
         // stuck at the front of a long contiguous run of items it can never find, this spun
         // forever on the same handful of rows instead of ever reaching new ones.
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -223,7 +230,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     {
         // The cooldown is specific to the device that released -- a device that actually HAS
         // the file locally must not be made to wait out someone else's cooldown.
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -237,7 +244,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     [Fact]
     public async Task ClaimBatchAsync_LetsTheSameDeviceReclaimOnceTheReleaseCooldownHasPassed()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -258,7 +265,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     [Fact]
     public async Task ReseedAllAsync_ClearsAnyStandingReleaseCooldown()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -282,8 +289,8 @@ public class NfoRebuildQueueServiceTests : IDisposable
         // never resolve to a real local file. Identified the same way
         // MetadataEnrichmentService.MarkCollectionContainersPendingAsSkippedAsync does: a
         // "collection:" external id, not a real per-provider match.
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
-        _db.MediaItems.Add(new MediaItem { Id = 300, MediaTypeId = MovieTypeId, Name = "Toy Story Collection", HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        _db.MediaItems.Add(new MediaItem { Id = 300, MediaTypeId = MovieTypeId, Name = "Toy Story Collection", HierarchyLevel = 0, MetadataJson = FileJson("Toy Story Collection") });
         _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = 300, Source = "chronicle", ExternalId = "collection:300" });
         await _db.SaveChangesAsync();
 
@@ -299,7 +306,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
         // Simulates a row that was seeded before the collection-container exclusion existed --
         // EnsureSeededAsync's next throttled pass must clean it up, not just avoid adding new
         // ones, so an already-installed deployment's existing backlog is also fixed.
-        _db.MediaItems.Add(new MediaItem { Id = 300, MediaTypeId = MovieTypeId, Name = "Toy Story Collection", HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 300, MediaTypeId = MovieTypeId, Name = "Toy Story Collection", HierarchyLevel = 0, MetadataJson = FileJson("Toy Story Collection") });
         _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = 300, Source = "chronicle", ExternalId = "collection:300" });
         _db.NfoRebuildQueue.Add(new NfoRebuildQueueItem { MediaItemId = 300, Kind = "movie", EnqueuedAt = DateTime.UtcNow });
         await _db.SaveChangesAsync();
@@ -313,9 +320,66 @@ public class NfoRebuildQueueServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ClaimBatchAsync_NeverQueuesAMovieWithNoPhysicalFile()
+    {
+        // Per-user report (2026-09-08): only items with a real, scanned file anywhere should
+        // ever enter this queue -- a metadata-only stub (imported, scrobbled, or on a want-to-
+        // watch list with no local file) can never be resolved by ANY Kodi device, so queuing it
+        // just wastes a claim/release cycle and, worse, can trip nfo_rebuild.py's own
+        // consecutive-failure kind-exclusion breaker for a completely unrelated reason.
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        _db.MediaItems.Add(new MediaItem { Id = 400, MediaTypeId = MovieTypeId, Name = "Vaporware", Year = 2026, HierarchyLevel = 0 });
+        await _db.SaveChangesAsync();
+
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().ContainSingle();
+        claimed.Items[0].MediaItemId.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task ClaimBatchAsync_NeverQueuesAShowWithNoFileBearingEpisode()
+    {
+        // A show container never carries file info of its own (only a descendant episode does),
+        // so this can't be a plain "does this MediaItem have a file" check -- it has to roll the
+        // check up from the episode level. A show with only metadata-only episodes underneath it
+        // (e.g. seen by a metadata provider but never actually scanned from disk) must not queue
+        // the show either, for the same reason a file-less movie must not.
+        _db.MediaItems.Add(new MediaItem { Id = 200, MediaTypeId = TvTypeId, Name = "Lanterns", Year = 2026, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 201, MediaTypeId = TvTypeId, Name = "Season 1", ParentId = 200, Number = 1, HierarchyLevel = 1 });
+        _db.MediaItems.Add(new MediaItem { Id = 202, MediaTypeId = TvTypeId, Name = "OutKast", ParentId = 201, Number = 3, HierarchyLevel = 2 });
+        await _db.SaveChangesAsync();
+
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().BeEmpty();
+        claimed.TotalPending.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ClaimBatchAsync_PrunesAFileLessRowAlreadyQueuedBeforeTheFix()
+    {
+        // Same "clean up the existing backlog once" reasoning as
+        // ClaimBatchAsync_PrunesACollectionContainerAlreadyQueuedBeforeTheFix -- an
+        // already-installed deployment's queue may already carry thousands of file-less rows
+        // seeded before this check existed; EnsureSeededAsync's next throttled pass must remove
+        // them, not just avoid adding new ones.
+        _db.MediaItems.Add(new MediaItem { Id = 400, MediaTypeId = MovieTypeId, Name = "Vaporware", Year = 2026, HierarchyLevel = 0 });
+        _db.NfoRebuildQueue.Add(new NfoRebuildQueueItem { MediaItemId = 400, Kind = "movie", EnqueuedAt = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+
+        NfoRebuildQueueService.ResetSeedThrottleForTests();
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().BeEmpty();
+        claimed.TotalPending.Should().Be(0);
+        (await _db.NfoRebuildQueue.AnyAsync(q => q.MediaItemId == 400)).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task ReseedAllAsync_ResetsCompletedItemsBackToPending()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -331,9 +395,9 @@ public class NfoRebuildQueueServiceTests : IDisposable
     [Fact]
     public async Task GetStatusAsync_ReturnsOverallCounts()
     {
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
-        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0 });
-        _db.MediaItems.Add(new MediaItem { Id = 102, MediaTypeId = MovieTypeId, Name = "Alien 3", Year = 1992, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0, MetadataJson = FileJson("Aliens") });
+        _db.MediaItems.Add(new MediaItem { Id = 102, MediaTypeId = MovieTypeId, Name = "Alien 3", Year = 1992, HierarchyLevel = 0, MetadataJson = FileJson("Alien 3") });
         await _db.SaveChangesAsync();
 
         var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
@@ -355,7 +419,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
         // where no Kodi device has ever polled yet. A status check must still reflect the real
         // library instead of reading as "nothing to rebuild" just because nobody's claimed
         // anything.
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         var status = await _svc.GetStatusAsync();
@@ -370,8 +434,8 @@ public class NfoRebuildQueueServiceTests : IDisposable
     {
         _db.KodiDevices.Add(new KodiDevice { Id = 1, UserId = 1, ApiTokenId = 1, Name = "Vision", Host = "10.0.0.162", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
         _db.KodiDevices.Add(new KodiDevice { Id = 2, UserId = 1, ApiTokenId = 2, Name = "Office", Host = "10.0.0.163", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
-        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0, MetadataJson = FileJson("Aliens") });
         await _db.SaveChangesAsync();
 
         var claimVision = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 1, TimeSpan.FromMinutes(10));
@@ -405,8 +469,8 @@ public class NfoRebuildQueueServiceTests : IDisposable
         // apart even though DeviceName alone can't.
         _db.KodiDevices.Add(new KodiDevice { Id = 1, UserId = 1, ApiTokenId = 1, Name = "Kodi upstairs", Host = "10.0.0.229", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
         _db.KodiDevices.Add(new KodiDevice { Id = 2, UserId = 1, ApiTokenId = 2, Name = "Kodi upstairs", Host = "10.0.0.162", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
-        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        _db.MediaItems.Add(new MediaItem { Id = 101, MediaTypeId = MovieTypeId, Name = "Aliens", Year = 1986, HierarchyLevel = 0, MetadataJson = FileJson("Aliens") });
         await _db.SaveChangesAsync();
 
         await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 1, TimeSpan.FromMinutes(10));
@@ -425,7 +489,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
     public async Task GetStatusAsync_DoesNotCountALapsedLeaseAsAnActiveClaim()
     {
         _db.KodiDevices.Add(new KodiDevice { Id = 1, UserId = 1, ApiTokenId = 1, Name = "Vision", Host = "10.0.0.162", Port = 8080, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
 
         // Negative lease = already expired -- simulates a device that claimed and vanished
@@ -448,7 +512,7 @@ public class NfoRebuildQueueServiceTests : IDisposable
         // No KodiDevices row for id 1 at all -- simulates a device deleted/re-registered after
         // claiming (see the nfo_rebuild_queue table's own mapping comment on why there's
         // deliberately no FK enforcing this can't happen).
-        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         await _db.SaveChangesAsync();
         await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
 

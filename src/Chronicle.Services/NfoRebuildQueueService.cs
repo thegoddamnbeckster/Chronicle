@@ -297,26 +297,110 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
                 }
             }
 
-            // Id + HierarchyLevel only -- this can be tens of thousands of rows, no need to pull
-            // full MediaItem entities just to classify them.
-            var movieIds = await db.MediaItems
+            // Unlike the old Id-only classification queries this replaced, everything below also
+            // needs each item's MetadataJson to check physical-file status.
+            var movieRows = await db.MediaItems
                 .Where(m => movieTypeIds.Contains(m.MediaTypeId))
-                .Select(m => m.Id)
+                .Select(m => new { m.Id, m.MetadataJson })
                 .ToListAsync(ct);
-            movieIds.RemoveAll(collectionContainerIds.Contains);
+
+            // Only a leaf item (a movie or, below, an episode) ever gets Chronicle's own file
+            // scanner's "fileScanner.filePaths" populated -- see FileIdentityJson.HasKnownFile's
+            // own doc. An item with none is a metadata-only stub (imported, scrobbled, or added
+            // to a watchlist with no local file) -- no Kodi device, now or ever, can resolve an
+            // NFO for it, so queuing it just wastes a claim/release cycle. Confirmed live
+            // (2026-09-07): this was the exact signal that tripped nfo_rebuild.py's own
+            // consecutive-failure kind-exclusion breaker on a device whose local library is
+            // legitimately smaller than Chronicle's tracked catalog -- the real fix belongs here,
+            // at the source, not in the addon working around an unresolvable queue.
+            var movieIds = movieRows
+                .Where(m => !collectionContainerIds.Contains(m.Id) && FileIdentityJson.HasKnownFile(m.MetadataJson))
+                .Select(m => m.Id)
+                .ToHashSet();
 
             // Number != null on the episode side excludes a numberless episode (a scan/matching
             // gap upstream -- see ScraperController.GetEpisodes' own identical exclusion and its
             // doc for why) from ever entering the queue at all: with no real episode number,
             // get_episode(tvshowid, season, None) can never match a real Kodi episode, so every
             // device that claimed one would release it right back, forever -- an unproductive
-            // claim/release loop with no way to ever complete. Shows (HierarchyLevel == 0) have
-            // no equivalent "Number" concept to gate on.
-            var showEpisodeRows = await db.MediaItems
-                .Where(m => showTypeIds.Contains(m.MediaTypeId)
-                         && (m.HierarchyLevel == 0 || (m.HierarchyLevel == 2 && m.Number != null)))
-                .Select(m => new { m.Id, m.HierarchyLevel })
+            // claim/release loop with no way to ever complete.
+            var episodeRows = await db.MediaItems
+                .Where(m => showTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 2 && m.Number != null)
+                .Select(m => new { m.Id, m.MetadataJson })
                 .ToListAsync(ct);
+            var episodeIdsWithFile = episodeRows
+                .Where(e => FileIdentityJson.HasKnownFile(e.MetadataJson))
+                .Select(e => e.Id)
+                .ToHashSet();
+
+            var showIds = await db.MediaItems
+                .Where(m => showTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0)
+                .Select(m => m.Id)
+                .ToListAsync(ct);
+
+            // A show container never carries file info of its own -- only a descendant episode
+            // (or, for a media type with no season level in between, a direct child) does. Same
+            // batched two-hop walk as LibraryController.GetLibrary's own physical-file rollup:
+            // one query for every show's direct children, one for their children, matched back
+            // to the show in memory instead of N+1 per show.
+            var showIdsWithFile = new HashSet<int>();
+            if (showIds.Count > 0)
+            {
+                var directChildren = await db.MediaItems
+                    .Where(m => m.ParentId != null && showIds.Contains(m.ParentId.Value))
+                    .Select(m => new { m.Id, m.ParentId, m.MetadataJson })
+                    .ToListAsync(ct);
+
+                foreach (var c in directChildren)
+                    if (FileIdentityJson.HasKnownFile(c.MetadataJson))
+                        showIdsWithFile.Add(c.ParentId!.Value);
+
+                var directChildIds = directChildren.Select(c => c.Id).ToList();
+                if (directChildIds.Count > 0)
+                {
+                    var directChildToShow = directChildren.ToDictionary(c => c.Id, c => c.ParentId!.Value);
+                    var grandchildren = await db.MediaItems
+                        .Where(m => m.ParentId != null && directChildIds.Contains(m.ParentId.Value))
+                        .Select(m => new { m.ParentId, m.MetadataJson })
+                        .ToListAsync(ct);
+
+                    foreach (var gc in grandchildren)
+                    {
+                        if (!FileIdentityJson.HasKnownFile(gc.MetadataJson)) continue;
+                        if (directChildToShow.TryGetValue(gc.ParentId!.Value, out var showId))
+                            showIdsWithFile.Add(showId);
+                    }
+                }
+            }
+
+            // Prunes rows already queued for a file-less item BEFORE this fix landed, not just
+            // new ones going forward -- same "clean up the existing backlog once" reasoning as
+            // the collection-container prune above.
+            var existingRows = await db.NfoRebuildQueue
+                .Select(q => new { q.Id, q.MediaItemId, q.Kind })
+                .ToListAsync(ct);
+            var staleFileLessIds = existingRows
+                .Where(r => r.Kind switch
+                {
+                    "movie"   => !movieIds.Contains(r.MediaItemId),
+                    "episode" => !episodeIdsWithFile.Contains(r.MediaItemId),
+                    "tvshow"  => !showIdsWithFile.Contains(r.MediaItemId),
+                    _         => false,
+                })
+                .Select(r => r.Id)
+                .ToList();
+            if (staleFileLessIds.Count > 0)
+            {
+                var toRemove = await db.NfoRebuildQueue
+                    .Where(q => staleFileLessIds.Contains(q.Id))
+                    .ToListAsync(ct);
+                db.NfoRebuildQueue.RemoveRange(toRemove);
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation(
+                    "NfoRebuildQueueService: pruned {Count} stale row(s) from the rebuild queue " +
+                    "-- no physical file recorded for these items on any device",
+                    toRemove.Count);
+            }
 
             var existingIds = (await db.NfoRebuildQueue.Select(q => q.MediaItemId).ToListAsync(ct)).ToHashSet();
 
@@ -325,14 +409,12 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             foreach (var id in movieIds)
                 if (!existingIds.Contains(id))
                     toInsert.Add(new NfoRebuildQueueItem { MediaItemId = id, Kind = "movie", EnqueuedAt = now });
-            foreach (var row in showEpisodeRows)
-                if (!existingIds.Contains(row.Id))
-                    toInsert.Add(new NfoRebuildQueueItem
-                    {
-                        MediaItemId = row.Id,
-                        Kind        = row.HierarchyLevel == 0 ? "tvshow" : "episode",
-                        EnqueuedAt  = now,
-                    });
+            foreach (var id in showIds)
+                if (showIdsWithFile.Contains(id) && !existingIds.Contains(id))
+                    toInsert.Add(new NfoRebuildQueueItem { MediaItemId = id, Kind = "tvshow", EnqueuedAt = now });
+            foreach (var id in episodeIdsWithFile)
+                if (!existingIds.Contains(id))
+                    toInsert.Add(new NfoRebuildQueueItem { MediaItemId = id, Kind = "episode", EnqueuedAt = now });
 
             if (toInsert.Count > 0)
             {
