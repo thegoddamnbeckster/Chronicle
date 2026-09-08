@@ -62,8 +62,17 @@ public interface INfoRebuildQueueService
     /// <summary>Claims up to batchSize eligible items (never claimed, or a previous claim's
     /// lease has lapsed) for kodiDeviceId, and marks them claimed with a fresh lease. Lazily
     /// tops up the queue first with any qualifying MediaItem that has no queue row at all yet
-    /// (see EnsureSeededAsync) -- rate-limited internally so this stays cheap on every call.</summary>
-    Task<NfoRebuildQueueClaimBatchDto> ClaimBatchAsync(int kodiDeviceId, int batchSize, TimeSpan lease, CancellationToken ct = default);
+    /// (see EnsureSeededAsync) -- rate-limited internally so this stays cheap on every call.
+    /// excludeKinds (values matching NfoRebuildQueueItem.Kind, e.g. "movie"/"tvshow"/"episode")
+    /// lets a caller that has already determined it can't resolve a given kind locally this run
+    /// (see Chronicle_Scraper's nfo_rebuild.py, which tracks a per-kind consecutive-failure
+    /// streak) stop being handed more of it -- per-user report (2026-09-08): a device whose
+    /// local library covers only a fraction of the shared catalog was claiming, failing to
+    /// resolve, and releasing tens of thousands of items of the same doomed kind in a single
+    /// run before this existed. Null or empty means no exclusion (every prior caller's
+    /// behavior, unchanged).</summary>
+    Task<NfoRebuildQueueClaimBatchDto> ClaimBatchAsync(int kodiDeviceId, int batchSize, TimeSpan lease,
+        IReadOnlyCollection<string>? excludeKinds = null, CancellationToken ct = default);
 
     /// <summary>Marks one item done -- a no-op only if queueItemId doesn't exist or is already
     /// completed. Deliberately NOT gated on kodiDeviceId still being the row's current claimant:

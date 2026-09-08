@@ -108,7 +108,10 @@ public class KodiDeviceController(
     private const int MaxClaimBatchSize = 100;
     private static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(10);
 
-    public record ClaimRebuildBatchRequest(int? BatchSize);
+    /// <summary>ExcludeKinds lets a caller that already determined it can't resolve a kind
+    /// locally this run (values matching NfoRebuildQueueItem.Kind, e.g. "movie"/"tvshow"/
+    /// "episode") stop being handed more of it -- see ClaimBatchAsync's own doc.</summary>
+    public record ClaimRebuildBatchRequest(int? BatchSize, List<string>? ExcludeKinds);
 
     /// <summary>POST /api/v1/scraper/nfo-rebuild-queue/claim -- claims up to BatchSize (default
     /// 25, capped at 100) pending items for the calling device. Requires an API key with a
@@ -123,7 +126,8 @@ public class KodiDeviceController(
             return Ok(ApiResponse<NfoRebuildQueueClaimBatchDto>.Ok(new NfoRebuildQueueClaimBatchDto([], 0)));
 
         var batchSize = Math.Clamp(request?.BatchSize ?? 25, 1, MaxClaimBatchSize);
-        var claimed = await rebuildQueue.ClaimBatchAsync(deviceId.Value, batchSize, ClaimLease, ct);
+        var claimed = await rebuildQueue.ClaimBatchAsync(
+            deviceId.Value, batchSize, ClaimLease, request?.ExcludeKinds, ct);
         return Ok(ApiResponse<NfoRebuildQueueClaimBatchDto>.Ok(claimed));
     }
 

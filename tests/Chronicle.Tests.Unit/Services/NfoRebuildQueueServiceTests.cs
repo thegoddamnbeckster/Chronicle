@@ -54,6 +54,31 @@ public class NfoRebuildQueueServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ClaimBatchAsync_ExcludeKinds_OmitsThatKindFromTheBatch()
+    {
+        // Per-user report (2026-09-08): a device whose local library covers only a fraction of
+        // the shared catalog was claiming, failing to resolve, and releasing tens of thousands
+        // of episodes in a single run before this existed -- once Chronicle_Scraper's own
+        // per-kind failure-streak tracking (nfo_rebuild.py) decides it can't resolve a kind this
+        // run, it should stop being handed more of it.
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 200, MediaTypeId = TvTypeId, Name = "Lanterns", Year = 2026, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 201, MediaTypeId = TvTypeId, Name = "Season 1", ParentId = 200, Number = 1, HierarchyLevel = 1 });
+        _db.MediaItems.Add(new MediaItem { Id = 202, MediaTypeId = TvTypeId, Name = "OutKast", ParentId = 201, Number = 3, HierarchyLevel = 2 });
+        await _db.SaveChangesAsync();
+
+        var claimed = await _svc.ClaimBatchAsync(
+            kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5), excludeKinds: ["episode"]);
+
+        // Show (level 0, kind "tvshow") and movie both still come back -- only "episode" itself
+        // was excluded, proving the filter is precise to the requested kind(s), not "any TV content".
+        claimed.Items.Should().HaveCount(2);
+        claimed.Items.Should().Contain(c => c.Kind == "movie");
+        claimed.Items.Should().Contain(c => c.Kind == "tvshow");
+        claimed.Items.Should().NotContain(c => c.Kind == "episode");
+    }
+
+    [Fact]
     public async Task ClaimBatchAsync_EpisodeIncludesParentShowNameAndYear()
     {
         _db.MediaItems.Add(new MediaItem { Id = 200, MediaTypeId = TvTypeId, Name = "Lanterns", Year = 2026, HierarchyLevel = 0 });

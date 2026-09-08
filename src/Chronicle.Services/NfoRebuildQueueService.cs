@@ -66,7 +66,8 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
     internal static void ResetSeedThrottleForTests() => _lastSeedCheck = DateTime.MinValue;
 
     public async Task<NfoRebuildQueueClaimBatchDto> ClaimBatchAsync(
-        int kodiDeviceId, int batchSize, TimeSpan lease, CancellationToken ct = default)
+        int kodiDeviceId, int batchSize, TimeSpan lease,
+        IReadOnlyCollection<string>? excludeKinds = null, CancellationToken ct = default)
     {
         await EnsureSeededAsync(ct);
 
@@ -76,13 +77,20 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         {
             var now = DateTime.UtcNow;
             var cooldownCutoff = now - ReleaseCooldown;
-            candidates = await db.NfoRebuildQueue
+            var query = db.NfoRebuildQueue
                 .Where(q => q.CompletedAt == null && (q.ClaimedByKodiDeviceId == null || q.LeaseExpiresAt < now))
                 // Excludes only THIS device's own still-cooling-down releases -- see
                 // ReleaseCooldown's own doc. Any other device is unaffected by this clause
                 // (a row this device can't reclaim yet may still be claimed by someone else in
                 // the very same batch).
-                .Where(q => q.LastReleasedByKodiDeviceId != kodiDeviceId || q.LastReleasedAt < cooldownCutoff)
+                .Where(q => q.LastReleasedByKodiDeviceId != kodiDeviceId || q.LastReleasedAt < cooldownCutoff);
+
+            // See this method's own interface doc for why -- a device that already proved this
+            // run it can't resolve a kind locally shouldn't keep being handed more of it.
+            if (excludeKinds is { Count: > 0 })
+                query = query.Where(q => !excludeKinds.Contains(q.Kind));
+
+            candidates = await query
                 .OrderBy(q => q.Id)
                 .Take(batchSize)
                 .ToListAsync(ct);
