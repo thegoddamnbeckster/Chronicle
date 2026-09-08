@@ -88,16 +88,18 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task EnrichPendingAsync_SkipsHierarchyLevelThePluginDeclaresEmpty()
+    public async Task EnrichPendingAsync_RemovesHierarchyLevelThePluginDeclaresEmpty()
     {
         // Root-caused live (2026-09-08): Chronicle.Plugin.Simkl has no standalone season/episode
         // search, so it already returns [] for those immediately (no API call) -- but the row
         // sat Pending forever regardless, competing for a batch-pass slot a real rate-limit trip
         // could strand alongside genuinely enrichable items, and inflating the visible Pending
         // count. A plugin declares "nothing to offer at this level" via an EMPTY (not absent)
-        // LevelFields entry for that level; this should remove such rows from Pending for good,
-        // WITHOUT ever calling SearchAsync -- per-user report the same day: "If they are
-        // episodes and seasons, then they don't need to be in the queue at all."
+        // LevelFields entry for that level; such rows get REMOVED from the queue entirely (not
+        // merely marked Skipped -- per-user correction the same day, once the first version of
+        // this fix landed 23,638 rows in that state: "if they're not meant for SIMKL, they
+        // should not be in the SIMKL queue... REMOVE them. Not skip them."), and WITHOUT ever
+        // calling SearchAsync.
         var mediaType = await EnsureMediaTypeAsync("tv");
         var season = new MediaItem
         {
@@ -137,8 +139,53 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         mockProvider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Never);
         var updated = await _db.MediaEnrichments.FindAsync(row.Id);
-        updated!.Status.Should().Be(EnrichmentStatus.Skipped);
-        updated.ErrorMessage.Should().Contain("hierarchy level 1");
+        updated.Should().BeNull("the row should be removed entirely, not left behind in any status");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_SweepsUpRowsAPreviousBuildLeftSkippedForHierarchyReasons()
+    {
+        // This method used to just mark Status = Skipped instead of deleting -- this proves a
+        // row already left in that now-obsolete state (from before this behavior changed) gets
+        // swept up and actually removed too, not left behind forever as stale history.
+        var mediaType = await EnsureMediaTypeAsync("tv");
+        var season = new MediaItem
+        {
+            Name           = "Season 1",
+            MediaTypeId    = mediaType.Id,
+            HierarchyLevel = 1,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(season);
+        await _db.SaveChangesAsync();
+
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId  = season.Id,
+            PluginId     = "chronicle.plugin.simkl",
+            Status       = EnrichmentStatus.Skipped,
+            ErrorMessage = "'chronicle.plugin.simkl' does not support searching at hierarchy " +
+                           "level 1 of media type 'tv'.",
+            MaxRetries   = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.simkl");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport
+            {
+                MediaTypeName = "tv",
+                LevelFields   = new() { [1] = [], [2] = [] },
+            }]);
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.simkl")).Returns(mockProvider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.simkl");
+
+        var updated = await _db.MediaEnrichments.FindAsync(row.Id);
+        updated.Should().BeNull();
     }
 
     [Fact]
