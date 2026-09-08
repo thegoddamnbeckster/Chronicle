@@ -95,6 +95,19 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task ScrobbleAsync_SameUserItemTimestampTwice_ReturnsPreExistingEventWithoutDuplicating()
+        {
+            var timestamp = DateTime.UtcNow;
+
+            var first = await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 50.0, timestamp, "Kodi"));
+            var second = await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 50.0, timestamp, "Kodi"));
+
+            second.Event.Id.Should().Be(first.Event.Id);
+            _context.InteractionEvents.Count(e => e.UserId == 1 && e.MediaItemId == 1 && e.Timestamp == timestamp)
+                .Should().Be(1);
+        }
+
+        [Fact]
         public async Task GetHistoryAsync_ReturnsEventsInDescendingOrder()
         {
             var past = DateTime.UtcNow.AddHours(-1);

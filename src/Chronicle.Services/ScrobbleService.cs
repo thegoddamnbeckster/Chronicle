@@ -33,6 +33,22 @@ namespace Chronicle.Services
             // not just once an item is finished. See UpsertLibraryStateAsync.
             var entry = await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
 
+            // Idempotency guard, checked up front: Kodi's periodic reconciliation pass
+            // resends every library item's state on every tick using Kodi's own lastplayed
+            // timestamp (not "now"), so the same (user, item, timestamp) triple is expected
+            // to repeat constantly for items that haven't changed. Relying solely on the
+            // unique-constraint catch below for this routine case meant SaveChangesAsync
+            // threw thousands of times a day, and EF Core logs a full [ERR] stack trace for
+            // every failed save at its own diagnostics layer before our catch ever runs.
+            // Checking first avoids that log spam for the expected case; the catch stays as
+            // a fallback for the genuine concurrent-request race.
+            var preExisting = await _context.InteractionEvents.AsNoTracking()
+                .FirstOrDefaultAsync(e => e.UserId == userId
+                                       && e.MediaItemId == mediaItemId
+                                       && e.Timestamp == timestamp, ct);
+            if (preExisting != null)
+                return new ScrobbleResult(preExisting, markedAsWatched);
+
             var evt = new InteractionEvent
             {
                 UserId          = userId,
@@ -66,11 +82,10 @@ namespace Chronicle.Services
             }
             catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex, "interaction_events"))
             {
-                // Duplicate scrobble — same (user, item, timestamp) already recorded.
-                // Detach only the failed event insert -- the UserLibrary upsert above is
-                // still a valid, unrelated change and must survive this retry (unlike the
-                // old ChangeTracker.Clear() here, which silently discarded it too) -- then
-                // return the pre-existing event.
+                // Genuine race: two concurrent requests both passed the pre-check above
+                // before either had committed. Detach only the failed event insert -- the
+                // UserLibrary upsert above is still a valid, unrelated change and must
+                // survive this retry -- then return the row the other request just committed.
                 _context.Entry(evt).State = EntityState.Detached;
                 await _context.SaveChangesAsync(ct);
                 var existing = await _context.InteractionEvents.AsNoTracking()
