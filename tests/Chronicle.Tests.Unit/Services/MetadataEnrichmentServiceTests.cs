@@ -51,7 +51,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task EnrichPendingAsync_SkipsKnownCollectionContainer()
+    public async Task EnrichPendingAsync_RemovesKnownCollectionContainer()
     {
         // Regression test for a real production bug (2026-09-05): a movie collection container
         // already has its own genuine identity from MovieCollectionService.EnsureCollectionStubsAsync
@@ -62,6 +62,11 @@ public class MetadataEnrichmentServiceTests : IDisposable
         // overwriting the collection's own correct name/art with it. Confirmed live: "The Fast
         // and the Furious" collection (real identity "The Fast and the Furious Collection") had
         // its Name overwritten with the Wikipedia article for the first film alone.
+        //
+        // Removed entirely, not merely marked Skipped -- per-user correction (2026-09-08), made
+        // about a different but structurally identical case (SIMKL season/episode rows) and
+        // extended to this one for the same reason: a row that can never become eligible has
+        // nothing worth keeping a historical record of.
         var (item, status) = await SeedItemWithStatus(null, EnrichmentStatus.Pending);
         _db.MediaExternalIds.Add(new MediaExternalId
         {
@@ -83,8 +88,34 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         mockProvider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Never);
         var updated = await _db.MediaEnrichments.FindAsync(status.Id);
-        updated!.Status.Should().Be(EnrichmentStatus.Skipped);
-        updated.ErrorMessage.Should().Contain("collection container");
+        updated.Should().BeNull("the row should be removed entirely, not left behind in any status");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_SweepsUpRowsAPreviousBuildLeftSkippedAsCollectionContainers()
+    {
+        // This method used to just mark Status = Skipped instead of deleting -- this proves a
+        // row already left in that now-obsolete state gets swept up and actually removed too.
+        var (item, status) = await SeedItemWithStatus(null, EnrichmentStatus.Skipped);
+        status.ErrorMessage = "This item is a collection container -- its identity and artwork " +
+                               "come from the collection-specific pipeline, not per-item enrichment.";
+        _db.MediaExternalIds.Add(new MediaExternalId
+        {
+            MediaItemId = item.Id, Source = "tmdb", ExternalId = "collection:9485"
+        });
+        await _db.SaveChangesAsync();
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz"))
+            .Returns(mockProvider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var updated = await _db.MediaEnrichments.FindAsync(status.Id);
+        updated.Should().BeNull();
     }
 
     [Fact]

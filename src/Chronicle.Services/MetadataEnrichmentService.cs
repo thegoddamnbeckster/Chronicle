@@ -174,7 +174,7 @@ public class MetadataEnrichmentService(
         // provider), since those rows can never become eligible and the cleanup that would
         // clear them out was unreachable code after a loop that never exits.
         await MarkUnsupportedPendingAsSkippedAsync(db, pluginId, supportedRawTypes, ct);
-        await MarkCollectionContainersPendingAsSkippedAsync(db, pluginId, ct);
+        await RemoveCollectionContainersPendingAsync(db, pluginId, ct);
         await RemoveHierarchyUnsupportedPendingAsync(db, pluginId, provider, ct);
 
         var cutoff = DateTime.UtcNow - RetryWindow;
@@ -224,7 +224,7 @@ public class MetadataEnrichmentService(
                              (x.MediaItem!.MediaType != null &&
                               supportedRawTypes.Contains(x.MediaItem!.MediaType!.Name))) &&
                             // A collection container can never be enriched the normal way (see
-                            // MarkCollectionContainersPendingAsSkippedAsync's own doc) -- checked
+                            // RemoveCollectionContainersPendingAsync's own doc) -- checked
                             // here too, not just in that pre/post sweep, because a NEW collection
                             // can be created mid-run (EnsureCollectionStubsAsync, called from
                             // this same per-item loop for an unrelated movie) and seed a fresh
@@ -389,7 +389,7 @@ public class MetadataEnrichmentService(
         // something this plugin doesn't support while this run was in progress. The real
         // guard against the infinite-loop case is the identical call before the main loop.
         await MarkUnsupportedPendingAsSkippedAsync(db, pluginId, supportedRawTypes, ct);
-        await MarkCollectionContainersPendingAsSkippedAsync(db, pluginId, ct);
+        await RemoveCollectionContainersPendingAsync(db, pluginId, ct);
         await RemoveHierarchyUnsupportedPendingAsync(db, pluginId, provider, ct);
 
         // 2. Diagnostic summary — log how many items are still Pending after the run
@@ -2256,11 +2256,13 @@ public class MetadataEnrichmentService(
     /// see the call site before that loop for why this must run first, not just after).
     /// </summary>
     /// <summary>
-    /// Marks any Pending row for a KNOWN COLLECTION CONTAINER (identified the same way
-    /// SeedCrossRefEnrichmentRowsAsync already does -- a "collection:{id}" external id) as
-    /// Skipped, for every plugin uniformly. "A collection container can never be enriched the
-    /// normal way" (Chronicle/CLAUDE.md) was previously only true BY ACCIDENT for TMDB/
-    /// FanartTV -- their own id-format checks happen to reject a "collection:" prefixed
+    /// REMOVES (not merely marks Skipped) any Pending row for a KNOWN COLLECTION CONTAINER
+    /// (identified the same way SeedCrossRefEnrichmentRowsAsync already does -- a
+    /// "collection:{id}" external id), for every plugin uniformly -- and sweeps up any row a
+    /// previous build of this method left Skipped with its own "collection container" message,
+    /// so nothing from that now-obsolete state lingers either. "A collection container can never
+    /// be enriched the normal way" (Chronicle/CLAUDE.md) was previously only true BY ACCIDENT for
+    /// TMDB/FanartTV -- their own id-format checks happen to reject a "collection:" prefixed
     /// reference, so their generic per-item search never matched anything. Nothing stopped a
     /// plugin with no such prefix check (Wikipedia) from running its normal name-based search
     /// against a collection anyway, matching whatever real article scores best -- almost always
@@ -2273,8 +2275,17 @@ public class MetadataEnrichmentService(
     /// representing 11+ films. No plugin's real collection data flows through this generic
     /// per-item loop (TMDB's own genuine collection title/art arrives via EnsureCollectionStubsAsync
     /// instead), so excluding collections here loses nothing.
+    ///
+    /// Originally just set Status = Skipped -- per-user correction (2026-09-08), made about a
+    /// different but structurally identical case (SIMKL season/episode rows) and applied here for
+    /// the same reason: "if they're not meant for [this plugin], they should not be in the
+    /// [plugin's] queue... REMOVE them. Not skip them." A row for a (plugin, item) pair that can
+    /// NEVER become eligible, for a structural reason that has nothing to do with this plugin's
+    /// own capability (a collection container isn't a real per-item search target for ANY
+    /// plugin), has nothing worth keeping a historical record of. Deleted outright instead,
+    /// mirroring the existing staleSkipped prune in SeedEnrichmentRowsFromExternalIdsAsync.
     /// </summary>
-    private async Task MarkCollectionContainersPendingAsSkippedAsync(
+    private async Task RemoveCollectionContainersPendingAsync(
         ChronicleDbContext db, string pluginId, CancellationToken ct)
     {
         var collectionItemIds = await db.MediaExternalIds
@@ -2284,23 +2295,20 @@ public class MetadataEnrichmentService(
             .ToListAsync(ct);
         if (collectionItemIds.Count == 0) return;
 
-        var pendingOnCollections = await db.MediaEnrichments
+        var toRemove = await db.MediaEnrichments
             .Where(x => x.PluginId == pluginId &&
-                        x.Status == EnrichmentStatus.Pending &&
+                        (x.Status == EnrichmentStatus.Pending ||
+                         (x.Status == EnrichmentStatus.Skipped && x.ErrorMessage != null &&
+                          x.ErrorMessage.Contains("This item is a collection container"))) &&
                         collectionItemIds.Contains(x.MediaItemId))
             .ToListAsync(ct);
-        if (pendingOnCollections.Count == 0) return;
+        if (toRemove.Count == 0) return;
 
-        foreach (var row in pendingOnCollections)
-        {
-            row.Status       = EnrichmentStatus.Skipped;
-            row.ErrorMessage = "This item is a collection container -- its identity and artwork " +
-                                "come from the collection-specific pipeline, not per-item enrichment.";
-        }
+        db.MediaEnrichments.RemoveRange(toRemove);
         await db.SaveChangesAsync(ct);
         logger.LogInformation(
-            "EnrichPendingAsync: marked {Count} items as Skipped for {PluginId} -- known collection containers",
-            pendingOnCollections.Count, pluginId);
+            "EnrichPendingAsync: removed {Count} items from the queue for {PluginId} -- known collection containers",
+            toRemove.Count, pluginId);
         db.ChangeTracker.Clear();
     }
 
@@ -2357,18 +2365,18 @@ public class MetadataEnrichmentService(
     /// never actually blocked by the rate limit at all, making the whole backlog look far slower
     /// than it actually is.
     ///
-    /// Originally just set Status = Skipped (matching MarkCollectionContainersPendingAsSkippedAsync's
-    /// own precedent) -- per-user correction the same day, once 23,638 rows landed in that state:
-    /// "if they're not meant for SIMKL, they should not be in the SIMKL queue... REMOVE them.
-    /// Not skip them." A row for a (plugin, item) pair that can NEVER become eligible, for a
-    /// structural reason the plugin itself declares (not an administrative choice like "this
-    /// media type isn't configured right now"), has nothing worth keeping a historical record
-    /// of -- unlike a genuine Skipped outcome (e.g. a collection container), which records a
-    /// real decision about real content. Deleted outright instead, mirroring the existing
-    /// staleSkipped prune in SeedEnrichmentRowsFromExternalIdsAsync (same idea: rows that should
-    /// never have existed get removed, not archived) -- and re-run on every EnrichPendingAsync
-    /// pass so a row some other seeding path recreates never survives past the next pass either,
-    /// without needing to audit every one of those call sites individually.
+    /// Originally just set Status = Skipped -- per-user correction the same day, once 23,638
+    /// rows landed in that state: "if they're not meant for SIMKL, they should not be in the
+    /// SIMKL queue... REMOVE them. Not skip them." (The same correction was then applied to
+    /// RemoveCollectionContainersPendingAsync too, for the identical reason -- a row that can
+    /// never become eligible has nothing worth keeping a historical record of.) A row for a
+    /// (plugin, item) pair that can NEVER become eligible, for a structural reason the plugin
+    /// itself declares (not an administrative choice like "this media type isn't configured
+    /// right now"), is deleted outright instead, mirroring the existing staleSkipped prune in
+    /// SeedEnrichmentRowsFromExternalIdsAsync (same idea: rows that should never have existed
+    /// get removed, not archived) -- and re-run on every EnrichPendingAsync pass so a row some
+    /// other seeding path recreates never survives past the next pass either, without needing to
+    /// audit every one of those call sites individually.
     /// </summary>
     private async Task RemoveHierarchyUnsupportedPendingAsync(
         ChronicleDbContext db, string pluginId, IMetadataProvider provider, CancellationToken ct)
