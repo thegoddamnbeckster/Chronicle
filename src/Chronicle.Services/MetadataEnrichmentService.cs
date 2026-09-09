@@ -714,30 +714,54 @@ public class MetadataEnrichmentService(
             var allItems = await db.MediaItems
                 .Include(m => m.MediaType)
                 .Where(m => m.MediaType != null)
-                .Select(m => new { m.Id, TypeName = m.MediaType!.Name })
+                .Select(m => new { m.Id, TypeName = m.MediaType!.Name, m.HierarchyLevel })
                 .ToListAsync(ct);
 
             var itemTypeMap = allItems.ToDictionary(i => i.Id, i => i.TypeName);
+            var itemLevelMap = allItems.ToDictionary(i => i.Id, i => i.HierarchyLevel);
+
+            // Same two exclusions RemoveHierarchyUnsupportedPendingAsync/
+            // RemoveCollectionContainersPendingAsync apply inside EnrichPendingAsync's own pass
+            // -- needed here too because this method runs on every API startup (PluginHostService),
+            // and used to recreate exactly the rows those two methods had just removed, undoing
+            // that fix every single restart instead of once.
+            var collectionContainerIds = (await db.MediaExternalIds
+                .Where(e => e.ExternalId.StartsWith("collection:"))
+                .Select(e => e.MediaItemId)
+                .Distinct()
+                .ToListAsync(ct)).ToHashSet();
 
             // ── Phase 3b: prune Pending rows for unsupported type/plugin pairs ─────
             // Pending rows for types a plugin doesn't support will always be Skipped
             // when the enrichment service picks them up — delete them proactively now
             // that we have the full plugin registry loaded. This catches rows seeded
-            // by old code before the type-filter was enforced.
+            // by old code before the type-filter was enforced. Also prunes rows for a
+            // collection container or a hierarchy level the plugin declared empty --
+            // same rows EnrichPendingAsync's own cleanup removes, caught here too so a
+            // backlog Phase 3 previously recreated doesn't have to wait for that plugin's
+            // next enrichment pass to be cleaned up.
             int phase3bDeletedTotal = 0;
             foreach (var (pluginId, provider, _) in pluginEntries)
             {
                 var supportedTypes = provider.GetSupportedMediaTypes()
                     .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var emptyLevelsByRawType = BuildEmptyLevelsByRawType(provider);
 
                 var pendingForPlugin = await db.MediaEnrichments
                     .Where(me => me.PluginId == pluginId && me.Status == EnrichmentStatus.Pending)
                     .ToListAsync(ct);
 
                 var toDelete = pendingForPlugin
-                    .Where(me => itemTypeMap.TryGetValue(me.MediaItemId, out var typeName)
-                                 && !supportedTypes.Contains(NormalizeMediaTypeName(typeName)))
+                    .Where(me =>
+                    {
+                        if (!itemTypeMap.TryGetValue(me.MediaItemId, out var typeName)) return false;
+                        if (!supportedTypes.Contains(NormalizeMediaTypeName(typeName))) return true;
+                        if (collectionContainerIds.Contains(me.MediaItemId)) return true;
+                        return emptyLevelsByRawType.TryGetValue(typeName, out var emptyLevels)
+                               && itemLevelMap.TryGetValue(me.MediaItemId, out var level)
+                               && emptyLevels.Contains(level);
+                    })
                     .ToList();
 
                 if (toDelete.Count > 0)
@@ -750,7 +774,8 @@ public class MetadataEnrichmentService(
             {
                 await db.SaveChangesAsync(ct);
                 logger.LogInformation(
-                    "SeedEnrichmentRows Phase 3b: pruned {Count} stale Pending rows for unsupported media types",
+                    "SeedEnrichmentRows Phase 3b: pruned {Count} stale Pending rows (unsupported media " +
+                    "type, collection container, or plugin-declared-empty hierarchy level)",
                     phase3bDeletedTotal);
             }
 
@@ -767,10 +792,16 @@ public class MetadataEnrichmentService(
                 var supportedTypes = provider.GetSupportedMediaTypes()
                     .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var emptyLevelsByRawType = BuildEmptyLevelsByRawType(provider);
 
                 foreach (var item in allItems)
                 {
                     if (!supportedTypes.Contains(NormalizeMediaTypeName(item.TypeName)))
+                        continue;
+                    if (collectionContainerIds.Contains(item.Id))
+                        continue;
+                    if (emptyLevelsByRawType.TryGetValue(item.TypeName, out var emptyLevels)
+                        && emptyLevels.Contains(item.HierarchyLevel))
                         continue;
                     if (existingRows.Contains((item.Id, pluginId.ToLower())))
                         continue;
@@ -2378,8 +2409,19 @@ public class MetadataEnrichmentService(
     /// other seeding path recreates never survives past the next pass either, without needing to
     /// audit every one of those call sites individually.
     /// </summary>
-    private async Task RemoveHierarchyUnsupportedPendingAsync(
-        ChronicleDbContext db, string pluginId, IMetadataProvider provider, CancellationToken ct)
+    /// <summary>
+    /// Raw-DB-type-name -> hierarchy levels a plugin has explicitly declared it has nothing to
+    /// offer at (an empty <see cref="MediaTypeSupport.LevelFields"/> list for that level).
+    /// Shared by <see cref="RemoveHierarchyUnsupportedPendingAsync"/> (cleans up rows already
+    /// seeded) and Phase 3 of <see cref="SeedEnrichmentRowsFromExternalIdsAsync"/> (must not
+    /// re-seed them in the first place) -- these used to only agree by coincidence, and Phase 3
+    /// (which runs on every API startup, per PluginHostService) recreated every hierarchy-level
+    /// row this method had just removed on the previous run, undoing the fix on every restart.
+    /// Root-caused live (2026-09-08): the chronicle.plugin.simkl queue was reported back up to
+    /// 29,656 pending items -- almost entirely season/episode rows and collection containers --
+    /// within a single restart, because Phase 3 had no idea LevelFields existed at all.
+    /// </summary>
+    private static Dictionary<string, HashSet<int>> BuildEmptyLevelsByRawType(IMetadataProvider provider)
     {
         var unsupportedLevelsByRawType = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
         foreach (var type in provider.GetSupportedMediaTypes())
@@ -2393,6 +2435,13 @@ public class MetadataEnrichmentService(
             foreach (var rawType in ExpandMediaTypeName(type.MediaTypeName))
                 unsupportedLevelsByRawType[rawType] = emptyLevels;
         }
+        return unsupportedLevelsByRawType;
+    }
+
+    private async Task RemoveHierarchyUnsupportedPendingAsync(
+        ChronicleDbContext db, string pluginId, IMetadataProvider provider, CancellationToken ct)
+    {
+        var unsupportedLevelsByRawType = BuildEmptyLevelsByRawType(provider);
         if (unsupportedLevelsByRawType.Count == 0) return;
 
         var relevantRawTypes = unsupportedLevelsByRawType.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);

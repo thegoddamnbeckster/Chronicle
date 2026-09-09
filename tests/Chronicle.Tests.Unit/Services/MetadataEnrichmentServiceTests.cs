@@ -582,6 +582,122 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SeedEnrichmentRowsFromExternalIdsAsync_NeverSeedsOrKeepsAHierarchyLevelThePluginDeclaresEmpty()
+    {
+        // Root-caused live (2026-09-08): EnrichPendingAsync's own RemoveHierarchyUnsupportedPendingAsync
+        // correctly removes these rows on its own pass, but SeedEnrichmentRowsFromExternalIdsAsync
+        // (Phase 3) runs on EVERY API startup (PluginHostService) and had no idea LevelFields
+        // existed -- it recreated the exact rows the other method had just removed, so the
+        // chronicle.plugin.simkl queue was reported back up to 29,656 pending items after two
+        // routine restarts. This asserts BOTH halves of that regression at once: a pre-existing
+        // stale row for this level gets pruned (Phase 3b), and no new one gets seeded (Phase 3)
+        // in the very same call.
+        var mediaType = await EnsureMediaTypeAsync("tv");
+        var season = new MediaItem
+        {
+            Name = "Season 1", MediaTypeId = mediaType.Id, HierarchyLevel = 1,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(season);
+        await _db.SaveChangesAsync();
+
+        // Stale row seeded before this fix existed -- must be pruned, not left behind.
+        _db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = season.Id, PluginId = "chronicle.plugin.simkl",
+            Status = EnrichmentStatus.Pending, MaxRetries = 3,
+        });
+
+        // A genuinely new external-id candidate is needed so Phase 1's own "nothing new to seed"
+        // early-out doesn't skip the whole method (and Phases 2/3/3b, where this fix lives) before
+        // it even gets to look at the season row above -- unrelated to what's under test here.
+        _db.Plugins.Add(new Chronicle.Core.Models.Plugin
+        {
+            PluginId = "chronicle.plugin.simkl", Name = "SIMKL", Author = "Test", Version = "1.0.0",
+            DllPath = "/fake/path.dll", IsEnabled = true, InstalledAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        var show = new MediaItem
+        {
+            Name = "Real Show", MediaTypeId = mediaType.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(show);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = show.Id, Source = "simkl", ExternalId = "simkl:tv:999" });
+        await _db.SaveChangesAsync();
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.simkl");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "tv", LevelFields = new() { [1] = [], [2] = [] } }]);
+        _registry.Setup(r => r.GetMetadataProviderEntries())
+            .Returns(new List<(string, IMetadataProvider, string?)> { ("chronicle.plugin.simkl", mockProvider.Object, null) });
+
+        await _svc.SeedEnrichmentRowsFromExternalIdsAsync();
+
+        var row = await _db.MediaEnrichments
+            .FirstOrDefaultAsync(e => e.MediaItemId == season.Id && e.PluginId == "chronicle.plugin.simkl");
+        row.Should().BeNull("a hierarchy level the plugin declares empty must never have a queued row, seeded here or left over from before");
+    }
+
+    [Fact]
+    public async Task SeedEnrichmentRowsFromExternalIdsAsync_NeverSeedsOrKeepsAKnownCollectionContainer()
+    {
+        // Same regression, for the other exclusion Phase 3 was missing: a collection container
+        // (identified by its own "collection:" external id) has its identity/artwork come from
+        // MovieCollectionService.EnsureCollectionStubsAsync, not per-item enrichment -- but
+        // Phase 3 iterated every MediaItem of a supported type with no such check at all.
+        var mediaType = await EnsureMediaTypeAsync("movie");
+        var container = new MediaItem
+        {
+            Name = "Toy Story Collection", MediaTypeId = mediaType.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(container);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId
+        {
+            MediaItemId = container.Id, Source = "tmdb", ExternalId = "collection:9485"
+        });
+        _db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = container.Id, PluginId = "chronicle.plugin.musicbrainz",
+            Status = EnrichmentStatus.Pending, MaxRetries = 3,
+        });
+
+        // A genuinely new external-id candidate is needed so Phase 1's own "nothing new to seed"
+        // early-out doesn't skip the whole method (and Phases 2/3/3b, where this fix lives) before
+        // it even gets to look at the container row above -- unrelated to what's under test here.
+        _db.Plugins.Add(new Chronicle.Core.Models.Plugin
+        {
+            PluginId = "chronicle.plugin.musicbrainz", Name = "MusicBrainz", Author = "Test", Version = "1.0.0",
+            DllPath = "/fake/path.dll", IsEnabled = true, InstalledAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        var realMovie = new MediaItem
+        {
+            Name = "Real Movie", MediaTypeId = mediaType.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(realMovie);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = realMovie.Id, Source = "musicbrainz", ExternalId = "musicbrainz:release-group:xyz" });
+        await _db.SaveChangesAsync();
+
+        var mockProvider = new Mock<IMetadataProvider>();
+        mockProvider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        mockProvider.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "movie" }]);
+        _registry.Setup(r => r.GetMetadataProviderEntries())
+            .Returns(new List<(string, IMetadataProvider, string?)> { ("chronicle.plugin.musicbrainz", mockProvider.Object, null) });
+
+        await _svc.SeedEnrichmentRowsFromExternalIdsAsync();
+
+        var row = await _db.MediaEnrichments
+            .FirstOrDefaultAsync(e => e.MediaItemId == container.Id && e.PluginId == "chronicle.plugin.musicbrainz");
+        row.Should().BeNull("a known collection container must never have a queued enrichment row, seeded here or left over from before");
+    }
+
+    [Fact]
     public async Task GetStatsAsync_ReturnsCountsPerPlugin()
     {
         // Seed a Plugin record — GetStatsAsync now returns one row per installed plugin
