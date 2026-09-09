@@ -134,7 +134,8 @@ public class ScraperController : ControllerBase
 
         existing ??= FindByNormalizedTitle(candidates, title, year);
 
-        var item = await ResolveOrCreateAsync(existing, movieTypeId, title, year, fileName, ct);
+        var item = await ResolveOrCreateAsync(existing, movieTypeId, title, year, fileName, ct,
+            oppositeFamilyTypeIds: await GetShowLikeTypeIdsAsync(ct));
         if (item is null)
         {
             _logger.LogWarning("scraper/movies/search: title={Title} year={Year} -- resolve-or-create failed, returning 404", title, year);
@@ -339,7 +340,8 @@ public class ScraperController : ControllerBase
         // TV shows have no filename-confirmation signal from Kodi's find step (that feature
         // is movies-only, per SearchMovies's fileName parameter) -- explicit null, not an
         // oversight.
-        item = await ResolveOrCreateAsync(item, tvTypeId, title, year, fileName: null, ct);
+        item = await ResolveOrCreateAsync(item, tvTypeId, title, year, fileName: null, ct,
+            oppositeFamilyTypeIds: await GetMovieLikeTypeIdsAsync(ct));
         if (item is null)
             return NotFound(ApiResponse<object>.Fail("RESOLVE_FAILED", "Could not resolve or create this show."));
 
@@ -741,7 +743,8 @@ public class ScraperController : ControllerBase
     // ── Shared resolve-or-create ────────────────────────────────────────────
 
     private async Task<MediaItem?> ResolveOrCreateAsync(
-        MediaItem? existing, int mediaTypeId, string title, int? year, string? fileName, CancellationToken ct)
+        MediaItem? existing, int mediaTypeId, string title, int? year, string? fileName, CancellationToken ct,
+        List<int>? oppositeFamilyTypeIds = null)
     {
         var item = existing;
         if (item is null)
@@ -761,6 +764,68 @@ public class ScraperController : ControllerBase
             {
                 SetScraperResolvedFile(item, fileName);
                 await _context.SaveChangesAsync(ct);
+            }
+
+            // Root-caused live (2026-09-04, rediscovered while investigating a huge SIMKL
+            // matching backlog on 2026-09-09): a Kodi "Movies" source pointed at content that's
+            // actually TV episodes -- or vice versa -- scrapes every title through the WRONG one
+            // of these two endpoints, and neither endpoint's own "already have it" widening
+            // (movie-like vs. show-like) ever looks at the OPPOSITE family, so it silently
+            // mints a wrongly-typed duplicate of an item the user already has, forever, on every
+            // scrape. That one Aug-21 incident alone left ~250+ duplicate root items (Ted Lasso,
+            // Shōgun, Reacher, Schitt's Creek, ...) sitting undetected until a human went
+            // looking three weeks later. DuplicateCandidateScanService's own cross-type pass
+            // (added the same day as the first sighting) only ever catches this on its next
+            // nightly run at best -- this check catches it the INSTANT the duplicate is minted,
+            // using the identical conservative criteria (year present and equal on both sides,
+            // at least one side still unverified) so a genuinely different same-titled work
+            // (a movie and an unrelated show sharing a name) is never flagged.
+            if (oppositeFamilyTypeIds is { Count: > 0 } && year.HasValue)
+            {
+                var looseTarget = MediaItemNormalizer.NormalizeNameLoose(title);
+                if (looseTarget.Length > 0)
+                {
+                    // No "at least one side unverified" filter here, unlike the nightly scanner's
+                    // own cross-type pass -- that check exists there to skip two independently-
+                    // verified items that coincidentally share a name/year, but the item on THIS
+                    // side of the comparison is the one just created above: by construction it is
+                    // always unverified (a brand-new stub, zero external ids, about to be enriched
+                    // for the first time), so that condition is trivially satisfied every time and
+                    // would be a no-op if repeated here -- checking crossTypeMatch's OWN
+                    // verification status instead (an earlier version of this fix did exactly
+                    // that) would wrongly skip the most common real case: the pre-existing item is
+                    // usually the fully-enriched, correct one.
+                    var crossTypeMatch = await _context.MediaItems
+                        .Where(m => oppositeFamilyTypeIds.Contains(m.MediaTypeId)
+                                 && m.HierarchyLevel == 0
+                                 && m.NormalizedNameLoose == looseTarget
+                                 && m.Year == year)
+                        .Select(m => new { m.Id })
+                        .FirstOrDefaultAsync(ct);
+                    if (crossTypeMatch is not null)
+                    {
+                        _logger.LogWarning(
+                            "scraper: item {NewId} \"{Title}\" ({Year}) was just created as a NEW item, but a " +
+                            "same-name/year item {ExistingId} already exists under a different media type -- " +
+                            "likely a Kodi source scraping this title through the wrong library section " +
+                            "(Movies vs. TV Shows). Registering it as a duplicate candidate for review.",
+                            item.Id, title, year, crossTypeMatch.Id);
+                        var a = Math.Min(item.Id, crossTypeMatch.Id);
+                        var b = Math.Max(item.Id, crossTypeMatch.Id);
+                        var alreadyDismissed = await _context.MediaItemDuplicateDismissals.AnyAsync(
+                            d => d.ItemAId == a && d.ItemBId == b, ct);
+                        if (!alreadyDismissed)
+                        {
+                            _context.MediaItemDuplicateCandidates.Add(new MediaItemDuplicateCandidate
+                            {
+                                ItemAId    = a,
+                                ItemBId    = b,
+                                DetectedAt = DateTime.UtcNow,
+                            });
+                            await _context.SaveChangesAsync(ct);
+                        }
+                    }
+                }
             }
 
             await _enrichment.EnrichItemAsync(item.Id,
