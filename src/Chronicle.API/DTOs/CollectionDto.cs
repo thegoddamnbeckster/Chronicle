@@ -32,6 +32,7 @@ public class CollectionMemberDto
     public string? PosterUrl { get; set; }
     public bool InLibrary { get; set; }
     public string? LibraryStatus { get; set; }
+    public double? ResumePositionPercent { get; set; }
     public double? Rating { get; set; }
     public int? UserRating { get; set; }
     public string? UserRatingSource { get; set; }

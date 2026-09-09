@@ -7,6 +7,7 @@ export interface CollectionMember {
   posterUrl: string | null
   inLibrary: boolean
   libraryStatus: string | null
+  resumePositionPercent: number | null
   rating: number | null
   userRating: number | null
   userRatingSource: string | null

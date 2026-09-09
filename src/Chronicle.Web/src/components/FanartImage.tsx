@@ -10,6 +10,13 @@ interface FanartImageProps {
   imgClassName?: string
   /** Minimum height (px) of the skeleton placeholder. */
   minHeight?: number
+  /**
+   * Watch/read/listen position, 0-100. Renders a thin highlight-colored fill bar across the
+   * bottom edge, same as PosterImage's own progressPercent -- needed here too since this
+   * component stands in for PosterImage whenever a poster happens to be fanart.tv-hosted (see
+   * CollectionMetadataBox's isFanartUrl branch). Omit, or pass null/0, to show no bar.
+   */
+  progressPercent?: number | null
 }
 
 /**
@@ -17,10 +24,12 @@ interface FanartImageProps {
  * Shows a shimmer skeleton labelled "fanart.tv" while the image loads so the
  * user knows Chronicle is waiting on an external CDN, not that it's broken.
  */
-export function FanartImage({ src, alt = '', wrapperClassName, imgClassName, minHeight = 80 }: FanartImageProps) {
+export function FanartImage({ src, alt = '', wrapperClassName, imgClassName, minHeight = 80, progressPercent }: FanartImageProps) {
   const [state, setState] = useState<'loading' | 'loaded' | 'error'>('loading')
 
   if (state === 'error') return null
+
+  const clampedProgress = progressPercent != null ? Math.max(0, Math.min(100, progressPercent)) : null
 
   return (
     <div className={`${styles.wrap} ${wrapperClassName ?? ''}`}>
@@ -39,6 +48,11 @@ export function FanartImage({ src, alt = '', wrapperClassName, imgClassName, min
         onLoad={() => setState('loaded')}
         onError={() => setState('error')}
       />
+      {clampedProgress != null && clampedProgress > 0 && (
+        <div className={styles.progressTrack} title={`${Math.round(clampedProgress)}% watched`}>
+          <div className={styles.progressFill} style={{ width: `${clampedProgress}%` }} />
+        </div>
+      )}
     </div>
   )
 }

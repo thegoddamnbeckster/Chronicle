@@ -4,6 +4,7 @@ import { PosterImage } from './PosterImage'
 import { FanartImage } from './FanartImage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCollection, rebuildCollection } from '@/api/collections'
+import { posterProgressPercent } from '@/utils/posterProgress'
 import styles from './CollectionMetadataBox.module.css'
 
 function isFanartUrl(url: string | null | undefined): boolean {
@@ -98,8 +99,8 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
               <Link to={`/media/${movie.id}`} className={styles.posterLink}>
                 <div className={styles.posterWrap}>
                   {isFanartUrl(movie.posterUrl)
-                    ? <FanartImage src={movie.posterUrl!} wrapperClassName={styles.moviePosterWrap} imgClassName={styles.moviePosterImg} minHeight={120} />
-                    : <PosterImage posterUrl={movie.posterUrl} name={movie.name} />
+                    ? <FanartImage src={movie.posterUrl!} wrapperClassName={styles.moviePosterWrap} imgClassName={styles.moviePosterImg} minHeight={120} progressPercent={posterProgressPercent(movie.libraryStatus, movie.resumePositionPercent)} />
+                    : <PosterImage posterUrl={movie.posterUrl} name={movie.name} progressPercent={posterProgressPercent(movie.libraryStatus, movie.resumePositionPercent)} />
                   }
                   {!movie.hasFile && (
                     <div className={styles.stubBanner}>Not in Library</div>
