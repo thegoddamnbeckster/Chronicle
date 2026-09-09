@@ -2290,11 +2290,13 @@ public class MetadataEnrichmentService(
     /// see the call site before that loop for why this must run first, not just after).
     /// </summary>
     /// <summary>
-    /// REMOVES (not merely marks Skipped) any Pending row for a KNOWN COLLECTION CONTAINER
-    /// (identified the same way SeedCrossRefEnrichmentRowsAsync already does -- a
-    /// "collection:{id}" external id), for every plugin uniformly -- and sweeps up any row a
-    /// previous build of this method left Skipped with its own "collection container" message,
-    /// so nothing from that now-obsolete state lingers either. "A collection container can never
+    /// REMOVES (not merely marks Skipped) every row -- ANY status, not just Pending -- for a
+    /// KNOWN COLLECTION CONTAINER (see GetCollectionContainerIdsForExclusionAsync for the two
+    /// ways an item qualifies), for every plugin uniformly. All statuses, not just Pending, since
+    /// 2026-09-09: a row that already reached NotFound/Failed/Exhausted before this sweep last
+    /// ran (or before an item was recognized as a container at all) used to sit there forever --
+    /// this sweep only ever pruned Pending rows, so nothing retroactively cleaned an existing
+    /// backlog. "A collection container can never
     /// be enriched the normal way" (Chronicle/CLAUDE.md) was previously only true BY ACCIDENT for
     /// TMDB/FanartTV -- their own id-format checks happen to reject a "collection:" prefixed
     /// reference, so their generic per-item search never matched anything. Nothing stopped a
@@ -2325,12 +2327,15 @@ public class MetadataEnrichmentService(
         var collectionItemIds = await GetCollectionContainerIdsForExclusionAsync(db, ct);
         if (collectionItemIds.Count == 0) return;
 
+        // ANY status, not just Pending/tagged-Skipped -- confirmed live (2026-09-09, per-user
+        // report on "Black Sheep collection"): a row that reached NotFound (or Failed/Exhausted)
+        // BEFORE this item was recognized as a container -- e.g. before GetCollectionContainer
+        // IdsForExclusionAsync's own children-based arm existed, or simply before this sweep's
+        // most recent run -- sat there forever, since only Pending rows were ever swept. Once an
+        // item is a confirmed container, no status it can be in is worth keeping: no provider
+        // will ever match a container's own made-up title, regardless of what a stale row says.
         var toRemove = await db.MediaEnrichments
-            .Where(x => x.PluginId == pluginId &&
-                        (x.Status == EnrichmentStatus.Pending ||
-                         (x.Status == EnrichmentStatus.Skipped && x.ErrorMessage != null &&
-                          x.ErrorMessage.Contains("This item is a collection container"))) &&
-                        collectionItemIds.Contains(x.MediaItemId))
+            .Where(x => x.PluginId == pluginId && collectionItemIds.Contains(x.MediaItemId))
             .ToListAsync(ct);
         if (toRemove.Count == 0) return;
 
