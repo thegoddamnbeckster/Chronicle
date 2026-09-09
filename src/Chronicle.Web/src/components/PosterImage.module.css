@@ -33,5 +33,8 @@
 
 .progressFill {
   height: 100%;
-  background: var(--success);
+  /* Theme's own highlight color, not a fixed "success" green -- per-user report
+     (2026-09-09): the bar should follow whichever theme is active, same as every other
+     highlight in the UI (--accent is the token every theme plugin overrides). */
+  background: var(--accent);
 }

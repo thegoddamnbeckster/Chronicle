@@ -151,7 +151,9 @@
 
 .progressFill {
   height: 100%;
-  background: var(--success);
+  /* Theme's own highlight color, not a fixed "success" green -- see PosterImage's identical
+     fix (2026-09-09) for the same reasoning. */
+  background: var(--accent);
 }
 
 /* Per-user request (2026-08-29): on a narrow window the device name / breadcrumb / title
