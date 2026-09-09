@@ -905,25 +905,53 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             lib.Status = LibraryStatus.Watching;
         }
 
-        if (lib.ResumeUpdatedAt is { } existingResumeAt && progress.UpdatedAt.UtcDateTime <= existingResumeAt)
-            return false;
+        // Snapshot BEFORE either field below gets mutated -- see ScrobbleService.
+        // UpsertLibraryStateAsync's identical snapshot for the full reasoning: LastKnownProgressAt
+        // is a brand-new column (2026-09-09), so every pre-existing row has it null even though
+        // ResumeUpdatedAt may already reflect a genuinely newer progress event. Without comparing
+        // against BOTH, an out-of-order/duplicate sync tick could slip into LastKnownProgressPercent
+        // as if it were fresh, disagreeing with a newer ResumePositionPercent recorded moments
+        // earlier for the same item.
+        var priorResumeUpdatedAt = lib.ResumeUpdatedAt;
+        var priorMostRecentProgressAt = ProgressTimestampHelper.Latest(priorResumeUpdatedAt, lib.LastKnownProgressAt);
 
-        lib.ResumePositionPercent = progress.ProgressPercent;
-        lib.ResumeUpdatedAt       = progress.UpdatedAt.UtcDateTime;
+        // Each field is guarded against staleness independently -- NOT one gating the other --
+        // since they can genuinely diverge. Code-review catch (2026-09-09): an earlier version
+        // had the ResumePositionPercent staleness check `return false` before ever reaching the
+        // LastKnownProgressPercent block, so a row with an already-populated ResumeUpdatedAt but
+        // a null LastKnownProgressAt could have LastKnownProgressPercent permanently skipped by a
+        // Trakt sync tick that's merely a duplicate/non-newer report against the OLD field, even
+        // though it would have been newer than the (nonexistent) old value of the NEW field.
+        var resumeIsNewer = priorResumeUpdatedAt is not DateTime existingResumeAt
+            || progress.UpdatedAt.UtcDateTime > existingResumeAt;
+        if (resumeIsNewer)
+        {
+            lib.ResumePositionPercent = progress.ProgressPercent;
+            lib.ResumeUpdatedAt       = progress.UpdatedAt.UtcDateTime;
+        }
 
         // Unlike ResumePositionPercent above, this is never cleared on completion -- see
         // UserLibrary.LastKnownProgressPercent's own doc and ScrobbleService.UpsertLibraryStateAsync's
         // identical write for a live Kodi scrobble. Without this, an item whose only progress
         // signal ever came from Trakt's playback sync (never scrobbled directly) would still
         // fall back to a flat 100% once marked Completed, instead of the real percent Trakt
-        // last reported -- same bug, different ingestion path. Tracked against its own
-        // timestamp, not ResumeUpdatedAt (which this method's own guard above can require to be
-        // absent/older), so it survives independently of whatever resets that field.
-        if (lib.LastKnownProgressAt is not DateTime existingKnownAt || progress.UpdatedAt.UtcDateTime >= existingKnownAt)
+        // last reported -- same bug, different ingestion path. Compared against
+        // priorMostRecentProgressAt (see its own doc above), not just this field's own
+        // (possibly-never-yet-populated) timestamp. Strict '>', matching resumeIsNewer right
+        // above (not ScrobbleService's own '>=' -- code-review catch, 2026-09-09: a repeat sync
+        // tick reporting the exact same UpdatedAt as already stored is a duplicate/no-op, not a
+        // genuinely newer report, and treating it as "newer" made this method return true and
+        // inflate the caller's progressUpdated count for nothing having actually changed).
+        var knownProgressIsNewer = priorMostRecentProgressAt is not DateTime existingKnownAt
+            || progress.UpdatedAt.UtcDateTime > existingKnownAt;
+        if (knownProgressIsNewer)
         {
             lib.LastKnownProgressPercent = progress.ProgressPercent;
             lib.LastKnownProgressAt      = progress.UpdatedAt.UtcDateTime;
         }
+
+        if (!resumeIsNewer && !knownProgressIsNewer)
+            return false;
 
         lib.UpdatedAt             = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);

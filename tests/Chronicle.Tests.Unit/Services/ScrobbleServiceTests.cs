@@ -154,6 +154,56 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task ScrobbleAsync_OutOfOrderScrobble_DoesNotBackfillStaleLastKnownProgress()
+        {
+            // Code-review catch (2026-09-09): LastKnownProgressAt is a brand-new column -- a
+            // row that already had a newer ResumeUpdatedAt from before this field existed has
+            // LastKnownProgressAt null, which must NOT be treated as "accept any incoming
+            // value regardless of its own timestamp." An out-of-order/replayed scrobble here is
+            // older than the ResumePositionPercent we already trust more.
+            var newerTimestamp = DateTime.UtcNow;
+            _context.UserLibraries.Add(new UserLibrary
+            {
+                UserId = 1, MediaItemId = 1, Status = LibraryStatus.Watching,
+                ResumePositionPercent = 80.0, ResumeUpdatedAt = newerTimestamp,
+                LastKnownProgressPercent = null, LastKnownProgressAt = null,
+                AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 10.0, newerTimestamp.AddHours(-1), null));
+
+            var libraryEntry = _context.UserLibraries.First(l => l.UserId == 1 && l.MediaItemId == 1);
+            libraryEntry.ResumePositionPercent.Should().Be(80.0, "the out-of-order scrobble must not clobber the newer resume position");
+            libraryEntry.LastKnownProgressPercent.Should().BeNull("a stale scrobble must not backfill a value that disagrees with the newer resume data");
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_BackfillsLastKnownProgress_ForARowThatPredatesTheField()
+        {
+            // Mirror of SyncOrchestrationServiceTests.
+            // UpsertPlaybackProgressAsync_BackfillsLastKnownProgress_ForARowThatPredatesTheField --
+            // same duplicated snapshot logic (now shared via ProgressTimestampHelper), so both
+            // write paths need this half of the guard tested, not just the rejection half above.
+            // A row with an OLD ResumeUpdatedAt and null LastKnownProgressAt must still accept a
+            // genuinely newer scrobble.
+            var oldTimestamp = DateTime.UtcNow.AddDays(-30);
+            _context.UserLibraries.Add(new UserLibrary
+            {
+                UserId = 1, MediaItemId = 1, Status = LibraryStatus.Watching,
+                ResumePositionPercent = 20.0, ResumeUpdatedAt = oldTimestamp,
+                LastKnownProgressPercent = null, LastKnownProgressAt = null,
+                AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 55.0, DateTime.UtcNow, null));
+
+            var libraryEntry = _context.UserLibraries.First(l => l.UserId == 1 && l.MediaItemId == 1);
+            libraryEntry.LastKnownProgressPercent.Should().Be(55.0);
+        }
+
+        [Fact]
         public async Task ScrobbleAsync_SameUserItemTimestampTwice_ReturnsPreExistingEventWithoutDuplicating()
         {
             var timestamp = DateTime.UtcNow;

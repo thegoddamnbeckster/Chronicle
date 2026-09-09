@@ -651,6 +651,17 @@ namespace Chronicle.Services
                 entry.UpdatedAt = DateTime.UtcNow;
             }
 
+            // Snapshot BEFORE either field below gets mutated -- LastKnownProgressPercent's own
+            // ordering guard (further down) needs to compare against whichever of the two
+            // fields held the most recent progress information as of THIS call's start, not
+            // just its own column. LastKnownProgressAt is a brand-new column (2026-09-09): every
+            // pre-existing row has it null even though ResumeUpdatedAt may already reflect a
+            // genuinely newer progress event, and without this an out-of-order/replayed scrobble
+            // could still slip into LastKnownProgressPercent as if it were fresh, disagreeing
+            // with a newer ResumePositionPercent recorded moments earlier for the same item.
+            var priorResumeUpdatedAt = entry.ResumeUpdatedAt;
+            var priorMostRecentProgressAt = ProgressTimestampHelper.Latest(priorResumeUpdatedAt, entry.LastKnownProgressAt);
+
             // Cleared once watched -- an item you just finished has nothing left to
             // "resume", and leaving a stale percent behind would make a later rewatch
             // start with a bogus seek-ahead on whatever device picks it up next.
@@ -664,18 +675,18 @@ namespace Chronicle.Services
             // offline queue replay, a backfill import) with an older explicit Timestamp
             // could clobber a genuinely newer position with stale data.
             else if (progressPercent.HasValue
-                     && (entry.ResumeUpdatedAt is not DateTime existing || timestamp >= existing))
+                     && (priorResumeUpdatedAt is not DateTime existing || timestamp >= existing))
             {
                 entry.ResumePositionPercent = progressPercent.Value;
                 entry.ResumeUpdatedAt       = timestamp;
             }
 
             // Unlike ResumePositionPercent above, this is NEVER cleared on completion -- see
-            // LastKnownProgressPercent's own doc. Same out-of-order protection, tracked against
-            // its own timestamp (not ResumeUpdatedAt, which gets nulled out exactly when this
-            // needs to survive).
+            // LastKnownProgressPercent's own doc. Same out-of-order protection, but compared
+            // against priorMostRecentProgressAt (see its own doc above), not just this field's
+            // own (possibly-never-yet-populated) timestamp.
             if (progressPercent.HasValue
-                && (entry.LastKnownProgressAt is not DateTime existingKnown || timestamp >= existingKnown))
+                && (priorMostRecentProgressAt is not DateTime existingKnown || timestamp >= existingKnown))
             {
                 entry.LastKnownProgressPercent = progressPercent.Value;
                 entry.LastKnownProgressAt      = timestamp;

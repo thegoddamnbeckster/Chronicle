@@ -264,15 +264,71 @@ public class SyncOrchestrationServiceTests : IDisposable
         });
         await _db.SaveChangesAsync();
 
-        // This call also returns false (stale ResumeUpdatedAt), so LastKnownProgressPercent
-        // isn't even reached -- confirms both fields stay consistent, not just independently
-        // protected.
+        // Both fields are checked against their own stored timestamp here (both already equal
+        // "newer"), so this stale/out-of-order tick is correctly rejected on both -- confirms
+        // they stay consistent with each other, not just independently protected.
         var applied = await SyncOrchestrationService.UpsertPlaybackProgressAsync(
             _db, MakeProgress("trakt:1009", 10.0, newer.AddHours(-1)), "chronicle.plugin.trakt", userId: 1, default);
 
         applied.Should().BeFalse();
         var lib = await _db.UserLibraries.SingleAsync(l => l.MediaItemId == movie.Id);
         lib.LastKnownProgressPercent.Should().Be(80.0);
+    }
+
+    [Fact]
+    public async Task UpsertPlaybackProgressAsync_BackfillsLastKnownProgress_ForARowThatPredatesTheField()
+    {
+        // Code-review catch (2026-09-09): LastKnownProgressAt is a brand-new column -- every
+        // row that existed before it does has it null even though ResumeUpdatedAt may already
+        // be populated from real, older progress data. A genuinely newer sync tick must still
+        // backfill LastKnownProgressPercent in that case, not treat "my own column has never
+        // been set" as unconditional permission to accept ANY incoming value regardless of
+        // whether it's actually newer than what ResumeUpdatedAt already reflects.
+        var movie = SeedMovie(510, "trakt", "trakt:1010");
+        var oldResumeAt = DateTimeOffset.UtcNow.AddDays(-30);
+        _db.UserLibraries.Add(new UserLibrary
+        {
+            UserId = 1, MediaItemId = movie.Id, Status = LibraryStatus.Watching,
+            ResumePositionPercent = 20.0, ResumeUpdatedAt = oldResumeAt.UtcDateTime,
+            LastKnownProgressPercent = null, LastKnownProgressAt = null,
+            AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
+        var applied = await SyncOrchestrationService.UpsertPlaybackProgressAsync(
+            _db, MakeProgress("trakt:1010", 55.0, DateTimeOffset.UtcNow), "chronicle.plugin.trakt", userId: 1, default);
+
+        applied.Should().BeTrue();
+        var lib = await _db.UserLibraries.SingleAsync(l => l.MediaItemId == movie.Id);
+        lib.LastKnownProgressPercent.Should().Be(55.0);
+    }
+
+    [Fact]
+    public async Task UpsertPlaybackProgressAsync_DoesNotBackfillLastKnownProgress_WhenOlderThanExistingResumeData()
+    {
+        // The other half of the same code-review catch: LastKnownProgressAt being null must
+        // NOT be treated as "accept anything" when ResumeUpdatedAt already proves a newer
+        // progress event exists for this item -- otherwise an out-of-order/replayed tick could
+        // still slip a stale percent into LastKnownProgressPercent even though it disagrees
+        // with the (correctly protected) newer ResumePositionPercent sitting right next to it.
+        var movie = SeedMovie(511, "trakt", "trakt:1011");
+        var newerResumeAt = DateTimeOffset.UtcNow;
+        _db.UserLibraries.Add(new UserLibrary
+        {
+            UserId = 1, MediaItemId = movie.Id, Status = LibraryStatus.Watching,
+            ResumePositionPercent = 80.0, ResumeUpdatedAt = newerResumeAt.UtcDateTime,
+            LastKnownProgressPercent = null, LastKnownProgressAt = null,
+            AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
+        var applied = await SyncOrchestrationService.UpsertPlaybackProgressAsync(
+            _db, MakeProgress("trakt:1011", 10.0, newerResumeAt.AddHours(-1)), "chronicle.plugin.trakt", userId: 1, default);
+
+        applied.Should().BeFalse();
+        var lib = await _db.UserLibraries.SingleAsync(l => l.MediaItemId == movie.Id);
+        lib.LastKnownProgressPercent.Should().BeNull();
+        lib.ResumePositionPercent.Should().Be(80.0);
     }
 
     [Fact]
