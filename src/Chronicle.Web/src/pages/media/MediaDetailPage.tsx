@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, addToLibrary, updateLibraryEntry } from '@/api/library'
+import { posterProgressPercent } from '@/utils/posterProgress'
 import { listPlugins } from '@/api/plugins'
 import { getPluginDisplayOrder } from '@/api/settings'
 import { getMyPreferences, updateMyPreferences } from '@/api/users'
@@ -710,7 +711,7 @@ export default function MediaDetailPage() {
             name={item.name}
             imgClassName={styles.posterClickable}
             onClick={() => setLightboxIdx(0)}
-            progressPercent={libraryEntry?.resumePositionPercent}
+            progressPercent={posterProgressPercent(libraryEntry?.status, libraryEntry?.resumePositionPercent)}
           />
           {fanartCharacter && (
             <FanartImage
@@ -1552,7 +1553,8 @@ export default function MediaDetailPage() {
                 {(() => {
                   const enriched = child.enrichmentStatuses != null &&
                     Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
-                  const childProgress = childLibraryEntries.find(e => e.mediaItem.id === child.id)?.resumePositionPercent
+                  const childEntry = childLibraryEntries.find(e => e.mediaItem.id === child.id)
+                  const childProgress = posterProgressPercent(childEntry?.status, childEntry?.resumePositionPercent)
                   return (
                     <PosterImage
                       posterUrl={child.posterUrl}

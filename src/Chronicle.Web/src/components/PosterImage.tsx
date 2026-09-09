@@ -19,10 +19,11 @@ interface PosterImageProps {
    */
   lazy?: boolean
   /**
-   * In-progress watch/read/listen position, 0-100. Renders a thin green fill bar
-   * across the bottom edge of the poster. Omit, or pass null/0, to show no bar —
-   * a completed item's resume position is cleared server-side (not sent as 0), so
-   * callers don't need to distinguish "not started" from "finished" themselves.
+   * Watch/read/listen position, 0-100. Renders a thin green fill bar across the bottom edge
+   * of the poster. Omit, or pass null/0, to show no bar. This component doesn't know about
+   * library status, only the raw number -- a Completed item's resumePositionPercent is
+   * cleared server-side, so callers that want a full bar for a finished item must pass 100
+   * themselves (see utils/posterProgress.ts's posterProgressPercent).
    */
   progressPercent?: number | null
 }

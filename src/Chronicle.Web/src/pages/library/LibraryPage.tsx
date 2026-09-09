@@ -6,6 +6,7 @@ import { deleteMedia } from '@/api/media'
 import type { LibraryEntry, LibraryStatus } from '@/types'
 import { loadSortSettings, stripLeadingArticle, getIndexLetter } from '@/utils/sortSettings'
 import { loadPrefs, savePrefs, DEFAULT_PREFS, type LibraryPrefs } from '@/utils/libraryPrefs'
+import { posterProgressPercent } from '@/utils/posterProgress'
 import styles from './LibraryPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 import { PosterImage } from '@/components/PosterImage'
@@ -551,7 +552,7 @@ export default function LibraryPage() {
                   {selectMode ? (
                     <div className={styles.posterLink} style={{ position: 'relative' }}>
                       <div className={styles.poster}>
-                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={entry.resumePositionPercent} />
+                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent)} />
                         {entry.mediaItem.hasPhysicalFile && (
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
@@ -576,7 +577,7 @@ export default function LibraryPage() {
                   ) : (
                     <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
                       <div className={styles.poster}>
-                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={entry.resumePositionPercent} />
+                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent)} />
                         {entry.mediaItem.hasPhysicalFile && (
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
