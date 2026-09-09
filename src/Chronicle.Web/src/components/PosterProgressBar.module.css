@@ -1,0 +1,16 @@
+.track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.fill {
+  height: 100%;
+  /* Theme's own highlight color, not a fixed "success" green -- every theme plugin already
+     overrides this token (purple, teal, pink, etc.), so the bar follows whichever theme is
+     active instead of always reading as green. */
+  background: var(--accent);
+}

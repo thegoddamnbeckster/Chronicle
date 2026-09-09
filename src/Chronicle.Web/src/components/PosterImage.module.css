@@ -22,19 +22,4 @@
   display: block;
 }
 
-.progressTrack {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: rgba(0, 0, 0, 0.55);
-}
-
-.progressFill {
-  height: 100%;
-  /* Theme's own highlight color, not a fixed "success" green -- per-user report
-     (2026-09-09): the bar should follow whichever theme is active, same as every other
-     highlight in the UI (--accent is the token every theme plugin overrides). */
-  background: var(--accent);
-}
+/* Progress bar styling lives in PosterProgressBar.module.css (shared with FanartImage). */

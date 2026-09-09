@@ -26,6 +26,10 @@ public class NfoRebuildQueueServiceTests : IDisposable
 
         // Bypasses the process-static seed throttle -- see ResetSeedThrottleForTests' own doc.
         NfoRebuildQueueService.ResetSeedThrottleForTests();
+        // Same reasoning for the LastSeenAt update throttle -- process-static and keyed only by
+        // kodiDeviceId, so a test reusing a device id another test just claimed with inside the
+        // last simulated minute would otherwise see its own LastSeenAt update silently skipped.
+        NfoRebuildQueueService.ResetLastSeenThrottleForTests();
 
         _db.MediaTypes.Add(new MediaType { Id = MovieTypeId, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow });
         _db.MediaTypes.Add(new MediaType { Id = TvTypeId,    Name = "tv",     DisplayName = "TV",      CreatedAt = DateTime.UtcNow });
@@ -480,6 +484,73 @@ public class NfoRebuildQueueServiceTests : IDisposable
 
         var device = await _db.KodiDevices.FindAsync(1);
         device!.LastSeenAt.Should().BeAfter(staleLastSeen).And.BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_SurfacesTheRefreshedLastSeenAtOnEachDevice()
+    {
+        // Same scenario as ClaimBatchAsync_RefreshesTheDevicesLastSeenAt, but asserting through
+        // the actual API-facing DTO (what the rebuild queue panel reads) rather than just the
+        // raw DB row -- the two aren't the same thing until GetStatusAsync's own device mapping
+        // is confirmed to carry the field through.
+        var staleLastSeen = DateTime.UtcNow.AddHours(-3);
+        _db.KodiDevices.Add(new KodiDevice
+        {
+            Id = 1, UserId = 1, ApiTokenId = 1, Name = "Downstairs", Host = "10.2.0.2", Port = 8080,
+            CreatedAt = DateTime.UtcNow, LastSeenAt = staleLastSeen,
+        });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        await _db.SaveChangesAsync();
+
+        await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        var status = await _svc.GetStatusAsync();
+
+        var device = status.Devices.Should().ContainSingle(d => d.KodiDeviceId == 1).Subject;
+        device.LastSeenAt.Should().NotBeNull()
+            .And.Subject.Should().BeAfter(staleLastSeen).And.BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_ReturnsNullLastSeenAtForADeletedDevice()
+    {
+        // Mirrors GetStatusAsync_FallsBackToPlaceholderNameForADeletedDevice's own scenario --
+        // a device row can be deleted/re-registered independently of the rebuild queue (see
+        // NfoRebuildQueueItem's own doc on why there's no FK), so LastSeenAt must degrade to
+        // null gracefully rather than throwing on the missing lookup.
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        await _db.SaveChangesAsync();
+        await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        var status = await _svc.GetStatusAsync();
+
+        var device = status.Devices.Should().ContainSingle().Subject;
+        device.LastSeenAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ClaimBatchAsync_DoesNotRewriteLastSeenAtOnEveryCall_WithinTheThrottleWindow()
+    {
+        // An actively-rebuilding device calls ClaimBatchAsync repeatedly in quick succession --
+        // writing LastSeenAt on every single one would be a wasted SELECT+UPDATE per call for a
+        // liveness display that doesn't need sub-minute precision. See LastSeenUpdateThrottle's
+        // own doc.
+        _db.KodiDevices.Add(new KodiDevice
+        {
+            Id = 1, UserId = 1, ApiTokenId = 1, Name = "Downstairs", Host = "10.2.0.2", Port = 8080,
+            CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.MinValue,
+        });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        await _db.SaveChangesAsync();
+
+        await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+        var firstSeenAt = (await _db.KodiDevices.FindAsync(1))!.LastSeenAt;
+
+        // Second claim moments later -- well within the 1-minute throttle window.
+        await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+        var secondSeenAt = (await _db.KodiDevices.FindAsync(1))!.LastSeenAt;
+
+        secondSeenAt.Should().Be(firstSeenAt, "a second claim inside the throttle window should not re-write LastSeenAt");
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { PosterProgressBar } from './PosterProgressBar'
 import styles from './PosterImage.module.css'
 
 interface PosterImageProps {
@@ -35,7 +36,6 @@ interface PosterImageProps {
  */
 export function PosterImage({ posterUrl, name, className, onClick, imgClassName, placeholderContent, lazy = false, progressPercent }: PosterImageProps) {
   const [loaded, setLoaded] = useState(false)
-  const clampedProgress = progressPercent != null ? Math.max(0, Math.min(100, progressPercent)) : null
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
@@ -56,11 +56,7 @@ export function PosterImage({ posterUrl, name, className, onClick, imgClassName,
           onError={() => setLoaded(false)}
         />
       )}
-      {clampedProgress != null && clampedProgress > 0 && (
-        <div className={styles.progressTrack} title={`${Math.round(clampedProgress)}% watched`}>
-          <div className={styles.progressFill} style={{ width: `${clampedProgress}%` }} />
-        </div>
-      )}
+      <PosterProgressBar percent={progressPercent} />
     </div>
   )
 }

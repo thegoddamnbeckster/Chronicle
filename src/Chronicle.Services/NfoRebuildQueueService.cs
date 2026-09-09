@@ -65,6 +65,22 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
     /// precedent as TaskSchedulerService.SeedTasksAsync/TickAsync.</summary>
     internal static void ResetSeedThrottleForTests() => _lastSeedCheck = DateTime.MinValue;
 
+    // Per-device throttle on the KodiDevice.LastSeenAt refresh below -- same "cheap per-call,
+    // wasteful at poll frequency" shape as _lastSeedCheck above, since ClaimBatchAsync is
+    // itself polled frequently by an actively-rebuilding device (see this class's own claim-
+    // frequency comment). A 1-minute resolution is plenty for a "is this device on right now"
+    // liveness display -- nobody needs sub-minute precision on that -- and avoids an extra
+    // SELECT+UPDATE round trip on every single claim.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, DateTime> _lastSeenUpdateByDevice = new();
+    private static readonly TimeSpan LastSeenUpdateThrottle = TimeSpan.FromMinutes(1);
+
+    /// <summary>Test-only: clears the LastSeenAt update throttle above. Needed for the same
+    /// reason ResetSeedThrottleForTests exists -- the throttle is process-static and keyed only
+    /// by kodiDeviceId, so a test reusing a device id another test already claimed with inside
+    /// the last simulated minute would otherwise see its own LastSeenAt update silently
+    /// skipped.</summary>
+    internal static void ResetLastSeenThrottleForTests() => _lastSeenUpdateByDevice.Clear();
+
     public async Task<NfoRebuildQueueClaimBatchDto> ClaimBatchAsync(
         int kodiDeviceId, int batchSize, TimeSpan lease,
         IReadOnlyCollection<string>? excludeKinds = null, CancellationToken ct = default)
@@ -75,13 +91,22 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         // running, unlike KodiDevice.LastSeenAt's other writer (device_registration.py's
         // 6-hourly re-registration ping) -- refreshing it here too makes "last seen" a
         // meaningfully fresh liveness signal instead of being hours stale for a device that's
-        // been on the whole time. Best-effort: a device row that's been deleted/never
-        // registered is not an error here, just nothing to update.
-        var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.Id == kodiDeviceId, ct);
-        if (device is not null)
+        // been on the whole time. Throttled per-device (see LastSeenUpdateThrottle's own doc) so
+        // this doesn't cost an extra SELECT+UPDATE on every single claim -- a 1-minute-old
+        // timestamp is indistinguishable from a fresh one for this purpose. Best-effort: a
+        // device row that's been deleted/never registered is not an error here, just nothing to
+        // update.
+        var seenNow = DateTime.UtcNow;
+        if (!_lastSeenUpdateByDevice.TryGetValue(kodiDeviceId, out var lastSeenUpdate) ||
+            seenNow - lastSeenUpdate >= LastSeenUpdateThrottle)
         {
-            device.LastSeenAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
+            var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.Id == kodiDeviceId, ct);
+            if (device is not null)
+            {
+                device.LastSeenAt = seenNow;
+                await db.SaveChangesAsync(ct);
+                _lastSeenUpdateByDevice[kodiDeviceId] = seenNow;
+            }
         }
 
         List<NfoRebuildQueueItem> candidates;
