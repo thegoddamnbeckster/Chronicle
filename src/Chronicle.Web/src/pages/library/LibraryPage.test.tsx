@@ -55,6 +55,7 @@ function makeEntry(overrides: Partial<LibraryEntry> = {}, mediaOverrides: Partia
     startedAt: null,
     completedAt: null,
     resumePositionPercent: null,
+    lastKnownProgressPercent: null,
     ...overrides,
   }
 }

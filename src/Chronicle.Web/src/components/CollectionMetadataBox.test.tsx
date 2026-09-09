@@ -18,6 +18,7 @@ function makeMember(overrides: Partial<CollectionMember> = {}): CollectionMember
     inLibrary: true,
     libraryStatus: null,
     resumePositionPercent: null,
+    lastKnownProgressPercent: null,
     rating: 7.5,
     userRating: null,
     userRatingSource: null,
@@ -43,12 +44,30 @@ beforeEach(() => {
 })
 
 describe('CollectionMetadataBox', () => {
-  it('shows a full progress bar for a Completed movie, not none', async () => {
-    // Root-caused live (2026-09-09): a Completed movie's resumePositionPercent is cleared
-    // server-side, so its poster showed no progress bar at all inside a collection view --
-    // indistinguishable from never having been started.
+  it('shows the actual last-scrobbled percent for a Completed movie, not a flat 100%', async () => {
+    // Per-user correction (2026-09-09): "I used 100 percent as an example. you need to use
+    // the actual progress. so if the person stops watching something at 96 percent... you
+    // show 96 percent". resumePositionPercent is cleared on completion (nothing to "resume"),
+    // but lastKnownProgressPercent survives specifically so this case can show the real value.
     mockedGetCollection.mockResolvedValue(makeCollection([
-      makeMember({ id: 1, name: 'Fast X', libraryStatus: 'Completed', resumePositionPercent: null }),
+      makeMember({
+        id: 1, name: 'Fast X', libraryStatus: 'Completed',
+        resumePositionPercent: null, lastKnownProgressPercent: 96,
+      }),
+    ]))
+
+    renderWithProviders(<CollectionMetadataBox mediaItemId={1} />)
+
+    const track = await screen.findByTitle('96% watched')
+    const fill = track.querySelector('div')
+    expect(fill).toHaveStyle({ width: '96%' })
+  })
+
+  it('falls back to a full progress bar for a Completed movie with no known percent', async () => {
+    // e.g. marked Completed by hand, or imported from a watch-history sync that reports no
+    // percentage at all -- there's no better information than "fully watched" to show.
+    mockedGetCollection.mockResolvedValue(makeCollection([
+      makeMember({ id: 1, name: 'Fast X', libraryStatus: 'Completed', resumePositionPercent: null, lastKnownProgressPercent: null }),
     ]))
 
     renderWithProviders(<CollectionMetadataBox mediaItemId={1} />)

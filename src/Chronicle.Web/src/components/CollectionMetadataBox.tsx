@@ -99,8 +99,8 @@ export default function CollectionMetadataBox({ mediaItemId, compact = false }: 
               <Link to={`/media/${movie.id}`} className={styles.posterLink}>
                 <div className={styles.posterWrap}>
                   {isFanartUrl(movie.posterUrl)
-                    ? <FanartImage src={movie.posterUrl!} wrapperClassName={styles.moviePosterWrap} imgClassName={styles.moviePosterImg} minHeight={120} progressPercent={posterProgressPercent(movie.libraryStatus, movie.resumePositionPercent)} />
-                    : <PosterImage posterUrl={movie.posterUrl} name={movie.name} progressPercent={posterProgressPercent(movie.libraryStatus, movie.resumePositionPercent)} />
+                    ? <FanartImage src={movie.posterUrl!} wrapperClassName={styles.moviePosterWrap} imgClassName={styles.moviePosterImg} minHeight={120} progressPercent={posterProgressPercent(movie.libraryStatus, movie.resumePositionPercent, movie.lastKnownProgressPercent)} />
+                    : <PosterImage posterUrl={movie.posterUrl} name={movie.name} progressPercent={posterProgressPercent(movie.libraryStatus, movie.resumePositionPercent, movie.lastKnownProgressPercent)} />
                   }
                   {!movie.hasFile && (
                     <div className={styles.stubBanner}>Not in Library</div>

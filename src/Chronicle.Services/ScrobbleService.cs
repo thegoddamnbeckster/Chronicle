@@ -670,6 +670,17 @@ namespace Chronicle.Services
                 entry.ResumeUpdatedAt       = timestamp;
             }
 
+            // Unlike ResumePositionPercent above, this is NEVER cleared on completion -- see
+            // LastKnownProgressPercent's own doc. Same out-of-order protection, tracked against
+            // its own timestamp (not ResumeUpdatedAt, which gets nulled out exactly when this
+            // needs to survive).
+            if (progressPercent.HasValue
+                && (entry.LastKnownProgressAt is not DateTime existingKnown || timestamp >= existingKnown))
+            {
+                entry.LastKnownProgressPercent = progressPercent.Value;
+                entry.LastKnownProgressAt      = timestamp;
+            }
+
             return entry;
         }
 

@@ -8,6 +8,9 @@ export interface CollectionMember {
   inLibrary: boolean
   libraryStatus: string | null
   resumePositionPercent: number | null
+  /** The most recent scrobble's own progress percent, kept even after the item is marked
+   *  Completed (unlike resumePositionPercent, which is cleared then). */
+  lastKnownProgressPercent: number | null
   rating: number | null
   userRating: number | null
   userRatingSource: string | null

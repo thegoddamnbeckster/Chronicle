@@ -227,6 +227,55 @@ public class SyncOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpsertPlaybackProgressAsync_SetsLastKnownProgressPercent()
+    {
+        // Per-user question (2026-09-09): "are you getting playback progress from trakt and
+        // Simkl? if so you need to treat it the same way as if a user has watched something."
+        // Trakt's playback sync IS wired up, but this write used to only touch
+        // ResumePositionPercent -- a completely separate field from LastKnownProgressPercent
+        // (added the same day so a Completed item's poster shows the real last-known percent
+        // instead of a flat 100%). An item whose only progress signal ever came from Trakt
+        // (never scrobbled directly through Kodi) would still have fallen back to 100% once
+        // marked Completed some other way, losing the real number Trakt actually reported.
+        var movie = SeedMovie(508, "trakt", "trakt:1008");
+
+        await SyncOrchestrationService.UpsertPlaybackProgressAsync(
+            _db, MakeProgress("trakt:1008", 63.0), "chronicle.plugin.trakt", userId: 1, default);
+
+        var lib = await _db.UserLibraries.SingleAsync(l => l.MediaItemId == movie.Id);
+        lib.LastKnownProgressPercent.Should().Be(63.0);
+        lib.LastKnownProgressAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task UpsertPlaybackProgressAsync_OlderLastKnownProgress_DoesNotOverwriteNewer()
+    {
+        // Same "most-recent-wins" protection ResumePositionPercent already has, applied
+        // independently to LastKnownProgressPercent since it's tracked against its own
+        // timestamp (not ResumeUpdatedAt, which a later completion can clear to null).
+        var movie = SeedMovie(509, "trakt", "trakt:1009");
+        var newer = DateTimeOffset.UtcNow;
+        _db.UserLibraries.Add(new UserLibrary
+        {
+            UserId = 1, MediaItemId = movie.Id, Status = LibraryStatus.Watching,
+            ResumePositionPercent = 80.0, ResumeUpdatedAt = newer.UtcDateTime,
+            LastKnownProgressPercent = 80.0, LastKnownProgressAt = newer.UtcDateTime,
+            AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
+        // This call also returns false (stale ResumeUpdatedAt), so LastKnownProgressPercent
+        // isn't even reached -- confirms both fields stay consistent, not just independently
+        // protected.
+        var applied = await SyncOrchestrationService.UpsertPlaybackProgressAsync(
+            _db, MakeProgress("trakt:1009", 10.0, newer.AddHours(-1)), "chronicle.plugin.trakt", userId: 1, default);
+
+        applied.Should().BeFalse();
+        var lib = await _db.UserLibraries.SingleAsync(l => l.MediaItemId == movie.Id);
+        lib.LastKnownProgressPercent.Should().Be(80.0);
+    }
+
+    [Fact]
     public async Task UpsertPlaybackProgressAsync_NoMatchingMediaItem_ReturnsFalse()
     {
         var applied = await SyncOrchestrationService.UpsertPlaybackProgressAsync(

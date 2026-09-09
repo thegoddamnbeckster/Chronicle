@@ -33,6 +33,9 @@ public class CollectionMemberDto
     public bool InLibrary { get; set; }
     public string? LibraryStatus { get; set; }
     public double? ResumePositionPercent { get; set; }
+    /// <summary>The most recent scrobble's own progress percent, kept even after the item is
+    /// marked Completed -- see UserLibrary.LastKnownProgressPercent's own doc.</summary>
+    public double? LastKnownProgressPercent { get; set; }
     public double? Rating { get; set; }
     public int? UserRating { get; set; }
     public string? UserRatingSource { get; set; }

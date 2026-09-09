@@ -711,7 +711,7 @@ export default function MediaDetailPage() {
             name={item.name}
             imgClassName={styles.posterClickable}
             onClick={() => setLightboxIdx(0)}
-            progressPercent={posterProgressPercent(libraryEntry?.status, libraryEntry?.resumePositionPercent)}
+            progressPercent={posterProgressPercent(libraryEntry?.status, libraryEntry?.resumePositionPercent, libraryEntry?.lastKnownProgressPercent)}
           />
           {fanartCharacter && (
             <FanartImage
@@ -1554,7 +1554,7 @@ export default function MediaDetailPage() {
                   const enriched = child.enrichmentStatuses != null &&
                     Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
                   const childEntry = childLibraryEntries.find(e => e.mediaItem.id === child.id)
-                  const childProgress = posterProgressPercent(childEntry?.status, childEntry?.resumePositionPercent)
+                  const childProgress = posterProgressPercent(childEntry?.status, childEntry?.resumePositionPercent, childEntry?.lastKnownProgressPercent)
                   return (
                     <PosterImage
                       posterUrl={child.posterUrl}

@@ -211,6 +211,10 @@ export interface LibraryEntry {
   startedAt: string | null
   completedAt: string | null
   resumePositionPercent: number | null
+  /** The most recent scrobble's own progress percent, kept even after the item is marked
+   *  Completed (unlike resumePositionPercent, which is cleared then). Null only when the item
+   *  has never been scrobbled at all. */
+  lastKnownProgressPercent: number | null
 }
 
 // ── Scrobble ──────────────────────────────────────────────────────────────────

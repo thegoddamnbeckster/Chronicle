@@ -910,6 +910,21 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         lib.ResumePositionPercent = progress.ProgressPercent;
         lib.ResumeUpdatedAt       = progress.UpdatedAt.UtcDateTime;
+
+        // Unlike ResumePositionPercent above, this is never cleared on completion -- see
+        // UserLibrary.LastKnownProgressPercent's own doc and ScrobbleService.UpsertLibraryStateAsync's
+        // identical write for a live Kodi scrobble. Without this, an item whose only progress
+        // signal ever came from Trakt's playback sync (never scrobbled directly) would still
+        // fall back to a flat 100% once marked Completed, instead of the real percent Trakt
+        // last reported -- same bug, different ingestion path. Tracked against its own
+        // timestamp, not ResumeUpdatedAt (which this method's own guard above can require to be
+        // absent/older), so it survives independently of whatever resets that field.
+        if (lib.LastKnownProgressAt is not DateTime existingKnownAt || progress.UpdatedAt.UtcDateTime >= existingKnownAt)
+        {
+            lib.LastKnownProgressPercent = progress.ProgressPercent;
+            lib.LastKnownProgressAt      = progress.UpdatedAt.UtcDateTime;
+        }
+
         lib.UpdatedAt             = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
         return true;

@@ -247,7 +247,15 @@ namespace Chronicle.API.DTOs
         /// Chronicle's last watched status is older than Kodi's... Kodi should win... if
         /// Chronicle's data is more current than Kodi's, Chronicle's data should sync into Kodi."
         /// </summary>
-        DateTime? ResumeUpdatedAt = null
+        DateTime? ResumeUpdatedAt = null,
+        /// <summary>
+        /// The most recent scrobble's own progress percent, kept even after the item is marked
+        /// Completed (unlike ResumePositionPercent, which is cleared then) -- purely
+        /// informational, e.g. a poster's progress bar showing the actual percent someone
+        /// stopped at (96%) rather than always reading 100% for anything Completed. Null only
+        /// when the item has never been scrobbled at all.
+        /// </summary>
+        double? LastKnownProgressPercent = null
     );
 
     public record NuclearResetRequestDto(string ConfirmationToken);

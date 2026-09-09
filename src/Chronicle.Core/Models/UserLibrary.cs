@@ -46,6 +46,21 @@ namespace Chronicle.Core.Models
         public double? ResumePositionPercent { get; set; }
         public DateTime? ResumeUpdatedAt { get; set; }
 
+        /// <summary>
+        /// Percent-of-duration playback position from the MOST RECENT scrobble of any kind,
+        /// including one that crossed the watched threshold -- unlike ResumePositionPercent,
+        /// this is NEVER cleared on completion. Purely informational (a "how far did you
+        /// actually get" display value, e.g. a poster's progress bar for a Completed item), not
+        /// a resume-functional one -- per-user correction (2026-09-09): showing 100% for every
+        /// completed item was wrong; stopping at 96% and crossing the watched threshold should
+        /// still display as 96%, not be inflated. Null only when the item has never been
+        /// scrobbled at all (e.g. marked Completed by hand, or imported from a watch-history
+        /// sync that reports no percentage) -- callers fall back to 100% in that case, since
+        /// that's the best available assumption with no better information.
+        /// </summary>
+        public double? LastKnownProgressPercent { get; set; }
+        public DateTime? LastKnownProgressAt { get; set; }
+
         // Navigation
         public User? User { get; set; }
         public MediaItem? MediaItem { get; set; }

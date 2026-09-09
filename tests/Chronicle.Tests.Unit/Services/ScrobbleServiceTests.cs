@@ -136,6 +136,24 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task ScrobbleAsync_WatchedScrobbleAt96Percent_KeepsTheActualPercentForDisplay()
+        {
+            // Per-user correction (2026-09-09): "I used 100 percent as an example. you need to
+            // use the actual progress. so if the person stops watching something at 96 percent,
+            // you show 96 percent and since it's past the completed threshold, that counts as a
+            // complete watch." ResumePositionPercent is still correctly cleared (nothing left
+            // to resume), but LastKnownProgressPercent must carry the real 96 forward for
+            // display purposes -- not fall back to a flat 100%.
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 96.0, null, null));
+
+            var libraryEntry = _context.UserLibraries.First(l => l.UserId == 1 && l.MediaItemId == 1);
+
+            libraryEntry.Status.Should().Be(LibraryStatus.Completed);
+            libraryEntry.ResumePositionPercent.Should().BeNull();
+            libraryEntry.LastKnownProgressPercent.Should().Be(96.0);
+        }
+
+        [Fact]
         public async Task ScrobbleAsync_SameUserItemTimestampTwice_ReturnsPreExistingEventWithoutDuplicating()
         {
             var timestamp = DateTime.UtcNow;

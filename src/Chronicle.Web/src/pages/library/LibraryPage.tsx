@@ -552,7 +552,7 @@ export default function LibraryPage() {
                   {selectMode ? (
                     <div className={styles.posterLink} style={{ position: 'relative' }}>
                       <div className={styles.poster}>
-                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent)} />
+                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent, entry.lastKnownProgressPercent)} />
                         {entry.mediaItem.hasPhysicalFile && (
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
@@ -577,7 +577,7 @@ export default function LibraryPage() {
                   ) : (
                     <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
                       <div className={styles.poster}>
-                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent)} />
+                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent, entry.lastKnownProgressPercent)} />
                         {entry.mediaItem.hasPhysicalFile && (
                           <div className={styles.fileIndicator}>
                             <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>

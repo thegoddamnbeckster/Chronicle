@@ -1803,6 +1803,7 @@ namespace Chronicle.API.Controllers
                     InLibrary        = libraryEntries.ContainsKey(m.Id),
                     LibraryStatus    = libraryEntries.TryGetValue(m.Id, out var le) ? le.Status.ToString() : null,
                     ResumePositionPercent = le?.ResumePositionPercent,
+                    LastKnownProgressPercent = le?.LastKnownProgressPercent,
                     Rating           = ExtractRatingFromMetadata(m.MetadataJson),
                     UserRating       = le?.UserRating,
                     UserRatingSource = le?.UserRating.HasValue == true ? ExtractUserRatingSource(m.MetadataJson, le.UserRating.Value) : null,

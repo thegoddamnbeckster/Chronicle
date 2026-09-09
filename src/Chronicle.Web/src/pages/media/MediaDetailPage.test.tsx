@@ -104,6 +104,7 @@ function makeLibraryEntry(item: MediaItem, overrides: Partial<LibraryEntry> = {}
     startedAt: null,
     completedAt: null,
     resumePositionPercent: null,
+    lastKnownProgressPercent: null,
     ...overrides,
   }
 }
