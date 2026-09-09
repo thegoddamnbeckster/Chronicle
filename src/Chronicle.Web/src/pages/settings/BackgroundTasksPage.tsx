@@ -371,6 +371,15 @@ function NfoRebuildQueueSection({ isAdmin }: { isAdmin: boolean }) {
 
   const pct = Math.round((status.completedCount / status.totalItems) * 100)
 
+  // Only devices actively working the queue right now are worth a row -- lastSeenAt is
+  // refreshed on every claim (see its own comment below), so anything older than one polling
+  // cycle's worth of slack means that Kodi instance is off, not mid-rebuild. A device that has
+  // never claimed anything (lastSeenAt null) hasn't started either.
+  const ONLINE_WINDOW_MS = 5 * 60 * 1000
+  const onlineDevices = status.devices.filter(
+    d => d.lastSeenAt && Date.now() - new Date(d.lastSeenAt).getTime() <= ONLINE_WINDOW_MS,
+  )
+
   return (
     <div className={styles.enrichmentSection}>
       <div className={styles.sectionHeader}>
@@ -397,19 +406,18 @@ function NfoRebuildQueueSection({ isAdmin }: { isAdmin: boolean }) {
         <div className={styles.scanProgressTrack}>
           <div className={styles.scanProgressFill} style={{ width: `${pct}%` }} />
         </div>
-        {status.devices.length > 0 && (
+        {onlineDevices.length > 0 && (
           <div className={styles.enrichTableWrap} style={{ marginTop: 14 }}>
             <table className={styles.enrichTable}>
               <thead>
                 <tr>
                   <th className={styles.enrichTh}>Device</th>
-                  <th className={styles.enrichTh}>Last Seen</th>
                   <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>In Progress</th>
                   <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Completed</th>
                 </tr>
               </thead>
               <tbody>
-                {status.devices.map(d => (
+                {onlineDevices.map(d => (
                   <tr key={d.kodiDeviceId} className={styles.enrichRow}>
                     <td className={styles.enrichTd}>
                       {d.deviceName}
@@ -422,17 +430,6 @@ function NfoRebuildQueueSection({ isAdmin }: { isAdmin: boolean }) {
                           ({d.host})
                         </span>
                       )}
-                    </td>
-                    {/* Refreshed on every rebuild-queue claim, not just the addon's own 6-hourly
-                        re-registration ping -- a meaningfully fresh liveness signal, unlike the
-                        Completed column, which stays unchanged whether a device is on or off
-                        right now. Per-user report (2026-09-09): "Kodi downstairs has been off
-                        for over an hour" with no way to tell from this panel before this column
-                        existed. */}
-                    <td className={styles.enrichTd} style={{ color: 'var(--text-muted)' }}>
-                      {d.lastSeenAt
-                        ? new Date(d.lastSeenAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
-                        : '—'}
                     </td>
                     <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>{d.activeClaims.toLocaleString()}</td>
                     <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>{d.completedCount.toLocaleString()}</td>
