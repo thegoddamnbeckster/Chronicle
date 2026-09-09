@@ -245,6 +245,10 @@ builder.Services.AddSingleton<DuplicateCandidateScanService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<DuplicateCandidateScanService>());
 
+builder.Services.AddSingleton<DuplicatePersonAutoResolveService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<DuplicatePersonAutoResolveService>());
+
 builder.Services.AddSingleton<ScheduledScanService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<ScheduledScanService>());
