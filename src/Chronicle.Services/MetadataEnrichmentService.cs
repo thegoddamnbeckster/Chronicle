@@ -1342,10 +1342,27 @@ public class MetadataEnrichmentService(
                     }
                     catch (KeyNotFoundException ex)
                     {
-                        // Wrap in a private sentinel so the outer catch can distinguish
-                        // "provider returned no match" from unrelated KeyNotFoundExceptions
-                        // thrown by dictionary access or LINQ elsewhere in this method.
-                        throw new ProviderNotFoundException(ex.Message, ex);
+                        // Clear it and fall through to a real search -- exactly like the
+                        // ArgumentException case above, not the terminal-NotFound treatment this
+                        // used to get (wrapping into ProviderNotFoundException so the outer catch
+                        // aborted the whole attempt). Root-caused live (2026-09-09, per-user
+                        // report): Band of Brothers/Better Call Saul/Breaking Bad -- three
+                        // unmistakably real, famous shows -- each had a cross-ref-seeded
+                        // row.ExternalId ("imdb:tt0185906" etc., cascaded here automatically once
+                        // another plugin matched first, not something the user typed) that SIMKL's
+                        // own /search/id endpoint simply didn't have cross-referenced, even though
+                        // a plain title search finds all three immediately. The stored id being
+                        // unresolvable said nothing about whether the show exists on SIMKL, only
+                        // that THIS SPECIFIC cross-reference was missing from SIMKL's own index --
+                        // yet it was permanently blocking every one of these items from ever
+                        // reaching a real text search, silently, unless a human intervened with
+                        // Fix Match. A stored id a provider doesn't recognize deserves the exact
+                        // same benefit of the doubt as a malformed one.
+                        logger.LogWarning(
+                            "Clearing unresolvable ExternalId {ExternalId} for item {ItemId} (plugin {Plugin} " +
+                            "returned no match) -- falling through to a real search: {Error}",
+                            row.ExternalId, row.MediaItemId, pluginId, ex.Message);
+                        row.ExternalId = null;
                     }
                 }
                 else
@@ -2026,14 +2043,17 @@ public class MetadataEnrichmentService(
             // A 404 from the provider means "this item definitively does not exist upstream" —
             // treat as NotFound rather than a transient error so retries are not wasted.
             // Example: TMDB seasons/episodes that are not yet in TMDB's database return 404.
-            if (ex is ProviderNotFoundException ||
-                (ex is HttpRequestException httpEx &&
-                 httpEx.StatusCode == System.Net.HttpStatusCode.NotFound))
+            // A KeyNotFoundException from a STORED (cross-ref-seeded) id no longer reaches this
+            // catch at all -- Step 1 above now clears it and falls through to a real search
+            // instead of treating "this one cross-reference is missing" as "this item doesn't
+            // exist" (see that catch block's own doc for the live case that proved those aren't
+            // the same thing).
+            if (ex is HttpRequestException httpEx &&
+                httpEx.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 logger.LogInformation(
-                    "Enrichment not found: plugin={Plugin} item={ItemId} \"{Name}\" — {Reason}",
-                    row.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
-                    ex is ProviderNotFoundException ? "provider returned no match for stored ID" : "provider returned 404");
+                    "Enrichment not found: plugin={Plugin} item={ItemId} \"{Name}\" — provider returned 404",
+                    row.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?");
                 row.Status       = EnrichmentStatus.NotFound;
                 row.ErrorMessage = ex.Message;
             }
@@ -2175,17 +2195,6 @@ public class MetadataEnrichmentService(
             await CascadeToChildrenAsync(db, provider, pluginId, row.MediaItem!, options, ct, allProviders);
 
         return completedMeta;
-    }
-
-    /// <summary>
-    /// Thrown only by the inner GetByIdAsync catch to signal "provider returned no match for
-    /// this specific ID". Caught exclusively by the outer EnrichItemCoreLockedAsync handler so
-    /// that unrelated KeyNotFoundExceptions from dictionary access or LINQ elsewhere in the
-    /// method do NOT get silently marked as NotFound.
-    /// </summary>
-    private sealed class ProviderNotFoundException : Exception
-    {
-        public ProviderNotFoundException(string message, Exception inner) : base(message, inner) { }
     }
 
     /// <summary>
