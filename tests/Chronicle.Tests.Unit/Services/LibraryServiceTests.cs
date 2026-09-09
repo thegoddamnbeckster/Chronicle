@@ -16,6 +16,96 @@ public class LibraryServiceTests
         return new ChronicleDbContext(opts);
     }
 
+    // ── GetEntryAsync / GetEntriesForMediaItemsAsync ─────────────────────────────
+    // Root-caused live (2026-09-08): the media detail page used to find "its own" entry by
+    // fetching the entire catalog's library rows client-side (~88,500 entries, ~140MB at that
+    // catalog's size) -- for all practical purposes never completing, so a completed/rated item
+    // displayed as if it had never been tracked. These two methods are the targeted replacement:
+    // one item, or a small known set of items, instead of everything.
+
+    [Fact]
+    public async Task GetEntryAsync_ReturnsTheEntryWithMediaItemAndTypeLoaded()
+    {
+        var db = MakeDb();
+        var mt = new MediaType { Name = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+        var item = new MediaItem { Name = "Fast X", MediaTypeId = mt.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(item);
+        await db.SaveChangesAsync();
+        db.UserLibraries.Add(new UserLibrary
+        {
+            UserId = 1, MediaItemId = item.Id, Status = LibraryStatus.Completed, UserRating = 7,
+            AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var entry = await svc.GetEntryAsync(userId: 1, mediaItemId: item.Id);
+
+        Assert.NotNull(entry);
+        Assert.Equal(LibraryStatus.Completed, entry!.Status);
+        Assert.Equal(7, entry.UserRating);
+        Assert.NotNull(entry.MediaItem);
+        Assert.Equal("Movies", entry.MediaItem!.MediaType?.Name);
+    }
+
+    [Fact]
+    public async Task GetEntryAsync_NoEntryForThatUser_ReturnsNull()
+    {
+        var db = MakeDb();
+        var mt = new MediaType { Name = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+        var item = new MediaItem { Name = "Untracked", MediaTypeId = mt.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(item);
+        await db.SaveChangesAsync();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var entry = await svc.GetEntryAsync(userId: 1, mediaItemId: item.Id);
+
+        Assert.Null(entry);
+    }
+
+    [Fact]
+    public async Task GetEntriesForMediaItemsAsync_ReturnsOnlyEntriesThatExist_ForTheRequestedIds()
+    {
+        var db = MakeDb();
+        var mt = new MediaType { Name = "tv", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+        var ep1 = new MediaItem { Name = "Episode 1", MediaTypeId = mt.Id, HierarchyLevel = 2, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var ep2 = new MediaItem { Name = "Episode 2", MediaTypeId = mt.Id, HierarchyLevel = 2, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var ep3 = new MediaItem { Name = "Episode 3 (untracked)", MediaTypeId = mt.Id, HierarchyLevel = 2, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.AddRange(ep1, ep2, ep3);
+        await db.SaveChangesAsync();
+        db.UserLibraries.AddRange(
+            new UserLibrary { UserId = 1, MediaItemId = ep1.Id, Status = LibraryStatus.Watching, ResumePositionPercent = 42.5, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+            new UserLibrary { UserId = 1, MediaItemId = ep2.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow },
+            // A different user's row for ep3 must not leak into user 1's results.
+            new UserLibrary { UserId = 2, MediaItemId = ep3.Id, Status = LibraryStatus.Watching, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var entries = (await svc.GetEntriesForMediaItemsAsync(userId: 1, [ep1.Id, ep2.Id, ep3.Id])).ToList();
+
+        Assert.Equal(2, entries.Count);
+        Assert.Contains(entries, e => e.MediaItemId == ep1.Id && e.ResumePositionPercent == 42.5);
+        Assert.Contains(entries, e => e.MediaItemId == ep2.Id && e.Status == LibraryStatus.Completed);
+        Assert.DoesNotContain(entries, e => e.MediaItemId == ep3.Id);
+    }
+
+    [Fact]
+    public async Task GetEntriesForMediaItemsAsync_EmptyIdList_ReturnsEmptyWithoutQuerying()
+    {
+        var db = MakeDb();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var entries = await svc.GetEntriesForMediaItemsAsync(userId: 1, []);
+
+        Assert.Empty(entries);
+    }
+
     // ── ClearAllAsync ─────────────────────────────────────────────────────────
 
     [Fact]

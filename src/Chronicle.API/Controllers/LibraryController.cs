@@ -241,6 +241,50 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }
 
+        /// <summary>
+        /// Single-item counterpart to the bulk GET above -- for a page that only needs one
+        /// item's own library entry (e.g. the media detail page), not the whole catalog.
+        /// Root-caused live (2026-09-08): the detail page was calling the bulk endpoint with no
+        /// paging/filters at all, which returns literally every trackable item's library row
+        /// (~88,500 entries, ~140MB of JSON at this catalog's size) just to find the one entry
+        /// matching the current item -- for all practical purposes never completing, so a
+        /// completed/rated item like "Fast X" displayed as if it had never been tracked. Returns
+        /// {success:true, data:null} (not 404) when the item isn't tracked yet -- that's a normal,
+        /// expected state here, not an error; the frontend already renders "+ Add to Library" for it.
+        /// </summary>
+        [HttpGet("by-media/{mediaItemId:int}")]
+        public async Task<IActionResult> GetByMediaItem(int mediaItemId, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            var entry = await _libraryService.GetEntryAsync(userId, mediaItemId);
+            if (entry is null)
+                return Ok(ApiResponse<LibraryEntryDto?>.Ok(null));
+
+            var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
+            return Ok(ApiResponse<LibraryEntryDto?>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));
+        }
+
+        /// <summary>
+        /// Batched counterpart to GetByMediaItem, for a small known set of ids (e.g. a media
+        /// detail page's own children -- episodes within a season) that each need their own
+        /// progress/status without pulling in the whole catalog to find them.
+        /// </summary>
+        [HttpGet("by-media")]
+        public async Task<IActionResult> GetByMediaItems([FromQuery] string ids, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            var mediaItemIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => int.TryParse(s, out var id) ? id : (int?)null)
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToList();
+
+            var entries = await _libraryService.GetEntriesForMediaItemsAsync(userId, mediaItemIds, ct);
+            var dtos = entries.Select(e => ToDto(e)).ToList();
+            return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(dtos));
+        }
+
         [HttpPatch("{id:int}")]
         public async Task<IActionResult> Update(int id, [FromBody] UpdateLibraryRequestDto request, CancellationToken ct)
         {

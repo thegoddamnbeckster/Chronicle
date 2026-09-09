@@ -204,8 +204,20 @@ namespace Chronicle.Services
         public async Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId)
         {
             return await _context.UserLibraries
-                .Include(l => l.MediaItem)
+                .Include(l => l.MediaItem).ThenInclude(m => m!.MediaType)
+                .Include(l => l.MediaItem).ThenInclude(m => m!.ExternalIds)
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId);
+        }
+
+        public async Task<IEnumerable<UserLibrary>> GetEntriesForMediaItemsAsync(
+            int userId, IReadOnlyCollection<int> mediaItemIds, CancellationToken ct = default)
+        {
+            if (mediaItemIds.Count == 0) return [];
+            return await _context.UserLibraries
+                .Include(l => l.MediaItem).ThenInclude(m => m!.MediaType)
+                .Include(l => l.MediaItem).ThenInclude(m => m!.ExternalIds)
+                .Where(l => l.UserId == userId && mediaItemIds.Contains(l.MediaItemId))
+                .ToListAsync(ct);
         }
 
         public async Task<UserLibrary> UpdateAsync(int userId, int entryId, UpdateLibraryRequest request)

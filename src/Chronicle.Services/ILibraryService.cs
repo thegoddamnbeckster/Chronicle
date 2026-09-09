@@ -10,6 +10,17 @@ namespace Chronicle.Services
         Task<UserLibrary> AddAsync(int userId, AddToLibraryRequest request, CancellationToken ct = default);
         Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, bool includeStubs = true, CancellationToken ct = default);
         Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId);
+
+        /// <summary>
+        /// Batched counterpart to GetEntryAsync for a small, known set of ids (e.g. a media
+        /// detail page's own children list) -- one query instead of N, and instead of the
+        /// unbounded GetForUserAsync(rootOnly:false) that used to be pressed into service for
+        /// this (see MediaDetailPage's own history, 2026-09-08). Only returns rows that already
+        /// exist; an id with no library entry simply doesn't appear in the result -- callers
+        /// treat "not present" the same as "untracked", exactly as GetForUserAsync's LEFT JOIN
+        /// default would.
+        /// </summary>
+        Task<IEnumerable<UserLibrary>> GetEntriesForMediaItemsAsync(int userId, IReadOnlyCollection<int> mediaItemIds, CancellationToken ct = default);
         Task<UserLibrary> UpdateAsync(int userId, int entryId, UpdateLibraryRequest request);
         Task RemoveAsync(int userId, int entryId);
         /// <summary>

@@ -35,7 +35,8 @@ const mockedReparentToCollection = vi.mocked(mediaApi.reparentToCollection)
 const mockedUnparentFromCollection = vi.mocked(mediaApi.unparentFromCollection)
 const mockedSetMediaOverride = vi.mocked(mediaApi.setMediaOverride)
 
-const mockedGetLibrary = vi.mocked(libraryApi.getLibrary)
+const mockedGetLibraryEntryForMedia = vi.mocked(libraryApi.getLibraryEntryForMedia)
+const mockedGetLibraryEntriesForMediaIds = vi.mocked(libraryApi.getLibraryEntriesForMediaIds)
 const mockedAddToLibrary = vi.mocked(libraryApi.addToLibrary)
 const mockedUpdateLibraryEntry = vi.mocked(libraryApi.updateLibraryEntry)
 
@@ -144,7 +145,8 @@ beforeEach(() => {
   mockedUnparentFromCollection.mockResolvedValue(makeItem())
   mockedSetMediaOverride.mockResolvedValue(makeItem())
 
-  mockedGetLibrary.mockResolvedValue([])
+  mockedGetLibraryEntryForMedia.mockResolvedValue(null)
+  mockedGetLibraryEntriesForMediaIds.mockResolvedValue([])
   mockedAddToLibrary.mockResolvedValue(makeLibraryEntry(makeItem()))
   mockedUpdateLibraryEntry.mockResolvedValue(makeLibraryEntry(makeItem()))
 
@@ -194,7 +196,7 @@ describe('MediaDetailPage', () => {
   it('updates the library entry status through updateLibraryEntry', async () => {
     const user = userEvent.setup()
     const entry = makeLibraryEntry(makeItem(), { id: 777, status: 'Watching' })
-    mockedGetLibrary.mockResolvedValue([entry])
+    mockedGetLibraryEntryForMedia.mockResolvedValue(entry)
 
     renderMediaDetailPage()
     await screen.findByRole('heading', { name: 'Test Movie' })

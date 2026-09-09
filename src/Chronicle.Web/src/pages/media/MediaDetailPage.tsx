@@ -4,12 +4,12 @@ import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
-import { getLibrary, addToLibrary, updateLibraryEntry } from '@/api/library'
+import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, addToLibrary, updateLibraryEntry } from '@/api/library'
 import { listPlugins } from '@/api/plugins'
 import { getPluginDisplayOrder } from '@/api/settings'
 import { getMyPreferences, updateMyPreferences } from '@/api/users'
 import { useAuth } from '@/hooks/useAuth'
-import type { LibraryStatus } from '@/types'
+import type { LibraryStatus, LibraryEntry } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
 import { JsonTree } from '@/components/JsonTree'
 import CollectionMetadataBox from '@/components/CollectionMetadataBox'
@@ -220,6 +220,16 @@ export default function MediaDetailPage() {
     enabled: !isNaN(mediaId),
   })
 
+  // Per-child progress (episode/season poster bars below) -- batched to just this item's own
+  // children, not the whole catalog. See getLibraryEntryForMedia's own doc for why the old
+  // approach (fetching every trackable item's library row) doesn't scale.
+  const childIdsForLibrary = children.map(c => c.id)
+  const { data: childLibraryEntries = [] } = useQuery({
+    queryKey: ['library', 'children', mediaId, childIdsForLibrary],
+    queryFn: () => getLibraryEntriesForMediaIds(childIdsForLibrary),
+    enabled: childIdsForLibrary.length > 0,
+  })
+
   const { data: nfoDetail } = useQuery({
     queryKey: ['media', mediaId, 'nfo'],
     queryFn: () => getNfoDetail(mediaId),
@@ -235,11 +245,11 @@ export default function MediaDetailPage() {
   const otherPeople = peopleInvolved.filter(p => !isOnScreenRole(p.roles))
 
   // Get the user's library entry for this item (if any)
-  const { data: library = [] } = useQuery({
-    queryKey: ['library'],
-    queryFn: () => getLibrary(),
+  const { data: libraryEntry = null } = useQuery({
+    queryKey: ['library', 'media', mediaId],
+    queryFn: () => getLibraryEntryForMedia(mediaId),
+    enabled: !isNaN(mediaId),
   })
-  const libraryEntry = library.find(e => e.mediaItem.id === mediaId) ?? null
 
   const addMut = useMutation({
     mutationFn: (status: LibraryStatus) => addToLibrary(mediaId, status),
@@ -437,7 +447,14 @@ export default function MediaDetailPage() {
   const changeTypeMut = useMutation({
     mutationFn: (targetTypeId: number) => changeMediaType(mediaId, targetTypeId),
     onMutate: () => {
-      // Snapshot the adjacent item while the library list is still fresh.
+      // Snapshot the adjacent item using whatever the Library page has already cached (best
+      // effort, partial key match) -- not worth an extra full-catalog fetch here just for a
+      // "scroll to a nearby item" nicety. If nothing's cached (e.g. this page was opened
+      // directly, never via the Library page), the anchor is simply omitted -- "↑ Library"
+      // then lands at the top of the page instead of a specific item, same as before this
+      // feature existed.
+      const [cached] = qc.getQueriesData<LibraryEntry[]>({ queryKey: ['library', 'all'] })
+      const library = cached?.[1] ?? []
       const idx = library.findIndex(e => e.mediaItem.id === mediaId)
       if (idx !== -1) {
         const adjacent = library[idx - 1] ?? library[idx + 1]
@@ -1535,7 +1552,7 @@ export default function MediaDetailPage() {
                 {(() => {
                   const enriched = child.enrichmentStatuses != null &&
                     Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
-                  const childProgress = library.find(e => e.mediaItem.id === child.id)?.resumePositionPercent
+                  const childProgress = childLibraryEntries.find(e => e.mediaItem.id === child.id)?.resumePositionPercent
                   return (
                     <PosterImage
                       posterUrl={child.posterUrl}
