@@ -1081,6 +1081,19 @@ namespace Chronicle.API.Controllers
             }
 
             bool hasPhysicalFile = hasOwnFile || childrenHaveFile;
+
+            // Never actually wired up before (root-caused live 2026-09-09, per-user report of a
+            // real collection container reading as isCollectionContainer:false here despite
+            // showing the COLLECTION badge correctly in the library grid): this DTO field was
+            // simply omitted from the constructor call below and silently defaulted to false on
+            // every call through this method, regardless of the item's real state. Mirrors
+            // LibraryController's own computation for the same field so the two endpoints agree.
+            // Only correct when directChildrenMeta was actually fetched for this call (GetById,
+            // RefreshMetadata, RefreshForPlugin) -- callers that don't fetch descendant meta
+            // (bare ToDto(m) for search/list results) keep the same false default as before.
+            bool isCollectionContainer = m.HierarchyLevel == 0
+                && (m.MediaType?.SupportsCollections ?? false)
+                && directChildrenMeta?.Count > 0;
             // Per-user correction (2026-08-30): "why are so many tv shows showing as missing
             // when they aren't?" -- hasMetadataOnly used to also fire for a "mixed" state (some
             // leaves have a file, some don't -- e.g. one not-yet-aired episode out of a whole
@@ -1200,6 +1213,7 @@ namespace Chronicle.API.Controllers
                 ResolvedMetadata: resolvedMetadata,
                 Aliases: aliases,
                 MergeHistory: mergeHistory,
+                IsCollectionContainer: isCollectionContainer,
                 Overrides: overrides,
                 BirthDate: m.BirthDate,
                 DeathDate: m.DeathDate

@@ -230,7 +230,14 @@ public class MetadataEnrichmentService(
                             // this same per-item loop for an unrelated movie) and seed a fresh
                             // Pending row that the sweep above already ran past this pass.
                             !db.MediaExternalIds.Any(e => e.MediaItemId == x.MediaItemId &&
-                                                           e.ExternalId.StartsWith("collection:")))
+                                                           e.ExternalId.StartsWith("collection:")) &&
+                            // Same exclusion, second arm: a movie-shaped item with real children
+                            // but no "collection:" id yet -- see GetCollectionContainerIdsForExclusionAsync's
+                            // own doc for why the id-only check above misses these. Re-evaluated
+                            // every pass (not precomputed) for the same reason as the arm above.
+                            !(x.MediaItem!.HierarchyLevel == 0 &&
+                              x.MediaItem!.MediaType != null && x.MediaItem!.MediaType!.SupportsCollections &&
+                              db.MediaItems.Any(c => c.ParentId == x.MediaItemId)))
                 .OrderBy(x => x.MediaItem!.HierarchyLevel)
                 .Take(500)
                 .ToListAsync(ct);
@@ -725,11 +732,7 @@ public class MetadataEnrichmentService(
             // -- needed here too because this method runs on every API startup (PluginHostService),
             // and used to recreate exactly the rows those two methods had just removed, undoing
             // that fix every single restart instead of once.
-            var collectionContainerIds = (await db.MediaExternalIds
-                .Where(e => e.ExternalId.StartsWith("collection:"))
-                .Select(e => e.MediaItemId)
-                .Distinct()
-                .ToListAsync(ct)).ToHashSet();
+            var collectionContainerIds = await GetCollectionContainerIdsForExclusionAsync(db, ct);
 
             // ── Phase 3b: prune Pending rows for unsupported type/plugin pairs ─────
             // Pending rows for types a plugin doesn't support will always be Skipped
@@ -2319,11 +2322,7 @@ public class MetadataEnrichmentService(
     private async Task RemoveCollectionContainersPendingAsync(
         ChronicleDbContext db, string pluginId, CancellationToken ct)
     {
-        var collectionItemIds = await db.MediaExternalIds
-            .Where(e => e.ExternalId.StartsWith("collection:"))
-            .Select(e => e.MediaItemId)
-            .Distinct()
-            .ToListAsync(ct);
+        var collectionItemIds = await GetCollectionContainerIdsForExclusionAsync(db, ct);
         if (collectionItemIds.Count == 0) return;
 
         var toRemove = await db.MediaEnrichments
@@ -2341,6 +2340,44 @@ public class MetadataEnrichmentService(
             "EnrichPendingAsync: removed {Count} items from the queue for {PluginId} -- known collection containers",
             toRemove.Count, pluginId);
         db.ChangeTracker.Clear();
+    }
+
+    /// <summary>
+    /// Media item ids that are collection containers for enrichment-exclusion purposes.
+    /// Two ways an item qualifies:
+    ///   1. It already has a "collection:" external id (a real TMDB collection match, set by
+    ///      MovieCollectionService.EnsureCollectionParentAsync/EnsureCollectionStubsAsync) --
+    ///      the check this method's callers used exclusively before.
+    ///   2. It's a movie-shaped item (MediaType.SupportsCollections -- "movies", "anime_movies",
+    ///      "fanedits", "audiobooks") sitting at the top level with at least one real child, but
+    ///      with NO "collection:" id yet -- e.g. created via file-scanner import as a parent+
+    ///      children structure without ever going through a TMDB collection match. Root-caused
+    ///      live (2026-09-09): "Mobile Suit Gundam: The Origin Collection" has 6 real child films
+    ///      but zero external ids, so arm 1 alone never caught it -- it sat in chronicle.plugin.
+    ///      simkl/tmdb/fanarttv's queues forever, permanently NotFound, since no provider can
+    ///      ever match a container's own made-up title. Deliberately gated on SupportsCollections,
+    ///      not just "has children": a TV/anime show's children are seasons, not collection
+    ///      members, and must keep going through the normal per-item search. Same definition
+    ///      LibraryController already uses for the UI's own COLLECTION badge.
+    /// </summary>
+    private static async Task<HashSet<int>> GetCollectionContainerIdsForExclusionAsync(
+        ChronicleDbContext db, CancellationToken ct)
+    {
+        var byExternalId = await db.MediaExternalIds
+            .Where(e => e.ExternalId.StartsWith("collection:"))
+            .Select(e => e.MediaItemId)
+            .ToListAsync(ct);
+
+        var byUnlinkedChildren = await db.MediaItems
+            .Where(m => m.HierarchyLevel == 0
+                     && m.MediaType != null && m.MediaType.SupportsCollections
+                     && db.MediaItems.Any(c => c.ParentId == m.Id))
+            .Select(m => m.Id)
+            .ToListAsync(ct);
+
+        var result = new HashSet<int>(byExternalId);
+        result.UnionWith(byUnlinkedChildren);
+        return result;
     }
 
     private async Task MarkUnsupportedPendingAsSkippedAsync(
