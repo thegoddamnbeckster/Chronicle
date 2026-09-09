@@ -403,6 +403,7 @@ function NfoRebuildQueueSection({ isAdmin }: { isAdmin: boolean }) {
               <thead>
                 <tr>
                   <th className={styles.enrichTh}>Device</th>
+                  <th className={styles.enrichTh}>Last Seen</th>
                   <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>In Progress</th>
                   <th className={`${styles.enrichTh} ${styles.enrichThNum}`}>Completed</th>
                 </tr>
@@ -421,6 +422,17 @@ function NfoRebuildQueueSection({ isAdmin }: { isAdmin: boolean }) {
                           ({d.host})
                         </span>
                       )}
+                    </td>
+                    {/* Refreshed on every rebuild-queue claim, not just the addon's own 6-hourly
+                        re-registration ping -- a meaningfully fresh liveness signal, unlike the
+                        Completed column, which stays unchanged whether a device is on or off
+                        right now. Per-user report (2026-09-09): "Kodi downstairs has been off
+                        for over an hour" with no way to tell from this panel before this column
+                        existed. */}
+                    <td className={styles.enrichTd} style={{ color: 'var(--text-muted)' }}>
+                      {d.lastSeenAt
+                        ? new Date(d.lastSeenAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
+                        : '—'}
                     </td>
                     <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>{d.activeClaims.toLocaleString()}</td>
                     <td className={`${styles.enrichTd} ${styles.enrichTdNum}`}>{d.completedCount.toLocaleString()}</td>

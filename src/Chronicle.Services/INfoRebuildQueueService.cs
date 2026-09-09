@@ -44,8 +44,16 @@ public record NfoRebuildQueueClaimBatchDto(List<NfoRebuildQueueClaimDto> Items, 
 /// name (one mis-registered under a stale/copy-pasted name), which without Host to disambiguate
 /// looks indistinguishable from a bug ("this device is listed twice") rather than what it
 /// actually is (a device that needs re-registering with the right name).</summary>
+/// <summary>LastSeenAt is the device's own KodiDevice.LastSeenAt -- refreshed on every
+/// ClaimBatchAsync call (a device only calls this while its background service is actually
+/// running), not just the addon's own 6-hourly re-registration ping, so it's a meaningfully
+/// fresh "is this thing still alive" signal rather than being hours stale even for a device
+/// that's been on the whole time. Per-user report (2026-09-09): "Kodi downstairs has been off
+/// for over an hour" with no way to tell from this panel alone -- it only ever showed lifetime
+/// completed counts, which don't change whether a device is on or off right now.</summary>
 public record NfoRebuildQueueDeviceStatusDto(
-    int KodiDeviceId, string DeviceName, string? Host, int ActiveClaims, int CompletedCount);
+    int KodiDeviceId, string DeviceName, string? Host, int ActiveClaims, int CompletedCount,
+    DateTime? LastSeenAt);
 
 /// <summary>Snapshot of the whole cross-device rebuild queue for a status display -- see
 /// NfoRebuildQueueItem's own doc for why the queue exists at all. PendingCount includes both

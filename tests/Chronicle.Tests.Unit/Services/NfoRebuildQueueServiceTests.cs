@@ -458,6 +458,45 @@ public class NfoRebuildQueueServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ClaimBatchAsync_RefreshesTheDevicesLastSeenAt()
+    {
+        // Per-user report (2026-09-09): "Kodi downstairs has been off for over an hour" with no
+        // way to tell from this panel -- it only ever showed lifetime completed counts, which
+        // don't change whether a device is on or off right now. KodiDevice.LastSeenAt's only
+        // other writer is the addon's own 6-hourly re-registration ping, far too coarse to be a
+        // meaningful liveness signal on its own -- claiming a batch only happens while the
+        // device's background rebuild service is actually running, so refreshing it here too
+        // gives GetStatusAsync something fresh to show.
+        var staleLastSeen = DateTime.UtcNow.AddHours(-3);
+        _db.KodiDevices.Add(new KodiDevice
+        {
+            Id = 1, UserId = 1, ApiTokenId = 1, Name = "Downstairs", Host = "10.2.0.2", Port = 8080,
+            CreatedAt = DateTime.UtcNow, LastSeenAt = staleLastSeen,
+        });
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        await _db.SaveChangesAsync();
+
+        await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        var device = await _db.KodiDevices.FindAsync(1);
+        device!.LastSeenAt.Should().BeAfter(staleLastSeen).And.BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ClaimBatchAsync_ForANonexistentDevice_DoesNotThrow()
+    {
+        // A device row can be deleted/re-registered independently of the rebuild queue (see
+        // NfoRebuildQueueItem's own doc on why there's no FK) -- the LastSeenAt refresh must be
+        // a no-op for an unknown device id, not a failure that blocks the actual claim.
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        await _db.SaveChangesAsync();
+
+        var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 999, batchSize: 10, TimeSpan.FromMinutes(10));
+
+        claim.Items.Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task GetStatusAsync_DisambiguatesTwoDevicesThatShareTheSameSelfReportedName()
     {
         // Root-caused live (2026-09-07): KodiDevice.Name has no uniqueness constraint and is

@@ -71,6 +71,19 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
     {
         await EnsureSeededAsync(ct);
 
+        // A device only calls this while its own background rebuild service is actually
+        // running, unlike KodiDevice.LastSeenAt's other writer (device_registration.py's
+        // 6-hourly re-registration ping) -- refreshing it here too makes "last seen" a
+        // meaningfully fresh liveness signal instead of being hours stale for a device that's
+        // been on the whole time. Best-effort: a device row that's been deleted/never
+        // registered is not an error here, just nothing to update.
+        var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.Id == kodiDeviceId, ct);
+        if (device is not null)
+        {
+            device.LastSeenAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+        }
+
         List<NfoRebuildQueueItem> candidates;
         await _claimLock.WaitAsync(ct);
         try
@@ -216,7 +229,7 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         var deviceIds = perDeviceCounts.Select(d => d.KodiDeviceId).ToList();
         var devicesById = await db.KodiDevices
             .Where(d => deviceIds.Contains(d.Id))
-            .ToDictionaryAsync(d => d.Id, d => new { d.Name, d.Host }, ct);
+            .ToDictionaryAsync(d => d.Id, d => new { d.Name, d.Host, d.LastSeenAt }, ct);
 
         var devices = perDeviceCounts
             .Select(d =>
@@ -224,7 +237,7 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
                 var found = devicesById.TryGetValue(d.KodiDeviceId, out var info);
                 return new NfoRebuildQueueDeviceStatusDto(
                     d.KodiDeviceId, found ? info!.Name : "(deleted device)", found ? info!.Host : null,
-                    d.ActiveClaims, d.CompletedCount);
+                    d.ActiveClaims, d.CompletedCount, found ? info!.LastSeenAt : null);
             })
             .OrderByDescending(d => d.CompletedCount)
             .ThenByDescending(d => d.ActiveClaims)

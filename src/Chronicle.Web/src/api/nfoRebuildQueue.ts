@@ -11,6 +11,11 @@ export interface NfoRebuildQueueDeviceStatus {
   host: string | null
   activeClaims: number
   completedCount: number
+  /** Refreshed every time this device claims a batch (not just its own 6-hourly
+   * re-registration ping) -- a meaningfully fresh "is this thing still on" signal, not
+   * lifetime completed counts that don't change whether a device is currently online. Null
+   * only when the device row has since been deleted. */
+  lastSeenAt: string | null
 }
 
 export interface NfoRebuildQueueStatus {
