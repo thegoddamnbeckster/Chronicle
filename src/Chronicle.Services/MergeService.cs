@@ -258,6 +258,57 @@ public class MergeService(
                 credit.MediaItemId = winnerId;
         }
 
+        // ── PersonHeadshots — re-point, deduplicate by Url ─────────────────────
+        // Only meaningful when winner/loser are "people"-type items (see PersonHeadshot's own
+        // doc) -- a no-op otherwise, since a movie/show loser never has rows here. Without this,
+        // merging two person items silently lost the loser's entire accumulated photo history:
+        // PersonHeadshot.PersonMediaItemId cascades on delete, and nothing below used to touch
+        // this table before `dbContext.MediaItems.Remove(loser)` at the end of this method.
+        var loserHeadshots = await dbContext.PersonHeadshots.Where(h => h.PersonMediaItemId == loserId).ToListAsync(ct);
+        if (loserHeadshots.Count > 0)
+        {
+            var winnerHeadshotUrls = (await dbContext.PersonHeadshots
+                .Where(h => h.PersonMediaItemId == winnerId)
+                .Select(h => h.Url)
+                .ToListAsync(ct))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var h in loserHeadshots)
+            {
+                if (winnerHeadshotUrls.Contains(h.Url))
+                    dbContext.PersonHeadshots.Remove(h);
+                else
+                    h.PersonMediaItemId = winnerId;
+            }
+        }
+
+        // ── MediaCredits crediting the loser AS A PERSON — re-point, deduplicate ───────────
+        // Distinct from the "MediaCredits ON the loser's own page" section above (a movie/show
+        // loser's own cast list) -- this is the reverse direction: rows anywhere in the library
+        // that credit the loser PERSON item on some OTHER title. Same gap as PersonHeadshots
+        // above: MediaCredit.PersonMediaItemId's FK is ON DELETE SET NULL, so every one of these
+        // credits would have silently lost its link to the person (reading as "uncredited/
+        // unresolved" from then on) the moment the loser is deleted below. Deduplicated per
+        // (MediaItemId, Role) exactly like the other MediaCredits section, so a person already
+        // separately credited on the same title under both the winner's and loser's old identity
+        // doesn't end up double-listed.
+        var creditsOfLoserAsPerson = await dbContext.MediaCredits.Where(c => c.PersonMediaItemId == loserId).ToListAsync(ct);
+        if (creditsOfLoserAsPerson.Count > 0)
+        {
+            var winnerCreditedTitles = (await dbContext.MediaCredits
+                .Where(c => c.PersonMediaItemId == winnerId)
+                .Select(c => new { c.MediaItemId, c.Role })
+                .ToListAsync(ct))
+                .Select(c => $"{c.MediaItemId}\0{c.Role}")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var credit in creditsOfLoserAsPerson)
+            {
+                if (winnerCreditedTitles.Contains($"{credit.MediaItemId}\0{credit.Role}"))
+                    dbContext.MediaCredits.Remove(credit);
+                else
+                    credit.PersonMediaItemId = winnerId;
+            }
+        }
+
         // ── metadata_json — merge blobs (winner blobs take precedence) ────────
         if (!string.IsNullOrEmpty(loser.MetadataJson))
         {
