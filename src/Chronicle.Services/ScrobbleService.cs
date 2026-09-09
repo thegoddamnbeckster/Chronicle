@@ -3,6 +3,7 @@ using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services.Matching;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.Services
 {
@@ -10,10 +11,37 @@ namespace Chronicle.Services
     {
         private const double WatchedThreshold = 80.0;
         private readonly ChronicleDbContext _context;
+        private readonly IServiceScopeFactory _scopeFactory;
 
-        public ScrobbleService(ChronicleDbContext context)
+        public ScrobbleService(ChronicleDbContext context, IServiceScopeFactory scopeFactory)
         {
             _context = context;
+            _scopeFactory = scopeFactory;
+        }
+
+        /// <summary>
+        /// Fire-and-forget push to any Kodi device that already knows this item -- same pattern
+        /// and same trigger bar (a real status change, not every intermediate progress tick) as
+        /// LibraryController.Update's own push. Root-caused live (2026-09-08): a completed watch
+        /// reported by one Kodi device (e.g. via a scrobble) updated Chronicle's own database
+        /// correctly, but nothing ever told any OTHER Kodi device to reconsider that item -- the
+        /// push only ever fired from a manual status/rating edit in Chronicle's own web UI, never
+        /// from the far more common path (an actual watch session). Deliberately gated on
+        /// markedAsWatched, not called on every scrobble: a device mid-playback reports progress
+        /// roughly every 30 seconds, and rewriting an NFO + asking every other device to rescan
+        /// it that often would be pure waste for information nobody else needs until the item is
+        /// actually finished.
+        /// </summary>
+        private void PushToKodiIfWatched(int mediaItemId, int userId, bool markedAsWatched)
+        {
+            if (!markedAsWatched) return;
+            var scopeFactory = _scopeFactory;
+            _ = Task.Run(async () =>
+            {
+                using var scope = scopeFactory.CreateScope();
+                var nfoPush = scope.ServiceProvider.GetRequiredService<INfoPushService>();
+                await nfoPush.PushAsync(mediaItemId, userId, CancellationToken.None);
+            });
         }
 
         public async Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request, CancellationToken ct = default)
@@ -65,6 +93,7 @@ namespace Chronicle.Services
             try
             {
                 await _context.SaveChangesAsync(ct);
+                PushToKodiIfWatched(mediaItemId, userId, markedAsWatched);
                 return new ScrobbleResult(evt, markedAsWatched);
             }
             catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex, "user_libraries"))
@@ -78,6 +107,7 @@ namespace Chronicle.Services
                 _context.Entry(entry).State = EntityState.Detached;
                 entry = await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
                 await _context.SaveChangesAsync(ct);
+                PushToKodiIfWatched(mediaItemId, userId, markedAsWatched);
                 return new ScrobbleResult(evt, markedAsWatched);
             }
             catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex, "interaction_events"))
@@ -92,6 +122,7 @@ namespace Chronicle.Services
                     .FirstAsync(e => e.UserId == userId
                                   && e.MediaItemId == mediaItemId
                                   && e.Timestamp == timestamp, ct);
+                PushToKodiIfWatched(mediaItemId, userId, markedAsWatched);
                 return new ScrobbleResult(existing, markedAsWatched);
             }
         }
