@@ -15,6 +15,13 @@ public static class NfoKindHelper
     public static readonly string[] MovieLikeTypeNames = ["movies", "fanedits", "anime_movies"];
     public static readonly string[] ShowLikeTypeNames  = ["tv", "anime"];
 
+    /// <summary>True for a MediaType name that belongs to Kodi's video library at all (movie-
+    /// or show-like), regardless of hierarchy level -- used where a caller only needs "is this
+    /// Kodi-relevant" and not Classify's full movie/tvshow/episode split, e.g. deciding whether
+    /// an import should signal KodiDeviceService's "new content available" flag.</summary>
+    public static bool IsVideoLibraryType(string mediaTypeName) =>
+        MovieLikeTypeNames.Contains(mediaTypeName) || ShowLikeTypeNames.Contains(mediaTypeName);
+
     /// <summary>Returns "movie" | "tvshow" | "episode", or null for anything else (person,
     /// music, season container, collection, etc. -- none of these are individually pushable).
     /// No HierarchyLevel gate for movies: a standalone movie sits at level 0, but a movie that

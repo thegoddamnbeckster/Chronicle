@@ -412,7 +412,29 @@ public class FileScanController : ControllerBase
             {
                 // Pass the requesting user so they get an eager library row.
                 // Other users get rows auto-created by GetForUserAsync on their next library view.
-                await svc.ImportGroupsAsync(importRequest, [userId], CancellationToken.None);
+                var summary = await svc.ImportGroupsAsync(importRequest, [userId], CancellationToken.None);
+
+                // Same "Kodi needs to scan for brand-new files" signal ScheduledScanService
+                // sends after its own auto-import -- a manual review-and-approve import creates
+                // MediaItems the exact same way, so it needs the same pull-flag. Best-effort:
+                // never let a signalling failure fail an otherwise-successful import.
+                if (summary.Imported > 0)
+                {
+                    try
+                    {
+                        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+                        var mediaType = await db.MediaTypes.FindAsync([request.MediaTypeId], CancellationToken.None);
+                        if (mediaType is not null)
+                        {
+                            var kodiDevices = scope.ServiceProvider.GetRequiredService<IKodiDeviceService>();
+                            await kodiDevices.SignalNewContentAsync(mediaType.Name, CancellationToken.None);
+                        }
+                    }
+                    catch (Exception signalEx)
+                    {
+                        _logger.LogWarning(signalEx, "ImportGroups: failed to signal Kodi new-content scan flag");
+                    }
+                }
             }
             catch (Exception ex)
             {

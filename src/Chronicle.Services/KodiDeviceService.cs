@@ -1,3 +1,4 @@
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
@@ -6,6 +7,9 @@ namespace Chronicle.Services;
 
 public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceService
 {
+    // Single global key -- see SignalNewContentAsync's own doc for why this isn't per-device or
+    // per-media-type.
+    private const string NewContentSignalKey = "kodi.new_content_signaled_at";
     public async Task RegisterAsync(int userId, int apiTokenId, string name, string host, int port,
         string? username, string? password, CancellationToken ct = default)
     {
@@ -112,5 +116,59 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
     {
         var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.ApiTokenId == apiTokenId, ct);
         return device?.Id;
+    }
+
+    public async Task SignalNewContentAsync(string mediaTypeName, CancellationToken ct = default)
+    {
+        if (!NfoKindHelper.IsVideoLibraryType(mediaTypeName)) return;
+
+        var setting = await db.AppSettings.FindAsync([NewContentSignalKey], ct);
+        var now = DateTime.UtcNow.ToString("O");
+        if (setting is null)
+            db.AppSettings.Add(new AppSetting { Key = NewContentSignalKey, Value = now });
+        else
+            setting.Value = now;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<bool> IsScanNeededAsync(int apiTokenId, CancellationToken ct = default)
+    {
+        var setting = await db.AppSettings.FindAsync([NewContentSignalKey], ct);
+        if (setting is null || !DateTime.TryParse(setting.Value, null,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var signaledAt))
+            return false;
+
+        // No row at all (never acknowledged, ever -- including a caller that has never
+        // self-registered a KodiDevice, since this is deliberately independent of that) counts
+        // the same as a null LastAckAt: due.
+        var ack = await db.KodiScanAcks.FirstOrDefaultAsync(a => a.ApiTokenId == apiTokenId, ct);
+        return ack is null || ack.LastAckAt is null || ack.LastAckAt < signaledAt;
+    }
+
+    public async Task AcknowledgeScanAsync(int apiTokenId, CancellationToken ct = default)
+    {
+        var ack = await db.KodiScanAcks.FirstOrDefaultAsync(a => a.ApiTokenId == apiTokenId, ct);
+        var isNew = ack is null;
+        if (ack is null)
+        {
+            ack = new KodiScanAck { ApiTokenId = apiTokenId };
+            db.KodiScanAcks.Add(ack);
+        }
+        ack.LastAckAt = DateTime.UtcNow;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException) when (isNew)
+        {
+            // Same "lost the insert race" shape as RegisterAsync's own catch above -- two
+            // overlapping acknowledgements for a caller with no row yet (unlikely at a 3-minute
+            // poll interval, but the same insurance costs nothing).
+            db.Entry(ack).State = EntityState.Detached;
+            var existing = await db.KodiScanAcks.FirstAsync(a => a.ApiTokenId == apiTokenId, ct);
+            existing.LastAckAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+        }
     }
 }

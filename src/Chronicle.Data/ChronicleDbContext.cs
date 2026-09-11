@@ -83,6 +83,7 @@ namespace Chronicle.Data
         public DbSet<KodiDevice> KodiDevices { get; set; } = null!;
         public DbSet<KodiLibraryId> KodiLibraryIds { get; set; } = null!;
         public DbSet<NfoRebuildQueueItem> NfoRebuildQueue { get; set; } = null!;
+        public DbSet<KodiScanAck> KodiScanAcks { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -566,6 +567,19 @@ namespace Chronicle.Data
                 e.HasOne<ApiToken>().WithMany().HasForeignKey(x => x.ApiTokenId)
                     .OnDelete(DeleteBehavior.Cascade);
                 e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<KodiScanAck>(e =>
+            {
+                e.ToTable("kodi_scan_acks");
+                // Keyed directly by ApiTokenId, not KodiDeviceId -- see this model's own doc for
+                // why it must NOT go through KodiDevice (registration there is gated on "Allow
+                // remote control via HTTP", which this feature has no need of).
+                e.HasKey(x => x.ApiTokenId);
+                e.Property(x => x.ApiTokenId).HasColumnName("api_token_id").ValueGeneratedNever();
+                e.Property(x => x.LastAckAt).HasColumnName("last_ack_at");
+                e.HasOne<ApiToken>().WithMany().HasForeignKey(x => x.ApiTokenId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 

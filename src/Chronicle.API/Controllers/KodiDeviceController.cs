@@ -187,4 +187,48 @@ public class KodiDeviceController(
         var status = await rebuildQueue.GetStatusAsync(ct);
         return Ok(ApiResponse<NfoRebuildQueueStatusDto>.Ok(status));
     }
+
+    // ── New-content scan signal ──────────────────────────────────────────────
+    // See IKodiDeviceService.SignalNewContentAsync/IsScanNeededAsync's own docs. Deliberately
+    // pull, not push: unlike NfoPushService's RefreshAsync (which needs each device's own
+    // JSON-RPC-over-HTTP address and "Allow remote control via HTTP" turned on), a device polls
+    // this itself and, if due, runs VideoLibrary.Scan via its own LOCAL xbmc.executeJSONRPC --
+    // Chronicle never calls out to a device for this.
+    //
+    // Deliberately resolved by API TOKEN directly (GetApiTokenId), NOT via GetKodiDeviceIdAsync/
+    // KodiDevice the way the rebuild-queue endpoints above are: a KodiDevice row only exists
+    // once "Allow remote control via HTTP" is on and device_registration.py has self-registered
+    // (see KodiDevice's own doc), which would have silently made THIS feature depend on that
+    // same setting despite not needing it at all -- confirmed live (2026-09-11) as a real bug,
+    // caught before release: a vanilla Kodi install (remote control off by default) never got a
+    // KodiDevice row, so GetKodiDeviceIdAsync always returned null and this signal never fired.
+    // See KodiScanAck's own doc for the storage side of the fix.
+
+    /// <summary>GET /api/v1/scraper/kodi-scan-signal -- true if the calling device is due to run
+    /// its own local VideoLibrary.Scan (new movie/TV content was imported since this device last
+    /// acknowledged). False (not an error) for a caller with no API key (a JWT/web caller) --
+    /// same "nothing to do for this caller" shape as the rebuild-queue endpoints above, though
+    /// unlike those, any API-key caller qualifies here even with no prior registration.</summary>
+    [HttpGet("kodi-scan-signal")]
+    public async Task<IActionResult> GetScanSignal(CancellationToken ct)
+    {
+        var apiTokenId = GetApiTokenId();
+        if (apiTokenId is null) return Ok(ApiResponse<object>.Ok(new { scanNeeded = false }));
+
+        var scanNeeded = await devices.IsScanNeededAsync(apiTokenId.Value, ct);
+        return Ok(ApiResponse<object>.Ok(new { scanNeeded }));
+    }
+
+    /// <summary>POST /api/v1/scraper/kodi-scan-signal/ack -- reports that the calling device just
+    /// ran its own local VideoLibrary.Scan in response to the signal above. Call this AFTER the
+    /// scan actually runs, not before (see AcknowledgeScanAsync's own doc).</summary>
+    [HttpPost("kodi-scan-signal/ack")]
+    public async Task<IActionResult> AcknowledgeScanSignal(CancellationToken ct)
+    {
+        var apiTokenId = GetApiTokenId();
+        if (apiTokenId is null) return Ok(ApiResponse<object>.Ok(new { acknowledged = false }));
+
+        await devices.AcknowledgeScanAsync(apiTokenId.Value, ct);
+        return Ok(ApiResponse<object>.Ok(new { acknowledged = true }));
+    }
 }

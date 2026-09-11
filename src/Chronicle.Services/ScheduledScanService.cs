@@ -149,6 +149,18 @@ public sealed class ScheduledScanService : IScheduledTask
                 await db.SaveChangesAsync(ct);
             }
 
+            // New file(s) may be invisible to every Kodi device's own VideoLibrary until it
+            // runs its own local scan -- VideoLibrary.Refresh* (what NfoPushService uses for
+            // every other change) only works on an item Kodi already has a library entry for.
+            // Signals the pull-based flag each device's own poll checks (see
+            // IKodiDeviceService.SignalNewContentAsync's own doc); cheap (one upsert), so no
+            // need for a background Task.Run the way enrichment below gets.
+            if (summary.Imported > 0 && preview.Folder.MediaType is not null)
+            {
+                var kodiDevices = importScope.ServiceProvider.GetRequiredService<IKodiDeviceService>();
+                await kodiDevices.SignalNewContentAsync(preview.Folder.MediaType.Name, ct);
+            }
+
             // Fire-and-forget enrichment for newly imported items (non-blocking).
             // Use CancellationToken.None so enrichment isn't cancelled if the scan token is cancelled.
             _ = Task.Run(async () =>
