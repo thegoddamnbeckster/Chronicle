@@ -98,6 +98,20 @@ public class MovieCollectionService(
         var (collection, alreadyReparented) = await FindOrCreateCollectionAsync(
             db, movieItem.MediaTypeId, collectionData, externalIdValue, movieItem, ct);
 
+        // Defense in depth: FindOrCreateCollectionAsync's own lookups already exclude
+        // movieItem.Id (see their doc for the real bug this closed -- a movie becoming its
+        // own parent when its collection shares its exact title), but a self-reference here
+        // would otherwise corrupt the hierarchy silently, so refuse it outright rather than
+        // trust every current and future caller of that method to get the exclusion right.
+        if (collection.Id == movieItem.Id)
+        {
+            logger.LogError(
+                "EnsureCollectionParentAsync: refusing to parent movie {ItemId} \"{Name}\" under itself " +
+                "(collection data: source={Source}, name=\"{CollectionName}\")",
+                movieItem.Id, movieItem.Name, collectionData.Source, collectionData.Name);
+            return;
+        }
+
         // Collection containers are NOT enriched by plugins — their name, poster, and external ID
         // are fully populated from the movie's belongsToCollection data at creation time.
         // Seeding a Pending row would cause plugins to attempt enrichment and produce spurious
@@ -713,6 +727,18 @@ public class MovieCollectionService(
         // from a standalone movie that happens to share the name. This prevents a movie
         // named e.g. "The Avengers" from being treated as the "The Avengers Collection".
         //
+        // Excludes movieItem.Id itself -- confirmed root cause (2026-09-11) of a movie
+        // becoming its own parent: TMDB sometimes names a collection identically to its own
+        // first film (e.g. "The Slashening" collection, first film also "The Slashening").
+        // Once that movie had gained even one child through any other path (its own sequel
+        // matching it directly, a Kodi-scraper duplicate, etc.), it satisfied this query's
+        // "HierarchyLevel 0, matching name, has a child" criteria against ITSELF -- so the
+        // very next time this same movie's own belongsToCollection data was processed,
+        // FindOrCreateCollectionAsync handed back movieItem as the "collection", and
+        // EnsureCollectionParentAsync dutifully set movieItem.ParentId = movieItem.Id.
+        // Confirmed live via "Movie 501276 \"The Slashening\" re-parented under collection
+        // 501276 \"The Slashening\"" in the server log.
+        //
         // Concurrent-create note: the enrichment service processes items sequentially
         // per plugin (enforced by a per-plugin SemaphoreSlim in MetadataEnrichmentService).
         // Within a single enrichment batch, two calls for different movies in the same
@@ -721,7 +747,8 @@ public class MovieCollectionService(
         // ever becomes parallel, add a unique DB constraint on (MediaTypeId, HierarchyLevel, Name)
         // and handle the resulting DbUpdateException by re-fetching on constraint violation.
         var byName = await db.MediaItems
-            .Where(m => m.MediaTypeId == mediaTypeId &&
+            .Where(m => m.Id != movieItem.Id &&
+                        m.MediaTypeId == mediaTypeId &&
                         m.HierarchyLevel == 0 &&
                         m.Name == data.Name &&
                         db.MediaItems.Any(child => child.ParentId == m.Id))
@@ -769,8 +796,10 @@ public class MovieCollectionService(
 
             // Also re-check by name inside the transaction (catches the case where the
             // container's ExternalId was cleared but the container still exists by name).
+            // Excludes movieItem.Id itself -- see the identical exclusion above for why.
             var raceByName = await db.MediaItems
-                .Where(m => m.MediaTypeId == mediaTypeId &&
+                .Where(m => m.Id != movieItem.Id &&
+                            m.MediaTypeId == mediaTypeId &&
                             m.HierarchyLevel == 0 &&
                             m.Name == data.Name &&
                             db.MediaItems.Any(child => child.ParentId == m.Id))

@@ -100,6 +100,64 @@ public class MovieCollectionServiceTests
     }
 
     [Fact]
+    public async Task EnsureCollectionParentAsync_CollectionNamedAfterItself_NeverBecomesOwnParent()
+    {
+        // Regression test (2026-09-11): TMDB sometimes names a collection identically to its
+        // own first film (real example: "The Slashening" collection, first film also called
+        // "The Slashening"). FindOrCreateCollectionAsync's name-based fallback matches ANY
+        // HierarchyLevel-0 item with a matching name that already has at least one child -- it
+        // didn't exclude the movie being processed itself. Once this movie had gained a child
+        // through any other path (simulated here by seeding one directly), the very next time
+        // its own belongsToCollection data was processed, it satisfied its own lookup and got
+        // handed back as "the collection", so EnsureCollectionParentAsync set
+        // movie.ParentId = movie.Id. Confirmed live via "Movie 501276 \"The Slashening\"
+        // re-parented under collection 501276 \"The Slashening\"" in the server log.
+        await using var db = CreateInMemoryDb();
+        var mt = MoviesType();
+        db.MediaTypes.Add(mt);
+
+        const string metadataJson = """
+        {
+          "chronicle.plugin.tmdb": {
+            "title": "The Slashening",
+            "belongsToCollection": {
+              "id": 1223311,
+              "name": "The Slashening",
+              "posterPath": null
+            }
+          }
+        }
+        """;
+        var movie = new MediaItem
+        {
+            Id = 1, Name = "The Slashening", MediaTypeId = mt.Id, MediaType = mt,
+            HierarchyLevel = 0, MetadataJson = metadataJson, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        // Already has a child from some earlier, unrelated attachment -- this is exactly what
+        // made the movie itself satisfy its own "already a collection" lookup.
+        var existingChild = new MediaItem
+        {
+            Id = 2, Name = "Some Sibling", MediaTypeId = mt.Id, MediaType = mt,
+            ParentId = 1, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.AddRange(movie, existingChild);
+        await db.SaveChangesAsync();
+
+        var svc = CreateService();
+        await svc.EnsureCollectionParentAsync(db, movie);
+
+        movie.ParentId.Should().NotBe(movie.Id, "a movie must never become its own parent");
+        // Either it created a genuinely separate collection container, or (given the defensive
+        // guard) refused to touch it at all -- both are safe; only self-reference is not.
+        if (movie.ParentId is not null)
+        {
+            var collection = await db.MediaItems.FindAsync(movie.ParentId.Value);
+            collection.Should().NotBeNull();
+            collection!.Id.Should().NotBe(movie.Id);
+        }
+    }
+
+    [Fact]
     public async Task EnsureCollectionParentAsync_CollectionAlreadyExists_DoesNotDuplicate()
     {
         await using var db = CreateInMemoryDb();
