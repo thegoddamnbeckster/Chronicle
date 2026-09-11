@@ -675,22 +675,26 @@ function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCanc
         </div>
         <div className={styles.cardActions}>
           <span className={`${styles.badge} ${cls}`}>{label}</span>
-          <button
-            role="switch"
-            aria-checked={task.isEnabled}
-            className={`${styles.toggle} ${task.isEnabled ? styles.toggleOn : ''}`}
-            onClick={onToggle}
-            title={task.isEnabled ? 'Disable task' : 'Enable task'}
-          >
-            <span className={styles.toggleThumb} />
-          </button>
-          <button
-            className={styles.runBtn}
-            onClick={() => task.runConfirmation ? setConfirmPending(true) : onRunNow()}
-            disabled={isRunning}
-          >
-            {isRunning ? 'Running…' : 'Run Now'}
-          </button>
+          {task.isRunnable && (
+            <button
+              role="switch"
+              aria-checked={task.isEnabled}
+              className={`${styles.toggle} ${task.isEnabled ? styles.toggleOn : ''}`}
+              onClick={onToggle}
+              title={task.isEnabled ? 'Disable task' : 'Enable task'}
+            >
+              <span className={styles.toggleThumb} />
+            </button>
+          )}
+          {task.isRunnable && (
+            <button
+              className={styles.runBtn}
+              onClick={() => task.runConfirmation ? setConfirmPending(true) : onRunNow()}
+              disabled={isRunning}
+            >
+              {isRunning ? 'Running…' : 'Run Now'}
+            </button>
+          )}
           {task.schedulable && (
             <button
               className={styles.editBtn}

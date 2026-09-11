@@ -14,13 +14,19 @@ public class BackgroundTasksController : ControllerBase
 {
     private readonly ChronicleDbContext _db;
     private readonly ITaskSchedulerService _scheduler;
+    // Every real IScheduledTask registered in DI -- used to tell a genuinely triggerable task
+    // apart from a background_tasks row that exists purely for status display (see IsRunnable
+    // below). Distinct from _scheduler: that's the runner, this is the registry of what it can run.
+    private readonly HashSet<string> _registeredTaskIds;
 
     public BackgroundTasksController(
         ChronicleDbContext db,
-        ITaskSchedulerService scheduler)
+        ITaskSchedulerService scheduler,
+        IEnumerable<IScheduledTask> registeredTasks)
     {
         _db        = db;
         _scheduler = scheduler;
+        _registeredTaskIds = registeredTasks.Select(t => t.TaskId).ToHashSet();
     }
 
     /// <summary>Returns all registered background tasks with live status and plugin branding.</summary>
@@ -49,6 +55,13 @@ public class BackgroundTasksController : ControllerBase
             BrandColorLight:  r.Plugin?.BrandColorLight,
             BrandColorDark:   r.Plugin?.BrandColorDark,
             Schedulable:      r.Schedulable,
+            // False only for a row like "NFO Push" that exists purely to surface otherwise-
+            // invisible fire-and-forget activity in this same UI (see NfoPushService's own doc)
+            // -- there's no IScheduledTask backing it, so "Run Now" would always fail with
+            // TASK_NOT_FOUND. Deliberately NOT the same signal as IsEnabled/Schedulable: several
+            // genuinely runnable tasks (e.g. a disabled plugin sync) are IsEnabled=false and/or
+            // Schedulable=false too, so those can't be reused to mean "not runnable at all".
+            IsRunnable:       _registeredTaskIds.Contains(r.TaskId),
             RunConfirmation:  r.RunConfirmationTitle is not null
                 ? new BackgroundTaskRunConfirmationDto(r.RunConfirmationTitle, r.RunConfirmationMessage ?? string.Empty)
                 : null
@@ -159,6 +172,7 @@ public record BackgroundTaskDto(
     string?   BrandColorLight,
     string?   BrandColorDark,
     bool      Schedulable,
+    bool      IsRunnable,
     BackgroundTaskRunConfirmationDto? RunConfirmation
 );
 

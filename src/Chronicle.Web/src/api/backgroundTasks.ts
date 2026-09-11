@@ -18,6 +18,11 @@ export interface BackgroundTask {
   brandColorLight: string | null
   brandColorDark: string | null
   schedulable: boolean
+  // False for a row that exists purely to display status (e.g. "NFO Push", which fires on
+  // events, not on demand) -- no backing IScheduledTask, so Run Now would always fail with
+  // TASK_NOT_FOUND. Distinct from isEnabled/schedulable: a disabled-but-real task (e.g. a
+  // plugin sync nobody turned on) is still runnable.
+  isRunnable: boolean
   runConfirmation: { title: string; message: string } | null
 }
 
