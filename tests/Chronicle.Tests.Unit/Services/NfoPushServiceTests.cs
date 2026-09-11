@@ -209,6 +209,79 @@ namespace Chronicle.Tests.Unit.Services
             _rpcMock.Verify(r => r.RefreshAsync(device, "movie", 42, It.IsAny<CancellationToken>()), Times.Once);
         }
 
+        // ── TryPushAsync's own outcome contract ─────────────────────────────────
+        // NfoGenerationService (the whole-backlog bulk generator) decides whether to mark a
+        // queue row complete purely from this return value -- true/false/null need to mean
+        // exactly what their own doc says, not just "PushAsync doesn't throw".
+
+        [Fact]
+        public async Task TryPushAsync_SuccessfulWrite_ReturnsTrue()
+        {
+            var item = new MediaItem
+            {
+                Id = 500, Name = "Outcome Movie", MediaTypeId = MovieTypeId, HierarchyLevel = 0,
+                MetadataJson = FileScannerMetadataJson(_tempDir, [Path.Combine(_tempDir, "Outcome.mkv")]),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync();
+
+            var service = BuildService("<movie/>"u8.ToArray());
+            var outcome = await service.TryPushAsync(mediaItemId: 500, userId: 1);
+
+            outcome.Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task TryPushAsync_UnknownMediaItem_ReturnsNull()
+        {
+            var service = BuildService([]);
+            var outcome = await service.TryPushAsync(mediaItemId: 99999, userId: 1);
+            outcome.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task TryPushAsync_NoFileScannerLocationYet_ReturnsNull()
+        {
+            var item = new MediaItem
+            {
+                Id = 501, Name = "Never Scanned Either", MediaTypeId = MovieTypeId, HierarchyLevel = 0,
+                MetadataJson = null,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync();
+
+            var service = BuildService([]);
+            var outcome = await service.TryPushAsync(mediaItemId: 501, userId: 1);
+
+            // Null (nothing to do yet), not false (an attempt was made and failed) -- the
+            // distinction NfoGenerationService relies on to decide whether to keep retrying.
+            outcome.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task TryPushAsync_SidecarEndpointReturnsError_ReturnsFalse()
+        {
+            var item = new MediaItem
+            {
+                Id = 502, Name = "Sidecar Failure", MediaTypeId = MovieTypeId, HierarchyLevel = 0,
+                MetadataJson = FileScannerMetadataJson(_tempDir, [Path.Combine(_tempDir, "Failure.mkv")]),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync();
+
+            var service = new NfoPushService(_context, _jwtMock.Object,
+                new StubHttpClientFactory(new StubFailingSidecarHandler()),
+                _devicesMock.Object, _rpcMock.Object, Mock.Of<ILogger<NfoPushService>>());
+            var outcome = await service.TryPushAsync(mediaItemId: 502, userId: 1);
+
+            // False (an attempt was made and failed), not null -- this IS a meaningful failure
+            // NfoGenerationService should count and retry, not silently treat as "nothing to do".
+            outcome.Should().BeFalse();
+        }
+
         // ── Test doubles ──────────────────────────────────────────────────────
 
         private sealed class StubHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
@@ -223,6 +296,15 @@ namespace Chronicle.Tests.Unit.Services
         {
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
                 Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(responseBytes) });
+        }
+
+        /// <summary>Simulates the sidecar endpoint itself being unreachable/erroring -- the
+        /// "false" branch of TryPushAsync's tri-state outcome, distinct from "nothing to push"
+        /// (StubSidecarHandler covers that indirectly via a location-less item instead).</summary>
+        private sealed class StubFailingSidecarHandler : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+                Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
         }
     }
 }

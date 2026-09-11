@@ -42,7 +42,7 @@ public sealed class NfoPushService(
     {
         try
         {
-            var outcome = await PushCoreAsync(mediaItemId, userId, ct);
+            var outcome = await TryPushAsync(mediaItemId, userId, ct);
             if (outcome.HasValue)
                 await RecordStatusAsync(outcome.Value, mediaItemId, null, ct);
         }
@@ -141,8 +141,10 @@ public sealed class NfoPushService(
     /// <summary>Returns null when there was genuinely nothing to push (item/type not found,
     /// unsupported kind, no on-disk location known yet) -- these aren't a background-task
     /// outcome worth recording, see RecordStatusAsync's own doc. Returns true/false once actual
-    /// push work was attempted (an NFO write, at minimum).</summary>
-    private async Task<bool?> PushCoreAsync(int mediaItemId, int userId, CancellationToken ct)
+    /// push work was attempted (an NFO write, at minimum). Public (via INfoPushService) so
+    /// NfoGenerationService can drive this directly for a whole backlog, not just PushAsync's
+    /// own single-item event-driven callers.</summary>
+    public async Task<bool?> TryPushAsync(int mediaItemId, int userId, CancellationToken ct = default)
     {
         var item = await db.MediaItems.FindAsync([mediaItemId], ct);
         if (item is null) return null;

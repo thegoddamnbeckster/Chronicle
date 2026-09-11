@@ -10,4 +10,12 @@ public interface INfoPushService
     /// offline) is logged and swallowed, since this is always called as a side effect of some
     /// other operation (a metadata edit) that must still succeed on its own.</summary>
     Task PushAsync(int mediaItemId, int userId, CancellationToken ct = default);
+
+    /// <summary>The same write-NFO-and-push-refresh work PushAsync does, but returns the
+    /// outcome instead of swallowing it into a background_tasks status row -- for a caller that
+    /// needs to know whether THIS item actually got written (NfoGenerationService, deciding
+    /// whether to mark its own queue row complete). Null means there was genuinely nothing to
+    /// do (item/type not found, unsupported kind, no known on-disk location yet) -- distinct
+    /// from false (an attempt was made and failed). Still never throws.</summary>
+    Task<bool?> TryPushAsync(int mediaItemId, int userId, CancellationToken ct = default);
 }

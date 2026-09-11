@@ -210,6 +210,27 @@ public class NfoRebuildQueueServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ReleaseAsync_OnARowNfoGenerationServiceAlreadyCompleted_IsANoOp()
+    {
+        // A device can claim a row, then -- before it calls back -- NfoGenerationService
+        // completes that same row directly (see CompleteFromGenerationAsync). The device's own
+        // later ReleaseAsync must not clear the completed row's ClaimedByKodiDeviceId, or that
+        // device's own work silently disappears from GetStatusAsync's per-device breakdown even
+        // though ClaimBatchAsync would never hand this row out again regardless (CompletedAt is
+        // already set).
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        await _db.SaveChangesAsync();
+        var claim = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(10));
+        await _svc.CompleteFromGenerationAsync(claim.Items[0].QueueItemId);
+
+        await _svc.ReleaseAsync(claim.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        var row = await _db.NfoRebuildQueue.FindAsync(claim.Items[0].QueueItemId);
+        row!.ClaimedByKodiDeviceId.Should().Be(1, "the completed row's own attribution must survive a stale release");
+        row.CompletedAt.Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task ReleaseAsync_PreventsTheSameDeviceFromImmediatelyReclaimingTheReleasedItem()
     {
         // Root-caused live (2026-09-07): a device whose local library is a strict subset of the
@@ -632,5 +653,109 @@ public class NfoRebuildQueueServiceTests : IDisposable
         device.DeviceName.Should().Be("(deleted device)");
         device.Host.Should().BeNull();
         device.ActiveClaims.Should().Be(1);
+    }
+
+    // ── GetPendingForGenerationAsync / CompleteFromGenerationAsync ─────────────
+    // NfoGenerationService's own read/complete path: no device, no claim, no lease -- just
+    // "what's pending" and "mark this one done".
+
+    [Fact]
+    public async Task GetPendingForGenerationAsync_SeedsTheQueueJustLikeClaimBatchDoes()
+    {
+        // Deliberately never calls ClaimBatchAsync in this test -- GetPendingForGenerationAsync
+        // must trigger the same lazy EnsureSeededAsync top-up on its own, since
+        // NfoGenerationService is a second, independent caller of this queue that never claims.
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
+        });
+        await _db.SaveChangesAsync();
+
+        var pending = await _svc.GetPendingForGenerationAsync(batchSize: 10);
+
+        pending.Should().ContainSingle();
+        pending[0].MediaItemId.Should().Be(100);
+        pending[0].Kind.Should().Be("movie");
+    }
+
+    [Fact]
+    public async Task GetPendingForGenerationAsync_DoesNotClaimTheRowsItReturns()
+    {
+        // Unlike ClaimBatchAsync, this must leave rows fully unclaimed -- a device calling
+        // ClaimBatchAsync afterward should still be able to claim the same row (e.g. for its
+        // own local streamdetails splice), not find it already spoken for.
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
+        });
+        await _db.SaveChangesAsync();
+
+        await _svc.GetPendingForGenerationAsync(batchSize: 10);
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().ContainSingle("GetPendingForGenerationAsync must not have claimed it first");
+    }
+
+    [Fact]
+    public async Task GetPendingForGenerationAsync_ExcludesAlreadyCompletedRows()
+    {
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
+        });
+        await _db.SaveChangesAsync();
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+        await _svc.CompleteAsync(claimed.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        var pending = await _svc.GetPendingForGenerationAsync(batchSize: 10);
+
+        pending.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task CompleteFromGenerationAsync_MarksTheRowDoneWithNoDeviceAttached()
+    {
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
+        });
+        await _db.SaveChangesAsync();
+        var pending = await _svc.GetPendingForGenerationAsync(batchSize: 10);
+
+        await _svc.CompleteFromGenerationAsync(pending[0].Id);
+
+        var row = await _db.NfoRebuildQueue.FindAsync(pending[0].Id);
+        row!.CompletedAt.Should().NotBeNull();
+        row.ClaimedByKodiDeviceId.Should().BeNull("Chronicle generated this directly -- no device ever claimed it");
+    }
+
+    [Fact]
+    public async Task CompleteFromGenerationAsync_UnknownQueueItemId_IsANoOp()
+    {
+        var act = async () => await _svc.CompleteFromGenerationAsync(queueItemId: 999999);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task CompleteFromGenerationAsync_AlreadyCompletedRow_StaysCompletedAndDoesNotThrow()
+    {
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
+        });
+        await _db.SaveChangesAsync();
+        var pending = await _svc.GetPendingForGenerationAsync(batchSize: 10);
+        await _svc.CompleteFromGenerationAsync(pending[0].Id);
+        var firstCompletedAt = (await _db.NfoRebuildQueue.FindAsync(pending[0].Id))!.CompletedAt;
+
+        var act = async () => await _svc.CompleteFromGenerationAsync(pending[0].Id);
+
+        await act.Should().NotThrowAsync();
+        (await _db.NfoRebuildQueue.FindAsync(pending[0].Id))!.CompletedAt.Should().Be(firstCompletedAt);
     }
 }

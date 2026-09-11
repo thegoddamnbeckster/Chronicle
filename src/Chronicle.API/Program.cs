@@ -253,6 +253,10 @@ builder.Services.AddSingleton<ScheduledScanService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<ScheduledScanService>());
 
+builder.Services.AddSingleton<NfoGenerationService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<NfoGenerationService>());
+
 builder.Services.AddSingleton<RebuildMovieCollectionsService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<RebuildMovieCollectionsService>());

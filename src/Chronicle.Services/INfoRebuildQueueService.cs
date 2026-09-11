@@ -1,3 +1,5 @@
+using Chronicle.Core.Models;
+
 namespace Chronicle.Services;
 
 /// <summary>One claimable unit of work, enough for a Kodi device to resolve the underlying
@@ -105,4 +107,19 @@ public interface INfoRebuildQueueService
     /// completed/pending/total counts plus a per-device breakdown. Does not seed or claim
     /// anything; safe to call as often as a UI wants to poll it.</summary>
     Task<NfoRebuildQueueStatusDto> GetStatusAsync(CancellationToken ct = default);
+
+    /// <summary>Up to batchSize not-yet-completed rows, WITHOUT claiming them for any device --
+    /// see NfoGenerationService's own doc for why this exists: Chronicle generates every
+    /// pending item's NFO directly, server-side, with no Kodi device involved at all, so there
+    /// is nothing to claim or lease here. Lazily tops up the queue first, same as
+    /// ClaimBatchAsync (see EnsureSeededAsync) -- rate-limited internally so this stays cheap on
+    /// every call. Ordered by Id so repeated calls make steady forward progress through the
+    /// backlog rather than re-picking the same items every time.</summary>
+    Task<List<NfoRebuildQueueItem>> GetPendingForGenerationAsync(int batchSize, CancellationToken ct = default);
+
+    /// <summary>Marks one row done because Chronicle itself just generated that item's NFO
+    /// directly -- not because any device claimed and confirmed it. No kodiDeviceId (compare
+    /// CompleteAsync above): there is no device to attribute this completion to. No-op if
+    /// queueItemId doesn't exist or is already completed.</summary>
+    Task CompleteFromGenerationAsync(int queueItemId, CancellationToken ct = default);
 }

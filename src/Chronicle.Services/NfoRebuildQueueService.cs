@@ -174,6 +174,14 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
     {
         var row = await db.NfoRebuildQueue.FindAsync([queueItemId], ct);
         if (row is null || row.ClaimedByKodiDeviceId != kodiDeviceId) return;
+        // Added alongside NfoGenerationService: that service can now complete a row directly
+        // (no claim at all) while a device still separately believes it holds this claim from
+        // an earlier ClaimBatchAsync call. Without this check, that device's later ReleaseAsync
+        // would clear ClaimedByKodiDeviceId on an already-completed row -- harmless to
+        // correctness (a completed row is never reclaimed regardless of this field, since
+        // ClaimBatchAsync's own eligibility query filters on CompletedAt first), but it would
+        // silently drop that device's own attribution in GetStatusAsync's per-device breakdown.
+        if (row.CompletedAt is not null) return;
         row.ClaimedByKodiDeviceId = null;
         row.ClaimedAt             = null;
         row.LeaseExpiresAt        = null;
@@ -182,6 +190,25 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         // doc and ReleaseCooldown for why.
         row.LastReleasedByKodiDeviceId = kodiDeviceId;
         row.LastReleasedAt             = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<List<NfoRebuildQueueItem>> GetPendingForGenerationAsync(int batchSize, CancellationToken ct = default)
+    {
+        await EnsureSeededAsync(ct);
+
+        return await db.NfoRebuildQueue
+            .Where(q => q.CompletedAt == null)
+            .OrderBy(q => q.Id)
+            .Take(batchSize)
+            .ToListAsync(ct);
+    }
+
+    public async Task CompleteFromGenerationAsync(int queueItemId, CancellationToken ct = default)
+    {
+        var row = await db.NfoRebuildQueue.FindAsync([queueItemId], ct);
+        if (row is null || row.CompletedAt is not null) return;
+        row.CompletedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
     }
 
