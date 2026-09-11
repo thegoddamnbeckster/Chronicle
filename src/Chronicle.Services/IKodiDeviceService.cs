@@ -22,14 +22,6 @@ public interface IKodiDeviceService
     /// internal id for this specific item via an ordinary scan.</summary>
     Task<List<(KodiDevice Device, KodiLibraryId Mapping)>> GetPushTargetsAsync(int mediaItemId, CancellationToken ct = default);
 
-    /// <summary>Every registered Kodi device whose backing ApiToken is still active -- for
-    /// callers (KodiLibraryScanService) that need to reach every known device rather than
-    /// only the ones that already reported an internal id for one specific item. Excludes a
-    /// device the same way GetPushTargetsAsync does: RevokeTokenAsync only flips
-    /// ApiToken.IsActive (KodiDevice's row survives), so without this filter a revoked
-    /// device's last-known host:port would keep getting contacted indefinitely.</summary>
-    Task<List<KodiDevice>> GetAllActiveDevicesAsync(CancellationToken ct = default);
-
     /// <summary>Resolves an API token to its own registered KodiDevice.Id, or null if that
     /// token has no device registered yet (e.g. remote control is off on that Kodi instance).
     /// The single place this lookup lives -- callers (KodiDeviceController's rebuild-queue

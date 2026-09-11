@@ -99,17 +99,7 @@ namespace Chronicle.Services
         int Imported,
         int Failed,
         List<string> Failures,
-        int Duplicates = 0,
-        // Every item actually created this run, root AND descendants (e.g. a new episode
-        // under an already-existing show) -- unlike Imported/Duplicates above, which only
-        // ever count the ROOT group (a show gaining one new episode reports as a
-        // "duplicate" show, not an import). This is what tells a caller whether it's worth
-        // calling IKodiLibraryScanService.NotifyNewContentAsync at all: it needs to know
-        // about a new leaf item even when nothing at the root changed. A count, not the ids
-        // themselves -- nothing downstream needs which items, just whether any exist, and a
-        // full id list here was a real problem on a large scan run (8,000+ items isn't
-        // hypothetical, see NotifyNewContentAsync's own doc).
-        int CreatedCount = 0
+        int Duplicates = 0
     );
 
     // ── Direct import (scanner data only — no metadata provider required) ────────

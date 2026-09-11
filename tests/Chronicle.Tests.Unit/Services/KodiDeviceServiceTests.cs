@@ -126,46 +126,5 @@ namespace Chronicle.Tests.Unit.Services
             var targets = await _service.GetPushTargetsAsync(mediaItemId: 100);
             targets.Should().BeEmpty();
         }
-
-        [Fact]
-        public async Task GetAllActiveDevicesAsync_ReturnsEveryRegisteredDevice_RegardlessOfItemMapping()
-        {
-            // Unlike GetPushTargetsAsync, this must NOT require a device to already know about
-            // any specific item -- KodiLibraryScanService needs to reach devices that have
-            // never heard of the new content yet, which is exactly the point of calling them.
-            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
-            _context.ApiTokens.Add(new ApiToken
-            {
-                Id = 2, UserId = 1, Name = "device2", Token = "hashed2",
-                CreatedAt = DateTime.UtcNow, IsActive = true,
-            });
-            await _context.SaveChangesAsync();
-            await _service.RegisterAsync(1, 2, "Downstairs", "10.0.0.11", 8080, null, null);
-
-            var all = await _service.GetAllActiveDevicesAsync();
-
-            all.Should().HaveCount(2);
-            all.Select(d => d.Host).Should().BeEquivalentTo(["10.0.0.10", "10.0.0.11"]);
-        }
-
-        [Fact]
-        public async Task GetAllActiveDevicesAsync_ExcludesDeviceWhoseApiTokenWasRevoked()
-        {
-            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
-            var token = await _context.ApiTokens.FirstAsync(t => t.Id == 1);
-            token.IsActive = false;
-            await _context.SaveChangesAsync();
-
-            var all = await _service.GetAllActiveDevicesAsync();
-
-            all.Should().BeEmpty();
-        }
-
-        [Fact]
-        public async Task GetAllActiveDevicesAsync_NoDevicesRegistered_ReturnsEmpty()
-        {
-            var all = await _service.GetAllActiveDevicesAsync();
-            all.Should().BeEmpty();
-        }
     }
 }

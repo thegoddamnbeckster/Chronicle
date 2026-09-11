@@ -164,28 +164,6 @@ public sealed class ScheduledScanService : IScheduledTask
                     _log.Error(enrichEx, "ScheduledScanService: Background enrichment failed after scan of {Path}", preview.Folder.Path);
                 }
             });
-
-            // Fire-and-forget Kodi library-scan trigger -- see IKodiLibraryScanService's own
-            // doc for why this is needed at all: VideoLibrary.Refresh* (used everywhere else)
-            // cannot make Kodi discover a file it has no library entry for yet, which is
-            // exactly the case for anything this scan just created. Same CancellationToken.None
-            // rationale as the enrichment kick-off above.
-            if (summary.CreatedCount > 0)
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        using var kodiScope = _scopeFactory.CreateScope();
-                        var kodiScanSvc = kodiScope.ServiceProvider.GetRequiredService<IKodiLibraryScanService>();
-                        await kodiScanSvc.NotifyNewContentAsync(preview.Folder.MediaTypeId, CancellationToken.None);
-                    }
-                    catch (Exception kodiEx)
-                    {
-                        _log.Error(kodiEx, "ScheduledScanService: Kodi library-scan trigger failed after scan of {Path}", preview.Folder.Path);
-                    }
-                });
-            }
         }
 
         _importProgress.Complete(new ImportProgressResult

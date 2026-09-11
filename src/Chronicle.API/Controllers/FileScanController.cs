@@ -412,23 +412,7 @@ public class FileScanController : ControllerBase
             {
                 // Pass the requesting user so they get an eager library row.
                 // Other users get rows auto-created by GetForUserAsync on their next library view.
-                var summary = await svc.ImportGroupsAsync(importRequest, [userId], CancellationToken.None);
-
-                // Best-effort: tell Kodi to go discover whatever this import just created --
-                // see IKodiLibraryScanService's own doc for why VideoLibrary.Refresh* alone
-                // can't do that. Never lets a scan-trigger failure fail the import itself.
-                if (summary.CreatedCount > 0)
-                {
-                    try
-                    {
-                        var kodiScanSvc = scope.ServiceProvider.GetRequiredService<IKodiLibraryScanService>();
-                        await kodiScanSvc.NotifyNewContentAsync(importRequest.MediaTypeId, CancellationToken.None);
-                    }
-                    catch (Exception kodiEx)
-                    {
-                        _logger.LogWarning(kodiEx, "FileScanController.ImportGroups: Kodi library-scan trigger failed");
-                    }
-                }
+                await svc.ImportGroupsAsync(importRequest, [userId], CancellationToken.None);
             }
             catch (Exception ex)
             {

@@ -14,7 +14,7 @@ public sealed class KodiRpcClient(IHttpClientFactory httpClientFactory, ILogger<
     // scan/rebuild, same as any other best-effort path in this feature.
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(8);
 
-    public Task<bool> RefreshAsync(KodiDevice device, string kind, int kodiId, CancellationToken ct = default)
+    public async Task<bool> RefreshAsync(KodiDevice device, string kind, int kodiId, CancellationToken ct = default)
     {
         var (method, paramName) = kind switch
         {
@@ -26,31 +26,16 @@ public sealed class KodiRpcClient(IHttpClientFactory httpClientFactory, ILogger<
         if (method is null)
         {
             logger.LogWarning("KodiRpcClient: unknown kind {Kind} for device {Device} -- skipping.", kind, device.Name);
-            return Task.FromResult(false);
+            return false;
         }
 
-        return SendAsync(device, method, new Dictionary<string, object> { [paramName!] = kodiId }, ct);
-    }
-
-    public Task<bool> ScanAsync(KodiDevice device, CancellationToken ct = default)
-    {
-        // No "directory" parameter -- deliberately a full-library scan, not a targeted one.
-        // Chronicle's own fileScanner.folderPath is recorded from THIS SERVER's own view of
-        // the filesystem (e.g. "J:\Videos\TV\..."), which has no reliable mapping to how any
-        // given Kodi device names that same share as one of ITS OWN sources (a different
-        // drive letter, a different SMB share name, NFS instead of SMB, a source added under
-        // a completely different label -- every registered device already varies in Host, see
-        // KodiDevice). A full scan costs more per call but needs no such mapping and is safe
-        // to call repeatedly: Kodi's own scanner is cheap for files it already knows about,
-        // only genuinely new files cost real work. IKodiLibraryScanService is what keeps this
-        // from being called too often.
-        return SendAsync(device, "VideoLibrary.Scan", new Dictionary<string, object> { ["showdialogs"] = false }, ct);
-    }
-
-    private async Task<bool> SendAsync(
-        KodiDevice device, string method, object @params, CancellationToken ct)
-    {
-        var payload = JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 1, method, @params });
+        var payload = JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id      = 1,
+            method,
+            @params = new Dictionary<string, int> { [paramName!] = kodiId },
+        });
 
         using var client = httpClientFactory.CreateClient(nameof(KodiRpcClient));
         client.Timeout = Timeout;
