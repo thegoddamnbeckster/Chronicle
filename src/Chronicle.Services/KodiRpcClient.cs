@@ -70,9 +70,35 @@ public sealed class KodiRpcClient(IHttpClientFactory httpClientFactory, ILogger<
             }
             return true;
         }
+        catch (HttpRequestException ex)
+        {
+            // "Device offline/unreachable" is the routine, expected failure mode here (a stale
+            // registration, a Shield that's asleep, a LAN hiccup) -- confirmed live (2026-09-11)
+            // that logging the full exception object floods the log with a 20+ line stack trace
+            // per failure, tripled by .NET's own HttpClientFactory logging handlers doing the
+            // same for the identical exception. This got dramatically more frequent once
+            // NfoGenerationService started racing through the whole NFO backlog (hundreds of
+            // pushes per run instead of one at a time), each fanning out to every registered
+            // device regardless of whether it's actually reachable. One concise line is enough
+            // to know which device and why; the stack trace adds nothing actionable for a
+            // condition this expected. Genuinely unexpected exceptions still fall through to the
+            // catch-all below with full detail.
+            logger.LogWarning("KodiRpcClient: {Method} to {Device} ({Host}) failed -- device unreachable ({Reason}).",
+                method, device.Name, device.Host, ex.Message);
+            return false;
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Our own 8s Timeout elapsed (not the caller's ct) -- same "expected, routine"
+            // reasoning as HttpRequestException above, just a different exception shape for a
+            // timeout specifically.
+            logger.LogWarning("KodiRpcClient: {Method} to {Device} ({Host}) failed -- timed out after {Timeout}.",
+                method, device.Name, device.Host, Timeout);
+            return false;
+        }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "KodiRpcClient: {Method} to {Device} ({Host}) failed.", method, device.Name, device.Host);
+            logger.LogWarning(ex, "KodiRpcClient: {Method} to {Device} ({Host}) failed unexpectedly.", method, device.Name, device.Host);
             return false;
         }
     }

@@ -68,6 +68,14 @@ builder.Host.UseSerilog((ctx, services, cfg) => cfg
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+    // .NET's own IHttpClientFactory logging handlers log every request (success AND failure) at
+    // Information, full exception included on failure -- confirmed live (2026-09-11) this
+    // produces two near-identical multi-line stack traces per KodiRpcClient call against an
+    // unreachable device, on top of Chronicle's own one-line warning for the same failure.
+    // Warning-and-up only: nothing meaningful is lost (a genuinely unexpected HttpClient problem
+    // would still surface at Warning+), and the routine "device offline" case -- the overwhelming
+    // majority of these -- stops flooding the log 3x per occurrence.
+    .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
     .WriteTo.Console(
         theme: AnsiConsoleTheme.Code,
         outputTemplate: "{Timestamp:HH:mm:ss} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
