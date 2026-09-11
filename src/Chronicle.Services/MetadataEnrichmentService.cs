@@ -1929,6 +1929,23 @@ public class MetadataEnrichmentService(
                 ? await FindExternalIdOwnerConflictAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId)
                 : null;
 
+            // A stub's claim on an external id is not a reason to reject a REAL item's own
+            // independent match to that same id -- a stub only exists because a collection's
+            // own provider-supplied parts list said this exact id belongs here, which is
+            // corroborating evidence for a real item's match, not a conflict. Root-caused live
+            // (2026-09-12): a freshly file-scanned real movie correctly resolved to the same
+            // TMDB id as its collection's pre-existing stub, but was rejected right here as
+            // "likely a duplicate" and permanently marked NotFound -- so it could never pick up
+            // the id its own collection's stub already had, leaving the two permanently
+            // unmerged. That's exactly the scenario MovieCollectionService's own real-vs-stub
+            // reparenting logic exists to resolve, except that logic can never run for an item
+            // that never gets its own matching external id in the first place. Treated as "no
+            // conflict" (not merely logged and allowed through) so every branch below --
+            // including the "conflictOwner is already known to be null here" skipConflictCheck
+            // comment further down -- stays accurate without needing its own stub-awareness.
+            if (conflictOwner is { IsStub: true })
+                conflictOwner = null;
+
             if (conflictOwner is not null)
             {
                 // Applies to every path that can reach this point, including Fix Match's manual

@@ -1269,6 +1269,48 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichPendingAsync_MatchedExternalIdOwnedByACollectionStub_MergesInstead()
+    {
+        // Root-caused live (2026-09-12, "Spider-Man: Brand New Day"): a real, freshly file-
+        // scanned movie correctly resolved via TMDB search to the exact same external id its
+        // own collection's pre-existing stub already carried -- and was rejected right here as
+        // "likely a duplicate", permanently marked NotFound. Unlike the real-conflict tests
+        // above (owner is a genuine second real item), a STUB'S claim on an id is not evidence
+        // of a duplicate -- it only exists because the collection's own provider data said this
+        // id belongs there, which corroborates the real item's match rather than contradicting
+        // it. Without this exemption, the item could never pick up its own matching id, so
+        // MovieCollectionService's real-vs-stub reparenting fix (which depends on the real item
+        // actually having that id) could never engage either -- the two stayed unmerged forever.
+        var stubOwner = await SeedRootItem("Die Hard Collection", null);
+        stubOwner.IsStub = true;
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = stubOwner.Id, Source = "tmdb", ExternalId = "movie:78" });
+        await _db.SaveChangesAsync();
+
+        var item = await SeedRootItem("Blade Runner", 1982);
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:78" }, Score: 70),
+            });
+        provider.Setup(p => p.GetByIdAsync("movie:78", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Blade Runner", ExternalId = "movie:78" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.tmdb");
+
+        var row = await _db.MediaEnrichments
+            .FirstAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.tmdb");
+        row.Status.Should().Be(EnrichmentStatus.Completed);
+        row.ExternalId.Should().Be("movie:78");
+
+        (await _db.MediaExternalIds.AnyAsync(e => e.MediaItemId == item.Id && e.Source == "tmdb" && e.ExternalId == "movie:78"))
+            .Should().BeTrue("the real item must actually pick up the id its collection's stub already carried");
+    }
+
+    [Fact]
     public async Task EnrichItemAsync_Force_FallbackRefetchIdOwnedByAnotherItem_RejectsRatherThanMerges()
     {
         // Regression test: the conflict check above must also catch a match that only
