@@ -3004,6 +3004,18 @@ namespace Chronicle.Services
         /// (mirrors that tier's own type-scoping). Same rationale as
         /// <see cref="BuildFilePathIndexAsync"/> -- avoids re-reading every container item of
         /// this type on every single call.
+        ///
+        /// Keyed by "{hierarchyLevel}|{folderPath}", not folderPath alone -- confirmed root
+        /// cause (2026-09-10) of Reacher/Lanterns episodes vanishing into the wrong parent:
+        /// <see cref="BackfillFolderPathsAsync"/> gives every leaf item (an episode, a track)
+        /// a folderPath equal to its OWN container's folder, since that's simply the directory
+        /// its one file lives in. Without the hierarchy-level component, that leaf item then
+        /// collides in this same index with its own season/album's real container entry --
+        /// last-write-wins picked whichever happened to be read last, so a Season-level lookup
+        /// could resolve to one of its own episodes instead of the season, and every episode
+        /// found afterward got nested under that episode instead of the real season. Confirmed
+        /// live: Reacher S4E01-05 ended up chained several levels deep under S4E06 this way,
+        /// each subsequent scan burying the next new episode one level deeper.
         /// </summary>
         private async Task<Dictionary<string, MediaItem>> BuildFolderPathIndexAsync(int mediaTypeId, CancellationToken ct)
         {
@@ -3022,13 +3034,20 @@ namespace Chronicle.Services
                     if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
                         fs.TryGetProperty("folderPath", out var fp) &&
                         fp.GetString() is { } folderPath)
-                        index[folderPath] = item;
+                        index[FolderPathKey(item.HierarchyLevel, folderPath)] = item;
                 }
                 catch (JsonException) { }
             }
 
             return index;
         }
+
+        /// <summary>
+        /// Composes the <see cref="BuildFolderPathIndexAsync"/> lookup key -- see that method's
+        /// doc for why hierarchy level must be part of it, not just the folder path.
+        /// </summary>
+        private static string FolderPathKey(int hierarchyLevel, string folderPath) =>
+            $"{hierarchyLevel}|{folderPath}";
 
         private async Task<(MediaItem Item, bool IsNew)> UpsertGroupItemAsync(
             ScanGroupImport group, int mediaTypeId,
@@ -3080,9 +3099,11 @@ namespace Chronicle.Services
             // "Dogma" band artist item that already existed. Primary intentionally stays
             // type-unscoped (see its own comment: an exact file path is strong enough evidence
             // to survive a manual "Change Type"), but a folder path alone isn't that strong.
+            // ALSO scoped by hierarchyLevel -- see BuildFolderPathIndexAsync's doc for why a
+            // leaf item's own (backfilled) folderPath must never satisfy its container's lookup.
             if (existing is null && group.Files.Count == 0 && !string.IsNullOrEmpty(group.FolderPath))
             {
-                folderPathIndex.TryGetValue(group.FolderPath, out existing);
+                folderPathIndex.TryGetValue(FolderPathKey(hierarchyLevel, group.FolderPath), out existing);
             }
 
             // Tertiary-and-a-half: match a sync-created STUB by season/episode/track Number
@@ -3211,7 +3232,7 @@ namespace Chronicle.Services
                 foreach (var f in group.Files)
                     filePathIndex[f] = existing;
                 if (!string.IsNullOrEmpty(group.FolderPath))
-                    folderPathIndex[group.FolderPath] = existing;
+                    folderPathIndex[FolderPathKey(hierarchyLevel, group.FolderPath)] = existing;
 
                 return (existing, false);
             }
@@ -3241,7 +3262,7 @@ namespace Chronicle.Services
             foreach (var f in group.Files)
                 filePathIndex[f] = item;
             if (!string.IsNullOrEmpty(group.FolderPath))
-                folderPathIndex[group.FolderPath] = item;
+                folderPathIndex[FolderPathKey(hierarchyLevel, group.FolderPath)] = item;
 
             return (item, true);
         }

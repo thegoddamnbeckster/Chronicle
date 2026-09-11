@@ -376,6 +376,80 @@ public class FileScanServiceHierarchyTests
     }
 
     [Fact]
+    public async Task ImportGroupsAsync_EpisodeFolderPathCollidesWithSeason_SeasonStillWinsOverSibling()
+    {
+        // Regression test: confirmed live (2026-09-10) -- BackfillFolderPathsAsync gives every
+        // leaf item (an episode) a fileScanner.folderPath equal to the directory its one file
+        // lives in, which for a TV episode is simply its season's own folder. Once that
+        // happens, the Secondary (folder-path) tier's index -- previously keyed by folder path
+        // alone -- collided an episode's entry with its own season's entry. A later scan
+        // resolving "Season 4" by folder path could land on episode 6 instead of the real
+        // season, after which every further episode found got nested under episode 6 instead
+        // of the season. Reacher S04E01-05 ended up chained several levels deep this way.
+        // The fix keys that index by hierarchy level too, so an episode's folderPath can never
+        // satisfy a season-level lookup even when the strings are identical.
+        await using var context = NewInMemoryContext();
+
+        var tvType = new MediaType { Id = 1, Name = "tv", DisplayName = "TV", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
+        context.MediaTypes.Add(tvType);
+
+        const string seasonFolder = @"J:\Videos\TV\Reacher (2022)\Season 04";
+
+        var show = new MediaItem
+        {
+            Id = 10, MediaTypeId = 1, Name = "Reacher", HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var escapedFolder = seasonFolder.Replace(@"\", @"\\");
+        var season = new MediaItem
+        {
+            Id = 20, MediaTypeId = 1, ParentId = 10, HierarchyLevel = 1, Name = "Season 4", Number = 4,
+            MetadataJson = "{\"fileScanner\":{\"folderPath\":\"" + escapedFolder + "\"}}",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        // The already-corrupted sibling: a real episode whose backfilled folderPath happens
+        // to equal the season's own folder -- exactly what a prior scan run would have left
+        // behind before this fix.
+        var episode6 = new MediaItem
+        {
+            Id = 30, MediaTypeId = 1, ParentId = 20, HierarchyLevel = 2, Name = "Plum Out of Luck", Number = 6,
+            MetadataJson = "{\"fileScanner\":{\"folderPath\":\"" + escapedFolder + "\",\"filePaths\":[\"" + escapedFolder + "\\\\E06.mkv\"]}}",
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        context.MediaItems.AddRange(show, season, episode6);
+        await context.SaveChangesAsync();
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var newEpisode = new ScanGroupImport(
+            Name: "Vote for Sampson", Year: null, PosterPath: null,
+            Children: [], Files: [$@"{seasonFolder}\E07.mkv"], Number: 7);
+        var seasonGroup = new ScanGroupImport(
+            Name: "Season 4", Year: null, PosterPath: null,
+            Children: [newEpisode], Files: [], FolderPath: seasonFolder, Number: 4);
+        var showGroup = new ScanGroupImport(
+            Name: "Reacher", Year: null, PosterPath: null,
+            Children: [seasonGroup], Files: []);
+
+        var request = new ImportGroupsRequest([showGroup], MediaTypeId: 1);
+        await service.ImportGroupsAsync(request, userIds: [1], manageProgress: false);
+
+        // No duplicate season was created -- the real season (20) is still the only one.
+        var seasons = await context.MediaItems.Where(m => m.HierarchyLevel == 1 && m.ParentId == 10).ToListAsync();
+        Assert.Single(seasons);
+        Assert.Equal(20, seasons[0].Id);
+
+        // The new episode was parented under the real season, not under its sibling episode 6.
+        var newEp = await context.MediaItems.SingleAsync(m => m.Number == 7 && m.HierarchyLevel == 2);
+        Assert.Equal(20, newEp.ParentId);
+
+        // Episode 6 gained no children -- it was never mistaken for a container.
+        Assert.False(await context.MediaItems.AnyAsync(m => m.ParentId == 30));
+    }
+
+    [Fact]
     public void GroupAudiobooksByAuthorAndSeries_UnknownAuthor_GroupsUnderUnknown()
     {
         var files = new List<ScannedFile>
