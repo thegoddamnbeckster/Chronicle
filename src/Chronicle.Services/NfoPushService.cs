@@ -213,8 +213,17 @@ public sealed class NfoPushService(
         }
         catch (Exception ex)
         {
+            // Logged and left at that -- not surfaced as a task failure. This is almost always
+            // an environmental condition outside Chronicle's control (the item's drive is
+            // offline, a share dropped, the folder was deleted) rather than a bug in the push
+            // itself, and there's nothing actionable a user could do from a permanent red
+            // "FAILED" badge that just sits there until some unrelated future push happens to
+            // succeed. Per-user correction (2026-09-11): "I don't want to see an unexplained
+            // error in the UI. log it and move on." Returning null (not false) means
+            // RecordStatusAsync is skipped entirely -- the task's last-known status is left
+            // exactly as it was rather than being overwritten with this one item's failure.
             logger.LogWarning(ex, "NfoPushService: couldn't write NFO for item {Id} to {Path}.", mediaItemId, destPath);
-            return false;
+            return null;
         }
         logger.LogInformation("NfoPushService: wrote NFO for item {Id} to {Path}.", mediaItemId, destPath);
 

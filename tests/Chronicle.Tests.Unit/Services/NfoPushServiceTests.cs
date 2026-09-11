@@ -129,6 +129,35 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task PushAsync_DestinationFolderMissing_LogsButDoesNotRecordTaskFailure()
+        {
+            // Per-user correction (2026-09-11): "I don't want to see an unexplained error in
+            // the UI. log it and move on." A write failure here is almost always environmental
+            // (the item's drive is offline, a share dropped, the folder was deleted) rather than
+            // a bug in the push itself -- there's nothing a user could act on from a permanent
+            // red "FAILED" badge on the NFO Push card. This must be logged (still exercised via
+            // the ILogger mock implicitly not throwing) but must NOT flip the shared
+            // background_tasks row to a failed state.
+            var missingDir = Path.Combine(_tempDir, "drive-not-mounted");
+            var videoPath  = Path.Combine(missingDir, "Movie (2020).mkv");
+            var item = new MediaItem
+            {
+                Id = 400, Name = "Movie", MediaTypeId = MovieTypeId, HierarchyLevel = 0,
+                MetadataJson = FileScannerMetadataJson(missingDir, [videoPath]),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync();
+
+            var service = BuildService("<movie><title>Movie</title></movie>"u8.ToArray());
+            var act = async () => await service.PushAsync(mediaItemId: 400, userId: 1);
+
+            await act.Should().NotThrowAsync();
+            (await _context.BackgroundTasks.FindAsync("nfo-push")).Should().BeNull(
+                "a per-item environmental write failure should not surface as a task-level FAILED badge");
+        }
+
+        [Fact]
         public async Task PushAsync_ItemWithNoFileScannerLocation_DoesNotThrowAndWritesNothing()
         {
             var item = new MediaItem
