@@ -52,7 +52,21 @@ public class KodiDeviceController(
 
     /// <summary>POST /api/v1/scraper/devices/kodi/register -- upserts the calling device's own
     /// remote-control address. See KodiDevice's own doc for why this is keyed by the calling
-    /// API token, not the user.</summary>
+    /// API token, not the user.
+    ///
+    /// The host actually stored comes from THIS REQUEST's own observed remote address, not
+    /// request.Host -- confirmed live (2026-09-11) that a device's own self-reported guess
+    /// (device_registration.py's UDP-connect-to-8.8.8.8 trick, picking whichever local
+    /// interface that route happens to use) can be wrong on a multi-homed device -- e.g. a VPN
+    /// client running alongside the LAN connection -- registering an address Chronicle can
+    /// never actually reach, silently and permanently (every future re-registration just
+    /// repeats the same wrong guess, since the client-side logic that produced it never
+    /// changes). The connection's own remote address is what Chronicle would need to reach that
+    /// same device again regardless of what interface the device THINKS it's on, and -- since
+    /// UseForwardedHeaders is already configured in Program.cs -- correctly reflects the
+    /// original client even if a reverse proxy sits in front. request.Host is now only used as
+    /// a presence check (kept for backward compatibility with older addon builds that still
+    /// send it) and as a fallback for the rare case the remote address can't be read at all.</summary>
     [HttpPost("devices/kodi/register")]
     public async Task<IActionResult> RegisterDevice([FromBody] RegisterKodiDeviceRequest request, CancellationToken ct)
     {
@@ -74,9 +88,18 @@ public class KodiDeviceController(
             return BadRequest(ApiResponse<object>.Fail(
                 "INVALID_DEVICE", "That port is Chronicle's own -- refusing to register it as a Kodi device."));
 
+        var remoteIp = HttpContext.Connection.RemoteIpAddress;
+        // Strip the IPv6-mapped-IPv4 prefix (::ffff:10.0.0.10) a dual-stack listener commonly
+        // wraps an actual IPv4 peer in -- matches the plain dotted-quad format device_registration.py
+        // itself would have sent, so this doesn't look like a surprising format change downstream
+        // (KodiRpcClient building "http://{host}:{port}/jsonrpc", the status page's Host column, etc).
+        var host = remoteIp is { IsIPv4MappedToIPv6: true } ? remoteIp.MapToIPv4().ToString() : remoteIp?.ToString();
+        if (string.IsNullOrWhiteSpace(host))
+            host = request.Host.Trim(); // couldn't read a remote address at all -- fall back rather than fail registration outright
+
         await devices.RegisterAsync(GetUserId(), apiTokenId.Value,
             string.IsNullOrWhiteSpace(request.Name) ? "Kodi" : request.Name.Trim(),
-            request.Host.Trim(), request.Port, request.Username, request.Password, ct);
+            host, request.Port, request.Username, request.Password, ct);
 
         return Ok(ApiResponse<object>.Ok(new { registered = true }));
     }
