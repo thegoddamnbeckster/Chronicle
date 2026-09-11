@@ -184,4 +184,103 @@ public class BackgroundTasksTests : IClassFixture<ChronicleApiFactory>
         Assert.Equal("Sure?",      task.GetProperty("runConfirmation").GetProperty("title").GetString());
         Assert.Equal("Body text.", task.GetProperty("runConfirmation").GetProperty("message").GetString());
     }
+
+    [Fact]
+    public async Task GetAll_RealSystemTask_IsRunnableTrue()
+    {
+        // Seeded at startup from the real DI-registered IScheduledTask collection (see
+        // TaskSchedulerService.SeedTasksAsync) -- any of them should be reported runnable.
+        var client = await AdminClientAsync();
+
+        var resp = await client.GetAsync("/api/v1/background-tasks");
+        var tasks = JsonDocument.Parse(await resp.Content.ReadAsStringAsync()).RootElement.GetProperty("data");
+        var systemTask = tasks.EnumerateArray().First(t => t.GetProperty("pluginId").ValueKind == JsonValueKind.Null);
+
+        systemTask.GetProperty("isRunnable").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetAll_SystemTaskWithNoRegisteredImplementation_IsRunnableFalse()
+    {
+        // Exactly NfoPushService's own row shape: PluginId null, no matching IScheduledTask
+        // registered in DI (see BackgroundTasksController's IsRunnable doc for why this one
+        // exists on purpose -- it's status-only, nothing to manually run).
+        var client = await AdminClientAsync();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            db.BackgroundTasks.Add(new Chronicle.Core.Models.BackgroundTask
+            {
+                TaskId = "nfo-push", DisplayName = "NFO Push", Description = "d",
+                CronExpression = "0 0 1 1 *", IsEnabled = false, Schedulable = false,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var resp = await client.GetAsync("/api/v1/background-tasks");
+        var task = JsonDocument.Parse(await resp.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("data").EnumerateArray()
+            .First(t => t.GetProperty("taskId").GetString() == "nfo-push");
+
+        task.GetProperty("isRunnable").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAll_PluginTaskWhosePluginIsInstalled_IsRunnableTrue()
+    {
+        var client = await AdminClientAsync();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            db.Plugins.Add(new Chronicle.Core.Models.Plugin
+            {
+                PluginId = "chronicle.plugin.faketest", Name = "Fake", Version = "1.0", Author = "t",
+                DllPath = "fake.dll", InstalledAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            db.BackgroundTasks.Add(new Chronicle.Core.Models.BackgroundTask
+            {
+                TaskId = "chronicle.plugin.faketest:fetch-missing-metadata", DisplayName = "Fetch",
+                Description = "d", CronExpression = "0 5 * * *", PluginId = "chronicle.plugin.faketest",
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var resp = await client.GetAsync("/api/v1/background-tasks");
+        var task = JsonDocument.Parse(await resp.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("data").EnumerateArray()
+            .First(t => t.GetProperty("taskId").GetString() == "chronicle.plugin.faketest:fetch-missing-metadata");
+
+        task.GetProperty("isRunnable").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetAll_PluginTaskWhosePluginWasUninstalled_IsRunnableFalse()
+    {
+        // Regression test (2026-09-11): uninstalling a plugin never deletes its background_tasks
+        // rows. Before this fix, IsRunnable checked only `PluginId is not null`, so this leftover
+        // row still showed a working Run Now button that would silently no-op instead of
+        // actually running anything (PluginTaskRunner's provider lookup just logs and returns).
+        var client = await AdminClientAsync();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            // Deliberately NOT adding a matching Plugins row -- simulates an uninstalled plugin.
+            db.BackgroundTasks.Add(new Chronicle.Core.Models.BackgroundTask
+            {
+                TaskId = "chronicle.plugin.ghost:fetch-missing-metadata", DisplayName = "Fetch",
+                Description = "d", CronExpression = "0 5 * * *", PluginId = "chronicle.plugin.ghost",
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var resp = await client.GetAsync("/api/v1/background-tasks");
+        var task = JsonDocument.Parse(await resp.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("data").EnumerateArray()
+            .First(t => t.GetProperty("taskId").GetString() == "chronicle.plugin.ghost:fetch-missing-metadata");
+
+        task.GetProperty("isRunnable").GetBoolean().Should().BeFalse();
+    }
 }

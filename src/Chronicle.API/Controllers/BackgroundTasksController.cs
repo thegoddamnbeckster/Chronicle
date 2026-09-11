@@ -55,13 +55,33 @@ public class BackgroundTasksController : ControllerBase
             BrandColorLight:  r.Plugin?.BrandColorLight,
             BrandColorDark:   r.Plugin?.BrandColorDark,
             Schedulable:      r.Schedulable,
-            // False only for a row like "NFO Push" that exists purely to surface otherwise-
-            // invisible fire-and-forget activity in this same UI (see NfoPushService's own doc)
-            // -- there's no IScheduledTask backing it, so "Run Now" would always fail with
-            // TASK_NOT_FOUND. Deliberately NOT the same signal as IsEnabled/Schedulable: several
-            // genuinely runnable tasks (e.g. a disabled plugin sync) are IsEnabled=false and/or
-            // Schedulable=false too, so those can't be reused to mean "not runnable at all".
-            IsRunnable:       _registeredTaskIds.Contains(r.TaskId),
+            // Mirrors TaskSchedulerService.TriggerNowAsync's own validity check, since that's
+            // the actual authority on whether Run Now will work: a PLUGIN-owned row (PluginId
+            // != null, e.g. Fanart.tv's "Fetch Missing Artwork") is routed to the plugin
+            // directly and was never in the DI-registered IScheduledTask collection to begin
+            // with, so checking that set alone (as an earlier version of this fix did) wrongly
+            // hid Run Now for every plugin task in the dashboard.
+            //
+            // For a plugin row, checking r.Plugin (not just r.PluginId) -- already loaded by
+            // this query's own .Include(t => t.Plugin) above, so this costs nothing extra --
+            // catches the same staleness this session already found and fixed once for
+            // GetEnrichmentRecordsAsync: uninstalling a plugin never deletes its background_tasks
+            // rows, so PluginId alone can't tell a live plugin task apart from a leftover one
+            // whose plugin is long gone. A row for a genuinely-uninstalled plugin would
+            // otherwise show a working Run Now that silently no-ops (PluginTaskRunner's provider
+            // lookup just logs a warning and returns -- no exception -- so the run gets recorded
+            // as a false "succeeded").
+            //
+            // A row with no PluginId is a "system" task and IS gated on being in the registered
+            // IScheduledTask set -- false only for something like "NFO Push", which exists
+            // purely to surface otherwise-invisible fire-and-forget activity in this same UI
+            // (see NfoPushService's own doc) and has no IScheduledTask backing it at all, so
+            // Run Now would always fail with TASK_NOT_FOUND. Deliberately NOT the same signal
+            // as IsEnabled/Schedulable: several genuinely runnable tasks (e.g. a disabled plugin
+            // sync) are IsEnabled=false and/or Schedulable=false too.
+            IsRunnable:       r.PluginId is not null
+                                  ? r.Plugin is not null
+                                  : _registeredTaskIds.Contains(r.TaskId),
             RunConfirmation:  r.RunConfirmationTitle is not null
                 ? new BackgroundTaskRunConfirmationDto(r.RunConfirmationTitle, r.RunConfirmationMessage ?? string.Empty)
                 : null
