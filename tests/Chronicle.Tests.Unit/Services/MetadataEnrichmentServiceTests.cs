@@ -51,6 +51,32 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetEnrichmentRecordsAsync_OmitsRowForNoLongerInstalledPlugin()
+    {
+        // Regression test (2026-09-11): uninstalling a plugin never touches its old
+        // media_enrichment rows, so a row for a plugin that's since been removed just sits
+        // there forever. Without filtering by what's currently registered, the media detail
+        // page rendered a permanent, unrefreshable card for it -- confirmed live with a
+        // "TheTVDB" card that kept appearing on every show despite that plugin not being
+        // installed in this environment at all.
+        var (item, _) = await SeedItemWithStatus("thetvdb:123", EnrichmentStatus.Failed, pluginId: "chronicle.plugin.thetvdb");
+        await SeedItemWithStatus("tmdb:456", EnrichmentStatus.Completed, pluginId: "chronicle.plugin.tmdb", name: item.Name);
+        // SeedItemWithStatus creates a new item each call -- re-target the second row onto
+        // the same item so both plugins are being asked about the one item under test.
+        var secondRow = await _db.MediaEnrichments.OrderByDescending(e => e.Id).FirstAsync();
+        secondRow.MediaItemId = item.Id;
+        await _db.SaveChangesAsync();
+
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.tmdb")).Returns(Mock.Of<IMetadataProvider>());
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.thetvdb")).Returns((IMetadataProvider?)null);
+
+        var records = await _svc.GetEnrichmentRecordsAsync(item.Id);
+
+        records.Should().ContainSingle();
+        records[0].PluginId.Should().Be("chronicle.plugin.tmdb");
+    }
+
+    [Fact]
     public async Task EnrichPendingAsync_RemovesKnownCollectionContainer()
     {
         // Regression test for a real production bug (2026-09-05): a movie collection container

@@ -107,15 +107,27 @@ public class MetadataEnrichmentService(
         int mediaItemId, CancellationToken ct = default)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var db       = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var registry = scope.ServiceProvider.GetRequiredService<IPluginRegistry>();
 
         var rows = await db.MediaEnrichments
             .Where(e => e.MediaItemId == mediaItemId)
             .ToListAsync(ct);
 
-        return rows.Select(r => new EnrichmentRecord(
-            r.PluginId, r.ExternalId, r.Status,
-            r.LastCompletedAt, r.ErrorMessage, r.DiagnosticsJson))
+        // Drop rows for a plugin that isn't currently loaded -- a row this old just means the
+        // plugin was installed at some point in the past and later removed. Its DLL is gone, so
+        // there's no branding/icon for it and nothing "Refresh" could ever call, but the row
+        // itself was never cleaned up (uninstalling a plugin doesn't touch media_enrichment).
+        // Without this filter the media detail page rendered a permanent, unrefreshable card
+        // for it forever, showing whatever error it last failed with (e.g. "not configured")
+        // as if that were live, current state. Confirmed live (2026-09-11): a "TheTVDB" card
+        // kept appearing on every show despite that plugin not being installed in this
+        // environment at all.
+        return rows
+            .Where(r => registry.GetMetadataProvider(r.PluginId) is not null)
+            .Select(r => new EnrichmentRecord(
+                r.PluginId, r.ExternalId, r.Status,
+                r.LastCompletedAt, r.ErrorMessage, r.DiagnosticsJson))
             .ToList();
     }
 
