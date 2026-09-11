@@ -2888,7 +2888,7 @@ namespace Chronicle.Services
                 await SeedEnrichmentRowsForNewItemsAsync(
                     createdItemIds[lastSeededIndex..], mediaType.Name, ct);
 
-            var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
+            var summary = new ImportApprovedSummary(imported, failed, failures, duplicates, createdItemIds.Count);
             if (manageProgress)
                 _importProgress.Complete(new ImportProgressResult
                 {

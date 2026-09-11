@@ -154,6 +154,11 @@ builder.Services.AddScoped<IKodiDeviceService, KodiDeviceService>();
 builder.Services.AddScoped<IKodiRpcClient, KodiRpcClient>();
 builder.Services.AddScoped<INfoPushService, NfoPushService>();
 builder.Services.AddScoped<INfoRebuildQueueService, NfoRebuildQueueService>();
+// Singleton, not scoped: its per-device throttle state must outlive any one scan run or
+// request -- see KodiLibraryScanService's own doc. Creates its own DI scope per call
+// (IServiceScopeFactory) for the scoped services (DbContext, IKodiDeviceService,
+// IKodiRpcClient) it needs along the way, the same pattern TaskSchedulerService uses.
+builder.Services.AddSingleton<IKodiLibraryScanService, KodiLibraryScanService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();

@@ -108,6 +108,16 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
         return rows.Select(r => (r.device, r.mapping)).ToList();
     }
 
+    public async Task<List<KodiDevice>> GetAllActiveDevicesAsync(CancellationToken ct = default)
+    {
+        return await (
+            from device in db.KodiDevices
+            join token in db.ApiTokens on device.ApiTokenId equals token.Id
+            where token.IsActive
+            select device
+        ).ToListAsync(ct);
+    }
+
     public async Task<int?> GetDeviceIdForApiTokenAsync(int apiTokenId, CancellationToken ct = default)
     {
         var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.ApiTokenId == apiTokenId, ct);
