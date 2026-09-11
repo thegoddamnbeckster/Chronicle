@@ -936,10 +936,19 @@ public class MovieCollectionServiceTests
             .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning)));
         services.AddScoped(_ => resolutionService ?? new NoopResolutionService());
         services.AddLogging();
+        // MovieCollectionService resolves IMergeService lazily (via its own scopeFactory, from
+        // inside MergeRedundantStubAsync) rather than as a constructor dependency -- MergeService
+        // itself needs IMovieCollectionService for its own eligibility check, so a direct
+        // constructor dependency in either direction would be circular. These registrations are
+        // what let that lazy resolution actually succeed in a test, the same as it does via
+        // Program.cs's real DI container.
+        services.AddSingleton(httpClientFactory ?? new StubHttpClientFactory(new StubImageHandler()));
+        services.AddScoped<IMovieCollectionService, MovieCollectionService>();
+        services.AddScoped<IMergeService, MergeService>();
         var provider = services.BuildServiceProvider();
         var svc = new MovieCollectionService(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            httpClientFactory ?? new StubHttpClientFactory(new StubImageHandler()),
+            provider.GetRequiredService<IHttpClientFactory>(),
             NullLogger<MovieCollectionService>.Instance);
         return (svc, provider.GetRequiredService<ChronicleDbContext>());
     }
@@ -1240,6 +1249,66 @@ public class MovieCollectionServiceTests
 
         (await db.MediaItems.AnyAsync(m => m.Id == staleStub.Id)).Should()
             .BeFalse("the redundant stub must actually be deleted, not just left orphaned");
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_StaleStubHasWatchHistory_MergesItOntoTheRealItemInsteadOfDeletingIt()
+    {
+        // Root-caused live (2026-09-12), moments after shipping the fix above: the very first
+        // time this cleanup ran for real, the stub being replaced already carried months-old
+        // UserLibrary data (a "Watching" status with a 9/10 rating, set before the real file was
+        // ever scanned in). media_items.Id cascades UserLibrary/InteractionEvent/MediaListItem
+        // rows by design (see ChronicleDbContext's own FK config) -- a plain delete of the stub
+        // silently erased that watch status and rating instead of carrying it onto the real item,
+        // with no trace it had ever existed. The cleanup must go through IMergeService (the same
+        // machinery "Merge with..." uses) so the stub's own history survives on the real item.
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+
+        var staleStub = new MediaItem
+        {
+            Name = "Die Hard", MediaTypeId = 1, ParentId = collection.Id, HierarchyLevel = 1,
+            IsStub = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(staleStub);
+        await db.SaveChangesAsync();
+        staleStub.ExternalIds.Add(new MediaExternalId { MediaItemId = staleStub.Id, Source = "tmdb", ExternalId = "movie:562" });
+        db.UserLibraries.Add(new UserLibrary
+        {
+            UserId = 1, MediaItemId = staleStub.Id, Status = LibraryStatus.Watching, UserRating = 9,
+            AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var realItem = new MediaItem
+        {
+            Name = "Die Hard", MediaTypeId = 1, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(realItem);
+        await db.SaveChangesAsync();
+        realItem.ExternalIds.Add(new MediaExternalId { MediaItemId = realItem.Id, Source = "tmdb", ExternalId = "movie:562" });
+        // The real item has its own, unrelated library entry (e.g. freshly added, Unwatched) --
+        // the merge must reconcile this with the stub's, not just overwrite or ignore either.
+        db.UserLibraries.Add(new UserLibrary
+        {
+            UserId = 1, MediaItemId = realItem.Id, Status = LibraryStatus.Unwatched,
+            AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 0));
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        (await db.MediaItems.AnyAsync(m => m.Id == staleStub.Id)).Should().BeFalse(
+            "the stub is still removed once its data has somewhere real to go");
+
+        var survivingLib = await db.UserLibraries.SingleAsync(l => l.MediaItemId == realItem.Id && l.UserId == 1);
+        survivingLib.Status.Should().Be(LibraryStatus.Watching,
+            "the stub's Watching status outranks the real item's own Unwatched entry and must win");
+        survivingLib.UserRating.Should().Be(9,
+            "the user's actual rating must survive on the real item, not be discarded with the stub");
     }
 
     [Fact]

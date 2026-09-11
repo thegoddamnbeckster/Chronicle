@@ -1012,7 +1012,7 @@ public class MovieCollectionService(
             // matched to TMDB, and simply never told to join this collection.
             var match = await ReparentExistingMemberIfNeededAsync(db, collection, part, mediaTypeId, ct);
 
-            if (match == ExistingMemberMatch.ReparentedReal)
+            if (match.Outcome == ExistingMemberMatch.ReparentedReal)
             {
                 // A real item just took this part's slot — if a stub was previously sitting
                 // here as this collection's own child, it's now redundant duplicate data.
@@ -1025,19 +1025,11 @@ public class MovieCollectionService(
                 var redundantStub = await db.MediaItems.Include(m => m.ExternalIds)
                     .FirstOrDefaultAsync(m => m.ParentId == collection.Id && m.IsStub &&
                         m.ExternalIds.Any(e => e.ExternalId == part.ExternalId), ct);
-                if (redundantStub is not null)
-                {
-                    db.MediaExternalIds.RemoveRange(redundantStub.ExternalIds);
-                    db.MediaItems.Remove(redundantStub);
-                    await db.SaveChangesAsync(ct);
-                    logger.LogInformation(
-                        "Removed now-redundant stub {StubId} \"{Name}\" from collection {CollectionId} " +
-                        "\"{CollectionName}\" — a real library item was reparented into its place",
-                        redundantStub.Id, redundantStub.Name, collection.Id, collection.Name);
-                }
+                if (redundantStub is not null && match.RealItem is not null)
+                    await MergeRedundantStubAsync(db, collection, match.RealItem, redundantStub, ct);
                 continue;
             }
-            if (match == ExistingMemberMatch.MatchedStub) continue;
+            if (match.Outcome == ExistingMemberMatch.MatchedStub) continue;
 
             // Save stub + ExternalId in one atomic write so the stub is never
             // visible without its ExternalId. A concurrent run seeing a stub
@@ -1114,6 +1106,12 @@ public class MovieCollectionService(
     /// (only the former means an old stub sitting in that same slot is now redundant).</summary>
     private enum ExistingMemberMatch { None, MatchedStub, ReparentedReal }
 
+    /// <summary>Return shape for <see cref="ReparentExistingMemberIfNeededAsync"/>. RealItem is
+    /// only ever populated alongside <see cref="ExistingMemberMatch.ReparentedReal"/> — the
+    /// caller needs the actual item reference (not just the outcome) to merge a redundant stub
+    /// into it rather than deleting the stub outright.</summary>
+    private readonly record struct ExistingMemberResult(ExistingMemberMatch Outcome, MediaItem? RealItem);
+
     /// <summary>
     /// If a REAL (non-stub) item matching this collection part already exists elsewhere in the
     /// library -- by ExternalId, or by normalized title+year when no ExternalId match exists --
@@ -1147,7 +1145,7 @@ public class MovieCollectionService(
     /// stub is now strictly the fallback for "nothing real exists yet, so don't duplicate the
     /// placeholder" — never a reason to stop looking for a real one.
     /// </summary>
-    private async Task<ExistingMemberMatch> ReparentExistingMemberIfNeededAsync(
+    private async Task<ExistingMemberResult> ReparentExistingMemberIfNeededAsync(
         ChronicleDbContext db, MediaItem collection, MediaMetadata part, int mediaTypeId, CancellationToken ct)
     {
         var existingReal = await FindExistingMemberAsync(db, part, mediaTypeId, excludeStubs: true, ct);
@@ -1174,14 +1172,15 @@ public class MovieCollectionService(
                 if (oldParentId.HasValue && oldParentId.Value != collection.Id)
                     await RemoveOrphanedCollectionAsync(db, oldParentId.Value, mediaTypeId, ct);
             }
-            return ExistingMemberMatch.ReparentedReal;
+            return new ExistingMemberResult(ExistingMemberMatch.ReparentedReal, existingReal);
         }
 
         // No real item anywhere for this part -- a stub already covering it is not a reason to
         // stop looking (see this method's own 2026-09-12 doc above), only a reason not to create
         // a second, identical stub.
         var existingStub = await FindExistingMemberAsync(db, part, mediaTypeId, excludeStubs: false, ct);
-        return existingStub is not null ? ExistingMemberMatch.MatchedStub : ExistingMemberMatch.None;
+        return new ExistingMemberResult(
+            existingStub is not null ? ExistingMemberMatch.MatchedStub : ExistingMemberMatch.None, null);
     }
 
     /// <summary>Shared lookup behind <see cref="ReparentExistingMemberIfNeededAsync"/>: matches
@@ -1211,6 +1210,60 @@ public class MovieCollectionService(
         }
 
         return existing;
+    }
+
+    /// <summary>
+    /// Folds a now-redundant collection stub into the real item that replaced it, via the same
+    /// <see cref="IMergeService"/> the duplicate-cleanup UI uses -- rather than just deleting the
+    /// stub outright.
+    ///
+    /// Root-caused live (2026-09-12), the very first time the ReparentedReal cleanup above ran
+    /// for real: the stub being replaced already had months-old UserLibrary data on it (a
+    /// "Watching" status with a 9/10 rating, set back before the real file was ever scanned in).
+    /// A plain delete of the stub -- media_items.Id cascades UserLibrary, InteractionEvent, and
+    /// MediaListItem rows by design (see ChronicleDbContext's own FK config) -- silently erased
+    /// that watch status and rating instead of carrying it onto the real item, with no trace it
+    /// had ever existed. IMergeService.MergeLoadedItemsAsync already solves exactly this (it's
+    /// the same logic "Merge with..." uses): it re-points library entries, interaction history,
+    /// list memberships, credits, and external IDs onto the winner, reconciling conflicts by
+    /// rank rather than blindly overwriting, and records a reversible MediaItemMerges audit row.
+    ///
+    /// IMergeService is resolved from a fresh scope here rather than taken as a constructor
+    /// dependency -- MergeService itself depends on IMovieCollectionService (for its own
+    /// container-vs-non-container eligibility check), so a direct constructor dependency in
+    /// either direction would be a circular one the DI container can't construct. Resolving
+    /// it lazily, the same way several other services in this codebase reach a sibling service
+    /// from inside a method body, avoids that entirely -- the scope factory this class already
+    /// takes is enough.
+    /// </summary>
+    private async Task MergeRedundantStubAsync(
+        ChronicleDbContext db, MediaItem collection, MediaItem realItem, MediaItem redundantStub, CancellationToken ct)
+    {
+        await using var mergeScope = scopeFactory.CreateAsyncScope();
+        var mergeService = mergeScope.ServiceProvider.GetRequiredService<IMergeService>();
+
+        var ineligibleReason = await mergeService.CheckMergeEligibilityAsync(db, realItem, redundantStub, ct);
+        if (ineligibleReason is not null)
+        {
+            // Should not happen in practice -- both items were just confirmed to share this
+            // collection as their ParentId/HierarchyLevel=1 a moment ago -- but if it somehow
+            // does, leaving the stub in place (however redundant-looking) is strictly safer
+            // than either losing data or throwing out of a background pass.
+            logger.LogWarning(
+                "Collection {CollectionId} \"{CollectionName}\": found a real replacement for stub " +
+                "{StubId} \"{StubName}\" but they are not eligible to merge ({Reason}) -- leaving the " +
+                "stub in place rather than risk losing its data.",
+                collection.Id, collection.Name, redundantStub.Id, redundantStub.Name, ineligibleReason);
+            return;
+        }
+
+        await mergeService.MergeLoadedItemsAsync(db, realItem, redundantStub, mergedByUserId: null, ct);
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation(
+            "Merged now-redundant stub {StubId} \"{StubName}\" into real item {RealId} \"{RealName}\" for " +
+            "collection {CollectionId} \"{CollectionName}\" -- the stub's own watch status, rating, and " +
+            "interaction history (if any) now belong to the real item instead of being discarded",
+            redundantStub.Id, redundantStub.Name, realItem.Id, realItem.Name, collection.Id, collection.Name);
     }
 
     public async Task RebuildSingleCollectionAsync(
