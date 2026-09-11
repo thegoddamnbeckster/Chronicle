@@ -264,4 +264,64 @@ describe('PeopleLibraryPage', () => {
       expect(mockedGetPeople.mock.calls.length).toBeGreaterThan(callsBefore)
     }, { timeout: 2000 })
   })
+
+  // --- Regression coverage for the 2026-09-11 "infinite scroll stops for minutes, then
+  // catches up the instant you look at the tab" fix -------------------------------------
+
+  it.each(['visibilitychange', 'focus'] as const)(
+    'immediately re-checks and fetches on a %s event, without waiting for the polling backstop',
+    async eventName => {
+      // Root-caused live (2026-09-11) via peopleDebugLog: the 500ms polling backstop above is a
+      // plain setInterval, which browsers throttle almost to a stop on a backgrounded/unfocused
+      // tab -- confirmed live as several silent multi-minute gaps with zero ticks logged, each
+      // one ending in a burst of catch-up activity the instant the tab regained attention. The
+      // fix re-runs the same check on 'visibilitychange'/'focus' so returning to the tab catches
+      // it up right away instead of waiting on the very timer that just got throttled.
+      //
+      // setInterval is stubbed to a no-op here so this test can only pass via that new listener
+      // -- without the stub, the real 500ms backstop tick could coincidentally fire first and
+      // make this test pass for the wrong reason.
+      const intervalSpy = vi.spyOn(window, 'setInterval')
+        .mockReturnValue(0 as unknown as ReturnType<typeof setInterval>)
+
+      const { main } = renderPeoplePage(<PeopleLibraryPage />, { initialEntries: ['/people'] })
+      await screen.findByText('Person 0000')
+
+      const callsBefore = mockedGetPeople.mock.calls.length
+
+      // Real scrollTop moves; no 'scroll' event dispatched, and the backstop's own interval
+      // never actually runs (stubbed above) -- the only remaining path that can notice this and
+      // fetch is the new visibilitychange/focus listener.
+      Object.defineProperty(main, 'scrollTop', { configurable: true, value: 20000 })
+      const target = eventName === 'focus' ? window : document
+      target.dispatchEvent(new Event(eventName))
+
+      await waitFor(() => {
+        expect(mockedGetPeople.mock.calls.length).toBeGreaterThan(callsBefore)
+      })
+
+      intervalSpy.mockRestore()
+    },
+  )
+
+  it('does not fetch on a visibilitychange event while the tab is going hidden, not becoming visible', async () => {
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+      .mockReturnValue(0 as unknown as ReturnType<typeof setInterval>)
+    const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+
+    const { main } = renderPeoplePage(<PeopleLibraryPage />, { initialEntries: ['/people'] })
+    await screen.findByText('Person 0000')
+
+    const callsBefore = mockedGetPeople.mock.calls.length
+    Object.defineProperty(main, 'scrollTop', { configurable: true, value: 20000 })
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    // No waitFor here on purpose -- asserting a negative needs to check the settled state, not
+    // race a timeout against work that (correctly) never happens.
+    await Promise.resolve()
+    expect(mockedGetPeople.mock.calls.length).toBe(callsBefore)
+
+    visibilitySpy.mockRestore()
+    intervalSpy.mockRestore()
+  })
 })

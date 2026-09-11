@@ -429,7 +429,7 @@ export default function PeopleLibraryPage() {
       return
     }
 
-    const id = setInterval(() => {
+    const runCheck = () => {
       const main = mainScrollRef.current
       if (!main) return
       const { maxLoadedRow, minLoadedRow } = loadedRowRange(pageParams, initialPage, columnsPerRow)
@@ -462,9 +462,29 @@ export default function PeopleLibraryPage() {
         logPeopleDebug('backstop-fetch-previous')
         peopleQuery.fetchPreviousPage()
       }
-    }, 500)
+    }
 
-    return () => clearInterval(id)
+    const id = setInterval(runCheck, 500)
+    // Root-caused live (2026-09-11) via peopleDebugLog: this interval is itself subject to the
+    // exact throttling it was built to work around. Browsers suspend setInterval almost
+    // entirely on a backgrounded/unfocused tab -- confirmed live, five silent gaps (11s-135s)
+    // with zero ticks logged in any of them, each one ending in a burst of normal activity the
+    // instant the tab regained focus. Waiting on the timer alone means a stall can last as long
+    // as the tab stays backgrounded, however long that is. Re-running the same check on
+    // 'visibilitychange'/'focus' means returning attention to the tab catches it up
+    // immediately, instead of waiting on the very timer that just got throttled by that same
+    // backgrounding.
+    const onRegainedAttention = () => {
+      if (document.visibilityState === 'visible') runCheck()
+    }
+    document.addEventListener('visibilitychange', onRegainedAttention)
+    window.addEventListener('focus', onRegainedAttention)
+
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onRegainedAttention)
+      window.removeEventListener('focus', onRegainedAttention)
+    }
   }, [
     mainScrollRef, pageParams, initialPage, columnsPerRow, rowHeight, jumpTarget, jumpRequestId,
     peopleQuery.hasNextPage, peopleQuery.isFetchingNextPage, peopleQuery.fetchNextPage,
