@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
@@ -149,8 +150,23 @@ public class MetadataResolutionService(
         if (resolved.TryGetValue("deathDate", out var dd) && HasValue(dd) && DateTime.TryParse(dd.GetString(), out var ddVal))
             item.DeathDate = ddVal;
 
-        // title and year only promoted at level 0
-        if (item.HierarchyLevel == 0)
+        // title and year are promoted at level 0 (unchanged), PLUS two specific additional
+        // cases confirmed live (2026-09-11) to be real, individually-titled items that the
+        // original "level 0 only" rule wrongly starved of ever having a stale/wrong Name
+        // corrected: a TV/anime episode (level 2 -- e.g. a real episode stuck showing
+        // "Valles Marineris" from its original import despite _resolved already having the
+        // corrected "Orders of Magnitude"), and a movie belonging to a collection (level 1 for
+        // a movie-like type -- e.g. "Die Hard: With a Vengeance" never updated to the resolved
+        // "Die Hard with a Vengeance"; see NfoPushService's own "No HierarchyLevel gate for
+        // movies" doc for why a collection member is still a real, individually-titled movie).
+        // Deliberately NOT a blanket "promote above level 0 too" for every type -- audiobooks
+        // (and any other multi-level type not covered by these two vocabularies) keep their
+        // existing, intentional level-0-only behavior; see
+        // ResolveAsync_TitleAndYearNotPromotedAboveLevelZero for a level-1 type this must NOT
+        // affect.
+        var isEpisode          = NfoKindHelper.ShowLikeTypeNames.Contains(mediaTypeName)  && item.HierarchyLevel == 2;
+        var isCollectionMember = NfoKindHelper.MovieLikeTypeNames.Contains(mediaTypeName) && item.HierarchyLevel == 1;
+        if (item.HierarchyLevel == 0 || isEpisode || isCollectionMember)
         {
             if (resolved.TryGetValue("title", out var title) && HasValue(title))
                 item.Name = title.GetString()!;

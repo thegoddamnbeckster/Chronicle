@@ -479,6 +479,41 @@ public class SettingsController : ControllerBase
         return Ok(new { success = true });
     }
 
+    // ── Manual resolved-metadata recompute ──────────────────────────────────────
+    // Standalone trigger for the same ResolveAllForMediaTypeAsync the two actions above already
+    // fire as a side effect of an assignment/alias config save -- added alongside the
+    // 2026-09-11 title/year promotion fix (MetadataResolutionService.ResolveAsync) so an
+    // already-affected item (an episode or collection movie carrying a stale Name from before
+    // that fix) can be corrected without needing to touch an unrelated config just to trigger a
+    // recompute. Same admin gating and fire-and-forget background shape as those two.
+
+    public record RecomputeResolvedMetadataRequest(string MediaType);
+
+    /// <summary>POST /api/v1/settings/metadata/recompute -- re-runs ResolveAsync for every
+    /// MediaItem of the given DB media type name (e.g. "tv", "movies"), regardless of
+    /// hierarchy level. No network calls; just re-derives _resolved (and now-promotable
+    /// first-class columns like Name/Year) from already-stored plugin data.</summary>
+    [HttpPost("metadata/recompute")]
+    [Authorize(Roles = "Admin")]
+    public IActionResult RecomputeResolvedMetadata([FromBody] RecomputeResolvedMetadataRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.MediaType))
+            return BadRequest(new { error = "mediaType is required." });
+
+        var mediaType = request.MediaType;
+        _ = Task.Run(async () =>
+        {
+            try   { await _resolutionService.ResolveAllForMediaTypeAsync(mediaType); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Manual _resolved recompute failed for media type '{Type}'", mediaType);
+            }
+        }, CancellationToken.None);
+
+        return Ok(new { started = true });
+    }
+
     // ── Plugin display order ──────────────────────────────────────────────────
 
     /// <summary>

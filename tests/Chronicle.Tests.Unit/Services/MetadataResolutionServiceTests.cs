@@ -131,6 +131,66 @@ public class MetadataResolutionServiceTests
         item.Year.Should().BeNull();
     }
 
+    [Fact]
+    public async Task ResolveAsync_Episode_PromotesTitleDespiteBeingAboveLevelZero()
+    {
+        // Regression test for a real, live bug (2026-09-11): a TV episode showing a stale/wrong
+        // title from its original import ("Valles Marineris") while _resolved already had the
+        // corrected title ("Orders of Magnitude") -- because episodes sit at HierarchyLevel 2,
+        // the old "level 0 only" promotion rule never corrected MediaItem.Name, the field that
+        // actually displays as the title everywhere.
+        var item = BuildItem("tv", 2, """{"tmdb":{"title":"Orders of Magnitude","year":2026}}""");
+        item.Name = "Valles Marineris";
+
+        await ResolveWithConfig(item, "tv", 2, new()
+        {
+            ["title"] = ["tmdb"],
+            ["year"]  = ["tmdb"],
+        });
+
+        item.Name.Should().Be("Orders of Magnitude");
+        item.Year.Should().Be(2026);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_MovieInACollection_PromotesTitleDespiteBeingAboveLevelZero()
+    {
+        // Regression test for the same class of bug on the movie side: a collection member
+        // sits at HierarchyLevel 1 (the collection container itself is level 0 -- see
+        // NfoPushService's own "No HierarchyLevel gate for movies" doc), but is still a real,
+        // individually-titled movie, not a container -- unlike a TV season container, which
+        // also sits at level 1 but genuinely has no title of its own.
+        var item = BuildItem("movies", 1, """{"tmdb":{"title":"Die Hard with a Vengeance","year":1995}}""");
+        item.Name = "Die Hard: With a Vengeance";
+
+        await ResolveWithConfig(item, "movies", 1, new()
+        {
+            ["title"] = ["tmdb"],
+            ["year"]  = ["tmdb"],
+        });
+
+        item.Name.Should().Be("Die Hard with a Vengeance");
+        item.Year.Should().Be(1995);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_TvSeasonContainer_StillDoesNotPromoteTitle()
+    {
+        // A TV season sits at the SAME HierarchyLevel (1) as a movie collection member, but
+        // must NOT get this treatment -- a season has no individually-provided title the way a
+        // movie does. Guards against a too-broad fix that promotes at level 1 for every type.
+        var item = BuildItem("tv", 1, """{"tmdb":{"title":"Season 4","year":2026}}""");
+        item.Name = "Season 04";
+
+        await ResolveWithConfig(item, "tv", 1, new()
+        {
+            ["title"] = ["tmdb"],
+            ["year"]  = ["tmdb"],
+        });
+
+        item.Name.Should().Be("Season 04");
+    }
+
     // ── ResolveAsync — field-name aliasing (music sources naming the same concept differently) ──
 
     [Fact]
