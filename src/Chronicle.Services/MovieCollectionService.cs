@@ -988,21 +988,12 @@ public class MovieCollectionService(
         }
         await db.SaveChangesAsync(ct);
 
-        // Load existing ExternalIds for children of this collection to avoid duplicates.
-        var existingChildExtIds = await db.MediaExternalIds
-            .Where(e => db.MediaItems.Any(m => m.Id == e.MediaItemId && m.ParentId == collection.Id))
-            .Select(e => e.ExternalId)
-            .ToHashSetAsync(ct);
-
         int created = 0;
         var now = DateTime.UtcNow;
 
         foreach (var part in collectionMeta.Results)
         {
             if (string.IsNullOrEmpty(part.ExternalId) || string.IsNullOrEmpty(part.Title)) continue;
-
-            // Skip if a child of THIS collection already has this ExternalId.
-            if (existingChildExtIds.Contains(part.ExternalId)) continue;
 
             // The movie already exists somewhere in the DB (by ExternalId, or by normalized
             // title+year — see ReparentExistingMemberIfNeededAsync for why both checks are
@@ -1019,8 +1010,34 @@ public class MovieCollectionService(
             // reported: the collection looked like it was "missing" a movie the user
             // definitely owned, because the real file was sitting standalone, correctly
             // matched to TMDB, and simply never told to join this collection.
-            if (await ReparentExistingMemberIfNeededAsync(db, collection, part, mediaTypeId, ct))
+            var match = await ReparentExistingMemberIfNeededAsync(db, collection, part, mediaTypeId, ct);
+
+            if (match == ExistingMemberMatch.ReparentedReal)
+            {
+                // A real item just took this part's slot — if a stub was previously sitting
+                // here as this collection's own child, it's now redundant duplicate data.
+                // Root-caused live (2026-09-12): "Spider-Man: Brand New Day added to the
+                // library but not the collection" — a stub was created here first (before the
+                // user added the real movie), and nothing ever rechecked for a better real
+                // match once that stub already existed, so the two coexisted forever, with the
+                // collection page stuck showing its own "Not in your library" placeholder next
+                // to the user's actual, separately-added copy.
+                var redundantStub = await db.MediaItems.Include(m => m.ExternalIds)
+                    .FirstOrDefaultAsync(m => m.ParentId == collection.Id && m.IsStub &&
+                        m.ExternalIds.Any(e => e.ExternalId == part.ExternalId), ct);
+                if (redundantStub is not null)
+                {
+                    db.MediaExternalIds.RemoveRange(redundantStub.ExternalIds);
+                    db.MediaItems.Remove(redundantStub);
+                    await db.SaveChangesAsync(ct);
+                    logger.LogInformation(
+                        "Removed now-redundant stub {StubId} \"{Name}\" from collection {CollectionId} " +
+                        "\"{CollectionName}\" — a real library item was reparented into its place",
+                        redundantStub.Id, redundantStub.Name, collection.Id, collection.Name);
+                }
                 continue;
+            }
+            if (match == ExistingMemberMatch.MatchedStub) continue;
 
             // Save stub + ExternalId in one atomic write so the stub is never
             // visible without its ExternalId. A concurrent run seeing a stub
@@ -1078,7 +1095,6 @@ public class MovieCollectionService(
             db.MediaItems.Add(stub);
             await db.SaveChangesAsync(ct);
 
-            existingChildExtIds.Add(part.ExternalId);
             created++;
             logger.LogInformation(
                 "Created collection stub {StubId} \"{Name}\" under collection {CollectionId} \"{CollectionName}\"",
@@ -1093,12 +1109,20 @@ public class MovieCollectionService(
         return true;
     }
 
+    /// <summary>Outcome of <see cref="ReparentExistingMemberIfNeededAsync"/> — distinguishes a
+    /// genuine reparent from "already covered by a stub" so the caller can tell the two apart
+    /// (only the former means an old stub sitting in that same slot is now redundant).</summary>
+    private enum ExistingMemberMatch { None, MatchedStub, ReparentedReal }
+
     /// <summary>
-    /// If an item matching this collection part already exists elsewhere in the library -- by
-    /// ExternalId, or by normalized title+year when no ExternalId match exists -- reparents it
-    /// into <paramref name="collection"/> (unless already correctly parented there) and returns
-    /// true so the caller skips creating a duplicate stub. Returns false when no existing item
-    /// was found, meaning the caller should create a new stub instead.
+    /// If a REAL (non-stub) item matching this collection part already exists elsewhere in the
+    /// library -- by ExternalId, or by normalized title+year when no ExternalId match exists --
+    /// reparents it into <paramref name="collection"/> (unless already correctly parented there)
+    /// and returns <see cref="ExistingMemberMatch.ReparentedReal"/> so the caller skips creating
+    /// a duplicate stub. If no real item is found but a stub already covers this same part,
+    /// returns <see cref="ExistingMemberMatch.MatchedStub"/> (also skip creating a duplicate).
+    /// Returns <see cref="ExistingMemberMatch.None"/> only when nothing at all was found,
+    /// meaning the caller should create a new stub.
     ///
     /// Confirmed directly (2026-08-03): before this existed, both the ExternalId match and the
     /// title+year match below only ever skipped stub *creation* — neither actually moved the
@@ -1112,15 +1136,64 @@ public class MovieCollectionService(
     /// Story Collection"): this used to only match a REAL (non-stub) existing item, on the
     /// theory that a stub isn't trustworthy enough to reparent. But a stub is exactly what's
     /// sitting here when e.g. a PRIOR partial/interrupted collection build already created one
-    /// for this same part -- excluding stubs meant that case could never be found, so a second
-    /// stub got created for the identical ExternalId instead of just moving the first one.
-    /// Matching stubs too is strictly safer than the alternative (an actual duplicate).
+    /// for this same part -- excluding stubs entirely meant that case could never be found, so a
+    /// second stub got created for the identical ExternalId instead of just moving the first one.
+    ///
+    /// Root-caused a third, real duplicate (2026-09-12, "Spider-Man: Brand New Day"): matching
+    /// stubs unconditionally (the 2026-08-31 fix above) went too far the other way — once a stub
+    /// existed for a part, it satisfied the match immediately and a REAL item added later (the
+    /// exact scenario the 2026-08-03 fix exists for) was never even considered, leaving the two
+    /// permanently un-linked. A real item must always be preferred when one exists; matching a
+    /// stub is now strictly the fallback for "nothing real exists yet, so don't duplicate the
+    /// placeholder" — never a reason to stop looking for a real one.
     /// </summary>
-    private async Task<bool> ReparentExistingMemberIfNeededAsync(
+    private async Task<ExistingMemberMatch> ReparentExistingMemberIfNeededAsync(
         ChronicleDbContext db, MediaItem collection, MediaMetadata part, int mediaTypeId, CancellationToken ct)
     {
-        var existing = await db.MediaItems
-            .Where(m => m.MediaTypeId == mediaTypeId)
+        var existingReal = await FindExistingMemberAsync(db, part, mediaTypeId, excludeStubs: true, ct);
+
+        if (existingReal is not null)
+        {
+            // existingReal.Id == collection.Id is a paranoia guard (a part matching the
+            // container's own id shouldn't happen) -- skip actually reparenting in that case,
+            // same as an already-correctly-parented item, but still report it as handled so the
+            // caller doesn't go on to create a stub for it.
+            if (existingReal.Id != collection.Id && existingReal.ParentId != collection.Id)
+            {
+                var oldParentId = existingReal.ParentId;
+                existingReal.ParentId       = collection.Id;
+                existingReal.HierarchyLevel = 1;
+                existingReal.UpdatedAt      = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation(
+                    "Reparented existing item {ItemId} \"{Name}\" into collection {CollectionId} \"{CollectionName}\" " +
+                    "(was previously parent={OldParent}) -- found already in the library rather than creating a duplicate stub",
+                    existingReal.Id, existingReal.Name, collection.Id, collection.Name,
+                    oldParentId?.ToString() ?? "root");
+
+                if (oldParentId.HasValue && oldParentId.Value != collection.Id)
+                    await RemoveOrphanedCollectionAsync(db, oldParentId.Value, mediaTypeId, ct);
+            }
+            return ExistingMemberMatch.ReparentedReal;
+        }
+
+        // No real item anywhere for this part -- a stub already covering it is not a reason to
+        // stop looking (see this method's own 2026-09-12 doc above), only a reason not to create
+        // a second, identical stub.
+        var existingStub = await FindExistingMemberAsync(db, part, mediaTypeId, excludeStubs: false, ct);
+        return existingStub is not null ? ExistingMemberMatch.MatchedStub : ExistingMemberMatch.None;
+    }
+
+    /// <summary>Shared lookup behind <see cref="ReparentExistingMemberIfNeededAsync"/>: matches
+    /// by ExternalId first, falling back to normalized title+year when no ExternalId match
+    /// exists (see that method's own doc for why both are needed). <paramref name="excludeStubs"/>
+    /// restricts the search to real (non-stub) items only, or allows stubs too.</summary>
+    private static async Task<MediaItem?> FindExistingMemberAsync(
+        ChronicleDbContext db, MediaMetadata part, int mediaTypeId, bool excludeStubs, CancellationToken ct)
+    {
+        var byExternalId = db.MediaItems.Where(m => m.MediaTypeId == mediaTypeId);
+        if (excludeStubs) byExternalId = byExternalId.Where(m => !m.IsStub);
+        var existing = await byExternalId
             .Where(m => db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId == part.ExternalId))
             .FirstOrDefaultAsync(ct);
 
@@ -1129,35 +1202,15 @@ public class MovieCollectionService(
             var normalizedPartTitle = MediaItemNormalizer.NormalizeName(part.Title);
             if (!string.IsNullOrEmpty(normalizedPartTitle))
             {
-                var sameYearCandidates = await db.MediaItems
-                    .Where(m => m.MediaTypeId == mediaTypeId && m.Year == part.Year)
-                    .ToListAsync(ct);
+                var candidates = db.MediaItems.Where(m => m.MediaTypeId == mediaTypeId && m.Year == part.Year);
+                if (excludeStubs) candidates = candidates.Where(m => !m.IsStub);
+                var sameYearCandidates = await candidates.ToListAsync(ct);
                 existing = sameYearCandidates.FirstOrDefault(
                     m => MediaItemNormalizer.NormalizeName(m.Name) == normalizedPartTitle);
             }
         }
 
-        if (existing is null) return false;
-        if (existing.Id == collection.Id) return true; // paranoia guard, shouldn't happen
-
-        if (existing.ParentId != collection.Id)
-        {
-            var oldParentId = existing.ParentId;
-            existing.ParentId       = collection.Id;
-            existing.HierarchyLevel = 1;
-            existing.UpdatedAt      = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
-            logger.LogInformation(
-                "Reparented existing item {ItemId} \"{Name}\" into collection {CollectionId} \"{CollectionName}\" " +
-                "(was previously parent={OldParent}) -- found already in the library rather than creating a duplicate stub",
-                existing.Id, existing.Name, collection.Id, collection.Name,
-                oldParentId?.ToString() ?? "root");
-
-            if (oldParentId.HasValue && oldParentId.Value != collection.Id)
-                await RemoveOrphanedCollectionAsync(db, oldParentId.Value, mediaTypeId, ct);
-        }
-
-        return true;
+        return existing;
     }
 
     public async Task RebuildSingleCollectionAsync(

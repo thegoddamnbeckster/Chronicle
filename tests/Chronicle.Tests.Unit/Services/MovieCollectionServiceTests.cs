@@ -1165,6 +1165,122 @@ public class MovieCollectionServiceTests
             .Should().BeNullOrEmpty();
     }
 
+    // ── Existing-member matching (ReparentExistingMemberIfNeededAsync) ──────────
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_OnlyAStubExists_DoesNotCreateASecondStub()
+    {
+        // Regression coverage for the 2026-08-31 "A Christmas Story" duplicate-stub bug: a stub
+        // already covering a part must not cause a second, identical stub to be created for it.
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+
+        var stub = new MediaItem
+        {
+            Name = "Die Hard", MediaTypeId = 1, ParentId = collection.Id, HierarchyLevel = 1,
+            IsStub = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(stub);
+        await db.SaveChangesAsync();
+        stub.ExternalIds.Add(new MediaExternalId { MediaItemId = stub.Id, Source = "tmdb", ExternalId = "movie:562" });
+        await db.SaveChangesAsync();
+
+        var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 0));
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        var children = await db.MediaItems.Where(m => m.ParentId == collection.Id).ToListAsync();
+        children.Should().HaveCount(1, "the existing stub already covers this part");
+        children[0].Id.Should().Be(stub.Id);
+        children[0].IsStub.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_RealItemAddedAfterStubAlreadyExists_ReparentsRealItemAndRemovesStaleStub()
+    {
+        // Root-caused live (2026-09-12): "Spider-Man: Brand New Day added to the library but
+        // not showing in the collection" — a stub already existed for this part (created before
+        // the movie was added), and once it did, nothing ever re-checked whether a REAL item had
+        // since shown up to replace it. The two coexisted forever: the collection kept showing
+        // its own "Not in your library" stub right next to the user's actual, separately-added
+        // copy of the same movie.
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+
+        var staleStub = new MediaItem
+        {
+            Name = "Die Hard", MediaTypeId = 1, ParentId = collection.Id, HierarchyLevel = 1,
+            IsStub = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(staleStub);
+        await db.SaveChangesAsync();
+        staleStub.ExternalIds.Add(new MediaExternalId { MediaItemId = staleStub.Id, Source = "tmdb", ExternalId = "movie:562" });
+        await db.SaveChangesAsync();
+
+        // The user later adds the real movie themselves — standalone, at the root, already
+        // carrying the matching TMDB id (e.g. from their own search-and-add flow).
+        var realItem = new MediaItem
+        {
+            Name = "Die Hard", MediaTypeId = 1, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(realItem);
+        await db.SaveChangesAsync();
+        realItem.ExternalIds.Add(new MediaExternalId { MediaItemId = realItem.Id, Source = "tmdb", ExternalId = "movie:562" });
+        await db.SaveChangesAsync();
+
+        var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 0));
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        var children = await db.MediaItems.Where(m => m.ParentId == collection.Id).ToListAsync();
+        children.Should().HaveCount(1, "the stale stub must be removed once the real item takes its place");
+        children[0].Id.Should().Be(realItem.Id);
+        children[0].IsStub.Should().BeFalse();
+
+        (await db.MediaItems.AnyAsync(m => m.Id == staleStub.Id)).Should()
+            .BeFalse("the redundant stub must actually be deleted, not just left orphaned");
+    }
+
+    [Fact]
+    public async Task EnsureCollectionStubsAsync_RealItemMatchesByTitleYearOnly_ReparentsAndRemovesStaleStub()
+    {
+        // Same scenario as the ExternalId-match test above, but for the exact shape of the live
+        // repro this was root-caused against: the newly-added real item hadn't been enriched
+        // yet, so it carried no TMDB ExternalId at all — only the normalized title+year fallback
+        // (see ReparentExistingMemberIfNeededAsync's own doc) can find it.
+        var (svc, db) = CreateServiceForStubs(Guid.NewGuid().ToString());
+        var collection = await SeedCollectionAsync(db, "Die Hard Collection", "1570");
+
+        var staleStub = new MediaItem
+        {
+            Name = "Die Hard", MediaTypeId = 1, ParentId = collection.Id, HierarchyLevel = 1,
+            IsStub = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(staleStub);
+        await db.SaveChangesAsync();
+        staleStub.ExternalIds.Add(new MediaExternalId { MediaItemId = staleStub.Id, Source = "tmdb", ExternalId = "movie:562" });
+        await db.SaveChangesAsync();
+
+        var realItem = new MediaItem
+        {
+            Name = "Die Hard", Year = 1988, MediaTypeId = 1, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(realItem);
+        await db.SaveChangesAsync(); // no ExternalIds at all -- not yet enriched
+
+        var provider = StubProvider(CollectionMetadata("Die Hard Collection", posterCount: 0));
+        await svc.EnsureCollectionStubsAsync(db, collection, provider.Object,
+            allProviders: [("chronicle.plugin.tmdb", provider.Object)]);
+
+        var children = await db.MediaItems.Where(m => m.ParentId == collection.Id).ToListAsync();
+        children.Should().HaveCount(1);
+        children[0].Id.Should().Be(realItem.Id);
+        children[0].IsStub.Should().BeFalse();
+        (await db.MediaItems.AnyAsync(m => m.Id == staleStub.Id)).Should().BeFalse();
+    }
+
     // ── Direct local-write (kodi_movie_collection_folder) ───────────────────────
     // Chronicle used to only ever reach a set's local folder indirectly, as a side effect of
     // collection_sync.py running when Kodi happened to scrape a movie -- meaning a correction
