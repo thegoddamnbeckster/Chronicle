@@ -450,6 +450,61 @@ public class MetadataResolutionServiceTests
             "an item outside the subtree must keep its pin");
     }
 
+    // ── ResolveAsync — people poster_url (accumulated headshots, not the normal priority walk) ──
+
+    [Fact]
+    public async Task ResolveAsync_PersonWithNoRemainingHeadshot_ClearsTheStalePosterUrl()
+    {
+        // Regression test for a real, live bug (2026-09-11): removing a person's only headshot
+        // (e.g. a wrongly name-matched photo shared with a different real person of the same
+        // name) left MediaItem.PosterUrl stuck on that same stale value forever, no matter how
+        // many times resolution re-ran -- the promotion step only ever overwrote when a new
+        // value was found, it never cleared one when the resolved value disappeared.
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = new MediaItem
+        {
+            Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
+            PosterUrl = "https://stale.example/wrong-shared-photo.jpg",
+            MediaType = new MediaType { Id = 9, Name = "people", DisplayName = "People" },
+        };
+        db.MediaItems.Add(item);
+        await db.SaveChangesAsync();
+        // Deliberately no PersonHeadshots row at all -- simulates the wrongly-attributed one
+        // having just been removed, with no fallback (e.g. no TMDB photo) left.
+
+        var svc = BuildService("people", 0, new() { ["title"] = ["tmdb"] });
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+
+        item.PosterUrl.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PersonWithAHeadshot_PromotesItAsPosterUrl()
+    {
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = new MediaItem
+        {
+            Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
+            MediaType = new MediaType { Id = 9, Name = "people", DisplayName = "People" },
+        };
+        db.MediaItems.Add(item);
+        db.PersonHeadshots.Add(new PersonHeadshot
+        {
+            PersonMediaItemId = 1, Url = "https://example/correct-own-photo.jpg",
+            Source = "tmdb", FirstSeenAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var svc = BuildService("people", 0, new() { ["title"] = ["tmdb"] });
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+
+        item.PosterUrl.Should().Be("https://example/correct-own-photo.jpg");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static MediaItem BuildItem(string mediaTypeName, int hierarchyLevel, string metadataJson) =>

@@ -99,9 +99,18 @@ public class MetadataResolutionService(
             // always wins.
             if (assignmentField == "poster_url" && mediaTypeName == "people")
             {
+                // Always records a decision (a real URL, or an explicit JSON null) rather than
+                // simply omitting the key when there's no headshot -- confirmed live (2026-09-11)
+                // that omitting it left a person's OLD, since-invalidated PosterUrl stuck forever:
+                // the promotion step below only ever OVERWRITES when a value is found, it never
+                // clears one, so a person whose only headshot got removed (e.g. a wrongly
+                // name-matched Wikipedia photo shared with a different real person of the same
+                // name) kept showing that same wrong photo no matter how many times resolution
+                // re-ran afterward.
                 var headshotUrl = await GetLatestHeadshotUrlAsync(db, item.Id, ct);
-                if (headshotUrl is not null)
-                    resolved[canonicalKey] = JsonSerializer.SerializeToElement(headshotUrl);
+                resolved[canonicalKey] = headshotUrl is not null
+                    ? JsonSerializer.SerializeToElement(headshotUrl)
+                    : JsonSerializer.SerializeToElement((string?)null);
                 continue;
             }
 
@@ -141,6 +150,15 @@ public class MetadataResolutionService(
         // Promote first-class columns
         if (resolved.TryGetValue("posterUrl", out var poster) && HasValue(poster))
             item.PosterUrl = poster.GetString();
+        else if (mediaTypeName == "people" && resolved.ContainsKey("posterUrl"))
+            // The people-specific branch above always records a decision (see its own doc) --
+            // a present-but-valueless "posterUrl" here specifically means "no headshot exists
+            // right now", so the stale old value must be cleared, not left in place. Scoped to
+            // "people" only: no other media type's poster_url resolution makes this same
+            // explicit-absence guarantee, so leaving their existing "just don't overwrite"
+            // behavior alone avoids changing anything for movies/shows without the same
+            // verification this got.
+            item.PosterUrl = null;
         if (resolved.TryGetValue("overview", out var ov) && HasValue(ov))
             item.Overview = ov.GetString();
         if (resolved.TryGetValue("runtimeMinutes", out var rt) && rt.ValueKind == JsonValueKind.Number)
