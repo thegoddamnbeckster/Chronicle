@@ -388,13 +388,28 @@ export default function PeopleLibraryPage() {
       hasNextPage: peopleQuery.hasNextPage, isFetchingNextPage: peopleQuery.isFetchingNextPage,
     })
 
-    if (lastRow.index >= maxLoadedRow - 3 && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
-      logPeopleDebug('primary-effect-fetch-next')
-      peopleQuery.fetchNextPage()
-    }
-    if (firstRow.index <= minLoadedRow + 2 && peopleQuery.hasPreviousPage && !peopleQuery.isFetchingPreviousPage) {
-      logPeopleDebug('primary-effect-fetch-previous')
-      peopleQuery.fetchPreviousPage()
+    // Root-caused live (2026-09-11) via peopleDebugLog as the actual cause of "infinite scroll
+    // just stops, permanently, while I'm actively scrolling": when the loaded window happens to
+    // be narrower than the visible viewport (confirmed live: 6 loaded rows under a 10-row
+    // viewport, right after a jump landed with only its own single page loaded so far), BOTH
+    // conditions below go true at once. Firing fetchNextPage() and fetchPreviousPage() as two
+    // independent, unguarded `if`s let both be in flight together -- confirmed live that doing so
+    // makes each one reset/cancel the other before either ever resolves, so pageParams never
+    // grows, the loaded window never widens, both conditions stay true forever, and this effect
+    // (which reruns on every isFetchingNextPage/isFetchingPreviousPage flip, both of which are its
+    // own deps) just keeps re-firing them at each other -- a tight, synchronous loop with no
+    // stopping condition, which is what actually froze the page. Only ever starting a new fetch
+    // once neither direction is already in flight -- and picking one direction per check when both
+    // are needed, rather than both -- means the previous one always finishes and merges before the
+    // next is even attempted, so the loaded window can actually grow instead of thrashing.
+    if (!peopleQuery.isFetchingNextPage && !peopleQuery.isFetchingPreviousPage) {
+      if (lastRow.index >= maxLoadedRow - 3 && peopleQuery.hasNextPage) {
+        logPeopleDebug('primary-effect-fetch-next')
+        peopleQuery.fetchNextPage()
+      } else if (firstRow.index <= minLoadedRow + 2 && peopleQuery.hasPreviousPage) {
+        logPeopleDebug('primary-effect-fetch-previous')
+        peopleQuery.fetchPreviousPage()
+      }
     }
   }, [
     virtualRows, columnsPerRow, pageParams, initialPage, jumpTarget, jumpRequestId,
@@ -452,15 +467,21 @@ export default function PeopleLibraryPage() {
         logPeopleDebug('backstop-tick', tick)
       }
 
-      if (main.scrollTop + main.clientHeight >= loadedBottomY - rowSpan * 3
-          && peopleQuery.hasNextPage && !peopleQuery.isFetchingNextPage) {
-        logPeopleDebug('backstop-fetch-next')
-        peopleQuery.fetchNextPage()
-      }
-      if (main.scrollTop <= loadedTopY + rowSpan * 2
-          && peopleQuery.hasPreviousPage && !peopleQuery.isFetchingPreviousPage) {
-        logPeopleDebug('backstop-fetch-previous')
-        peopleQuery.fetchPreviousPage()
+      // Same "never start the opposite direction while one is already in flight" guard as the
+      // primary effect above, and for the identical reason (see that effect's own doc): a
+      // loaded window narrower than the viewport makes both conditions below true at once, and
+      // firing fetchNextPage()/fetchPreviousPage() as independent, unguarded `if`s here too would
+      // let each one cancel the other before it can ever resolve and grow the loaded window.
+      if (!peopleQuery.isFetchingNextPage && !peopleQuery.isFetchingPreviousPage) {
+        if (main.scrollTop + main.clientHeight >= loadedBottomY - rowSpan * 3
+            && peopleQuery.hasNextPage) {
+          logPeopleDebug('backstop-fetch-next')
+          peopleQuery.fetchNextPage()
+        } else if (main.scrollTop <= loadedTopY + rowSpan * 2
+            && peopleQuery.hasPreviousPage) {
+          logPeopleDebug('backstop-fetch-previous')
+          peopleQuery.fetchPreviousPage()
+        }
       }
     }
 

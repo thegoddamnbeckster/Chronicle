@@ -324,4 +324,84 @@ describe('PeopleLibraryPage', () => {
     visibilitySpy.mockRestore()
     intervalSpy.mockRestore()
   })
+
+  // --- Regression coverage for the 2026-09-11 "infinite scroll permanently freezes the page
+  // mid-scroll" fix (a distinct bug from the visibilitychange/focus one above, found the same
+  // day) -----------------------------------------------------------------------------------
+
+  it('never starts a backstop fetch in one direction while the OTHER direction is already in flight', async () => {
+    // Root-caused live (2026-09-11) via peopleDebugLog, reproduced live scrolling to a real
+    // person's actual position: this backstop (like the primary auto-load effect above it)
+    // decided whether to fetch the next page and the previous page via two independent,
+    // unguarded `if`s -- neither one considered whether the OTHER direction already had a fetch
+    // in flight. Confirmed live: once one direction starts, letting the other start too lets each
+    // one cancel/reset the other before either ever resolves and merges a page, so the loaded
+    // window never grows, both conditions stay true forever, and the surrounding effect (which
+    // reruns on every isFetchingNextPage/isFetchingPreviousPage flip) just keeps re-firing them
+    // at each other in a tight loop -- the actual freeze, with the log showing the identical
+    // firstRow/lastRow/maxLoadedRow/minLoadedRow repeating a dozen times in under 100ms.
+    //
+    // This reproduces it at the backstop layer specifically, since that layer's fetch decision
+    // reads main.scrollTop/clientHeight directly off the DOM node -- fully controllable the same
+    // way every other backstop test in this file already controls it -- rather than through
+    // @tanstack/react-virtual's own internal viewport measurement, which this jsdom environment
+    // caches at mount and doesn't visibly respond to a later clientHeight/getBoundingClientRect
+    // override.
+    const targetIndex = 400
+    mockedGetJumpPosition.mockResolvedValue({ index: targetIndex, total: TOTAL_PEOPLE })
+    const initialPageNum = Math.floor(targetIndex / PAGE_SIZE) + 1 // page 11
+    // columnsPerRow/cardWidth never leave their useState initial values in this jsdom
+    // environment (MIN_COLUMNS=3, CARD_MIN_WIDTH=170) -- the ResizeObserver that would otherwise
+    // recompute them from the grid's real measured width never fires here outside the one test
+    // that manually drives it. So a single 40-item page spans rows 133-146 (loadedRowRange):
+    // minLoadedRow = floor(10*40/3) = 133, maxLoadedRow = floor(439/3) = 146, and rowSpan =
+    // CARD_MIN_WIDTH*1.5+CARD_INFO_HEIGHT(84)+GRID_GAP(14) = 170*1.5+84+14 = 353.
+    const rowSpan = 353
+    const minLoadedRow = 133
+    const maxLoadedRow = 146
+    const loadedTopY = minLoadedRow * rowSpan // 46949
+    const loadedBottomY = (maxLoadedRow + 1) * rowSpan // 51891
+
+    // Page 11 (the jump's opening page) resolves normally; every OTHER page hangs forever --
+    // this test only needs to observe which pages get REQUESTED, never how a merge plays out.
+    const requestedPages: number[] = []
+    mockedGetPeople.mockImplementation(({ page = 1, perPage = PAGE_SIZE } = {}) => {
+      requestedPages.push(page)
+      if (page === initialPageNum) {
+        const start = (page - 1) * perPage
+        const items = Array.from({ length: perPage }, (_, i) => makePerson(start + i))
+        return Promise.resolve({ items, total: TOTAL_PEOPLE })
+      }
+      return new Promise(() => {})
+    })
+
+    const { main } = renderPeoplePage(<PeopleLibraryPage />, {
+      initialEntries: [{ pathname: '/people', state: { jumpTo: 'Person 0400' } }],
+    })
+
+    await screen.findByText('Person 0400')
+    // The page's own auto-load effect naturally requests page 10 here too (the jumped-to row
+    // sits near the start of the one loaded page) -- expected and unrelated to this test; it's
+    // exactly what puts a previous-direction fetch genuinely in flight for what follows.
+    await waitFor(() => expect(requestedPages).toContain(initialPageNum - 1))
+
+    // Directly engineer main's scroll geometry (same instance-level override pattern every other
+    // backstop test in this file already uses) so BOTH of the backstop's own conditions --
+    // "near the loaded bottom edge" and "near the loaded top edge" -- are true at once, against
+    // the still-single loaded page (pageParams stays [11]; page 10's fetch above never resolves).
+    const scrollTop = loadedTopY // comfortably satisfies scrollTop <= loadedTopY + 2*rowSpan
+    // Comfortably satisfies scrollTop+clientHeight >= loadedBottomY - 3*rowSpan.
+    const clientHeight = (loadedBottomY - 3 * rowSpan) - scrollTop + rowSpan
+    Object.defineProperty(main, 'scrollTop', { configurable: true, value: scrollTop })
+    Object.defineProperty(main, 'clientHeight', { configurable: true, value: clientHeight })
+
+    // Give the 500ms backstop interval a real tick to act on this geometry.
+    await new Promise(resolve => setTimeout(resolve, 700))
+
+    // The actual bug: with the previous-direction fetch (page 10) still unresolved and in
+    // flight, unguarded code fires the next-direction fetch (page 12) anyway. The fix wraps both
+    // branches in "only if nothing is already fetching in either direction", so page 12 must
+    // never be requested while page 10 is still outstanding.
+    expect(requestedPages).not.toContain(initialPageNum + 1)
+  })
 })
