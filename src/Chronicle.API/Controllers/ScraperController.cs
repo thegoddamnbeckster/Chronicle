@@ -524,10 +524,54 @@ public class ScraperController : ControllerBase
 
         if (item is null || item.HierarchyLevel != 2)
         {
-            item = await _context.MediaItems
-                .Where(m => m.HierarchyLevel == 2
+            // Root-caused live (2026-09-12): a bare numeric externalId (e.g. a TMDB episode id
+            // like "3335323") is short enough to turn up as a coincidental SUBSTRING inside a
+            // totally unrelated item's MetadataJson -- confirmed live against a music track
+            // whose MusicBrainz cover-art URL happened to contain "...43335323700...", matched
+            // ahead of the real TV episode purely because a blind `LIKE '%id%'` scan (with no
+            // media-type scope and no notion of a JSON key) came back with whichever row
+            // happened first in table order. Silently resolving to the wrong episode is worse
+            // than resolving to none: NfoUrl has no fallback (see this endpoint's own doc), so
+            // this single bad match was permanently capping whole shows at whatever had scanned
+            // in before their NFOs existed -- and it will keep happening for entirely NEW
+            // episodes too, not just this one-time backlog, since any short numeric id can
+            // collide with an unrelated field anywhere in the library.
+            //
+            // Fixed by reusing CollectExternalIds -- the exact same parser that derives the
+            // externalIds this endpoint's sibling (/tv/episode-details) actually sends to Kodi's
+            // NFO in the first place -- instead of a substring guess. The `LIKE` below is still
+            // there, but only as a cheap pre-filter to avoid parsing every TV/anime item's JSON
+            // on every call; the real match is the exact string comparison against the parsed
+            // ids afterward, so a coincidental digit run anywhere else in an item's MetadataJson
+            // can no longer produce a false match.
+            var showLikeTypeIds = await GetShowLikeTypeIdsAsync(ct);
+            var candidates = await _context.MediaItems
+                .Where(m => m.HierarchyLevel == 2 && showLikeTypeIds.Contains(m.MediaTypeId)
                          && m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, $"%{externalId}%"))
-                .FirstOrDefaultAsync(ct);
+                .ToListAsync(ct);
+
+            item = candidates.FirstOrDefault(m =>
+            {
+                ScraperExternalIdsDto? ids;
+                try
+                {
+                    using var doc = JsonDocument.Parse(m.MetadataJson!);
+                    ids = CollectExternalIds(doc.RootElement);
+                }
+                catch (JsonException)
+                {
+                    return false;
+                }
+                var value = sourceLower switch
+                {
+                    "imdb"  => ids?.Imdb,
+                    "tvdb"  => ids?.Tvdb,
+                    "tmdb"  => ids?.Tmdb,
+                    "trakt" => ids?.Trakt,
+                    _       => null,
+                };
+                return value == externalId;
+            });
         }
 
         if (item is null || item.HierarchyLevel != 2)

@@ -210,4 +210,60 @@ public class ScraperResolveEpisodeByExternalIdTests : IClassFixture<ChronicleApi
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
+
+    /// Root-caused live (2026-09-12), same day as the fix above: a bare numeric TMDB episode id
+    /// ("3335323") is short enough to turn up as a coincidental SUBSTRING inside a totally
+    /// unrelated item's MetadataJson -- confirmed live against a music track whose MusicBrainz
+    /// cover-art URL happened to contain "...43335323700...". The fallback used to be a blind
+    /// `LIKE '%id%'` scan with no notion of a JSON key, so it silently resolved to that wrong
+    /// item instead of the real episode -- worse than resolving to nothing at all, since NfoUrl
+    /// has no fallback of its own. The collision here is deliberately kept WITHIN the TV media
+    /// type (a different show's episode, not a different media type) so this test exercises the
+    /// exact-match fix itself, not just the HierarchyLevel/media-type scoping ResolveEpisode_
+    /// MatchIsAShowNotAnEpisode_ReturnsNotFound above already covers. Fixed by reusing
+    /// CollectExternalIds (the same parser /tv/episode-details itself uses) for an exact
+    /// comparison instead of a substring guess.
+    [Fact]
+    public async Task ResolveEpisode_IdIsSubstringOfUnrelatedEpisodesMetadata_StillFindsRealEpisode()
+    {
+        var episodeId = SeedEpisodeWithEmbeddedExternalId(
+            "Substring Collision Probe Show", seasonNumber: 1, episodeNumber: 1, "Episode 1",
+            "tmdb", "9998001");
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var tvTypeId = db.MediaTypes.First(t => t.Name == "tv").Id;
+
+            // "9998001" appears here purely as a substring of a much longer, unrelated number
+            // (a fake image-asset id) -- exactly the shape of the real MusicBrainz cover-art URL
+            // collision, just kept inside the TV media type this time.
+            var metadataJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["chronicle.plugin.tmdb"] = new Dictionary<string, object>
+                {
+                    ["thumbUrl"] = "https://image.tmdb.org/t/p/w500/asset1999980010500.jpg",
+                    ["extendedData"] = new Dictionary<string, object>
+                    {
+                        ["ids"] = new Dictionary<string, string> { ["tmdb"] = "1234567" },
+                    },
+                },
+            });
+            db.MediaItems.Add(new MediaItem
+            {
+                MediaTypeId = tvTypeId, Name = "Unrelated Episode", HierarchyLevel = 2,
+                MetadataJson = metadataJson,
+                NormalizedName = MediaItemNormalizer.NormalizeName("Unrelated Episode"),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            db.SaveChanges();
+        }
+
+        var client = await AuthClientAsync();
+        var resp = await client.GetAsync(
+            "/api/v1/scraper/tv/resolve-episode-by-external-id?source=tmdb&externalId=9998001");
+
+        resp.EnsureSuccessStatusCode();
+        (await resp.Content.ReadAsStringAsync()).Should().Contain($"\"id\":{episodeId}");
+    }
 }
