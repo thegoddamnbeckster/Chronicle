@@ -21,14 +21,19 @@ public class NfoGenerationServiceTests
 
     /// <summary>Same "real ServiceCollection so CreateScope() actually works" pattern as
     /// ScheduledScanServiceTests -- NfoGenerationService creates its own outer scope, plus one
-    /// more scope per item it processes.</summary>
+    /// more scope per item it processes. devices defaults to "no scan currently active" (a Mock
+    /// with IsScanActiveAsync unconfigured returns false) so every pre-existing test below,
+    /// written before the scan-pause check existed, keeps exercising the queue-processing path
+    /// it actually means to test.</summary>
     private static IServiceScopeFactory MakeScopeFactory(
-        ChronicleDbContext db, INfoRebuildQueueService rebuildQueue, INfoPushService nfoPush)
+        ChronicleDbContext db, INfoRebuildQueueService rebuildQueue, INfoPushService nfoPush,
+        IKodiDeviceService? devices = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(db);
         services.AddSingleton(rebuildQueue);
         services.AddSingleton(nfoPush);
+        services.AddSingleton(devices ?? Mock.Of<IKodiDeviceService>());
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 
@@ -186,5 +191,35 @@ public class NfoGenerationServiceTests
             nfoPush.Verify(p => p.TryPushAsync(row.MediaItemId, 1, It.IsAny<CancellationToken>()), Times.Once);
         rebuildQueue.Verify(
             q => q.CompleteFromGenerationAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AKodiDeviceIsActivelyScanning_SkipsTheEntireTick()
+    {
+        // Root-caused live (2026-09-12): this sweep and an active library scan's own live,
+        // per-item NFO pushes routinely landed on the same freshly-discovered item within
+        // seconds of each other, each independently rebuilding and writing the identical NFO --
+        // confirmed via server log showing every scanned item's sidecar built twice and its
+        // temp-file write losing a race against itself. Pausing the whole tick while a scan is
+        // active (see IKodiDeviceService.IsScanActiveAsync) removes the contention outright,
+        // and per-user request (2026-09-12), prevents the duplicate trigger rather than merely
+        // detecting and skipping it after the fact.
+        var db = await WithOneUserAsync(MakeDb());
+        var rebuildQueue = new Mock<INfoRebuildQueueService>();
+        rebuildQueue.Setup(q => q.GetPendingForGenerationAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([PendingRow(id: 1, mediaItemId: 100)]);
+        var nfoPush = new Mock<INfoPushService>();
+        var devices = new Mock<IKodiDeviceService>();
+        devices.Setup(d => d.IsScanActiveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var service = new NfoGenerationService(
+            MakeScopeFactory(db, rebuildQueue.Object, nfoPush.Object, devices.Object));
+        await service.ExecuteAsync(CancellationToken.None);
+
+        rebuildQueue.Verify(
+            q => q.GetPendingForGenerationAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never, "an active scan must pause the whole tick, not just filter it per-item");
+        nfoPush.Verify(
+            p => p.TryPushAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

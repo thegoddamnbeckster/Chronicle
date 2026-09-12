@@ -804,4 +804,76 @@ public class NfoRebuildQueueServiceTests : IDisposable
         await act.Should().NotThrowAsync();
         (await _db.NfoRebuildQueue.FindAsync(pending[0].Id))!.CompletedAt.Should().Be(firstCompletedAt);
     }
+
+    // ── CompleteForMediaItemAsync ────────────────────────────────────────────
+    // Root-caused live (2026-09-12): NfoPushService's own live, event-driven push and this
+    // service's scheduled generation sweep had no coordination -- during an active library
+    // scan, a freshly-discovered item was simultaneously "pending" in the queue AND being
+    // pushed live, so both independently rebuilt and wrote the identical NFO within seconds of
+    // each other. This is what the live push calls the moment it succeeds, so the item drops
+    // out of GetPendingForGenerationAsync's eligibility before the next scheduled tick ever
+    // gets a chance to redo it.
+
+    [Fact]
+    public async Task CompleteForMediaItemAsync_PendingRowExists_MarksItComplete()
+    {
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
+        });
+        await _db.SaveChangesAsync();
+        var pending = await _svc.GetPendingForGenerationAsync(batchSize: 10);
+        pending.Should().ContainSingle(p => p.MediaItemId == 100);
+
+        await _svc.CompleteForMediaItemAsync(mediaItemId: 100);
+
+        var row = await _db.NfoRebuildQueue.FirstAsync(q => q.MediaItemId == 100);
+        row.CompletedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task CompleteForMediaItemAsync_ThenGetPendingForGenerationAsync_NoLongerReturnsIt()
+    {
+        // The actual bug this fixes: without this call, the scheduled sweep's very next tick
+        // would still see the item as pending and rebuild its NFO a second, redundant time.
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
+        });
+        await _db.SaveChangesAsync();
+        await _svc.GetPendingForGenerationAsync(batchSize: 10); // seeds the queue row
+
+        await _svc.CompleteForMediaItemAsync(mediaItemId: 100);
+
+        var stillPending = await _svc.GetPendingForGenerationAsync(batchSize: 10);
+        stillPending.Should().NotContain(p => p.MediaItemId == 100);
+    }
+
+    [Fact]
+    public async Task CompleteForMediaItemAsync_NoQueueRowForThatItem_IsANoOp()
+    {
+        var act = async () => await _svc.CompleteForMediaItemAsync(mediaItemId: 999999);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task CompleteForMediaItemAsync_AlreadyCompletedRow_StaysCompletedAndDoesNotThrow()
+    {
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0,
+            MetadataJson = FileJson("Alien"),
+        });
+        await _db.SaveChangesAsync();
+        var pending = await _svc.GetPendingForGenerationAsync(batchSize: 10);
+        await _svc.CompleteFromGenerationAsync(pending[0].Id);
+        var firstCompletedAt = (await _db.NfoRebuildQueue.FindAsync(pending[0].Id))!.CompletedAt;
+
+        var act = async () => await _svc.CompleteForMediaItemAsync(mediaItemId: 100);
+
+        await act.Should().NotThrowAsync();
+        (await _db.NfoRebuildQueue.FindAsync(pending[0].Id))!.CompletedAt.Should().Be(firstCompletedAt);
+    }
 }

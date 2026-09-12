@@ -254,4 +254,19 @@ public class KodiDeviceController(
         await devices.AcknowledgeScanAsync(apiTokenId.Value, ct);
         return Ok(ApiResponse<object>.Ok(new { acknowledged = true }));
     }
+
+    /// <summary>POST /api/v1/scraper/scan-active -- heartbeat telling Chronicle "a Kodi device is
+    /// actively scanning right now," so NfoGenerationService's own scheduled sweep pauses itself
+    /// for the duration -- see IKodiDeviceService.ReportScanActivityAsync/IsScanActiveAsync's own
+    /// docs. Call once from the addon's xbmc.Monitor.onScanStarted() hook and again periodically
+    /// while a scan is still running (there's no onScanProgress callback); no explicit "finished"
+    /// endpoint by design -- the flag just expires a couple of minutes after the last heartbeat.
+    /// No API-key/registered-device requirement, same reasoning as kodi-scan-signal above: this
+    /// must work on a vanilla install with "Allow remote control via HTTP" left off.</summary>
+    [HttpPost("scan-active")]
+    public async Task<IActionResult> ReportScanActive(CancellationToken ct)
+    {
+        await devices.ReportScanActivityAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { acknowledged = true }));
+    }
 }

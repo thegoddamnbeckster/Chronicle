@@ -48,4 +48,28 @@ public interface IKodiDeviceService
     /// poll rather than wrongly marked caught-up. Creates the KodiScanAck row on first call --
     /// no prior registration required.</summary>
     Task AcknowledgeScanAsync(int apiTokenId, CancellationToken ct = default);
+
+    /// <summary>Renews a short, self-expiring "some Kodi device is actively scanning right now"
+    /// flag -- see IsScanActiveAsync's own doc for what it gates. Called by the addon's own
+    /// xbmc.Monitor.onScanStarted() hook, then again periodically for the duration of a long
+    /// scan (there is no onScanProgress callback in Kodi's own API), so the flag keeps renewing
+    /// itself for as long as a scan is genuinely still running. Deliberately a single global TTL
+    /// rather than per-device state or an explicit "finished" signal: with up to five Kodi
+    /// instances sharing one library, one device finishing first must never prematurely resume
+    /// generation while another is still mid-scan, and a device that crashes mid-scan must not
+    /// leave the flag stuck forever -- letting it simply expire a couple of minutes after the
+    /// last heartbeat handles both without any cross-device coordination.</summary>
+    Task ReportScanActivityAsync(CancellationToken ct = default);
+
+    /// <summary>True if some Kodi device renewed the scan-activity flag (see
+    /// ReportScanActivityAsync) within its own TTL. NfoGenerationService checks this at the top
+    /// of every scheduled tick and skips the whole run when true -- root-caused live
+    /// (2026-09-12): its own 2-minute sweep and an active library scan's live, per-item NFO
+    /// pushes routinely landed on the same freshly-discovered item within seconds of each other,
+    /// each independently rebuilding and writing the identical NFO (confirmed via server log:
+    /// every scanned item's sidecar built twice, its temp-file write losing a race against
+    /// itself before succeeding on retry). Pausing the scheduled sweep for the scan's own
+    /// duration removes the contention outright, and frees the exact server/IO capacity the
+    /// active scan needs most rather than competing with it for it.</summary>
+    Task<bool> IsScanActiveAsync(CancellationToken ct = default);
 }

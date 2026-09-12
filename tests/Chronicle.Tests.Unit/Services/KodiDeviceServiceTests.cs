@@ -161,5 +161,51 @@ namespace Chronicle.Tests.Unit.Services
 
             (await _context.KodiScanAcks.CountAsync(a => a.ApiTokenId == 1)).Should().Be(1);
         }
+
+        // ── Scan-active heartbeat ────────────────────────────────────────────────
+        // Root-caused live (2026-09-12): NfoGenerationService's own 2-minute scheduled sweep and
+        // an active library scan's live, per-item NFO pushes had no coordination -- both
+        // routinely rebuilt and wrote the same freshly-discovered item's NFO within seconds of
+        // each other. This flag is what NfoGenerationService checks to pause its own sweep for
+        // as long as some Kodi device keeps renewing it.
+
+        [Fact]
+        public async Task IsScanActiveAsync_BeforeAnyHeartbeat_ReturnsFalse()
+        {
+            (await _service.IsScanActiveAsync()).Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task ReportScanActivityAsync_ThenIsScanActiveAsync_ReturnsTrue()
+        {
+            await _service.ReportScanActivityAsync();
+
+            (await _service.IsScanActiveAsync()).Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task IsScanActiveAsync_PastDeadline_ReturnsFalse()
+        {
+            // Simulates the flag's own TTL having lapsed with no further heartbeat -- rather
+            // than waiting out the real TTL, write an already-past deadline directly (same
+            // storage shape ReportScanActivityAsync itself writes: an ISO-8601 "until" instant).
+            _context.AppSettings.Add(new AppSetting
+            {
+                Key = "kodi.scan_active_until",
+                Value = DateTime.UtcNow.AddMinutes(-1).ToString("O"),
+            });
+            await _context.SaveChangesAsync();
+
+            (await _service.IsScanActiveAsync()).Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task ReportScanActivityAsync_CalledTwice_RenewsRatherThanDuplicating()
+        {
+            await _service.ReportScanActivityAsync();
+            await _service.ReportScanActivityAsync();
+
+            (await _context.AppSettings.CountAsync(s => s.Key == "kodi.scan_active_until")).Should().Be(1);
+        }
     }
 }

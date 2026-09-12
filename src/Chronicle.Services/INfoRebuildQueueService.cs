@@ -122,4 +122,16 @@ public interface INfoRebuildQueueService
     /// CompleteAsync above): there is no device to attribute this completion to. No-op if
     /// queueItemId doesn't exist or is already completed.</summary>
     Task CompleteFromGenerationAsync(int queueItemId, CancellationToken ct = default);
+
+    /// <summary>Marks any not-yet-completed row(s) for this MediaItemId done because
+    /// NfoPushService's own live, event-driven push just wrote that item's NFO successfully --
+    /// see NfoPushService.TryPushAsync's own doc for why this exists: without it, an item that's
+    /// simultaneously "pending" in the queue and freshly touched by a live push (the common case
+    /// during an active library scan) gets rebuilt a second, redundant time by
+    /// NfoGenerationService's next scheduled sweep. Removing the item from eligibility here
+    /// prevents that second trigger outright rather than detecting and skipping it after the
+    /// fact. Keyed by MediaItemId, not a specific queue row id (unlike CompleteFromGenerationAsync)
+    /// since the live-push caller only ever knows the media item, never which queue row (if any)
+    /// currently represents it. No-op if no such row exists.</summary>
+    Task CompleteForMediaItemAsync(int mediaItemId, CancellationToken ct = default);
 }

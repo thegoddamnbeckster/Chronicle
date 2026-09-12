@@ -69,6 +69,20 @@ public sealed class NfoGenerationService : IScheduledTask
         using var scope  = _scopeFactory.CreateScope();
         var db           = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
         var rebuildQueue = scope.ServiceProvider.GetRequiredService<INfoRebuildQueueService>();
+        var devices      = scope.ServiceProvider.GetRequiredService<IKodiDeviceService>();
+
+        // Root-caused live (2026-09-12): this sweep and an active library scan's own live,
+        // per-item NFO pushes routinely landed on the same freshly-discovered item within
+        // seconds of each other, each independently rebuilding and writing the identical NFO --
+        // pure waste, and it competes with the scan for the exact server/IO capacity the scan
+        // needs most. See IKodiDeviceService.IsScanActiveAsync's own doc. Skipping the whole tick
+        // (rather than filtering per-item) is deliberate: if a scan is active, NOTHING here is
+        // urgent enough to contend with it -- the next tick two minutes later tries again.
+        if (await devices.IsScanActiveAsync(ct))
+        {
+            _log.Debug("NfoGenerationService: a Kodi device is actively scanning -- skipping this tick.");
+            return;
+        }
 
         // No specific triggering user for a scheduled backlog pass -- same "first user" system
         // fallback SyncOrchestrationService already uses for its own no-particular-user

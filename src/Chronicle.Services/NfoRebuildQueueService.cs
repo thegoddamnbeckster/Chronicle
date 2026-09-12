@@ -212,6 +212,19 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task CompleteForMediaItemAsync(int mediaItemId, CancellationToken ct = default)
+    {
+        var rows = await db.NfoRebuildQueue
+            .Where(q => q.MediaItemId == mediaItemId && q.CompletedAt == null)
+            .ToListAsync(ct);
+        if (rows.Count == 0) return;
+
+        var now = DateTime.UtcNow;
+        foreach (var row in rows)
+            row.CompletedAt = now;
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<int> ReseedAllAsync(CancellationToken ct = default)
     {
         // Reset every row back to pending rather than delete+reinsert -- keeps the unique

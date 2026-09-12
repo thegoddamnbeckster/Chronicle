@@ -38,6 +38,7 @@ public sealed class NfoPushService(
     ChronicleDbContext db,
     IJwtTokenService jwt,
     IHttpClientFactory httpClientFactory,
+    INfoRebuildQueueService rebuildQueue,
     ILogger<NfoPushService> logger) : INfoPushService
 {
     /// <summary>Stable id this service's own row lives under in the shared background_tasks
@@ -235,6 +236,29 @@ public sealed class NfoPushService(
             return null;
         }
         logger.LogInformation("NfoPushService: wrote NFO for item {Id} to {Path}.", mediaItemId, destPath);
+
+        // Root-caused live (2026-09-12): this live, event-driven push and NfoGenerationService's
+        // own 2-minute scheduled sweep are two independent triggers over the same rebuild queue
+        // with nothing coordinating them -- during an active library scan, a freshly-discovered
+        // item is simultaneously "pending" in the queue AND being scrobbled live by Kodi, so both
+        // paths rebuilt and wrote the identical NFO within seconds of each other (confirmed via
+        // server log: every movie's sidecar built twice, its temp-file write losing a race
+        // against itself before succeeding on retry). Marking the item's own queue row(s)
+        // complete the moment a live push actually succeeds removes it from
+        // GetPendingForGenerationAsync's eligibility outright, so the next scheduled tick simply
+        // never sees it -- the duplicate trigger is prevented, not detected-and-skipped after the
+        // fact. Best-effort: a failure here must never turn an already-successful NFO write into
+        // a reported push failure.
+        try
+        {
+            await rebuildQueue.CompleteForMediaItemAsync(mediaItemId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "NfoPushService: wrote item {Id}'s NFO but couldn't mark its rebuild-queue row " +
+                "complete -- the next scheduled sweep may redundantly rebuild it once more.", mediaItemId);
+        }
 
         // No JSON-RPC refresh push from here on -- see this class's own doc for why. The NFO
         // write itself succeeding is the meaningful outcome; Kodi's own scan/refresh cadence, or

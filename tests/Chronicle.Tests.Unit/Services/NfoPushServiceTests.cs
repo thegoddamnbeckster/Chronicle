@@ -15,6 +15,7 @@ namespace Chronicle.Tests.Unit.Services
     {
         private readonly ChronicleDbContext _context;
         private readonly Mock<IJwtTokenService> _jwtMock = new();
+        private readonly Mock<INfoRebuildQueueService> _rebuildQueueMock = new();
         private readonly string _tempDir;
 
         private const int MovieTypeId = 1;
@@ -51,6 +52,7 @@ namespace Chronicle.Tests.Unit.Services
         private NfoPushService BuildService(byte[] sidecarResponseBytes) =>
             new(_context, _jwtMock.Object,
                 new StubHttpClientFactory(new StubSidecarHandler(sidecarResponseBytes)),
+                _rebuildQueueMock.Object,
                 Mock.Of<ILogger<NfoPushService>>());
 
         private static string FileScannerMetadataJson(string? folderPath, string[]? filePaths, string? nfoPath = null) =>
@@ -101,6 +103,32 @@ namespace Chronicle.Tests.Unit.Services
             await service.PushAsync(mediaItemId: 200, userId: 1);
 
             File.Exists(Path.Combine(_tempDir, "tvshow.nfo")).Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task TryPushAsync_SuccessfulWrite_CompletesTheItemsRebuildQueueRow()
+        {
+            // Root-caused live (2026-09-12): NfoGenerationService's own 2-minute scheduled sweep
+            // and this live, event-driven push had no coordination -- during an active library
+            // scan, a freshly-discovered item was simultaneously "pending" in the rebuild queue
+            // AND being pushed live, so both independently rebuilt and wrote the identical NFO
+            // within seconds of each other. Marking the item's own queue row(s) complete the
+            // moment a live push actually succeeds is what prevents the next scheduled tick from
+            // redundantly doing it again -- see CompleteForMediaItemAsync's own doc.
+            var item = new MediaItem
+            {
+                Id = 220, Name = "Test Show 2", MediaTypeId = ShowTypeId, HierarchyLevel = 0,
+                MetadataJson = FileScannerMetadataJson(_tempDir, null),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            _context.MediaItems.Add(item);
+            await _context.SaveChangesAsync();
+
+            var service = BuildService("<tvshow><title>Test Show 2</title></tvshow>"u8.ToArray());
+            var outcome = await service.TryPushAsync(mediaItemId: 220, userId: 1);
+
+            outcome.Should().BeTrue();
+            _rebuildQueueMock.Verify(q => q.CompleteForMediaItemAsync(220, It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [Fact]
@@ -244,6 +272,7 @@ namespace Chronicle.Tests.Unit.Services
 
             var service = new NfoPushService(_context, _jwtMock.Object,
                 new StubHttpClientFactory(new StubFailingSidecarHandler()),
+                _rebuildQueueMock.Object,
                 Mock.Of<ILogger<NfoPushService>>());
             var outcome = await service.TryPushAsync(mediaItemId: 502, userId: 1);
 

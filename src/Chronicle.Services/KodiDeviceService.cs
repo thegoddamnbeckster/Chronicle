@@ -10,6 +10,12 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
     // Single global key -- see SignalNewContentAsync's own doc for why this isn't per-device or
     // per-media-type.
     private const string NewContentSignalKey = "kodi.new_content_signaled_at";
+
+    // See ReportScanActivityAsync/IsScanActiveAsync's own docs. Stores the deadline (now + TTL)
+    // directly, not just the last-heartbeat time, so IsScanActiveAsync is a single string
+    // comparison with no TimeSpan arithmetic of its own.
+    private const string ScanActiveUntilKey = "kodi.scan_active_until";
+    private static readonly TimeSpan ScanActivityTtl = TimeSpan.FromMinutes(3);
     public async Task RegisterAsync(int userId, int apiTokenId, string name, string host, int port,
         string? username, string? password, CancellationToken ct = default)
     {
@@ -149,5 +155,25 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
             existing.LastAckAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    public async Task ReportScanActivityAsync(CancellationToken ct = default)
+    {
+        var until = DateTime.UtcNow.Add(ScanActivityTtl).ToString("O");
+        var setting = await db.AppSettings.FindAsync([ScanActiveUntilKey], ct);
+        if (setting is null)
+            db.AppSettings.Add(new AppSetting { Key = ScanActiveUntilKey, Value = until });
+        else
+            setting.Value = until;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<bool> IsScanActiveAsync(CancellationToken ct = default)
+    {
+        var setting = await db.AppSettings.FindAsync([ScanActiveUntilKey], ct);
+        if (setting is null || !DateTime.TryParse(setting.Value, null,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var until))
+            return false;
+        return DateTime.UtcNow < until;
     }
 }
