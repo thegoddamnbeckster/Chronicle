@@ -355,6 +355,66 @@ public class ScraperController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// Resolves a show by external id (e.g. imdb "tt27497393") to Chronicle's own internal item
+    /// id -- the lookup Kodi's "getartwork" action needs that "find"/"getdetails" never do, since
+    /// those two instead exchange the addon's own opaque lookup string (see
+    /// tv_addon/python/tvshow_scraper.py's _resolve_lookup_id doc for why getartwork is
+    /// different). Root-caused live (2026-09-12): Kodi's own getartwork call passes back the
+    /// show's default uniqueid (imdb, since Chronicle's own NFOs always mark it default="true")
+    /// as a bare string like "tt27497393" -- neither a Chronicle internal id nor the addon's own
+    /// lookup-string format, so every getartwork call failed to resolve anything and Kodi's
+    /// "Choose Art" picker showed zero options for every TV show, for every user, always.
+    ///
+    /// imdb/tvdb/trakt need a second lookup path a plain MediaExternalIds query can't serve:
+    /// unlike tmdb/tvmaze/fanarttv/simkl/wikipedia (each persisted as its own row when Chronicle
+    /// records "this item came from provider X with id Y"), imdb/tvdb/trakt are cross-reference
+    /// ids CollectExternalIds derives on the fly from a provider's own embedded extendedData --
+    /// see that method's own doc. Confirmed live: Stuart Fails to Save the Universe's own row in
+    /// media_external_ids has tmdb/tvmaze/fanarttv/simkl/wikipedia entries but no "imdb" row at
+    /// all, even though /tv/details correctly reports its imdb id (derived, not stored) -- a
+    /// first version of this endpoint that only queried MediaExternalIds 404'd on every single
+    /// show for exactly this reason, including ones Chronicle fully knows. Falls back to a text
+    /// search over the bounded show-type candidate set instead of a second persisted table.
+    /// </summary>
+    [HttpGet("tv/resolve-by-external-id")]
+    public async Task<IActionResult> ResolveShowByExternalId(
+        [FromQuery] string source, [FromQuery] string externalId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(externalId))
+            return BadRequest(ApiResponse<object>.Fail(
+                "EXTERNAL_ID_REQUIRED", "source and externalId are both required."));
+
+        var sourceLower = source.ToLowerInvariant();
+        var showLikeTypeIds = await GetShowLikeTypeIdsAsync(ct);
+
+        var item = await _context.MediaExternalIds
+            .Where(x => x.Source == sourceLower && x.ExternalId == externalId)
+            .Select(x => x.MediaItem)
+            .FirstOrDefaultAsync(ct);
+
+        if (item is null && sourceLower is "imdb" or "tvdb" or "trakt")
+        {
+            item = await _context.MediaItems
+                .Where(m => showLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0
+                         && m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, $"%{externalId}%"))
+                .FirstOrDefaultAsync(ct);
+        }
+
+        if (item is null || !showLikeTypeIds.Contains(item.MediaTypeId) || item.HierarchyLevel != 0)
+            return NotFound(ApiResponse<object>.Fail(
+                "MEDIA_NOT_FOUND", $"No show found for {source}:{externalId}."));
+
+        var resolved = ParseResolvedCore(item.MetadataJson);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id        = item.Id,
+            title     = resolved?.Title ?? item.Name,
+            year      = resolved?.Year ?? item.Year,
+            posterUrl = resolved?.PosterUrl ?? item.PosterUrl,
+        }));
+    }
+
     /// <summary>Kodi's "getdetails" step for TV shows: show-level info plus every season Chronicle already has.</summary>
     [HttpGet("tv/details")]
     public async Task<IActionResult> GetShowDetails([FromQuery] int id, CancellationToken ct)
