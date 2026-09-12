@@ -1170,82 +1170,102 @@ namespace Chronicle.Services
         private static readonly System.Text.RegularExpressions.Regex _yearSegmentRegex =
             new(@"^\((\d{4})\)$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
+        /// <summary>Strips a trailing " (YYYY)"/" [YYYY]" from a title, or returns it unchanged
+        /// if it has none. Shared by TitleMatchVariants below and UpsertGroupItemAsync's own
+        /// tertiary name-match tier -- both need "does this title match that title, ignoring an
+        /// embedded year suffix" and, until 2026-09-12, each had its own independently-written
+        /// copy of this exact regex.</summary>
+        private static string StripTrailingYearSuffix(string title) =>
+            _trailingYearInTitle.Replace(title, string.Empty).Trim();
+
         /// <summary>
-        /// Looks up a media item by title (and optionally year), trying several normalised
-        /// variants so that file-scanner titles (e.g. <c>Movie - Subtitle (2025)</c>) and
-        /// canonical metadata titles (e.g. <c>Movie: Subtitle</c>) resolve to the same row.
+        /// Every normalized string worth trying when matching a scanned/parsed title against an
+        /// existing item's stored Name -- literal, colon/dash punctuation swap (covers
+        /// <c>"Movie - Subtitle"</c> vs <c>"Movie: Subtitle"</c>), each of those with a trailing
+        /// " (YYYY)"/" [YYYY]" stripped, and with a trailing disambiguating parenthetical
+        /// stripped (e.g. Wikipedia's own <c>"Dogma (film)"</c> for the already-catalogued
+        /// <c>"Dogma"</c>, root-caused as a real duplicate 2026-08-30). Order matches how
+        /// FindByTitleAsync below tries them: most-literal first.
         ///
-        /// Variants tried in order:
-        ///   1. Literal title
-        ///   2. Colon-variant  (" - " → ": ")
-        ///   3. Dash-variant   (": " → " - ")
-        ///   4–6. The same three variants with any trailing " (YYYY)" / " [YYYY]" stripped
+        /// This used to be duplicated rather than shared: FindByTitleAsync had this full cascade,
+        /// while UpsertGroupItemAsync's own tertiary name-match tier had only ever grown a lone
+        /// year-suffix strip -- no colon/dash handling, no deparenthesizing. Root-caused live
+        /// (2026-09-12) as the exact class of drift two independent copies of "the same job"
+        /// invites: a movie already sitting in a collection ("The Mouse Trap", HierarchyLevel 1)
+        /// had its folder renamed on disk, and the flat movie-scan path's own bug (see
+        /// FindByTitleAsync's HierarchyLevel doc) meant this was the only cascade that could have
+        /// found it again -- it never got the chance, because movies never reach
+        /// UpsertGroupItemAsync's copy in the first place. Consolidating the STRING-MATCHING
+        /// definition here doesn't merge the two outer methods (they genuinely serve different
+        /// scan shapes -- one flat per-file movie lookup, one bulk in-memory candidate list for a
+        /// hierarchical TV/audiobook scan pass -- and forcing those into one function would trade
+        /// a real duplication bug for a worse one), but it guarantees both now try the exact same
+        /// definition of "these two titles are the same title," so a future fix to what counts as
+        /// a match only ever has to be made once.
+        /// </summary>
+        private static IReadOnlyList<string> TitleMatchVariants(string title)
+        {
+            var variants = new List<string>();
+            void Add(string t)
+            {
+                if (!string.IsNullOrEmpty(t) && !variants.Contains(t, StringComparer.Ordinal))
+                    variants.Add(t);
+            }
+            void AddWithPunctuationSwap(string t)
+            {
+                Add(t);
+                Add(t.Replace(" - ", ": "));
+                Add(t.Replace(": ", " - "));
+            }
+
+            AddWithPunctuationSwap(title);
+
+            var yearStripped = StripTrailingYearSuffix(title);
+            if (yearStripped != title)
+                AddWithPunctuationSwap(yearStripped);
+
+            var deparenthesized = _trailingParenthetical.Replace(title, string.Empty).Trim();
+            if (deparenthesized != title && deparenthesized.Length > 0)
+                AddWithPunctuationSwap(deparenthesized);
+
+            return variants;
+        }
+
+        /// <summary>
+        /// Looks up a media item by title (and optionally year), trying every variant
+        /// TitleMatchVariants generates so that file-scanner titles (e.g.
+        /// <c>Movie - Subtitle (2025)</c>) and canonical metadata titles (e.g.
+        /// <c>Movie: Subtitle</c>) resolve to the same row.
         /// </summary>
         private async Task<MediaItem?> FindByTitleAsync(
             string title, int mediaTypeId, int? year, CancellationToken ct)
         {
-            var colonTitle = title.Replace(" - ", ": ");
-            var dashTitle  = title.Replace(": ", " - ");
-
+            // HierarchyLevel <= 1, not == 0 (every level check in this method) -- root-caused
+            // live (2026-09-12): a movie that's already a collection member (HierarchyLevel 1,
+            // e.g. "The Mouse Trap" sitting inside a "Bad Movies" collection) was completely
+            // invisible to this whole method, no matter how exact the title/year match was. Its
+            // folder had been renamed on disk weeks earlier, so this was the ONLY path that could
+            // have found it again -- the file-path and external-id tiers in FindExistingItemAsync
+            // both miss a renamed folder by design. Every rescan since silently created a fresh
+            // ROOT-level duplicate instead of reconciling the existing one, confirmed live by
+            // triggering a real scan and watching it happen. The two hierarchy levels a movie can
+            // ever actually be at are 0 (standalone) and 1 (collection member) -- this method is
+            // never reached for a 3-level type (TV/anime/audiobooks route through
+            // ScanHierarchicalAsync instead, see ScanAsync's own doc) -- so <= 1 covers every
+            // legitimate case without risking a match against something structurally different.
+            //
             // Use lower() == lower() for case-insensitive exact matching.
             // EF.Functions.Like was previously used here but treats '%' and '_' in titles
             // as SQL wildcards, producing incorrect matches for titles such as "100% Hotter".
-            foreach (var variant in new[] { title, colonTitle, dashTitle }.Distinct(StringComparer.Ordinal))
+            foreach (var variant in TitleMatchVariants(title))
             {
                 var variantLower = variant.ToLowerInvariant();
                 var hit = await _context.MediaItems.FirstOrDefaultAsync(
                     m => m.MediaTypeId == mediaTypeId
-                      && m.HierarchyLevel == 0
+                      && m.HierarchyLevel <= 1
                       && (year == null || m.Year == year)
                       && m.Name.ToLower() == variantLower, ct);
                 if (hit is not null) return hit;
-            }
-
-            // Strip embedded trailing year (e.g. "Title (2026)") and retry all three variants.
-            var stripped = _trailingYearInTitle.Replace(title, string.Empty).Trim();
-            if (stripped != title)
-            {
-                var strippedColon = stripped.Replace(" - ", ": ");
-                var strippedDash  = stripped.Replace(": ", " - ");
-
-                foreach (var variant in new[] { stripped, strippedColon, strippedDash }.Distinct(StringComparer.Ordinal))
-                {
-                    var variantLower = variant.ToLowerInvariant();
-                    var hit = await _context.MediaItems.FirstOrDefaultAsync(
-                        m => m.MediaTypeId == mediaTypeId
-                          && m.HierarchyLevel == 0
-                          && (year == null || m.Year == year)
-                          && m.Name.ToLower() == variantLower, ct);
-                    if (hit is not null) return hit;
-                }
-            }
-
-            // Strip a trailing parenthetical disambiguator (e.g. "Dogma (film)", "Chosen (TV
-            // series)") and retry all three variants. Root-caused a real duplicate (2026-08-30):
-            // Wikipedia's own article title for a movie is often its disambiguated form ("Dogma"
-            // is a disambiguation page there; the film's article is "Dogma (film)"), which never
-            // matched the already-catalogued "Dogma" and created a second MediaItem instead of
-            // reusing it. Deliberately generic (any trailing "(...)", not a hardcoded list of
-            // known disambiguator words) so it isn't a Wikipedia-specific patch -- same technique
-            // as the trailing-year strip above, just one token class wider. Still scoped to the
-            // same media type + year as every other variant here, which keeps the false-positive
-            // risk in line with the colon/dash variants already tried.
-            var deparenthesized = _trailingParenthetical.Replace(title, string.Empty).Trim();
-            if (deparenthesized != title && deparenthesized.Length > 0)
-            {
-                var deparenColon = deparenthesized.Replace(" - ", ": ");
-                var deparenDash  = deparenthesized.Replace(": ", " - ");
-
-                foreach (var variant in new[] { deparenthesized, deparenColon, deparenDash }.Distinct(StringComparer.Ordinal))
-                {
-                    var variantLower = variant.ToLowerInvariant();
-                    var hit = await _context.MediaItems.FirstOrDefaultAsync(
-                        m => m.MediaTypeId == mediaTypeId
-                          && m.HierarchyLevel == 0
-                          && (year == null || m.Year == year)
-                          && m.Name.ToLower() == variantLower, ct);
-                    if (hit is not null) return hit;
-                }
             }
 
             // Final fallback: normalize both sides (strips all punctuation/separators).
@@ -1257,7 +1277,7 @@ namespace Chronicle.Services
             {
                 var hit = await _context.MediaItems.FirstOrDefaultAsync(
                     m => m.MediaTypeId == mediaTypeId
-                      && m.HierarchyLevel == 0
+                      && m.HierarchyLevel <= 1
                       && (year == null || m.Year == year)
                       && m.NormalizedName == normalizedTitle, ct);
                 if (hit is not null) return hit;
@@ -1265,6 +1285,18 @@ namespace Chronicle.Services
 
             return null;
         }
+
+        /// <summary>Exposed for unit testing only -- lets a test exercise the real
+        /// FindByTitleAsync (the flat-scan movie title/year matcher) directly, without needing a
+        /// full ScanAsync call (which requires a real on-disk directory for its own
+        /// Directory.Exists check up front).</summary>
+        internal Task<MediaItem?> FindByTitleAsyncForTest(
+            string title, int mediaTypeId, int? year, CancellationToken ct = default) =>
+            FindByTitleAsync(title, mediaTypeId, year, ct);
+
+        /// <summary>Exposed for unit testing only.</summary>
+        internal static IReadOnlyList<string> TitleMatchVariantsForTest(string title) =>
+            TitleMatchVariants(title);
 
         private async Task<MediaItem> CreateStubItemAsync(
             Chronicle.Plugins.Models.ScannedFile file, int mediaTypeId, CancellationToken ct)
@@ -3136,7 +3168,12 @@ namespace Chronicle.Services
             }
 
             // Tertiary: match by name (covers items where neither filePaths nor folderPath matched).
-            // Strip trailing "(YYYY)" from both sides so "Show (2016)" and "Show" deduplicate.
+            // Tries every variant TitleMatchVariants generates (colon/dash swap, year-suffix
+            // strip, deparenthesized) against each candidate's own year-stripped Name -- until
+            // 2026-09-12 this only ever stripped the year and compared literally, missing the
+            // colon/dash and deparenthesizing cases FindByTitleAsync's own copy already had (see
+            // TitleMatchVariants' own doc for why these two independent copies of "the same job"
+            // existed at all, and why only one of them getting a given fix was a real live bug).
             //
             // Root items (hierarchyLevel == 0) stay unscoped by parentId — same reasoning as the
             // folderPath check above: a movie can legitimately be reparented into/out of a
@@ -3154,18 +3191,20 @@ namespace Chronicle.Services
             // external IDs during enrichment (MetadataEnrichmentService derives an episode's ID
             // from its grandparent's stored ExternalId). A whole Star Trek: TNG season was
             // misfiled under Rick and Morty's Season 04 this way, in one real run.
-            var groupNameClean = System.Text.RegularExpressions.Regex
-                .Replace(group.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
+            var groupNameClean = StripTrailingYearSuffix(group.Name ?? "");
             var nameCandidates = await _context.MediaItems
                 .Where(m => m.MediaTypeId == mediaTypeId &&
                             (hierarchyLevel == 0 || (m.ParentId == parentId && m.HierarchyLevel == hierarchyLevel)))
                 .ToListAsync(ct);
-            existing ??= nameCandidates.FirstOrDefault(m =>
+            if (existing is null)
             {
-                var dbNameClean = System.Text.RegularExpressions.Regex
-                    .Replace(m.Name ?? "", @"\s*\(\d{4}\)\s*$", "").Trim();
-                return string.Equals(dbNameClean, groupNameClean, StringComparison.OrdinalIgnoreCase);
-            });
+                var groupVariants = TitleMatchVariants(group.Name ?? "");
+                existing = nameCandidates.FirstOrDefault(m =>
+                {
+                    var dbNameClean = StripTrailingYearSuffix(m.Name ?? "");
+                    return groupVariants.Any(v => string.Equals(v, dbNameClean, StringComparison.OrdinalIgnoreCase));
+                });
+            }
 
             // Quaternary: resolve a merged-away name via MediaItemAlias. UpsertGroupItemAsync
             // is a SEPARATE implementation from FindOrCreateParentAsync (used by

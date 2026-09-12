@@ -569,4 +569,141 @@ public class FileScanServiceHierarchyTests
 
         Assert.Empty(groups);
     }
+
+    // ── FindByTitleAsync (flat movie-scan title/year matcher) ───────────────────
+
+    [Fact]
+    public async Task FindByTitleAsync_MatchesACollectionMemberMovie_NotJustRootLevel()
+    {
+        // Root-caused live (2026-09-12): this query hard-coded HierarchyLevel == 0, so a movie
+        // already sitting inside a collection (HierarchyLevel 1 -- e.g. "The Mouse Trap" in a
+        // "Bad Movies" collection) was completely invisible to it, no matter how exact the
+        // title/year match was. Confirmed live by renaming that movie's real folder on disk and
+        // triggering a real scan: instead of reconciling the existing item, it silently created
+        // a brand-new root-level duplicate every time, since this was the only remaining tier
+        // that could have found the renamed folder's file again (the file-path and external-id
+        // tiers both miss a rename by design).
+        await using var context = NewInMemoryContext();
+        var movieType = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 2, CreatedAt = DateTime.UtcNow };
+        context.MediaTypes.Add(movieType);
+
+        var collection = new MediaItem { Id = 100, MediaTypeId = 1, Name = "Bad Movies Collection", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var movie = new MediaItem
+        {
+            Id = 101, MediaTypeId = 1, ParentId = 100, HierarchyLevel = 1,
+            Name = "The Mouse Trap", Year = 2024, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        context.MediaItems.AddRange(collection, movie);
+        await context.SaveChangesAsync();
+
+        var service = new FileScanService(context, Mock.Of<IPluginRegistry>(), null!, null!, new ImportProgressService(), null!);
+
+        var hit = await service.FindByTitleAsyncForTest("The Mouse Trap", mediaTypeId: 1, year: 2024);
+
+        Assert.NotNull(hit);
+        Assert.Equal(movie.Id, hit!.Id);
+    }
+
+    [Fact]
+    public async Task FindByTitleAsync_DoesNotMatchAMovieOfADifferentMediaType()
+    {
+        // Sanity check on the same relaxed HierarchyLevel <= 1 filter: it must stay scoped to
+        // mediaTypeId, not become a blanket "any item at level 0 or 1" match.
+        await using var context = NewInMemoryContext();
+        var movieType = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 2, CreatedAt = DateTime.UtcNow };
+        var tvType    = new MediaType { Id = 2, Name = "tv", DisplayName = "TV", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
+        context.MediaTypes.AddRange(movieType, tvType);
+
+        var show = new MediaItem { Id = 200, MediaTypeId = 2, Name = "Chosen", Year = 2024, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        context.MediaItems.Add(show);
+        await context.SaveChangesAsync();
+
+        var service = new FileScanService(context, Mock.Of<IPluginRegistry>(), null!, null!, new ImportProgressService(), null!);
+
+        var hit = await service.FindByTitleAsyncForTest("Chosen", mediaTypeId: 1, year: 2024);
+
+        Assert.Null(hit);
+    }
+
+    // ── TitleMatchVariants (shared by FindByTitleAsync and UpsertGroupItemAsync) ─
+
+    [Theory]
+    [InlineData("Movie - Subtitle", "Movie: Subtitle")]
+    [InlineData("Movie: Subtitle", "Movie - Subtitle")]
+    public void TitleMatchVariants_IncludesThePunctuationSwappedForm(string input, string expectedVariant)
+    {
+        var variants = FileScanService.TitleMatchVariantsForTest(input);
+
+        Assert.Contains(expectedVariant, variants);
+    }
+
+    [Fact]
+    public void TitleMatchVariants_IncludesTheYearStrippedForm()
+    {
+        var variants = FileScanService.TitleMatchVariantsForTest("Some Movie (2026)");
+
+        Assert.Contains("Some Movie", variants);
+    }
+
+    [Fact]
+    public void TitleMatchVariants_IncludesTheDeparenthesizedForm()
+    {
+        // Root-caused live (2026-08-30): Wikipedia's own article title for a movie is often its
+        // disambiguated form ("Dogma (film)"), which never matched the already-catalogued
+        // "Dogma" before this variant existed.
+        var variants = FileScanService.TitleMatchVariantsForTest("Dogma (film)");
+
+        Assert.Contains("Dogma", variants);
+    }
+
+    [Fact]
+    public void TitleMatchVariants_NoSpecialPunctuationOrSuffix_ReturnsJustTheLiteralTitle()
+    {
+        var variants = FileScanService.TitleMatchVariantsForTest("Plain Title");
+
+        Assert.Single(variants);
+        Assert.Equal("Plain Title", variants[0]);
+    }
+
+    // ── UpsertGroupItemAsync's own tertiary tier now shares TitleMatchVariants ──
+
+    [Fact]
+    public async Task ImportGroupsAsync_MatchesAnExistingItemByColonDashVariant_NotJustLiteralYearStrip()
+    {
+        // Before the two independent "match by title" implementations were consolidated
+        // (2026-09-12), this tier only ever stripped a trailing year and compared literally --
+        // it had never grown FindByTitleAsync's own colon/dash-swap handling. A season/show
+        // whose stored name uses one punctuation convention while the freshly scanned folder
+        // uses the other would previously create a duplicate here; it must now reconcile to the
+        // same existing item instead.
+        await using var context = NewInMemoryContext();
+        var movieType = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        context.MediaTypes.Add(movieType);
+
+        var existing = new MediaItem
+        {
+            Id = 300, MediaTypeId = 1, Name = "Movie: Subtitle", HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        context.MediaItems.Add(existing);
+        await context.SaveChangesAsync();
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var request = new ImportGroupsRequest(
+            [
+                new ScanGroupImport(
+                    Name: "Movie - Subtitle", Year: null, PosterPath: null,
+                    Children: [], Files: [@"F:\Videos\Movies\Movie - Subtitle\Movie - Subtitle.mkv"]),
+            ],
+            MediaTypeId: 1);
+
+        await service.ImportGroupsAsync(request, userIds: [1], manageProgress: false);
+
+        var allMovies = await context.MediaItems.Where(m => m.MediaTypeId == 1).ToListAsync();
+        Assert.Single(allMovies);
+        Assert.Equal(existing.Id, allMovies[0].Id);
+    }
 }
