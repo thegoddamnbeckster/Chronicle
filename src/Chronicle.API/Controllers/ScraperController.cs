@@ -415,6 +415,81 @@ public class ScraperController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// Resolves a single EPISODE by external id (e.g. tmdb "3455959") to Chronicle's own
+    /// internal item id -- the counterpart ResolveShowByExternalId provides for shows, needed
+    /// for the exact same reason: Kodi's episode-level "NfoUrl" action hands the addon a raw
+    /// episode NFO with only that NFO's own embedded ids, never a Chronicle lookup string and
+    /// -- root-caused live (2026-09-12) -- never any identifying context for which SHOW the
+    /// episode belongs to either (confirmed via captured params: action/nfo/pathSettings only,
+    /// no folder path, no show title). A show/season/episode-number guess would risk matching
+    /// the wrong show entirely when Kodi is scraping several shows concurrently (confirmed via
+    /// kodi.log: each NfoUrl/getdetails call for what a human would call "the same show" lands
+    /// on a different worker thread, so there is no thread-local way to correlate an episode
+    /// call back to the show call that preceded it either) -- resolving by the episode's OWN
+    /// globally-unique external id sidesteps needing that context at all.
+    ///
+    /// This is the fix for a real household show stuck at 5 of 38 episodes no matter how many
+    /// times it was rescanned, restarted, or removed-and-rescanned from Kodi's library: once
+    /// Chronicle's own write_nfo feature had written a sidecar .nfo next to EVERY episode file,
+    /// Kodi began firing episode-level NfoUrl for every one of them -- and unlike a failed
+    /// SHOW-level NfoUrl (confirmed live to fall back cleanly to Kodi's normal find/getepisode-
+    /// list flow), a failed EPISODE-level NfoUrl does NOT fall back: kodi.log showed Kodi
+    /// abandoning the rest of that show's episode scan entirely after the very first episode's
+    /// NfoUrl call came back empty, rather than proceeding to ask for getepisodelist/getepisode-
+    /// details normally. With every episode NFO'd, that first failure landed on episode 1 every
+    /// time, silently capping the show at whatever had scanned in before its NFOs existed.
+    ///
+    /// Unlike the show endpoint, episode-level ids are not known to reliably land in
+    /// MediaExternalIds (episodes created by EnsureEpisodesResolvedAsync's lightweight stub
+    /// path never get a row there at all -- see StampProviderPartition), so every source falls
+    /// back to the MetadataJson text search, not just imdb/tvdb/trakt.
+    /// </summary>
+    [HttpGet("tv/resolve-episode-by-external-id")]
+    public async Task<IActionResult> ResolveEpisodeByExternalId(
+        [FromQuery] string source, [FromQuery] string externalId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(externalId))
+            return BadRequest(ApiResponse<object>.Fail(
+                "EXTERNAL_ID_REQUIRED", "source and externalId are both required."));
+
+        var sourceLower = source.ToLowerInvariant();
+
+        var item = await _context.MediaExternalIds
+            .Where(x => x.Source == sourceLower && x.ExternalId == externalId)
+            .Select(x => x.MediaItem)
+            .FirstOrDefaultAsync(ct);
+
+        if (item is null || item.HierarchyLevel != 2)
+        {
+            item = await _context.MediaItems
+                .Where(m => m.HierarchyLevel == 2
+                         && m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, $"%{externalId}%"))
+                .FirstOrDefaultAsync(ct);
+        }
+
+        if (item is null || item.HierarchyLevel != 2)
+            return NotFound(ApiResponse<object>.Fail(
+                "MEDIA_NOT_FOUND", $"No episode found for {source}:{externalId}."));
+
+        var season = 1;
+        if (item.ParentId.HasValue)
+        {
+            var parent = await _context.MediaItems.FindAsync([item.ParentId.Value], ct);
+            if (parent is not null && parent.HierarchyLevel == 1)
+                season = parent.Number ?? 1;
+        }
+
+        var resolved = ParseResolvedCore(item.MetadataJson);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id      = item.Id,
+            title   = resolved?.Title ?? item.Name,
+            season,
+            episode = item.Number ?? 0,
+        }));
+    }
+
     /// <summary>Kodi's "getdetails" step for TV shows: show-level info plus every season Chronicle already has.</summary>
     [HttpGet("tv/details")]
     public async Task<IActionResult> GetShowDetails([FromQuery] int id, CancellationToken ct)
