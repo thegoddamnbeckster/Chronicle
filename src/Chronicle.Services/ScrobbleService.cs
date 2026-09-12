@@ -128,6 +128,35 @@ namespace Chronicle.Services
         }
 
         /// <summary>
+        /// If the caller couldn't tell us Season/Episode itself (see
+        /// MediaItemMatcher.TryParseEmbeddedEpisodeInfo's own doc for exactly when/why that
+        /// happens), try to recover them from Title before doing anything else -- otherwise every
+        /// step downstream (the show lookup, and stub creation if that fails) works off a raw
+        /// "Show - S01E08 - Episode Title" string instead of the actual show title. A caller that
+        /// already knows its own Season/Episode is never second-guessed here, MediaType is only
+        /// filled in when the caller left it blank, and an explicit EpisodeTitle the caller DID
+        /// provide always wins over whatever this recovers from Title.
+        /// </summary>
+        private static ScrobbleRequest ApplyEmbeddedEpisodeInfoIfNeeded(ScrobbleRequest request)
+        {
+            if (request.Season.HasValue || request.Episode.HasValue || request.Title is null)
+                return request;
+
+            var parsed = MediaItemMatcher.TryParseEmbeddedEpisodeInfo(request.Title);
+            if (parsed is not { } info)
+                return request;
+
+            return request with
+            {
+                Title        = info.ShowTitle,
+                Season       = info.Season,
+                Episode      = info.Episode,
+                EpisodeTitle = request.EpisodeTitle ?? info.EpisodeTitle,
+                MediaType    = request.MediaType ?? "tv",
+            };
+        }
+
+        /// <summary>
         /// Resolves a <see cref="ScrobbleRequest"/> that arrived without a Chronicle
         /// MediaItemId (e.g. from the Kodi addon scrobbling an item Chronicle has never
         /// seen before) — matches by external ID first, then title+year scoped to media
@@ -140,6 +169,7 @@ namespace Chronicle.Services
         /// </summary>
         private async Task<MediaItem> FindOrCreateMediaItemAsync(ScrobbleRequest request, CancellationToken ct)
         {
+            request = ApplyEmbeddedEpisodeInfoIfNeeded(request);
             var externalIds = request.ExternalIds ?? new Dictionary<string, string>();
             var found = await TryFindMediaItemAsync(request.Title, request.Year, request.MediaType, externalIds, ct);
             if (found != null)

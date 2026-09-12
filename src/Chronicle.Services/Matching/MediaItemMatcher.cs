@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -182,6 +183,52 @@ public static class MediaItemMatcher
              m.Name == deparenthesized) &&
             !db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId.StartsWith("collection:")),
             ct);
+    }
+
+    // ── Recovering season/episode embedded in an unidentified scrobble's raw title ──
+
+    // Same core "SxxEyy" token FolderSignalExtractor._episodeRegex already matches in a scanned
+    // filename -- kept as a separate regex here (rather than sharing that field directly) because
+    // this one is anchored to split a full "Show - S01E08 - Episode Title" string into pieces,
+    // which is a different job than just detecting the token's presence anywhere in a name.
+    private static readonly Regex _embeddedEpisodeInfo = new(
+        @"^(?<show>.+?)\s+-\s+[Ss](?<season>\d{1,2})[Ee](?<episode>\d{1,3})(?:\s+-\s+(?<episodeTitle>.+))?$",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Recovers (show title, season, episode, episode title) from a raw "Show - S01E08 - Episode
+    /// Title" string -- the Sonarr/Radarr-style filename convention -- or null if it doesn't match.
+    /// Null episodeTitle when the string ends right after the SxxEyy token (no trailing title).
+    ///
+    /// Exists for the one caller that has no other way to learn season/episode at all: a scrobble
+    /// for a file Kodi hasn't identified as a library episode yet reports mediaType outside
+    /// "episode" and Season/Episode both come back null (see Chronicle_Scrobbler's media_info.py --
+    /// those fields are only ever populated when Kodi's own Player.GetItem already says "episode").
+    /// All Kodi has left to offer at that point is whatever raw label it's showing for the file,
+    /// which for an as-yet-unscraped item is typically the bare filename. Root-caused live
+    /// (2026-09-12): scrobbling "Stuart Fails to Save the Universe" S01E08 while in that state
+    /// created a permanent, un-nested root MediaItem literally named the whole raw string --
+    /// invisible to every metadata provider's search (the query itself is unparseable garbage)
+    /// and to Kodi's own future poster/art lookups for it. Recovering the real show/season/episode
+    /// from the title text itself, the same convention FolderSignalExtractor already parses out of
+    /// scanned filenames, lets the scrobble land on the real show and the real episode instead --
+    /// exactly as if the client had reported it properly in the first place.
+    /// </summary>
+    public static (string ShowTitle, int Season, int Episode, string? EpisodeTitle)? TryParseEmbeddedEpisodeInfo(
+        string title)
+    {
+        var m = _embeddedEpisodeInfo.Match(title);
+        if (!m.Success) return null;
+        if (!int.TryParse(m.Groups["season"].Value, out var season)) return null;
+        if (!int.TryParse(m.Groups["episode"].Value, out var episode)) return null;
+
+        var showTitle = m.Groups["show"].Value.Trim();
+        if (showTitle.Length == 0) return null;
+
+        var episodeTitle = m.Groups["episodeTitle"].Success
+            ? m.Groups["episodeTitle"].Value.Trim()
+            : null;
+        return (showTitle, season, episode, episodeTitle is { Length: 0 } ? null : episodeTitle);
     }
 
     // ── Episode hierarchy resolution ─────────────────────────────────────────

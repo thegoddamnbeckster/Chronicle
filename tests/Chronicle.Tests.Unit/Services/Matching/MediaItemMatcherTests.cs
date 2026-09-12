@@ -310,5 +310,43 @@ namespace Chronicle.Tests.Unit.Services.Matching
         }
 
         public void Dispose() => _db.Dispose();
+
+        // ── TryParseEmbeddedEpisodeInfo ──────────────────────────────────────
+
+        [Fact]
+        public void TryParseEmbeddedEpisodeInfo_StandardSonarrStyleName_ParsesAllFour()
+        {
+            // The exact raw string root-caused live (2026-09-12): Kodi's scrobbler reports this
+            // whole thing as "title" when it hasn't identified the file as a library episode yet.
+            var result = MediaItemMatcher.TryParseEmbeddedEpisodeInfo(
+                "Stuart Fails to Save the Universe - S01E08 - Spoiler - We're as Confused as You Are");
+
+            result.Should().NotBeNull();
+            result!.Value.ShowTitle.Should().Be("Stuart Fails to Save the Universe");
+            result.Value.Season.Should().Be(1);
+            result.Value.Episode.Should().Be(8);
+            result.Value.EpisodeTitle.Should().Be("Spoiler - We're as Confused as You Are");
+        }
+
+        [Fact]
+        public void TryParseEmbeddedEpisodeInfo_NoTrailingEpisodeTitle_StillParsesShowSeasonEpisode()
+        {
+            var result = MediaItemMatcher.TryParseEmbeddedEpisodeInfo("Some Show - S02E05");
+
+            result.Should().NotBeNull();
+            result!.Value.ShowTitle.Should().Be("Some Show");
+            result.Value.Season.Should().Be(2);
+            result.Value.Episode.Should().Be(5);
+            result.Value.EpisodeTitle.Should().BeNull();
+        }
+
+        [Theory]
+        [InlineData("Plain Movie Title")]
+        [InlineData("Some Show Season 2 Episode 5")] // spelled out, not the SxxEyy token this parses
+        [InlineData("")]
+        public void TryParseEmbeddedEpisodeInfo_NoEmbeddedEpisodeToken_ReturnsNull(string title)
+        {
+            MediaItemMatcher.TryParseEmbeddedEpisodeInfo(title).Should().BeNull();
+        }
     }
 }

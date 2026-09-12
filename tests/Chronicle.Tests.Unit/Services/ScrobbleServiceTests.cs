@@ -308,6 +308,90 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task ScrobbleAsync_UnidentifiedEpisodeTitleWithNoSeasonEpisode_NestsUnderExistingShow()
+        {
+            // Root-caused live (2026-09-12): a Kodi scrobble for a file it hasn't identified as a
+            // library episode yet has no season/episode fields at all and reports its own raw
+            // playback label -- typically the bare filename -- as "title". Before this fix, that
+            // created a permanent, un-nested root item named literally that whole raw string
+            // instead of landing on the real, already-existing episode.
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 10, MediaTypeId = 1, Name = "Stuart Fails to Save the Universe",
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 11, MediaTypeId = 1, Name = "Season 1", ParentId = 10, Number = 1,
+                HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 12, MediaTypeId = 1, Name = "Spoiler: We're as Confused as You Are",
+                ParentId = 11, Number = 8, HierarchyLevel = 2,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await _context.SaveChangesAsync();
+            var itemCountBefore = await _context.MediaItems.CountAsync();
+
+            var request = new ScrobbleRequest(
+                MediaItemId: null, ProgressPercent: 10.0, Timestamp: null, DeviceName: "Kodi",
+                Title: "Stuart Fails to Save the Universe - S01E08 - Spoiler - We're as Confused as You Are");
+
+            var result = await _service.ScrobbleAsync(1, request);
+
+            result.Event.MediaItemId.Should().Be(12); // the real, already-nested episode
+            (await _context.MediaItems.CountAsync()).Should().Be(itemCountBefore); // no new item created
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_UnidentifiedEpisodeTitleWithNoExistingShow_CreatesShowAndNestsEpisode()
+        {
+            var request = new ScrobbleRequest(
+                MediaItemId: null, ProgressPercent: 10.0, Timestamp: null, DeviceName: "Kodi",
+                Title: "Brand New Show - S02E03 - The Episode Title");
+
+            var result = await _service.ScrobbleAsync(1, request);
+
+            var episode = await _context.MediaItems.FindAsync(result.Event.MediaItemId);
+            episode!.HierarchyLevel.Should().Be(2);
+            episode.Name.Should().Be("The Episode Title");
+            episode.Number.Should().Be(3);
+
+            var season = await _context.MediaItems.FindAsync(episode.ParentId);
+            season!.Number.Should().Be(2);
+
+            var show = await _context.MediaItems.FindAsync(season.ParentId);
+            show!.Name.Should().Be("Brand New Show"); // clean show title, not the raw scrobble string
+            show.HierarchyLevel.Should().Be(0);
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_ExplicitSeasonEpisodeProvided_TitleIsNeverReparsed()
+        {
+            // Sanity check on the same fix: a caller that DOES know its own season/episode must
+            // never have that overridden by embedded-episode-info parsing, even if its title text
+            // happens to also contain an SxxEyy-shaped substring.
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 20, MediaTypeId = 1, Name = "Show With S02E05 In Its Own Title",
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await _context.SaveChangesAsync();
+
+            var request = new ScrobbleRequest(
+                MediaItemId: null, ProgressPercent: 10.0, Timestamp: null, DeviceName: "Kodi",
+                Title: "Show With S02E05 In Its Own Title", Season: 1, Episode: 1);
+
+            var result = await _service.ScrobbleAsync(1, request);
+
+            var episode = await _context.MediaItems.FindAsync(result.Event.MediaItemId);
+            episode!.ParentId.Should().NotBeNull();
+            var season = await _context.MediaItems.FindAsync(episode.ParentId);
+            season!.Number.Should().Be(1); // the caller's own Season, not a re-parsed "2"
+        }
+
+        [Fact]
         public async Task GetWatchSummaryAsync_NoEvents_ReturnsZeroCountAndNullTimestamp()
         {
             var (lastWatchedAt, count) = await _service.GetWatchSummaryAsync(1, 1);
