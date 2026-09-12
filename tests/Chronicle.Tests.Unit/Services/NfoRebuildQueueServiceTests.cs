@@ -128,6 +128,67 @@ public class NfoRebuildQueueServiceTests : IDisposable
         secondBatch.TotalPending.Should().Be(0);
     }
 
+    /// Root-caused live (2026-09-12): EnsureSeededAsync only ever inserted a row for a given
+    /// MediaItem ONCE -- correct for "don't duplicate an already-queued item," but it meant an
+    /// item whose metadata (e.g. a provider's tmdb id, arriving via a separately-timed
+    /// enrichment pass) finished changing AFTER its NFO had already been completed once stayed
+    /// permanently stale -- an already-COMPLETED row is never reconsidered just because the
+    /// underlying data later improved. Confirmed live against a real household episode whose
+    /// on-disk NFO was missing a <uniqueid> element the current (correct) Chronicle data
+    /// clearly had, silently breaking Kodi's NfoUrl lookup for it (and, per that lookup's own
+    /// no-fallback behavior, everything after it in the same show). This proves the fix: a
+    /// completed row whose MediaItem.UpdatedAt is now later than the row's own CompletedAt gets
+    /// reset back to pending on the very next seed pass, no admin-triggered whole-library
+    /// ReseedAllAsync required.
+    [Fact]
+    public async Task ClaimBatchAsync_CompletedItemUpdatedAfterCompletion_BecomesClaimableAgain()
+    {
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        await _db.SaveChangesAsync();
+
+        var firstBatch = await _svc.ClaimBatchAsync(1, 10, TimeSpan.FromMinutes(5));
+        await _svc.CompleteAsync(firstBatch.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        // Simulate the NFO having been generated, then the underlying item's data changing
+        // afterward (e.g. enrichment finishing late) -- CompletedAt is pinned to a known instant
+        // so UpdatedAt can be deterministically placed after it.
+        var completedRow = await _db.NfoRebuildQueue.FindAsync(firstBatch.Items[0].QueueItemId);
+        completedRow!.CompletedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var item = await _db.MediaItems.FindAsync(100);
+        item!.UpdatedAt = new DateTime(2026, 1, 1, 0, 0, 1, DateTimeKind.Utc);
+        await _db.SaveChangesAsync();
+
+        NfoRebuildQueueService.ResetSeedThrottleForTests();
+        var secondBatch = await _svc.ClaimBatchAsync(2, 10, TimeSpan.FromMinutes(5));
+
+        secondBatch.Items.Should().ContainSingle();
+        secondBatch.Items[0].MediaItemId.Should().Be(100);
+    }
+
+    /// The mirror case: nothing changed after completion, so a completed item must stay
+    /// completed forever -- otherwise every seed pass would perpetually re-queue the whole
+    /// library.
+    [Fact]
+    public async Task ClaimBatchAsync_CompletedItemNeverUpdatedSinceCompletion_StaysCompleted()
+    {
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        await _db.SaveChangesAsync();
+
+        var firstBatch = await _svc.ClaimBatchAsync(1, 10, TimeSpan.FromMinutes(5));
+        await _svc.CompleteAsync(firstBatch.Items[0].QueueItemId, kodiDeviceId: 1);
+
+        var completedRow = await _db.NfoRebuildQueue.FindAsync(firstBatch.Items[0].QueueItemId);
+        completedRow!.CompletedAt = new DateTime(2026, 1, 1, 0, 0, 1, DateTimeKind.Utc);
+        var item = await _db.MediaItems.FindAsync(100);
+        item!.UpdatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc); // before CompletedAt
+        await _db.SaveChangesAsync();
+
+        NfoRebuildQueueService.ResetSeedThrottleForTests();
+        var secondBatch = await _svc.ClaimBatchAsync(2, 10, TimeSpan.FromMinutes(5));
+
+        secondBatch.Items.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task ClaimBatchAsync_DoesNotDoubleClaimWithinAnotherDevicesActiveLease()
     {

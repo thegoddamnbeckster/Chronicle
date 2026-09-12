@@ -21,14 +21,15 @@ namespace Chronicle.Tests.Integration;
 /// Root-caused live (2026-09-12), same day as the two fixes elsewhere in this class: the
 /// original version treated "this season already has at least one local episode" as
 /// "permanently resolved, never check the provider again" -- correct for a finished season a
-/// real file scan already fully covers, but it meant a CURRENTLY AIRING show's own latest
-/// season could never learn about a newly released episode through this endpoint either, no
-/// matter how many times Kodi asked. A user would have needed the whole show removed and
-/// rescanned from scratch every time a new episode dropped. Fixed to re-check just the single
-/// highest-numbered known season on every call and top it up with any episode NUMBER it
-/// doesn't already have, while every other already-known season (and the season/episode rows
-/// themselves) stay untouched -- these tests exist to prove both halves of that: new episodes
-/// get added, and nothing already-known gets duplicated or re-queried.
+/// real file scan already fully covers, but it meant a CURRENTLY AIRING show could never learn
+/// about a newly released episode through this endpoint either, no matter how many times Kodi
+/// asked. A user would have needed the whole show removed and rescanned from scratch every
+/// time a new episode dropped. Fixed to re-check EVERY known season on every call and top each
+/// one up with any episode NUMBER it doesn't already have -- deliberately not special-cased to
+/// just the latest season (per-user direction, 2026-09-12: "don't do special handling for the
+/// latest episode, just get any episodes that aren't in Kodi yet"). These tests exist to prove
+/// both halves of that: new episodes get added wherever they appear, and nothing already-known
+/// ever gets duplicated.
 /// </summary>
 public class ScraperResolveEpisodesLockedTests : IClassFixture<EpisodeProviderTestFactory>
 {
@@ -183,23 +184,42 @@ public class ScraperResolveEpisodesLockedTests : IClassFixture<EpisodeProviderTe
             .Should().Be(1);
     }
 
+    /// The behavior this whole fix exists for: NOT special-cased to only the latest season
+    /// (per-user direction, 2026-09-12) -- an OLDER, already-known season that gained a new
+    /// episode (e.g. a late-added special, or a provider correction) gets topped up exactly
+    /// the same way the latest one does, even while a genuinely later season is also known.
     [Fact]
-    public async Task GetEpisodes_OlderAlreadyKnownSeason_IsNeverReQueried()
+    public async Task GetEpisodes_OlderAlreadyKnownSeasonGainsAnEpisode_IsToppedUpToo()
     {
         var showId = SeedShow("show-3");
-        SeedSeasonWithEpisodes(showId, seasonNumber: 1, 1, 2, 3);
+        var season1Id = SeedSeasonWithEpisodes(showId, seasonNumber: 1, 1, 2, 3);
         SeedSeasonWithEpisodes(showId, seasonNumber: 2, 1, 2);
-        // Season 2 is the latest known season -- deliberately no provider data configured for
-        // it (defaults to empty), so if season 1 ever got queried too this test would still
-        // pass by accident; the real assertion is on QueriedSeasons below.
-        _factory.Provider.SeasonEpisodes[2] = [];
+        _factory.Provider.SeasonEpisodes[1] =
+        [
+            new ProviderEpisodeSummary(1, "Episode 1"),
+            new ProviderEpisodeSummary(2, "Episode 2"),
+            new ProviderEpisodeSummary(3, "Episode 3"),
+            new ProviderEpisodeSummary(4, "Late-Added Episode"),
+        ];
+        _factory.Provider.SeasonEpisodes[2] =
+        [
+            new ProviderEpisodeSummary(1, "Episode 1"),
+            new ProviderEpisodeSummary(2, "Episode 2"),
+        ];
 
         var client = await AuthClientAsync();
         var resp = await client.GetAsync($"/api/v1/scraper/tv/episodes?showId={showId}");
         resp.EnsureSuccessStatusCode();
 
-        _factory.Provider.QueriedSeasons.Should().NotContain(1,
-            "an older, fully-known season must never be re-queried against the provider");
+        _factory.Provider.QueriedSeasons.Should().Contain(1,
+            "an older season must be re-checked too, not only the latest one");
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var season1Numbers = db.MediaItems
+            .Where(e => e.ParentId == season1Id && e.HierarchyLevel == 2)
+            .Select(e => e.Number).ToList();
+        season1Numbers.Should().BeEquivalentTo(new int?[] { 1, 2, 3, 4 });
     }
 
     [Fact]

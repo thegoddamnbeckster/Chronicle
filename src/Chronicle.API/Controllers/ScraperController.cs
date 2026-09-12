@@ -731,22 +731,21 @@ public class ScraperController : ControllerBase
     /// Checked PER SEASON, not per-show: a show can have some seasons from a real file
     /// scan (with per-file data a scan alone can supply, like exact filenames) and be
     /// completely missing others -- e.g. only season 1 was ever scanned before season 2
-    /// aired and landed in a folder no scan folder covers yet. A season that already has
-    /// local episodes (from either this method or a file-scanner import) is left untouched
-    /// -- EXCEPT the single highest-numbered season Chronicle already knows about, which is
-    /// re-checked against the provider on every call and topped up with any episode NUMBER
-    /// it doesn't already have (never touching/duplicating the ones it does).
+    /// aired and landed in a folder no scan folder covers yet. Every season is re-checked
+    /// against the provider on every call and topped up with any episode NUMBER it doesn't
+    /// already have -- never touching/duplicating the ones it does, and never re-creating a
+    /// season container that already exists (see the season-container lookup below).
     ///
     /// Root-caused live (2026-09-12): before this, "already has local episodes" meant
-    /// "permanently done, never check again" -- fine for an already-finished season, but it
-    /// meant a CURRENTLY AIRING show's own latest season could never learn about a newly
-    /// released episode through this path either, no matter how many times Kodi asked, since
-    /// this endpoint backs Kodi's getepisodelist/getepisodedetails contract directly. A user
-    /// would have needed the show fully removed and rescanned from scratch every time a new
-    /// episode dropped -- exactly the "why do I have to nuke the whole library for one new
-    /// episode" complaint this fixes. Bounded to just the latest season (not every known
-    /// season) to avoid turning every getepisodelist call into one provider round-trip per
-    /// season a show has ever had.
+    /// "permanently done, never check again" -- meaning a CURRENTLY AIRING show could never
+    /// learn about a newly released episode through this path either, no matter how many
+    /// times Kodi asked, since this endpoint backs Kodi's getepisodelist/getepisodedetails
+    /// contract directly. A user would have needed the show fully removed and rescanned from
+    /// scratch every time a new episode dropped -- exactly the "why do I have to nuke the
+    /// whole library for one new episode" complaint this fixes. Deliberately NOT special-
+    /// cased to just the latest season (per-user direction, 2026-09-12: "just get any
+    /// episodes that aren't in Kodi yet") -- every known season is re-checked, not only the
+    /// one most likely to still be airing.
     ///
     /// Tries providers in the order their external ids appear on the show's MetadataJson,
     /// NOT Chronicle's configured per-field resolution priority (MetadataResolutionService)
@@ -828,12 +827,6 @@ public class ScraperController : ControllerBase
             s => s.Number!.Value,
             s => episodeNumbersBySeasonId.GetValueOrDefault(s.Id, new HashSet<int>()));
 
-        // The one already-known season still worth asking the provider about on every call --
-        // see this method's own doc for why only the latest, not every known season.
-        var latestKnownSeasonNumber = existingEpisodeNumbersBySeasonNumber.Count > 0
-            ? existingEpisodeNumbersBySeasonNumber.Keys.Max()
-            : (int?)null;
-
         IMetadataProvider? provider = null;
         string? showExternalId = null;
         string? providerPluginId = null;
@@ -848,11 +841,6 @@ public class ScraperController : ControllerBase
         for (var seasonNum = 0; seasonNum <= maxSeasons && consecutiveEmpty < emptyStreakLimit; seasonNum++)
         {
             var isKnownSeason = existingEpisodeNumbersBySeasonNumber.ContainsKey(seasonNum);
-            if (isKnownSeason && seasonNum != latestKnownSeasonNumber)
-            {
-                consecutiveEmpty = 0;
-                continue;
-            }
 
             IReadOnlyList<ProviderEpisodeSummary> episodes;
             if (provider is not null)
@@ -882,8 +870,8 @@ public class ScraperController : ControllerBase
             {
                 // Only counts toward the "past this show's real season count" streak for a
                 // season Chronicle had never heard of at all -- an empty/unchanged response for
-                // the already-known latest season (the common case: nothing new aired) must not
-                // cut the search for later, still-undiscovered seasons short.
+                // an already-known season (the common case: nothing new in it) must not cut the
+                // search for later, still-undiscovered seasons short.
                 if (!isKnownSeason) consecutiveEmpty++;
                 continue;
             }

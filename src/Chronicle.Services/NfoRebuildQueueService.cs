@@ -379,7 +379,7 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             // needs each item's MetadataJson to check physical-file status.
             var movieRows = await db.MediaItems
                 .Where(m => movieTypeIds.Contains(m.MediaTypeId))
-                .Select(m => new { m.Id, m.MetadataJson, m.IsStub })
+                .Select(m => new { m.Id, m.MetadataJson, m.IsStub, m.UpdatedAt })
                 .ToListAsync(ct);
 
             // Only a leaf item (a movie or, below, an episode) ever gets Chronicle's own file
@@ -413,17 +413,18 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             // claim/release loop with no way to ever complete.
             var episodeRows = await db.MediaItems
                 .Where(m => showTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 2 && m.Number != null)
-                .Select(m => new { m.Id, m.MetadataJson })
+                .Select(m => new { m.Id, m.MetadataJson, m.UpdatedAt })
                 .ToListAsync(ct);
             var episodeIdsWithFile = episodeRows
                 .Where(e => FileIdentityJson.HasKnownFile(e.MetadataJson))
                 .Select(e => e.Id)
                 .ToHashSet();
 
-            var showIds = await db.MediaItems
+            var showRows = await db.MediaItems
                 .Where(m => showTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0)
-                .Select(m => m.Id)
+                .Select(m => new { m.Id, m.UpdatedAt })
                 .ToListAsync(ct);
+            var showIds = showRows.Select(s => s.Id).ToList();
 
             // A show container never carries file info of its own -- only a descendant episode
             // (or, for a media type with no season level in between, a direct child) does. Same
@@ -464,7 +465,7 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             // new ones going forward -- same "clean up the existing backlog once" reasoning as
             // the collection-container prune above.
             var existingRows = await db.NfoRebuildQueue
-                .Select(q => new { q.Id, q.MediaItemId, q.Kind })
+                .Select(q => new { q.Id, q.MediaItemId, q.Kind, q.CompletedAt })
                 .ToListAsync(ct);
             var staleFileLessIds = existingRows
                 .Where(r => r.Kind switch
@@ -487,6 +488,48 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
                     "NfoRebuildQueueService: pruned {Count} stale row(s) from the rebuild queue " +
                     "-- no physical file recorded for these items on any device",
                     toRemove.Count);
+            }
+
+            // Root-caused live (2026-09-12): a row only ever got inserted here ONCE, the first
+            // time an item was seen with a known file -- correct for a "seed" (never re-insert a
+            // duplicate row for the same item), but it meant an item whose metadata enrichment
+            // finished AFTER its nfo had already been generated once (a real race: file
+            // discovery and provider enrichment run independently) sat with a permanently stale,
+            // incomplete NFO forever -- e.g. missing the <uniqueid> a later scan's NfoUrl lookup
+            // depends on, with no fallback of its own, silently capping a currently-airing show
+            // partway through. Previously the only way to catch this up was an admin-triggered
+            // ReseedAllAsync across the WHOLE library. Now: any COMPLETED row whose MediaItem was
+            // updated after its NFO was last generated gets reset back to pending on its own, the
+            // same lightweight "top up" pass this method already does for brand-new items.
+            var updatedAtById = movieRows.ToDictionary(m => m.Id, m => m.UpdatedAt);
+            foreach (var e in episodeRows) updatedAtById[e.Id] = e.UpdatedAt;
+            foreach (var s in showRows) updatedAtById[s.Id] = s.UpdatedAt;
+
+            var rowsNeedingRefresh = existingRows
+                .Where(r => r.CompletedAt.HasValue
+                         && updatedAtById.TryGetValue(r.MediaItemId, out var updatedAt)
+                         && updatedAt > r.CompletedAt.Value)
+                .Select(r => r.Id)
+                .ToList();
+            if (rowsNeedingRefresh.Count > 0)
+            {
+                var toRefresh = await db.NfoRebuildQueue
+                    .Where(q => rowsNeedingRefresh.Contains(q.Id))
+                    .ToListAsync(ct);
+                foreach (var row in toRefresh)
+                {
+                    row.CompletedAt                = null;
+                    row.ClaimedByKodiDeviceId      = null;
+                    row.ClaimedAt                  = null;
+                    row.LeaseExpiresAt             = null;
+                    row.LastReleasedByKodiDeviceId = null;
+                    row.LastReleasedAt             = null;
+                }
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation(
+                    "NfoRebuildQueueService: reset {Count} row(s) back to pending -- their " +
+                    "MediaItem was updated after the NFO was last generated",
+                    toRefresh.Count);
             }
 
             var existingIds = (await db.NfoRebuildQueue.Select(q => q.MediaItemId).ToListAsync(ct)).ToHashSet();
