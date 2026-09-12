@@ -2832,7 +2832,7 @@ namespace Chronicle.Services
                 {
                     var (rootItem, rootIsNew) = await UpsertGroupItemAsync(
                         rootGroup, request.MediaTypeId, parentId: null,
-                        hierarchyLevel: 0, filePathIndex, folderPathIndex, ct);
+                        hierarchyLevel: 0, mediaType.HierarchyLevels, filePathIndex, folderPathIndex, ct);
 
                     if (rootIsNew)
                         createdItemIds.Add(rootItem.Id);
@@ -2869,7 +2869,7 @@ namespace Chronicle.Services
 
                     // Persist children recursively — no library entries
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
-                        rootItem.Id, hierarchyLevel: 1, createdItemIds,
+                        rootItem.Id, hierarchyLevel: 1, mediaType.HierarchyLevels, createdItemIds,
                         filePathIndex, folderPathIndex, ct);
 
                     pendingInBatch++;
@@ -2935,7 +2935,7 @@ namespace Chronicle.Services
 
         private async Task PersistChildGroupsAsync(
             List<ScanGroupImport> children, int mediaTypeId,
-            int parentId, int hierarchyLevel, List<int> createdItemIds,
+            int parentId, int hierarchyLevel, int totalHierarchyLevels, List<int> createdItemIds,
             Dictionary<string, MediaItem> filePathIndex,
             Dictionary<string, MediaItem> folderPathIndex,
             CancellationToken ct)
@@ -2943,12 +2943,13 @@ namespace Chronicle.Services
             foreach (var child in children)
             {
                 var (item, isNew) = await UpsertGroupItemAsync(
-                    child, mediaTypeId, parentId, hierarchyLevel, filePathIndex, folderPathIndex, ct);
+                    child, mediaTypeId, parentId, hierarchyLevel, totalHierarchyLevels,
+                    filePathIndex, folderPathIndex, ct);
                 if (isNew)
                     createdItemIds.Add(item.Id);
                 if (child.Children.Count > 0)
                     await PersistChildGroupsAsync(child.Children, mediaTypeId,
-                        item.Id, hierarchyLevel + 1, createdItemIds,
+                        item.Id, hierarchyLevel + 1, totalHierarchyLevels, createdItemIds,
                         filePathIndex, folderPathIndex, ct);
             }
         }
@@ -3083,7 +3084,7 @@ namespace Chronicle.Services
 
         private async Task<(MediaItem Item, bool IsNew)> UpsertGroupItemAsync(
             ScanGroupImport group, int mediaTypeId,
-            int? parentId, int hierarchyLevel,
+            int? parentId, int hierarchyLevel, int totalHierarchyLevels,
             Dictionary<string, MediaItem> filePathIndex,
             Dictionary<string, MediaItem> folderPathIndex,
             CancellationToken ct)
@@ -3151,20 +3152,36 @@ namespace Chronicle.Services
             // actually reach that season.
             //
             // Deliberately restricted to candidates with NO fileScanner data yet (a real stub,
-            // never claimed by any file) -- NOT a general "same number = same item" rule.
-            // Checked directly against this same library (2026-09-04): one season alone had 17
-            // genuinely different, already-file-scanned episodes sharing episode number 5 (an
-            // unreliably-parsed clip-show/reality series), each with its own real file and its
-            // own real identity. Matching on Number alone there would have silently attached a
-            // brand-new file's data onto a random unrelated episode. Requiring the existing side
-            // to still be file-less makes that impossible: a real, already-scanned episode is
-            // never a match target here, no matter what its Number is.
+            // never claimed by any file) -- NOT a general "same number = same item" rule --
+            // but ONLY at the deepest (leaf) hierarchy level for this media type (episode/track/
+            // standalone-book). Checked directly against this same library (2026-09-04): one
+            // season alone had 17 genuinely different, already-file-scanned episodes sharing
+            // episode number 5 (an unreliably-parsed clip-show/reality series), each with its
+            // own real file and its own real identity. Matching on Number alone there would have
+            // silently attached a brand-new file's data onto a random unrelated episode.
+            // Requiring the existing side to still be file-less makes that impossible: a real,
+            // already-scanned leaf item is never a match target here, no matter what its Number
+            // is.
+            //
+            // A CONTAINER level (season/album/series -- anything with a deeper level still below
+            // it, per mediaType.HierarchyLevels) has no such ambiguity: its Number is its whole
+            // identity under its parent, full stop, so the file-less restriction is dropped there
+            // even when the container already has fileScanner data (from its OWN folder having
+            // been matched by an earlier scan). Root-caused (2026-09-12) a live "skipped
+            // episodes" bug on Rick and Morty: this tier's Number match used to skip a season
+            // container purely because it already carried fileScanner data, and the Tertiary
+            // name-tier just below has no zero-padding normalization ("Season 4" vs "Season 04"
+            // never match), so re-scanning under a differently-zero-padded season name matched
+            // neither tier and created a brand-new duplicate "Season 4" sibling with only the one
+            // newly-scanned episode under it -- exactly what looked like the scraper "skipping"
+            // the rest of that season's episodes.
+            var isLeafLevel = hierarchyLevel >= totalHierarchyLevels - 1;
             if (existing is null && group.Number.HasValue && hierarchyLevel >= 1)
             {
                 existing = await _context.MediaItems.FirstOrDefaultAsync(m =>
                     m.MediaTypeId == mediaTypeId && m.ParentId == parentId &&
                     m.HierarchyLevel == hierarchyLevel && m.Number == group.Number.Value &&
-                    (m.MetadataJson == null || !EF.Functions.Like(m.MetadataJson, "%fileScanner%")), ct);
+                    (!isLeafLevel || m.MetadataJson == null || !EF.Functions.Like(m.MetadataJson, "%fileScanner%")), ct);
             }
 
             // Tertiary: match by name (covers items where neither filePaths nor folderPath matched).
