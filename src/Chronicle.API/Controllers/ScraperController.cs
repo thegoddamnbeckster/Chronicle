@@ -732,7 +732,21 @@ public class ScraperController : ControllerBase
     /// scan (with per-file data a scan alone can supply, like exact filenames) and be
     /// completely missing others -- e.g. only season 1 was ever scanned before season 2
     /// aired and landed in a folder no scan folder covers yet. A season that already has
-    /// local episodes (from either this method or a file-scanner import) is left untouched.
+    /// local episodes (from either this method or a file-scanner import) is left untouched
+    /// -- EXCEPT the single highest-numbered season Chronicle already knows about, which is
+    /// re-checked against the provider on every call and topped up with any episode NUMBER
+    /// it doesn't already have (never touching/duplicating the ones it does).
+    ///
+    /// Root-caused live (2026-09-12): before this, "already has local episodes" meant
+    /// "permanently done, never check again" -- fine for an already-finished season, but it
+    /// meant a CURRENTLY AIRING show's own latest season could never learn about a newly
+    /// released episode through this path either, no matter how many times Kodi asked, since
+    /// this endpoint backs Kodi's getepisodelist/getepisodedetails contract directly. A user
+    /// would have needed the show fully removed and rescanned from scratch every time a new
+    /// episode dropped -- exactly the "why do I have to nuke the whole library for one new
+    /// episode" complaint this fixes. Bounded to just the latest season (not every known
+    /// season) to avoid turning every getepisodelist call into one provider round-trip per
+    /// season a show has ever had.
     ///
     /// Tries providers in the order their external ids appear on the show's MetadataJson,
     /// NOT Chronicle's configured per-field resolution priority (MetadataResolutionService)
@@ -784,18 +798,41 @@ public class ScraperController : ControllerBase
     private async Task ResolveEpisodesLockedAsync(
         MediaItem show, List<(string PluginId, string ExternalId)> candidates, CancellationToken ct)
     {
-        // Seasons that already have at least one local episode with a KNOWN number -- left
-        // alone regardless of source, so a real file-scanner import always wins for the
-        // season it actually covers. A season row with a null Number (shouldn't normally
-        // happen, but not impossible from a legacy import path) is never treated as
-        // "resolved" for any season number -- especially not season 0 (Specials), which a
-        // naive `Number ?? 0` would silently and permanently block.
-        var existingSeasonNumbers = (await _context.MediaItems
+        // Every season MediaItem this show already has (regardless of episode count) -- looked
+        // up once so a season container is always REUSED below, never re-created. CreateAsync
+        // has no find-or-create check of its own (see MediaService.CreateAsync); the season
+        // create call further down used to run unconditionally for any seasonNum not in the old
+        // "has episodes" set, which could just as easily have been an EMPTY season container
+        // left over from an earlier interrupted attempt -- the exact "Season 4"/"Season 04"
+        // sibling-duplication bug already root-caused elsewhere today (FileScanService's
+        // UpsertGroupItemAsync), just via this endpoint's own separate code path instead.
+        var seasonRows = await _context.MediaItems
             .Where(s => s.ParentId == show.Id && s.HierarchyLevel == 1 && s.Number != null)
-            .Where(s => _context.MediaItems.Any(e => e.ParentId == s.Id && e.HierarchyLevel == 2))
-            .Select(s => s.Number!.Value)
-            .ToListAsync(ct))
-            .ToHashSet();
+            .ToListAsync(ct);
+        var seasonIds = seasonRows.Select(s => s.Id).ToList();
+
+        // Every episode number Chronicle already has, per season number -- a season row with a
+        // null Number (shouldn't normally happen, but not impossible from a legacy import path)
+        // is never treated as "known" for any season number, especially not season 0
+        // (Specials), which a naive `Number ?? 0` would silently and permanently block.
+        var episodeNumbersBySeasonId = (await _context.MediaItems
+                .Where(e => e.HierarchyLevel == 2 && e.ParentId != null && seasonIds.Contains(e.ParentId.Value))
+                .Select(e => new { e.ParentId, e.Number })
+                .ToListAsync(ct))
+            .Where(e => e.Number.HasValue)
+            .GroupBy(e => e.ParentId!.Value)
+            .ToDictionary(g => g.Key, g => g.Select(e => e.Number!.Value).ToHashSet());
+
+        var seasonContainerByNumber = seasonRows.ToDictionary(s => s.Number!.Value);
+        var existingEpisodeNumbersBySeasonNumber = seasonRows.ToDictionary(
+            s => s.Number!.Value,
+            s => episodeNumbersBySeasonId.GetValueOrDefault(s.Id, new HashSet<int>()));
+
+        // The one already-known season still worth asking the provider about on every call --
+        // see this method's own doc for why only the latest, not every known season.
+        var latestKnownSeasonNumber = existingEpisodeNumbersBySeasonNumber.Count > 0
+            ? existingEpisodeNumbersBySeasonNumber.Keys.Max()
+            : (int?)null;
 
         IMetadataProvider? provider = null;
         string? showExternalId = null;
@@ -810,7 +847,8 @@ public class ScraperController : ControllerBase
         // and some shows have nothing BUT specials scanned yet.
         for (var seasonNum = 0; seasonNum <= maxSeasons && consecutiveEmpty < emptyStreakLimit; seasonNum++)
         {
-            if (existingSeasonNumbers.Contains(seasonNum))
+            var isKnownSeason = existingEpisodeNumbersBySeasonNumber.ContainsKey(seasonNum);
+            if (isKnownSeason && seasonNum != latestKnownSeasonNumber)
             {
                 consecutiveEmpty = 0;
                 continue;
@@ -842,18 +880,32 @@ public class ScraperController : ControllerBase
 
             if (episodes.Count == 0)
             {
-                consecutiveEmpty++;
+                // Only counts toward the "past this show's real season count" streak for a
+                // season Chronicle had never heard of at all -- an empty/unchanged response for
+                // the already-known latest season (the common case: nothing new aired) must not
+                // cut the search for later, still-undiscovered seasons short.
+                if (!isKnownSeason) consecutiveEmpty++;
                 continue;
             }
             consecutiveEmpty = 0;
 
+            var alreadyKnownNumbers = existingEpisodeNumbersBySeasonNumber.GetValueOrDefault(seasonNum);
+            var newEpisodes = alreadyKnownNumbers is null
+                ? episodes
+                : episodes.Where(e => !alreadyKnownNumbers.Contains(e.EpisodeNumber)).ToList();
+            if (newEpisodes.Count == 0) continue;
+
             await using (var tx = await _context.Database.BeginTransactionAsync(ct))
             {
-                var season = await _mediaService.CreateAsync(new CreateMediaRequest(
-                    show.MediaTypeId, show.Id, $"Season {seasonNum}", null, null, null, null,
-                    HierarchyLevel: 1, Number: seasonNum), ct);
+                if (!seasonContainerByNumber.TryGetValue(seasonNum, out var season))
+                {
+                    season = await _mediaService.CreateAsync(new CreateMediaRequest(
+                        show.MediaTypeId, show.Id, $"Season {seasonNum}", null, null, null, null,
+                        HierarchyLevel: 1, Number: seasonNum), ct);
+                    seasonContainerByNumber[seasonNum] = season;
+                }
 
-                foreach (var ep in episodes)
+                foreach (var ep in newEpisodes)
                 {
                     var episode = await _mediaService.CreateAsync(new CreateMediaRequest(
                         show.MediaTypeId, season.Id, ep.Title, null, ep.Overview, ep.StillUrl, null,
@@ -867,8 +919,8 @@ public class ScraperController : ControllerBase
             }
 
             _logger.LogInformation(
-                "scraper/tv/episodes: resolved season {Season} of show {ShowId} ({Count} episodes) from {PluginId}, no local scan required",
-                seasonNum, show.Id, episodes.Count, providerPluginId);
+                "scraper/tv/episodes: resolved season {Season} of show {ShowId} ({Count} new of {Total} episode(s)) from {PluginId}",
+                seasonNum, show.Id, newEpisodes.Count, episodes.Count, providerPluginId);
         }
     }
 
