@@ -366,7 +366,7 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             // needs each item's MetadataJson to check physical-file status.
             var movieRows = await db.MediaItems
                 .Where(m => movieTypeIds.Contains(m.MediaTypeId))
-                .Select(m => new { m.Id, m.MetadataJson })
+                .Select(m => new { m.Id, m.MetadataJson, m.IsStub })
                 .ToListAsync(ct);
 
             // Only a leaf item (a movie or, below, an episode) ever gets Chronicle's own file
@@ -378,8 +378,17 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             // consecutive-failure kind-exclusion breaker on a device whose local library is
             // legitimately smaller than Chronicle's tracked catalog -- the real fix belongs here,
             // at the source, not in the addon working around an unresolvable queue.
+            //
+            // !m.IsStub added (2026-09-12): a collection's own auto-generated placeholder (e.g.
+            // "Toy Story 5" sitting in the Toy Story Collection ahead of release) is exactly the
+            // same "no real file, never resolvable" case HasKnownFile already exists to catch --
+            // confirmed live that a few of these had a stray HasKnownFile-satisfying blob left
+            // over regardless, and sat in the NFO Rebuild Queue's 99%-forever tail alongside the
+            // legitimately file-less items. IsStub is the more direct, purpose-built signal for
+            // "this item was never scraped from a real file" than trying to further tighten
+            // HasKnownFile's own broader definition would be.
             var movieIds = movieRows
-                .Where(m => !collectionContainerIds.Contains(m.Id) && FileIdentityJson.HasKnownFile(m.MetadataJson))
+                .Where(m => !collectionContainerIds.Contains(m.Id) && !m.IsStub && FileIdentityJson.HasKnownFile(m.MetadataJson))
                 .Select(m => m.Id)
                 .ToHashSet();
 

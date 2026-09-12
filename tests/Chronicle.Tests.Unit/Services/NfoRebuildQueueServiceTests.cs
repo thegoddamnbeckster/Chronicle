@@ -363,6 +363,52 @@ public class NfoRebuildQueueServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ClaimBatchAsync_NeverQueuesAStub()
+    {
+        // Root-caused live (2026-09-12): a collection's own auto-generated placeholder (e.g.
+        // "Toy Story 5" sitting in the Toy Story Collection ahead of its real release) has no
+        // actual video file, exactly the same "never resolvable" case the no-physical-file
+        // exclusion above exists to catch -- but a few of these still carried a stray
+        // HasKnownFile-satisfying MetadataJson blob regardless, and sat in the NFO Rebuild
+        // Queue's 99%-forever tail alongside the legitimately file-less items. IsStub is checked
+        // here on purpose (not relying on the file-presence check alone) since it's the more
+        // direct, purpose-built signal for "this item was never scraped from a real file."
+        _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 500, MediaTypeId = MovieTypeId, Name = "Toy Story 5", Year = 2026, HierarchyLevel = 1,
+            IsStub = true, MetadataJson = FileJson("Toy Story 5"),
+        });
+        await _db.SaveChangesAsync();
+
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().ContainSingle();
+        claimed.Items[0].MediaItemId.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task ClaimBatchAsync_PrunesAStubAlreadyQueuedBeforeTheFix()
+    {
+        // Same "clean up the existing backlog too, not just avoid adding new ones" reasoning as
+        // ClaimBatchAsync_PrunesACollectionContainerAlreadyQueuedBeforeTheFix.
+        _db.MediaItems.Add(new MediaItem
+        {
+            Id = 500, MediaTypeId = MovieTypeId, Name = "Toy Story 5", Year = 2026, HierarchyLevel = 1,
+            IsStub = true, MetadataJson = FileJson("Toy Story 5"),
+        });
+        _db.NfoRebuildQueue.Add(new NfoRebuildQueueItem { MediaItemId = 500, Kind = "movie", EnqueuedAt = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+
+        NfoRebuildQueueService.ResetSeedThrottleForTests();
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().BeEmpty();
+        claimed.TotalPending.Should().Be(0);
+        (await _db.NfoRebuildQueue.AnyAsync(q => q.MediaItemId == 500)).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task ClaimBatchAsync_NeverQueuesAShowWithNoFileBearingEpisode()
     {
         // A show container never carries file info of its own (only a descendant episode does),
