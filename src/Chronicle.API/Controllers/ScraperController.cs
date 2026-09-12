@@ -753,7 +753,21 @@ public class ScraperController : ControllerBase
     {
         var dto = await BuildEpisodeDetailsDtoAsync(id, ct);
         if (dto is null)
+        {
+            _logger.LogWarning("scraper/tv/episode-details: item {ItemId} not found", id);
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+        }
+
+        // Deliberately added (2026-09-12), unlike movies/shows' own long-standing per-request
+        // log line: with no distinguishing log at all, there was no way to tell -- short of
+        // asking Kodi live over JSON-RPC -- which episodes of a show Kodi's own scan had even
+        // ATTEMPTED getepisodedetails for, versus never asked about at all. Root-caused a real
+        // household show stuck at 5 of 38 episodes, the exact same 5 every time regardless of
+        // scan/restart/library-removal -- this is the log line that answers "did Kodi even ask
+        // about the other 33, or did it ask and something else ate the answer".
+        _logger.LogInformation(
+            "scraper/tv/episode-details: item {ItemId} \"{ShowTitle}\" S{Season:D2}E{Episode:D2} \"{Title}\"",
+            id, dto.ShowTitle, dto.Season, dto.Episode, dto.Title);
 
         return Ok(ApiResponse<ScraperEpisodeDetailsDto>.Ok(dto));
     }
