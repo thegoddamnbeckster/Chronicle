@@ -220,6 +220,113 @@ public class ScraperController : ControllerBase
     }
 
     /// <summary>
+    /// Builds one collection's ScraperCollectionDto from its own container MediaItem --
+    /// factored out of BuildMovieDetailsDtoAsync (2026-09-12) so the same fallback-poster logic
+    /// backs both an individual movie's embedded "collection" field AND
+    /// GetAllCollectionsForArtSync's own standalone listing, used by the movie addon's periodic
+    /// collection-art task (see that endpoint's own doc for why it exists -- replacing
+    /// Chronicle_Scrobbler's retired sync_engine.py). logMemberContext is the calling movie's own
+    /// name for the "no poster at all" warning below; null when there's no single member movie
+    /// driving this call (the standalone listing logs its own summary instead).
+    /// </summary>
+    private async Task<ScraperCollectionDto> BuildCollectionDtoAsync(
+        MediaItem parent, CancellationToken ct, string? logMemberContext = null)
+    {
+        var parentResolved = ParseResolvedCore(parent.MetadataJson);
+        var collectionPoster = parentResolved?.PosterUrl ?? parent.PosterUrl;
+        var usedFallback = false;
+
+        if (string.IsNullOrEmpty(collectionPoster))
+        {
+            // Confirmed directly (2026-07-30): 35 collections in this library have no
+            // dedicated set-level art from ANY configured provider at all (not a stale
+            // registration like the earlier Video3/Video7 bug -- Chronicle genuinely has
+            // nothing for the collection itself), most with several real member movies,
+            // not just one-off single-movie groupings. Rather than leave Kodi's set card
+            // permanently blank, fall back to the first member's own poster (same rule,
+            // same order, the web collection page now also falls back with -- see
+            // IMovieCollectionService.GetFallbackPosterAsync) -- better than nothing, and
+            // a common convention other media managers already use. Deliberately no
+            // ownership filter: a collection member without a local file is exactly as
+            // eligible a poster source as one you have -- the goal is always showing a
+            // poster where one exists, not gating it on file ownership.
+            collectionPoster = await _collections.GetFallbackPosterAsync(_context, parent.Id, ct);
+            usedFallback = collectionPoster is not null;
+        }
+
+        var collection = new ScraperCollectionDto(
+            parent.Id,
+            parentResolved?.Title ?? parent.Name,
+            parentResolved?.Overview ?? parent.Overview,
+            collectionPoster,
+            parentResolved?.BackdropUrl,
+            // Kodi's set folder accepts all of these; anything omitted here simply
+            // cannot reach Kodi, since movie sets have no scraper hook of their own.
+            LogoUrl:     parentResolved?.LogoUrl,
+            BannerUrl:   parentResolved?.BannerUrl,
+            ClearartUrl: parentResolved?.ClearartUrl,
+            DiscUrl:     parentResolved?.DiscUrl,
+            ThumbUrl:    parentResolved?.ThumbUrl,
+            PinnedSlots: ParsePinnedSlots(parent.MetadataJson));
+
+        if (string.IsNullOrEmpty(collectionPoster))
+        {
+            if (logMemberContext is not null)
+                _logger.LogWarning(
+                    "scraper/movies/details: item \"{Title}\" belongs to collection {CollectionId} \"{CollectionName}\" " +
+                    "which has NO posterUrl in Chronicle (and no member movie has one either) -- Kodi's set poster will stay blank",
+                    logMemberContext, parent.Id, collection.Name);
+        }
+        else if (usedFallback)
+        {
+            _logger.LogInformation(
+                "scraper/movies/details: collection {CollectionId} \"{CollectionName}\" has no poster of its own -- " +
+                "using a member movie's poster instead", parent.Id, collection.Name);
+        }
+
+        return collection;
+    }
+
+    /// <summary>
+    /// GET /api/v1/scraper/movies/collections -- every real collection Chronicle knows about,
+    /// as the same ScraperCollectionDto shape an individual movie's own /movies/details response
+    /// embeds. Added (2026-09-12) so the movie addon can refresh every collection's art
+    /// periodically as its own task, not just as a side effect of some member movie happening to
+    /// get rescraped -- a collection whose every member is already fully scraped otherwise never
+    /// gets revisited even after its own art changes in Chronicle. Replaces
+    /// Chronicle_Scrobbler's retired sync_engine.py, which pushed collection art via
+    /// VideoLibrary.SetMovieSetDetails directly; per-user decision (2026-09-12), movie
+    /// collections belong entirely to the movie scraper now, using the same
+    /// collection_sync.sync_collection_art() file-based mechanism an individual movie scrape
+    /// already relies on -- this endpoint only supplies the list to iterate, not a second way to
+    /// push art.
+    ///
+    /// Identifies a real collection the same way NfoRebuildQueueService's own seeding does: a
+    /// movie-type, HierarchyLevel-0 item carrying its own "collection:" MediaExternalId marker
+    /// (see MediaService.CreateAsync) -- not by having children, since a fresh, not-yet-imported
+    /// collection stub has none yet either.
+    /// </summary>
+    [HttpGet("movies/collections")]
+    public async Task<IActionResult> GetAllCollectionsForArtSync(CancellationToken ct)
+    {
+        var collectionIds = await _context.MediaExternalIds
+            .Where(e => e.ExternalId.StartsWith("collection:"))
+            .Select(e => e.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var containers = await _context.MediaItems
+            .Where(m => collectionIds.Contains(m.Id))
+            .ToListAsync(ct);
+
+        var dtos = new List<ScraperCollectionDto>(containers.Count);
+        foreach (var container in containers)
+            dtos.Add(await BuildCollectionDtoAsync(container, ct));
+
+        return Ok(ApiResponse<List<ScraperCollectionDto>>.Ok(dtos));
+    }
+
+    /// <summary>
     /// Resolves and assembles the full ScraperMovieDetailsDto for one item -- shared by
     /// GetMovieDetails (JSON, for Kodi's getdetails step) and GetMovieSidecar (raw sidecar
     /// bytes, for the addon's NFO-rebuild flow) so collection/artwork resolution isn't
@@ -240,52 +347,7 @@ public class ScraperController : ControllerBase
             var parent = await _context.MediaItems.FindAsync([item.ParentId.Value], ct);
             if (parent is not null)
             {
-                var parentResolved = ParseResolvedCore(parent.MetadataJson);
-                var collectionPoster = parentResolved?.PosterUrl ?? parent.PosterUrl;
-                var usedFallback = false;
-
-                if (string.IsNullOrEmpty(collectionPoster))
-                {
-                    // Confirmed directly (2026-07-30): 35 collections in this library have no
-                    // dedicated set-level art from ANY configured provider at all (not a stale
-                    // registration like the earlier Video3/Video7 bug -- Chronicle genuinely has
-                    // nothing for the collection itself), most with several real member movies,
-                    // not just one-off single-movie groupings. Rather than leave Kodi's set card
-                    // permanently blank, fall back to the first member's own poster (same rule,
-                    // same order, the web collection page now also falls back with -- see
-                    // IMovieCollectionService.GetFallbackPosterAsync) -- better than nothing, and
-                    // a common convention other media managers already use. Deliberately no
-                    // ownership filter: a collection member without a local file is exactly as
-                    // eligible a poster source as one you have -- the goal is always showing a
-                    // poster where one exists, not gating it on file ownership.
-                    collectionPoster = await _collections.GetFallbackPosterAsync(_context, parent.Id, ct);
-                    usedFallback = collectionPoster is not null;
-                }
-
-                collection = new ScraperCollectionDto(
-                    parent.Id,
-                    parentResolved?.Title ?? parent.Name,
-                    parentResolved?.Overview ?? parent.Overview,
-                    collectionPoster,
-                    parentResolved?.BackdropUrl,
-                    // Kodi's set folder accepts all of these; anything omitted here simply
-                    // cannot reach Kodi, since movie sets have no scraper hook of their own.
-                    LogoUrl:     parentResolved?.LogoUrl,
-                    BannerUrl:   parentResolved?.BannerUrl,
-                    ClearartUrl: parentResolved?.ClearartUrl,
-                    DiscUrl:     parentResolved?.DiscUrl,
-                    ThumbUrl:    parentResolved?.ThumbUrl,
-                    PinnedSlots: ParsePinnedSlots(parent.MetadataJson));
-
-                if (string.IsNullOrEmpty(collectionPoster))
-                    _logger.LogWarning(
-                        "scraper/movies/details: item {ItemId} \"{Title}\" belongs to collection {CollectionId} \"{CollectionName}\" " +
-                        "which has NO posterUrl in Chronicle (and no member movie has one either) -- Kodi's set poster will stay blank",
-                        id, item.Name, parent.Id, collection.Name);
-                else if (usedFallback)
-                    _logger.LogInformation(
-                        "scraper/movies/details: collection {CollectionId} \"{CollectionName}\" has no poster of its own -- " +
-                        "using a member movie's poster instead", parent.Id, collection.Name);
+                collection = await BuildCollectionDtoAsync(parent, ct, logMemberContext: item.Name);
             }
             else
             {
