@@ -224,6 +224,29 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   padding: 3px 10px;
   transition: color 0.15s, border-color 0.15s;
   white-space: nowrap;
+  /* A long collection/show name ("The Mitchells vs. the Machines Collection") had no cap here,
+   * unlike .breadcrumbLink right next to it in the same .topNav flex row -- white-space: nowrap
+   * with no max-width let this button grow to its full text width, and a flex item's implicit
+   * min-width: auto stopped the row from ever shrinking it back down, pushing the whole .topNav
+   * row (and with it the entire page, which has nothing to contain that overflow) wider than
+   * the viewport on mobile. Root-caused live (2026-09-12, phone screenshot): the resulting
+   * page-wide horizontal scroll made every section below -- Crew included -- look like it was
+   * spilling out of its own bounds, when the actual overflow's source was all the way up here.
+   * Matches .breadcrumbLink's own existing max-width/ellipsis treatment; overflow: hidden also
+   * has the side effect of resetting this flex item's automatic min-width to 0, which is what
+   * actually lets it shrink instead of forcing the row wider. */
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Without this, .breadcrumb (its sibling in the same space-between row) claims space first
+   * and squeezes this down to just a few px -- functionally still clickable, but visually
+   * showing nothing but a sliver of the "↑" glyph. min-width alone (not flex-shrink: 0 --
+   * tried first, but that stopped this item shrinking AT ALL below its 200px max-width,
+   * reintroducing the exact page-wide overflow this rule exists to fix) gives it a floor while
+   * still letting it shrink above that, so the remaining space pressure falls on .breadcrumb
+   * instead, which degrades far more gracefully under it (flex-wrap: wrap already lets it drop
+   * to a second line instead of losing legibility). */
+  min-width: 32px;
 }
 
 .upBtn:hover { color: var(--text-primary); border-color: var(--accent); }
