@@ -89,44 +89,6 @@ namespace Chronicle.Tests.Unit.Services
             mappings[0].KodiId.Should().Be(43);
         }
 
-        [Fact]
-        public async Task GetPushTargetsAsync_ReturnsRegisteredDeviceForMappedItem()
-        {
-            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
-            await _service.RecordKodiIdAsync(1, mediaItemId: 100, "movie", kodiId: 42);
-
-            var targets = await _service.GetPushTargetsAsync(mediaItemId: 100);
-
-            targets.Should().HaveCount(1);
-            targets[0].Device.Host.Should().Be("10.0.0.10");
-            targets[0].Mapping.KodiId.Should().Be(42);
-        }
-
-        [Fact]
-        public async Task GetPushTargetsAsync_ExcludesDeviceWhoseApiTokenWasRevoked()
-        {
-            // RevokeTokenAsync only flips IsActive -- it never deletes the ApiToken row, so
-            // KodiDevice's cascade-on-delete FK never fires. GetPushTargetsAsync must filter
-            // this itself or a revoked device keeps receiving pushes indefinitely.
-            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
-            await _service.RecordKodiIdAsync(1, mediaItemId: 100, "movie", kodiId: 42);
-
-            var token = await _context.ApiTokens.FirstAsync(t => t.Id == 1);
-            token.IsActive = false;
-            await _context.SaveChangesAsync();
-
-            var targets = await _service.GetPushTargetsAsync(mediaItemId: 100);
-
-            targets.Should().BeEmpty();
-        }
-
-        [Fact]
-        public async Task GetPushTargetsAsync_ForItemWithNoMapping_ReturnsEmpty()
-        {
-            var targets = await _service.GetPushTargetsAsync(mediaItemId: 100);
-            targets.Should().BeEmpty();
-        }
-
         // ── New-content scan signal ──────────────────────────────────────────
         // Deliberately exercised WITHOUT ever calling RegisterAsync/creating a KodiDevice --
         // that's the whole point: KodiDevice only exists once "Allow remote control via HTTP"

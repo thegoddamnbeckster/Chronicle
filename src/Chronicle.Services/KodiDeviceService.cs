@@ -91,27 +91,6 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
         }
     }
 
-    public async Task<List<(KodiDevice Device, KodiLibraryId Mapping)>> GetPushTargetsAsync(
-        int mediaItemId, CancellationToken ct = default)
-    {
-        // Single joined query (was two round trips + a manual in-memory join) that also excludes
-        // any device whose backing ApiToken has since been revoked: RevokeTokenAsync only flips
-        // ApiToken.IsActive (it never deletes the row, so KodiDevice's cascade-on-delete FK never
-        // fires), so without this filter a revoked device's last-known host:port would otherwise
-        // keep receiving pushes indefinitely -- including, after a DHCP lease change, to whatever
-        // device now holds that LAN IP.
-        var rows = await (
-            from mapping in db.KodiLibraryIds
-            where mapping.MediaItemId == mediaItemId
-            join device in db.KodiDevices on mapping.KodiDeviceId equals device.Id
-            join token in db.ApiTokens on device.ApiTokenId equals token.Id
-            where token.IsActive
-            select new { device, mapping }
-        ).ToListAsync(ct);
-
-        return rows.Select(r => (r.device, r.mapping)).ToList();
-    }
-
     public async Task<int?> GetDeviceIdForApiTokenAsync(int apiTokenId, CancellationToken ct = default)
     {
         var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.ApiTokenId == apiTokenId, ct);

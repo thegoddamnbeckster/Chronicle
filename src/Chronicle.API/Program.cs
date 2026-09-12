@@ -70,11 +70,12 @@ builder.Host.UseSerilog((ctx, services, cfg) => cfg
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
     // .NET's own IHttpClientFactory logging handlers log every request (success AND failure) at
     // Information, full exception included on failure -- confirmed live (2026-09-11) this
-    // produces two near-identical multi-line stack traces per KodiRpcClient call against an
-    // unreachable device, on top of Chronicle's own one-line warning for the same failure.
-    // Warning-and-up only: nothing meaningful is lost (a genuinely unexpected HttpClient problem
-    // would still surface at Warning+), and the routine "device offline" case -- the overwhelming
-    // majority of these -- stops flooding the log 3x per occurrence.
+    // produced two near-identical multi-line stack traces per call against an unreachable
+    // device (originally observed via the now-removed KodiRpcClient; see NfoPushService's own
+    // doc for why that class is gone), on top of Chronicle's own one-line warning for the same
+    // failure. Warning-and-up only: nothing meaningful is lost (a genuinely unexpected
+    // HttpClient problem would still surface at Warning+), and this still applies to every
+    // other outbound HttpClient call Chronicle makes, not just that one.
     .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
     .WriteTo.Console(
         theme: AnsiConsoleTheme.Code,
@@ -159,7 +160,6 @@ builder.Services.AddScoped<ISyncOrchestrationService, SyncOrchestrationService>(
 builder.Services.AddSingleton<ISyncJobTracker, SyncJobTracker>();
 builder.Services.AddScoped<IPluginTaskRunner, PluginTaskRunner>();
 builder.Services.AddScoped<IKodiDeviceService, KodiDeviceService>();
-builder.Services.AddScoped<IKodiRpcClient, KodiRpcClient>();
 builder.Services.AddScoped<INfoPushService, NfoPushService>();
 builder.Services.AddScoped<INfoRebuildQueueService, NfoRebuildQueueService>();
 
@@ -212,12 +212,6 @@ builder.Services.AddHttpClient("internal-loopback", c =>
     c.BaseAddress = new Uri($"http://localhost:{portConfig.Api}");
     c.Timeout = TimeSpan.FromSeconds(15);
 });
-
-// ── Named HttpClient for pushing VideoLibrary.Refresh* to a registered Kodi device's own
-// remote-control endpoint (KodiRpcClient sets Timeout per-call and BaseAddress per-device, since
-// every device has a different host/port -- this registration exists only so the named client
-// is a distinct instance from "internal-loopback" above, not for any shared config).
-builder.Services.AddHttpClient(nameof(Chronicle.Services.KodiRpcClient));
 
 // ── Data Protection (plugin settings encryption) ──────────────────────────────
 // Keys are persisted under ContentRootPath (project root in dev, publish dir in

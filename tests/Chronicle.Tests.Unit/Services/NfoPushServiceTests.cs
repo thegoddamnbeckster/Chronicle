@@ -15,8 +15,6 @@ namespace Chronicle.Tests.Unit.Services
     {
         private readonly ChronicleDbContext _context;
         private readonly Mock<IJwtTokenService> _jwtMock = new();
-        private readonly Mock<IKodiDeviceService> _devicesMock = new();
-        private readonly Mock<IKodiRpcClient> _rpcMock = new();
         private readonly string _tempDir;
 
         private const int MovieTypeId = 1;
@@ -39,8 +37,6 @@ namespace Chronicle.Tests.Unit.Services
             _context.SaveChanges();
 
             _jwtMock.Setup(j => j.GenerateToken(It.IsAny<User>())).Returns("fake-jwt");
-            _devicesMock.Setup(d => d.GetPushTargetsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync([]);
 
             _tempDir = Path.Combine(Path.GetTempPath(), "chronicle-nfo-push-tests-" + Guid.NewGuid());
             Directory.CreateDirectory(_tempDir);
@@ -55,7 +51,6 @@ namespace Chronicle.Tests.Unit.Services
         private NfoPushService BuildService(byte[] sidecarResponseBytes) =>
             new(_context, _jwtMock.Object,
                 new StubHttpClientFactory(new StubSidecarHandler(sidecarResponseBytes)),
-                _devicesMock.Object, _rpcMock.Object,
                 Mock.Of<ILogger<NfoPushService>>());
 
         private static string FileScannerMetadataJson(string? folderPath, string[]? filePaths, string? nfoPath = null) =>
@@ -184,31 +179,6 @@ namespace Chronicle.Tests.Unit.Services
             await act.Should().NotThrowAsync();
         }
 
-        [Fact]
-        public async Task PushAsync_WithRegisteredDevice_CallsRpcRefresh()
-        {
-            var item = new MediaItem
-            {
-                Id = 400, Name = "Pushable Movie", MediaTypeId = MovieTypeId, HierarchyLevel = 0,
-                MetadataJson = FileScannerMetadataJson(_tempDir, [Path.Combine(_tempDir, "Movie.mkv")]),
-                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
-            };
-            _context.MediaItems.Add(item);
-            await _context.SaveChangesAsync();
-
-            var device = new KodiDevice { Id = 1, Name = "Shield", Host = "10.0.0.10", Port = 8080 };
-            var mapping = new KodiLibraryId { KodiDeviceId = 1, MediaItemId = 400, Kind = "movie", KodiId = 42 };
-            _devicesMock.Setup(d => d.GetPushTargetsAsync(400, It.IsAny<CancellationToken>()))
-                .ReturnsAsync([(device, mapping)]);
-            _rpcMock.Setup(r => r.RefreshAsync(device, "movie", 42, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(true);
-
-            var service = BuildService("<movie/>"u8.ToArray());
-            await service.PushAsync(mediaItemId: 400, userId: 1);
-
-            _rpcMock.Verify(r => r.RefreshAsync(device, "movie", 42, It.IsAny<CancellationToken>()), Times.Once);
-        }
-
         // ── TryPushAsync's own outcome contract ─────────────────────────────────
         // NfoGenerationService (the whole-backlog bulk generator) decides whether to mark a
         // queue row complete purely from this return value -- true/false/null need to mean
@@ -274,7 +244,7 @@ namespace Chronicle.Tests.Unit.Services
 
             var service = new NfoPushService(_context, _jwtMock.Object,
                 new StubHttpClientFactory(new StubFailingSidecarHandler()),
-                _devicesMock.Object, _rpcMock.Object, Mock.Of<ILogger<NfoPushService>>());
+                Mock.Of<ILogger<NfoPushService>>());
             var outcome = await service.TryPushAsync(mediaItemId: 502, userId: 1);
 
             // False (an attempt was made and failed), not null -- this IS a meaningful failure

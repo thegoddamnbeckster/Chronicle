@@ -11,9 +11,18 @@ namespace Chronicle.Services;
 
 /// <summary>
 /// Builds this item's NFO the exact same way the sidecar endpoints already do (an internal,
-/// JWT-authenticated loopback call to Chronicle's own API -- see the "why loopback" note below),
-/// writes it straight to the item's own on-disk location, then pushes a targeted
-/// VideoLibrary.Refresh* to every Kodi instance that already knows this item's internal id.
+/// JWT-authenticated loopback call to Chronicle's own API -- see the "why loopback" note below)
+/// and writes it straight to the item's own on-disk location.
+///
+/// Deliberately does NOT also push a VideoLibrary.Refresh* to Kodi via JSON-RPC after writing --
+/// removed 2026-09-12. That call only ever worked for a device with "Allow remote control via
+/// HTTP" turned on, an opt-in Kodi setting the average user hasn't enabled; every device that
+/// hasn't was silently logged as a "failed" push every single time, forever, with nothing
+/// actionable for the user to do about it. Kodi's own scan/refresh cadence (its own scheduled
+/// library update, or the user's own manual scan/refresh) is what actually gets an updated NFO
+/// read now -- the existing pull-based kodi-scan-signal family on IKodiDeviceService
+/// (SignalNewContentAsync/IsScanNeededAsync/AcknowledgeScanAsync) is the supported way to nudge
+/// a device to look, and it was specifically designed to need no such opt-in setting.
 ///
 /// Why a loopback HTTP call instead of calling the sidecar-building logic directly: that logic
 /// (ScraperController's BuildMovieDetailsDtoAsync/BuildShowDetailsDtoAsync/
@@ -29,8 +38,6 @@ public sealed class NfoPushService(
     ChronicleDbContext db,
     IJwtTokenService jwt,
     IHttpClientFactory httpClientFactory,
-    IKodiDeviceService devices,
-    IKodiRpcClient rpc,
     ILogger<NfoPushService> logger) : INfoPushService
 {
     /// <summary>Stable id this service's own row lives under in the shared background_tasks
@@ -229,23 +236,9 @@ public sealed class NfoPushService(
         }
         logger.LogInformation("NfoPushService: wrote NFO for item {Id} to {Path}.", mediaItemId, destPath);
 
-        var targets = await devices.GetPushTargetsAsync(mediaItemId, ct);
-        // Fanned out concurrently, not one device at a time: KodiRpcClient.RefreshAsync already
-        // caps each call at its own 8s timeout, but a sequential loop would pay that timeout
-        // once PER unreachable device instead of once total.
-        await Task.WhenAll(targets.Select(async t =>
-        {
-            var (device, mapping) = t;
-            var ok = await rpc.RefreshAsync(device, mapping.Kind, mapping.KodiId, ct);
-            logger.LogInformation(
-                "NfoPushService: refresh push to device {Device} ({Host}) for item {Id} -- {Result}.",
-                device.Name, device.Host, mediaItemId, ok ? "accepted" : "failed");
-        }));
-
-        // The NFO write itself succeeding is the meaningful outcome here, even if targets is
-        // empty (this device has no Kodi devices registered against it yet -- e.g. before this
-        // item's first NFO-rebuild pass has ever run, see kodi_library_ids/report_kodi_id) --
-        // that's not a push failure, just nothing left to fan out to yet.
+        // No JSON-RPC refresh push from here on -- see this class's own doc for why. The NFO
+        // write itself succeeding is the meaningful outcome; Kodi's own scan/refresh cadence, or
+        // the pull-based kodi-scan-signal, is what gets it actually read.
         return true;
     }
 

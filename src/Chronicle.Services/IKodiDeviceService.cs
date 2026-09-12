@@ -17,11 +17,6 @@ public interface IKodiDeviceService
     /// to for it regardless.</summary>
     Task RecordKodiIdAsync(int apiTokenId, int mediaItemId, string kind, int kodiId, CancellationToken ct = default);
 
-    /// <summary>Every (device, mapping) pair NfoPushService should push this MediaItem to --
-    /// i.e. every Kodi instance that has both self-registered AND already reported its own
-    /// internal id for this specific item via an ordinary scan.</summary>
-    Task<List<(KodiDevice Device, KodiLibraryId Mapping)>> GetPushTargetsAsync(int mediaItemId, CancellationToken ct = default);
-
     /// <summary>Resolves an API token to its own registered KodiDevice.Id, or null if that
     /// token has no device registered yet (e.g. remote control is off on that Kodi instance).
     /// The single place this lookup lives -- callers (KodiDeviceController's rebuild-queue

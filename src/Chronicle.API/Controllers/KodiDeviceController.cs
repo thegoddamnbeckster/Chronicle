@@ -92,7 +92,7 @@ public class KodiDeviceController(
         // Strip the IPv6-mapped-IPv4 prefix (::ffff:10.0.0.10) a dual-stack listener commonly
         // wraps an actual IPv4 peer in -- matches the plain dotted-quad format device_registration.py
         // itself would have sent, so this doesn't look like a surprising format change downstream
-        // (KodiRpcClient building "http://{host}:{port}/jsonrpc", the status page's Host column, etc).
+        // (the status page's Host column, etc).
         var host = remoteIp is { IsIPv4MappedToIPv6: true } ? remoteIp.MapToIPv4().ToString() : remoteIp?.ToString();
         if (string.IsNullOrWhiteSpace(host))
             host = request.Host.Trim(); // couldn't read a remote address at all -- fall back rather than fail registration outright
