@@ -69,9 +69,13 @@ public class NfoRebuildQueueServiceTests : IDisposable
     {
         // Per-user report (2026-09-08): a device whose local library covers only a fraction of
         // the shared catalog was claiming, failing to resolve, and releasing tens of thousands
-        // of episodes in a single run before this existed -- once Chronicle_Scraper's own
-        // per-kind failure-streak tracking (nfo_rebuild.py) decides it can't resolve a kind this
-        // run, it should stop being handed more of it.
+        // of items in a single run before this existed -- once Chronicle_Scraper's own per-kind
+        // failure-streak tracking (nfo_rebuild.py) decides it can't resolve a kind this run, it
+        // should stop being handed more of it. Exercised against "movie"/"tvshow" here rather
+        // than the original "episode" report (2026-09-12: Chronicle no longer queues episodes
+        // for NFO generation at all -- see EnsureSeededAsync's own doc) -- the exclusion
+        // mechanism itself is generic to any kind, so this still proves it's precise to the
+        // requested kind(s), not "any TV content" or "everything".
         _db.MediaItems.Add(new MediaItem { Id = 100, MediaTypeId = MovieTypeId, Name = "Alien", Year = 1979, HierarchyLevel = 0, MetadataJson = FileJson("Alien") });
         _db.MediaItems.Add(new MediaItem { Id = 200, MediaTypeId = TvTypeId, Name = "Lanterns", Year = 2026, HierarchyLevel = 0 });
         _db.MediaItems.Add(new MediaItem { Id = 201, MediaTypeId = TvTypeId, Name = "Season 1", ParentId = 200, Number = 1, HierarchyLevel = 1 });
@@ -79,18 +83,28 @@ public class NfoRebuildQueueServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         var claimed = await _svc.ClaimBatchAsync(
-            kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5), excludeKinds: ["episode"]);
+            kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5), excludeKinds: ["movie"]);
 
-        // Show (level 0, kind "tvshow") and movie both still come back -- only "episode" itself
-        // was excluded, proving the filter is precise to the requested kind(s), not "any TV content".
-        claimed.Items.Should().HaveCount(2);
-        claimed.Items.Should().Contain(c => c.Kind == "movie");
+        // The show (kind "tvshow") still comes back -- only "movie" itself was excluded. Its
+        // episode is never a candidate in the first place (see the dedicated test below).
+        claimed.Items.Should().ContainSingle();
         claimed.Items.Should().Contain(c => c.Kind == "tvshow");
-        claimed.Items.Should().NotContain(c => c.Kind == "episode");
+        claimed.Items.Should().NotContain(c => c.Kind == "movie");
     }
 
+    /// Root-caused live (2026-09-12), per-user direction: Chronicle no longer writes
+    /// per-episode NFOs at all -- the NfoUrl action Kodi fires for an episode carries no show
+    /// context whatsoever, and unlike a failed show-level NfoUrl call (which Kodi tolerates), a
+    /// failed episode-level one aborts the rest of that show's scan entirely with no fallback.
+    /// The normal find/getepisodelist/getepisodedetails path already delivers everything an
+    /// episode nfo would have, and watch_rating_sync.py already keeps rating/resume/watched
+    /// status current on anything already in a device's library directly via
+    /// VideoLibrary.Set*Details -- nothing is lost by never generating one. This is the single,
+    /// authoritative point that guarantees it: an episode with a real file is never seeded into
+    /// the rebuild queue in the first place, even though a show or movie in the identical shape
+    /// would be.
     [Fact]
-    public async Task ClaimBatchAsync_EpisodeIncludesParentShowNameAndYear()
+    public async Task ClaimBatchAsync_NeverQueuesAnEpisodeEvenWithARealFile()
     {
         _db.MediaItems.Add(new MediaItem { Id = 200, MediaTypeId = TvTypeId, Name = "Lanterns", Year = 2026, HierarchyLevel = 0 });
         _db.MediaItems.Add(new MediaItem { Id = 201, MediaTypeId = TvTypeId, Name = "Season 1", ParentId = 200, Number = 1, HierarchyLevel = 1 });
@@ -99,18 +113,30 @@ public class NfoRebuildQueueServiceTests : IDisposable
 
         var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
 
-        // Show (level 0) and episode (level 2) are both queued; the season container (level 1) is not.
-        claimed.Items.Should().HaveCount(2);
-        claimed.TotalPending.Should().Be(2);
-        var episode = claimed.Items.Should().ContainSingle(c => c.Kind == "episode").Subject;
-        episode.MediaItemId.Should().Be(202);
-        episode.Season.Should().Be(1);
-        episode.Episode.Should().Be(3);
-        episode.ShowName.Should().Be("Lanterns");
-        episode.ShowYear.Should().Be(2026);
-
+        // Only the show (level 0) is queued; the season container (level 1, never queued
+        // regardless of kind) and the episode (level 2, deliberately never queued at all) are not.
+        claimed.Items.Should().ContainSingle();
+        claimed.TotalPending.Should().Be(1);
         var show = claimed.Items.Should().ContainSingle(c => c.Kind == "tvshow").Subject;
         show.MediaItemId.Should().Be(200);
+    }
+
+    /// Mirrors the test above, but for a PRE-EXISTING episode row from before this change --
+    /// proves the pruning half of the fix, not just "never insert a new one."
+    [Fact]
+    public async Task ClaimBatchAsync_PrunesAPreExistingEpisodeRowFromBeforeThisChange()
+    {
+        _db.MediaItems.Add(new MediaItem { Id = 200, MediaTypeId = TvTypeId, Name = "Lanterns", Year = 2026, HierarchyLevel = 0 });
+        _db.MediaItems.Add(new MediaItem { Id = 201, MediaTypeId = TvTypeId, Name = "Season 1", ParentId = 200, Number = 1, HierarchyLevel = 1 });
+        _db.MediaItems.Add(new MediaItem { Id = 202, MediaTypeId = TvTypeId, Name = "OutKast", ParentId = 201, Number = 3, HierarchyLevel = 2, MetadataJson = FileJson("OutKast") });
+        _db.NfoRebuildQueue.Add(new NfoRebuildQueueItem { MediaItemId = 202, Kind = "episode", EnqueuedAt = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+
+        NfoRebuildQueueService.ResetSeedThrottleForTests();
+        var claimed = await _svc.ClaimBatchAsync(kodiDeviceId: 1, batchSize: 10, TimeSpan.FromMinutes(5));
+
+        claimed.Items.Should().NotContain(c => c.Kind == "episode");
+        _db.NfoRebuildQueue.Any(q => q.MediaItemId == 202).Should().BeFalse();
     }
 
     [Fact]

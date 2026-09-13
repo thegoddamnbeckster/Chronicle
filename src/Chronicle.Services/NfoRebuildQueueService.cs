@@ -405,21 +405,6 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
                 .Select(m => m.Id)
                 .ToHashSet();
 
-            // Number != null on the episode side excludes a numberless episode (a scan/matching
-            // gap upstream -- see ScraperController.GetEpisodes' own identical exclusion and its
-            // doc for why) from ever entering the queue at all: with no real episode number,
-            // get_episode(tvshowid, season, None) can never match a real Kodi episode, so every
-            // device that claimed one would release it right back, forever -- an unproductive
-            // claim/release loop with no way to ever complete.
-            var episodeRows = await db.MediaItems
-                .Where(m => showTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 2 && m.Number != null)
-                .Select(m => new { m.Id, m.MetadataJson, m.UpdatedAt })
-                .ToListAsync(ct);
-            var episodeIdsWithFile = episodeRows
-                .Where(e => FileIdentityJson.HasKnownFile(e.MetadataJson))
-                .Select(e => e.Id)
-                .ToHashSet();
-
             var showRows = await db.MediaItems
                 .Where(m => showTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0)
                 .Select(m => new { m.Id, m.UpdatedAt })
@@ -464,6 +449,27 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             // Prunes rows already queued for a file-less item BEFORE this fix landed, not just
             // new ones going forward -- same "clean up the existing backlog once" reasoning as
             // the collection-container prune above.
+            //
+            // "episode" is unconditionally stale now (2026-09-12, per-user direction): Chronicle
+            // no longer writes per-episode NFOs at all. The NfoUrl action Kodi fires for a file
+            // with an existing sidecar carries no show context whatsoever (confirmed live the
+            // same day -- see ScraperController.ResolveEpisodeByExternalId's own doc), and
+            // unlike a failed SHOW-level NfoUrl call (which Kodi tolerates, falling back to its
+            // normal find/getepisodelist flow), a failed EPISODE-level one aborts the rest of
+            // that show's scan entirely with no fallback -- a structural Kodi limitation, not
+            // something either side of this pipeline can route around. The normal find/
+            // getepisodelist/getepisodedetails path already delivers every field an nfo would
+            // have (see get_episode_details()), and watch_rating_sync.py already keeps rating/
+            // resume/watched status current on anything already in a device's library via
+            // direct VideoLibrary.Set*Details calls -- nothing an episode nfo did is lost by
+            // removing it, and removing it eliminates the one-bad-file-kills-the-whole-show
+            // failure mode outright. This is the single, authoritative point that stops it:
+            // with no "episode" kind ever seeded (or left over) here, nfo_rebuild.py's own
+            // per-item pipeline (Chronicle_Scraper, movie addon -- shared code across all three
+            // kinds) can never be handed episode work again, so its "episode" branches are
+            // deliberately left in place rather than surgically removed from that shared,
+            // concurrent, heavily-hardened pipeline -- they're provably unreachable from here,
+            // and removing them there risked the movie/show handling for no behavioral gain.
             var existingRows = await db.NfoRebuildQueue
                 .Select(q => new { q.Id, q.MediaItemId, q.Kind, q.CompletedAt })
                 .ToListAsync(ct);
@@ -471,7 +477,7 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
                 .Where(r => r.Kind switch
                 {
                     "movie"   => !movieIds.Contains(r.MediaItemId),
-                    "episode" => !episodeIdsWithFile.Contains(r.MediaItemId),
+                    "episode" => true,
                     "tvshow"  => !showIdsWithFile.Contains(r.MediaItemId),
                     _         => false,
                 })
@@ -486,7 +492,8 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
                 await db.SaveChangesAsync(ct);
                 logger.LogInformation(
                     "NfoRebuildQueueService: pruned {Count} stale row(s) from the rebuild queue " +
-                    "-- no physical file recorded for these items on any device",
+                    "-- no physical file recorded for these items on any device, or (episodes) " +
+                    "Chronicle no longer generates per-episode NFOs at all",
                     toRemove.Count);
             }
 
@@ -502,7 +509,6 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             // updated after its NFO was last generated gets reset back to pending on its own, the
             // same lightweight "top up" pass this method already does for brand-new items.
             var updatedAtById = movieRows.ToDictionary(m => m.Id, m => m.UpdatedAt);
-            foreach (var e in episodeRows) updatedAtById[e.Id] = e.UpdatedAt;
             foreach (var s in showRows) updatedAtById[s.Id] = s.UpdatedAt;
 
             var rowsNeedingRefresh = existingRows
@@ -542,9 +548,10 @@ public sealed class NfoRebuildQueueService(ChronicleDbContext db, ILogger<NfoReb
             foreach (var id in showIds)
                 if (showIdsWithFile.Contains(id) && !existingIds.Contains(id))
                     toInsert.Add(new NfoRebuildQueueItem { MediaItemId = id, Kind = "tvshow", EnqueuedAt = now });
-            foreach (var id in episodeIdsWithFile)
-                if (!existingIds.Contains(id))
-                    toInsert.Add(new NfoRebuildQueueItem { MediaItemId = id, Kind = "episode", EnqueuedAt = now });
+            // "episode" is deliberately never seeded (2026-09-12) -- see the pruning block
+            // above's own doc for why. showIdsWithFile's own grandchildren query above already
+            // rolls a show's file-presence check up from its descendant episodes independently,
+            // so no episode-level query is needed here at all any more.
 
             if (toInsert.Count > 0)
             {

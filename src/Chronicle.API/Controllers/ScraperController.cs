@@ -1519,41 +1519,10 @@ public class ScraperController : ControllerBase
         return File(bytes, "application/octet-stream");
     }
 
-    /// <summary>Kodi's NFO-rebuild flow for episodes -- see GetMovieSidecar's own doc.</summary>
-    [HttpGet("tv/episode-sidecar")]
-    public async Task<IActionResult> GetEpisodeSidecar(
-        [FromQuery] int id, [FromQuery] string? pluginId, CancellationToken ct)
-    {
-        var plugin = ResolveSidecarPlugin(pluginId);
-        if (plugin is null)
-            return NotFound(ApiResponse<object>.Fail("NO_SIDECAR_PLUGIN", "No sidecar format plugin is installed."));
-
-        var dto = await BuildEpisodeDetailsDtoAsync(id, ct);
-        if (dto is null)
-            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
-
-        var data = new ResolvedEpisodeData(
-            Title:          dto.Title,
-            Overview:       dto.Overview,
-            Season:         dto.Season,
-            Episode:        dto.Episode,
-            Year:           dto.Year,
-            Aired:          dto.Aired,
-            RuntimeMinutes: dto.RuntimeMinutes,
-            Cast:           MapCast(dto.Cast),
-            Crew:           MapCrew(dto.Crew),
-            Ratings:        MapRatings(dto.Ratings),
-            ThumbUrl:       dto.ThumbUrl,
-            ExternalIds:    MapExternalIds(dto.ExternalIds),
-            ShowTitle:      dto.ShowTitle,
-            ShowYear:       dto.ShowYear,
-            UserRating:            dto.UserRating,
-            ResumePositionPercent: dto.ResumePositionPercent,
-            ResumeUpdatedAt:       dto.ResumeUpdatedAt);
-
-        var bytes = await plugin.BuildAsync(new EpisodeSidecarBuildRequest(data), ct);
-        return File(bytes, "application/octet-stream");
-    }
+    // Kodi's NFO-rebuild flow for episodes -- GET tv/episode-sidecar -- was removed 2026-09-12
+    // along with tv_nfo_writer.py's sync_episode_nfo() (its only caller). Chronicle no longer
+    // writes per-episode NFOs at all; see NfoRebuildQueueService.EnsureSeededAsync's own doc
+    // for why. GetMovieSidecar/GetShowSidecar are unaffected -- this removal is episode-only.
 
     // ── Scraper DTO -> plugin resolved-data mapping ─────────────────────────
     // The scraper DTOs (Chronicle.API.DTOs) and the plugin's resolved-data models

@@ -10,16 +10,19 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Chronicle.Tests.Integration;
 
 /// <summary>
-/// ScraperController's sidecar-building endpoints (movies/sidecar, tv/sidecar,
-/// tv/episode-sidecar) -- the Chronicle-side half of
-/// docs/plans/2026-09-02-kodi-nfo-plugin-design.md's phased-rollout step 3. No
-/// ISidecarFormatPlugin DLL is built into this repo's test output (the real implementation,
-/// Chronicle.Plugin.Kodi.NFO, lives in a separate repo with its own build/tests), so
-/// IPluginRegistry.GetSidecarFormatPlugins() is always empty in this integration test host --
-/// these tests cover exactly that: routing, auth, and the graceful "no sidecar plugin
-/// installed" response, end to end through the real ASP.NET Core pipeline. The
-/// resolved-data-mapping and byte-building logic itself is covered by the plugin repo's own
-/// KodiNfoBuilderTests.cs.
+/// ScraperController's sidecar-building endpoints (movies/sidecar, tv/sidecar) -- the
+/// Chronicle-side half of docs/plans/2026-09-02-kodi-nfo-plugin-design.md's phased-rollout
+/// step 3. No ISidecarFormatPlugin DLL is built into this repo's test output (the real
+/// implementation, Chronicle.Plugin.Kodi.NFO, lives in a separate repo with its own
+/// build/tests), so IPluginRegistry.GetSidecarFormatPlugins() is always empty in this
+/// integration test host -- these tests cover exactly that: routing, auth, and the graceful
+/// "no sidecar plugin installed" response, end to end through the real ASP.NET Core pipeline.
+/// The resolved-data-mapping and byte-building logic itself is covered by the plugin repo's
+/// own KodiNfoBuilderTests.cs.
+///
+/// tv/episode-sidecar removed (2026-09-12) along with GetEpisodeSidecar itself -- Chronicle no
+/// longer writes per-episode NFOs at all; see NfoRebuildQueueService.EnsureSeededAsync's own
+/// doc for why.
 /// </summary>
 public class ScraperSidecarTests : IClassFixture<ChronicleApiFactory>
 {
@@ -109,14 +112,16 @@ public class ScraperSidecarTests : IClassFixture<ChronicleApiFactory>
     }
 
     [Fact]
-    public async Task EpisodeSidecar_NoSidecarPluginInstalled_ReturnsNotFoundWithCode()
+    public async Task EpisodeSidecar_RouteNoLongerExists_ReturnsPlainNotFound()
     {
+        // Confirms the route itself is gone, not just returning a different error -- a bare
+        // ASP.NET routing 404 (no Chronicle error envelope at all), unlike the two tests above.
         var client = await AuthClientAsync();
 
         var resp = await client.GetAsync("/api/v1/scraper/tv/episode-sidecar?id=999999");
 
         resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
         var body = await resp.Content.ReadAsStringAsync();
-        body.Should().Contain("\"code\":\"NO_SIDECAR_PLUGIN\"");
+        body.Should().NotContain("\"code\":\"NO_SIDECAR_PLUGIN\"");
     }
 }
