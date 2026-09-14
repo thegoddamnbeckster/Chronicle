@@ -14,6 +14,7 @@ public class DuplicateCleanupServiceTests : IDisposable
     private readonly DuplicateCleanupService _service;
     private readonly MediaType _moviesType;
     private readonly MediaType _faneditsType;
+    private readonly MediaType _tvType;
 
     public DuplicateCleanupServiceTests()
     {
@@ -26,7 +27,8 @@ public class DuplicateCleanupServiceTests : IDisposable
         // Seed media types
         _moviesType  = new MediaType { Name = "movies",   DisplayName = "Movies",    HierarchyLevels = 1 };
         _faneditsType = new MediaType { Name = "fanedits", DisplayName = "Fan Edits", HierarchyLevels = 1 };
-        _context.MediaTypes.AddRange(_moviesType, _faneditsType);
+        _tvType      = new MediaType { Name = "tv",       DisplayName = "TV",        HierarchyLevels = 3 };
+        _context.MediaTypes.AddRange(_moviesType, _faneditsType, _tvType);
         _context.SaveChanges();
 
         var services = new ServiceCollection();
@@ -444,7 +446,150 @@ public class DuplicateCleanupServiceTests : IDisposable
         _context.MediaItems.Count(m => m.Name == "Same Title").Should().Be(2);
     }
 
+    // ── Pass 5: same-parent, same-Number CONTAINER auto-merge ──────────────────
+
+    [Fact]
+    public async Task RunAsync_MergesContainerDuplicates_WhenChildrenDoNotOverlap()
+    {
+        // The safe case this pass exists for: two season containers share the real season
+        // Number ("Season 2" / "Season 02" -- a format mismatch the name-based passes above
+        // never catch) but their episodes don't collide, so merging is unambiguous.
+        var show    = MakeHierarchyItem("Renovation Resort", _tvType.Id, hierarchyLevel: 0);
+        var seasonA = MakeHierarchyItem("Season 2",  _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        var seasonB = MakeHierarchyItem("Season 02", _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        MakeHierarchyItem("Episode One", _tvType.Id, hierarchyLevel: 2, parentId: seasonA.Id, number: 1);
+        MakeHierarchyItem("Episode Two", _tvType.Id, hierarchyLevel: 2, parentId: seasonB.Id, number: 2);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(1);
+        var survivingSeason = await _context.MediaItems.SingleAsync(m => m.ParentId == show.Id);
+        var children = await _context.MediaItems.Where(m => m.ParentId == survivingSeason.Id).ToListAsync();
+        children.Select(c => c.Number).Should().BeEquivalentTo(new[] { 1, 2 },
+            "both episodes should now live under the single surviving season");
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotMergeContainerDuplicates_WhenChildrenOverlap()
+    {
+        // The unsafe case: both season containers already have their own "Episode 1". A plain
+        // reparent can't resolve which one is real, so this must be left alone entirely --
+        // reproducing that judgment call automatically is exactly the near-miss caught live
+        // 2026-09-13 (an insufficiently-careful heuristic nearly deleted 40 real Rick and Morty
+        // episodes). DuplicateCandidateScanService queues this shape for a human instead.
+        var show    = MakeHierarchyItem("Renovation Resort", _tvType.Id, hierarchyLevel: 0);
+        var seasonA = MakeHierarchyItem("Season 2",  _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        var seasonB = MakeHierarchyItem("Season 02", _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        MakeHierarchyItem("Episode One (real)", _tvType.Id, hierarchyLevel: 2, parentId: seasonA.Id, number: 1);
+        MakeHierarchyItem("Episode One (dup)",  _tvType.Id, hierarchyLevel: 2, parentId: seasonB.Id, number: 1);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(0, "overlapping children make this ambiguous -- must not auto-merge");
+        (await _context.MediaItems.CountAsync(m => m.ParentId == show.Id)).Should().Be(2, "both seasons must survive untouched");
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotMergeContainerDuplicates_WhenBothSidesAreChildlessAndNeitherIsAStub()
+    {
+        // Caught in review before release: absence of overlap is not real safety evidence when
+        // there's nothing on either side to compare in the first place. Two containers sharing
+        // just (ParentId, MediaTypeId, Number) with zero children and no stub marker on either
+        // side isn't proof of duplication -- it must be left for a human, not auto-merged on
+        // bare Number agreement alone.
+        var show    = MakeHierarchyItem("Renovation Resort", _tvType.Id, hierarchyLevel: 0);
+        MakeHierarchyItem("Season 2",  _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        MakeHierarchyItem("Season 02", _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(0, "neither side has children or a stub marker -- not enough evidence to auto-merge");
+        (await _context.MediaItems.CountAsync(m => m.ParentId == show.Id)).Should().Be(2, "both seasons must survive untouched");
+    }
+
+    [Fact]
+    public async Task RunAsync_MergesContainerDuplicates_WhenChildlessSideIsAConfirmedStub()
+    {
+        // The genuinely safe childless case: an empty stub container (never actually
+        // populated) colliding with a real, populated season is exactly the spurious-duplicate
+        // shape this pass exists to clean up automatically.
+        var show      = MakeHierarchyItem("Renovation Resort", _tvType.Id, hierarchyLevel: 0);
+        var stub      = MakeHierarchyItem("Season 2",  _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 2, isStub: true);
+        var realSeason = MakeHierarchyItem("Season 02", _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        MakeHierarchyItem("Episode One", _tvType.Id, hierarchyLevel: 2, parentId: realSeason.Id, number: 1);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(1, "a childless stub colliding with a populated season is the safe auto-merge case");
+        (await _context.MediaItems.CountAsync(m => m.ParentId == show.Id)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotMergeContainers_UnderDifferentParents()
+    {
+        var showA = MakeHierarchyItem("Show A", _tvType.Id, hierarchyLevel: 0);
+        var showB = MakeHierarchyItem("Show B", _tvType.Id, hierarchyLevel: 0);
+        MakeHierarchyItem("Season 1", _tvType.Id, hierarchyLevel: 1, parentId: showA.Id, number: 1);
+        MakeHierarchyItem("Season 1", _tvType.Id, hierarchyLevel: 1, parentId: showB.Id, number: 1);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(0, "season 1 of two different shows must never be merged");
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotAutoMergeLeafItems_SharingANumber()
+    {
+        // Confirmed real, legitimate case (root-caused 2026-09-12): an unreliably-parsed
+        // reality show can have several genuinely different episodes that all parsed to the
+        // same episode Number. Pass 5 must never touch leaf-level items.
+        var show   = MakeHierarchyItem("Reality Show", _tvType.Id, hierarchyLevel: 0);
+        var season = MakeHierarchyItem("Season 1", _tvType.Id, hierarchyLevel: 1, parentId: show.Id, number: 1);
+        MakeHierarchyItem("Episode Five A", _tvType.Id, hierarchyLevel: 2, parentId: season.Id, number: 5);
+        MakeHierarchyItem("Episode Five B", _tvType.Id, hierarchyLevel: 2, parentId: season.Id, number: 5);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(0, "leaf-level Number collisions are a known-legitimate case, not a duplicate signal");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A bare hierarchy node (show/season/episode container) with no fileScanner metadata --
+    /// distinct from <see cref="MakeItem"/> below, which always attaches file metadata and is
+    /// meant for flat, file-backed items (Passes 1-4). Pass 5 operates on containers, which
+    /// legitimately have no file of their own.
+    /// </summary>
+    private MediaItem MakeHierarchyItem(
+        string name, int typeId, int hierarchyLevel, int? parentId = null, int? number = null, bool isStub = false)
+    {
+        // Added to the context immediately (rather than returned bare) so its Id is assigned
+        // right away -- a caller building a child in the same statement (e.g.
+        // MakeHierarchyItem("Season 1", ..., parentId: show.Id)) needs the PARENT's real Id
+        // already assigned at that point, not its default 0. Confirmed live while writing
+        // these tests: batching multiple bare instances into one AddRange afterward captured
+        // parentId as 0 for every child, since none of the Ids exist yet at construction time.
+        var item = new MediaItem
+        {
+            Name           = name,
+            MediaTypeId    = typeId,
+            HierarchyLevel = hierarchyLevel,
+            ParentId       = parentId,
+            Number         = number,
+            IsStub         = isStub,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
+        };
+        _context.MediaItems.Add(item);
+        return item;
+    }
 
     private MediaItem MakeItem(
         string fileName,

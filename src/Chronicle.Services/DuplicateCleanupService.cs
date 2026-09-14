@@ -404,6 +404,120 @@ public sealed class DuplicateCleanupService : IScheduledTask
             }
         }
 
+        // ── Pass 5: same-parent, same-Number CONTAINER duplicates (auto-merge) ─────
+        // Per-user request (2026-09-13): minimize how often a person has to open the
+        // Duplicates page at all, not just make review easier once they do. A container's
+        // Number IS its whole identity under its parent (see FileScanService.
+        // UpsertGroupItemAsync's own "tertiary-and-a-half" tier, which already treats it that
+        // way) -- unlike a bare name match, this is unambiguous identity evidence, so it's
+        // safe to resolve automatically the same way Passes 1-4 already do for their own
+        // strong signals (file path, external ID).
+        //
+        // Restricted to the SAFE case only: the two containers' own children must NOT
+        // collide by Number. A plain merge only reparents the loser's children onto the
+        // winner (see MergeService.MergeLoadedItemsAsync) -- it does not resolve a conflict
+        // between two children that land under the winner sharing the same Number, so if
+        // both sides already have (say) their own "Episode 3", automatically merging them
+        // would silently produce exactly that kind of leaf-level collision instead of fixing
+        // anything. That case is deliberately left to DuplicateCandidateScanService's own
+        // container-Number pass instead, which queues it for a human -- the near-miss caught
+        // live 2026-09-13 (almost deleting 40 real Rick and Morty episodes via an
+        // insufficiently-careful automated heuristic) is exactly why an overlapping case
+        // still needs a person's judgment rather than a blind automatic resolution.
+        var hierarchyLevelsByType = await context.MediaTypes
+            .Select(t => new { t.Id, t.HierarchyLevels })
+            .ToDictionaryAsync(t => t.Id, t => t.HierarchyLevels, ct);
+
+        var allParented = await context.MediaItems
+            .Where(m => m.ParentId != null)
+            .Select(m => new { m.Id, m.ParentId, m.MediaTypeId, m.HierarchyLevel, m.Number })
+            .ToListAsync(ct);
+
+        var childNumbersByParent = allParented
+            .Where(m => m.Number is not null)
+            .GroupBy(m => m.ParentId!.Value)
+            .ToDictionary(g => g.Key, g => g.Select(m => m.Number!.Value).ToHashSet());
+
+        var containerGroups = allParented
+            .Where(m => !alreadyRemoved.Contains(m.Id) && m.Number is not null
+                     && hierarchyLevelsByType.TryGetValue(m.MediaTypeId, out var levels)
+                     && m.HierarchyLevel < levels - 1)
+            .GroupBy(m => (m.ParentId, m.MediaTypeId, m.Number))
+            .Where(g => g.Count() > 1)
+            .ToList();
+
+        if (containerGroups.Count > 0)
+        {
+            _log.Information(
+                "DuplicateCleanup: found {Count} container-Number group(s) with duplicate items",
+                containerGroups.Count);
+
+            foreach (var group in containerGroups)
+            {
+                ct.ThrowIfCancellationRequested();
+                var candidateIds = group.Where(m => !alreadyRemoved.Contains(m.Id)).Select(m => m.Id).ToList();
+                if (candidateIds.Count < 2) continue;
+
+                var candidates = await context.MediaItems
+                    .Include(m => m.ExternalIds)
+                    .Where(m => candidateIds.Contains(m.Id))
+                    .OrderBy(m => m.Id) // oldest wins, same philosophy as Pass 1
+                    .ToListAsync(ct);
+
+                var winner = candidates[0];
+                foreach (var loser in candidates.Skip(1))
+                {
+                    childNumbersByParent.TryGetValue(winner.Id, out var winnerChildNums);
+                    childNumbersByParent.TryGetValue(loser.Id, out var loserChildNums);
+                    var overlaps = winnerChildNums is not null && loserChildNums is not null
+                                   && winnerChildNums.Overlaps(loserChildNums);
+
+                    // Caught in review before release: absence of overlap alone isn't real
+                    // safety evidence when one side has zero recorded children -- there's simply
+                    // nothing to compare. A childless container is safe to fold away only when
+                    // it's a confirmed stub (IsStub); a fully-scanned container that just
+                    // happens to have no children yet colliding on bare Number/Parent/Type isn't
+                    // proof of duplication, so this is treated the same as a real overlap --
+                    // deferred to manual review instead of auto-merged with no other
+                    // corroboration at all (no Name or Year check either).
+                    var winnerEmpty = winnerChildNums is null || winnerChildNums.Count == 0;
+                    var loserEmpty = loserChildNums is null || loserChildNums.Count == 0;
+                    var emptySideUnverified = (winnerEmpty && !winner.IsStub) || (loserEmpty && !loser.IsStub);
+
+                    if (overlaps || emptySideUnverified)
+                    {
+                        _log.Information(
+                            "DuplicateCleanup: container {WId} ('{WName}') and {LId} ('{LName}') share Number " +
+                            "{Number} under parent {ParentId} but {Reason} -- leaving for manual " +
+                            "review instead of auto-merging",
+                            winner.Id, winner.Name, loser.Id, loser.Name, group.Key.Number, group.Key.ParentId,
+                            overlaps ? "their children overlap" : "at least one side has no recorded children and isn't a confirmed stub");
+                        continue;
+                    }
+
+                    _log.Information(
+                        "DuplicateCleanup: container Number {Number} under parent {ParentId} — keeping {WId} " +
+                        "('{WName}'), removing {LId} ('{LName}')",
+                        group.Key.Number, group.Key.ParentId, winner.Id, winner.Name, loser.Id, loser.Name);
+                    if (await TryMergeAsync(context, mergeService, winner, loser, ct))
+                    {
+                        alreadyRemoved.Add(loser.Id);
+                        removed++;
+                        // The loser's children just moved onto the winner -- fold them into the
+                        // winner's own child-number set so a THIRD container sharing this same
+                        // Number (a rare but possible triple-duplicate) is evaluated against the
+                        // full, post-merge picture rather than the winner's original, smaller set.
+                        if (loserChildNums is not null)
+                        {
+                            if (!childNumbersByParent.TryGetValue(winner.Id, out var merged))
+                                childNumbersByParent[winner.Id] = merged = new HashSet<int>();
+                            merged.UnionWith(loserChildNums);
+                        }
+                    }
+                }
+            }
+        }
+
         if (removed > 0)
             _log.Information("DuplicateCleanup: total {Count} duplicate item(s) removed", removed);
 

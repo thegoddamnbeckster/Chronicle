@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -5,6 +6,7 @@ using Chronicle.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -39,8 +41,11 @@ public class DuplicateCandidateScanServiceTests : IDisposable
 
     private MediaItem MakeItem(
         string name, MediaType type, int? year = null, bool isStub = false,
-        int hierarchyLevel = 0, int? parentId = null)
+        int hierarchyLevel = 0, int? parentId = null, int? number = null, string? filePath = null)
     {
+        var metadataJson = filePath is null
+            ? null
+            : JsonSerializer.Serialize(new { fileScanner = new { filePaths = new[] { filePath } } });
         var item = new MediaItem
         {
             Name           = name,
@@ -51,6 +56,8 @@ public class DuplicateCandidateScanServiceTests : IDisposable
             IsStub         = isStub,
             HierarchyLevel = hierarchyLevel,
             ParentId       = parentId,
+            Number         = number,
+            MetadataJson   = metadataJson,
             CreatedAt      = DateTime.UtcNow,
             UpdatedAt      = DateTime.UtcNow,
         };
@@ -239,6 +246,187 @@ public class DuplicateCandidateScanServiceTests : IDisposable
         candidates.Where(c => c.Item1 == moviePhantomChild.Id || c.Item2 == moviePhantomChild.Id)
             .Should().BeEmpty("cross-type matching only applies to root-level items");
     }
+
+    // ── Same-parent, same-Number CONTAINER pass (added 2026-09-13 for the 2026-08-03 incident) ──
+    // Per-user request (2026-09-13): minimize how often a duplicate needs a human to look at it
+    // at all. So this pass only queues a container pair when their CHILDREN actually collide by
+    // Number (genuinely ambiguous -- see DuplicateCleanupService's own Pass 5 for the safe,
+    // non-overlapping case, which is auto-merged and never reaches this queue).
+
+    [Fact]
+    public async Task Container_SameParentSameNumber_OverlappingChildren_Flagged()
+    {
+        // The actual gap this pass closes: two season containers share the real season
+        // Number but are named differently enough ("Season 2" vs "Season 02") that the
+        // NormalizedName-based pass above never groups them together. Both sides also each
+        // have an "Episode 1" -- a real content conflict a plain reparent can't safely
+        // resolve, so this is exactly the shape that still needs a human.
+        var show = MakeItem("Renovation Resort", _tvType);
+        var seasonA = MakeItem("Season 2", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        var seasonB = MakeItem("Season 02", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        MakeItem("Episode One", _tvType, hierarchyLevel: 2, parentId: seasonA.Id, number: 1);
+        MakeItem("Episode One (dup)", _tvType, hierarchyLevel: 2, parentId: seasonB.Id, number: 1);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().Contain((Math.Min(seasonA.Id, seasonB.Id), Math.Max(seasonA.Id, seasonB.Id)));
+    }
+
+    [Fact]
+    public async Task Container_SameParentSameNumber_NonOverlappingChildren_NotFlagged()
+    {
+        // The safe case -- one season holds episodes 1-2, its duplicate holds only episode 3,
+        // nothing to conflict over. DuplicateCleanupService's Pass 5 resolves this
+        // automatically, so it must never reach the human-review queue here.
+        var show = MakeItem("Renovation Resort", _tvType);
+        var seasonA = MakeItem("Season 2", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        var seasonB = MakeItem("Season 02", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        MakeItem("Episode One", _tvType, hierarchyLevel: 2, parentId: seasonA.Id, number: 1);
+        MakeItem("Episode Two", _tvType, hierarchyLevel: 2, parentId: seasonA.Id, number: 2);
+        MakeItem("Episode Three", _tvType, hierarchyLevel: 2, parentId: seasonB.Id, number: 3);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().NotContain((Math.Min(seasonA.Id, seasonB.Id), Math.Max(seasonA.Id, seasonB.Id)),
+            "non-overlapping containers are unambiguous and handled by Pass 5's auto-merge instead");
+    }
+
+    [Fact]
+    public async Task Container_SameParentSameNumber_DifferentParents_NotFlagged()
+    {
+        var showA = MakeItem("Show A", _tvType);
+        var showB = MakeItem("Show B", _tvType);
+        MakeItem("Season 1", _tvType, hierarchyLevel: 1, parentId: showA.Id, number: 1);
+        MakeItem("Season 1", _tvType, hierarchyLevel: 1, parentId: showB.Id, number: 1);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().BeEmpty("season 1 of two different shows is not a duplicate pair");
+    }
+
+    [Fact]
+    public async Task Leaf_SameParentSameNumber_NeverFlaggedByContainerPass()
+    {
+        // Confirmed real, legitimate case (root-caused live 2026-09-12): an unreliably-parsed
+        // reality show can have several genuinely different episodes that all parsed to the
+        // same episode Number. The container-Number pass must never touch leaf-level items,
+        // no matter how many share a Number under the same season.
+        var show = MakeItem("Reality Show", _tvType);
+        var season = MakeItem("Season 1", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 1);
+        var epA = MakeItem("Episode Five A", _tvType, hierarchyLevel: 2, parentId: season.Id, number: 5);
+        var epB = MakeItem("Episode Five B", _tvType, hierarchyLevel: 2, parentId: season.Id, number: 5);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Where(c => c.Item1 == epA.Id || c.Item2 == epA.Id || c.Item1 == epB.Id || c.Item2 == epB.Id)
+            .Should().BeEmpty("leaf-level Number collisions are a known-legitimate case, not a duplicate signal");
+    }
+
+    [Fact]
+    public async Task Container_SameParentSameNumber_OverlapOnlyVisibleViaBlankNameChild_Flagged()
+    {
+        // Caught in review before release: the overlap check must see every child, including
+        // one with a blank Name (the exact shape of a corrupted/fabricated record) -- if it
+        // only sees the name-filtered `items` list, this pair looks like a false "no overlap"
+        // and never reaches the review queue, even though DuplicateCleanupService's own
+        // unfiltered check would correctly detect the real overlap and refuse to auto-merge it,
+        // leaving the pair invisible to BOTH the automatic and manual cleanup paths.
+        var show = MakeItem("Renovation Resort", _tvType);
+        var seasonA = MakeItem("Season 2", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        var seasonB = MakeItem("Season 02", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        MakeItem("", _tvType, hierarchyLevel: 2, parentId: seasonA.Id, number: 1);
+        MakeItem("Episode One (dup)", _tvType, hierarchyLevel: 2, parentId: seasonB.Id, number: 1);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().Contain((Math.Min(seasonA.Id, seasonB.Id), Math.Max(seasonA.Id, seasonB.Id)),
+            "the blank-Name child must still be visible to the overlap check");
+    }
+
+    [Fact]
+    public async Task Container_SameParentSameNumber_BothChildless_Flagged()
+    {
+        // Mirrors DuplicateCleanupService's own Pass 5 fix: zero children on both sides isn't
+        // evidence of safety, it's an absence of evidence -- must be queued for a human, not
+        // silently skipped as "safe, Cleanup handles it" when Cleanup would actually now defer
+        // to manual review too.
+        var show = MakeItem("Renovation Resort", _tvType);
+        var seasonA = MakeItem("Season 2", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        var seasonB = MakeItem("Season 02", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().Contain((Math.Min(seasonA.Id, seasonB.Id), Math.Max(seasonA.Id, seasonB.Id)),
+            "neither side has children or a stub marker -- not enough evidence to call this safe");
+    }
+
+    [Fact]
+    public async Task Container_SameParentSameNumber_ChildlessStubSide_NotFlagged()
+    {
+        // The genuinely safe childless case must still be left for Pass 5's auto-merge, not
+        // queued -- a confirmed stub colliding with a real, populated season.
+        var show = MakeItem("Renovation Resort", _tvType);
+        var stub = MakeItem("Season 2", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2, isStub: true);
+        var realSeason = MakeItem("Season 02", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        MakeItem("Episode One", _tvType, hierarchyLevel: 2, parentId: realSeason.Id, number: 1);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().NotContain((Math.Min(stub.Id, realSeason.Id), Math.Max(stub.Id, realSeason.Id)),
+            "a childless stub colliding with a populated season is Pass 5's own safe auto-merge case");
+    }
+
+    [Fact]
+    public async Task Container_DismissedPair_NotReSurfaced()
+    {
+        var show = MakeItem("Some Show", _tvType);
+        var seasonA = MakeItem("Season 2", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        var seasonB = MakeItem("Season 02", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 2);
+        await _db.SaveChangesAsync();
+        _db.MediaItemDuplicateDismissals.Add(new MediaItemDuplicateDismissal
+        {
+            ItemAId = Math.Min(seasonA.Id, seasonB.Id), ItemBId = Math.Max(seasonA.Id, seasonB.Id), DismissedAt = DateTime.UtcNow,
+        });
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().BeEmpty("a dismissed container pair must not reappear either");
+    }
+
+    // ── Show/path mismatch diagnostic logging (added 2026-09-13) ──────────────────────────
+
+    [Fact]
+    public async Task PathMismatch_EpisodeFileUnderWrongShowFolder_LogsWarning()
+    {
+        var show = MakeItem("Dark Matter", _tvType);
+        var season = MakeItem("Season 1", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 1);
+        MakeItem("Episode One", _tvType, hierarchyLevel: 2, parentId: season.Id, number: 1,
+            filePath: @"H:\TV\Top Chef - Last Chance Kitchen\S01\file.mkv");
+        await _db.SaveChangesAsync();
+
+        var capturingLogger = new CapturingLogger<DuplicateCandidateScanService>();
+        var svc = new DuplicateCandidateScanService(new DirectScopeFactory(_db), capturingLogger);
+        await svc.ExecuteAsync(CancellationToken.None);
+
+        capturingLogger.Warnings.Should().Contain(w => w.Contains("Dark Matter"),
+            "the episode's own recorded file path doesn't contain its show's name at all");
+    }
+
+    [Fact]
+    public async Task PathMismatch_EpisodeFileUnderCorrectShowFolder_NoWarning()
+    {
+        var show = MakeItem("Dark Matter", _tvType);
+        var season = MakeItem("Season 1", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 1);
+        MakeItem("Episode One", _tvType, hierarchyLevel: 2, parentId: season.Id, number: 1,
+            filePath: @"H:\TV\Dark Matter\Season 01\file.mkv");
+        await _db.SaveChangesAsync();
+
+        var capturingLogger = new CapturingLogger<DuplicateCandidateScanService>();
+        var svc = new DuplicateCandidateScanService(new DirectScopeFactory(_db), capturingLogger);
+        await svc.ExecuteAsync(CancellationToken.None);
+
+        capturingLogger.Warnings.Should().BeEmpty("the file path correctly names its own show");
+    }
 }
 
 /// <summary>
@@ -263,5 +451,26 @@ file sealed class DirectScopeFactory(ChronicleDbContext ctx) : IServiceScopeFact
     {
         public object? GetService(Type serviceType) =>
             serviceType == typeof(ChronicleDbContext) ? ctx : null;
+    }
+}
+
+/// <summary>
+/// Minimal <see cref="ILogger{T}"/> that records formatted Warning-level messages so tests can
+/// assert on the show/path-mismatch diagnostic pass, which -- unlike the candidate passes --
+/// has no database table to inspect and only ever surfaces via a log line.
+/// </summary>
+file sealed class CapturingLogger<T> : ILogger<T>
+{
+    public List<string> Warnings { get; } = new();
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter)
+    {
+        if (logLevel == LogLevel.Warning)
+            Warnings.Add(formatter(state, exception));
     }
 }
