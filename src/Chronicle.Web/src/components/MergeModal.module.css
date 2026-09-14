@@ -262,3 +262,34 @@
 }
 .confirmBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 .confirmBtn:not(:disabled):hover { filter: brightness(1.1); }
+
+/* ── Mobile ─────────────────────────────────────────────── */
+/* Side-by-side cards squeeze .meta's text column down to almost nothing on a
+   phone-width modal (two cards sharing ~340px, each losing 120px to its
+   fixed-width poster) -- name/chips/overview/file-path all truncate into
+   illegibility. Stacking the cards instead gives each one the full modal
+   width, so the same 120px poster leaves plenty of room for text. */
+@media (max-width: 640px) {
+  .modal {
+    padding: 20px 18px 18px;
+  }
+
+  .items {
+    flex-direction: column;
+  }
+
+  .itemCard {
+    min-height: 0;
+  }
+
+  .posterWrap,
+  .poster,
+  .posterPlaceholder {
+    width: 96px;
+  }
+
+  .poster,
+  .posterPlaceholder {
+    min-height: 140px;
+  }
+}

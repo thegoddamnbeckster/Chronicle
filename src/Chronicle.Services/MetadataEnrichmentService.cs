@@ -1775,7 +1775,10 @@ public class MetadataEnrichmentService(
                             ChildNames:       childNames,
                             SubItemMetadata:  subItemMetadata,
                             MediaTypeName:    mediaTypeName,
-                            KnownExternalIds: knownExternalIds.Count > 0 ? knownExternalIds : null);
+                            KnownExternalIds: knownExternalIds.Count > 0 ? knownExternalIds : null,
+                            KnownBirthYear:   mediaTypeName == "people"
+                                                  ? ExtractKnownBirthYear(row.MediaItem.MetadataJson)
+                                                  : null);
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
@@ -2637,6 +2640,40 @@ public class MetadataEnrichmentService(
                 Add(n);
 
         return results.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Scans every already-saved provider partition in <c>metadata_json</c> for a birthDate and
+    /// returns its year -- the "people" search disambiguation hint (see
+    /// MediaSearchContext.KnownBirthYear's own doc). Deliberately scans every plugin partition
+    /// rather than reading _resolved: _resolved only reflects whatever ResolveAsync last
+    /// computed, which can lag behind a provider that already saved its own birthDate earlier in
+    /// THIS SAME enrichment pass (see EnrichItemAsync's own per-provider SaveChangesAsync) --
+    /// scanning the raw partitions directly picks that up immediately. Reuses
+    /// MetadataResolutionService.TryGetBlobProperty so a birthDate nested under a partition's own
+    /// extendedData (e.g. TMDB's) is found the same way normal field resolution finds it, not a
+    /// second, potentially-drifting copy of that lookup rule. Returns the first plausible year
+    /// found; a genuine conflict between providers isn't resolved here since this is only a
+    /// corroboration hint, not the source of truth.
+    /// </summary>
+    private static int? ExtractKnownBirthYear(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(metadataJson);
+            foreach (var plugin in doc.RootElement.EnumerateObject())
+            {
+                if (plugin.Name is "_resolved" or "_overrides") continue;
+                if (plugin.Value.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                if (MetadataResolutionService.TryGetBlobProperty(plugin.Value, "birthDate", out var bdEl) &&
+                    bdEl.ValueKind == System.Text.Json.JsonValueKind.String &&
+                    DateTime.TryParse(bdEl.GetString(), out var bdVal))
+                    return bdVal.Year;
+            }
+            return null;
+        }
+        catch { return null; }
     }
 
     /// <summary>

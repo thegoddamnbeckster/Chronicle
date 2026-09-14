@@ -144,6 +144,31 @@ public class MetadataResolutionService(
             }
         }
 
+        // A death date earlier than a birth date is a logically impossible fact for one real
+        // person -- confirmed live (2026-09-14): each field resolves independently by its own
+        // per-provider priority, so birthDate can come from one provider (e.g. TMDB, correctly
+        // matched) while deathDate comes from a DIFFERENT provider whose own search matched an
+        // entirely different, same-named person (e.g. Wikipedia matching a decades-earlier
+        // historical figure sharing a modern actor's exact name), with nothing checking that the
+        // two facts describe the same individual. See WikipediaScoring's own life-years
+        // corroboration signal for the actual root-cause prevention on the search side -- this
+        // is the last-resort guard against whatever future source makes the same mistake:
+        // dropping the death date is far safer than publishing an impossible record.
+        var droppedInconsistentDeathDate = false;
+        if (resolved.TryGetValue("birthDate", out var birthCheck) && HasValue(birthCheck) &&
+            DateTime.TryParse(birthCheck.GetString(), out var birthCheckVal) &&
+            resolved.TryGetValue("deathDate", out var deathCheck) && HasValue(deathCheck) &&
+            DateTime.TryParse(deathCheck.GetString(), out var deathCheckVal) &&
+            deathCheckVal < birthCheckVal)
+        {
+            logger.LogWarning(
+                "MediaItem {Id} ({Name}): resolved deathDate {Death:yyyy-MM-dd} predates birthDate " +
+                "{Birth:yyyy-MM-dd} -- dropping the death date as almost certainly a cross-provider " +
+                "identity mismatch", item.Id, item.Name, deathCheckVal, birthCheckVal);
+            resolved.Remove("deathDate");
+            droppedInconsistentDeathDate = true;
+        }
+
         blobs["_resolved"] = JsonSerializer.SerializeToElement(resolved);
         item.MetadataJson  = JsonSerializer.Serialize(blobs);
 
@@ -167,6 +192,13 @@ public class MetadataResolutionService(
             item.BirthDate = bdVal;
         if (resolved.TryGetValue("deathDate", out var dd) && HasValue(dd) && DateTime.TryParse(dd.GetString(), out var ddVal))
             item.DeathDate = ddVal;
+        else if (droppedInconsistentDeathDate)
+            // Same "must actually clear, not just skip" reasoning as posterUrl's own
+            // people-branch above -- otherwise a DeathDate promoted by an earlier resolve pass
+            // (before this consistency check existed, or from a since-corrected bad match)
+            // stays stuck on the item column forever, even though _resolved above no longer
+            // carries it.
+            item.DeathDate = null;
 
         // title and year are promoted at level 0 (unchanged), PLUS two specific additional
         // cases confirmed live (2026-09-11) to be real, individually-titled items that the

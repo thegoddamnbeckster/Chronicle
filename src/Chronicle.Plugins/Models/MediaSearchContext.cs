@@ -84,5 +84,16 @@ public record MediaSearchContext(
     /// text-search endpoint use these to resolve the correct API lookup ID without needing a
     /// separate search round-trip.
     /// </summary>
-    IReadOnlyDictionary<string, string>? KnownExternalIds = null
+    IReadOnlyDictionary<string, string>? KnownExternalIds = null,
+
+    /// <summary>
+    /// For a "people"-type item, the birth year Chronicle already has from a previously
+    /// enriched provider (if any) -- the people-search equivalent of <see cref="Year"/>'s
+    /// movie/show corroboration, since Year itself is naturally never set for a person query.
+    /// Lets a provider hard-reject a candidate that is a same-named but clearly different real
+    /// person (e.g. a historical figure sharing a modern actor's exact name) rather than relying
+    /// on title/type signals alone, which can't tell two same-named people apart. Null when no
+    /// birth year is known yet (e.g. this is the very first provider to search for this item).
+    /// </summary>
+    int? KnownBirthYear = null
 );

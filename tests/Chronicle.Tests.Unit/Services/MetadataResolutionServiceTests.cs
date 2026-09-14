@@ -505,6 +505,85 @@ public class MetadataResolutionServiceTests
         item.PosterUrl.Should().Be("https://example/correct-own-photo.jpg");
     }
 
+    // ── Death-date-before-birth-date consistency guard ─────────────────────────
+
+    [Fact]
+    public async Task ResolveAsync_DeathDatePredatesBirthDate_DropsDeathDate()
+    {
+        // Regression test for a real, live bug (2026-09-14): "Arturo Castro" resolved birthDate
+        // from TMDB (1985, correct) and deathDate from Wikipedia (1975), because Wikipedia's own
+        // search had matched a completely different, same-named historical actor -- each field
+        // resolves independently by its own per-provider priority, with nothing checking the two
+        // facts describe the same individual. The impossible combination (died 10 years before
+        // born) must never reach _resolved or the item's own columns.
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = BuildItem("people", 0,
+            """{"chronicle.plugin.tmdb":{"birthDate":"1985-11-26"},"chronicle.plugin.wikipedia":{"deathDate":"1975-03-06"}}""");
+        item.MediaTypeId = 9;
+        item.MediaType!.Id = 9;
+
+        var svc = BuildService("people", 0, new()
+        {
+            ["birth_date"] = ["chronicle.plugin.tmdb"],
+            ["death_date"] = ["chronicle.plugin.wikipedia"],
+        });
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+
+        item.BirthDate.Should().Be(new DateTime(1985, 11, 26));
+        item.DeathDate.Should().BeNull();
+        GetResolved(item).Should().NotContainKey("deathDate");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_DeathDatePredatesBirthDate_ClearsStaleDeathDateColumn()
+    {
+        // The promotion step only ever overwrites item.DeathDate when a value is found -- same
+        // "must actually clear, not just skip" gap the posterUrl fix above closed. A DeathDate
+        // promoted by an earlier resolve pass (before this consistency check existed) must not
+        // survive a later re-resolve that now correctly drops the inconsistent value.
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = BuildItem("people", 0,
+            """{"chronicle.plugin.tmdb":{"birthDate":"1985-11-26"},"chronicle.plugin.wikipedia":{"deathDate":"1975-03-06"}}""");
+        item.MediaTypeId = 9;
+        item.MediaType!.Id = 9;
+        item.DeathDate = new DateTime(1975, 3, 6); // stale value from a previous, buggy resolve pass
+
+        var svc = BuildService("people", 0, new()
+        {
+            ["birth_date"] = ["chronicle.plugin.tmdb"],
+            ["death_date"] = ["chronicle.plugin.wikipedia"],
+        });
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+
+        item.DeathDate.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ConsistentBirthAndDeathDates_BothResolve()
+    {
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = BuildItem("people", 0,
+            """{"chronicle.plugin.tmdb":{"birthDate":"1918-03-21"},"chronicle.plugin.wikipedia":{"deathDate":"1975-03-06"}}""");
+        item.MediaTypeId = 9;
+        item.MediaType!.Id = 9;
+
+        var svc = BuildService("people", 0, new()
+        {
+            ["birth_date"] = ["chronicle.plugin.tmdb"],
+            ["death_date"] = ["chronicle.plugin.wikipedia"],
+        });
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+
+        item.BirthDate.Should().Be(new DateTime(1918, 3, 21));
+        item.DeathDate.Should().Be(new DateTime(1975, 3, 6));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static MediaItem BuildItem(string mediaTypeName, int hierarchyLevel, string metadataJson) =>
