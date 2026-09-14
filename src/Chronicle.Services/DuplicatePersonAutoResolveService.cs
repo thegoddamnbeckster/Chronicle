@@ -45,6 +45,25 @@ public sealed class DuplicatePersonAutoResolveService(
 
     private static readonly Regex TrailingDigits = new(@"(\d+)$", RegexOptions.Compiled);
 
+    /// <summary>
+    /// Sources whose "people" external id is derived from a name-based search match Chronicle
+    /// ran on its own, not a structured id handed over directly by an authoritative payload
+    /// (TMDB's numeric person id arrives in a title's own cast list; MusicBrainz/Hardcover ids
+    /// come from an exact catalog lookup). An id from a source in this set can be wrong in
+    /// exactly the way that also makes two different real people look like the same one --
+    /// confirmed live (2026-09-14): Wikipedia's own person search matched the identical wrong
+    /// article ("Anthony Edwards (actor)") onto both the actor's stub and an unrelated NBA
+    /// player's stub, and this service then merged them because their two "wikipedia" ids
+    /// agreed -- they agreed because the SAME upstream search bug produced both, not because
+    /// they're actually the same person. Treating that agreement as corroborating evidence is
+    /// circular: the id itself is exactly as unreliable as the merge decision it's supposed to
+    /// validate. Excluded from <c>agreeingSource</c> below for that reason; still eligible via
+    /// a shared headshot or matching birthdate, and still gets attached to items normally --
+    /// only its use as auto-merge proof is restricted.
+    /// </summary>
+    private static readonly HashSet<string> NameSearchDerivedSources =
+        new(StringComparer.OrdinalIgnoreCase) { "wikipedia" };
+
     public async Task ExecuteAsync(CancellationToken ct)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -162,10 +181,26 @@ public sealed class DuplicatePersonAutoResolveService(
         var bareB = extB.GroupBy(e => e.Source, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Select(e => BareId(e.ExternalId)).ToHashSet(StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
-        var agreeingSource = bareA.Keys.Any(src => bareB.TryGetValue(src, out var setB) && bareA[src].Overlaps(setB));
+        var agreeingSource = bareA.Keys.Any(src =>
+            !NameSearchDerivedSources.Contains(src) &&
+            bareB.TryGetValue(src, out var setB) && bareA[src].Overlaps(setB));
 
-        var headsA = await db.PersonHeadshots.Where(h => h.PersonMediaItemId == idA).Select(h => h.Url).ToListAsync(ct);
-        var headsB = await db.PersonHeadshots.Where(h => h.PersonMediaItemId == idB).Select(h => h.Url).ToListAsync(ct);
+        // Same exclusion as agreeingSource above, and for the same reason: a headshot recorded
+        // under a name-search-derived source came from whatever article that search matched,
+        // so two stubs sharing one is only proof they hit the SAME search bug, not that they're
+        // the same person. The source filter is applied AFTER ToListAsync, in memory -- EF Core
+        // translates a `Where` clause to SQL, where equality follows the column's DB collation
+        // (case-sensitive by default in SQLite), not NameSearchDerivedSources' own
+        // OrdinalIgnoreCase comparer; filtering client-side is what actually makes the exclusion
+        // case-insensitive the way agreeingSource's own (already in-memory) check above is.
+        var rawHeadsA = await db.PersonHeadshots
+            .Where(h => h.PersonMediaItemId == idA)
+            .Select(h => new { h.Url, h.Source }).ToListAsync(ct);
+        var rawHeadsB = await db.PersonHeadshots
+            .Where(h => h.PersonMediaItemId == idB)
+            .Select(h => new { h.Url, h.Source }).ToListAsync(ct);
+        var headsA = rawHeadsA.Where(h => !NameSearchDerivedSources.Contains(h.Source)).Select(h => h.Url);
+        var headsB = rawHeadsB.Where(h => !NameSearchDerivedSources.Contains(h.Source)).Select(h => h.Url);
         var sharedHeadshot = headsA.Intersect(headsB, StringComparer.OrdinalIgnoreCase).Any();
 
         var datesA = await db.MediaItems.Where(m => m.Id == idA)
