@@ -51,8 +51,10 @@ if (Environment.GetEnvironmentVariable("EF_DESIGN_TIME") != "1" &&
 builder.WebHost.UseUrls($"http://0.0.0.0:{portConfig.Api}");
 // Injectable so KodiDeviceController can refuse to register a "device" at Chronicle's own
 // port -- see that controller's own doc for why (SSRF guard: an authenticated caller could
-// otherwise register 127.0.0.1:<this port> and have NfoPushService's later pushes attack
-// Chronicle's own API on a schedule the attacker doesn't even need to trigger themselves).
+// otherwise register 127.0.0.1:<this port> as a "Kodi device" and use whatever future feature
+// pushes to registered devices to attack Chronicle's own API on a schedule the attacker
+// doesn't even need to trigger themselves -- the original concrete case, NfoPushService's own
+// per-edit pushes, was removed 2026-09-13, but the guard itself stays general-purpose).
 builder.Services.AddSingleton(portConfig);
 
 // ── Serilog ───────────────────────────────────────────────────────────────────
@@ -71,8 +73,8 @@ builder.Host.UseSerilog((ctx, services, cfg) => cfg
     // .NET's own IHttpClientFactory logging handlers log every request (success AND failure) at
     // Information, full exception included on failure -- confirmed live (2026-09-11) this
     // produced two near-identical multi-line stack traces per call against an unreachable
-    // device (originally observed via the now-removed KodiRpcClient; see NfoPushService's own
-    // doc for why that class is gone), on top of Chronicle's own one-line warning for the same
+    // device (originally observed via the now-removed KodiRpcClient, superseded by the
+    // now-also-removed NfoPushService), on top of Chronicle's own one-line warning for the same
     // failure. Warning-and-up only: nothing meaningful is lost (a genuinely unexpected
     // HttpClient problem would still surface at Warning+), and this still applies to every
     // other outbound HttpClient call Chronicle makes, not just that one.
@@ -160,8 +162,6 @@ builder.Services.AddScoped<ISyncOrchestrationService, SyncOrchestrationService>(
 builder.Services.AddSingleton<ISyncJobTracker, SyncJobTracker>();
 builder.Services.AddScoped<IPluginTaskRunner, PluginTaskRunner>();
 builder.Services.AddScoped<IKodiDeviceService, KodiDeviceService>();
-builder.Services.AddScoped<INfoPushService, NfoPushService>();
-builder.Services.AddScoped<INfoRebuildQueueService, NfoRebuildQueueService>();
 
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();
@@ -205,14 +205,6 @@ builder.Services.AddHttpClient("github", c =>
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", githubToken);
 });
 
-// ── Named HttpClient for NfoPushService's internal loopback call to its own sidecar
-// endpoints (see NfoPushService's own doc for why a loopback call, not a shared-code refactor).
-builder.Services.AddHttpClient("internal-loopback", c =>
-{
-    c.BaseAddress = new Uri($"http://localhost:{portConfig.Api}");
-    c.Timeout = TimeSpan.FromSeconds(15);
-});
-
 // ── Data Protection (plugin settings encryption) ──────────────────────────────
 // Keys are persisted under ContentRootPath (project root in dev, publish dir in
 // production) so they survive both restarts AND clean rebuilds. AppContext.BaseDirectory
@@ -254,10 +246,6 @@ builder.Services.AddSingleton<IScheduledTask>(
 builder.Services.AddSingleton<ScheduledScanService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<ScheduledScanService>());
-
-builder.Services.AddSingleton<NfoGenerationService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<NfoGenerationService>());
 
 builder.Services.AddSingleton<RebuildMovieCollectionsService>();
 builder.Services.AddSingleton<IScheduledTask>(

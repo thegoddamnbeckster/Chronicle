@@ -1,38 +1,22 @@
 namespace Chronicle.Core.Helpers;
 
 /// <summary>
-/// Classifies a MediaItem into the "movie" | "tvshow" | "episode" vocabulary Kodi's
-/// VideoLibrary.Refresh* JSON-RPC methods (and KodiLibraryId.Kind) use -- shared by
-/// NfoPushService (per-edit/rating/watch live push) and NfoRebuildQueueService (the
-/// cross-device rebuild queue) so the two never quietly disagree on what's pushable.
+/// Classifies a MediaItem's MediaType name into whether (and how) it belongs to Kodi's video
+/// library. Originally also classified into the "movie" | "tvshow" | "episode" vocabulary
+/// Kodi's VideoLibrary.Refresh* JSON-RPC methods use (see the now-removed Classify method) for
+/// NfoPushService/NfoRebuildQueueService's benefit -- both deleted 2026-09-13 along with the
+/// rest of the server-side NFO generation system, leaving just the MediaType-name classification
+/// below, still used by KodiDeviceService (deciding whether an import should signal "new content
+/// available") and MetadataResolutionService (title-promotion eligibility).
 /// </summary>
 public static class NfoKindHelper
 {
-    /// <summary>Public (not just used internally by Classify below) so callers that need to
-    /// filter a MediaType query by name -- e.g. NfoRebuildQueueService.EnsureSeededAsync,
-    /// which can't express Classify's per-item HierarchyLevel branching directly in a SQL
-    /// WHERE clause -- reference the exact same list instead of redeclaring their own copy.</summary>
     public static readonly string[] MovieLikeTypeNames = ["movies", "fanedits", "anime_movies"];
     public static readonly string[] ShowLikeTypeNames  = ["tv", "anime"];
 
     /// <summary>True for a MediaType name that belongs to Kodi's video library at all (movie-
-    /// or show-like), regardless of hierarchy level -- used where a caller only needs "is this
-    /// Kodi-relevant" and not Classify's full movie/tvshow/episode split, e.g. deciding whether
-    /// an import should signal KodiDeviceService's "new content available" flag.</summary>
+    /// or show-like) -- used where a caller only needs "is this Kodi-relevant," e.g. deciding
+    /// whether an import should signal KodiDeviceService's "new content available" flag.</summary>
     public static bool IsVideoLibraryType(string mediaTypeName) =>
         MovieLikeTypeNames.Contains(mediaTypeName) || ShowLikeTypeNames.Contains(mediaTypeName);
-
-    /// <summary>Returns "movie" | "tvshow" | "episode", or null for anything else (person,
-    /// music, season container, collection, etc. -- none of these are individually pushable).
-    /// No HierarchyLevel gate for movies: a standalone movie sits at level 0, but a movie that
-    /// belongs to a collection sits at level 1 (the collection container itself is level 0) --
-    /// see NfoPushService's own original comment on this for the F9/Fast & Furious case that
-    /// found it.</summary>
-    public static string? Classify(string mediaTypeName, int hierarchyLevel)
-    {
-        if (MovieLikeTypeNames.Contains(mediaTypeName)) return "movie";
-        if (ShowLikeTypeNames.Contains(mediaTypeName) && hierarchyLevel == 0) return "tvshow";
-        if (ShowLikeTypeNames.Contains(mediaTypeName) && hierarchyLevel == 2) return "episode";
-        return null;
-    }
 }

@@ -221,10 +221,20 @@ public class PluginService : IPluginService
         var enrichmentRows = await _db.MediaEnrichments
             .Where(e => e.PluginId == plugin.PluginId)
             .ToListAsync();
-        var affectedItemIds = enrichmentRows.Select(e => e.MediaItemId).Distinct().ToList();
         if (enrichmentRows.Count > 0)
             _db.MediaEnrichments.RemoveRange(enrichmentRows);
 
+        // MediaExternalIds, MediaCredits, and PersonHeadshots are all keyed by the SHORT source
+        // form (PluginIdHelper.ToSource), not the full plugin id -- confirmed against every
+        // write site (MetadataEnrichmentService's UpsertExternalIdForEnrichmentAsync call,
+        // ResolveCreditsAsync, and PersonResolutionService.RecordOwnPortraitAsync/
+        // RecordHeadshotsIfNewAsync all pass PluginIdHelper.ToSource(pluginId) through, never
+        // the full id) -- PersonHeadshot's own doc comment gives a full-id example ("chronicle.
+        // plugin.tmdb") but that's stale; the actual column value is short form ("tmdb"). Found
+        // 2026-09-14 as a real gap: chronicle.plugin.thetvdb had been uninstalled well before
+        // this predates, but only its MediaEnrichment rows had ever been purged (by hand, since
+        // this method didn't exist yet) -- had it had any MediaCredit/PersonHeadshot rows, those
+        // would have kept dangling here too, same as MediaEnrichment did.
         var sourceKey = PluginIdHelper.ToSource(plugin.PluginId);
         var externalIdRows = await _db.MediaExternalIds
             .Where(e => e.Source == sourceKey)
@@ -232,28 +242,53 @@ public class PluginService : IPluginService
         if (externalIdRows.Count > 0)
             _db.MediaExternalIds.RemoveRange(externalIdRows);
 
-        // Strip this plugin's own top-level key from MetadataJson on every item it ever
-        // wrote to (MediaEnrichments and the JSON blob are always written together by
-        // EnrichItemCoreAsync, so affectedItemIds above is the exact, correctly-scoped set --
-        // no need to scan every MediaItem in the catalog).
-        if (affectedItemIds.Count > 0)
+        var creditRows = await _db.MediaCredits
+            .Where(c => c.Source == sourceKey)
+            .ToListAsync();
+        if (creditRows.Count > 0)
+            _db.MediaCredits.RemoveRange(creditRows);
+
+        // INSERT-only and never overwritten (see PersonHeadshot's own doc) -- so unlike
+        // MediaCredit (rewritten wholesale on every enrichment run), a headshot this plugin
+        // discovered has no other path that would ever naturally clear it out.
+        var headshotRows = await _db.PersonHeadshots
+            .Where(h => h.Source == sourceKey)
+            .ToListAsync();
+        if (headshotRows.Count > 0)
+            _db.PersonHeadshots.RemoveRange(headshotRows);
+
+        // Strip this plugin's own top-level key from MetadataJson on every item that has one.
+        // Deliberately NOT scoped to items with a MediaEnrichment row for this plugin: a
+        // movie-collection CONTAINER's own MetadataJson partition is written directly by
+        // MovieCollectionService.PersistCollectionMetadataAsync with no corresponding
+        // MediaEnrichment row at all -- collections can't go through the normal enrichment
+        // pipeline in the first place (see that method's own doc) -- so scoping this to
+        // enrichment-linked items only would leave a stale metadata box on every collection
+        // this plugin ever enriched, forever: the exact "phantom metadata box" symptom the
+        // 2026-08-30 fix was supposed to kill. A plain string Contains() candidate filter is
+        // cheap and sufficient here (this codebase already does the same substring-over-
+        // MetadataJson pattern elsewhere, e.g. MovieCollectionService's own belongsToCollection
+        // check) -- the actual removal below only acts on an exact top-level JSON key match, so
+        // a substring false positive just costs one harmless no-op parse.
+        var items = await _db.MediaItems
+            .Where(m => m.MetadataJson != null && m.MetadataJson.Contains(plugin.PluginId))
+            .ToListAsync();
+        var strippedItemCount = 0;
+        foreach (var item in items)
         {
-            var items = await _db.MediaItems
-                .Where(m => affectedItemIds.Contains(m.Id) && m.MetadataJson != null)
-                .ToListAsync();
-            foreach (var item in items)
+            try
             {
-                try
+                var root = JsonNode.Parse(item.MetadataJson!)?.AsObject();
+                if (root is not null && root.Remove(plugin.PluginId))
                 {
-                    var root = JsonNode.Parse(item.MetadataJson!)?.AsObject();
-                    if (root is not null && root.Remove(plugin.PluginId))
-                        item.MetadataJson = root.ToJsonString();
+                    item.MetadataJson = root.ToJsonString();
+                    strippedItemCount++;
                 }
-                catch (JsonException)
-                {
-                    // Malformed JSON on this row predates this cleanup -- leave it alone
-                    // rather than risk losing whatever else is in it.
-                }
+            }
+            catch (JsonException)
+            {
+                // Malformed JSON on this row predates this cleanup -- leave it alone
+                // rather than risk losing whatever else is in it.
             }
         }
 
@@ -269,8 +304,10 @@ public class PluginService : IPluginService
 
         _log.Information(
             "Uninstalled plugin {PluginId} (db id {Id}) -- purged {EnrichmentCount} enrichment rows, " +
-            "{ExternalIdCount} external ids, metadata JSON on {ItemCount} items",
-            plugin.PluginId, id, enrichmentRows.Count, externalIdRows.Count, affectedItemIds.Count);
+            "{ExternalIdCount} external ids, {CreditCount} credits, {HeadshotCount} headshots, " +
+            "metadata JSON on {ItemCount} items, {TaskCount} background tasks",
+            plugin.PluginId, id, enrichmentRows.Count, externalIdRows.Count, creditRows.Count,
+            headshotRows.Count, strippedItemCount, tasks.Count);
     }
 
     public Task<bool> UnloadFromRegistryAsync(string pluginId)

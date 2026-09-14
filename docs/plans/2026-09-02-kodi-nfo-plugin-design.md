@@ -1,5 +1,16 @@
 # Chronicle.Plugin.Kodi.NFO — Design
 
+**2026-09-13 update:** The write side this doc designs (`BuildAsync`, the sidecar-building
+endpoints, `NfoPushService`/`NfoGenerationService`/`NfoRebuildQueueService`, and their web UI)
+was removed entirely -- per-user direction, after it was identified as the actual mechanism by
+which a real `.nfo` file written onto a Kodi-scanned share could permanently block that item
+from ever being re-scanned. Neither Kodi addon requires a local NFO to function; Chronicle's
+own API is the source of truth both scrapers already read from directly. The read side
+(`FindSidecar`/`ExtractSignal`/`CaptureLossless`/`ExtractCuratedFields`, still backing
+`FileScanService`/`ScanGroupingService`/`MetadataEnrichmentService`/the media page's "view NFO"
+panel) is unaffected. This document is kept as a historical record of the original design; see
+git history (this repo and `Chronicle.Plugin.Kodi.NFO`) for the removed code.
+
 **Date:** 2026-09-02
 **Status:** Done, all six phased-rollout steps. Read side + core rewiring done
 (`NfoSignalExtractor`/`NfoDetailParser` deleted). Write side done on the Chronicle side:

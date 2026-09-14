@@ -8,7 +8,8 @@ namespace Chronicle.Core.Models
     /// is written only by device_registration.py's register(), which explicitly skips itself
     /// entirely when Kodi's "Allow remote control via HTTP" is off (see its own doc: there's
     /// nothing to register in that case, since KodiDevice originally existed only to hold a
-    /// remote-control address for NfoPushService to push to). This scan-signal feature has no
+    /// remote-control address for the now-removed NfoPushService to push to -- it's kept today
+    /// for report-kodi-id and device self-registration generally). This scan-signal feature has no
     /// such requirement -- it's a pull, the addon polls Chronicle and runs the scan on itself
     /// locally -- so tying its own device-identity tracking to that same gated table would have
     /// silently reintroduced the exact "needs remote control" dependency this feature exists to

@@ -97,12 +97,6 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
         }
     }
 
-    public async Task<int?> GetDeviceIdForApiTokenAsync(int apiTokenId, CancellationToken ct = default)
-    {
-        var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.ApiTokenId == apiTokenId, ct);
-        return device?.Id;
-    }
-
     public async Task SignalNewContentAsync(string mediaTypeName, CancellationToken ct = default)
     {
         if (!NfoKindHelper.IsVideoLibraryType(mediaTypeName)) return;

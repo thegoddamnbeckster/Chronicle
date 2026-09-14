@@ -13,12 +13,14 @@ namespace Chronicle.Core.Models
     /// -- not just during an explicit rebuild pass, so this mapping stays fresh even for
     /// devices that never run a rebuild.
     ///
-    /// Required for NfoPushService to call the one JSON-RPC method actually confirmed (live,
-    /// via nfo_rebuild.py's own kodi.log-verified behaviour) to make an ALREADY-IMPORTED item
-    /// reconsider its local NFO: VideoLibrary.RefreshMovie/RefreshTVShow/RefreshEpisode, all of
-    /// which take Kodi's own internal id, not a file path. No mapping recorded yet for a given
-    /// (MediaItem, KodiDevice) pair simply means that device doesn't get pushed to for this
-    /// item until its own next ordinary scan reports one.
+    /// Originally required by NfoPushService to call VideoLibrary.RefreshMovie/RefreshTVShow/
+    /// RefreshEpisode (all of which take Kodi's own internal id, not a file path) to make an
+    /// ALREADY-IMPORTED item reconsider its local NFO -- removed 2026-09-13 along with the rest
+    /// of the server-side NFO generation system, so this mapping has no current server-side
+    /// consumer. Left in place (both the table and the report-kodi-id endpoint both Kodi addons
+    /// still call on every ordinary scan) since it's a harmless write with no NFO/scanning
+    /// implications, and a future feature may want the same "which Kodi id is this on which
+    /// device" mapping again.
     /// </summary>
     public class KodiLibraryId
     {

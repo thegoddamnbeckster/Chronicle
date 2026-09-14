@@ -150,11 +150,11 @@ public sealed class ScheduledScanService : IScheduledTask
             }
 
             // New file(s) may be invisible to every Kodi device's own VideoLibrary until it
-            // runs its own local scan -- VideoLibrary.Refresh* (what NfoPushService uses for
-            // every other change) only works on an item Kodi already has a library entry for.
-            // Signals the pull-based flag each device's own poll checks (see
-            // IKodiDeviceService.SignalNewContentAsync's own doc); cheap (one upsert), so no
-            // need for a background Task.Run the way enrichment below gets.
+            // runs its own local scan -- VideoLibrary.Refresh* only works on an item Kodi
+            // already has a library entry for, so a brand-new file needs a real
+            // VideoLibrary.Scan instead. Signals the pull-based flag each device's own poll
+            // checks (see IKodiDeviceService.SignalNewContentAsync's own doc); cheap (one
+            // upsert), so no need for a background Task.Run the way enrichment below gets.
             if (summary.Imported > 0 && preview.Folder.MediaType is not null)
             {
                 var kodiDevices = importScope.ServiceProvider.GetRequiredService<IKodiDeviceService>();

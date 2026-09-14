@@ -73,9 +73,9 @@ public class BackgroundTasksController : ControllerBase
             // as a false "succeeded").
             //
             // A row with no PluginId is a "system" task and IS gated on being in the registered
-            // IScheduledTask set -- false only for something like "NFO Push", which exists
-            // purely to surface otherwise-invisible fire-and-forget activity in this same UI
-            // (see NfoPushService's own doc) and has no IScheduledTask backing it at all, so
+            // IScheduledTask set -- false only for a row that exists purely to surface an
+            // otherwise-invisible event-triggered activity in this same UI (fires on an edit/
+            // rating/watch, not on a schedule) and has no IScheduledTask backing it at all, so
             // Run Now would always fail with TASK_NOT_FOUND. Deliberately NOT the same signal
             // as IsEnabled/Schedulable: several genuinely runnable tasks (e.g. a disabled plugin
             // sync) are IsEnabled=false and/or Schedulable=false too.

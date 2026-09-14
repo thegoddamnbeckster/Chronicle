@@ -17,10 +17,11 @@ public class PersonHeadshot
     public string Url { get; set; } = string.Empty;
     public string? ThumbnailUrl { get; set; }
 
-    /// <summary>Plugin id that supplied this URL (e.g. "chronicle.plugin.tmdb") -- provenance
-    /// is about who supplied the URL, not necessarily who the image depicts (a credit-path
-    /// headshot is tagged with the TITLE's enriching plugin, even though the image is of the
-    /// person).</summary>
+    /// <summary>Short-form plugin id that supplied this URL (e.g. "tmdb", via
+    /// PluginIdHelper.ToSource -- same convention as MediaExternalId.Source/MediaCredit.Source)
+    /// -- provenance is about who supplied the URL, not necessarily who the image depicts (a
+    /// credit-path headshot is tagged with the TITLE's enriching plugin, even though the image
+    /// is of the person).</summary>
     public string Source { get; set; } = string.Empty;
 
     public DateTime FirstSeenAt { get; set; } = DateTime.UtcNow;

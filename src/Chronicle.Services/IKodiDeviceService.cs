@@ -17,12 +17,6 @@ public interface IKodiDeviceService
     /// to for it regardless.</summary>
     Task RecordKodiIdAsync(int apiTokenId, int mediaItemId, string kind, int kodiId, CancellationToken ct = default);
 
-    /// <summary>Resolves an API token to its own registered KodiDevice.Id, or null if that
-    /// token has no device registered yet (e.g. remote control is off on that Kodi instance).
-    /// The single place this lookup lives -- callers (KodiDeviceController's rebuild-queue
-    /// endpoints) should use this rather than querying KodiDevices directly.</summary>
-    Task<int?> GetDeviceIdForApiTokenAsync(int apiTokenId, CancellationToken ct = default);
-
     /// <summary>Records that Chronicle imported at least one new movie/TV item, so any Kodi
     /// device that hasn't scanned since is due for one -- see IsScanNeededAsync's own doc for
     /// the pull side of this. mediaTypeName is checked against NfoKindHelper.IsVideoLibraryType
@@ -62,14 +56,10 @@ public interface IKodiDeviceService
     Task ReportScanActivityAsync(CancellationToken ct = default);
 
     /// <summary>True if some Kodi device renewed the scan-activity flag (see
-    /// ReportScanActivityAsync) within its own TTL. NfoGenerationService checks this at the top
-    /// of every scheduled tick and skips the whole run when true -- root-caused live
-    /// (2026-09-12): its own 2-minute sweep and an active library scan's live, per-item NFO
-    /// pushes routinely landed on the same freshly-discovered item within seconds of each other,
-    /// each independently rebuilding and writing the identical NFO (confirmed via server log:
-    /// every scanned item's sidecar built twice, its temp-file write losing a race against
-    /// itself before succeeding on retry). Pausing the scheduled sweep for the scan's own
-    /// duration removes the contention outright, and frees the exact server/IO capacity the
-    /// active scan needs most rather than competing with it for it.</summary>
+    /// ReportScanActivityAsync) within its own TTL. Originally consumed by the now-removed
+    /// NfoGenerationService (deleted 2026-09-13 along with all server-side NFO writing) to pause
+    /// its own scheduled sweep while a scan was active. No current caller -- left in place since
+    /// ReportScanActivityAsync's own endpoint is still actively called by both Kodi addons on
+    /// every scan start, and a future feature may want the same "is a scan active" signal.</summary>
     Task<bool> IsScanActiveAsync(CancellationToken ct = default);
 }

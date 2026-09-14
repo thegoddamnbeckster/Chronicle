@@ -4,13 +4,8 @@ using Chronicle.Plugins.Models;
 namespace Chronicle.Plugins;
 
 /// <summary>
-/// A plugin that owns one local sidecar-metadata format end to end -- both reading it
-/// (during a scan, for matching signal and for lossless capture) and writing it (building a
-/// document from Chronicle's own resolved data, for an external tool to write to disk).
-///
-/// Kept as one interface, not two, because round-trip fidelity is the whole point: whatever
-/// BuildAsync produces must be exactly what ExtractSignal/CaptureLossless can read back --
-/// one implementation owns the schema, not a reader and a writer that could quietly drift.
+/// A plugin that reads a local sidecar-metadata format -- during a scan, for matching signal
+/// and for lossless capture, and on demand for the media detail page's "view NFO" panel.
 ///
 /// Exists so Chronicle's core scan pipeline (BuiltInFileScannerPlugin, ScanGroupingService,
 /// FileScanService) never needs to know what a specific sidecar format looks like -- it just
@@ -19,6 +14,14 @@ namespace Chronicle.Plugins;
 /// installed means no enrichment. See docs/plans/2026-09-02-kodi-nfo-plugin-design.md for
 /// the design this implements: Chronicle.Plugin.Kodi.NFO is the first implementation, for
 /// Kodi's own .nfo convention.
+///
+/// This interface originally also had a write side (BuildAsync, building a sidecar document
+/// from Chronicle's own resolved data for an external tool to write to disk) -- removed
+/// 2026-09-13 along with the server-side NFO generation/push/rebuild-queue system that was its
+/// only caller. Per-user direction: that system's entire purpose was writing real .nfo files
+/// onto the same shares Kodi scans, which made it a standing threat to Kodi ever re-scanning
+/// an item, and neither Kodi addon actually requires a local NFO to function. See git history
+/// (and Chronicle.Plugin.Kodi.NFO's own history) if the write side is ever needed again.
 /// </summary>
 public interface ISidecarFormatPlugin
 {
@@ -76,14 +79,4 @@ public interface ISidecarFormatPlugin
     /// giving special UI treatment beyond the generic capture. Never throws.
     /// </summary>
     JsonElement? ExtractCuratedFields(string sidecarPath) => null;
-
-    // ── Write side (on demand, via API) ──────────────────────────────────────
-
-    /// <summary>
-    /// Builds a sidecar document for one movie/show/episode from Chronicle's own resolved
-    /// data (see <see cref="MovieSidecarBuildRequest"/>/<see cref="ShowSidecarBuildRequest"/>/
-    /// <see cref="EpisodeSidecarBuildRequest"/>). Returns the exact bytes to write to disk
-    /// (correct encoding/declaration for the format) -- the caller just writes them.
-    /// </summary>
-    Task<byte[]> BuildAsync(SidecarBuildRequest request, CancellationToken ct = default);
 }

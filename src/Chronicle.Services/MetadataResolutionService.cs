@@ -175,8 +175,8 @@ public class MetadataResolutionService(
         // "Valles Marineris" from its original import despite _resolved already having the
         // corrected "Orders of Magnitude"), and a movie belonging to a collection (level 1 for
         // a movie-like type -- e.g. "Die Hard: With a Vengeance" never updated to the resolved
-        // "Die Hard with a Vengeance"; see NfoPushService's own "No HierarchyLevel gate for
-        // movies" doc for why a collection member is still a real, individually-titled movie).
+        // "Die Hard with a Vengeance" -- a collection member is still a real, individually-
+        // titled movie, not a container/grouping row).
         // Deliberately NOT a blanket "promote above level 0 too" for every type -- audiobooks
         // (and any other multi-level type not covered by these two vocabularies) keep their
         // existing, intentional level-0-only behavior; see

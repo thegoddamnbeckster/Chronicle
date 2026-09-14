@@ -46,9 +46,6 @@ file sealed class FakeNfoSidecarPlugin(IReadOnlyDictionary<string, string>? side
     public SidecarSignal? ExtractSignal(string sidecarPath) => null;
 
     public SidecarCapture? CaptureLossless(string sidecarPath) => null;
-
-    public Task<byte[]> BuildAsync(SidecarBuildRequest request, CancellationToken ct = default) =>
-        throw new NotImplementedException();
 }
 
 public class ScanGroupModelTests

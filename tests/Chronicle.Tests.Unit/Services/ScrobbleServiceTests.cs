@@ -4,8 +4,6 @@ using Chronicle.Data;
 using Chronicle.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Moq;
 
 namespace Chronicle.Tests.Unit.Services
 {
@@ -13,7 +11,6 @@ namespace Chronicle.Tests.Unit.Services
     {
         private readonly ChronicleDbContext _context;
         private readonly ScrobbleService _service;
-        private readonly Mock<INfoPushService> _nfoPush = new();
 
         public ScrobbleServiceTests()
         {
@@ -22,12 +19,7 @@ namespace Chronicle.Tests.Unit.Services
                 .Options;
 
             _context = new ChronicleDbContext(options);
-            _nfoPush.Setup(p => p.PushAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
-            var services = new ServiceCollection();
-            services.AddSingleton(_nfoPush.Object);
-            var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-            _service = new ScrobbleService(_context, scopeFactory);
+            _service = new ScrobbleService(_context);
 
             // Seed required data (EF 9 InMemory validates FK constraints)
             _context.Users.Add(new User
@@ -77,38 +69,10 @@ namespace Chronicle.Tests.Unit.Services
             result.MarkedAsWatched.Should().BeFalse();
         }
 
-        [Fact]
-        public async Task ScrobbleAsync_CrossingWatchedThreshold_PushesToKodi()
-        {
-            // Root-caused live (2026-09-08): a completed watch reported by one Kodi device
-            // updated Chronicle's own database correctly, but nothing ever told any OTHER Kodi
-            // device to reconsider that item -- the NFO push only ever fired from a manual
-            // status/rating edit in Chronicle's web UI, never from an actual watch session.
-            var tcs = new TaskCompletionSource();
-            _nfoPush.Setup(p => p.PushAsync(1, 1, It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask)
-                .Callback(() => tcs.TrySetResult());
-
-            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 90.0, null, null));
-
-            var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(2)));
-            completed.Should().Be(tcs.Task, "the fire-and-forget push should have run by now");
-            _nfoPush.Verify(p => p.PushAsync(1, 1, It.IsAny<CancellationToken>()), Times.Once);
-        }
-
-        [Fact]
-        public async Task ScrobbleAsync_OrdinaryProgressUpdate_DoesNotPushToKodi()
-        {
-            // Deliberately NOT triggered on every scrobble -- a device mid-playback reports
-            // progress roughly every 30 seconds, and rewriting an NFO + asking every other
-            // device to rescan it that often would be pure waste until the item is finished.
-            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 50.0, null, null));
-
-            // Give any (incorrectly-fired) background push a moment to have run before asserting
-            // its absence, so this isn't just passing because nothing had a chance to happen yet.
-            await Task.Delay(TimeSpan.FromMilliseconds(200));
-            _nfoPush.Verify(p => p.PushAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-        }
+        // ScrobbleAsync_CrossingWatchedThreshold_PushesToKodi and
+        // ScrobbleAsync_OrdinaryProgressUpdate_DoesNotPushToKodi, which used to live here, tested
+        // the NFO-push-on-watch behavior -- removed 2026-09-13 along with NfoPushService/
+        // INfoPushService and the rest of the server-side NFO generation system.
 
         [Fact]
         public async Task ScrobbleAsync_InvalidMediaId_Throws()
