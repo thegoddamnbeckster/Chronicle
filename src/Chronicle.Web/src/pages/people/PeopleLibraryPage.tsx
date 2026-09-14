@@ -238,10 +238,30 @@ export default function PeopleLibraryPage() {
   // rather than shifting anything, which is what lets fetchPreviousPage prepend without any
   // scroll-position correction: a row's absolute index never changes once assigned.
   const itemsByIndex = new Map<number, PersonListItem>()
+  const seenPersonIds = new Set<number>()
   const pageParams = (peopleQuery.data?.pageParams ?? []) as number[]
   peopleQuery.data?.pages.forEach((page, i) => {
     const pageNum = pageParams[i]
-    page.items.forEach((item, j) => itemsByIndex.set((pageNum - 1) * PEOPLE_PAGE_SIZE + j, item))
+    page.items.forEach((item, j) => {
+      // Confirmed live (2026-09-14): the same person can land in two different already-
+      // fetched pages at once, rendered as two tiles for the same name/photo with nothing
+      // duplicated in the database itself. GetPeople recomputes its full alphabetized
+      // Skip/Take ordering fresh on every request, and Chronicle continuously creates new
+      // "people" stub records in the background as titles get scanned/enriched -- a person
+      // inserted earlier in the alphabet between two page fetches shifts everyone after them
+      // by one position, so whoever sat at that shifted page boundary gets included in BOTH
+      // the page already loaded and the next one fetched. Skipping a person id already placed
+      // at an earlier absolute index (instead of overwriting it, which would just move the
+      // visible duplicate rather than remove it) leaves that later slot as a harmless empty
+      // gap instead -- far less confusing than the same person appearing twice. This doesn't
+      // fix the underlying Skip/Take instability (a real, different person can still get
+      // silently skipped past instead of duplicated, the mirror-image of this bug) -- that
+      // needs cursor/keyset-based pagination, a bigger change than this page's absolute-index
+      // virtualization model supports today.
+      if (seenPersonIds.has(item.id)) return
+      seenPersonIds.add(item.id)
+      itemsByIndex.set((pageNum - 1) * PEOPLE_PAGE_SIZE + j, item)
+    })
   })
 
   const isInitialLoading = jumpTarget != null

@@ -80,6 +80,50 @@ describe('PeopleLibraryPage', () => {
     expect(mockedGetJumpPosition).not.toHaveBeenCalled()
   })
 
+  it('renders a person only once when GetPeople returns them on two consecutive pages', async () => {
+    // Confirmed live (2026-09-14): GetPeople recomputes its full alphabetized ordering fresh
+    // on every request, and Chronicle continuously creates new "people" stub records in the
+    // background as titles get scanned/enriched. A person inserted earlier in the alphabet
+    // between two page fetches shifts everyone after them by one position, so whoever sat at
+    // that shifted page boundary comes back in BOTH the already-loaded page and the next one
+    // fetched -- reproduced here directly against the API response shape, not by simulating
+    // the server-side insert itself.
+    mockedGetPeople.mockImplementation(async ({ page = 1, perPage = PAGE_SIZE } = {}) => {
+      if (page === 1) {
+        return { items: Array.from({ length: perPage }, (_, i) => makePerson(i)), total: TOTAL_PEOPLE }
+      }
+      if (page === 2) {
+        // Off-by-one overlap: page 2 starts at the same person page 1 ended on.
+        return { items: Array.from({ length: perPage }, (_, i) => makePerson(perPage - 1 + i)), total: TOTAL_PEOPLE }
+      }
+      const start = (page - 1) * perPage
+      return { items: Array.from({ length: perPage }, (_, i) => makePerson(start + i)), total: TOTAL_PEOPLE }
+    })
+
+    const { main } = renderPeoplePage(<PeopleLibraryPage />, { initialEntries: ['/people'] })
+    await screen.findByText('Person 0000')
+
+    // A moderate scroll -- enough to bring the last loaded row (13: with a single 40-item page
+    // loaded and 3 columns/row, maxLoadedRow = floor(39/3) = 13) within the auto-load effect's
+    // own trigger distance, but not so far that row 13 itself scrolls back OUT of the
+    // virtualizer's rendered/overscan window (an earlier version of this test scrolled 20000px,
+    // which reliably triggered page 2 but also unmounted the very row being asserted on, making
+    // the assertion vacuously pass either way regardless of whether the fix worked). Same
+    // columnsPerRow=3/CARD_MIN_WIDTH=170 jsdom quirk as the backstop tests above (ResizeObserver
+    // never fires here): rowSpan = 170*1.5 + 84 + 14 = 353. Trigger fires once the last visible
+    // row reaches row 10 (maxLoadedRow - 3); scrollTop 2900 puts it there while row 13 stays
+    // within the overscan(4) window (rendered rows extend to ~14).
+    Object.defineProperty(main, 'scrollTop', { configurable: true, value: 2900 })
+    main.dispatchEvent(new Event('scroll'))
+
+    await waitFor(() => {
+      expect(mockedGetPeople).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }))
+    })
+    await waitFor(() => {
+      expect(screen.getAllByText('Person 0039')).toHaveLength(1)
+    })
+  })
+
   it('re-queries with the selected deceased filter', async () => {
     const user = userEvent.setup()
     renderPeoplePage(<PeopleLibraryPage />)
