@@ -3017,12 +3017,21 @@ public class MetadataEnrichmentService(
         var old = db.MediaCredits.Where(c => c.MediaItemId == item.Id && c.Source == source);
         db.MediaCredits.RemoveRange(old);
 
+        // Only a performance type's Cast entries are actors playing a character -- see
+        // CreditRoleHelper's own doc for the live bug this guards against (Ernest Cline's own
+        // "Author" credit on his own books showing up as an "Actor" whose character was
+        // literally named "Author"). Every other type's CastMember.Role IS the real
+        // contribution (Hardcover: "Author"/"Illustrator"/...) and belongs directly in
+        // MediaCredit.Role with no character name at all -- same shape as a Crew entry's Job.
+        var castIsActing = CreditRoleHelper.CastEntryIsActingCredit(item.MediaType?.Name);
         var billingOrder = 0;
         foreach (var cast in result.Cast)
         {
             await personResolutionService.ResolveAndRecordCreditAsync(
                 db, item.Id, cast.Name, cast.ExternalPersonId, source, cast.ProfileImageUrl,
-                role: "Actor", characterName: cast.Role, billingOrder: billingOrder++, ct);
+                role: castIsActing ? "Actor" : (cast.Role ?? "Cast"),
+                characterName: castIsActing ? cast.Role : null,
+                billingOrder: billingOrder++, ct);
         }
         foreach (var crew in result.Crew)
         {

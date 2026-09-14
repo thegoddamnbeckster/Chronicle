@@ -254,9 +254,13 @@ namespace Chronicle.API.Controllers
 
                 var item = await _context.MediaItems
                     .Where(m => m.Id == itemId)
-                    .Select(m => new { m.Id, m.MetadataJson })
+                    .Select(m => new { m.Id, m.MetadataJson, MediaTypeName = m.MediaType!.Name })
                     .FirstOrDefaultAsync(ct);
                 if (item?.MetadataJson is null) continue;
+
+                // See CreditRoleHelper's own doc for the bug this guards against -- only a
+                // performance type's Cast entries are actors playing a character.
+                var castIsActing = CreditRoleHelper.CastEntryIsActingCredit(item.MediaTypeName);
 
                 // Only (item, source) pairs that currently have an orphaned credit get cleared
                 // and re-derived -- a pair with no orphaned credit is left untouched.
@@ -306,7 +310,9 @@ namespace Chronicle.API.Controllers
                             if (string.IsNullOrWhiteSpace(c.Name)) continue;
                             await _personResolutionService.ResolveAndRecordCreditAsync(
                                 _context, itemId, c.Name, c.ExternalPersonId, source, c.ProfileImageUrl,
-                                role: "Actor", characterName: c.Role, billingOrder: billingOrder++, ct);
+                                role: castIsActing ? "Actor" : (c.Role ?? "Cast"),
+                                characterName: castIsActing ? c.Role : null,
+                                billingOrder: billingOrder++, ct);
                             creditsResolved++;
                         }
                     }

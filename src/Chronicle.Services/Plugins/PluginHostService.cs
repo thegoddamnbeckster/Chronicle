@@ -373,7 +373,7 @@ public sealed class PluginHostService : IHostedService
                 .Where(m => m.Id > lastId && m.MetadataJson != null)
                 .OrderBy(m => m.Id)
                 .Take(pageSize)
-                .Select(m => new { m.Id, m.MetadataJson })
+                .Select(m => new { m.Id, m.MetadataJson, MediaTypeName = m.MediaType!.Name })
                 .ToListAsync(ct);
             if (page.Count == 0) break;
             lastId = page[^1].Id;
@@ -386,6 +386,10 @@ public sealed class PluginHostService : IHostedService
                 try { blobs = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(item.MetadataJson!); }
                 catch (JsonException) { continue; }
                 if (blobs is null) continue;
+
+                // See CreditRoleHelper's own doc for the bug this guards against -- only a
+                // performance type's Cast entries are actors playing a character.
+                var castIsActing = Chronicle.Core.Helpers.CreditRoleHelper.CastEntryIsActingCredit(item.MediaTypeName);
 
                 foreach (var (pluginId, blob) in blobs)
                 {
@@ -413,7 +417,9 @@ public sealed class PluginHostService : IHostedService
                             {
                                 await personResolutionService.ResolveAndRecordCreditAsync(
                                     db, item.Id, c.Name, c.ExternalPersonId, source, c.ProfileImageUrl,
-                                    role: "Actor", characterName: c.Role, billingOrder: billingOrder++, ct);
+                                    role: castIsActing ? "Actor" : (c.Role ?? "Cast"),
+                                    characterName: castIsActing ? c.Role : null,
+                                    billingOrder: billingOrder++, ct);
                                 creditsResolved++;
                             }
                             catch (Exception ex)

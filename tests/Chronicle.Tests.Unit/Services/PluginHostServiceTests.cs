@@ -39,6 +39,7 @@ public class PluginHostServiceTests : IDisposable
 
         _db.MediaTypes.Add(new MediaType { Id = 1, Name = "people", DisplayName = "People", IsTrackable = false, CreatedAt = DateTime.UtcNow });
         _db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow });
+        _db.MediaTypes.Add(new MediaType { Id = 3, Name = "book", DisplayName = "Books", CreatedAt = DateTime.UtcNow });
         _db.SaveChanges();
 
         _svc = new PluginHostService(
@@ -53,6 +54,36 @@ public class PluginHostServiceTests : IDisposable
         Id = id, MediaTypeId = 2, Name = name, HierarchyLevel = 0,
         MetadataJson = metadataJson, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
     };
+
+    private static MediaItem MakeBook(int id, string name, string metadataJson) => new()
+    {
+        Id = id, MediaTypeId = 3, Name = name, HierarchyLevel = 0,
+        MetadataJson = metadataJson, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+    };
+
+    [Fact]
+    public async Task BackfillCreditsFromCachedMetadataAsync_BookCastEntry_RecordsRealRoleNotActor()
+    {
+        // Confirmed live (2026-09-14): Ernest Cline's own "Author" credit on his own books
+        // showed up on his person page grouped under an "Actor" section, with "Author" as if it
+        // were his character name -- Hardcover's own cast entries put the real contribution
+        // ("Author") into CastMember.Role since a book has no character concept at all, but the
+        // backfill (and the live enrichment path it mirrors) hardcoded every Cast entry as an
+        // "Actor" with that value stashed into CharacterName regardless of media type.
+        var book = MakeBook(104, "Ready Player Two", """
+            { "hardcover": { "cast": [{ "name": "Ernest Cline", "role": "Author", "externalPersonId": "hardcover:1" }] } }
+            """);
+        _db.MediaItems.Add(book);
+        await _db.SaveChangesAsync();
+
+        await _svc.BackfillCreditsFromCachedMetadataAsync(_db, _personResolutionService, default);
+        await _db.SaveChangesAsync();
+
+        var credit = (await _db.MediaCredits.Where(c => c.MediaItemId == book.Id).ToListAsync()).Should().ContainSingle().Which;
+        credit.PersonName.Should().Be("Ernest Cline");
+        credit.Role.Should().Be("Author");
+        credit.CharacterName.Should().BeNull();
+    }
 
     [Fact]
     public async Task BackfillCreditsFromCachedMetadataAsync_CastAndCrewInBlob_ResolvesToMediaCredits()
