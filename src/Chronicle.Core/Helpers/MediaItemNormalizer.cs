@@ -26,6 +26,25 @@ public static class MediaItemNormalizer
         new("\\s*[\"\u201C][^\"\u201D]*[\"\u201D]\\s*", RegexOptions.Compiled);
 
     /// <summary>
+    /// Same purpose as <see cref="_quotedNickname"/>, for a nickname delimited by SINGLE quotes
+    /// instead of double -- e.g. the `'Wee Man'` in `Jason 'Wee Man' Acuña`. Confirmed live
+    /// (2026-09-15): that exact credit split into two Person rows ("Jason Acuña" and "Jason
+    /// 'Wee Man' Acuña", same 1973-05-16 birthdate) because the source that included the
+    /// nickname used single quotes, which the double-quote-only regex above never matches.
+    ///
+    /// Distinguishes a nickname delimiter from a real apostrophe (O'Brien, D'Angelo) by
+    /// requiring whitespace -- or start/end of string -- immediately OUTSIDE both quote
+    /// characters: a nickname is always its own separated token ("Jason 'Wee Man' Acuña" has a
+    /// space before the opening quote and after the closing one), while a real apostrophe sits
+    /// directly between two letters with no surrounding whitespace at all ("O'Brien"). `(?<!\S)`
+    /// / `(?!\S)` cover both "preceded/followed by whitespace" and "at the very start/end of the
+    /// string" in one lookaround each, unlike `\s`, which would refuse to match a nickname sitting
+    /// right at either edge (`'Stone Cold' Steve Austin`).
+    /// </summary>
+    private static readonly Regex _quotedNicknameSingle =
+        new(@"(?<!\S)'[^']+'(?!\S)", RegexOptions.Compiled);
+
+    /// <summary>
     /// Produces a canonical lowercase string for duplicate detection.
     /// Strips common punctuation to nothing, collapses whitespace, trims.
     /// "James S. A. Corey" → "james s a corey"
@@ -50,6 +69,7 @@ public static class MediaItemNormalizer
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
         var noNickname = _quotedNickname.Replace(name.Normalize(NormalizationForm.FormC), " ");
+        noNickname = _quotedNicknameSingle.Replace(noNickname, " ");
         var stripped = _strip.Replace(noNickname, string.Empty);
         var collapsed = _spaces.Replace(stripped, " ").Trim().ToLowerInvariant();
         return collapsed;
@@ -72,6 +92,7 @@ public static class MediaItemNormalizer
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
         var noNickname = _quotedNickname.Replace(name.Normalize(NormalizationForm.FormC), " ");
+        noNickname = _quotedNicknameSingle.Replace(noNickname, " ");
         var stripped = _strip.Replace(noNickname, string.Empty);
         return _spaces.Replace(stripped, string.Empty).ToLowerInvariant();
     }

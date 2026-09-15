@@ -20,6 +20,18 @@ public class MediaItemNormalizerTests
     [InlineData("Michael \"Mike\" Smith", "michael smith")]
     [InlineData("Michael “Mike” Smith", "michael smith")] // curly quotes
     [InlineData("O'Brien",            "obrien")] // apostrophe alone must NOT be treated as a nickname delimiter
+    // Root-caused live (2026-09-15): "Jason Acuña" and "Jason 'Wee Man' Acuña" (same real
+    // person, same 1973-05-16 birthdate) normalized to two different strings because the
+    // single-quoted nickname was never stripped -- only double-quoted ones were.
+    [InlineData("Jason 'Wee Man' Acuña", "jason acuña")]
+    [InlineData("D'Angelo",           "dangelo")] // real apostrophe, no nickname anywhere
+    // A single-quoted nickname sitting right at the start of the string -- the whitespace-based
+    // boundary check must not require an actual space character that doesn't exist there.
+    [InlineData("'Stone Cold' Steve Austin", "steve austin")]
+    // Both a real apostrophe AND a single-quoted nickname in the same name -- the real
+    // apostrophe (no surrounding whitespace) must survive while the nickname (surrounded by
+    // whitespace on both sides) still strips.
+    [InlineData("O'Brien 'Big O' Smith", "obrien smith")]
     public void NormalizeName_VariousInputs_CorrectResult(string? input, string expected)
     {
         MediaItemNormalizer.NormalizeName(input).Should().Be(expected);
@@ -38,6 +50,7 @@ public class MediaItemNormalizerTests
     [InlineData("",                   "")]
     [InlineData(null,                 "")]
     [InlineData("Michael \"Mike\" Smith", "michaelsmith")]
+    [InlineData("Jason 'Wee Man' Acuña", "jasonacuña")]
     public void NormalizeNameLoose_CollapsesSpacingAroundInitials(string? input, string expected)
     {
         MediaItemNormalizer.NormalizeNameLoose(input).Should().Be(expected);
