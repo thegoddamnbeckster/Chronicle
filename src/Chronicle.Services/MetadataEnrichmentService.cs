@@ -1946,7 +1946,21 @@ public class MetadataEnrichmentService(
             // conflict" (not merely logged and allowed through) so every branch below --
             // including the "conflictOwner is already known to be null here" skipConflictCheck
             // comment further down -- stays accurate without needing its own stub-awareness.
-            if (conflictOwner is { IsStub: true })
+            //
+            // Scoped to a NON-"people" owner (2026-09-15): every "people" item is created with
+            // IsStub=true permanently (PersonResolutionService.ResolvePersonOnlyAsync's own stub
+            // model -- nothing anywhere ever flips a person's IsStub back to false, unlike a
+            // movie/show stub, which really does mean "not yet resolved"). Applying this bypass
+            // to a people-type owner made the whole cross-item conflict guard silently inert for
+            // the entire People catalog -- confirmed live: "Sharon Alexander" (two different
+            // real actors' own TMDB records, credited on ReBoot and Munich respectively) both
+            // got the identical Wikipedia page attached, because the "owner is just a stub, not
+            // a real conflict" exemption fired for a person stub too. A person stub's claim on
+            // an id is exactly as real and independent as the new item's own match -- it is
+            // never provider-supplied corroborating evidence for ANOTHER person the way a
+            // collection's parts-list stub is for a movie, so it must still count as a conflict.
+            if (conflictOwner is { IsStub: true } &&
+                !string.Equals(conflictOwner.MediaType?.Name, "people", StringComparison.OrdinalIgnoreCase))
                 conflictOwner = null;
 
             if (conflictOwner is not null)
@@ -3358,9 +3372,12 @@ public class MetadataEnrichmentService(
         string? excludePluginId)
     {
         var (source, extId) = DeriveExternalIdSourceAndId(rawExternalId, excludePluginId);
-        // No .Include() needed -- Select projects the navigation property directly, which EF
-        // Core already joins to materialize on its own.
+        // .Include(...).ThenInclude(MediaType) -- the caller's IsStub bypass below now also
+        // needs to know the owner's media TYPE (see that check's own doc for why), which a bare
+        // Select(e => e.MediaItem) never materializes; Include must run before Select changes
+        // the query's shape away from MediaExternalId, not after.
         return await db.MediaExternalIds
+            .Include(e => e.MediaItem!).ThenInclude(m => m.MediaType)
             .Where(e => e.Source == source && e.ExternalId == extId && e.MediaItemId != mediaItemId)
             .Select(e => e.MediaItem)
             .FirstOrDefaultAsync(ct);

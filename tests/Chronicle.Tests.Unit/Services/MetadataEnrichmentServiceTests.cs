@@ -1311,6 +1311,69 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichPendingAsync_MatchedExternalIdOwnedByAnotherPersonStub_RejectsRatherThanMerges()
+    {
+        // Root-caused live (2026-09-15, "Sharon Alexander"): every "people" item is created
+        // with IsStub=true PERMANENTLY (PersonResolutionService's own stub model -- nothing
+        // ever flips a person's IsStub back to false the way a movie/show stub's does once
+        // resolved). The collection-stub exemption right above this test (a stub's claim isn't
+        // a real conflict) was never scoped away from people, so it silently disabled the
+        // entire cross-item conflict guard for the whole People catalog: two different real
+        // actors both named "Sharon Alexander" (one credited on ReBoot, the other on Munich)
+        // both got the identical Wikipedia page attached, because the existing owner being a
+        // (permanently-true) stub always bypassed the check. Unlike a collection's parts-list
+        // stub, a person stub's claim on an id is exactly as real and independent as the new
+        // item's own match -- it must still count as a conflict.
+        var peopleType = new MediaType
+        {
+            Name = "people", DisplayName = "People", HierarchyLevels = 1,
+            HierarchyLabels = "Person", InteractionVerb = "viewed", ProgressUnit = "percent",
+        };
+        _db.MediaTypes.Add(peopleType);
+        await _db.SaveChangesAsync();
+
+        var owner = new MediaItem
+        {
+            Name = "Sharon Alexander", MediaTypeId = peopleType.Id, IsStub = true,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(owner);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId
+        {
+            MediaItemId = owner.Id, Source = "wikipedia", ExternalId = "wikipedia:en:Sharon_Alexander",
+        });
+        await _db.SaveChangesAsync();
+
+        var item = new MediaItem
+        {
+            Name = "Sharon Alexander", MediaTypeId = peopleType.Id, IsStub = true,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.wikipedia", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.wikipedia", "people");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Sharon Alexander", ExternalId = "wikipedia:en:Sharon_Alexander" }, Score: 70),
+            });
+        provider.Setup(p => p.GetByIdAsync("wikipedia:en:Sharon_Alexander", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Sharon Alexander", ExternalId = "wikipedia:en:Sharon_Alexander" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.wikipedia");
+
+        var row = await _db.MediaEnrichments
+            .FirstAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.wikipedia");
+        row.Status.Should().Be(EnrichmentStatus.NotFound);
+
+        (await _db.MediaExternalIds.AnyAsync(e => e.MediaItemId == item.Id && e.Source == "wikipedia"))
+            .Should().BeFalse("the second person must never pick up an id the first person's stub already claims");
+    }
+
+    [Fact]
     public async Task EnrichItemAsync_Force_FallbackRefetchIdOwnedByAnotherItem_RejectsRatherThanMerges()
     {
         // Regression test: the conflict check above must also catch a match that only
