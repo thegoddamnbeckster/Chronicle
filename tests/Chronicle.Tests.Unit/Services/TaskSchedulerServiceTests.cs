@@ -361,6 +361,213 @@ public class TaskSchedulerServiceTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── Fetch-missing-metadata: keep retrying until the queue is actually drained ───────────
+    // Per-user request (2026-09-15): "I would really prefer that it keep trying periodically
+    // until the queues are emptied" -- see ComputeNextRunAtAsync's own doc for the full
+    // reasoning (EnrichPendingAsync's while(true) loop only ever stops early because the
+    // provider became unavailable, so "still Pending right after a completed run" reliably
+    // means "got blocked", not just "big queue, more to do eventually").
+
+    [Fact]
+    public async Task PersistRunResult_FetchMissingMetadataStillPending_SchedulesSoonRetryNotFullCron()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId         = "chronicle.plugin.tmdb:fetch-missing-metadata",
+            PluginId       = "chronicle.plugin.tmdb",
+            DisplayName    = "Fetch Missing Metadata",
+            Description    = "Looks up metadata for new items.",
+            CronExpression = "0 4 * * *", // once daily -- the actual live TMDB schedule
+            IsEnabled      = true,
+            NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
+        });
+        db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = 1, PluginId = "chronicle.plugin.tmdb", Status = EnrichmentStatus.Pending,
+        });
+        await db.SaveChangesAsync();
+
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask); // completes without throwing -- the graceful "provider unavailable" outcome
+
+        var services = new ServiceCollection();
+        services.AddSingleton(db);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
+
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.tmdb:fetch-missing-metadata"));
+
+        var row = await db.BackgroundTasks.AsNoTracking()
+            .FirstAsync(t => t.TaskId == "chronicle.plugin.tmdb:fetch-missing-metadata");
+        row.NextRunAt.Should().NotBeNull();
+        row.NextRunAt!.Value.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromSeconds(30),
+            "still-Pending work should retry soon, not wait for tomorrow's 4am cron");
+    }
+
+    [Fact]
+    public async Task PersistRunResult_FetchMissingMetadataFullyDrained_UsesNormalCron()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId         = "chronicle.plugin.tmdb:fetch-missing-metadata",
+            PluginId       = "chronicle.plugin.tmdb",
+            DisplayName    = "Fetch Missing Metadata",
+            Description    = "Looks up metadata for new items.",
+            CronExpression = "0 4 * * *",
+            IsEnabled      = true,
+            NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
+        });
+        // No Pending rows for this plugin -- the queue is genuinely empty.
+        await db.SaveChangesAsync();
+
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(db);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
+
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.tmdb:fetch-missing-metadata"));
+
+        var row = await db.BackgroundTasks.AsNoTracking()
+            .FirstAsync(t => t.TaskId == "chronicle.plugin.tmdb:fetch-missing-metadata");
+        row.NextRunAt.Should().NotBeNull();
+        // Falls back to the real cron occurrence -- comfortably more than 15 minutes away for
+        // an "0 4 * * *" schedule regardless of what time the test happens to run.
+        row.NextRunAt!.Value.Should().BeAfter(DateTime.UtcNow.AddHours(1),
+            "a fully-drained queue must fall back to the task's own normal cron, not keep retrying soon");
+    }
+
+    [Fact]
+    public async Task PersistRunResult_FetchMissingMetadataStillPending_NeverSchedulesLaterThanNormalCron()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId         = "chronicle.plugin.musicbrainz:fetch-missing-metadata",
+            PluginId       = "chronicle.plugin.musicbrainz",
+            DisplayName    = "Fetch Missing Metadata",
+            Description    = "Looks up metadata for new items.",
+            CronExpression = "* * * * *", // every minute -- already far more frequent than the 15-minute retry floor
+            IsEnabled      = true,
+            NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
+        });
+        db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = 1, PluginId = "chronicle.plugin.musicbrainz", Status = EnrichmentStatus.Pending,
+        });
+        await db.SaveChangesAsync();
+
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(db);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
+
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.musicbrainz:fetch-missing-metadata"));
+
+        var row = await db.BackgroundTasks.AsNoTracking()
+            .FirstAsync(t => t.TaskId == "chronicle.plugin.musicbrainz:fetch-missing-metadata");
+        row.NextRunAt.Should().NotBeNull();
+        row.NextRunAt!.Value.Should().BeBefore(DateTime.UtcNow.AddMinutes(2),
+            "a plugin whose own cron is already more frequent than the retry floor must keep its faster cadence");
+    }
+
+    [Fact]
+    public async Task PersistRunResult_NonFetchMissingPluginTask_IgnoresPendingRows()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId         = "chronicle.plugin.tmdb:resync-all-metadata",
+            PluginId       = "chronicle.plugin.tmdb",
+            DisplayName    = "Re-sync All Metadata",
+            Description    = "Re-downloads metadata.",
+            CronExpression = "0 3 * * 0",
+            IsEnabled      = true,
+            NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
+        });
+        db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = 1, PluginId = "chronicle.plugin.tmdb", Status = EnrichmentStatus.Pending,
+        });
+        await db.SaveChangesAsync();
+
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(db);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
+
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.tmdb:resync-all-metadata"));
+
+        var row = await db.BackgroundTasks.AsNoTracking()
+            .FirstAsync(t => t.TaskId == "chronicle.plugin.tmdb:resync-all-metadata");
+        row.NextRunAt.Should().NotBeNull();
+        row.NextRunAt!.Value.Should().BeAfter(DateTime.UtcNow.AddHours(1),
+            "the soon-retry behavior is scoped to fetch-missing-metadata only, not every plugin task");
+    }
+
+    [Fact]
+    public async Task PersistRunResult_FetchMissingMetadataThrows_UsesNormalCronNotSoonRetry()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId         = "chronicle.plugin.tmdb:fetch-missing-metadata",
+            PluginId       = "chronicle.plugin.tmdb",
+            DisplayName    = "Fetch Missing Metadata",
+            Description    = "Looks up metadata for new items.",
+            CronExpression = "0 4 * * *",
+            IsEnabled      = true,
+            NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
+        });
+        db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = 1, PluginId = "chronicle.plugin.tmdb", Status = EnrichmentStatus.Pending,
+        });
+        await db.SaveChangesAsync();
+
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .ThrowsAsync(new InvalidOperationException("plugin blew up"));
+
+        var services = new ServiceCollection();
+        services.AddSingleton(db);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
+
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.tmdb:fetch-missing-metadata"));
+
+        var row = await db.BackgroundTasks.AsNoTracking()
+            .FirstAsync(t => t.TaskId == "chronicle.plugin.tmdb:fetch-missing-metadata");
+        row.LastRunSucceeded.Should().BeFalse();
+        row.NextRunAt.Should().NotBeNull();
+        row.NextRunAt!.Value.Should().BeAfter(DateTime.UtcNow.AddHours(1),
+            "a genuine unhandled crash gets the normal cadence, not a rapid retry loop against whatever just broke it");
+    }
+
     // ── Error isolation ────────────────────────────────────────────────────────
 
     [Fact]

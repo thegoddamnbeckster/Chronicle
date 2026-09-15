@@ -19,6 +19,12 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(30);
 
+    // How soon a plugin's own "fetch-missing-metadata" task is retried when it finishes a run
+    // still owing Pending enrichment rows, instead of waiting for its normal (often once-daily)
+    // cron. See ComputeNextRunAtAsync's own doc for the full reasoning.
+    private static readonly TimeSpan FetchMissingRetryInterval = TimeSpan.FromMinutes(15);
+    private const string FetchMissingMetadataTaskId = "fetch-missing-metadata";
+
     private readonly IReadOnlyList<IScheduledTask> _tasks;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ConcurrentDictionary<string, bool> _running = new();
@@ -219,7 +225,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
             row.LastRunAt        = lastRunAt;
             row.LastRunSucceeded = succeeded;
             row.LastErrorMessage = succeeded ? null : error;
-            row.NextRunAt        = GetNextOccurrence(row.CronExpression);
+            row.NextRunAt        = await ComputeNextRunAtAsync(db, row, succeeded);
 
             await db.SaveChangesAsync();
         }
@@ -227,6 +233,52 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         {
             _log.Error(ex, "TaskScheduler: failed to persist run result for '{TaskId}'", taskId);
         }
+    }
+
+    /// <summary>
+    /// Normally just the cron's own next occurrence -- EXCEPT for a plugin's own
+    /// "fetch-missing-metadata" task that finished this run still owing Pending enrichment
+    /// rows for that plugin. MetadataEnrichmentService.EnrichPendingAsync's own while(true) loop
+    /// never stops early for any reason OTHER than the provider becoming unavailable (rate
+    /// limit or network failure exhausting ProviderCallGuard's own bounded retries) -- there is
+    /// no arbitrary batch cap that could otherwise explain Pending rows remaining after a
+    /// completed (non-throwing) run. So "still Pending right after this task just ran" reliably
+    /// means "got blocked", not merely "big queue, more to do eventually."
+    ///
+    /// Root-caused live (2026-09-15): TMDB's own fetch-missing-metadata cron is once daily —
+    /// on a 270,000+ item backlog that kept getting interrupted by transient network blips
+    /// (see ProviderCallGuard's own doc), waiting for the NEXT cron occurrence meant at most one
+    /// blocked, barely-progressing attempt per day. Per-user request: "I would really prefer
+    /// that it keep trying periodically until the queues are emptied." Retries again in
+    /// <see cref="FetchMissingRetryInterval"/> instead of the full cron interval, repeating for
+    /// as many runs in a row as it takes -- each successful PersistRunResultAsync call re-checks
+    /// Pending and keeps scheduling itself soon again -- until the queue genuinely is empty, at
+    /// which point this falls back to the task's normal cron cadence exactly as before. Never
+    /// mutates the stored CronExpression itself, only this one run's computed NextRunAt, so nothing
+    /// needs to "restore" the normal schedule afterward.
+    ///
+    /// Never schedules LATER than the plugin's own normal cron would have -- a plugin whose cron
+    /// is already more frequent than the retry interval (e.g. MusicBrainz's "0 */4 * * *") must
+    /// keep its own faster cadence, not get slowed down to this floor.
+    /// </summary>
+    private async Task<DateTime?> ComputeNextRunAtAsync(ChronicleDbContext db, BackgroundTask row, bool succeeded)
+    {
+        var normalNext = GetNextOccurrence(row.CronExpression);
+
+        // A genuine unhandled failure (not the graceful provider-unavailable pause, which never
+        // surfaces as succeeded: false -- see this method's own doc) gets the normal cadence,
+        // not a rapid retry loop against whatever just crashed it.
+        if (!succeeded || row.PluginId is null) return normalNext;
+
+        var bareTaskId = row.TaskId.Contains(':') ? row.TaskId[(row.TaskId.IndexOf(':') + 1)..] : row.TaskId;
+        if (bareTaskId != FetchMissingMetadataTaskId) return normalNext;
+
+        var stillPending = await db.MediaEnrichments
+            .AnyAsync(e => e.PluginId == row.PluginId && e.Status == EnrichmentStatus.Pending);
+        if (!stillPending) return normalNext;
+
+        var soonRetry = DateTime.UtcNow + FetchMissingRetryInterval;
+        return normalNext is { } n && n < soonRetry ? n : soonRetry;
     }
 
     private static DateTime? GetNextOccurrence(string cronExpression)
