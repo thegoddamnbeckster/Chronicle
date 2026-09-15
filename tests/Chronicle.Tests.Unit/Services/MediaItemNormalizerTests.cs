@@ -50,7 +50,7 @@ public class MediaItemNormalizerTests
     [InlineData("",                   "")]
     [InlineData(null,                 "")]
     [InlineData("Michael \"Mike\" Smith", "michaelsmith")]
-    [InlineData("Jason 'Wee Man' Acuña", "jasonacuña")]
+    [InlineData("Jason 'Wee Man' Acuña", "jasonacuna")] // also exercises diacritic folding below
     public void NormalizeNameLoose_CollapsesSpacingAroundInitials(string? input, string expected)
     {
         MediaItemNormalizer.NormalizeNameLoose(input).Should().Be(expected);
@@ -82,5 +82,31 @@ public class MediaItemNormalizerTests
     {
         MediaItemNormalizer.NormalizeNameLoose(PrecomposedName)
             .Should().Be(MediaItemNormalizer.NormalizeNameLoose(DecomposedName));
+    }
+
+    // Root-caused a real duplicate (2026-09-15): "Alex Acuña" and "Alex Acuna" -- same real
+    // person, same 1944-12-12 birthdate, one source's credit simply missing the tilde --
+    // normalized to different strings under NormalizeName (which reconciles different
+    // ENCODINGS of an accented character, per the test above, but never removes a diacritic
+    // that's genuinely absent from one side). NormalizeNameLoose now folds diacritics too, so
+    // PersonResolutionService's own loose-name fallback match (Step 2b) catches this pair.
+    [Theory]
+    [InlineData("Alex Acuña",   "alexacuna")]
+    [InlineData("Alex Acuna",   "alexacuna")]
+    [InlineData("Björgvin Arnarson", "bjorgvinarnarson")]
+    [InlineData("Plain Name",   "plainname")] // no diacritics at all -- must pass through unchanged
+    public void NormalizeNameLoose_FoldsDiacritics(string input, string expected)
+    {
+        MediaItemNormalizer.NormalizeNameLoose(input).Should().Be(expected);
+    }
+
+    [Fact]
+    public void NormalizeName_DoesNotFoldDiacritics()
+    {
+        // Diacritic folding is deliberately scoped to the Loose fallback tier only -- see
+        // NormalizeNameLoose's own doc for why widening the primary NormalizeName itself would
+        // need a backfill migration rather than just a method-body change.
+        MediaItemNormalizer.NormalizeName("Alex Acuña").Should().Be("alex acuña");
+        MediaItemNormalizer.NormalizeName("Alex Acuna").Should().Be("alex acuna");
     }
 }

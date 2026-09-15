@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -45,6 +46,32 @@ public static class MediaItemNormalizer
         new(@"(?<!\S)'[^']+'(?!\S)", RegexOptions.Compiled);
 
     /// <summary>
+    /// Folds a Unicode base letter plus its combining diacritic marks down to the bare base
+    /// letter -- "Acuña" -> "Acuna", "Björgvin" -> "Bjorgvin". Confirmed live (2026-09-15):
+    /// "Alex Acuña" (with the tilde) and "Alex Acuna" (without -- an ASCII-transliterated
+    /// credit from a source that doesn't preserve it) are the same real person, same
+    /// 1944-12-12 birthdate, but NormalizeName's own FormC pass only reconciles two different
+    /// ENCODINGS of the identical visible character (see that method's own doc) -- it never
+    /// removes a diacritic that's genuinely absent from one side. FormD decomposes each
+    /// accented character into its base letter plus separate combining-mark codepoint(s), which
+    /// this then filters out by Unicode category (Mn = "nonspacing mark") -- letters that were
+    /// never accented in the first place pass through untouched. Used by NormalizeNameLoose
+    /// only, not NormalizeName -- see NormalizeNameLoose's own doc for why a wider strip belongs
+    /// in the secondary fallback tier, not the primary indexed column.
+    /// </summary>
+    private static string RemoveDiacritics(string value)
+    {
+        var decomposed = value.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(decomposed.Length);
+        foreach (var c in decomposed)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        }
+        return sb.ToString().Normalize(NormalizationForm.FormC);
+    }
+
+    /// <summary>
     /// Produces a canonical lowercase string for duplicate detection.
     /// Strips common punctuation to nothing, collapses whitespace, trims.
     /// "James S. A. Corey" → "james s a corey"
@@ -87,13 +114,22 @@ public static class MediaItemNormalizer
     /// separate from NormalizeName -- which many existing duplicate-detection call sites
     /// already depend on for its current, less aggressive behavior -- rather than changing it
     /// in place; use this as an additional fallback comparison tier, not a replacement.
+    ///
+    /// Also folds diacritics (see <see cref="RemoveDiacritics"/>) for the identical reason:
+    /// root-caused a real duplicate (2026-09-15) where "Alex Acuña" and "Alex Acuna" -- same
+    /// real person, one source's credit missing the tilde entirely -- normalized to different
+    /// strings under NormalizeName. Widening NormalizeName itself would need a backfill
+    /// migration (it's a stored, indexed column many other call sites already depend on); this
+    /// fallback tier is exactly where StripTrailingParenthetical's own doc already says that
+    /// kind of wider, riskier strip belongs instead.
     /// </summary>
     public static string NormalizeNameLoose(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
         var noNickname = _quotedNickname.Replace(name.Normalize(NormalizationForm.FormC), " ");
         noNickname = _quotedNicknameSingle.Replace(noNickname, " ");
-        var stripped = _strip.Replace(noNickname, string.Empty);
+        var noDiacritics = RemoveDiacritics(noNickname);
+        var stripped = _strip.Replace(noDiacritics, string.Empty);
         return _spaces.Replace(stripped, string.Empty).ToLowerInvariant();
     }
 
