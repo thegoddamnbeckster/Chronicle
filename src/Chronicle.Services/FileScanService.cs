@@ -1638,11 +1638,31 @@ namespace Chronicle.Services
                 ?? ProvidersForType(mediaType.Name).FirstOrDefault()
                 ?? throw new InvalidOperationException("No metadata provider is loaded.");
 
-            var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                async t => (MediaMetadata?)await provider.GetByIdAsync(externalId, t), provider.PluginId, "GetByIdAsync",
-                null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
-                ?? throw new InvalidOperationException(
-                    $"Provider {provider.PluginId} did not return metadata for {externalId}");
+            // ProviderCallGuard only retries TRANSIENT network failures (see its own doc) -- a
+            // definitive HTTP error like a 404 (a stale/invalid id, or a provider-side removal)
+            // is logged once and re-thrown as-is, not swallowed into a null return. The `?? throw`
+            // below only ever catches a call that SUCCEEDED but genuinely found nothing -- it can
+            // never run for a thrown exception, since `??` doesn't catch throws. Root-caused live
+            // (2026-09-18, per-user report): adding "Star Wars: The Clone Wars" 500'd instead of
+            // showing an error, because the underlying HttpRequestException(404) propagated all
+            // the way past this method and past the controller's catch (which only catches
+            // InvalidOperationException) to an unhandled exception. Translating it here, at the
+            // one place that actually knows what was being looked up, lets the existing
+            // ADD_ERROR handling work as originally intended.
+            MediaMetadata? meta;
+            try
+            {
+                meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                    async t => (MediaMetadata?)await provider.GetByIdAsync(externalId, t), provider.PluginId, "GetByIdAsync",
+                    null, msg => _log.Warning(msg), msg => _log.Error(msg), ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or KeyNotFoundException or ArgumentException)
+            {
+                throw new InvalidOperationException(
+                    $"Provider {provider.PluginId} could not find {externalId} -- it may be stale or invalid: {ex.Message}");
+            }
+            meta = meta ?? throw new InvalidOperationException(
+                $"Provider {provider.PluginId} did not return metadata for {externalId}");
 
             // DELIBERATELY PERMANENT — added 2026-08-03 after several "Add Media" items (all
             // sourced from a currently-flaky provider) ended up with Name set but MetadataJson

@@ -1,10 +1,12 @@
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Plugins;
 using Chronicle.Plugins.Models;
 using Chronicle.Services;
 using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Moq;
+using System.Net;
 using Xunit;
 
 namespace Chronicle.Tests.Unit.Services;
@@ -705,5 +707,45 @@ public class FileScanServiceHierarchyTests
         var allMovies = await context.MediaItems.Where(m => m.MediaTypeId == 1).ToListAsync();
         Assert.Single(allMovies);
         Assert.Equal(existing.Id, allMovies[0].Id);
+    }
+
+    // ── AddFromSearchAsync ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AddFromSearchAsync_ProviderReturns404_ThrowsInvalidOperationException_NotUnhandledHttpException()
+    {
+        // Root-caused live (2026-09-18, per-user report): adding "Star Wars: The Clone Wars"
+        // 500'd instead of showing an error. ProviderCallGuard only retries TRANSIENT network
+        // failures -- a definitive 404 (a stale/invalid externalId, e.g. from a search result
+        // TMDB's own index no longer backs) is logged once and re-thrown as-is. The old code's
+        // `?? throw new InvalidOperationException(...)` only ever covered a call that SUCCEEDED
+        // but returned null -- it can never run for a thrown exception -- so the raw
+        // HttpRequestException propagated past the controller's catch (which only catches
+        // InvalidOperationException) into an unhandled 500. This proves the 404 is now
+        // translated into the InvalidOperationException the controller already knows how to
+        // turn into a clean ADD_ERROR response.
+        await using var context = NewInMemoryContext();
+
+        var mediaType = new MediaType
+        {
+            Id = 1, Name = "tv", DisplayName = "TV Shows", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow,
+        };
+        context.MediaTypes.Add(mediaType);
+        await context.SaveChangesAsync();
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.tmdb");
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Not Found", null, HttpStatusCode.NotFound));
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.tmdb")).Returns(provider.Object);
+
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddFromSearchAsync("tv:99999999", mediaTypeId: 1, userId: 1));
+
+        Assert.Contains("tv:99999999", ex.Message);
     }
 }
