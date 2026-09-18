@@ -972,46 +972,99 @@ public class MetadataEnrichmentService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        IQueryable<MediaItemEnrichment> query = db.MediaEnrichments
-            .Include(x => x.MediaItem)
-                .ThenInclude(m => m!.MediaType)
-            .Include(x => x.MediaItem)
-                .ThenInclude(m => m!.Parent)
-                    .ThenInclude(p => p!.Parent)
-            .Where(x => x.PluginId == pluginId);
+        // Joined with explicit LEFT JOIN query syntax rather than through the
+        // MediaItem/MediaType/Parent navigation properties (whether via Include/ThenInclude or a
+        // Select projection accessing them). Root-caused live (2026-09-15):
+        // MediaItemEnrichment.MediaItemId is a non-nullable `int`, so EF Core's relationship
+        // discovery marks MediaItemEnrichment.MediaItem as a REQUIRED navigation at the model
+        // level -- and for a required navigation, EF's query translator proves any
+        // `x.MediaItem != null` check redundant (a required FK "can never" point at a missing
+        // row) and optimizes it away, still emitting an INNER JOIN no matter how the query is
+        // written. That silently dropped orphaned enrichment rows (a MediaItem deleted without
+        // this row cascading away) from the result entirely, even though `total` below -- a
+        // plain COUNT(*), never touched by any join -- correctly still counted them. Showed up
+        // live as "Pending (3)" with only 2 items ever rendering. Explicit join syntax builds
+        // the join keys from plain range variables instead of navigation-property metadata, so
+        // this "required navigation" optimization can't apply -- each hop is a genuine LEFT
+        // JOIN, PK-to-PK so none of them can fan out and duplicate rows.
+        var joined =
+            from x in db.MediaEnrichments
+            where x.PluginId == pluginId
+            join m in db.MediaItems on x.MediaItemId equals m.Id into mGroup
+            from m in mGroup.DefaultIfEmpty()
+            join mt in db.MediaTypes on m.MediaTypeId equals mt.Id into mtGroup
+            from mt in mtGroup.DefaultIfEmpty()
+            join p in db.MediaItems on m.ParentId equals p.Id into pGroup
+            from p in pGroup.DefaultIfEmpty()
+            join gp in db.MediaItems on p.ParentId equals gp.Id into gpGroup
+            from gp in gpGroup.DefaultIfEmpty()
+            select new { x, m, mt, p, gp };
 
-        if (!string.IsNullOrEmpty(status) &&
-            Enum.TryParse<EnrichmentStatus>(status, ignoreCase: true, out var parsedStatus))
-            query = query.Where(x => x.Status == parsedStatus);
+        EnrichmentStatus? parsedStatus = !string.IsNullOrEmpty(status) &&
+            Enum.TryParse<EnrichmentStatus>(status, ignoreCase: true, out var s) ? s : null;
+        if (parsedStatus is { } ps)
+            joined = joined.Where(r => r.x.Status == ps);
 
         if (!string.IsNullOrEmpty(search))
         {
             var pattern = $"%{search}%";
-            query = query.Where(x =>
+            joined = joined.Where(r =>
                 // Title
-                (x.MediaItem != null && EF.Functions.Like(x.MediaItem.Name, pattern)) ||
+                (r.m != null && EF.Functions.Like(r.m.Name, pattern)) ||
                 // MetadataJson blob — covers author, series, file paths stored by the scanner
-                (x.MediaItem != null && x.MediaItem.MetadataJson != null &&
-                 EF.Functions.Like(x.MediaItem.MetadataJson, pattern)) ||
+                (r.m != null && r.m.MetadataJson != null &&
+                 EF.Functions.Like(r.m.MetadataJson, pattern)) ||
                 // Stored external ID (e.g. "release-group:xxxx")
-                (x.ExternalId != null && EF.Functions.Like(x.ExternalId, pattern)) ||
+                (r.x.ExternalId != null && EF.Functions.Like(r.x.ExternalId, pattern)) ||
                 // Parent name (artist for music, show for TV)
-                (x.MediaItem != null && x.MediaItem.Parent != null &&
-                 EF.Functions.Like(x.MediaItem.Parent.Name, pattern)));
+                (r.p != null && EF.Functions.Like(r.p.Name, pattern)));
         }
 
-        var total = await query.CountAsync(ct);
+        // Counted from the plain (unjoined) MediaEnrichments query whenever possible -- `search`
+        // is the only filter that needs the join chain (it matches against MediaItem/Parent
+        // fields), so the common case (no search box in use) counts against MediaEnrichments
+        // alone instead of paying for all four LEFT JOINs just to produce an integer.
+        var total = string.IsNullOrEmpty(search)
+            ? await db.MediaEnrichments
+                .Where(x => x.PluginId == pluginId)
+                .Where(x => parsedStatus == null || x.Status == parsedStatus)
+                .CountAsync(ct)
+            : await joined.CountAsync(ct);
 
-        var rows = await query
-            .OrderBy(x => x.MediaItem != null ? x.MediaItem.Name : string.Empty)
+        var rows = await joined
+            // A bare column reference (not a null-coalescing/ternary expression) so this can
+            // still use the index on MediaItems.Name -- SQLite's default ORDER BY places NULLs
+            // (orphaned rows, no matching MediaItem) first, same position the old ?? "" fallback
+            // put them in.
+            .OrderBy(r => r.m.Name)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .Select(r => new
+            {
+                r.x.Id,
+                r.x.MediaItemId,
+                Name            = r.m != null ? r.m.Name : null,
+                Year            = r.m != null ? r.m.Year : null,
+                MediaTypeDisplayName = r.mt != null ? r.mt.DisplayName : null,
+                HierarchyLevel  = r.m != null ? r.m.HierarchyLevel : (int?)null,
+                PosterUrl       = r.m != null ? r.m.PosterUrl : null,
+                MetadataJson    = r.m != null ? r.m.MetadataJson : null,
+                ParentName      = r.p != null ? r.p.Name : null,
+                GrandparentName = r.gp != null ? r.gp.Name : null,
+                r.x.ExternalId,
+                r.x.Status,
+                r.x.ErrorMessage,
+                r.x.RetryCount,
+                r.x.MaxRetries,
+                r.x.LastAttemptedAt,
+                r.x.DiagnosticsJson,
+            })
             .ToListAsync(ct);
 
         var items = rows.Select(row =>
         {
             string? scannerJson = null;
-            if (row.MediaItem?.MetadataJson is { } mj)
+            if (row.MetadataJson is { } mj)
             {
                 try
                 {
@@ -1025,11 +1078,11 @@ public class MetadataEnrichmentService(
             return new EnrichmentItemResult(
                 row.Id,
                 row.MediaItemId,
-                row.MediaItem?.Name ?? "(unknown)",
-                row.MediaItem?.Year,
-                row.MediaItem?.MediaType?.DisplayName ?? row.MediaItem?.MediaType?.Name ?? "Unknown",
-                row.MediaItem?.HierarchyLevel ?? 0,
-                row.MediaItem?.PosterUrl,
+                row.Name ?? "(unknown)",
+                row.Year,
+                row.MediaTypeDisplayName ?? "Unknown",
+                row.HierarchyLevel ?? 0,
+                row.PosterUrl,
                 row.ExternalId,
                 row.Status,
                 row.ErrorMessage,
@@ -1038,8 +1091,8 @@ public class MetadataEnrichmentService(
                 row.LastAttemptedAt,
                 row.DiagnosticsJson,
                 scannerJson,
-                row.MediaItem?.Parent?.Name,
-                row.MediaItem?.Parent?.Parent?.Name);
+                row.ParentName,
+                row.GrandparentName);
         }).ToList();
 
         return new PagedEnrichmentItems(items, total, page, pageSize);
