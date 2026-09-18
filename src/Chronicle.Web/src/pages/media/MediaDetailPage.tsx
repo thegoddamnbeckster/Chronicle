@@ -268,9 +268,12 @@ export default function MediaDetailPage() {
   // resetting every user's entry additionally requires Admin + the
   // reset_watch_progress_all_users app setting, checked server-side too -- see
   // LibraryController.ResetWatchProgress.
+  // Only admins can ever see/use the all-users checkbox this gates, so only fetch for them --
+  // every other viewer of this page (the common case) skips the request entirely.
   const { data: appSettings } = useQuery({
     queryKey: ['appSettings'],
     queryFn: getAppSettings,
+    enabled: isAdmin,
   })
   const resetAllUsersEnabled = appSettings?.['reset_watch_progress_all_users'] === 'true'
   const [resetProgressConfirm, setResetProgressConfirm] = useState(false)
@@ -866,8 +869,7 @@ export default function MediaDetailPage() {
               <div className={styles.confirmStrip}>
                 <span className={styles.confirmStripText}>
                   Reset watch progress for <strong>{item.name}</strong>?
-                  {item.hierarchyLevel === 0 && (item.mediaTypeInternalName ?? item.mediaTypeName)?.toLowerCase() === 'tv'
-                    ? ' This resets every season and episode too. ' : ' '}
+                  {children.length > 0 ? ' This resets everything underneath it too. ' : ' '}
                   Watched status and resume position are cleared; watch count is kept.
                 </span>
                 {isAdmin && resetAllUsersEnabled && (

@@ -263,7 +263,8 @@ namespace Chronicle.Services
         public async Task<int> ResetWatchProgressAsync(
             int actingUserId, int mediaItemId, bool applyToAllUsers, CancellationToken ct = default)
         {
-            var treeIds = await CollectMediaItemTreeIdsAsync(mediaItemId, ct);
+            var treeIds = await GetAllDescendantIdsAsync([mediaItemId], ct);
+            treeIds.Add(mediaItemId);
 
             var query = _context.UserLibraries.Where(l => treeIds.Contains(l.MediaItemId));
             if (!applyToAllUsers)
@@ -285,25 +286,6 @@ namespace Chronicle.Services
 
             await _context.SaveChangesAsync(ct);
             return entries.Count;
-        }
-
-        /// <summary>Self + every descendant's MediaItemId, breadth-first. Same shape as
-        /// DeleteMediaItemTreeAsync's own child-walk, just collecting ids instead of deleting.</summary>
-        private async Task<List<int>> CollectMediaItemTreeIdsAsync(int rootId, CancellationToken ct)
-        {
-            var ids = new List<int> { rootId };
-            var frontier = new List<int> { rootId };
-            while (frontier.Count > 0)
-            {
-                var children = await _context.MediaItems
-                    .Where(m => m.ParentId != null && frontier.Contains(m.ParentId.Value))
-                    .Select(m => m.Id)
-                    .ToListAsync(ct);
-                if (children.Count == 0) break;
-                ids.AddRange(children);
-                frontier = children;
-            }
-            return ids;
         }
 
         public async Task RemoveAsync(int userId, int entryId)

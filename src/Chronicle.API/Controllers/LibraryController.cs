@@ -319,11 +319,12 @@ namespace Chronicle.API.Controllers
         /// </summary>
         [HttpPost("by-media/{mediaItemId:int}/reset-watch-progress")]
         public async Task<IActionResult> ResetWatchProgress(
-            int mediaItemId, [FromBody] ResetWatchProgressRequestDto request, CancellationToken ct)
+            int mediaItemId, [FromBody] ResetWatchProgressRequestDto? request, CancellationToken ct)
         {
             var userId = GetUserId();
+            var applyToAllUsers = request?.ApplyToAllUsers ?? false;
 
-            if (request.ApplyToAllUsers)
+            if (applyToAllUsers)
             {
                 if (!User.IsInRole("Admin"))
                     return Forbid();
@@ -336,7 +337,7 @@ namespace Chronicle.API.Controllers
                         "Resetting watch progress for all users is disabled. Enable it in Settings first."));
             }
 
-            var count = await _libraryService.ResetWatchProgressAsync(userId, mediaItemId, request.ApplyToAllUsers, ct);
+            var count = await _libraryService.ResetWatchProgressAsync(userId, mediaItemId, applyToAllUsers, ct);
             return Ok(ApiResponse<object>.Ok(new { reset = count }));
         }
 
