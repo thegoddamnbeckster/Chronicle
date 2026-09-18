@@ -246,6 +246,66 @@ namespace Chronicle.Services
             return entry;
         }
 
+        /// <summary>
+        /// Resets watch status back to never-watched for a media item and every descendant
+        /// (a show resets all its seasons/episodes too; a movie or episode has no descendants
+        /// to cascade to). Only clears Status/StartedAt/CompletedAt and the two progress fields
+        /// (ResumePositionPercent, LastKnownProgressPercent) -- InteractionEvents is never
+        /// touched, so a "how many times watched" count derived from it (see
+        /// ScrobbleService.GetWatchSummaryAsync) survives the reset and keeps growing on a
+        /// future rewatch, exactly as if the item had simply never been marked watched before.
+        /// Kodi picks this up on its own next sync pass (it pulls UserLibrary state live, see
+        /// ScraperController) -- nothing needs to be pushed to it.
+        /// <paramref name="applyToAllUsers"/> is trusted as already-authorized by the caller
+        /// (Admin role + the reset_watch_progress_all_users app setting, both checked in
+        /// LibraryController) -- this method itself applies no further access control.
+        /// </summary>
+        public async Task<int> ResetWatchProgressAsync(
+            int actingUserId, int mediaItemId, bool applyToAllUsers, CancellationToken ct = default)
+        {
+            var treeIds = await CollectMediaItemTreeIdsAsync(mediaItemId, ct);
+
+            var query = _context.UserLibraries.Where(l => treeIds.Contains(l.MediaItemId));
+            if (!applyToAllUsers)
+                query = query.Where(l => l.UserId == actingUserId);
+
+            var entries = await query.ToListAsync(ct);
+            var now = DateTime.UtcNow;
+            foreach (var entry in entries)
+            {
+                entry.Status = LibraryStatus.Unwatched;
+                entry.StartedAt = null;
+                entry.CompletedAt = null;
+                entry.ResumePositionPercent = null;
+                entry.ResumeUpdatedAt = null;
+                entry.LastKnownProgressPercent = null;
+                entry.LastKnownProgressAt = null;
+                entry.UpdatedAt = now;
+            }
+
+            await _context.SaveChangesAsync(ct);
+            return entries.Count;
+        }
+
+        /// <summary>Self + every descendant's MediaItemId, breadth-first. Same shape as
+        /// DeleteMediaItemTreeAsync's own child-walk, just collecting ids instead of deleting.</summary>
+        private async Task<List<int>> CollectMediaItemTreeIdsAsync(int rootId, CancellationToken ct)
+        {
+            var ids = new List<int> { rootId };
+            var frontier = new List<int> { rootId };
+            while (frontier.Count > 0)
+            {
+                var children = await _context.MediaItems
+                    .Where(m => m.ParentId != null && frontier.Contains(m.ParentId.Value))
+                    .Select(m => m.Id)
+                    .ToListAsync(ct);
+                if (children.Count == 0) break;
+                ids.AddRange(children);
+                frontier = children;
+            }
+            return ids;
+        }
+
         public async Task RemoveAsync(int userId, int entryId)
         {
             var entry = await _context.UserLibraries

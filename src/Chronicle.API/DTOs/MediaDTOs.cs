@@ -221,6 +221,8 @@ namespace Chronicle.API.DTOs
         string? Notes
     );
 
+    public record ResetWatchProgressRequestDto(bool ApplyToAllUsers = false);
+
     public record MediaTypeDto(int Id, string Name, string DisplayName, int HierarchyLevels);
 
     /// <summary>Optional body for POST /api/v1/media/{id}/refresh/{pluginId}.</summary>

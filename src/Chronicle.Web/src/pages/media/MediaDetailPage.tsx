@@ -4,10 +4,10 @@ import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
-import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, addToLibrary, updateLibraryEntry } from '@/api/library'
+import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, addToLibrary, updateLibraryEntry, resetWatchProgress } from '@/api/library'
 import { posterProgressPercent } from '@/utils/posterProgress'
 import { listPlugins } from '@/api/plugins'
-import { getPluginDisplayOrder } from '@/api/settings'
+import { getPluginDisplayOrder, getAppSettings } from '@/api/settings'
 import { getMyPreferences, updateMyPreferences } from '@/api/users'
 import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus, LibraryEntry } from '@/types'
@@ -261,6 +261,27 @@ export default function MediaDetailPage() {
     mutationFn: ({ status, rating }: { status?: LibraryStatus; rating?: number }) =>
       updateLibraryEntry(libraryEntry!.id, { status, userRating: rating }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  })
+
+  // ── Reset Watch Progress ─────────────────────────────────────────────────
+  // Available to any user for their own entry (same as changing your own status/rating);
+  // resetting every user's entry additionally requires Admin + the
+  // reset_watch_progress_all_users app setting, checked server-side too -- see
+  // LibraryController.ResetWatchProgress.
+  const { data: appSettings } = useQuery({
+    queryKey: ['appSettings'],
+    queryFn: getAppSettings,
+  })
+  const resetAllUsersEnabled = appSettings?.['reset_watch_progress_all_users'] === 'true'
+  const [resetProgressConfirm, setResetProgressConfirm] = useState(false)
+  const [resetProgressAllUsers, setResetProgressAllUsers] = useState(false)
+  const resetProgressMut = useMutation({
+    mutationFn: () => resetWatchProgress(mediaId, resetProgressAllUsers),
+    onSuccess: () => {
+      setResetProgressConfirm(false)
+      setResetProgressAllUsers(false)
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
   })
 
   const refreshMut = useMutation({
@@ -831,6 +852,48 @@ export default function MediaDetailPage() {
               >
                 {unmergeOpen ? 'Cancel' : `Unmerge… (${item.mergeHistory.length})`}
               </button>
+            )}
+            {libraryEntry && !resetProgressConfirm && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => setResetProgressConfirm(true)}
+                title="Clear watched status and resume position back to never-watched. Watch count history is kept."
+              >
+                Reset Watch Progress
+              </button>
+            )}
+            {resetProgressConfirm && (
+              <div className={styles.confirmStrip}>
+                <span className={styles.confirmStripText}>
+                  Reset watch progress for <strong>{item.name}</strong>?
+                  {item.hierarchyLevel === 0 && (item.mediaTypeInternalName ?? item.mediaTypeName)?.toLowerCase() === 'tv'
+                    ? ' This resets every season and episode too. ' : ' '}
+                  Watched status and resume position are cleared; watch count is kept.
+                </span>
+                {isAdmin && resetAllUsersEnabled && (
+                  <label className={styles.confirmStripCheckboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={resetProgressAllUsers}
+                      onChange={(e) => setResetProgressAllUsers(e.target.checked)}
+                    />
+                    Apply to all users
+                  </label>
+                )}
+                <button
+                  className={styles.confirmStripCancel}
+                  onClick={() => { setResetProgressConfirm(false); setResetProgressAllUsers(false) }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className={styles.confirmStripOk}
+                  onClick={() => resetProgressMut.mutate()}
+                  disabled={resetProgressMut.isPending}
+                >
+                  {resetProgressMut.isPending ? 'Resetting…' : 'Reset'}
+                </button>
+              </div>
             )}
             {!deleteConfirm ? (
               <button className={styles.deleteBtn} onClick={() => setDeleteConfirm(true)}>

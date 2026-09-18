@@ -368,4 +368,125 @@ public class LibraryServiceTests
         await Assert.ThrowsAsync<Chronicle.Core.Exceptions.NotTrackableMediaException>(
             () => svc.AddAsync(1, new AddToLibraryRequest(person.Id, LibraryStatus.Watching)));
     }
+
+    // ── ResetWatchProgressAsync ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task ResetWatchProgressAsync_ClearsStatusAndProgress_ButNeverTouchesInteractionEvents()
+    {
+        var db = MakeDb();
+        var mt = new MediaType { Name = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+        var item = new MediaItem { Name = "Fast X", MediaTypeId = mt.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(item);
+        await db.SaveChangesAsync();
+        db.UserLibraries.Add(new UserLibrary
+        {
+            UserId = 1, MediaItemId = item.Id, Status = LibraryStatus.Completed,
+            StartedAt = DateTime.UtcNow.AddDays(-3), CompletedAt = DateTime.UtcNow,
+            ResumePositionPercent = 42.0, ResumeUpdatedAt = DateTime.UtcNow,
+            LastKnownProgressPercent = 100.0, LastKnownProgressAt = DateTime.UtcNow,
+            AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        // Two prior watch-through events -- these represent the "watch count" and must survive
+        // a reset untouched, so a future rewatch keeps counting from 2, not resets to 0.
+        db.InteractionEvents.Add(new InteractionEvent
+        {
+            UserId = 1, MediaItemId = item.Id, ProgressPercent = 100, MarkedAsWatched = true,
+            Timestamp = DateTime.UtcNow.AddDays(-10), DeviceName = "test",
+        });
+        db.InteractionEvents.Add(new InteractionEvent
+        {
+            UserId = 1, MediaItemId = item.Id, ProgressPercent = 100, MarkedAsWatched = true,
+            Timestamp = DateTime.UtcNow, DeviceName = "test",
+        });
+        await db.SaveChangesAsync();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var count = await svc.ResetWatchProgressAsync(actingUserId: 1, mediaItemId: item.Id, applyToAllUsers: false);
+
+        Assert.Equal(1, count);
+        var entry = await db.UserLibraries.SingleAsync(l => l.MediaItemId == item.Id);
+        Assert.Equal(LibraryStatus.Unwatched, entry.Status);
+        Assert.Null(entry.StartedAt);
+        Assert.Null(entry.CompletedAt);
+        Assert.Null(entry.ResumePositionPercent);
+        Assert.Null(entry.ResumeUpdatedAt);
+        Assert.Null(entry.LastKnownProgressPercent);
+        Assert.Null(entry.LastKnownProgressAt);
+
+        Assert.Equal(2, await db.InteractionEvents.CountAsync(e => e.MediaItemId == item.Id && e.MarkedAsWatched));
+    }
+
+    [Fact]
+    public async Task ResetWatchProgressAsync_CascadesToDescendants_ShowResetsItsEpisodesToo()
+    {
+        var db = MakeDb();
+        var mt = new MediaType { Name = "tv", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+        var show = new MediaItem { Name = "Picard", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(show);
+        await db.SaveChangesAsync();
+        var season = new MediaItem { Name = "Season 1", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = show.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(season);
+        await db.SaveChangesAsync();
+        var episode = new MediaItem { Name = "Remembrance", MediaTypeId = mt.Id, HierarchyLevel = 2, ParentId = season.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(episode);
+        await db.SaveChangesAsync();
+        db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = episode.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var count = await svc.ResetWatchProgressAsync(actingUserId: 1, mediaItemId: show.Id, applyToAllUsers: false);
+
+        Assert.Equal(1, count);
+        var episodeEntry = await db.UserLibraries.SingleAsync(l => l.MediaItemId == episode.Id);
+        Assert.Equal(LibraryStatus.Unwatched, episodeEntry.Status);
+    }
+
+    [Fact]
+    public async Task ResetWatchProgressAsync_NotApplyToAllUsers_OnlyResetsActingUsersOwnEntry()
+    {
+        var db = MakeDb();
+        var mt = new MediaType { Name = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+        var item = new MediaItem { Name = "Fast X", MediaTypeId = mt.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(item);
+        await db.SaveChangesAsync();
+        db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = item.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        db.UserLibraries.Add(new UserLibrary { UserId = 2, MediaItemId = item.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var count = await svc.ResetWatchProgressAsync(actingUserId: 1, mediaItemId: item.Id, applyToAllUsers: false);
+
+        Assert.Equal(1, count);
+        Assert.Equal(LibraryStatus.Unwatched, (await db.UserLibraries.SingleAsync(l => l.UserId == 1)).Status);
+        Assert.Equal(LibraryStatus.Completed, (await db.UserLibraries.SingleAsync(l => l.UserId == 2)).Status);
+    }
+
+    [Fact]
+    public async Task ResetWatchProgressAsync_ApplyToAllUsers_ResetsEveryUsersEntry()
+    {
+        var db = MakeDb();
+        var mt = new MediaType { Name = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+        var item = new MediaItem { Name = "Fast X", MediaTypeId = mt.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(item);
+        await db.SaveChangesAsync();
+        db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = item.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        db.UserLibraries.Add(new UserLibrary { UserId = 2, MediaItemId = item.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+
+        var count = await svc.ResetWatchProgressAsync(actingUserId: 1, mediaItemId: item.Id, applyToAllUsers: true);
+
+        Assert.Equal(2, count);
+        Assert.All(await db.UserLibraries.Where(l => l.MediaItemId == item.Id).ToListAsync(),
+            l => Assert.Equal(LibraryStatus.Unwatched, l.Status));
+    }
 }

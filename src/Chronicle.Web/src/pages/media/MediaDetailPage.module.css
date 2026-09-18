@@ -792,6 +792,59 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 .deleteConfirmOk:hover:not(:disabled) { opacity: 0.85; }
 .deleteConfirmOk:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Neutral (non-destructive) counterpart to .deleteConfirmStrip -- same layout, no red danger
+   styling, for confirm strips on reversible-ish actions like Reset Watch Progress. */
+.confirmStrip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: var(--surface-alt, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--border);
+  width: 100%;
+}
+
+.confirmStripText { font-size: 13px; flex: 1; }
+
+.confirmStripCheckboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.confirmStripCancel {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.confirmStripCancel:hover { color: var(--text-primary); }
+
+.confirmStripOk {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.confirmStripOk:hover:not(:disabled) { opacity: 0.85; }
+.confirmStripOk:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .refreshError {
   font-size: 11px;
   color: var(--status-danger-fg);

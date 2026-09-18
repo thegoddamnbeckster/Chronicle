@@ -22,6 +22,17 @@ namespace Chronicle.Services
         /// </summary>
         Task<IEnumerable<UserLibrary>> GetEntriesForMediaItemsAsync(int userId, IReadOnlyCollection<int> mediaItemIds, CancellationToken ct = default);
         Task<UserLibrary> UpdateAsync(int userId, int entryId, UpdateLibraryRequest request);
+
+        /// <summary>
+        /// Resets watch status (Status, StartedAt, CompletedAt, resume/last-known progress) back
+        /// to never-watched for a media item and every descendant, without touching
+        /// InteractionEvents -- so a watch-count derived from those survives the reset. Caller is
+        /// responsible for authorizing <paramref name="applyToAllUsers"/> (Admin role + the
+        /// reset_watch_progress_all_users app setting) before passing true. Returns the number of
+        /// UserLibrary rows reset.
+        /// </summary>
+        Task<int> ResetWatchProgressAsync(int actingUserId, int mediaItemId, bool applyToAllUsers, CancellationToken ct = default);
+
         Task RemoveAsync(int userId, int entryId);
         /// <summary>
         /// Removes all library entries for the specified user and deletes any MediaItems

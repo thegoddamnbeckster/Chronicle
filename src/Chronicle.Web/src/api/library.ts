@@ -57,6 +57,20 @@ export async function removeFromLibrary(id: number): Promise<void> {
   await client.delete(`/library/${id}`)
 }
 
+// Resets watch status back to never-watched for a media item and every descendant (a show
+// resets its seasons/episodes too), without touching watch-count history -- see
+// LibraryService.ResetWatchProgressAsync's own doc. applyToAllUsers additionally requires the
+// Admin role and the reset_watch_progress_all_users app setting; the API returns
+// ALL_USERS_RESET_DISABLED if the setting is off.
+export async function resetWatchProgress(
+  mediaItemId: number, applyToAllUsers = false,
+): Promise<{ reset: number }> {
+  const { data } = await client.post<ApiResponse<{ reset: number }>>(
+    `/library/by-media/${mediaItemId}/reset-watch-progress`, { applyToAllUsers })
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to reset watch progress')
+  return data.data
+}
+
 export async function clearScannerData(): Promise<{ deleted: number }> {
   const { data } = await client.post<ApiResponse<{ deleted: number }>>('/library/clear-scanner-data')
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed')

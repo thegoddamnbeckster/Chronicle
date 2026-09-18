@@ -308,6 +308,38 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Resets watch status back to never-watched for a media item and every descendant
+        /// (a show resets all its seasons/episodes), preserving watch-count history since only
+        /// UserLibrary is touched -- InteractionEvents is never cleared. Self-scoped by default,
+        /// available to any authenticated user (same as changing your own status/rating);
+        /// ApplyToAllUsers additionally requires the Admin role AND the
+        /// reset_watch_progress_all_users app setting to be enabled, since it resets every
+        /// user's watch status for the item, not just the caller's own.
+        /// </summary>
+        [HttpPost("by-media/{mediaItemId:int}/reset-watch-progress")]
+        public async Task<IActionResult> ResetWatchProgress(
+            int mediaItemId, [FromBody] ResetWatchProgressRequestDto request, CancellationToken ct)
+        {
+            var userId = GetUserId();
+
+            if (request.ApplyToAllUsers)
+            {
+                if (!User.IsInRole("Admin"))
+                    return Forbid();
+
+                var setting = await _context.AppSettings.FindAsync(["reset_watch_progress_all_users"], ct);
+                var allowed = setting is not null && bool.TryParse(setting.Value, out var enabled) && enabled;
+                if (!allowed)
+                    return BadRequest(ApiResponse<object>.Fail(
+                        "ALL_USERS_RESET_DISABLED",
+                        "Resetting watch progress for all users is disabled. Enable it in Settings first."));
+            }
+
+            var count = await _libraryService.ResetWatchProgressAsync(userId, mediaItemId, request.ApplyToAllUsers, ct);
+            return Ok(ApiResponse<object>.Ok(new { reset = count }));
+        }
+
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Remove(int id)
         {

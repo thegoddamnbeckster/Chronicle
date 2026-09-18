@@ -105,6 +105,17 @@ export default function LibrarySettingsPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['appSettings'] }); setCollectionFolderInput('') },
   })
 
+  // ── Reset watch progress: all-users scope ────────────────────────────────
+  // Off by default (setting absent) -- "Reset Watch Progress" on a media detail page can only
+  // ever affect the acting user's own library entry until an admin turns this on, since
+  // resetting every user's watch status for an item is a much bigger blast radius than
+  // resetting your own.
+  const resetAllUsersEnabled = appSettings?.['reset_watch_progress_all_users'] === 'true'
+  const resetAllUsersMut = useMutation({
+    mutationFn: (val: boolean) => putAppSetting('reset_watch_progress_all_users', val ? 'true' : 'false'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['appSettings'] }),
+  })
+
   // ── Danger Zone ──────────────────────────────────────────────────────────
   const [clearConfirm, setClearConfirm] = useState(false)
   const clearMut = useMutation({
@@ -513,6 +524,40 @@ export default function LibrarySettingsPage() {
           </div>
         </div>
       </section>
+
+      {/* ── Watch Progress ──────────────────────────────────────────────── */}
+      {isAdmin && <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Watch Progress</h3>
+          <p className={styles.sectionDesc}>
+            Controls the "Reset Watch Progress" action available on movie, show, season, and
+            episode pages.
+          </p>
+        </div>
+
+        <div className={styles.sortCard}>
+          <label className={styles.toggleRow}>
+            <span className={styles.toggleLabel}>
+              <span className={styles.toggleTitle}>Allow resetting watch progress for all users</span>
+              <span className={styles.toggleDesc}>
+                When <strong>off</strong> (default), "Reset Watch Progress" only clears the
+                acting user's own watched status and resume position. When <strong>on</strong>,
+                an admin can additionally choose to reset it for every user on this instance at
+                once. Either way, watch-count history is preserved -- only the current
+                watched/in-progress status is cleared, not past scrobbles.
+              </span>
+            </span>
+            <button
+              role="switch"
+              aria-checked={resetAllUsersEnabled}
+              className={`${styles.toggle} ${resetAllUsersEnabled ? styles.toggleOn : ''}`}
+              onClick={() => resetAllUsersMut.mutate(!resetAllUsersEnabled)}
+            >
+              <span className={styles.toggleThumb} />
+            </button>
+          </label>
+        </div>
+      </section>}
 
       {/* ── Danger Zone ──────────────────────────────────────────────────── */}
       {isAdmin && <section className={styles.section}>
