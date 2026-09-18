@@ -166,6 +166,29 @@ public class PersonResolutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolvePersonOnlyAsync_SameSourceConflictingId_WithinOneUnsavedBatch_StillCreatesSeparatePerson()
+    {
+        // Root-caused live (2026-09-18): the real caller, MetadataEnrichmentService.
+        // ResolveCreditsAsync, resolves an ENTIRE title's cast+crew list in a loop against one
+        // DbContext and calls SaveChangesAsync exactly ONCE at the end -- it never saves between
+        // individual credits the way the sibling test above does. The previous guard only
+        // queried the database, so when a single title's own credit list happened to include two
+        // different real people sharing an exact name (routine once a title has dozens of crew),
+        // the first one's external id sat as a pending, unsaved MediaExternalId when the second
+        // one's guard query ran and the database-only check missed it -- silently merging them.
+        // Confirmed live: 2,519 "people" items ended up with multiple conflicting same-source
+        // external ids this way. No SaveChangesAsync between the two calls below, matching
+        // production's real batching, unlike the sibling test above.
+        var artist = await _svc.ResolvePersonOnlyAsync(_db, "Brian Johnson", "tmdb:9402", "tmdb", default);
+        var singer = await _svc.ResolvePersonOnlyAsync(_db, "Brian Johnson", "tmdb:84008", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        singer.Id.Should().NotBe(artist.Id,
+            "two different real people sharing a name must not merge just because neither credit was saved yet");
+        (await _db.MediaItems.CountAsync(m => m.MediaTypeId == 1)).Should().Be(2);
+    }
+
+    [Fact]
     public async Task ResolvePersonOnlyAsync_NewIdFromDifferentSource_StillMergesIntoNameMatch()
     {
         // The conflict check is scoped to the SAME source as the incoming credit -- a person

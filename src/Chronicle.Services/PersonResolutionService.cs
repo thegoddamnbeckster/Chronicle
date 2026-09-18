@@ -232,8 +232,7 @@ public class PersonResolutionService(
                 // person is visible and fixable (a thin duplicate stub); a wrongly-merged person
                 // silently corrupts another real person's page and is easy to never notice.
                 var hasConflictingSourceId = nameMatch is not null && !string.IsNullOrWhiteSpace(externalPersonId) &&
-                    await db.MediaExternalIds.AnyAsync(x =>
-                        x.MediaItemId == nameMatch.Id && x.Source == source && x.ExternalId != externalPersonId, ct);
+                    await HasConflictingSourceIdAsync(db, nameMatch.Id, source, externalPersonId, ct);
 
                 if (!hasConflictingSourceId)
                     person = nameMatch;
@@ -257,8 +256,7 @@ public class PersonResolutionService(
                         m => m.MediaTypeId == peopleTypeId && m.NormalizedNameLoose == looseNormalized, ct);
 
                     var hasConflictingSourceIdLoose = looseMatch is not null && !string.IsNullOrWhiteSpace(externalPersonId) &&
-                        await db.MediaExternalIds.AnyAsync(x =>
-                            x.MediaItemId == looseMatch.Id && x.Source == source && x.ExternalId != externalPersonId, ct);
+                        await HasConflictingSourceIdAsync(db, looseMatch.Id, source, externalPersonId, ct);
 
                     if (!hasConflictingSourceIdLoose)
                         person = looseMatch;
@@ -345,6 +343,37 @@ public class PersonResolutionService(
         }
 
         return person;
+    }
+
+    /// <summary>
+    /// Root-caused live (2026-09-18): the same-source-conflict guard in Steps 2/2b (see their
+    /// own doc) only ever queried the database -- but <see cref="ResolveCreditsAsync"/> (the
+    /// only real caller, in MetadataEnrichmentService) resolves an ENTIRE title's cast+crew list
+    /// in one loop against one DbContext, calling SaveChangesAsync exactly once at the end. So
+    /// when a title's own credit list happened to include two DIFFERENT real people who share an
+    /// exact name (extremely common for names like "Chris Clark" or "Adam Jones" once you're
+    /// crediting dozens of crew per title across a whole library) -- the FIRST one's external id
+    /// (added via Step 4 below) sat as a pending, unsaved <see cref="MediaExternalId"/> in this
+    /// DbContext's change tracker when the SECOND one's guard query ran, so the guard's
+    /// database-only query saw no conflict and silently merged them anyway. Confirmed live: 2,519
+    /// "people" items ended up carrying multiple different same-source external ids this exact
+    /// way (e.g. the actor Christopher Lee's item also carrying an unrelated TMDB production
+    /// assistant's id, whose photo then became the item's displayed poster). Same
+    /// not-yet-saved-entries pattern already used by Step 4's own duplicate check and
+    /// RecordHeadshotsIfNewAsync just above -- checking pending Added entries first, database
+    /// second, so this can never miss a conflict from earlier in the very same unsaved batch.
+    /// </summary>
+    private static async Task<bool> HasConflictingSourceIdAsync(
+        ChronicleDbContext db, int personId, string source, string externalPersonId, CancellationToken ct)
+    {
+        var pendingConflict = db.ChangeTracker.Entries<MediaExternalId>().Any(e =>
+            e.State == EntityState.Added &&
+            e.Entity.MediaItemId == personId && e.Entity.Source == source && e.Entity.ExternalId != externalPersonId);
+        if (pendingConflict)
+            return true;
+
+        return await db.MediaExternalIds.AnyAsync(x =>
+            x.MediaItemId == personId && x.Source == source && x.ExternalId != externalPersonId, ct);
     }
 
     /// <summary>
