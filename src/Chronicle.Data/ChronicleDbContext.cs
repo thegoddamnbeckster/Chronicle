@@ -470,6 +470,21 @@ namespace Chronicle.Data
                 e.HasIndex(x => x.NormalizedName).HasDatabaseName("idx_media_items_normalized_name");
                 e.Property(x => x.NormalizedNameLoose).HasColumnName("normalized_name_loose");
                 e.HasIndex(x => x.NormalizedNameLoose).HasDatabaseName("idx_media_items_normalized_name_loose");
+
+                // Confirmed live (2026-09-18): ScraperController.ResolveCastThumbnailsAsync's
+                // WHERE MediaTypeId == peopleTypeId && normalizedNames.Contains(NormalizedName)
+                // -- run on EVERY movies/details and tv/details call, once per cast member name
+                // -- was choosing IX_media_items_MediaTypeId (294k+ matching "people" rows) over
+                // the far more selective normalized_name index, then filtering that whole result
+                // set in memory for the handful of names actually being looked up. EXPLAIN QUERY
+                // PLAN confirmed it: ~470ms per call this way, ~10ms once a composite index lets
+                // SQLite seek on (NormalizedName, MediaTypeId) directly -- this alone accounts
+                // for the 500-800ms per-item cost that made a full-library Kodi scan take far
+                // longer than it should. NormalizedName leads the composite (highly selective,
+                // used in the IN-list) with MediaTypeId as a covering second column so the
+                // MediaTypeId check never needs a separate row lookup.
+                e.HasIndex(x => new { x.NormalizedName, x.MediaTypeId })
+                 .HasDatabaseName("idx_media_items_normalized_name_mediatypeid");
             });
 
             modelBuilder.Entity<MediaItemAlias>(e =>
