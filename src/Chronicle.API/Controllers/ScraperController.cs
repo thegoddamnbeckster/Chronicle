@@ -124,12 +124,40 @@ public class ScraperController : ControllerBase
         MediaItem? existing = null;
         if (!string.IsNullOrWhiteSpace(fileName))
         {
-            existing = candidates.FirstOrDefault(c =>
+            var filenameMatch = candidates.FirstOrDefault(c =>
                 string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase));
-            if (existing is not null)
-                _logger.LogInformation(
-                    "scraper/movies/search: title={Title} year={Year} fileName={FileName} -> matched existing item {ItemId} by filename (skipped title matching)",
-                    title, year, fileName, existing.Id);
+
+            // A bare filename match is only trustworthy when it doesn't contradict the search's
+            // own year -- confirmed live (2026-09-18): item 420944 ("Ghostbusters", correctly
+            // matched to the 1984 film) carried a stale fileScanner.filePaths entry for
+            // "Ghostbusters (2016).mkv" (a direct FileScanService import mismatch, unrelated to
+            // this endpoint), which GetKnownFileName prefers over the item's own, more recent
+            // scraperResolvedFile signal. The next time Kodi's scraper searched for the REAL 2016
+            // file (title=Ghostbusters year=2016), this filename fast-path blindly matched it to
+            // the 1984 item and skipped title matching entirely -- silently propagating one bad
+            // fileScanner association into an otherwise-correct item, permanently, on every
+            // future scrape. A same-basename collision across two truly different films sharing
+            // a title (remakes, reboots) is exactly the scenario year exists to disambiguate, so
+            // a year that flatly contradicts the matched candidate's own Year is treated as "this
+            // filename record is unreliable for this candidate," not as a confirmed match --
+            // falling through to normal title+year matching below instead of trusting it.
+            if (filenameMatch is not null && year.HasValue && filenameMatch.Year.HasValue &&
+                filenameMatch.Year.Value != year.Value)
+            {
+                _logger.LogWarning(
+                    "scraper/movies/search: title={Title} year={Year} fileName={FileName} -- item {ItemId} has " +
+                    "this exact filename recorded but its own Year ({ExistingYear}) contradicts the search year -- " +
+                    "ignoring the filename match, falling through to title matching instead",
+                    title, year, fileName, filenameMatch.Id, filenameMatch.Year);
+            }
+            else
+            {
+                existing = filenameMatch;
+                if (existing is not null)
+                    _logger.LogInformation(
+                        "scraper/movies/search: title={Title} year={Year} fileName={FileName} -> matched existing item {ItemId} by filename (skipped title matching)",
+                        title, year, fileName, existing.Id);
+            }
         }
 
         existing ??= FindByNormalizedTitle(candidates, title, year);
