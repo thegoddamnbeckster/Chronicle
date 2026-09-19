@@ -86,6 +86,9 @@ public class ScraperController : ControllerBase
         if (string.IsNullOrWhiteSpace(title))
             return BadRequest(ApiResponse<object>.Fail("TITLE_REQUIRED", "title is required."));
 
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
+        var stepSw = System.Diagnostics.Stopwatch.StartNew();
+
         var movieTypeId = await GetMediaTypeIdAsync("movies", ct);
         if (movieTypeId == 0)
             return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active 'movies' media type is configured."));
@@ -98,34 +101,45 @@ public class ScraperController : ControllerBase
         // duplicates, plus surviving anime_movies/movies pairs). Creation below still uses the
         // requested "movies" type — this only widens what counts as "already have it".
         var movieLikeTypeIds = await GetMovieLikeTypeIdsAsync(ct);
-        var candidates = await _context.MediaItems
-            .Where(m => movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1)
-            .ToListAsync(ct);
 
-        // Exclude collection containers from candidate matching -- a container's own Name can
-        // coincidentally normalize-match a searched title (e.g. a folder literally named "John
-        // Wick Collection"), and Kodi always expects a real movie's id back from this endpoint,
-        // never a container's. Confirmed the underlying data can support this: containers sit at
-        // HierarchyLevel 0, same as any other candidate here, so nothing else filters them out.
-        var containerIds = await _collections.GetCollectionContainerIdsAsync(
-            _context, candidates.Select(c => c.Id).ToList(), ct);
-        if (containerIds.Count > 0)
-            candidates = candidates.Where(c => !containerIds.Contains(c.Id)).ToList();
-
-        // Confirmation by filename, tried before title matching: title-token matching only
-        // finds an existing item when the title Kodi derived from the folder name happens to
-        // agree with Chronicle's own stored title -- it has no way to know "Alien - Derelict"
-        // and "Derelict" are the same physical file. A verified filename sidesteps that
-        // entirely: if any existing candidate's own recorded file (fileScanner.filePaths, or a
-        // prior scrape's reported KnownFileName) has this exact basename, it IS this movie,
-        // regardless of what title mismatch would otherwise have missed it. This is what
-        // closes the gap that let a fan edit spawn a second, wrongly-typed, posterless
-        // duplicate of itself on every scrape (confirmed live 2026-08-20: items 487715-487718).
+        // Filename fast-path, tried FIRST and narrowed via SQL before loading anything into
+        // memory -- confirmed live (2026-09-18) that loading the FULL candidate list up front
+        // (~6,100 movie-like items, ~400MB of MetadataJson total on this library) on EVERY
+        // single search call, even when a filename match would resolve it instantly, was the
+        // dominant per-search cost -- occasionally slow enough to exceed Kodi's own client-side
+        // timeout, which cancels the request and surfaces as an EF TaskCanceledException (a 500)
+        // here. A coarse SQL LIKE narrows to only the (typically zero or one) candidates whose
+        // MetadataJson text could possibly contain this exact filename, before pulling any of
+        // them into memory -- same established pattern as FindItemByFilePathAsync's own
+        // "%fileScanner%" narrowing just above. The full candidate list (needed for
+        // FindByNormalizedTitle's own richness/subset-matching logic, which DOES need each
+        // candidate's full MetadataJson) is now only ever loaded when this fast path misses --
+        // the common case for anything already scraped once.
         MediaItem? existing = null;
         if (!string.IsNullOrWhiteSpace(fileName))
         {
-            var filenameMatch = candidates.FirstOrDefault(c =>
+            var likePattern = "%" + fileName + "%";
+            var filenameHits = await _context.MediaItems
+                .Where(m => movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1 &&
+                            m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, likePattern))
+                .ToListAsync(ct);
+            _logger.LogInformation(
+                "scraper/movies/search: title={Title} year={Year} fileName={FileName} -- filename pre-filter: " +
+                "{Count} candidate(s) in {Ms}ms", title, year, fileName, filenameHits.Count, stepSw.ElapsedMilliseconds);
+            stepSw.Restart();
+
+            var filenameMatch = filenameHits.FirstOrDefault(c =>
                 string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase));
+
+            // A collection container (e.g. "John Wick Collection") is never a legitimate filename
+            // match in practice, but the LIKE pre-filter above doesn't exclude containers the way
+            // the bulk candidate list below does -- verify before trusting it, same safety
+            // guarantee the original always-loaded-candidates version had.
+            if (filenameMatch is not null &&
+                (await _collections.GetCollectionContainerIdsAsync(_context, [filenameMatch.Id], ct)).Count > 0)
+            {
+                filenameMatch = null;
+            }
 
             // A bare filename match is only trustworthy when it doesn't contradict the search's
             // own year -- confirmed live (2026-09-18): item 420944 ("Ghostbusters", correctly
@@ -155,15 +169,44 @@ public class ScraperController : ControllerBase
                 existing = filenameMatch;
                 if (existing is not null)
                     _logger.LogInformation(
-                        "scraper/movies/search: title={Title} year={Year} fileName={FileName} -> matched existing item {ItemId} by filename (skipped title matching)",
-                        title, year, fileName, existing.Id);
+                        "scraper/movies/search: title={Title} year={Year} fileName={FileName} -> matched existing item {ItemId} by filename (skipped title matching, {Ms}ms)",
+                        title, year, fileName, existing.Id, stepSw.ElapsedMilliseconds);
             }
         }
 
-        existing ??= FindByNormalizedTitle(candidates, title, year);
+        if (existing is null)
+        {
+            stepSw.Restart();
+            var candidates = await _context.MediaItems
+                .Where(m => movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1)
+                .ToListAsync(ct);
+            _logger.LogInformation(
+                "scraper/movies/search: title={Title} year={Year} -- full candidate load (filename fast path " +
+                "missed or wasn't available): {Count} items in {Ms}ms", title, year, candidates.Count, stepSw.ElapsedMilliseconds);
+            stepSw.Restart();
 
+            // Exclude collection containers from candidate matching -- a container's own Name can
+            // coincidentally normalize-match a searched title (e.g. a folder literally named "John
+            // Wick Collection"), and Kodi always expects a real movie's id back from this endpoint,
+            // never a container's. Confirmed the underlying data can support this: containers sit at
+            // HierarchyLevel 0, same as any other candidate here, so nothing else filters them out.
+            var containerIds = await _collections.GetCollectionContainerIdsAsync(
+                _context, candidates.Select(c => c.Id).ToList(), ct);
+            if (containerIds.Count > 0)
+                candidates = candidates.Where(c => !containerIds.Contains(c.Id)).ToList();
+
+            existing = FindByNormalizedTitle(candidates, title, year);
+            _logger.LogInformation(
+                "scraper/movies/search: title={Title} year={Year} -- title matching: {Result} in {Ms}ms",
+                title, year, existing is null ? "no match" : $"matched item {existing.Id}", stepSw.ElapsedMilliseconds);
+        }
+
+        stepSw.Restart();
         var item = await ResolveOrCreateAsync(existing, movieTypeId, title, year, fileName, ct,
             oppositeFamilyTypeIds: await GetShowLikeTypeIdsAsync(ct));
+        _logger.LogInformation(
+            "scraper/movies/search: title={Title} year={Year} -- resolve-or-create: {Ms}ms (total request: {TotalMs}ms)",
+            title, year, stepSw.ElapsedMilliseconds, totalSw.ElapsedMilliseconds);
         if (item is null)
         {
             _logger.LogWarning("scraper/movies/search: title={Title} year={Year} -- resolve-or-create failed, returning 404", title, year);
@@ -362,12 +405,17 @@ public class ScraperController : ControllerBase
     /// </summary>
     private async Task<ScraperMovieDetailsDto?> BuildMovieDetailsDtoAsync(int id, CancellationToken ct)
     {
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
+        var stepSw = System.Diagnostics.Stopwatch.StartNew();
+
         var item = await _context.MediaItems.FindAsync([id], ct);
         if (item is null)
         {
             _logger.LogWarning("scraper/movies/details: item {ItemId} not found", id);
             return null;
         }
+        var itemLoadMs = stepSw.ElapsedMilliseconds;
+        stepSw.Restart();
 
         ScraperCollectionDto? collection = null;
         if (item.ParentId.HasValue)
@@ -384,11 +432,16 @@ public class ScraperController : ControllerBase
                     id, item.Name, item.ParentId.Value);
             }
         }
+        var collectionMs = stepSw.ElapsedMilliseconds;
+        stepSw.Restart();
 
         var lib = await GetCallerLibraryEntryAsync(id, ct);
+        var libMs = stepSw.ElapsedMilliseconds;
+        stepSw.Restart();
 
         var dto = BuildMovieDetails(item, collection, lib);
         dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
+        var castMs = stepSw.ElapsedMilliseconds;
 
         var artworkSummary = dto.Artwork is null
             ? "(none)"
@@ -396,6 +449,10 @@ public class ScraperController : ControllerBase
         _logger.LogInformation(
             "scraper/movies/details: item {ItemId} \"{Title}\" -> artwork[{ArtworkSummary}] collection={Collection}",
             id, dto.Title, artworkSummary, collection is null ? "(none)" : $"\"{collection.Name}\" poster={(string.IsNullOrEmpty(collection.PosterUrl) ? "(none)" : "set")}");
+        _logger.LogInformation(
+            "scraper/movies/details: item {ItemId} timing -- item load: {ItemMs}ms, collection: {CollectionMs}ms, " +
+            "library entry: {LibMs}ms, cast thumbnails: {CastMs}ms, total: {TotalMs}ms",
+            id, itemLoadMs, collectionMs, libMs, castMs, totalSw.ElapsedMilliseconds);
 
         if (dto.Artwork is null || !dto.Artwork.TryGetValue("poster", out var posterCandidates) || posterCandidates.Count == 0)
             _logger.LogWarning(
