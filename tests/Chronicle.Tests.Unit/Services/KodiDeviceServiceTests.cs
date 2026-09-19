@@ -207,5 +207,118 @@ namespace Chronicle.Tests.Unit.Services
 
             (await _context.AppSettings.CountAsync(s => s.Key == "kodi.scan_active_until")).Should().Be(1);
         }
+
+        // ── Per-item refresh-push signal ──────────────────────────────────────────
+        // See IKodiDeviceService.GetItemsNeedingRefreshAsync's own doc. Deliberately never fakes
+        // timestamps directly -- ChronicleDbContext's own SaveChanges hook stamps UpdatedAt on
+        // every Modified MediaItem, so "device already caught up" vs. "due for a refresh" is
+        // expressed by ORDERING real calls (RecordKodiIdAsync then a later item edit, or the
+        // reverse), the same way it happens for real.
+
+        [Fact]
+        public async Task GetItemsNeedingRefreshAsync_WithNoRegisteredDevice_ReturnsEmpty()
+        {
+            var due = await _service.GetItemsNeedingRefreshAsync(apiTokenId: 999, ["movie"]);
+
+            due.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task GetItemsNeedingRefreshAsync_ItemNeverScrapedByThisDevice_IsNotIncluded()
+        {
+            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
+            // No RecordKodiIdAsync call -- this device has no kodi_library_ids row for item 100
+            // at all, so there's nothing to compare its own UpdatedAt against.
+
+            var due = await _service.GetItemsNeedingRefreshAsync(apiTokenId: 1, ["movie"]);
+
+            due.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task GetItemsNeedingRefreshAsync_ItemUnchangedSinceLastScrape_IsNotIncluded()
+        {
+            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
+            await _service.RecordKodiIdAsync(1, mediaItemId: 100, "movie", kodiId: 42);
+
+            var due = await _service.GetItemsNeedingRefreshAsync(apiTokenId: 1, ["movie"]);
+
+            due.Should().BeEmpty("the device's own kodi_library_ids row is already newer than the item's own last change");
+        }
+
+        [Fact]
+        public async Task GetItemsNeedingRefreshAsync_ItemChangedSinceLastScrape_IsIncluded()
+        {
+            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
+            await _service.RecordKodiIdAsync(1, mediaItemId: 100, "movie", kodiId: 42);
+
+            // A real metadata change after the device last scraped it -- e.g. re-enrichment or
+            // an admin edit. Any Modified save stamps a fresh UpdatedAt via the DbContext's own
+            // hook, so this alone is enough to simulate "Chronicle's data changed since."
+            var item = await _context.MediaItems.FindAsync(100);
+            item!.Overview = "A newly re-enriched overview.";
+            await _context.SaveChangesAsync();
+
+            var due = await _service.GetItemsNeedingRefreshAsync(apiTokenId: 1, ["movie"]);
+
+            due.Should().ContainSingle();
+            due[0].KodiId.Should().Be(42);
+            due[0].Kind.Should().Be("movie");
+        }
+
+        [Fact]
+        public async Task GetItemsNeedingRefreshAsync_FiltersByRequestedKindsOnly()
+        {
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 101, Name = "Test Episode", MediaTypeId = 1, HierarchyLevel = 2,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
+            await _service.RecordKodiIdAsync(1, mediaItemId: 100, "movie", kodiId: 42);
+            await _service.RecordKodiIdAsync(1, mediaItemId: 101, "episode", kodiId: 77);
+
+            var movie = await _context.MediaItems.FindAsync(100);
+            movie!.Overview = "Changed";
+            var episode = await _context.MediaItems.FindAsync(101);
+            episode!.Overview = "Also changed";
+            await _context.SaveChangesAsync();
+
+            // The Movies addon only ever polls for "movie" -- it must never be handed an
+            // episode's own kodi id to (wrongly) call VideoLibrary.RefreshMovie against.
+            var due = await _service.GetItemsNeedingRefreshAsync(apiTokenId: 1, ["movie"]);
+
+            due.Should().ContainSingle();
+            due[0].Kind.Should().Be("movie");
+        }
+
+        [Fact]
+        public async Task GetItemsNeedingRefreshAsync_MultipleRequestedKinds_ReturnsBoth()
+        {
+            _context.MediaItems.Add(new MediaItem
+            {
+                Id = 101, Name = "Test Episode", MediaTypeId = 1, HierarchyLevel = 2,
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.RegisterAsync(1, 1, "Shield", "10.0.0.10", 8080, null, null);
+            await _service.RecordKodiIdAsync(1, mediaItemId: 100, "movie", kodiId: 42);
+            await _service.RecordKodiIdAsync(1, mediaItemId: 101, "episode", kodiId: 77);
+
+            var movie = await _context.MediaItems.FindAsync(100);
+            movie!.Overview = "Changed";
+            var episode = await _context.MediaItems.FindAsync(101);
+            episode!.Overview = "Also changed";
+            await _context.SaveChangesAsync();
+
+            // The TV addon polls for BOTH its own kinds in one call.
+            var due = await _service.GetItemsNeedingRefreshAsync(apiTokenId: 1, ["episode", "tvshow"]);
+
+            due.Should().ContainSingle();
+            due[0].Kind.Should().Be("episode");
+        }
     }
 }

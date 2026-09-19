@@ -174,4 +174,36 @@ public class KodiDeviceController(IKodiDeviceService devices, PortConfig portCon
         await devices.ReportScanActivityAsync(ct);
         return Ok(ApiResponse<object>.Ok(new { acknowledged = true }));
     }
+
+    // ── Per-item refresh-push signal ──────────────────────────────────────────
+    // See IKodiDeviceService.GetItemsNeedingRefreshAsync's own doc for the full design: pull,
+    // not push (Chronicle never calls a device's JSON-RPC directly), no separate acknowledgement
+    // endpoint (report-kodi-id, already called on every ordinary scrape, closes the loop).
+
+    /// <summary>GET /api/v1/scraper/kodi-refresh-signal?kinds=movie or ?kinds=episode,tvshow --
+    /// items THIS device already knows about (of the requested kinds) whose own metadata has
+    /// changed in Chronicle since this device last scraped them. Each addon polls with only its
+    /// own relevant kind(s) -- the Movies addon "movie", the TV addon "episode,tvshow" -- so each
+    /// addon's own settings independently control its own polling, per-kind, the same way
+    /// scan-signal's own per-addon settings already do. Empty (not an error) for a caller with no
+    /// API key or no registered device -- same "nothing to do" shape as kodi-scan-signal
+    /// above.</summary>
+    [HttpGet("kodi-refresh-signal")]
+    public async Task<IActionResult> GetRefreshSignal([FromQuery] string? kinds, CancellationToken ct)
+    {
+        var apiTokenId = GetApiTokenId();
+        if (apiTokenId is null) return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<object>() }));
+
+        var kindList = (kinds ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+        if (kindList.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("KINDS_REQUIRED", "kinds is required (e.g. \"movie\" or \"episode,tvshow\")."));
+
+        var due = await devices.GetItemsNeedingRefreshAsync(apiTokenId.Value, kindList, ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = due.Select(d => new { kodiId = d.KodiId, kind = d.Kind }),
+        }));
+    }
 }

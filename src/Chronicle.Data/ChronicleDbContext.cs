@@ -29,20 +29,30 @@ namespace Chronicle.Data
         // exact same reason — PersonResolutionService.ResolvePersonOnlyAsync's loose-name
         // fallback (added to catch "Cee Lo Green" vs. "CeeLo Green") needs it kept in sync
         // for every MediaItem, not just people, without a second call-site hunt.
+        //
+        // UpdatedAt (2026-09-18) rides along here too, for a related reason: it was only ever
+        // given HasDefaultValueSql("CURRENT_TIMESTAMP") — applied on INSERT only, never touched
+        // again by any of the 20+ call sites that modify a MediaItem afterward, so the column
+        // had been silently lying (still showing creation time) for every item ever updated
+        // since it was first added. This is the same "unwinnable game of hunting down every
+        // call site" NormalizedName already solved centrally, and it's now load-bearing: the
+        // Kodi scraper addons' refresh-push feature (kodi-refresh-signal) compares this against
+        // each device's own kodi_library_ids.UpdatedAt (already bumped on every ordinary scrape
+        // via report-kodi-id) to decide whether a device's already-scraped copy is stale.
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
         {
-            SyncNormalizedNames();
+            SyncMediaItemBookkeeping();
             return base.SaveChanges(acceptAllChangesOnSuccess);
         }
 
         public override Task<int> SaveChangesAsync(
             bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
         {
-            SyncNormalizedNames();
+            SyncMediaItemBookkeeping();
             return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         }
 
-        private void SyncNormalizedNames()
+        private void SyncMediaItemBookkeeping()
         {
             foreach (var entry in ChangeTracker.Entries<MediaItem>())
             {
@@ -55,6 +65,14 @@ namespace Chronicle.Data
                 var normalizedLoose = MediaItemNormalizer.NormalizeNameLoose(entry.Entity.Name);
                 if (entry.Entity.NormalizedNameLoose != normalizedLoose)
                     entry.Entity.NormalizedNameLoose = normalizedLoose;
+
+                // Modified only -- a brand-new item has nothing for a device to have already
+                // scraped yet, so it can never legitimately need a "refresh" push; leaving
+                // UpdatedAt at its own CURRENT_TIMESTAMP insert default (rather than setting it
+                // again here, redundantly, to the same effective moment) keeps this block's own
+                // job singular: catching CHANGES to something that already existed.
+                if (entry.State == EntityState.Modified)
+                    entry.Entity.UpdatedAt = DateTime.UtcNow;
             }
         }
 

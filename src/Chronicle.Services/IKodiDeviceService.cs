@@ -62,4 +62,28 @@ public interface IKodiDeviceService
     /// ReportScanActivityAsync's own endpoint is still actively called by both Kodi addons on
     /// every scan start, and a future feature may want the same "is a scan active" signal.</summary>
     Task<bool> IsScanActiveAsync(CancellationToken ct = default);
+
+    /// <summary>Items this device already knows about (has a kodi_library_ids row for, one of
+    /// the requested kinds) whose own MediaItem has changed since this device last scraped it --
+    /// i.e. due for a local VideoLibrary.Refresh* push. Deliberately PULL, not push (see
+    /// kodi-scan-signal's own doc for why Chronicle's own code never calls a device's JSON-RPC
+    /// directly -- this is the same architecture applied to per-item refreshes instead of a
+    /// whole-library scan): the caller does its own local xbmc.executeJSONRPC
+    /// VideoLibrary.RefreshMovie/RefreshEpisode/RefreshTVShow for each returned item.
+    ///
+    /// No separate acknowledgement call exists for this feature -- refreshing an item makes
+    /// Kodi re-invoke getdetails(), which already calls report-kodi-id again (the existing,
+    /// unconditional call on every ordinary scrape), which bumps this exact device's
+    /// kodi_library_ids.UpdatedAt for that item -- closing the loop through machinery that
+    /// already exists rather than a second, parallel one.
+    ///
+    /// Bounded (see KodiDeviceService's own const) so a large backlog (e.g. after a bulk
+    /// re-enrichment) is drained gradually across several polls instead of handed to a device
+    /// in one giant, possibly-inconsistent batch.</summary>
+    Task<IReadOnlyList<RefreshDueItem>> GetItemsNeedingRefreshAsync(
+        int apiTokenId, IReadOnlyList<string> kinds, CancellationToken ct = default);
 }
+
+/// <summary>One item due for a local Kodi refresh push -- see
+/// IKodiDeviceService.GetItemsNeedingRefreshAsync's own doc.</summary>
+public sealed record RefreshDueItem(int KodiId, string Kind);

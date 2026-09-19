@@ -170,4 +170,26 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
             return false;
         return DateTime.UtcNow < until;
     }
+
+    // Bounds one poll's worth of refresh-due items -- see GetItemsNeedingRefreshAsync's own doc
+    // for why a large backlog is drained gradually rather than sent all at once.
+    private const int MaxRefreshItemsPerPoll = 50;
+
+    public async Task<IReadOnlyList<RefreshDueItem>> GetItemsNeedingRefreshAsync(
+        int apiTokenId, IReadOnlyList<string> kinds, CancellationToken ct = default)
+    {
+        if (kinds.Count == 0) return [];
+
+        var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.ApiTokenId == apiTokenId, ct);
+        if (device is null) return []; // remote control off on this instance -- nothing tracked to compare
+
+        return await db.KodiLibraryIds
+            .Where(m => m.KodiDeviceId == device.Id && kinds.Contains(m.Kind))
+            .Join(db.MediaItems, m => m.MediaItemId, i => i.Id, (m, i) => new { m.KodiId, m.Kind, m.UpdatedAt, ItemUpdatedAt = i.UpdatedAt })
+            .Where(x => x.ItemUpdatedAt > x.UpdatedAt)
+            .OrderBy(x => x.ItemUpdatedAt)
+            .Take(MaxRefreshItemsPerPoll)
+            .Select(x => new RefreshDueItem(x.KodiId, x.Kind))
+            .ToListAsync(ct);
+    }
 }
