@@ -1167,7 +1167,7 @@ export default function MediaDetailPage() {
           {onScreenPeople.length > 0 && (
             <div className={styles.peopleRow}>
               {onScreenPeople.map(person => (
-                <PersonCard key={person.id} person={person} />
+                <PersonCard key={person.id} person={person} fullName />
               ))}
             </div>
           )}
@@ -1332,7 +1332,7 @@ export default function MediaDetailPage() {
             <PluginFold foldKey={`media.${mediaId}.crew`} label="Crew">
               <div className={styles.peopleRow}>
                 {otherPeople.map(person => (
-                  <PersonCard key={person.id} person={person} />
+                  <PersonCard key={person.id} person={person} fullName />
                 ))}
               </div>
             </PluginFold>

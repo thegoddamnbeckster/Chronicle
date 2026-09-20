@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Chronicle.Core.Helpers;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,11 +24,32 @@ namespace Chronicle.Services;
 ///   - MERGE (via MergeService, so external ids/headshots/credits genuinely consolidate --
 ///     see MergeService's own doc for the person-specific gaps that fix closed): a shared
 ///     external id (normalised -- the same TMDB person can be recorded as "movie:12345" by
-///     one write path and "tmdb:12345" by another), a shared headshot photo URL, or a
-///     matching birth/death date.
+///     one write path and "tmdb:12345" by another), a shared headshot photo URL, a matching
+///     birth/death date, or both sides crediting the exact same character name on the exact
+///     same title (e.g. two stubs both crediting "Roy Kent" on Ted Lasso) -- two different
+///     real people sharing a name AND independently cast under the identical character on
+///     the identical show is not a realistic coincidence.
 ///   - DISMISS (mark definitively not-a-duplicate, same as a human clicking Dismiss): a
 ///     provably CONFLICTING birth or death date under the same name -- e.g. "Henry Kingi"
-///     born 1943 vs. 1970 are two different real people, not one person with a typo.
+///     born 1943 vs. 1970 are two different real people, not one person with a typo -- OR a
+///     DIFFERENT id from the same authoritative (non-name-search-derived) source on each side
+///     (e.g. two different tmdb ids). Root-caused live (2026-09-19): with ~15,800 "people"
+///     candidates backlogged and 12,800+ of them "people", a sample of 300 showed 298 fell
+///     into exactly this shape -- same normalized name, same source (almost always tmdb)
+///     present on both sides, but a DIFFERENT id. That's the identical signal
+///     PersonResolutionService's own Step 2/2b guard already trusts to REFUSE attaching a new
+///     credit (see its own doc, the "Brian Johnson" incident) -- a different catalog id from
+///     the same authoritative provider is overwhelmingly evidence of two different real
+///     people sharing a name, not one person recorded twice. Extending that same trusted
+///     signal here to auto-dismiss (rather than leaving it open forever) is what actually
+///     drains the backlog; leaving 12,800+ rows sitting in an unreviewable queue serves no
+///     one. Checked strictly AFTER every corroboration signal above, never before -- a shared
+///     character/title or an agreeing id on a DIFFERENT source can still prove genuine
+///     identity even when one particular source's own id disagrees (confirmed live: this
+///     exact shape happened for the real actor Brett Goldstein, who has two different tmdb
+///     person ids on file -- a TMDB data-quality issue, not a Chronicle bug -- but both stubs
+///     shared the identical "Roy Kent"/Ted Lasso credit, so the corroboration check above
+///     catches it before this dismissal check ever runs).
 /// Anything else -- same name, nothing else either way -- is genuinely unverifiable from
 /// data alone and is left as an open candidate for a human to look at, exactly as the
 /// scanner already leaves it.
@@ -181,9 +203,15 @@ public sealed class DuplicatePersonAutoResolveService(
         var bareB = extB.GroupBy(e => e.Source, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Select(e => BareId(e.ExternalId)).ToHashSet(StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
-        var agreeingSource = bareA.Keys.Any(src =>
-            !NameSearchDerivedSources.Contains(src) &&
-            bareB.TryGetValue(src, out var setB) && bareA[src].Overlaps(setB));
+        // Sources present (with a real, non-search-derived id) on BOTH sides -- the set this
+        // pair can actually be cross-checked against. agreeingSource looks for any of those
+        // sources where the ids actually overlap; conflictingSourceId (used below, only after
+        // every corroboration check has had its say) looks for one where they don't.
+        var commonAuthoritativeSources = bareA.Keys
+            .Where(src => !NameSearchDerivedSources.Contains(src) && bareB.ContainsKey(src))
+            .ToList();
+        var agreeingSource = commonAuthoritativeSources.Any(src => bareA[src].Overlaps(bareB[src]));
+        var conflictingSourceId = commonAuthoritativeSources.Any(src => !bareA[src].Overlaps(bareB[src]));
 
         // Same exclusion as agreeingSource above, and for the same reason: a headshot recorded
         // under a name-search-derived source came from whatever article that search matched,
@@ -212,12 +240,52 @@ public sealed class DuplicatePersonAutoResolveService(
 
         var conflictingBirth = birthA.HasValue && birthB.HasValue && birthA != birthB;
         var conflictingDeath = deathA.HasValue && deathB.HasValue && deathA != deathB;
+        var matchingBirth = birthA.HasValue && birthB.HasValue && birthA == birthB;
+
+        // A conflicting birth or death date is checked FIRST, unconditionally, same as before
+        // this file's 2026-09-19 same-source-id-conflict addition -- caught in review: an
+        // earlier version of that addition moved ALL corroboration checks ahead of ALL conflict
+        // checks, which went further than intended and let a merely-matching birthdate override
+        // a genuinely conflicting death date (two different real people who happen to share a
+        // birthdate but have distinct, correctly-recorded death dates). A conflicting birth/death
+        // date has no benign explanation the way a same-source id mismatch can (see
+        // conflictingSourceId's own doc below) -- it stays the highest-precedence signal.
         if (conflictingBirth || conflictingDeath)
             return Verdict.Conflicting;
 
-        var matchingBirth = birthA.HasValue && birthB.HasValue && birthA == birthB;
         if (agreeingSource || sharedHeadshot || matchingBirth)
             return Verdict.Corroborated;
+
+        // Both sides crediting the identical character name on the identical title -- see this
+        // class's own doc for why this is trusted as corroboration (independent of any id at
+        // all): two different real people sharing a name AND independently cast under the same
+        // character on the same show is not a realistic coincidence. Only reached when no
+        // cheaper signal above already answered it -- avoids two extra queries (and the
+        // O(n*m) comparison below) per pair for the common case, a real cost at the confirmed
+        // backlog scale (12,800+ "people" candidates in one run).
+        var creditsA = await db.MediaCredits.Where(c => c.PersonMediaItemId == idA)
+            .Select(c => new { c.MediaItemId, c.Role, c.CharacterName }).ToListAsync(ct);
+        var creditsB = await db.MediaCredits.Where(c => c.PersonMediaItemId == idB)
+            .Select(c => new { c.MediaItemId, c.Role, c.CharacterName }).ToListAsync(ct);
+        // Actor-role credits only -- same restriction as MediaController.GetPeople's own
+        // character-name lookup (a crew credit's CharacterName is never populated in practice,
+        // but this keeps that explicit rather than accidental, matching that method's own
+        // doc). Compared via MediaItemNormalizer.NormalizeName, the same helper this file's
+        // own person-name matching already trusts for "same visible name, different
+        // formatting" (punctuation/diacritics/whitespace), rather than a raw Trim +
+        // OrdinalIgnoreCase that would miss those same variations for a character name.
+        static bool IsActorCredit(string role) => string.Equals(role, "Actor", StringComparison.OrdinalIgnoreCase);
+        var sharedTitleCharacter = creditsA.Any(a =>
+            IsActorCredit(a.Role) && !string.IsNullOrWhiteSpace(a.CharacterName) &&
+            creditsB.Any(b => b.MediaItemId == a.MediaItemId && IsActorCredit(b.Role) &&
+                !string.IsNullOrWhiteSpace(b.CharacterName) &&
+                MediaItemNormalizer.NormalizeName(b.CharacterName) == MediaItemNormalizer.NormalizeName(a.CharacterName)));
+
+        if (sharedTitleCharacter)
+            return Verdict.Corroborated;
+
+        if (conflictingSourceId)
+            return Verdict.Conflicting;
 
         return Verdict.Unverified;
     }

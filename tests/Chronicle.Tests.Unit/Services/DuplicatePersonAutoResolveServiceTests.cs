@@ -161,6 +161,141 @@ public class DuplicatePersonAutoResolveServiceTests : IDisposable
         Assert.Equal(1, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
     }
 
+    /// <summary>
+    /// Root-caused live (2026-09-19): with ~12,800 "people" candidates backlogged, a sample
+    /// showed the overwhelming majority (298/300) were exactly this shape -- same normalized
+    /// name, a shared authoritative source (almost always tmdb) present on BOTH sides, but a
+    /// DIFFERENT id. Previously left permanently "Unverified" (nothing here checked for a
+    /// same-source id conflict at all, only birth/death date conflicts) -- this pins that it's
+    /// now auto-dismissed, draining the backlog instead of leaving it for a human who has no
+    /// more information to go on than this check already used.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DifferentTmdbIdSameName_IsDismissedAsDifferentPeople()
+    {
+        var a = MakePerson("John Smith");
+        var b = MakePerson("John Smith");
+        _db.SaveChanges();
+
+        _db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = a.Id, Source = "tmdb", ExternalId = "tmdb:111" },
+            new MediaExternalId { MediaItemId = b.Id, Source = "tmdb", ExternalId = "tmdb:222" });
+        _db.MediaItemDuplicateCandidates.Add(new MediaItemDuplicateCandidate { ItemAId = a.Id, ItemBId = b.Id, DetectedAt = DateTime.UtcNow });
+
+        await RunAsync();
+
+        // Neither merged (both still exist) nor left open -- dismissed as definitively
+        // different people, same outcome as a human clicking Dismiss.
+        Assert.Equal(2, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(0, await _db.MediaItemDuplicateCandidates.CountAsync());
+        Assert.Equal(1, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
+    /// <summary>
+    /// Confirmed live (2026-09-19, the actual Brett Goldstein bug this fix followed): the real
+    /// actor legitimately carries two different tmdb person ids (a TMDB data-quality issue, not
+    /// a Chronicle bug), which would otherwise hit the new same-source-conflict dismissal above
+    /// and wrongly get marked "definitely different people". Pins that a shared exact character
+    /// name on a shared title is checked FIRST and overrides that -- this pair merges instead.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DifferentTmdbIdButSharedTitleAndCharacter_StillMerges()
+    {
+        var tvType = new MediaType { Name = "tv", DisplayName = "TV", HierarchyLevels = 3 };
+        _db.MediaTypes.Add(tvType);
+        _db.SaveChanges(); // need tvType.Id assigned before using it as show's FK below
+        var show = new MediaItem
+        {
+            Name = "Ted Lasso", NormalizedName = "ted lasso", MediaTypeId = tvType.Id,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(show);
+        var a = MakePerson("Brett Goldstein");
+        var b = MakePerson("Brett Goldstein");
+        _db.SaveChanges();
+
+        _db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = a.Id, Source = "tmdb", ExternalId = "tmdb:577752" },
+            new MediaExternalId { MediaItemId = b.Id, Source = "tmdb", ExternalId = "tmdb:21422" });
+        _db.MediaCredits.AddRange(
+            new MediaCredit { MediaItemId = show.Id, PersonMediaItemId = a.Id, PersonName = "Brett Goldstein", Role = "Actor", CharacterName = "Roy Kent", Source = "tvmaze", CreatedAt = DateTime.UtcNow },
+            new MediaCredit { MediaItemId = show.Id, PersonMediaItemId = b.Id, PersonName = "Brett Goldstein", Role = "Actor", CharacterName = "Roy Kent", Source = "tmdb", CreatedAt = DateTime.UtcNow });
+        _db.MediaItemDuplicateCandidates.Add(new MediaItemDuplicateCandidate { ItemAId = a.Id, ItemBId = b.Id, DetectedAt = DateTime.UtcNow });
+
+        await RunAsync();
+
+        Assert.Equal(1, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(0, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
+    /// <summary>
+    /// Caught in review (2026-09-19): an earlier version of the corroboration-before-conflict
+    /// reordering above moved ALL corroboration checks (including the pre-existing
+    /// matchingBirth) ahead of ALL conflict checks (including the pre-existing
+    /// conflictingBirth/conflictingDeath), not just the new conflictingSourceId signal it was
+    /// meant to override. That let two people who happen to share a birthdate but have
+    /// distinct, correctly-recorded death dates get auto-merged instead of dismissed -- exactly
+    /// the "Henry Kingi" shape this class's own doc describes as provably-different-people
+    /// evidence. Pins that a conflicting death date still wins even when the birthdate matches.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_MatchingBirthButConflictingDeath_IsDismissedNotMerged()
+    {
+        var a = MakePerson("Henry Kingi");
+        var b = MakePerson("Henry Kingi");
+        a.BirthDate = new DateTime(1943, 1, 1);
+        b.BirthDate = new DateTime(1943, 1, 1);
+        a.DeathDate = new DateTime(2010, 1, 1);
+        b.DeathDate = new DateTime(2020, 1, 1);
+        _db.SaveChanges();
+
+        _db.MediaItemDuplicateCandidates.Add(new MediaItemDuplicateCandidate { ItemAId = a.Id, ItemBId = b.Id, DetectedAt = DateTime.UtcNow });
+
+        await RunAsync();
+
+        Assert.Equal(2, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(0, await _db.MediaItemDuplicateCandidates.CountAsync());
+        Assert.Equal(1, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
+    /// <summary>
+    /// Caught in review (2026-09-19): the shared-title-character corroboration check originally
+    /// matched on ANY credit's CharacterName regardless of Role, unlike MediaController.GetPeople's
+    /// own sibling fix in the same diff which explicitly restricts to Role=="Actor". Pins that a
+    /// non-blank CharacterName on a non-Actor (crew) credit does NOT corroborate a match.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_SharedTitleWithMatchingCharacterOnCrewCreditOnly_DoesNotMerge()
+    {
+        var tvType = new MediaType { Name = "tv", DisplayName = "TV", HierarchyLevels = 3 };
+        _db.MediaTypes.Add(tvType);
+        _db.SaveChanges();
+        var show = new MediaItem
+        {
+            Name = "Test Show", NormalizedName = "test show", MediaTypeId = tvType.Id,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(show);
+        var a = MakePerson("Same Name");
+        var b = MakePerson("Same Name");
+        _db.SaveChanges();
+
+        // Crew credits (not Actor) that happen to carry the same CharacterName text -- must not
+        // be treated as corroborating evidence the way a real Actor-role match would be.
+        _db.MediaCredits.AddRange(
+            new MediaCredit { MediaItemId = show.Id, PersonMediaItemId = a.Id, PersonName = "Same Name", Role = "Director", CharacterName = "Narrator", Source = "test", CreatedAt = DateTime.UtcNow },
+            new MediaCredit { MediaItemId = show.Id, PersonMediaItemId = b.Id, PersonName = "Same Name", Role = "Writer", CharacterName = "Narrator", Source = "test", CreatedAt = DateTime.UtcNow });
+        _db.MediaItemDuplicateCandidates.Add(new MediaItemDuplicateCandidate { ItemAId = a.Id, ItemBId = b.Id, DetectedAt = DateTime.UtcNow });
+
+        await RunAsync();
+
+        // Left open (Unverified) -- neither merged nor dismissed, since nothing here actually
+        // corroborates or conflicts.
+        Assert.Equal(2, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(1, await _db.MediaItemDuplicateCandidates.CountAsync());
+        Assert.Equal(0, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
     private sealed class DirectScopeFactory(ChronicleDbContext ctx) : IServiceScopeFactory
     {
         public IServiceScope CreateScope() => new DirectScope(ctx);

@@ -1698,9 +1698,46 @@ public class MovieCollectionService(
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>
+    /// "Has children" is only evidence of being a collection CONTAINER for an item whose own
+    /// media type is flat (HierarchyLevels == 1, e.g. "movies") -- a collection is a structural
+    /// exception layered on top of a flat type (see this project's own CLAUDE.md, "Artwork
+    /// overrides" section). For a genuinely hierarchical type (e.g. "tv", Show/Season/Episode),
+    /// a root item having children is the completely normal shape of every real, fully-scanned
+    /// show -- treating that as "this is a collection" is wrong, not just imprecise.
+    ///
+    /// Root-caused live (2026-09-19): this was previously unconditional on ANY item having ANY
+    /// child, so MergeService's own container-mismatch guard (see its own doc) flagged nearly
+    /// every real duplicate TV show merge as a false-positive "container vs. non-container"
+    /// mismatch the moment one side had season/episode children and the other (a thin,
+    /// not-yet-scanned duplicate stub) didn't -- exactly the shape a legitimate duplicate-show
+    /// merge always has. Confirmed live: merging two "Mountain Men" (2012) show items failed
+    /// with "one item is a collection container and the other is not" even though neither is a
+    /// movie, let alone a collection.
+    ///
+    /// GetFlatMediaTypeIdsAsync below is the single source of truth for what "flat" means --
+    /// both this method and GetCollectionContainerIdsAsync build their own flat check from it
+    /// (a per-id lookup here, a batch membership check there), so a future change to the rule
+    /// can't silently diverge between the two the way two independently-written queries could.
+    /// An item whose MediaTypeId doesn't resolve to any MediaTypes row (an orphaned/dangling
+    /// FK) is treated as NOT flat, since it's simply absent from that id set -- caught in
+    /// review: an earlier version of this method treated a missing type as flat, which
+    /// reintroduced this fix's own false-positive-container bug for that edge case, and
+    /// disagreed with GetCollectionContainerIdsAsync's own always-conservative handling of the
+    /// same case. An unknown type is never assumed eligible to be a collection container.
+    /// </summary>
+    private static async Task<HashSet<int>> GetFlatMediaTypeIdsAsync(ChronicleDbContext db, CancellationToken ct) =>
+        (await db.MediaTypes.Where(t => t.HierarchyLevels == 1).Select(t => t.Id).ToListAsync(ct)).ToHashSet();
+
+    private static async Task<bool> IsFlatMediaTypeAsync(ChronicleDbContext db, int mediaTypeId, CancellationToken ct) =>
+        (await GetFlatMediaTypeIdsAsync(db, ct)).Contains(mediaTypeId);
+
     public async Task<bool> IsCollectionContainerAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default)
     {
-        if (await db.MediaItems.AnyAsync(m => m.ParentId == itemId, ct))
+        var mediaTypeId = await db.MediaItems.Where(m => m.Id == itemId)
+            .Select(m => (int?)m.MediaTypeId).FirstOrDefaultAsync(ct);
+        if (mediaTypeId is not null && await IsFlatMediaTypeAsync(db, mediaTypeId.Value, ct) &&
+            await db.MediaItems.AnyAsync(m => m.ParentId == itemId, ct))
             return true;
         return await db.MediaExternalIds.AnyAsync(
             e => e.MediaItemId == itemId && e.ExternalId.StartsWith(CollectionExternalIdPrefix), ct);
@@ -1710,6 +1747,17 @@ public class MovieCollectionService(
         ChronicleDbContext db, IReadOnlyCollection<int> candidateIds, CancellationToken ct = default)
     {
         if (candidateIds.Count == 0) return [];
+
+        // Only candidates whose own media type is flat can ever be a container by "has
+        // children" -- see GetFlatMediaTypeIdsAsync's own doc, the single source of truth this
+        // and IsFlatMediaTypeAsync above both build from. Loaded once here (rather than
+        // per-candidate) since this is typically called with a whole library's worth of ids.
+        var flatMediaTypeIds = await GetFlatMediaTypeIdsAsync(db, ct);
+        var flatCandidateIds = (await db.MediaItems
+            .Where(m => candidateIds.Contains(m.Id) && flatMediaTypeIds.Contains(m.MediaTypeId))
+            .Select(m => m.Id)
+            .ToListAsync(ct))
+            .ToHashSet();
 
         var byChildren = await db.MediaItems
             .Where(m => m.ParentId != null && candidateIds.Contains(m.ParentId!.Value))
@@ -1723,7 +1771,7 @@ public class MovieCollectionService(
             .Distinct()
             .ToListAsync(ct);
 
-        var result = new HashSet<int>(byChildren);
+        var result = new HashSet<int>(byChildren.Where(flatCandidateIds.Contains));
         result.UnionWith(byExternalId);
         return result;
     }

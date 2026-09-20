@@ -123,21 +123,27 @@ public interface IMovieCollectionService
         ChronicleDbContext db, int movieId, int collectionId, CancellationToken ct = default);
 
     /// <summary>
-    /// True if <paramref name="itemId"/> is acting as a collection container -- it has at least
-    /// one child, or it carries a <c>collection:{id}</c> external ID (a brand-new container can
-    /// have zero children for a moment between creation and stub-seeding). The single canonical
-    /// check for "is this a collection, not a plain item" -- used anywhere that distinction
-    /// gates a structural decision (merge eligibility, scraper candidate matching, enrichment's
-    /// own re-parenting guard) so all of them agree with each other by construction instead of
-    /// drifting via separately hand-rolled copies of the same two conditions.
+    /// True if <paramref name="itemId"/> is acting as a collection container -- its own media
+    /// type is flat (HierarchyLevels == 1, e.g. "movies"; an unresolvable/orphaned media type
+    /// counts as NOT flat) AND it has at least one child, or it carries a <c>collection:{id}</c>
+    /// external ID (a brand-new container can have zero children for a moment between creation
+    /// and stub-seeding). "Has children" alone is deliberately NOT enough (2026-09-19
+    /// correction) -- for a hierarchical type (e.g. "tv", Show/Season/Episode) a root item
+    /// having children is the completely normal shape of every real, fully-scanned show, not
+    /// evidence of a movie-style collection. The single canonical check for "is this a
+    /// collection, not a plain item" -- used anywhere that distinction gates a structural
+    /// decision (merge eligibility, scraper candidate matching, enrichment's own re-parenting
+    /// guard) so all of them agree with each other by construction instead of drifting via
+    /// separately hand-rolled copies of the same conditions.
     /// </summary>
     Task<bool> IsCollectionContainerAsync(ChronicleDbContext db, int itemId, CancellationToken ct = default);
 
     /// <summary>
-    /// Batch form of <see cref="IsCollectionContainerAsync"/> — two queries over the whole
-    /// candidate set instead of two queries per item. Use whenever the container check runs
-    /// against a list rather than a single already-known item (e.g. filtering a scraper's
-    /// title-match candidate pool).
+    /// Batch form of <see cref="IsCollectionContainerAsync"/> -- same flat-media-type-scoped
+    /// "has children" rule plus the <c>collection:{id}</c> external-ID check, evaluated as a
+    /// handful of queries over the whole candidate set instead of per item. Use whenever the
+    /// container check runs against a list rather than a single already-known item (e.g.
+    /// filtering a scraper's title-match candidate pool).
     /// </summary>
     Task<HashSet<int>> GetCollectionContainerIdsAsync(
         ChronicleDbContext db, IReadOnlyCollection<int> candidateIds, CancellationToken ct = default);

@@ -294,6 +294,21 @@ describe('MediaDetailPage', () => {
     expect(within(crewFold).queryByText('Onscreen Actor')).not.toBeInTheDocument()
   })
 
+  it('shows the character an actor plays but not for crew (2026-09-19)', async () => {
+    const actor = makePerson({ id: 10, name: 'Onscreen Actor', roles: ['Actor'], characterName: 'Roy Kent' })
+    const director = makePerson({ id: 11, name: 'Behind Camera Director', roles: ['Director'], characterName: null })
+    mockedGetMediaPeople.mockResolvedValue([actor, director])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    expect(await screen.findByText('as Roy Kent')).toBeInTheDocument()
+    // Crew never shows a character line, even if characterName were ever non-null for one.
+    const crewHeader = screen.getByText('Crew')
+    const crewFold = crewHeader.closest('div') as HTMLElement
+    expect(within(crewFold).queryByText(/^as /)).not.toBeInTheDocument()
+  })
+
   it('pins the poster image to a slot via the lightbox image controls', async () => {
     const user = userEvent.setup()
     renderMediaDetailPage()

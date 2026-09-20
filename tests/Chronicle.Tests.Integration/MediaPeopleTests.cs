@@ -103,5 +103,77 @@ namespace Chronicle.Tests.Integration
                     .Select(r => r.GetString()).Should().BeEquivalentTo("Director", "Writer");
             }
         }
+
+        /// <summary>
+        /// Per-user request (2026-09-19): "For just the actors, I want to see the role they're
+        /// playing" -- the character name a person plays on THIS title. Must come from their own
+        /// Actor-role credit specifically, not leak in from an unrelated crew credit on the same
+        /// title (e.g. an actor who's also credited as Executive Producer, matching the real
+        /// Brett Goldstein/Ted Lasso shape this was built for).
+        /// </summary>
+        [Fact]
+        public async Task GetPeople_ActorWithCharacterName_ReturnsIt_CrewCreditDoesNot()
+        {
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+                var moviesType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "movies")
+                    ?? (await db.MediaTypes.AddAsync(new MediaType
+                    {
+                        Name = "movies", DisplayName = "Movies", HierarchyLevels = 1,
+                        InteractionVerb = "watched", ProgressUnit = "minutes",
+                        IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
+                    })).Entity;
+                var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
+                    ?? (await db.MediaTypes.AddAsync(new MediaType
+                    {
+                        Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                        InteractionVerb = "viewed", ProgressUnit = "percent",
+                        IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
+                    })).Entity;
+                await db.SaveChangesAsync();
+
+                var show = new MediaItem
+                {
+                    MediaTypeId = moviesType.Id, Name = "Test Show", Year = 2020, HierarchyLevel = 0,
+                    CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                };
+                // Actor AND Executive Producer on the same title -- the character must come
+                // from the Actor credit only, never the crew one.
+                var actorProducer = new MediaItem
+                {
+                    MediaTypeId = peopleType.Id, Name = "Actor Producer", HierarchyLevel = 0,
+                    CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                };
+                var crewOnly = new MediaItem
+                {
+                    MediaTypeId = peopleType.Id, Name = "Crew Only", HierarchyLevel = 0,
+                    CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                };
+                db.MediaItems.AddRange(show, actorProducer, crewOnly);
+                await db.SaveChangesAsync();
+
+                db.MediaCredits.AddRange(
+                    new MediaCredit { MediaItemId = show.Id, PersonMediaItemId = actorProducer.Id, PersonName = "Actor Producer", Role = "Actor", CharacterName = "Roy Kent", BillingOrder = 0, Source = "test" },
+                    new MediaCredit { MediaItemId = show.Id, PersonMediaItemId = actorProducer.Id, PersonName = "Actor Producer", Role = "Executive Producer", BillingOrder = 0, Source = "test" },
+                    new MediaCredit { MediaItemId = show.Id, PersonMediaItemId = crewOnly.Id, PersonName = "Crew Only", Role = "Director", BillingOrder = 1, Source = "test" }
+                );
+                await db.SaveChangesAsync();
+
+                var client = await AuthedClientAsync();
+                var resp = await client.GetAsync($"/api/v1/media/{show.Id}/people");
+                resp.EnsureSuccessStatusCode();
+
+                var body = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+                var items = body.RootElement.GetProperty("data").EnumerateArray().ToList();
+
+                var actorEntry = items.Single(i => i.GetProperty("name").GetString() == "Actor Producer");
+                actorEntry.GetProperty("characterName").GetString().Should().Be("Roy Kent");
+
+                var crewEntry = items.Single(i => i.GetProperty("name").GetString() == "Crew Only");
+                crewEntry.GetProperty("characterName").ValueKind.Should().Be(JsonValueKind.Null);
+            }
+        }
     }
 }

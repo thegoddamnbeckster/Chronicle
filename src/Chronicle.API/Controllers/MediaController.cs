@@ -234,11 +234,28 @@ namespace Chronicle.API.Controllers
                     Person = g.First().PersonMediaItem!,
                     Roles = g.Select(c => c.Role).Distinct().OrderBy(r => r).ToList(),
                     BillingOrder = g.Min(c => c.BillingOrder ?? int.MaxValue),
+                    // The character this person plays on THIS title -- only ever comes from
+                    // their own Actor-role credit row (character names on a crew credit, e.g.
+                    // "Executive Producer", are never populated in practice, but the role check
+                    // here keeps that explicit rather than accidental). A person can have more
+                    // than one Actor credit on the same title in rare cases (dual roles); the
+                    // one with the lowest BillingOrder wins (most prominent role first), then
+                    // by the credit's own Id for a fully deterministic tiebreak -- caught in
+                    // review: an earlier version picked "the first non-blank one" with no
+                    // ordering at all, so which character showed for a dual-role actor depended
+                    // on unspecified DB/EF enumeration order and could change across a re-scan
+                    // with no underlying data change.
+                    CharacterName = g.Where(c => string.Equals(c.Role, "Actor", StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(c.CharacterName))
+                        .OrderBy(c => c.BillingOrder ?? int.MaxValue).ThenBy(c => c.Id)
+                        .Select(c => c.CharacterName)
+                        .FirstOrDefault(),
                 })
                 .OrderBy(x => x.BillingOrder)
                 .ThenBy(x => x.Person.Name)
                 .Select(x => new PersonListItemDto(
-                    x.Person.Id, x.Person.Name, x.Person.PosterUrl, x.Person.BirthDate, x.Person.DeathDate, x.Roles))
+                    x.Person.Id, x.Person.Name, x.Person.PosterUrl, x.Person.BirthDate, x.Person.DeathDate,
+                    x.Roles, x.CharacterName))
                 .ToList();
 
             return Ok(ApiResponse<List<PersonListItemDto>>.Ok(dtos));

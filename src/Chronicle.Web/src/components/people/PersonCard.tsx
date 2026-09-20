@@ -31,12 +31,20 @@ function formatDateRange(birth: string | null, death: string | null): string | n
  * same kind of thing for people. also next and previous buttons." Mirrors LibraryPage's own
  * per-section listIds/listLabel state passed to its media cards. */
 export function PersonCard({
-  person, navState,
+  person, navState, fullName = false,
 }: {
   person: PersonListItem
   navState?: { listIds: number[]; listLabel?: string }
+  /** True on MediaDetailPage's own cast/crew section, which isn't virtualized and so has no
+   * fixed row height to protect -- shows the full name unclamped (per-user request: names like
+   * "Jason Mantzoukas" or "Dee Bradley Baker" were getting cut off at 2 lines) and, for an
+   * actor, the character they play on this title. False (the default) keeps the catalog-wide
+   * People grid's existing 2-line clamp, since PeopleLibraryPage's virtualized row height
+   * depends on it (see that page's own CARD_INFO_HEIGHT doc). */
+  fullName?: boolean
 }) {
   const dates = formatDateRange(person.birthDate, person.deathDate)
+  const isActor = person.roles.some(r => r.toLowerCase() === 'actor')
 
   return (
     <Link to={`/people/${person.id}`} state={navState} className={styles.personCard}>
@@ -47,9 +55,12 @@ export function PersonCard({
         )}
       </div>
       <div className={styles.info}>
-        <div className={styles.name}>{person.name}</div>
+        <div className={fullName ? styles.nameFull : styles.name}>{person.name}</div>
         {person.roles.length > 0 && (
           <div className={styles.positions}>{person.roles.join(', ')}</div>
+        )}
+        {fullName && isActor && person.characterName && (
+          <div className={styles.character}>as {person.characterName}</div>
         )}
         {dates && <div className={styles.dates}>{dates}</div>}
       </div>

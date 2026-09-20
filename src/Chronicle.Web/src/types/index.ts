@@ -173,6 +173,10 @@ export interface PersonListItem {
   birthDate: string | null
   deathDate: string | null
   roles: string[]
+  /** The character this person plays on the title this list is scoped to (MediaDetailPage's
+   * cast section) -- always null on the catalog-wide People grid, which has no single title
+   * to attribute a character to. */
+  characterName?: string | null
 }
 
 export interface PersonCredit {

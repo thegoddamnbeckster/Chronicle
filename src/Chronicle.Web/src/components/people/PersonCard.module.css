@@ -86,12 +86,26 @@
   overflow: hidden;
 }
 
+/* Unclamped variant (fullName prop) -- wraps to as many lines as the name needs instead of
+   cutting off at 2, for contexts with no fixed row height to protect (see PersonCard's own
+   fullName doc). */
+.nameFull {
+  font-weight: 600;
+  line-height: 1.25;
+}
+
 .positions {
   font-size: 0.85em;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.character {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .dates {

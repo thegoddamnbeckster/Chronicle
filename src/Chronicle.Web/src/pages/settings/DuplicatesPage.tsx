@@ -7,6 +7,7 @@ import {
   type DuplicateCandidate,
   type DuplicateCandidateItem,
 } from '@/api/duplicates'
+import { deleteMedia } from '@/api/media'
 import MergeModal from '@/components/MergeModal'
 import styles from './DuplicatesPage.module.css'
 import { PosterImage } from '@/components/PosterImage'
@@ -23,6 +24,30 @@ export default function DuplicatesPage() {
 
   const dismiss = useMutation({
     mutationFn: ({ a, b }: { a: number; b: number }) => dismissDuplicate(a, b),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['duplicates'] }),
+  })
+
+  // Deleting one side resolves the pair without merging -- per-user preference (2026-09-19):
+  // "I would also prefer to have the ability to delete one, not just merge." The candidate row
+  // itself is cleaned up automatically (media_item_duplicate_candidates cascades off either
+  // item id), so no separate dismiss/cleanup call is needed here.
+  //
+  // deletingIds (not deleteItem.isPending/.variables) tracks which item(s) are in flight --
+  // caught in review: a single mutation's own isPending/variables only ever reflects its MOST
+  // RECENT call, so deleting item X then, before that resolves, deleting item Y in another row
+  // would overwrite variables to Y and make X's button look idle again while X's DELETE is
+  // still in flight, letting a second click race a request against an item mid-deletion.
+  // onMutate/onSettled fire once per individual mutate() call, so tracking ids through them
+  // (rather than through the hook's own single-call state) supports overlapping deletes safely.
+  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set())
+  const deleteItem = useMutation({
+    mutationFn: (id: number) => deleteMedia(id),
+    onMutate: (id: number) => setDeletingIds(prev => new Set(prev).add(id)),
+    onSettled: (_data, _error, id: number) => setDeletingIds(prev => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['duplicates'] }),
   })
 
@@ -52,9 +77,11 @@ export default function DuplicatesPage() {
       <div className={styles.list}>
         {data?.data?.map(candidate => (
           <div key={candidate.candidateId} className={styles.row}>
-            <ItemCard item={candidate.itemA} />
+            <ItemCard item={candidate.itemA} onDelete={() => deleteItem.mutate(candidate.itemA.id)}
+              deleting={deletingIds.has(candidate.itemA.id)} />
             <div className={styles.vs}>vs</div>
-            <ItemCard item={candidate.itemB} />
+            <ItemCard item={candidate.itemB} onDelete={() => deleteItem.mutate(candidate.itemB.id)}
+              deleting={deletingIds.has(candidate.itemB.id)} />
             <div className={styles.actions}>
               <button className={styles.mergeBtn} onClick={() => setMergeTarget(candidate)}>
                 Merge
@@ -98,11 +125,21 @@ export default function DuplicatesPage() {
   )
 }
 
-function ItemCard({ item }: { item: DuplicateCandidateItem }) {
+function ItemCard({
+  item, onDelete, deleting,
+}: {
+  item: DuplicateCandidateItem
+  onDelete: () => void
+  deleting: boolean
+}) {
   // Show only the most useful external IDs (skip internal/noisy sources)
   const displayIds = item.externalIds.filter(e =>
     ['tmdb', 'imdb', 'tvdb', 'musicbrainz', 'simkl', 'trakt', 'hardcover', 'igdb'].includes(e.source.toLowerCase())
   )
+
+  const handleDelete = () => {
+    if (window.confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) onDelete()
+  }
 
   return (
     <div className={styles.card}>
@@ -129,6 +166,9 @@ function ItemCard({ item }: { item: DuplicateCandidateItem }) {
             📁 {item.filePath}
           </p>
         )}
+        <button className={styles.deleteBtn} onClick={handleDelete} disabled={deleting}>
+          {deleting ? 'Deleting…' : 'Delete this one'}
+        </button>
       </div>
     </div>
   )

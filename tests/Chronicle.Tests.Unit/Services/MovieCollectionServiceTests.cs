@@ -1524,6 +1524,92 @@ public class MovieCollectionServiceTests
         }
     }
 
+    /// <summary>
+    /// Root-caused live (2026-09-19): IsCollectionContainerAsync treated ANY item with ANY
+    /// child as a collection container regardless of media type, so a fully-scanned TV show
+    /// (a hierarchical type -- Show/Season/Episode, HierarchyLevels=3 in real production data)
+    /// with a real season child was wrongly flagged, breaking MergeService's own container
+    /// guard for the completely ordinary case of merging two duplicate TV shows. These pin
+    /// that "has children" is only trusted for a FLAT media type (HierarchyLevels==1, e.g.
+    /// real production "movies"/"fanedits"/"anime_movies"/"people"), matching this project's
+    /// own documented "collection is a structural exception under a flat type" design.
+    /// </summary>
+    [Fact]
+    public async Task IsCollectionContainerAsync_FlatTypeWithChildren_ReturnsTrue()
+    {
+        await using var db = CreateInMemoryDb();
+        var mt = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        var container = new MediaItem { Id = 1, Name = "John Wick Collection", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var member = new MediaItem { Id = 2, Name = "John Wick", MediaTypeId = mt.Id, ParentId = 1, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.AddRange(container, member);
+        await db.SaveChangesAsync();
+
+        var svc = CreateService();
+        (await svc.IsCollectionContainerAsync(db, container.Id)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsCollectionContainerAsync_HierarchicalTypeWithChildren_ReturnsFalse()
+    {
+        await using var db = CreateInMemoryDb();
+        var mt = new MediaType { Id = 1, Name = "tv", DisplayName = "TV", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        var show = new MediaItem { Id = 1, Name = "Mountain Men", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var season = new MediaItem { Id = 2, Name = "Season 1", MediaTypeId = mt.Id, ParentId = 1, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.AddRange(show, season);
+        await db.SaveChangesAsync();
+
+        var svc = CreateService();
+        (await svc.IsCollectionContainerAsync(db, show.Id)).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Caught in review (2026-09-19): an earlier version of IsFlatMediaTypeAsync treated an
+    /// item whose MediaTypeId doesn't resolve to any MediaTypes row (an orphaned/dangling FK)
+    /// as flat, reintroducing this same fix's own false-positive-container bug for that edge
+    /// case, and disagreeing with GetCollectionContainerIdsAsync's batch path (which already
+    /// excluded an unresolvable type id from its flat set). Pins that both now agree: an
+    /// unknown type is never treated as eligible to be a collection container.
+    /// </summary>
+    [Fact]
+    public async Task IsCollectionContainerAsync_OrphanedMediaTypeWithChildren_ReturnsFalse()
+    {
+        await using var db = CreateInMemoryDb();
+        // Deliberately no MediaTypes row for id 999 -- an orphaned/dangling FK.
+        var item = new MediaItem { Id = 1, Name = "Orphaned", MediaTypeId = 999, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var child = new MediaItem { Id = 2, Name = "Child", MediaTypeId = 999, ParentId = 1, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.AddRange(item, child);
+        await db.SaveChangesAsync();
+
+        var svc = CreateService();
+        (await svc.IsCollectionContainerAsync(db, item.Id)).Should().BeFalse();
+
+        var batchResult = await svc.GetCollectionContainerIdsAsync(db, [item.Id]);
+        batchResult.Should().NotContain(item.Id);
+    }
+
+    [Fact]
+    public async Task GetCollectionContainerIdsAsync_HierarchicalTypeWithChildren_ExcludesIt()
+    {
+        await using var db = CreateInMemoryDb();
+        var movies = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        var tv = new MediaType { Id = 2, Name = "tv", DisplayName = "TV", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.AddRange(movies, tv);
+        var collection = new MediaItem { Id = 1, Name = "John Wick Collection", MediaTypeId = movies.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var collectionMember = new MediaItem { Id = 2, Name = "John Wick", MediaTypeId = movies.Id, ParentId = 1, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var show = new MediaItem { Id = 3, Name = "Mountain Men", MediaTypeId = tv.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var season = new MediaItem { Id = 4, Name = "Season 1", MediaTypeId = tv.Id, ParentId = 3, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.AddRange(collection, collectionMember, show, season);
+        await db.SaveChangesAsync();
+
+        var svc = CreateService();
+        var result = await svc.GetCollectionContainerIdsAsync(db, [collection.Id, show.Id]);
+
+        result.Should().Contain(collection.Id);
+        result.Should().NotContain(show.Id);
+    }
+
     private static Mock<Chronicle.Plugins.IMetadataProvider> StubProvider(
         Chronicle.Plugins.Models.MediaMetadata meta)
     {

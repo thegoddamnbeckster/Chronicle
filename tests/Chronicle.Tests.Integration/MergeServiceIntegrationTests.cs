@@ -302,6 +302,80 @@ public class MergeServiceIntegrationTests : IClassFixture<ChronicleApiFactory>
         }
     }
 
+    /// <summary>
+    /// Root-caused live (2026-09-19): IsCollectionContainerAsync treated ANY item with ANY
+    /// child as a "collection container" regardless of media type, so merging two duplicate TV
+    /// shows failed with "one item is a collection container and the other is not" the moment
+    /// one side had real season/episode children and the other (a thin duplicate stub) didn't --
+    /// exactly the normal shape of a real duplicate-show merge, not an actual collection. Pins
+    /// that a hierarchical type's (tv, HierarchyLevels=3) root item having children no longer
+    /// trips the collection-container guard.
+    /// </summary>
+    [Fact]
+    public async Task MergeAsync_TvShowWithSeasonChildIntoBareDuplicateShow_Succeeds()
+    {
+        int winnerId, loserId, seasonId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var tv = db.MediaTypes.First(t => t.Name == "tv");
+
+            var winner = db.MediaItems.Add(new MediaItem
+            {
+                MediaTypeId    = tv.Id,
+                Name           = "Mountain Men",
+                NormalizedName = MediaItemNormalizer.NormalizeName("Mountain Men"),
+                Year           = 2012,
+                HierarchyLevel = 0,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            }).Entity;
+            var loser = db.MediaItems.Add(new MediaItem
+            {
+                MediaTypeId    = tv.Id,
+                Name           = "Mountain Men",
+                NormalizedName = MediaItemNormalizer.NormalizeName("Mountain Men"),
+                Year           = 2012,
+                HierarchyLevel = 0,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            }).Entity;
+            db.SaveChanges();
+
+            // Winner has a real season -- the completely normal shape of a fully-scanned show,
+            // not a "collection". The loser (a thin duplicate stub) has none.
+            var season = db.MediaItems.Add(new MediaItem
+            {
+                MediaTypeId    = tv.Id,
+                Name           = "Season 1",
+                NormalizedName = "season 1",
+                ParentId       = winner.Id,
+                HierarchyLevel = 1,
+                Number         = 1,
+                CreatedAt      = DateTime.UtcNow,
+                UpdatedAt      = DateTime.UtcNow,
+            }).Entity;
+            db.SaveChanges();
+            winnerId = winner.Id;
+            loserId  = loser.Id;
+            seasonId = season.Id;
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var svc = scope.ServiceProvider.GetRequiredService<IMergeService>();
+            await svc.MergeAsync(winnerId, loserId, null);
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            db.MediaItems.Find(loserId).Should().BeNull();
+            db.MediaItems.Find(winnerId).Should().NotBeNull();
+            db.MediaItems.Find(seasonId).Should().NotBeNull();
+        }
+    }
+
     [Fact]
     public async Task MergeAsync_SameItemTwice_ThrowsInvalidOperation()
     {

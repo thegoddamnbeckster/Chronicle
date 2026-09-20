@@ -195,6 +195,20 @@
   word-break: break-all;
 }
 
+.deleteBtn {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--danger, #d64545);
+  border: 1px solid var(--danger, #d64545);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.deleteBtn:hover { background: var(--danger, #d64545); color: #fff; }
+.deleteBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ── Pagination ── */
 .pagination {
   display: flex;
