@@ -10,6 +10,10 @@ export interface DuplicateCandidateItem {
   mediaType: string
   externalIds: { source: string; externalId: string }[]
   filePath: string | null
+  /** Root-to-parent breadcrumb (e.g. ["Worst Cooks in America", "Season 11"] for an
+   *  episode) -- lets a reviewer tell two same-titled leaves (a recurring segment name
+   *  reused across a season, or two different shows) apart without opening each one. */
+  ancestors?: string[]
 }
 
 export interface DuplicateCandidate {

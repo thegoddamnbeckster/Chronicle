@@ -45,6 +45,21 @@ public class DuplicatesController(
             .Take(pageSize)
             .ToListAsync(ct);
 
+        // Breadcrumb (e.g. Show, Season for a TV episode) for every item on this page --
+        // per-user request (2026-09-21): a bare episode title with no show/season context made
+        // it impossible to tell whether two same-titled episodes (a recurring segment name
+        // reused across a whole reality-show season, or two genuinely different shows) were
+        // safe to merge without opening each one individually. Shares MediaController's own
+        // ParentId-walk rather than a second hand-rolled copy.
+        var ancestorsById = new Dictionary<int, List<AncestorDto>>();
+        foreach (var id in candidates.SelectMany(c => new[] { c.ItemA?.ParentId, c.ItemB?.ParentId }).Where(p => p.HasValue).Select(p => p!.Value).Distinct())
+            ancestorsById[id] = await MediaController.BuildAncestorsAsync(db, id, ct);
+
+        List<string> BreadcrumbFor(MediaItem? item) =>
+            item?.ParentId is int pid && ancestorsById.TryGetValue(pid, out var chain)
+                ? chain.Select(a => a.Name).ToList()
+                : [];
+
         var data = candidates.Select(c => new
         {
             candidateId = c.Id,
@@ -54,6 +69,7 @@ public class DuplicatesController(
                 mediaType   = c.ItemA.MediaType?.Name,
                 externalIds = c.ItemA.ExternalIds.Select(e => new { e.Source, e.ExternalId }).ToList(),
                 filePath    = ExtractFilePath(c.ItemA.MetadataJson),
+                ancestors   = BreadcrumbFor(c.ItemA),
             },
             itemB = new {
                 c.ItemB!.Id, c.ItemB.Name, c.ItemB.PosterUrl, c.ItemB.HierarchyLevel,
@@ -61,6 +77,7 @@ public class DuplicatesController(
                 mediaType   = c.ItemB.MediaType?.Name,
                 externalIds = c.ItemB.ExternalIds.Select(e => new { e.Source, e.ExternalId }).ToList(),
                 filePath    = ExtractFilePath(c.ItemB.MetadataJson),
+                ancestors   = BreadcrumbFor(c.ItemB),
             },
         }).ToList<object>();
 

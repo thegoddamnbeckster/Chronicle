@@ -149,6 +149,9 @@ function ItemCard({
           placeholderContent="No poster" />
       </Link>
       <div className={styles.info}>
+        {item.ancestors && item.ancestors.length > 0 && (
+          <p className={styles.breadcrumb}>{item.ancestors.join(' › ')}</p>
+        )}
         <Link to={`/media/${item.id}`} target="_blank" rel="noopener noreferrer" className={styles.nameLink}>
           <p className={styles.name}>{item.name}</p>
         </Link>

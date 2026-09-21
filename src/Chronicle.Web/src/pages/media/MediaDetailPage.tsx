@@ -1028,6 +1028,8 @@ export default function MediaDetailPage() {
                           runtimeMinutes: result.runtimeMinutes,
                           overview: result.overview,
                           filePath: result.fileScannerMeta?.filePath ?? null,
+                          externalIds: result.externalIds,
+                          ancestors: result.ancestors?.map(a => a.name),
                         })
                         setMergeSearchOpen(false)
                         setMergeSearchQuery('')
@@ -1734,6 +1736,8 @@ export default function MediaDetailPage() {
             runtimeMinutes: item.runtimeMinutes,
             overview: item.overview,
             filePath: item.fileScannerMeta?.filePath ?? null,
+            externalIds: item.externalIds,
+            ancestors: item.ancestors?.map(a => a.name),
           }}
           itemB={mergeTarget}
           onClose={() => setMergeTarget(null)}

@@ -976,7 +976,18 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<List<CollectionSummaryDto>>.Ok(collections));
         }
 
-        private async Task<List<AncestorDto>> BuildAncestorsAsync(int? parentId, CancellationToken ct)
+        private Task<List<AncestorDto>> BuildAncestorsAsync(int? parentId, CancellationToken ct) =>
+            BuildAncestorsAsync(_context, parentId, ct);
+
+        /// <summary>
+        /// Walks the ParentId chain (root-first) to build a breadcrumb -- e.g. Show, Season for
+        /// a TV episode. Internal/static so other controllers needing the same breadcrumb (e.g.
+        /// DuplicatesController, so a reviewer can tell two same-named episodes' shows apart
+        /// without opening each one) share this single implementation instead of a second
+        /// hand-rolled copy.
+        /// </summary>
+        internal static async Task<List<AncestorDto>> BuildAncestorsAsync(
+            ChronicleDbContext context, int? parentId, CancellationToken ct)
         {
             var ancestors = new List<AncestorDto>();
             // Chronicle's deepest real hierarchy is 3 levels (Show→Season→Episode or
@@ -987,7 +998,7 @@ namespace Chronicle.API.Controllers
             var visited = new HashSet<int>();
             while (parentId != null && ancestors.Count < 10 && visited.Add(parentId.Value))
             {
-                var ancestor = await _context.MediaItems
+                var ancestor = await context.MediaItems
                     .Where(m => m.Id == parentId)
                     .Select(m => new { m.Id, m.Name, m.ParentId })
                     .FirstOrDefaultAsync(ct);

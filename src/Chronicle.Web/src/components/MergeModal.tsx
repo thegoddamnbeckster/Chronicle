@@ -14,6 +14,14 @@ export interface MergeItem {
   runtimeMinutes?: number | null
   overview?: string | null
   filePath?: string | null   // first file path from fileScanner, if any
+  /** Source-tagged external ids (tmdb/hardcover/musicbrainz/...) -- often the ONLY way to
+   *  tell two same-named records apart (e.g. two different real people who happen to share
+   *  a name each carry their own, disagreeing, hardcover author id). */
+  externalIds?: { source: string; externalId: string }[]
+  /** Root-to-parent breadcrumb (e.g. ["Worst Cooks in America", "Season 11"] for an episode)
+   *  -- without it a bare episode/track title gives no way to tell which show/season it's
+   *  actually under, or whether two same-titled leaves are siblings or unrelated. */
+  ancestors?: string[]
 }
 
 interface Props {
@@ -60,6 +68,9 @@ export default function MergeModal({ itemA, itemB, onClose, onMerged }: Props) {
 
                 {/* Metadata */}
                 <div className={styles.meta}>
+                  {item.ancestors && item.ancestors.length > 0 && (
+                    <p className={styles.breadcrumb}>{item.ancestors.join(' › ')}</p>
+                  )}
                   <p className={styles.name}>{item.name}</p>
 
                   <div className={styles.chips}>
@@ -73,6 +84,16 @@ export default function MergeModal({ itemA, itemB, onClose, onMerged }: Props) {
                       <span className={styles.chip}>{item.runtimeMinutes} min</span>
                     )}
                   </div>
+
+                  {item.externalIds && item.externalIds.length > 0 && (
+                    <div className={styles.idChips}>
+                      {item.externalIds.map(e => (
+                        <span key={`${e.source}:${e.externalId}`} className={styles.idChip}>
+                          {e.source}: {e.externalId}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   {item.overview && (
                     <p className={styles.overview}>{item.overview}</p>

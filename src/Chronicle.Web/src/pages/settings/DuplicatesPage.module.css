@@ -128,6 +128,18 @@
   gap: 4px;
 }
 
+.breadcrumb {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .nameLink {
   color: inherit;
   text-decoration: none;
@@ -191,7 +203,7 @@
   font-size: 0.75rem;
   color: var(--text-muted);
   font-family: monospace;
-  word-break: break-all;
+  overflow-wrap: break-word;
 }
 
 .deleteBtn {
@@ -204,6 +216,7 @@
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.75rem;
+  white-space: nowrap;
 }
 .deleteBtn:hover { background: var(--danger, #d64545); color: #fff; }
 .deleteBtn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -227,3 +240,33 @@
 }
 .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
 .pagination span { color: var(--text-muted); font-size: 0.9rem; }
+
+/* ── Narrow viewport ── */
+/* The 4-column grid (item / vs / item / actions) squeezes each card down to almost
+   nothing below ~1000px, which is what was producing unreadable character-by-character
+   text wrapping in file paths and multi-line button labels -- confirmed live (2026-09-21).
+   Stack everything into one column instead of letting the grid keep shrinking. */
+@media (max-width: 1000px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
+
+  .vs {
+    padding: 6px 0;
+    border-left: none;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .actions {
+    flex-direction: row;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .mergeBtn,
+  .dismissBtn {
+    flex: 1;
+  }
+}

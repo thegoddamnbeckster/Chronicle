@@ -86,6 +86,7 @@ namespace Chronicle.Services
         {
             var q = _context.MediaItems
                 .Include(m => m.MediaType)
+                .Include(m => m.ExternalIds)
                 .AsQueryable();
 
             if (!allLevels)

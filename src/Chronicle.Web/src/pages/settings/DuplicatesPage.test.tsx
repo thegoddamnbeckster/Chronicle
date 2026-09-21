@@ -23,6 +23,7 @@ function makeItem(overrides: Partial<DuplicateCandidateItem> & { id: number; nam
     mediaType: 'tv',
     externalIds: [],
     filePath: null,
+    ancestors: [],
     ...overrides,
   }
 }

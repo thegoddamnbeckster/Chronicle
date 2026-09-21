@@ -245,6 +245,7 @@ export default function PersonDetailPage() {
                           mediaTypeName: result.mediaTypeName,
                           year: result.year,
                           overview: result.overview,
+                          externalIds: result.externalIds,
                         })
                         setMergeSearchOpen(false)
                         setMergeSearchQuery('')
@@ -331,6 +332,7 @@ export default function PersonDetailPage() {
             mediaTypeName: person.mediaTypeName,
             year: person.year,
             overview: person.overview,
+            externalIds: person.externalIds,
           }}
           itemB={mergeTarget}
           onClose={() => setMergeTarget(null)}
