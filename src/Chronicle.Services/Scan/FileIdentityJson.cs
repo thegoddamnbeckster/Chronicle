@@ -162,5 +162,22 @@ namespace Chronicle.Services.Scan
             catch (JsonException) { }
             return null;
         }
+
+        /// <summary>
+        /// True when <paramref name="fileName"/>'s own text contains <paramref name="title"/>,
+        /// compared letters/digits-only and case-insensitively (mirrors
+        /// DuplicateCandidateScanService.LogShowPathMismatchesAsync's own normalization). Used
+        /// to tell whether an item's own recorded file was actually scanned FOR this item (a
+        /// directly-verified signal), versus a stale/corrupted association pointing elsewhere --
+        /// see MergeService.MergeLoadedItemsAsync and DuplicateCleanupService's same-parent pass,
+        /// both of which trust the side whose file matches its title over the side whose doesn't.
+        /// </summary>
+        public static bool FileNameMatchesTitle(string? fileName, string title)
+        {
+            if (string.IsNullOrEmpty(fileName)) return false;
+            static string Normalize(string s) => new string(s.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+            var normalizedTitle = Normalize(title);
+            return normalizedTitle.Length > 0 && Normalize(fileName).Contains(normalizedTitle, StringComparison.Ordinal);
+        }
     }
 }

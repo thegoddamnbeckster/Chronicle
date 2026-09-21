@@ -318,6 +318,34 @@ public class MergeService(
             {
                 var winnerBlobs = ParseMetadataBlobs(winner.MetadataJson);
                 var loserBlobs  = ParseMetadataBlobs(loser.MetadataJson);
+
+                // Confirmed live (2026-09-21): "winner blobs take precedence" is wrong
+                // specifically for fileScanner when the winner's own recorded file doesn't
+                // actually correspond to this item -- e.g. an item enriched correctly via TMDB
+                // (season/episode identity right) but whose fileScanner.filePaths was corrupted
+                // by an earlier scrape-matching bug, pointing at a completely different show's
+                // folder, while its file-scan-stub duplicate (the merge loser here) holds the
+                // real file that was actually scanned FOR this exact title. Since that stub's
+                // fileScanner data came directly from a real directory scan that matched this
+                // item's own title, it's strictly more trustworthy than an unverified existing
+                // value -- prefer it over the winner's own fileScanner blob in that one case,
+                // self-healing the corruption as part of routine automatic merging instead of
+                // requiring a one-off manual repair. The same corruption incident also
+                // miswrote the winner's own Number (11, its SEASON's number, instead of 1, its
+                // real episode number) -- once the file signal shows the winner's own data is
+                // the untrustworthy side, prefer the loser's Number too, for the same reason.
+                if (winnerBlobs.ContainsKey("fileScanner") && loserBlobs.ContainsKey("fileScanner"))
+                {
+                    var winnerFileMatches = FileIdentityJson.FileNameMatchesTitle(FileIdentityJson.GetKnownFileName(winner.MetadataJson), winner.Name);
+                    var loserFileMatches  = FileIdentityJson.FileNameMatchesTitle(FileIdentityJson.GetKnownFileName(loser.MetadataJson), winner.Name);
+                    if (!winnerFileMatches && loserFileMatches)
+                    {
+                        winnerBlobs["fileScanner"] = loserBlobs["fileScanner"];
+                        if (loser.Number.HasValue)
+                            winner.Number = loser.Number;
+                    }
+                }
+
                 foreach (var (key, val) in loserBlobs)
                     if (!winnerBlobs.ContainsKey(key) && key != "_resolved")
                         winnerBlobs[key] = val;

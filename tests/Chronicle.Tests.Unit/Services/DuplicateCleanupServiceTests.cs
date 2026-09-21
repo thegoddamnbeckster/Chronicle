@@ -447,6 +447,59 @@ public class DuplicateCleanupServiceTests : IDisposable
         _context.MediaItems.Count(m => m.Name == "Same Title").Should().Be(2);
     }
 
+    [Fact]
+    public async Task RunAsync_SameParentSameName_PrefersLosersFileScannerWhenWinnersDoesNotMatchTitle()
+    {
+        // Confirmed live (2026-09-21): an episode enriched correctly via TMDB (right season/
+        // episode identity, so it wins on score) had a corrupted fileScanner.filePaths pointing
+        // at a completely different show's folder, AND a corrupted Number (11, its season's
+        // number, instead of 1, its real episode number) -- same underlying scrape-matching
+        // bug. Its file-scan-stub duplicate (same parent/name, no external ids, so it loses on
+        // score) held the real file and the real episode Number. Two things had to be true for
+        // this to self-heal: the Number-mismatch guard must not block the merge just because the
+        // corrupted side disagrees, and the merge itself must prefer the loser's fileScanner/
+        // Number once the file-match signal shows the winner's own values are the untrustworthy
+        // ones -- otherwise "winner blobs take precedence" would keep the corruption forever.
+        var season = MakeHierarchyItem("Season 11", _tvType.Id, hierarchyLevel: 1);
+
+        var enriched = new MediaItem
+        {
+            Name = "Celebrity: Social Media Food Failures", MediaTypeId = _tvType.Id,
+            HierarchyLevel = 2, ParentId = season.Id, PosterUrl = "poster.jpg", Overview = "desc",
+            Number = 11,
+            MetadataJson = JsonSerializer.Serialize(new
+            {
+                fileScanner = new { filePaths = new[] { @"J:\Videos\TV\Futurama (1999)\Season 11" } },
+            }),
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.Add(enriched);
+        await _context.SaveChangesAsync();
+        _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = enriched.Id, Source = "tmdb", ExternalId = "tv:31783/season:11/episode:1" });
+
+        var stub = new MediaItem
+        {
+            Name = "Celebrity: Social Media Food Failures", MediaTypeId = _tvType.Id,
+            HierarchyLevel = 2, ParentId = season.Id,
+            Number = 1,
+            MetadataJson = JsonSerializer.Serialize(new
+            {
+                fileScanner = new { filePaths = new[] { @"D:\Video\TV\Worst Cooks in America (2010)\Season 11\Worst Cooks in America - S11E01 - Celebrity - Social Media Food Failures.mkv" } },
+            }),
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.Add(stub);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(1, "the Number mismatch is explained by known corruption on the winner's side, not by these being genuinely different episodes");
+        var survivor = await _context.MediaItems.SingleAsync(m => m.Id == enriched.Id);
+        Chronicle.Services.Scan.FileIdentityJson.GetKnownFileName(survivor.MetadataJson)
+            .Should().Contain("Celebrity", "the surviving item must end up with the file that actually matches its own title");
+        survivor.Number.Should().Be(1, "the surviving item must end up with the real episode number, not its season's number");
+    }
+
     // ── Pass 5: same-parent, same-Number CONTAINER auto-merge ──────────────────
 
     [Fact]
