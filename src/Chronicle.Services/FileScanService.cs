@@ -3050,18 +3050,32 @@ namespace Chronicle.Services
                 updated, candidates.Count);
         }
 
+        // AppSettings keys for BackfillKnownFileNamesAsync's own resumable progress -- see that
+        // method's own doc for why "table has any rows" (the original gate) wasn't durable.
+        private const string BackfillKnownFileNamesProgressKey = "known_file_names_backfill_last_id";
+        private const string BackfillKnownFileNamesCompleteKey = "known_file_names_backfill_complete";
+
         public async Task<int> BackfillKnownFileNamesAsync(CancellationToken ct = default)
         {
-            // Gated on "does this table have ANY rows yet" rather than re-checking every item
-            // on every startup -- every ordinary write to fileScanner data already keeps this
-            // table current going forward (see SyncKnownFileNamesAsync/
-            // ScraperController.EnsureKnownFileNameAsync), so this one-time catch-up for
-            // pre-existing data never needs to run again once it's completed successfully.
-            if (await _context.MediaItemKnownFileNames.AnyAsync(ct))
+            // Gated on an explicit completion marker, NOT "does this table have any rows yet" --
+            // caught in review (2026-09-20): the original gate was checked against a table this
+            // same method commits to in 500-item batches, so a crash/restart after batch 1
+            // landed but before the loop finished left AnyAsync() permanently true on every
+            // later startup, silently abandoning every item past the first batch forever, with
+            // no error and no retry path short of manually truncating the table. The progress
+            // marker below is persisted in the SAME transaction as each batch's own rows, so a
+            // mid-run crash resumes from exactly where it left off instead of either restarting
+            // the whole backfill or (the original bug) never finishing it at all. Every ordinary
+            // write to fileScanner data keeps the table current going forward on its own (see
+            // SyncKnownFileNamesAsync/ScraperController.EnsureKnownFileNameAsync) -- this method
+            // only ever needs to fully complete once.
+            if (await _context.AppSettings.AnyAsync(s => s.Key == BackfillKnownFileNamesCompleteKey, ct))
                 return 0;
 
+            var progressSetting = await _context.AppSettings.FindAsync([BackfillKnownFileNamesProgressKey], ct);
+            var lastId = progressSetting is not null && int.TryParse(progressSetting.Value, out var resumeFrom) ? resumeFrom : 0;
+
             int updated = 0;
-            int lastId = 0;
             while (true)
             {
                 var batch = await _context.MediaItems
@@ -3079,6 +3093,13 @@ namespace Chronicle.Services
                     await SyncKnownFileNamesAsync(item, paths, ct);
                     updated++;
                 }
+
+                var progress = await _context.AppSettings.FindAsync([BackfillKnownFileNamesProgressKey], ct);
+                if (progress is null)
+                    _context.AppSettings.Add(new AppSetting { Key = BackfillKnownFileNamesProgressKey, Value = lastId.ToString() });
+                else
+                    progress.Value = lastId.ToString();
+
                 await _context.SaveChangesAsync(ct);
 
                 // Caught live (2026-09-19): without this, the change tracker keeps every
@@ -3094,6 +3115,9 @@ namespace Chronicle.Services
                 // per-batch cost to one batch's worth, however large the library is.
                 _context.ChangeTracker.Clear();
             }
+
+            _context.AppSettings.Add(new AppSetting { Key = BackfillKnownFileNamesCompleteKey, Value = DateTime.UtcNow.ToString("O") });
+            await _context.SaveChangesAsync(ct);
 
             if (updated > 0)
                 _log.Information("BackfillKnownFileNames: populated the filename lookup table for {Count} pre-existing items", updated);
@@ -3467,17 +3491,67 @@ namespace Chronicle.Services
             // against, and the caller's own upcoming SaveChangesAsync inserts these new rows
             // together with the new MediaItem in the same round trip, EF wiring the real
             // MediaItemId via the MediaItem navigation property once it's assigned.
-            var existingRows = item.Id == 0
-                ? new List<MediaItemKnownFileName>()
-                : await _context.MediaItemKnownFileNames.Where(k => k.MediaItemId == item.Id).ToListAsync(ct);
+            List<MediaItemKnownFileName> existingRows;
+            if (item.Id == 0)
+            {
+                existingRows = [];
+            }
+            else
+            {
+                var dbRows = await _context.MediaItemKnownFileNames
+                    .Where(k => k.MediaItemId == item.Id).ToListAsync(ct);
+                // Also checks pending (not-yet-saved) Added entries for this same item id --
+                // same not-yet-saved-entries pattern PersonResolutionService's own
+                // RecordHeadshotsIfNewAsync/HasConflictingSourceIdAsync already use for this
+                // exact class of problem. Caught in review (2026-09-20): two sibling scan
+                // groups resolving to the same existing MediaItem before one shared
+                // SaveChangesAsync is a real, previously-hit race in this exact import flow
+                // (see the UserLibraries dedup comment in ImportGroupsAsync) -- a DB-only query
+                // can't see the earlier call's still-pending insert, so both calls would Add
+                // the same new (MediaItemId, FileName) row and the whole batch's
+                // SaveChangesAsync would throw on the unique index instead of just reconciling
+                // to one row.
+                var pendingRows = _context.ChangeTracker.Entries<MediaItemKnownFileName>()
+                    .Where(e => e.State == EntityState.Added && e.Entity.MediaItemId == item.Id)
+                    .Select(e => e.Entity);
+                existingRows = dbRows.Concat(pendingRows).Distinct().ToList();
+            }
 
             var existingNames = existingRows.Select(r => r.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (existingNames.SetEquals(newNames))
                 return;
 
-            _context.MediaItemKnownFileNames.RemoveRange(existingRows);
-            foreach (var name in newNames)
+            // Only ever remove rows already persisted to the DB -- a pending row from an
+            // earlier call in this same batch has Id == 0 (not yet saved) and must never be
+            // targeted by RemoveRange, which would cancel that other call's still-pending
+            // insert instead of leaving it alone.
+            _context.MediaItemKnownFileNames.RemoveRange(existingRows.Where(r => r.Id != 0));
+            foreach (var name in newNames.Where(n => !existingNames.Contains(n)))
                 _context.MediaItemKnownFileNames.Add(new MediaItemKnownFileName { MediaItem = item, FileName = name });
+        }
+
+        /// <summary>
+        /// Ensures MediaItemKnownFileNames has a row for this exact (item, fileName) pair --
+        /// additive only, never removes other rows, since this and SyncKnownFileNamesAsync's
+        /// own fileScanner-derived set are independent sources that can both legitimately be
+        /// known for the same item. Moved here from ScraperController (2026-09-21, caught in
+        /// review) -- reconciling this table is Services-layer business logic per this
+        /// project's own layer-separation rule, the same responsibility
+        /// SyncKnownFileNamesAsync already owns properly; the controller now just calls in.
+        /// </summary>
+        public async Task EnsureKnownFileNameAsync(MediaItem item, string fileName, CancellationToken ct = default)
+        {
+            var baseName = Path.GetFileName(fileName);
+            if (string.IsNullOrEmpty(baseName)) return;
+
+            // item.Id is 0 for a not-yet-saved item -- nothing to check against yet, and the
+            // caller's own upcoming SaveChangesAsync inserts this new row together with the new
+            // MediaItem in the same round trip, via the MediaItem navigation property.
+            var alreadyKnown = item.Id != 0 && await _context.MediaItemKnownFileNames.AnyAsync(
+                k => k.MediaItemId == item.Id && k.FileName == baseName, ct);
+            if (alreadyKnown) return;
+
+            _context.MediaItemKnownFileNames.Add(new MediaItemKnownFileName { MediaItem = item, FileName = baseName });
         }
 
         // ── Enrichment seeding ───────────────────────────────────────────────────

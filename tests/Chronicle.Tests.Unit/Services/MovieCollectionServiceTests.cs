@@ -730,6 +730,7 @@ public class MovieCollectionServiceTests
         services.AddScoped<IMetadataResolutionService, NoopResolutionService>();
         services.AddScoped<IMovieCollectionService, MovieCollectionService>();
         services.AddScoped<IMergeService, MergeService>();
+        services.AddSingleton(CreateNoopFileScanService());
         services.AddSingleton<IHttpClientFactory>(new StubHttpClientFactory(new StubImageHandler()));
         services.AddLogging();
         var provider = services.BuildServiceProvider();
@@ -740,6 +741,15 @@ public class MovieCollectionServiceTests
         // as the one the service's own scopes will resolve.
         var db = provider.GetRequiredService<ChronicleDbContext>();
         return (svc, db);
+    }
+
+    /// <summary>MergeService's own EnsureKnownFileNameAsync sync isn't under test via this DI path.</summary>
+    private static IFileScanService CreateNoopFileScanService()
+    {
+        var mock = new Mock<IFileScanService>();
+        mock.Setup(f => f.EnsureKnownFileNameAsync(It.IsAny<MediaItem>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        return mock.Object;
     }
 
     [Fact]
@@ -943,6 +953,7 @@ public class MovieCollectionServiceTests
         // what let that lazy resolution actually succeed in a test, the same as it does via
         // Program.cs's real DI container.
         services.AddSingleton(httpClientFactory ?? new StubHttpClientFactory(new StubImageHandler()));
+        services.AddSingleton(CreateNoopFileScanService());
         services.AddScoped<IMovieCollectionService, MovieCollectionService>();
         services.AddScoped<IMergeService, MergeService>();
         var provider = services.BuildServiceProvider();

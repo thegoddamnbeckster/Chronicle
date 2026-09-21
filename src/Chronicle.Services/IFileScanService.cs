@@ -92,10 +92,23 @@ namespace Chronicle.Services
         /// One-time data migration: populates MediaItemKnownFileNames (the indexed lookup
         /// ScraperController.SearchMovies's filename fast-path now uses) for every MediaItem
         /// that already has fileScanner.filePaths from before this table existed. Safe to call
-        /// on every startup -- a no-op once the table has any rows at all, since every ordinary
-        /// write to fileScanner data already keeps it current going forward. Returns the number
-        /// of items backfilled.
+        /// on every startup -- gated on a durable completion marker (an AppSettings row, not
+        /// "does the table have any rows"), and resumable from where it left off if interrupted
+        /// mid-run, since every ordinary write to fileScanner data already keeps the table
+        /// current going forward regardless. Returns the number of items backfilled.
         /// </summary>
         Task<int> BackfillKnownFileNamesAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// Ensures MediaItemKnownFileNames has a row for this exact (item, fileName) pair --
+        /// additive only, never removes other rows, since this and the fileScanner-derived set
+        /// SyncKnownFileNamesAsync reconciles are independent sources that can both legitimately
+        /// be known for the same item. For the "slow path" scraper fallback (an item resolved
+        /// via title/year matching or source-browsing, with no real fileScanner record at all)
+        /// -- without this, such an item would never become findable through SearchMovies's own
+        /// filename fast-path, silently falling back to a full candidate-list load on every
+        /// future scrape. Does not save -- the caller controls when to commit.
+        /// </summary>
+        Task EnsureKnownFileNameAsync(Chronicle.Core.Models.MediaItem item, string fileName, CancellationToken ct = default);
     }
 }

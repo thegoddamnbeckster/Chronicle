@@ -5,6 +5,7 @@ using Chronicle.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace Chronicle.Tests.Unit.Services;
 
@@ -654,8 +655,12 @@ file sealed class DirectScopeFactory : IServiceScopeFactory
             // (see e.g. RunAsync_UserLibraryReassignedToWinner_BeforeLoserDeleted below), and
             // that behavior now lives in MergeService.MergeLoadedItemsAsync, the single shared
             // implementation DuplicateCleanupService calls instead of its own former copy.
+            var fileScanMock = new Mock<IFileScanService>();
+            fileScanMock.Setup(f => f.EnsureKnownFileNameAsync(
+                    It.IsAny<MediaItem>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
             _mergeService = new MergeService(
-                _ctx, _noopResolution, _noopCollections,
+                _ctx, _noopResolution, _noopCollections, fileScanMock.Object,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<MergeService>.Instance);
         }
 

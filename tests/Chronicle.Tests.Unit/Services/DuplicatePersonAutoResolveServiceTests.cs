@@ -4,6 +4,7 @@ using Chronicle.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Chronicle.Tests.Unit.Services;
@@ -315,8 +316,12 @@ public class DuplicatePersonAutoResolveServiceTests : IDisposable
             public DirectServiceProvider(ChronicleDbContext ctx)
             {
                 _ctx = ctx;
+                var fileScanMock = new Mock<IFileScanService>();
+                fileScanMock.Setup(f => f.EnsureKnownFileNameAsync(
+                        It.IsAny<MediaItem>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                    .Returns(Task.CompletedTask);
                 _mergeService = new MergeService(
-                    _ctx, new NoopResolutionService(), new NoopMovieCollectionService(),
+                    _ctx, new NoopResolutionService(), new NoopMovieCollectionService(), fileScanMock.Object,
                     NullLogger<MergeService>.Instance);
             }
 

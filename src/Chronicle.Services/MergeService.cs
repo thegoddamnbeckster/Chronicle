@@ -2,6 +2,7 @@ using System.Text.Json;
 using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -11,6 +12,7 @@ public class MergeService(
     ChronicleDbContext db,
     IMetadataResolutionService resolutionService,
     IMovieCollectionService movieCollectionService,
+    IFileScanService fileScan,
     ILogger<MergeService> logger) : IMergeService
 {
     public async Task MergeAsync(int winnerId, int loserId, int? mergedByUserId, CancellationToken ct = default)
@@ -326,6 +328,17 @@ public class MergeService(
                 logger.LogWarning(ex, "Failed to merge metadata_json blobs for winner {WinnerId} / loser {LoserId}; skipping blob merge",
                     winnerId, loserId);
             }
+
+            // Caught in review (2026-09-20): grafting the loser's fileScanner partition onto
+            // the winner (above) never kept MediaItemKnownFileNames in sync -- a winner that
+            // absorbed the loser's own real filePaths this way could never be found by
+            // ScraperController.SearchMovies's filename fast-path afterward, permanently
+            // falling back to the full-candidate-list scan for every future scrape of it.
+            // Additive-only (not a full reconcile) is correct here: the graft above only ever
+            // ADDS the fileScanner key when the winner didn't already have one of its own, so
+            // there's nothing pre-existing on the winner to reconcile away.
+            foreach (var path in FileIdentityJson.ExtractFilePaths(winner.MetadataJson))
+                await fileScan.EnsureKnownFileNameAsync(winner, path, ct);
         }
 
         // ── Recompute _resolved ───────────────────────────────────────────────
@@ -399,6 +412,13 @@ public class MergeService(
         };
         db.MediaItems.Add(stub);
         await db.SaveChangesAsync(ct); // flush to get stub.Id; still inside the transaction
+
+        // Caught in review (2026-09-20): restoring the loser's own fileScanner.filePaths onto
+        // this fresh stub (above) never kept MediaItemKnownFileNames in sync either -- the
+        // restored item is genuinely findable by title/year but its own filename fast-path
+        // stays permanently cold, since BackfillKnownFileNamesAsync only ever runs once.
+        foreach (var path in FileIdentityJson.ExtractFilePaths(stub.MetadataJson))
+            await fileScan.EnsureKnownFileNameAsync(stub, path, ct);
 
         // ── Split external IDs back ───────────────────────────────────────────
         List<LoserExternalId> loserIds;

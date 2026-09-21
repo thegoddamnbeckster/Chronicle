@@ -41,17 +41,19 @@ public class ScraperController : ControllerBase
     private readonly IMediaService _mediaService;
     private readonly IMetadataEnrichmentService _enrichment;
     private readonly IMovieCollectionService _collections;
+    private readonly IFileScanService _fileScan;
     private readonly IPluginRegistry _registry;
     private readonly ILogger<ScraperController> _logger;
 
     public ScraperController(ChronicleDbContext context, IMediaService mediaService,
         IMetadataEnrichmentService enrichment, IMovieCollectionService collections,
-        IPluginRegistry registry, ILogger<ScraperController> logger)
+        IFileScanService fileScan, IPluginRegistry registry, ILogger<ScraperController> logger)
     {
         _context    = context;
         _mediaService = mediaService;
         _enrichment = enrichment;
         _collections = collections;
+        _fileScan   = fileScan;
         _registry   = registry;
         _logger     = logger;
     }
@@ -138,18 +140,35 @@ public class ScraperController : ControllerBase
                 "{Count} candidate(s) in {Ms}ms", title, year, fileName, filenameHits.Count, stepSw.ElapsedMilliseconds);
             stepSw.Restart();
 
-            var filenameMatch = filenameHits.FirstOrDefault(c =>
-                string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase));
+            var filenameCandidates = filenameHits.Where(c =>
+                string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase)).ToList();
 
             // A collection container (e.g. "John Wick Collection") is never a legitimate filename
             // match in practice, but the LIKE pre-filter above doesn't exclude containers the way
             // the bulk candidate list below does -- verify before trusting it, same safety
             // guarantee the original always-loaded-candidates version had.
-            if (filenameMatch is not null &&
-                (await _collections.GetCollectionContainerIdsAsync(_context, [filenameMatch.Id], ct)).Count > 0)
+            if (filenameCandidates.Count > 0)
             {
-                filenameMatch = null;
+                var containerIds = await _collections.GetCollectionContainerIdsAsync(
+                    _context, filenameCandidates.Select(c => c.Id).ToList(), ct);
+                if (containerIds.Count > 0)
+                    filenameCandidates = filenameCandidates.Where(c => !containerIds.Contains(c.Id)).ToList();
             }
+
+            // MediaItemKnownFileName's own doc describes two different real files sharing an
+            // exact basename in different folders as an expected, real case -- caught in review
+            // (2026-09-20): picking FirstOrDefault here had no real disambiguation among
+            // multiple hits beyond a post-hoc year check on whichever one happened to come
+            // first in unspecified id order. If the search's own year narrows multiple hits
+            // down to exactly one survivor, trust that one; if it's still ambiguous, this is
+            // genuinely too uncertain to guess and falls through to normal title+year matching
+            // below instead of silently risking the wrong movie.
+            MediaItem? filenameMatch = filenameCandidates.Count switch
+            {
+                0 => null,
+                1 => filenameCandidates[0],
+                _ => DisambiguateByYear(filenameCandidates, year, title, fileName, _logger),
+            };
 
             // A bare filename match is only trustworthy when it doesn't contradict the search's
             // own year -- confirmed live (2026-09-18): item 420944 ("Ghostbusters", correctly
@@ -262,7 +281,7 @@ public class ScraperController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
         SetScraperResolvedFile(item, request.FileName);
-        await EnsureKnownFileNameAsync(item, request.FileName, ct);
+        await _fileScan.EnsureKnownFileNameAsync(item, request.FileName, ct);
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation(
@@ -288,34 +307,6 @@ public class ScraperController : ControllerBase
             ["resolvedAt"] = DateTime.UtcNow.ToString("O"),
         };
         item.MetadataJson = root.ToJsonString();
-    }
-
-    /// <summary>
-    /// Ensures MediaItemKnownFileNames has a row for this exact (item, fileName) pair --
-    /// additive only, never removes other rows, since scraperResolvedFile and
-    /// fileScanner.filePaths are independent sources that can both legitimately be known for
-    /// the same item (FileScanService's own SyncKnownFileNamesAsync owns reconciling the
-    /// fileScanner-derived set; this only ever adds the one filename scraperResolvedFile just
-    /// recorded). Without this, an item resolved via this "slow path" fallback (no
-    /// fileScanner record at all -- see SetScraperResolvedFile's own doc) would never become
-    /// findable through SearchMovies's own filename fast-path, silently falling back to a full
-    /// candidate-list load on every future scrape -- defeating the entire point of recording
-    /// scraperResolvedFile in the first place. Does not save -- same contract as
-    /// SetScraperResolvedFile, the caller controls when to commit.
-    /// </summary>
-    private async Task EnsureKnownFileNameAsync(MediaItem item, string fileName, CancellationToken ct)
-    {
-        var baseName = System.IO.Path.GetFileName(fileName);
-        if (string.IsNullOrEmpty(baseName)) return;
-
-        // item.Id is 0 for a not-yet-saved item -- nothing to check against yet, and the
-        // caller's own upcoming SaveChangesAsync inserts this new row together with the new
-        // MediaItem in the same round trip, via the MediaItem navigation property.
-        var alreadyKnown = item.Id != 0 && await _context.MediaItemKnownFileNames.AnyAsync(
-            k => k.MediaItemId == item.Id && k.FileName == baseName, ct);
-        if (alreadyKnown) return;
-
-        _context.MediaItemKnownFileNames.Add(new MediaItemKnownFileName { MediaItem = item, FileName = baseName });
     }
 
     /// <summary>Kodi's "getdetails" step for movies: the full richness Chronicle has for this item.</summary>
@@ -1182,7 +1173,7 @@ public class ScraperController : ControllerBase
             if (!string.IsNullOrWhiteSpace(fileName))
             {
                 SetScraperResolvedFile(item, fileName);
-                await EnsureKnownFileNameAsync(item, fileName, ct);
+                await _fileScan.EnsureKnownFileNameAsync(item, fileName, ct);
                 await _context.SaveChangesAsync(ct);
             }
 
@@ -1419,6 +1410,34 @@ public class ScraperController : ControllerBase
     // of two independent copies of this exact logic.
     private static string? TryGetScannedFileName(string? metadataJson) =>
         Chronicle.Services.Scan.FileIdentityJson.GetKnownFileName(metadataJson);
+
+    /// <summary>
+    /// Narrows multiple items that all carry the exact same known filename down to one, using
+    /// the search's own year as the only disambiguating signal available at this point -- see
+    /// SearchMovies's own call site doc for why this exists (MediaItemKnownFileName's own doc
+    /// documents this exact collision as expected: two different real files sharing a basename
+    /// in different folders). A candidate whose own Year flatly contradicts the search year is
+    /// excluded outright; among what's left, only an unambiguous single survivor is trusted --
+    /// two or more remaining candidates (or zero) is genuinely too uncertain to guess, so this
+    /// returns null and the caller falls through to normal title+year matching instead.
+    /// </summary>
+    private static MediaItem? DisambiguateByYear(
+        List<MediaItem> candidates, int? year, string title, string? fileName, ILogger logger)
+    {
+        var narrowed = year.HasValue
+            ? candidates.Where(c => !c.Year.HasValue || c.Year.Value == year.Value).ToList()
+            : candidates;
+
+        if (narrowed.Count == 1)
+            return narrowed[0];
+
+        logger.LogWarning(
+            "scraper/movies/search: title={Title} year={Year} fileName={FileName} -- {Count} different items all " +
+            "carry this exact filename and year doesn't narrow it to one -- too ambiguous to trust, falling " +
+            "through to title matching instead",
+            title, year, fileName, candidates.Count);
+        return null;
+    }
 
     // Strips a trailing "(YYYY)"/"[YYYY]" year annotation before tokenizing -- year is already
     // matched separately via the caller's candidates.Year filter, and different sources
