@@ -1,21 +1,37 @@
-.root {
+/*
+ * These base rules are wrapped in :where() so they always carry zero specificity --
+ * a caller's own imgClassName/className (a plain single class, same specificity as an
+ * unwrapped rule here) must reliably win regardless of which CSS module happens to be
+ * injected into the page first. Without :where(), the placeholder's width/font-size
+ * could win or lose that tie based on unrelated import order, which is exactly what let
+ * an unsized "No poster" placeholder spill across the whole row instead of being capped
+ * to the caller's own poster box.
+ */
+:where(.root) {
   position: relative;
   width: 100%;
+  overflow: hidden;
   background: var(--bg-card);
 }
 
-.placeholder {
+:where(.placeholder) {
   width: 100%;
   min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 44px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--text-muted);
+  text-align: center;
+  line-height: 1.2;
+  padding: 6px;
+  box-sizing: border-box;
+  overflow: hidden;
+  word-break: break-word;
 }
 
-.img {
+:where(.img) {
   width: 100%;
   height: auto;
   object-fit: contain;

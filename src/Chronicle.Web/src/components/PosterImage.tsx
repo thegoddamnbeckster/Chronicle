@@ -38,8 +38,8 @@ export function PosterImage({ posterUrl, name, className, onClick, imgClassName,
   const [loaded, setLoaded] = useState(false)
 
   return (
-    <div className={`${styles.root} ${className ?? ''}`}>
-      <div className={styles.placeholder} style={{ display: loaded ? 'none' : 'flex' }}>
+    <div className={`${styles.root} ${className ?? ''} ${imgClassName ?? ''}`}>
+      <div className={`${styles.placeholder} ${imgClassName ?? ''}`} style={{ display: loaded ? 'none' : 'flex' }}>
         {placeholderContent ?? name.charAt(0)}
       </div>
       {posterUrl && (

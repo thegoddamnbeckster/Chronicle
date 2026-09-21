@@ -116,17 +116,9 @@
   flex-shrink: 0;
 }
 
-.posterPlaceholder {
-  width: 80px;
-  height: 120px;
-  background: var(--bg-secondary);
-  border-radius: 4px;
+.posterLink {
+  display: block;
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  font-size: 0.7rem;
 }
 
 .info {
@@ -135,6 +127,13 @@
   flex-direction: column;
   gap: 4px;
 }
+
+.nameLink {
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+.nameLink:hover .name { text-decoration: underline; }
 
 .name {
   margin: 0;

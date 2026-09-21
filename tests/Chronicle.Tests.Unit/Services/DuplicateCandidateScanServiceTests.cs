@@ -142,6 +142,39 @@ public class DuplicateCandidateScanServiceTests : IDisposable
         candidates.Should().BeEmpty("a pair the user already dismissed must not reappear");
     }
 
+    [Fact]
+    public async Task SameType_ConflictingSameSourceExternalId_NotFlagged()
+    {
+        // Confirmed live (2026-09-21): two different real people both named "John Warner" were
+        // flagged as duplicates purely by name. Each carries its own hardcover author id, which
+        // is definitive proof they're not the same entity -- a same-source, different-id pair
+        // outweighs the name match, the same way FileScanService's Tertiary/Quaternary tiers
+        // already let a Year conflict veto an otherwise-matching name.
+        var a = MakeItem("John Warner", _moviesType); // MediaType reused generically; type isn't what's under test here
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = a.Id, Source = "hardcover", ExternalId = "author:534516" });
+        var b = MakeItem("John Warner", _moviesType);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = b.Id, Source = "hardcover", ExternalId = "author:280264" });
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().BeEmpty("conflicting hardcover author ids prove these are two different real people");
+    }
+
+    [Fact]
+    public async Task SameType_SameExternalId_StillFlagged()
+    {
+        // A matching (not conflicting) same-source id is corroboration FOR a duplicate, not
+        // against one -- the conflict check must not accidentally suppress this case too.
+        var a = MakeItem("Michael Cheney", _moviesType);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = a.Id, Source = "hardcover", ExternalId = "author:1364021" });
+        var b = MakeItem("Michael Cheney", _moviesType);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = b.Id, Source = "hardcover", ExternalId = "author:1364021" });
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().Contain((Math.Min(a.Id, b.Id), Math.Max(a.Id, b.Id)));
+    }
+
     // ── Cross-type pass (new: catches a phantom scrape duplicate of a different type) ──────
 
     [Fact]
@@ -188,6 +221,22 @@ public class DuplicateCandidateScanServiceTests : IDisposable
         var candidates = await RunAndGetCandidatesAsync();
 
         candidates.Should().BeEmpty("both sides are independently verified real entries, not a phantom duplicate");
+    }
+
+    [Fact]
+    public async Task CrossType_ConflictingSameSourceExternalId_NotFlagged()
+    {
+        // Same protection as the same-type pass, for the cross-type case: even though one side
+        // is unverified enough to pass the IsStub/HasExternalId gate, a same-source id present
+        // on BOTH sides that disagrees is still definitive proof of two different entities.
+        var tvShow = MakeItem("Ambiguous", _tvType, 2013, isStub: false);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = tvShow.Id, Source = "tmdb", ExternalId = "tv:1" });
+        var phantomMovie = MakeItem("Ambiguous", _moviesType, 2013, isStub: true);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = phantomMovie.Id, Source = "tmdb", ExternalId = "tv:2" });
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().BeEmpty("a conflicting tmdb id on both sides proves these are different works");
     }
 
     [Fact]

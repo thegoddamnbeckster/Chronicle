@@ -55,7 +55,7 @@ describe('DuplicatesPage', () => {
     renderWithProviders(<DuplicatesPage />)
     await screen.findByText('Real Episode')
 
-    const deleteButtons = await screen.findAllByRole('button', { name: 'Delete this one' })
+    const deleteButtons = await screen.findAllByRole('button', { name: 'Delete this one from Chronicle' })
     await user.click(deleteButtons[1]) // "Phantom Episode" side
 
     await waitFor(() => expect(mockedDeleteMedia).toHaveBeenCalledWith(102))
@@ -75,7 +75,7 @@ describe('DuplicatesPage', () => {
     renderWithProviders(<DuplicatesPage />)
     await screen.findByText('Real Episode')
 
-    const deleteButtons = await screen.findAllByRole('button', { name: 'Delete this one' })
+    const deleteButtons = await screen.findAllByRole('button', { name: 'Delete this one from Chronicle' })
     await user.click(deleteButtons[0])
 
     expect(mockedDeleteMedia).not.toHaveBeenCalled()
@@ -102,13 +102,13 @@ describe('DuplicatesPage', () => {
     renderWithProviders(<DuplicatesPage />)
     await screen.findByText('Item A')
 
-    const [deleteA, deleteB] = await screen.findAllByRole('button', { name: 'Delete this one' })
+    const [deleteA, deleteB] = await screen.findAllByRole('button', { name: 'Delete this one from Chronicle' })
     await user.click(deleteA) // starts a delete for item A that never resolves yet
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Deleting…' })).toBeInTheDocument())
     // Item B's own button must still be idle -- it was never clicked, and the still-pending
     // delete for A must not bleed its "deleting" state onto B's button.
-    expect(deleteB).toHaveTextContent('Delete this one')
+    expect(deleteB).toHaveTextContent('Delete this one from Chronicle')
     expect(deleteB).not.toBeDisabled()
 
     resolveFirstDelete()

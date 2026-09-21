@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getDuplicateCandidates,
@@ -143,10 +144,14 @@ function ItemCard({
 
   return (
     <div className={styles.card}>
-      <PosterImage posterUrl={item.posterUrl} name={item.name} imgClassName={styles.poster}
-        placeholderContent="No poster" />
+      <Link to={`/media/${item.id}`} target="_blank" rel="noopener noreferrer" className={styles.posterLink}>
+        <PosterImage posterUrl={item.posterUrl} name={item.name} imgClassName={styles.poster}
+          placeholderContent="No poster" />
+      </Link>
       <div className={styles.info}>
-        <p className={styles.name}>{item.name}</p>
+        <Link to={`/media/${item.id}`} target="_blank" rel="noopener noreferrer" className={styles.nameLink}>
+          <p className={styles.name}>{item.name}</p>
+        </Link>
         {item.year && <span className={styles.year}>{item.year}</span>}
         <p className={styles.meta}>{item.mediaType} · Level {item.hierarchyLevel}</p>
         {item.overview && (
@@ -167,7 +172,7 @@ function ItemCard({
           </p>
         )}
         <button className={styles.deleteBtn} onClick={handleDelete} disabled={deleting}>
-          {deleting ? 'Deleting…' : 'Delete this one'}
+          {deleting ? 'Deleting…' : 'Delete this one from Chronicle'}
         </button>
       </div>
     </div>

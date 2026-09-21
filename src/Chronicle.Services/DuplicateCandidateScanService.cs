@@ -61,6 +61,34 @@ public sealed class DuplicateCandidateScanService(
             })
             .ToListAsync(ct);
 
+        // Per-item external IDs, keyed by MediaItemId -- lets every pass check for a same-source
+        // conflict (both sides have an id from the same provider, but the id itself differs)
+        // before flagging a name match as a duplicate. Confirmed live (2026-09-21): two
+        // different real people both named "John Warner" were flagged as duplicates purely by
+        // name -- each carries its own hardcover:author id (534516 vs 280264), which is exactly
+        // the kind of corroborating signal FileScanService.UpsertGroupItemAsync's own
+        // Tertiary/Quaternary tiers already use (there, Year) to stop a same-name match from
+        // overriding evidence the two items are provably different. A source only present on
+        // one side (or matching on both) is not a conflict -- only a same-source, different-id
+        // pair is definitive proof.
+        var externalIdsByItem = (await db.MediaExternalIds
+            .Select(e => new { e.MediaItemId, e.Source, e.ExternalId })
+            .ToListAsync(ct))
+            .GroupBy(e => e.MediaItemId)
+            .ToDictionary(g => g.Key, g => g.Select(e => (e.Source, e.ExternalId)).ToList());
+
+        bool ExternalIdsConflict(int idA, int idB)
+        {
+            if (!externalIdsByItem.TryGetValue(idA, out var a) || !externalIdsByItem.TryGetValue(idB, out var b))
+                return false;
+            foreach (var (sourceA, externalIdA) in a)
+            foreach (var (sourceB, externalIdB) in b)
+                if (string.Equals(sourceA, sourceB, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(externalIdA, externalIdB, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
+        }
+
         // Needed by AddSameParentSameNumberCandidates to tell a container level (season,
         // album, ...) apart from a leaf level (episode, track, ...) for each item's own media
         // type -- read from the DB rather than hardcoded, per this project's "no hardcoding"
@@ -111,6 +139,9 @@ public sealed class DuplicateCandidateScanService(
                     var yearI = list[i].Year;
                     var yearJ = list[j].Year;
                     if (yearI.HasValue && yearJ.HasValue && yearI != yearJ)
+                        continue;
+
+                    if (ExternalIdsConflict(list[i].Id, list[j].Id))
                         continue;
 
                     var a = Math.Min(list[i].Id, list[j].Id);
@@ -173,6 +204,9 @@ public sealed class DuplicateCandidateScanService(
                     var jUnverified = list[j].IsStub || !list[j].HasExternalId;
                     if (!iUnverified && !jUnverified)
                         continue; // both sides independently verified -- too risky to assume duplicate
+
+                    if (ExternalIdsConflict(list[i].Id, list[j].Id))
+                        continue;
 
                     var a = Math.Min(list[i].Id, list[j].Id);
                     var b = Math.Max(list[i].Id, list[j].Id);
