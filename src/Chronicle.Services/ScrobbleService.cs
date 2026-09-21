@@ -28,6 +28,23 @@ namespace Chronicle.Services
             var markedAsWatched = request.ProgressPercent >= WatchedThreshold;
             var timestamp = request.Timestamp ?? DateTime.UtcNow;
 
+            // Confirmed live (2026-09-21): a client-side reconciliation feature (Chronicle_
+            // Scraper's "reconcile from local Kodi playback") imports whatever a Kodi device's
+            // own local library says is watched, on the theory that Kodi's own state is a real
+            // signal worth trusting. It isn't always -- confirmed one single claimed watch
+            // instant covering 106 episodes across 4 completely unrelated shows (Kodi's own
+            // playcount/lastplayed apparently shared across them from some local library
+            // artifact, not real per-episode playback). No genuine single Kodi action (marking
+            // an episode, season, or whole show watched) can ever span more than one show or
+            // movie at the exact same instant, so that shape is definitive proof the claimed
+            // timestamp isn't a real, distinct watch event -- reject the "watched" claim itself
+            // (the underlying scrobble/progress event still gets recorded for audit purposes,
+            // just without corrupting the item's own watched status). Scoped to MarkedAsWatched
+            // only: a partial resume percentage has no equivalent "exact match across unrelated
+            // shows is impossible" property to lean on.
+            if (markedAsWatched && await IsCrossShowPoisonedTimestampAsync(userId, mediaItemId, timestamp, ct))
+                markedAsWatched = false;
+
             // Every scrobble (not just watched-threshold crossings) upserts the library
             // entry -- resume position needs to be current after every progress update,
             // not just once an item is finished. See UpsertLibraryStateAsync.
@@ -698,5 +715,57 @@ namespace Chronicle.Services
             ex.InnerException?.Message.Contains("UNIQUE constraint failed",
                 StringComparison.OrdinalIgnoreCase) == true
             && ex.InnerException.Message.Contains(table, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// True when some OTHER item, under a DIFFERENT root show/movie than
+        /// <paramref name="mediaItemId"/>'s own, already has a MarkedAsWatched event for this
+        /// same user at this exact same timestamp. See the "Confirmed live" comment at this
+        /// method's call site for what this catches and why it's a reliable signal. Only
+        /// checks against events already recorded, so within one batch of many poisoned
+        /// scrobbles arriving close together, the very first to be processed (before any
+        /// sibling from a different show has landed yet) can still slip through -- acceptable:
+        /// this is defense-in-depth against future corruption, not the only safeguard, and
+        /// catching all-but-possibly-one of a multi-item batch is still a large improvement.
+        /// </summary>
+        private async Task<bool> IsCrossShowPoisonedTimestampAsync(
+            int userId, int mediaItemId, DateTime timestamp, CancellationToken ct)
+        {
+            var otherItemIds = await _context.InteractionEvents
+                .Where(e => e.UserId == userId && e.MarkedAsWatched
+                         && e.Timestamp == timestamp && e.MediaItemId != mediaItemId)
+                .Select(e => e.MediaItemId)
+                .Distinct()
+                .ToListAsync(ct);
+            if (otherItemIds.Count == 0) return false;
+
+            var thisRootId = await GetRootMediaItemIdAsync(mediaItemId, ct);
+            foreach (var otherId in otherItemIds)
+                if (await GetRootMediaItemIdAsync(otherId, ct) != thisRootId)
+                    return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Walks ParentId to the root (a show/collection/artist, or the item itself when it's
+        /// already flat) -- same bounded-with-visited-guard shape as
+        /// MediaController.BuildAncestorsAsync, so a corrupt/cyclical ParentId chain can never
+        /// hang this on a hot scrobble-write path.
+        /// </summary>
+        private async Task<int> GetRootMediaItemIdAsync(int mediaItemId, CancellationToken ct)
+        {
+            var currentId = mediaItemId;
+            var visited = new HashSet<int>();
+            var guard = 0;
+            while (visited.Add(currentId) && guard++ < 10)
+            {
+                var parentId = await _context.MediaItems
+                    .Where(m => m.Id == currentId)
+                    .Select(m => m.ParentId)
+                    .FirstOrDefaultAsync(ct);
+                if (parentId is null) break;
+                currentId = parentId.Value;
+            }
+            return currentId;
+        }
     }
 }

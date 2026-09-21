@@ -111,10 +111,13 @@ public class MergeService(
         // Queried fresh rather than read off winner.ExternalIds — a caller that loaded `winner`
         // without .Include(ExternalIds) would otherwise see this as empty (no lazy-loading
         // proxies configured), falsely concluding the winner owns none of its own external IDs.
-        var winnerIdSet = (await dbContext.MediaExternalIds
+        // Kept as a raw list (not just the derived hash set below) since the fileScanner
+        // preference check further down also needs it, to parse a season/episode out of
+        // whichever external id encodes one.
+        var winnerExternalIds = await dbContext.MediaExternalIds
             .Where(e => e.MediaItemId == winnerId)
-            .Select(e => new { e.Source, e.ExternalId })
-            .ToListAsync(ct))
+            .ToListAsync(ct);
+        var winnerIdSet = winnerExternalIds
             .Select(e => $"{e.Source}:{e.ExternalId}")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -334,10 +337,16 @@ public class MergeService(
                 // miswrote the winner's own Number (11, its SEASON's number, instead of 1, its
                 // real episode number) -- once the file signal shows the winner's own data is
                 // the untrustworthy side, prefer the loser's Number too, for the same reason.
+                // FileBelongsTo (not a bare title check) also catches a SECOND, distinct
+                // incident (confirmed live 2026-09-21): TMDB and TVMAZE disagreeing on an
+                // episode's own title ("Celebrity: A La Cuisine!" vs "By Land and Sea") defeats
+                // a pure title-text match even though the file is genuinely correct -- the
+                // season/episode code embedded in both the filename and the winner's own tmdb
+                // external id is a more universal signal than title text for exactly this case.
                 if (winnerBlobs.ContainsKey("fileScanner") && loserBlobs.ContainsKey("fileScanner"))
                 {
-                    var winnerFileMatches = FileIdentityJson.FileNameMatchesTitle(FileIdentityJson.GetKnownFileName(winner.MetadataJson), winner.Name);
-                    var loserFileMatches  = FileIdentityJson.FileNameMatchesTitle(FileIdentityJson.GetKnownFileName(loser.MetadataJson), winner.Name);
+                    var winnerFileMatches = FileIdentityJson.FileBelongsTo(winner.MetadataJson, winner.Name, winnerExternalIds);
+                    var loserFileMatches  = FileIdentityJson.FileBelongsTo(loser.MetadataJson, winner.Name, winnerExternalIds);
                     if (!winnerFileMatches && loserFileMatches)
                     {
                         winnerBlobs["fileScanner"] = loserBlobs["fileScanner"];

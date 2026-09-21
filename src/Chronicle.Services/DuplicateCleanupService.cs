@@ -370,16 +370,22 @@ public sealed class DuplicateCleanupService : IScheduledTask
                     if (!itemsById.TryGetValue(loserProjection.Id, out var loser)) continue;
 
                     // Confirmed live (2026-09-21): exactly one side's own recorded file actually
-                    // matches its own title -- the other side's fileScanner data (and, in this
-                    // exact incident, its Number too -- 11, its season's number, instead of 1,
-                    // its real episode number) is stale/corrupted from an earlier scrape-matching
-                    // bug, not evidence of a genuinely different real item. When that signal is
-                    // present, a Number or Year disagreement is explained by the corruption
-                    // rather than disproving the match, so the guards below don't apply -- let
-                    // the merge proceed, and MergeService.MergeLoadedItemsAsync's own file-match
-                    // check repairs the corrupted side's fileScanner/Number from the verified one.
-                    var winnerFileMatches = FileIdentityJson.FileNameMatchesTitle(FileIdentityJson.GetKnownFileName(winner.MetadataJson), winner.Name);
-                    var loserFileMatches  = FileIdentityJson.FileNameMatchesTitle(FileIdentityJson.GetKnownFileName(loser.MetadataJson), loser.Name);
+                    // belongs to the winner's identity -- the other side's fileScanner data
+                    // (and, in this exact incident, its Number too -- 11, its season's number,
+                    // instead of 1, its real episode number) is stale/corrupted from an earlier
+                    // scrape-matching bug, not evidence of a genuinely different real item. When
+                    // that signal is present, a Number or Year disagreement is explained by the
+                    // corruption rather than disproving the match, so the guards below don't
+                    // apply -- let the merge proceed, and MergeService.MergeLoadedItemsAsync's
+                    // own file-match check repairs the corrupted side's fileScanner/Number from
+                    // the verified one. FileBelongsTo checks the LOSER's file against the
+                    // WINNER's own identity (not the loser's own, usually-absent one), and falls
+                    // back to season/episode-code matching when title text disagrees across
+                    // providers (a second, distinct incident confirmed live the same day: TMDB
+                    // and TVMAZE titled the same episode differently, and the real file on disk
+                    // followed TVMAZE's title).
+                    var winnerFileMatches = FileIdentityJson.FileBelongsTo(winner.MetadataJson, winner.Name, winner.ExternalIds);
+                    var loserFileMatches  = FileIdentityJson.FileBelongsTo(loser.MetadataJson, winner.Name, winner.ExternalIds);
                     var oneSideUnverified = winnerFileMatches != loserFileMatches;
 
                     // Guard: two DIFFERENT numbered siblings under the same parent (e.g. two

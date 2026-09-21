@@ -75,6 +75,49 @@ namespace Chronicle.Tests.Unit.Services
         // INfoPushService and the rest of the server-side NFO generation system.
 
         [Fact]
+        public async Task ScrobbleAsync_CrossShowSameTimestamp_RejectsSecondMarkedAsWatched()
+        {
+            // Confirmed live (2026-09-21): a single claimed watch instant covering episodes of
+            // 4 completely unrelated shows -- no real single Kodi action (mark episode/season/
+            // show watched) can ever span more than one show at the exact same instant.
+            var show1 = new MediaItem { Id = 501, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 502, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 503, MediaTypeId = 1, Name = "Episode A", ParentId = 501, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 504, MediaTypeId = 1, Name = "Episode B", ParentId = 502, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+            await _context.SaveChangesAsync();
+
+            var timestamp = DateTime.UtcNow;
+            var device = "Chronicle Scraper (reconciled from local Kodi playback)";
+            var first = await _service.ScrobbleAsync(1, new ScrobbleRequest(503, 100.0, timestamp, device));
+            first.MarkedAsWatched.Should().BeTrue("the first item in a batch has nothing to compare against yet");
+
+            var second = await _service.ScrobbleAsync(1, new ScrobbleRequest(504, 100.0, timestamp, device));
+            second.MarkedAsWatched.Should().BeFalse(
+                "two different shows both claiming to be watched at the exact same instant is impossible for a real single Kodi action");
+            second.Event.MarkedAsWatched.Should().BeFalse("the stored event must reflect the rejected claim, not the raw progress percent");
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_SameShowSameTimestamp_StillMarksAsWatched()
+        {
+            // A legitimate "mark whole season/show as watched" click in Kodi touches many
+            // episodes of the SAME show at the same instant -- the cross-show guard must not
+            // block this.
+            var show = new MediaItem { Id = 511, MediaTypeId = 1, Name = "Show", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 512, MediaTypeId = 1, Name = "Episode A", ParentId = 511, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 513, MediaTypeId = 1, Name = "Episode B", ParentId = 511, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show, epA, epB);
+            await _context.SaveChangesAsync();
+
+            var timestamp = DateTime.UtcNow;
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(512, 100.0, timestamp, "Kodi"));
+            var second = await _service.ScrobbleAsync(1, new ScrobbleRequest(513, 100.0, timestamp, "Kodi"));
+
+            second.MarkedAsWatched.Should().BeTrue();
+        }
+
+        [Fact]
         public async Task ScrobbleAsync_InvalidMediaId_Throws()
         {
             await FluentActions.Invoking(() => _service.ScrobbleAsync(1, new ScrobbleRequest(999, 50.0, null, null)))

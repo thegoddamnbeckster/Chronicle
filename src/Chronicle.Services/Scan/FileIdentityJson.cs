@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace Chronicle.Services.Scan
 {
@@ -178,6 +179,66 @@ namespace Chronicle.Services.Scan
             static string Normalize(string s) => new string(s.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
             var normalizedTitle = Normalize(title);
             return normalizedTitle.Length > 0 && Normalize(fileName).Contains(normalizedTitle, StringComparison.Ordinal);
+        }
+
+        private static readonly Regex SeasonEpisodeInFileNameRegex =
+            new(@"[Ss](\d{1,2})[Ee](\d{1,3})", RegexOptions.Compiled);
+
+        private static readonly Regex SeasonEpisodeInExternalIdRegex =
+            new(@"season:(\d+)/episode:(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        /// <summary>Season/episode parsed from a "SxxEyy"-style filename fragment, if present.</summary>
+        public static (int Season, int Episode)? ExtractSeasonEpisodeFromFileName(string? fileName)
+        {
+            if (string.IsNullOrEmpty(fileName)) return null;
+            var m = SeasonEpisodeInFileNameRegex.Match(fileName);
+            return m.Success ? (int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)) : null;
+        }
+
+        /// <summary>
+        /// Season/episode parsed from the first external id (of any source) that encodes one
+        /// in the "season:N/episode:M" shape this codebase's own tmdb ids already use (see
+        /// ScraperController's own extendedData.seasonNumber/episodeNumber). Other sources
+        /// (e.g. a bare tvmaze "episode:12345") don't encode this and are silently skipped.
+        /// </summary>
+        public static (int Season, int Episode)? ExtractSeasonEpisodeFromExternalIds(
+            IEnumerable<Chronicle.Core.Models.MediaExternalId> externalIds)
+        {
+            foreach (var id in externalIds)
+            {
+                var m = SeasonEpisodeInExternalIdRegex.Match(id.ExternalId ?? string.Empty);
+                if (m.Success) return (int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value));
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Whether the file recorded in <paramref name="candidateMetadataJson"/> genuinely
+        /// belongs to <paramref name="referenceItem"/>'s identity -- checked two ways: does
+        /// the file's own name contain the reference item's title (works whenever every
+        /// source agrees on the episode's title), or failing that, does the file's own
+        /// season/episode code (e.g. "S14E01") match a season/episode parsed from the
+        /// reference item's own external ids (works even when different metadata providers
+        /// give the same episode different titles -- confirmed live 2026-09-21: TMDB titled
+        /// an episode "Celebrity: A La Cuisine!", TVMAZE titled the exact same episode "By
+        /// Land and Sea", and the real file on disk followed TVMAZE's title, so a pure
+        /// title-text check found no match even though the file was genuinely correct).
+        /// Pass the SAME item as both the file source and the reference to check a side
+        /// against its own identity; pass a DIFFERENT item (e.g. the merge winner) to check
+        /// one side's file against the other side's identity, for a stub with no identity of
+        /// its own to compare against.
+        /// </summary>
+        public static bool FileBelongsTo(
+            string? candidateMetadataJson, string referenceName,
+            IEnumerable<Chronicle.Core.Models.MediaExternalId> referenceExternalIds)
+        {
+            var fileName = GetKnownFileName(candidateMetadataJson);
+            if (fileName is null) return false;
+            if (FileNameMatchesTitle(fileName, referenceName)) return true;
+
+            var fileSeasonEpisode = ExtractSeasonEpisodeFromFileName(fileName);
+            if (fileSeasonEpisode is null) return false;
+            return fileSeasonEpisode == ExtractSeasonEpisodeFromExternalIds(referenceExternalIds);
         }
     }
 }

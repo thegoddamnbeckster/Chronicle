@@ -500,6 +500,56 @@ public class DuplicateCleanupServiceTests : IDisposable
         survivor.Number.Should().Be(1, "the surviving item must end up with the real episode number, not its season's number");
     }
 
+    [Fact]
+    public async Task RunAsync_SameParentSameName_MergesWhenProvidersDisagreeOnEpisodeTitleButSeasonEpisodeCodeMatches()
+    {
+        // Confirmed live (2026-09-21): a second, distinct incident from the one above -- TMDB
+        // titled this episode "Celebrity: A La Cuisine!", TVMAZE titled the SAME episode "By
+        // Land and Sea", and the real file on disk followed TVMAZE's title. A pure title-text
+        // match against the item's own Name (TMDB's title) finds nothing on either side --
+        // winner has no file at all, and loser's file doesn't textually match "Celebrity: A La
+        // Cuisine!" -- so without a season/episode-code fallback this pair would stay stuck
+        // forever, exactly as it did in production before this test was written.
+        var season = MakeHierarchyItem("Season 14", _tvType.Id, hierarchyLevel: 1);
+
+        var enriched = new MediaItem
+        {
+            Name = "Celebrity: A La Cuisine!", MediaTypeId = _tvType.Id,
+            HierarchyLevel = 2, ParentId = season.Id, PosterUrl = "poster.jpg", Overview = "desc",
+            Number = 14,
+            MetadataJson = JsonSerializer.Serialize(new
+            {
+                fileScanner = new { filePaths = Array.Empty<string>(), folderPath = @"J:\Videos\TV\Love It or List It (2011)\Season 14" },
+            }),
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.Add(enriched);
+        await _context.SaveChangesAsync();
+        _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = enriched.Id, Source = "tmdb", ExternalId = "tv:31783/season:14/episode:1" });
+
+        var stub = new MediaItem
+        {
+            Name = "Celebrity: A La Cuisine!", MediaTypeId = _tvType.Id,
+            HierarchyLevel = 2, ParentId = season.Id,
+            Number = 1,
+            MetadataJson = JsonSerializer.Serialize(new
+            {
+                fileScanner = new { filePaths = new[] { @"D:\Video\TV\Worst Cooks in America (2010)\Season 14\Worst Cooks in America - S14E01 - By Land and Sea.mkv" } },
+            }),
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.Add(stub);
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(1, "the season/episode code embedded in the file (S14E01) matches the winner's own tmdb identity even though the titles disagree");
+        var survivor = await _context.MediaItems.SingleAsync(m => m.Id == enriched.Id);
+        Chronicle.Services.Scan.FileIdentityJson.GetKnownFileName(survivor.MetadataJson)
+            .Should().Contain("By Land and Sea", "the surviving item must end up with the real file despite the cross-provider title mismatch");
+        survivor.Number.Should().Be(1, "the surviving item must end up with the real episode number, not its season's number");
+    }
+
     // ── Pass 5: same-parent, same-Number CONTAINER auto-merge ──────────────────
 
     [Fact]
