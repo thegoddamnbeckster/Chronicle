@@ -751,6 +751,13 @@ namespace Chronicle.Services
                         UpdatedAt      = DateTime.UtcNow,
                     };
                     _context.MediaItems.Add(item);
+                    // Caught in review (2026-09-20): this direct-import path writes
+                    // fileScanner.filePaths via SerializeMetadata but, unlike
+                    // UpsertGroupItemAsync's own two write sites, never called
+                    // SyncKnownFileNamesAsync -- an item imported this way could never be found
+                    // by ScraperController.SearchMovies's filename fast-path, permanently
+                    // falling back to the full-candidate-list scan for every future scrape.
+                    await SyncKnownFileNamesAsync(item, [file.FilePath], ct);
                     pairs.Add((file, item));
                 }
 
@@ -1179,6 +1186,20 @@ namespace Chronicle.Services
             _trailingYearInTitle.Replace(title, string.Empty).Trim();
 
         /// <summary>
+        /// True only when BOTH years are known AND they disagree -- a missing year on either
+        /// side is "insufficient evidence to reject," not itself a conflict (same principle
+        /// ScraperController.SearchMovies's own filename-match guard uses). Shared by
+        /// UpsertGroupItemAsync's Tertiary (name) and Quaternary (alias) match tiers -- caught
+        /// in review (2026-09-20): the Tertiary tier's own year fix (the Ghostbusters 1984/2016
+        /// bug) was originally added as a one-off inline check that Quaternary, right below it
+        /// in the same method, never got -- and Quaternary is MORE likely to be reached now that
+        /// Tertiary correctly rejects a year-mismatched candidate instead of wrongly claiming it
+        /// itself. A shared predicate keeps both tiers -- and any future tier that needs the
+        /// same check -- from silently drifting apart on what "conflicting year" means.
+        /// </summary>
+        private static bool YearsConflict(int? a, int? b) => a.HasValue && b.HasValue && a.Value != b.Value;
+
+        /// <summary>
         /// Every normalized string worth trying when matching a scanned/parsed title against an
         /// existing item's stored Name -- literal, colon/dash punctuation swap (covers
         /// <c>"Movie - Subtitle"</c> vs <c>"Movie: Subtitle"</c>), each of those with a trailing
@@ -1329,6 +1350,12 @@ namespace Chronicle.Services
                             UpdatedAt      = DateTime.UtcNow,
                         };
                         _context.MediaItems.Add(enriched);
+                        // Caught in review (2026-09-20): this flat-scan stub creator writes
+                        // fileScanner data (via SerializeMetadata's scannedFile param) but,
+                        // unlike UpsertGroupItemAsync's own write sites, never synced
+                        // MediaItemKnownFileNames -- see ImportDirectAsync's own identical fix
+                        // for the full failure scenario.
+                        await SyncKnownFileNamesAsync(enriched, [file.FilePath], ct);
                         await _context.SaveChangesAsync(ct);
                         return enriched;
                     }
@@ -1359,6 +1386,7 @@ namespace Chronicle.Services
                 UpdatedAt      = DateTime.UtcNow,
             };
             _context.MediaItems.Add(stub);
+            await SyncKnownFileNamesAsync(stub, [file.FilePath], ct);
             await _context.SaveChangesAsync(ct);
             return stub;
         }
@@ -3022,6 +3050,56 @@ namespace Chronicle.Services
                 updated, candidates.Count);
         }
 
+        public async Task<int> BackfillKnownFileNamesAsync(CancellationToken ct = default)
+        {
+            // Gated on "does this table have ANY rows yet" rather than re-checking every item
+            // on every startup -- every ordinary write to fileScanner data already keeps this
+            // table current going forward (see SyncKnownFileNamesAsync/
+            // ScraperController.EnsureKnownFileNameAsync), so this one-time catch-up for
+            // pre-existing data never needs to run again once it's completed successfully.
+            if (await _context.MediaItemKnownFileNames.AnyAsync(ct))
+                return 0;
+
+            int updated = 0;
+            int lastId = 0;
+            while (true)
+            {
+                var batch = await _context.MediaItems
+                    .Where(m => m.Id > lastId && m.MetadataJson != null)
+                    .OrderBy(m => m.Id)
+                    .Take(500)
+                    .ToListAsync(ct);
+                if (batch.Count == 0) break;
+                lastId = batch[^1].Id;
+
+                foreach (var item in batch)
+                {
+                    var paths = FileIdentityJson.ExtractFilePaths(item.MetadataJson);
+                    if (paths.Count == 0) continue;
+                    await SyncKnownFileNamesAsync(item, paths, ct);
+                    updated++;
+                }
+                await _context.SaveChangesAsync(ct);
+
+                // Caught live (2026-09-19): without this, the change tracker keeps every
+                // batch's MediaItems (each carrying its own potentially large MetadataJson
+                // string) tracked for the rest of the ENTIRE run instead of just its own
+                // batch -- across the full library (tens of thousands of items across every
+                // media type) this made each successive query/SaveChangesAsync slower than the
+                // last as EF's own change-tracking overhead grew with the accumulated graph,
+                // to the point of appearing to hang the whole API on startup (confirmed live:
+                // the process burned real CPU briefly, then sat at 0% doing nothing for over
+                // ten minutes with no further progress and never opened its listening port).
+                // Clearing after each batch's own commit bounds tracked-entity memory and
+                // per-batch cost to one batch's worth, however large the library is.
+                _context.ChangeTracker.Clear();
+            }
+
+            if (updated > 0)
+                _log.Information("BackfillKnownFileNames: populated the filename lookup table for {Count} pre-existing items", updated);
+            return updated;
+        }
+
         /// <summary>
         /// Builds the Primary-tier lookup for <see cref="UpsertGroupItemAsync"/> once per
         /// import run: exact file path -> owning MediaItem, across every item with recorded
@@ -3238,6 +3316,17 @@ namespace Chronicle.Services
                 var groupVariants = TitleMatchVariants(group.Name ?? "");
                 existing = nameCandidates.FirstOrDefault(m =>
                 {
+                    // A year that flatly contradicts the file's own parsed year is never a real
+                    // match -- root-caused live (2026-09-20): THIS tier never checked year at
+                    // all, so "Ghostbusters (2016).mkv" kept matching the pre-existing
+                    // "Ghostbusters" (1984) item by stripped-name alone, on every single scan --
+                    // the actual, currently-active source of that item's own repeatedly-wrong
+                    // fileScanner.filePaths, not stale leftover data from before the search-side
+                    // fix. A remake/reboot sharing an exact title with a different year is
+                    // exactly the scenario year exists to disambiguate. See YearsConflict's own
+                    // doc for why this same check is also applied to the Quaternary tier below.
+                    if (YearsConflict(group.Year, m.Year))
+                        return false;
                     var dbNameClean = StripTrailingYearSuffix(m.Name ?? "");
                     return groupVariants.Any(v => string.Equals(v, dbNameClean, StringComparison.OrdinalIgnoreCase));
                 });
@@ -3262,13 +3351,23 @@ namespace Chronicle.Services
                 // check and avoids a culture-dependent casing bug (e.g. Turkish "İ"/"i") that a
                 // thread's current culture could introduce into this comparison.
                 var groupNameCleanLower = groupNameClean.ToLowerInvariant();
-                existing = await _context.MediaItemAliases
+                // Materialized (not FirstOrDefaultAsync directly) so the same YearsConflict
+                // check the Tertiary tier above uses can also be applied here, client-side --
+                // caught in review (2026-09-20): this tier originally had no year check
+                // whatsoever, the exact same gap Tertiary was just fixed for, and is MORE
+                // likely to be reached now that Tertiary correctly rejects a year-mismatched
+                // candidate instead of wrongly claiming it itself. An EF query can't call an
+                // arbitrary C# static method mid-translation, so the alias/scope filter still
+                // runs in SQL and only the year check happens after materializing -- the
+                // candidate set here (rows sharing one exact alias string) is small regardless.
+                var aliasCandidates = await _context.MediaItemAliases
                     .Where(a => a.Alias.ToLower() == groupNameCleanLower
                              && a.MediaItem!.MediaTypeId == mediaTypeId
                              && (hierarchyLevel == 0 ||
                                  (a.MediaItem.ParentId == parentId && a.MediaItem.HierarchyLevel == hierarchyLevel)))
                     .Select(a => a.MediaItem!)
-                    .FirstOrDefaultAsync(ct);
+                    .ToListAsync(ct);
+                existing = aliasCandidates.FirstOrDefault(m => !YearsConflict(group.Year, m.Year));
 
                 if (existing is not null)
                     _log.Information(
@@ -3301,6 +3400,7 @@ namespace Chronicle.Services
                         nfoPath = group.NfoPath, nfoRaw, nfoParsed,
                     }));
                 existing.MetadataJson = existingNode.ToJsonString();
+                await SyncKnownFileNamesAsync(existing, group.Files, ct);
 
                 // Keep the in-memory indices in sync with what was just written so a later
                 // group in this same import run (e.g. a sibling episode) sees this item too,
@@ -3333,6 +3433,7 @@ namespace Chronicle.Services
                 UpdatedAt = DateTime.UtcNow,
             };
             _context.MediaItems.Add(item);
+            await SyncKnownFileNamesAsync(item, group.Files, ct);
             await _context.SaveChangesAsync(ct); // need the ID for children
 
             foreach (var f in group.Files)
@@ -3341,6 +3442,42 @@ namespace Chronicle.Services
                 folderPathIndex[FolderPathKey(hierarchyLevel, group.FolderPath)] = item;
 
             return (item, true);
+        }
+
+        /// <summary>
+        /// Reconciles MediaItemKnownFileNames to match <paramref name="filePaths"/> (the SAME
+        /// array being written into fileScanner.filePaths at this call's own two call sites)
+        /// so ScraperController.SearchMovies's filename fast-path can look these up via a
+        /// plain index instead of a `LIKE '%...%'` scan over MetadataJson -- see that model's
+        /// own doc for the ~590ms-per-search cost this replaces. Base filenames only (via
+        /// Path.GetFileName) -- the fast-path lookup only ever has a bare filename to match
+        /// against, never a full path. No-ops when nothing actually changed, to avoid a
+        /// needless delete+insert on every single already-correct item during a routine
+        /// rescan (the overwhelmingly common case).
+        /// </summary>
+        private async Task SyncKnownFileNamesAsync(MediaItem item, IReadOnlyList<string> filePaths, CancellationToken ct)
+        {
+            var newNames = filePaths
+                .Select(Path.GetFileName)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .Select(n => n!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // item.Id is 0 for a not-yet-saved new item -- nothing existing to reconcile
+            // against, and the caller's own upcoming SaveChangesAsync inserts these new rows
+            // together with the new MediaItem in the same round trip, EF wiring the real
+            // MediaItemId via the MediaItem navigation property once it's assigned.
+            var existingRows = item.Id == 0
+                ? new List<MediaItemKnownFileName>()
+                : await _context.MediaItemKnownFileNames.Where(k => k.MediaItemId == item.Id).ToListAsync(ct);
+
+            var existingNames = existingRows.Select(r => r.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (existingNames.SetEquals(newNames))
+                return;
+
+            _context.MediaItemKnownFileNames.RemoveRange(existingRows);
+            foreach (var name in newNames)
+                _context.MediaItemKnownFileNames.Add(new MediaItemKnownFileName { MediaItem = item, FileName = name });
         }
 
         // ── Enrichment seeding ───────────────────────────────────────────────────

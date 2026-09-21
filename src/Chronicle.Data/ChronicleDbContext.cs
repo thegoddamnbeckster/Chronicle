@@ -81,6 +81,7 @@ namespace Chronicle.Data
         public DbSet<MediaType> MediaTypes => Set<MediaType>();
         public DbSet<MediaItem> MediaItems => Set<MediaItem>();
         public DbSet<MediaExternalId> MediaExternalIds => Set<MediaExternalId>();
+        public DbSet<MediaItemKnownFileName> MediaItemKnownFileNames => Set<MediaItemKnownFileName>();
         public DbSet<UserLibrary> UserLibraries => Set<UserLibrary>();
         public DbSet<InteractionEvent> InteractionEvents => Set<InteractionEvent>();
         public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
@@ -235,6 +236,27 @@ namespace Chronicle.Data
 
                 entity.HasOne(e => e.MediaItem)
                     .WithMany(e => e.ExternalIds)
+                    .HasForeignKey(e => e.MediaItemId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<MediaItemKnownFileName>(entity =>
+            {
+                entity.ToTable("media_item_known_file_names");
+                entity.HasKey(e => e.Id);
+                // Non-unique: two different real files can share an exact basename in
+                // different folders (see this model's own doc) -- a lookup can and does
+                // legitimately return more than one row for the same FileName.
+                entity.HasIndex(e => e.FileName);
+                entity.HasIndex(e => new { e.MediaItemId, e.FileName }).IsUnique();
+                // NOCASE -- the LIKE scan this table replaces was case-insensitive for ASCII by
+                // SQLite's own default LIKE behavior, and Kodi's own filename casing can't be
+                // relied on to match exactly; both the index above and equality lookups against
+                // this column need to preserve that same case-insensitivity.
+                entity.Property(e => e.FileName).IsRequired().UseCollation("NOCASE");
+
+                entity.HasOne(e => e.MediaItem)
+                    .WithMany(e => e.KnownFileNames)
                     .HasForeignKey(e => e.MediaItemId)
                     .OnDelete(DeleteBehavior.Cascade);
             });

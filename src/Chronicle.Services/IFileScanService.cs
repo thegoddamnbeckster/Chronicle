@@ -88,5 +88,14 @@ namespace Chronicle.Services
         /// </summary>
         Task BackfillFolderPathsAsync(CancellationToken ct = default);
 
+        /// <summary>
+        /// One-time data migration: populates MediaItemKnownFileNames (the indexed lookup
+        /// ScraperController.SearchMovies's filename fast-path now uses) for every MediaItem
+        /// that already has fileScanner.filePaths from before this table existed. Safe to call
+        /// on every startup -- a no-op once the table has any rows at all, since every ordinary
+        /// write to fileScanner data already keeps it current going forward. Returns the number
+        /// of items backfilled.
+        /// </summary>
+        Task<int> BackfillKnownFileNamesAsync(CancellationToken ct = default);
     }
 }

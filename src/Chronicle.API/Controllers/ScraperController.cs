@@ -102,27 +102,37 @@ public class ScraperController : ControllerBase
         // requested "movies" type — this only widens what counts as "already have it".
         var movieLikeTypeIds = await GetMovieLikeTypeIdsAsync(ct);
 
-        // Filename fast-path, tried FIRST and narrowed via SQL before loading anything into
-        // memory -- confirmed live (2026-09-18) that loading the FULL candidate list up front
-        // (~6,100 movie-like items, ~400MB of MetadataJson total on this library) on EVERY
-        // single search call, even when a filename match would resolve it instantly, was the
-        // dominant per-search cost -- occasionally slow enough to exceed Kodi's own client-side
-        // timeout, which cancels the request and surfaces as an EF TaskCanceledException (a 500)
-        // here. A coarse SQL LIKE narrows to only the (typically zero or one) candidates whose
-        // MetadataJson text could possibly contain this exact filename, before pulling any of
-        // them into memory -- same established pattern as FindItemByFilePathAsync's own
-        // "%fileScanner%" narrowing just above. The full candidate list (needed for
-        // FindByNormalizedTitle's own richness/subset-matching logic, which DOES need each
-        // candidate's full MetadataJson) is now only ever loaded when this fast path misses --
-        // the common case for anything already scraped once.
+        // Filename fast-path, tried FIRST and narrowed via an indexed lookup before loading
+        // anything else into memory -- confirmed live (2026-09-18) that loading the FULL
+        // candidate list up front (~6,100 movie-like items, ~400MB of MetadataJson total on
+        // this library) on EVERY single search call, even when a filename match would resolve
+        // it instantly, was the dominant per-search cost -- occasionally slow enough to exceed
+        // Kodi's own client-side timeout, which cancels the request and surfaces as an EF
+        // TaskCanceledException (a 500) here. That first fix (this narrowing) originally used a
+        // `LIKE '%filename%'` scan over MetadataJson itself -- confirmed live (2026-09-19) that
+        // this was STILL a ~590ms floor on every single call, since SQLite can never use an
+        // index for a leading-wildcard LIKE and MetadataJson holds everything about an item
+        // (cast, overview, every provider's own blob), not just its file paths. Narrowed
+        // further onto MediaItemKnownFileNames -- a small, indexed, exact-match table synced by
+        // FileScanService/EnsureKnownFileNameAsync every time an item's known file(s) change --
+        // so this is now a real index lookup, not a scan of any size. The full candidate list
+        // (needed for FindByNormalizedTitle's own richness/subset-matching logic, which DOES
+        // need each candidate's full MetadataJson) is still only ever loaded when this fast
+        // path misses -- the common case for anything already scraped once.
         MediaItem? existing = null;
         if (!string.IsNullOrWhiteSpace(fileName))
         {
-            var likePattern = "%" + fileName + "%";
-            var filenameHits = await _context.MediaItems
-                .Where(m => movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1 &&
-                            m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, likePattern))
+            var knownFileNameHitIds = await _context.MediaItemKnownFileNames
+                .Where(k => k.FileName == fileName)
+                .Select(k => k.MediaItemId)
+                .Distinct()
                 .ToListAsync(ct);
+            var filenameHits = knownFileNameHitIds.Count == 0
+                ? []
+                : await _context.MediaItems
+                    .Where(m => knownFileNameHitIds.Contains(m.Id) &&
+                                movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1)
+                    .ToListAsync(ct);
             _logger.LogInformation(
                 "scraper/movies/search: title={Title} year={Year} fileName={FileName} -- filename pre-filter: " +
                 "{Count} candidate(s) in {Ms}ms", title, year, fileName, filenameHits.Count, stepSw.ElapsedMilliseconds);
@@ -252,6 +262,7 @@ public class ScraperController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
 
         SetScraperResolvedFile(item, request.FileName);
+        await EnsureKnownFileNameAsync(item, request.FileName, ct);
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation(
@@ -277,6 +288,34 @@ public class ScraperController : ControllerBase
             ["resolvedAt"] = DateTime.UtcNow.ToString("O"),
         };
         item.MetadataJson = root.ToJsonString();
+    }
+
+    /// <summary>
+    /// Ensures MediaItemKnownFileNames has a row for this exact (item, fileName) pair --
+    /// additive only, never removes other rows, since scraperResolvedFile and
+    /// fileScanner.filePaths are independent sources that can both legitimately be known for
+    /// the same item (FileScanService's own SyncKnownFileNamesAsync owns reconciling the
+    /// fileScanner-derived set; this only ever adds the one filename scraperResolvedFile just
+    /// recorded). Without this, an item resolved via this "slow path" fallback (no
+    /// fileScanner record at all -- see SetScraperResolvedFile's own doc) would never become
+    /// findable through SearchMovies's own filename fast-path, silently falling back to a full
+    /// candidate-list load on every future scrape -- defeating the entire point of recording
+    /// scraperResolvedFile in the first place. Does not save -- same contract as
+    /// SetScraperResolvedFile, the caller controls when to commit.
+    /// </summary>
+    private async Task EnsureKnownFileNameAsync(MediaItem item, string fileName, CancellationToken ct)
+    {
+        var baseName = System.IO.Path.GetFileName(fileName);
+        if (string.IsNullOrEmpty(baseName)) return;
+
+        // item.Id is 0 for a not-yet-saved item -- nothing to check against yet, and the
+        // caller's own upcoming SaveChangesAsync inserts this new row together with the new
+        // MediaItem in the same round trip, via the MediaItem navigation property.
+        var alreadyKnown = item.Id != 0 && await _context.MediaItemKnownFileNames.AnyAsync(
+            k => k.MediaItemId == item.Id && k.FileName == baseName, ct);
+        if (alreadyKnown) return;
+
+        _context.MediaItemKnownFileNames.Add(new MediaItemKnownFileName { MediaItem = item, FileName = baseName });
     }
 
     /// <summary>Kodi's "getdetails" step for movies: the full richness Chronicle has for this item.</summary>
@@ -1143,6 +1182,7 @@ public class ScraperController : ControllerBase
             if (!string.IsNullOrWhiteSpace(fileName))
             {
                 SetScraperResolvedFile(item, fileName);
+                await EnsureKnownFileNameAsync(item, fileName, ct);
                 await _context.SaveChangesAsync(ct);
             }
 

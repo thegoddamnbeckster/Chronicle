@@ -293,6 +293,93 @@ public class FileScanServiceHierarchyTests
         Assert.Equal(100, authorItems[0].Id);
     }
 
+    /// <summary>
+    /// Caught in review (2026-09-20): the Quaternary alias tier had the identical unguarded-year
+    /// defect the Tertiary (name) tier right above it was just fixed for -- and is MORE likely
+    /// to be reached now that Tertiary correctly rejects a year-mismatched candidate instead of
+    /// wrongly claiming it itself. Simulates the exact real-world shape: a duplicate 1984
+    /// "Ghostbusters" was merged away (recording a MediaItemAlias), and a later scan of the
+    /// unrelated 2016 remake's file must NOT be silently absorbed into that alias winner.
+    /// </summary>
+    [Fact]
+    public async Task ImportGroupsAsync_AliasMatchesButYearContradicts_CreatesNewItemInsteadOfOverwriting()
+    {
+        await using var context = NewInMemoryContext();
+
+        var movieType = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        context.MediaTypes.Add(movieType);
+
+        var original = new MediaItem
+        {
+            Id = 400, MediaTypeId = 1, Name = "Ghostbusters", Year = 1984, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        context.MediaItems.Add(original);
+        context.MediaItemAliases.Add(new MediaItemAlias
+        {
+            MediaItemId = 400, Alias = "Ghostbusters", Source = "merge", CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var request = new ImportGroupsRequest(
+            [
+                new ScanGroupImport(
+                    Name: "Ghostbusters", Year: 2016, PosterPath: null,
+                    Children: [], Files: [@"F:\Videos\Movies\Ghostbusters (2016)\Ghostbusters (2016).mkv"]),
+            ],
+            MediaTypeId: 1);
+
+        await service.ImportGroupsAsync(request, userIds: [1], manageProgress: false);
+
+        var refreshedOriginal = await context.MediaItems.FindAsync(original.Id);
+        Assert.NotNull(refreshedOriginal);
+        Assert.DoesNotContain("2016", refreshedOriginal!.MetadataJson ?? "");
+
+        var allGhostbusters = await context.MediaItems.Where(m => m.MediaTypeId == 1).ToListAsync();
+        Assert.Equal(2, allGhostbusters.Count);
+        var remake = allGhostbusters.Single(m => m.Id != original.Id);
+        Assert.Equal(2016, remake.Year);
+    }
+
+    /// <summary>
+    /// Caught in review (2026-09-20): ImportDirectAsync's flat branch writes
+    /// fileScanner.filePaths (via SerializeMetadata) but, unlike UpsertGroupItemAsync's own
+    /// write sites, never synced MediaItemKnownFileNames -- an item imported this way could
+    /// never be found by ScraperController.SearchMovies's filename fast-path, permanently
+    /// falling back to a full-candidate-list scan for every future scrape of it.
+    /// </summary>
+    [Fact]
+    public async Task ImportDirectAsync_FlatImport_PopulatesKnownFileNameForTheNewItem()
+    {
+        await using var context = NewInMemoryContext();
+        var movieType = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        context.MediaTypes.Add(movieType);
+        await context.SaveChangesAsync();
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        registry.Setup(r => r.GetSidecarFormatPlugins()).Returns([]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var request = new DirectImportRequest(
+            Files: [new DirectImportFile(
+                FilePath: @"F:\Videos\Movies\Some Movie (2020)\Some Movie (2020).mkv",
+                ParsedTitle: "Some Movie", ParsedYear: 2020, SuggestedExternalId: null,
+                MediaTypeHint: "movies")],
+            MediaTypeId: 1, UserId: 1);
+
+        await service.ImportDirectAsync(request);
+
+        var item = await context.MediaItems.SingleAsync(m => m.MediaTypeId == 1);
+        var knownNames = await context.MediaItemKnownFileNames
+            .Where(k => k.MediaItemId == item.Id).Select(k => k.FileName).ToListAsync();
+        Assert.Contains("Some Movie (2020).mkv", knownNames);
+    }
+
     [Fact]
     public async Task ImportGroupsAsync_NoAliasMatch_StillCreatesNewRoot()
     {
@@ -707,6 +794,59 @@ public class FileScanServiceHierarchyTests
         var allMovies = await context.MediaItems.Where(m => m.MediaTypeId == 1).ToListAsync();
         Assert.Single(allMovies);
         Assert.Equal(existing.Id, allMovies[0].Id);
+    }
+
+    /// <summary>
+    /// Root-caused live (2026-09-20): this tier's own name-match predicate never checked year
+    /// at all, so a remake/reboot sharing an exact title with the original (Ghostbusters 1984
+    /// vs. 2016) matched by stripped-name alone -- silently overwriting the ORIGINAL item's own
+    /// fileScanner.filePaths with the REMAKE's file, on every single scan of the remake's
+    /// folder. This was the actual, currently-active source of a real live bug (Kodi downstairs
+    /// showing the 1984 cast under the 2016 entry) -- not stale leftover data from before
+    /// ScraperController.SearchMovies's own, separate year-mismatch guard (added earlier for
+    /// the read/search side; this is the write/scan side, a different code path entirely).
+    /// </summary>
+    [Fact]
+    public async Task ImportGroupsAsync_SameTitleDifferentYear_CreatesNewItemInsteadOfOverwritingTheWrongOne()
+    {
+        await using var context = NewInMemoryContext();
+        var movieType = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        context.MediaTypes.Add(movieType);
+
+        var original = new MediaItem
+        {
+            Id = 400, MediaTypeId = 1, Name = "Ghostbusters", Year = 1984, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        context.MediaItems.Add(original);
+        await context.SaveChangesAsync();
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var request = new ImportGroupsRequest(
+            [
+                new ScanGroupImport(
+                    Name: "Ghostbusters", Year: 2016, PosterPath: null,
+                    Children: [], Files: [@"F:\Videos\Movies\Ghostbusters (2016)\Ghostbusters (2016).mkv"]),
+            ],
+            MediaTypeId: 1);
+
+        await service.ImportGroupsAsync(request, userIds: [1], manageProgress: false);
+
+        // The 1984 original must be untouched -- no fileScanner data grafted onto it from the
+        // 2016 file -- and a SEPARATE new item must exist for the 2016 remake instead of the
+        // scan silently overwriting the original.
+        var refreshedOriginal = await context.MediaItems.FindAsync(original.Id);
+        Assert.NotNull(refreshedOriginal);
+        Assert.DoesNotContain("2016", refreshedOriginal!.MetadataJson ?? "");
+
+        var allGhostbusters = await context.MediaItems.Where(m => m.MediaTypeId == 1).ToListAsync();
+        Assert.Equal(2, allGhostbusters.Count);
+        var remake = allGhostbusters.Single(m => m.Id != original.Id);
+        Assert.Equal(2016, remake.Year);
+        Assert.Contains("2016", remake.MetadataJson ?? "");
     }
 
     // ── AddFromSearchAsync ───────────────────────────────────────────────────

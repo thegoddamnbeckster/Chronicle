@@ -64,5 +64,6 @@ namespace Chronicle.Core.Models
         public ICollection<MediaExternalId> ExternalIds { get; set; } = new List<MediaExternalId>();
         public ICollection<MediaItemAlias> Aliases { get; set; } = new List<MediaItemAlias>();
         public ICollection<MediaItemMerge> MergesAsWinner { get; set; } = new List<MediaItemMerge>();
+        public ICollection<MediaItemKnownFileName> KnownFileNames { get; set; } = new List<MediaItemKnownFileName>();
     }
 }

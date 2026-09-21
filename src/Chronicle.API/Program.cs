@@ -414,6 +414,12 @@ using (var scope = app.Services.CreateScope())
         var fileScanService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IFileScanService>();
         await fileScanService.BackfillFolderPathsAsync();
 
+        // Backfill the indexed filename-lookup table for items scraped before it existed --
+        // see ScraperController.SearchMovies's own doc for the ~590ms-per-search LIKE-scan
+        // cost this table replaces. A no-op after the first successful run (see the method's
+        // own doc).
+        await fileScanService.BackfillKnownFileNamesAsync();
+
         // NOTE: media_enrichment seeding from external IDs (SeedEnrichmentRowsFromExternalIdsAsync)
         // deliberately does NOT run here. Its per-plugin media-type filter depends on
         // IPluginRegistry.GetMetadataProviderEntries(), but PluginHostService (an IHostedService)

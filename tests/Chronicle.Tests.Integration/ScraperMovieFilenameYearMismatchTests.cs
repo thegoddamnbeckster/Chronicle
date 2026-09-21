@@ -67,6 +67,13 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
         };
         db.MediaItems.Add(item);
         db.SaveChanges();
+        // Real writers (FileScanService.SyncKnownFileNamesAsync) keep this indexed table in
+        // sync with fileScanner.filePaths automatically -- this direct-seed helper bypasses
+        // that writer entirely, so it must populate the same row itself, or SearchMovies's own
+        // filename fast-path (which now reads this table, not a MetadataJson scan -- see that
+        // endpoint's own 2026-09-19 doc) would never find these seeded items at all.
+        db.MediaItemKnownFileNames.Add(new MediaItemKnownFileName { MediaItemId = item.Id, FileName = fileName });
+        db.SaveChanges();
         return item.Id;
     }
 
@@ -123,6 +130,70 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
         resp.EnsureSuccessStatusCode();
         var body = await resp.Content.ReadAsStringAsync();
         body.Should().Contain($"\"id\":{itemId}");
+    }
+
+    /// <summary>
+    /// Root-caused live (2026-09-19): the filename fast-path was rewritten from a
+    /// `LIKE '%filename%'` scan over MetadataJson (a ~590ms floor on EVERY search, scanning
+    /// ~389MB of JSON with no possible index) to an exact, indexed lookup against
+    /// MediaItemKnownFileNames instead. Every item scraped BEFORE this table existed has
+    /// fileScanner.filePaths in its MetadataJson but no corresponding row there yet --
+    /// IFileScanService.BackfillKnownFileNamesAsync is what catches those up. Pins that the
+    /// fast path actually depends on the new table (not a fallback to the old scan) and that
+    /// the backfill is what makes a pre-existing item findable through it.
+    /// </summary>
+    [Fact]
+    public async Task MovieSearch_ItemHasFilePathsButNoKnownFileNameRowYet_BackfillMakesItFindable()
+    {
+        var movieTypeId = EnsureMovieType();
+        const string title = "Scraper Backfill Probe";
+        const string fileName = "Scraper Backfill Probe (2010).mkv";
+        int itemId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var metadata = new JsonObject
+            {
+                ["fileScanner"] = new JsonObject
+                {
+                    ["filePaths"] = new JsonArray($"F:\\Videos\\Movies\\{title}\\{fileName}"),
+                },
+            };
+            var item = new MediaItem
+            {
+                MediaTypeId = movieTypeId, Name = title, Year = 2010,
+                HierarchyLevel = 0,
+                NormalizedName = MediaItemNormalizer.NormalizeName(title),
+                MetadataJson = metadata.ToJsonString(),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(item);
+            db.SaveChanges();
+            itemId = item.Id;
+            // Deliberately NOT seeding MediaItemKnownFileNames here -- simulates data that
+            // predates this table.
+        }
+
+        var client = await AuthClientAsync();
+
+        // Before the backfill runs, the fast path has nothing to find this item by.
+        var beforeResp = await client.GetAsync(
+            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(title)}&year=2010&fileName={Uri.EscapeDataString(fileName)}");
+        beforeResp.EnsureSuccessStatusCode();
+        (await beforeResp.Content.ReadAsStringAsync()).Should().NotContain($"\"id\":{itemId}",
+            "nothing has populated MediaItemKnownFileNames for this item yet");
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var fileScanService = scope.ServiceProvider.GetRequiredService<Chronicle.Services.IFileScanService>();
+            await fileScanService.BackfillKnownFileNamesAsync();
+        }
+
+        var afterResp = await client.GetAsync(
+            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(title)}&year=2010&fileName={Uri.EscapeDataString(fileName)}");
+        afterResp.EnsureSuccessStatusCode();
+        (await afterResp.Content.ReadAsStringAsync()).Should().Contain($"\"id\":{itemId}",
+            "the backfill should have populated MediaItemKnownFileNames from the item's existing fileScanner.filePaths");
     }
 
     [Fact]
