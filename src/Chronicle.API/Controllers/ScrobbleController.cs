@@ -249,6 +249,21 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<List<ActiveSessionDto>>.Ok(dtos));
         }
 
+        /// <summary>
+        /// Admin-only data-repair pass for historical cross-show timestamp corruption -- see
+        /// IScrobbleService.CleanupCrossShowCorruptionAsync's own doc. dryRun=true (the
+        /// default) reports what would be affected without changing anything; pass
+        /// dryRun=false to actually delete the poisoned events and rebuild affected
+        /// UserLibrary rows.
+        /// </summary>
+        [HttpPost("admin/cleanup-cross-show-corruption")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> CleanupCrossShowCorruption([FromQuery] bool dryRun = true, CancellationToken ct = default)
+        {
+            var result = await _scrobbleService.CleanupCrossShowCorruptionAsync(dryRun, ct);
+            return Ok(ApiResponse<CrossShowCorruptionCleanupResult>.Ok(result));
+        }
+
         private int GetUserId() =>
             int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     }

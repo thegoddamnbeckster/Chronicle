@@ -767,5 +767,107 @@ namespace Chronicle.Services
             }
             return currentId;
         }
+
+        public async Task<CrossShowCorruptionCleanupResult> CleanupCrossShowCorruptionAsync(bool dryRun, CancellationToken ct = default)
+        {
+            var watchedEvents = await _context.InteractionEvents
+                .Where(e => e.MarkedAsWatched)
+                .Select(e => new { e.Id, e.UserId, e.MediaItemId, e.Timestamp })
+                .ToListAsync(ct);
+
+            // Root id cache shared across the whole pass -- an item referenced by many
+            // events/groups only ever has its ParentId chain walked once.
+            var rootCache = new Dictionary<int, int>();
+            async Task<int> RootOfAsync(int mediaItemId)
+            {
+                if (rootCache.TryGetValue(mediaItemId, out var cached)) return cached;
+                var root = await GetRootMediaItemIdAsync(mediaItemId, ct);
+                rootCache[mediaItemId] = root;
+                return root;
+            }
+
+            var poisonedEventIds = new HashSet<int>();
+            var affectedItems = new HashSet<(int UserId, int MediaItemId)>();
+
+            foreach (var group in watchedEvents.GroupBy(e => (e.UserId, e.Timestamp)))
+            {
+                var distinctItemIds = group.Select(e => e.MediaItemId).Distinct().ToList();
+                if (distinctItemIds.Count < 2) continue;
+
+                var roots = new HashSet<int>();
+                foreach (var itemId in distinctItemIds)
+                    roots.Add(await RootOfAsync(itemId));
+                if (roots.Count < 2) continue; // same show legitimately sharing a timestamp -- not poisoned
+
+                foreach (var e in group)
+                {
+                    poisonedEventIds.Add(e.Id);
+                    affectedItems.Add((e.UserId, e.MediaItemId));
+                }
+            }
+
+            if (dryRun || poisonedEventIds.Count == 0)
+            {
+                return new CrossShowCorruptionCleanupResult(
+                    DryRun: dryRun,
+                    PoisonedEventCount: poisonedEventIds.Count,
+                    AffectedUserCount: affectedItems.Select(a => a.UserId).Distinct().Count(),
+                    AffectedMediaItemCount: affectedItems.Count);
+            }
+
+            var poisonedRows = await _context.InteractionEvents
+                .Where(e => poisonedEventIds.Contains(e.Id))
+                .ToListAsync(ct);
+            _context.InteractionEvents.RemoveRange(poisonedRows);
+            await _context.SaveChangesAsync(ct);
+
+            // Rebuild each affected item's UserLibrary row from scratch, by replaying its own
+            // surviving event history (in order) through the exact same upsert logic a live
+            // scrobble uses -- the result is identical to what it would be had the poisoned
+            // events never landed, rather than a guess at what "should" be there.
+            foreach (var (userId, mediaItemId) in affectedItems)
+            {
+                var existing = await _context.UserLibraries
+                    .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+
+                var remaining = await _context.InteractionEvents
+                    .Where(e => e.UserId == userId && e.MediaItemId == mediaItemId)
+                    .OrderBy(e => e.Timestamp)
+                    .ToListAsync(ct);
+
+                if (remaining.Count == 0)
+                {
+                    // Nothing genuine ever happened for this item -- reset in place rather
+                    // than remove library membership entirely, matching the manual precedent
+                    // (School Spirits/Spider-Noir cleanup, 2026-09-06).
+                    if (existing != null)
+                    {
+                        existing.Status = LibraryStatus.Unwatched;
+                        existing.StartedAt = null;
+                        existing.CompletedAt = null;
+                        existing.ResumePositionPercent = null;
+                        existing.ResumeUpdatedAt = null;
+                        existing.LastKnownProgressPercent = null;
+                        existing.LastKnownProgressAt = null;
+                        existing.UpdatedAt = DateTime.UtcNow;
+                    }
+                    continue;
+                }
+
+                if (existing != null)
+                    _context.UserLibraries.Remove(existing);
+                await _context.SaveChangesAsync(ct);
+
+                foreach (var e in remaining)
+                    await UpsertLibraryStateAsync(userId, mediaItemId, e.ProgressPercent, e.MarkedAsWatched, e.Timestamp, ct);
+            }
+            await _context.SaveChangesAsync(ct);
+
+            return new CrossShowCorruptionCleanupResult(
+                DryRun: false,
+                PoisonedEventCount: poisonedEventIds.Count,
+                AffectedUserCount: affectedItems.Select(a => a.UserId).Distinct().Count(),
+                AffectedMediaItemCount: affectedItems.Count);
+        }
     }
 }

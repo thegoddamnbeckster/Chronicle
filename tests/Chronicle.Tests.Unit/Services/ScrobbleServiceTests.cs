@@ -841,6 +841,123 @@ namespace Chronicle.Tests.Unit.Services
             active[0].PosterUrl.Should().BeNull();
         }
 
+        // ── CleanupCrossShowCorruptionAsync: repairs history predating the live guard ──
+
+        [Fact]
+        public async Task CleanupCrossShowCorruptionAsync_DryRun_ReportsWithoutChangingAnything()
+        {
+            var show1 = new MediaItem { Id = 601, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 602, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 603, MediaTypeId = 1, Name = "Episode A", ParentId = 601, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 604, MediaTypeId = 1, Name = "Episode B", ParentId = 602, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+
+            var timestamp = DateTime.UtcNow;
+            // Inserted directly, bypassing ScrobbleAsync's own live guard -- simulates
+            // corruption recorded BEFORE that guard existed, which is exactly what this
+            // cleanup pass exists to repair.
+            _context.InteractionEvents.AddRange(
+                new InteractionEvent { UserId = 1, MediaItemId = 603, Timestamp = timestamp, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = timestamp },
+                new InteractionEvent { UserId = 1, MediaItemId = 604, Timestamp = timestamp, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = timestamp });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.CleanupCrossShowCorruptionAsync(dryRun: true);
+
+            result.DryRun.Should().BeTrue();
+            result.PoisonedEventCount.Should().Be(2);
+            result.AffectedUserCount.Should().Be(1);
+            result.AffectedMediaItemCount.Should().Be(2);
+            (await _context.InteractionEvents.CountAsync()).Should().Be(2, "a dry run must not delete anything");
+        }
+
+        [Fact]
+        public async Task CleanupCrossShowCorruptionAsync_DeletesPoisonedEventsAndResetsLibraryToUnwatched()
+        {
+            var show1 = new MediaItem { Id = 611, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 612, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 613, MediaTypeId = 1, Name = "Episode A", ParentId = 611, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 614, MediaTypeId = 1, Name = "Episode B", ParentId = 612, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+
+            var timestamp = DateTime.UtcNow;
+            _context.InteractionEvents.AddRange(
+                new InteractionEvent { UserId = 1, MediaItemId = 613, Timestamp = timestamp, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = timestamp },
+                new InteractionEvent { UserId = 1, MediaItemId = 614, Timestamp = timestamp, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = timestamp });
+            // The corrupted UserLibrary state that resulted from those two fabricated events --
+            // this is what the manual School Spirits/Spider-Noir cleanup reset by hand.
+            _context.UserLibraries.AddRange(
+                new UserLibrary { UserId = 1, MediaItemId = 613, Status = LibraryStatus.Completed, CompletedAt = timestamp, AddedAt = timestamp, UpdatedAt = timestamp },
+                new UserLibrary { UserId = 1, MediaItemId = 614, Status = LibraryStatus.Completed, CompletedAt = timestamp, AddedAt = timestamp, UpdatedAt = timestamp });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.CleanupCrossShowCorruptionAsync(dryRun: false);
+
+            result.DryRun.Should().BeFalse();
+            result.PoisonedEventCount.Should().Be(2);
+            (await _context.InteractionEvents.CountAsync()).Should().Be(0, "both fabricated events must be deleted");
+
+            var libA = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 613);
+            libA.Status.Should().Be(LibraryStatus.Unwatched);
+            libA.CompletedAt.Should().BeNull();
+
+            var libB = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 614);
+            libB.Status.Should().Be(LibraryStatus.Unwatched);
+            libB.CompletedAt.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task CleanupCrossShowCorruptionAsync_KeepsGenuineEventAfterRemovingThePoisonedOne()
+        {
+            // Mirrors the real Spider-Noir fix: one item has a genuine, earlier, non-watched
+            // scrobble alongside the later fabricated cross-show "watched" one. Deleting only
+            // the poisoned event must leave the genuine progress intact via a replay, not wipe
+            // the item back to a blank slate.
+            var show1 = new MediaItem { Id = 621, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 622, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 623, MediaTypeId = 1, Name = "Episode A", ParentId = 621, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 624, MediaTypeId = 1, Name = "Episode B", ParentId = 622, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+
+            var genuineTime = DateTime.UtcNow.AddDays(-30);
+            var poisonedTime = DateTime.UtcNow;
+            _context.InteractionEvents.AddRange(
+                new InteractionEvent { UserId = 1, MediaItemId = 623, Timestamp = genuineTime, ProgressPercent = 43.79, MarkedAsWatched = false, CreatedAt = genuineTime },
+                new InteractionEvent { UserId = 1, MediaItemId = 623, Timestamp = poisonedTime, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = poisonedTime },
+                new InteractionEvent { UserId = 1, MediaItemId = 624, Timestamp = poisonedTime, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = poisonedTime });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.CleanupCrossShowCorruptionAsync(dryRun: false);
+
+            result.PoisonedEventCount.Should().Be(2, "only the two same-instant cross-show events are poisoned, not the earlier genuine one");
+            (await _context.InteractionEvents.CountAsync(e => e.MediaItemId == 623)).Should().Be(1, "the genuine earlier event must survive");
+
+            var libA = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 623);
+            libA.Status.Should().Be(LibraryStatus.Watching, "the surviving genuine 43.79% event should leave this item Watching, not Unwatched or falsely Completed");
+            libA.LastKnownProgressPercent.Should().Be(43.79);
+        }
+
+        [Fact]
+        public async Task CleanupCrossShowCorruptionAsync_SameShowSharedTimestamp_NeverTouched()
+        {
+            // A legitimate "mark whole season as watched" batch -- must never be treated as
+            // corruption just because it shares a timestamp across multiple items.
+            var show = new MediaItem { Id = 631, MediaTypeId = 1, Name = "Show", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 632, MediaTypeId = 1, Name = "Episode A", ParentId = 631, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 633, MediaTypeId = 1, Name = "Episode B", ParentId = 631, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show, epA, epB);
+
+            var timestamp = DateTime.UtcNow;
+            _context.InteractionEvents.AddRange(
+                new InteractionEvent { UserId = 1, MediaItemId = 632, Timestamp = timestamp, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = timestamp },
+                new InteractionEvent { UserId = 1, MediaItemId = 633, Timestamp = timestamp, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = timestamp });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.CleanupCrossShowCorruptionAsync(dryRun: false);
+
+            result.PoisonedEventCount.Should().Be(0);
+            (await _context.InteractionEvents.CountAsync()).Should().Be(2);
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

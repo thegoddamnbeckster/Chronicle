@@ -184,5 +184,26 @@ namespace Chronicle.Services
         /// staleness (no event within the window, i.e. playback actually stopped) does.
         /// </summary>
         Task<IReadOnlyList<ActiveSession>> GetActiveSessionsAsync(int userId, CancellationToken ct = default);
+
+        /// <summary>
+        /// One-off/repeatable data-repair pass for historical data corrupted by the same
+        /// cross-show timestamp collision <see cref="ScrobbleAsync"/> now guards against at
+        /// ingestion time (see its own "IsCrossShowPoisonedTimestampAsync" check) -- events
+        /// recorded BEFORE that guard existed are untouched by it. Deletes every
+        /// MarkedAsWatched event that shares its user+timestamp with another MarkedAsWatched
+        /// event under a genuinely different root show/movie, then rebuilds each affected
+        /// item's UserLibrary row by replaying its own surviving event history through the
+        /// same UpsertLibraryStateAsync logic a live scrobble uses -- so the recomputed state
+        /// is identical to what it would be had the poisoned events never landed. dryRun
+        /// reports what WOULD be affected without changing anything.
+        /// </summary>
+        Task<CrossShowCorruptionCleanupResult> CleanupCrossShowCorruptionAsync(bool dryRun, CancellationToken ct = default);
     }
+
+    public record CrossShowCorruptionCleanupResult(
+        bool DryRun,
+        int PoisonedEventCount,
+        int AffectedUserCount,
+        int AffectedMediaItemCount
+    );
 }
