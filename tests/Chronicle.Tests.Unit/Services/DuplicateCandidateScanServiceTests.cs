@@ -114,6 +114,38 @@ public class DuplicateCandidateScanServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SameType_DifferentEpisodeNumbersSameTitle_NotFlagged()
+    {
+        // Root-caused live (2026-09-22): reality-TV episodes recur under a generic title
+        // ("Evictions & HOH", "POV") across a whole season, often with no season-container
+        // level in between (flat show->episode), so a shared title alone put every one of
+        // them in the same (MediaTypeId, HierarchyLevel, ParentId) group. Two genuinely
+        // different episodes of the same show must not be flagged just because they share
+        // that recurring title.
+        var show = MakeItem("Big Brother", _tvType);
+        var a = MakeItem("Evictions & HOH", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 12);
+        var b = MakeItem("Evictions & HOH", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 20);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().BeEmpty("different episode numbers mean genuinely different episodes, even with the same recurring title");
+    }
+
+    [Fact]
+    public async Task SameType_OneSideMissingNumber_StillFlagged()
+    {
+        // Missing Number on either side is "not enough information to rule it out", the same
+        // treatment the pre-existing Year check gets.
+        var show = MakeItem("Big Brother", _tvType);
+        var a = MakeItem("Evictions & HOH", _tvType, hierarchyLevel: 1, parentId: show.Id, number: 12);
+        var b = MakeItem("Evictions & HOH", _tvType, hierarchyLevel: 1, parentId: show.Id, number: null);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().Contain((Math.Min(a.Id, b.Id), Math.Max(a.Id, b.Id)));
+    }
+
+    [Fact]
     public async Task SameType_DifferentParent_NotFlagged()
     {
         var show = MakeItem("Some Show", _tvType);

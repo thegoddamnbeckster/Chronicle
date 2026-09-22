@@ -141,6 +141,19 @@ public sealed class DuplicateCandidateScanService(
                     if (yearI.HasValue && yearJ.HasValue && yearI != yearJ)
                         continue;
 
+                    // If both items have a known Number (season/episode index within their
+                    // shared parent) and the numbers differ, they are different episodes that
+                    // merely share a recurring generic title (e.g. reality-TV episodes all
+                    // titled "Evictions & HOH" or "POV") — not duplicates. Confirmed live
+                    // (2026-09-22): flat show→episode hierarchies with no season container
+                    // (common for reality TV) put every episode of a show in the same
+                    // (MediaTypeId, HierarchyLevel, ParentId) group, so a shared title alone
+                    // was enough to flag genuinely different episodes.
+                    var numberI = list[i].Number;
+                    var numberJ = list[j].Number;
+                    if (numberI.HasValue && numberJ.HasValue && numberI != numberJ)
+                        continue;
+
                     if (ExternalIdsConflict(list[i].Id, list[j].Id))
                         continue;
 
