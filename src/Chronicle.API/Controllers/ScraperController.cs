@@ -124,36 +124,11 @@ public class ScraperController : ControllerBase
         MediaItem? existing = null;
         if (!string.IsNullOrWhiteSpace(fileName))
         {
-            var knownFileNameHitIds = await _context.MediaItemKnownFileNames
-                .Where(k => k.FileName == fileName)
-                .Select(k => k.MediaItemId)
-                .Distinct()
-                .ToListAsync(ct);
-            var filenameHits = knownFileNameHitIds.Count == 0
-                ? []
-                : await _context.MediaItems
-                    .Where(m => knownFileNameHitIds.Contains(m.Id) &&
-                                movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1)
-                    .ToListAsync(ct);
+            var filenameCandidates = await FindExactFileNameMatchesAsync(fileName, movieLikeTypeIds, ct);
             _logger.LogInformation(
                 "scraper/movies/search: title={Title} year={Year} fileName={FileName} -- filename pre-filter: " +
-                "{Count} candidate(s) in {Ms}ms", title, year, fileName, filenameHits.Count, stepSw.ElapsedMilliseconds);
+                "{Count} candidate(s) in {Ms}ms", title, year, fileName, filenameCandidates.Count, stepSw.ElapsedMilliseconds);
             stepSw.Restart();
-
-            var filenameCandidates = filenameHits.Where(c =>
-                string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase)).ToList();
-
-            // A collection container (e.g. "John Wick Collection") is never a legitimate filename
-            // match in practice, but the LIKE pre-filter above doesn't exclude containers the way
-            // the bulk candidate list below does -- verify before trusting it, same safety
-            // guarantee the original always-loaded-candidates version had.
-            if (filenameCandidates.Count > 0)
-            {
-                var containerIds = await _collections.GetCollectionContainerIdsAsync(
-                    _context, filenameCandidates.Select(c => c.Id).ToList(), ct);
-                if (containerIds.Count > 0)
-                    filenameCandidates = filenameCandidates.Where(c => !containerIds.Contains(c.Id)).ToList();
-            }
 
             // MediaItemKnownFileName's own doc describes two different real files sharing an
             // exact basename in different folders as an expected, real case -- caught in review
@@ -321,6 +296,69 @@ public class ScraperController : ControllerBase
     }
 
     /// <summary>
+    /// GET /api/v1/scraper/movies/details-by-file?fileName=... -- the same details
+    /// GetMovieDetails returns, but resolved purely from the exact video file's own basename
+    /// (fileName), never a MediaItemId. Read-only: unlike /movies/search, this never creates
+    /// anything and never falls back to title/year matching -- Kodi's own file path is a
+    /// definitive, unambiguous identity for whatever's already in the library, so a caller
+    /// walking its FULL local inventory (Chronicle_Scraper's own full-library sync-check, run
+    /// after every VideoLibrary scan finishes) can resolve every item this way without ever
+    /// needing to know its Chronicle id up front. 404 when nothing matches, OR when the exact
+    /// filename is genuinely ambiguous (shared by more than one real item, with no year here to
+    /// disambiguate it the way /movies/search can) -- a caller with no Chronicle id to fall
+    /// back on has nothing safer to do than skip that file, never guess.
+    ///
+    /// year is optional but strongly recommended by full_sync_check.py, which always has it
+    /// (Kodi's own VideoLibrary.GetMovies already returns each item's year at no extra cost).
+    /// Caught in review (2026-09-22): this endpoint's whole reason to exist is repairing the
+    /// exact class of bug a STALE MediaItemKnownFileNames/fileScanner record causes (the
+    /// original "Ghostbusters" incident -- see SearchMovies' own doc), yet unlike SearchMovies
+    /// it had no cross-check against that same stale-record shape at all. Without year, a
+    /// single exact-filename match is trusted outright; if Chronicle's own record for that
+    /// filename is itself stale (points at the wrong item), this endpoint would hand back that
+    /// wrong item's data and full_sync_check.py would push it onto a Kodi movie that wasn't
+    /// broken -- the safety net actively causing the corruption it exists to fix. When year is
+    /// supplied and the matched item's own Year is known and disagrees, this is treated as an
+    /// unresolved match (404), the same "don't trust a filename that contradicts the caller's
+    /// own year" rule SearchMovies already uses.
+    /// </summary>
+    [HttpGet("movies/details-by-file")]
+    public async Task<IActionResult> GetMovieDetailsByFile(
+        [FromQuery] string? fileName, [FromQuery] int? year, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return BadRequest(ApiResponse<object>.Fail("FILENAME_REQUIRED", "fileName is required."));
+
+        var movieLikeTypeIds = await GetMovieLikeTypeIdsAsync(ct);
+        var exactMatches = await FindExactFileNameMatchesAsync(fileName, movieLikeTypeIds, ct);
+
+        if (exactMatches.Count == 1 && year.HasValue && exactMatches[0].Year.HasValue &&
+            exactMatches[0].Year!.Value != year.Value)
+        {
+            _logger.LogWarning(
+                "scraper/movies/details-by-file: fileName={FileName} -- item {ItemId} has this exact " +
+                "filename recorded but its own Year ({ExistingYear}) contradicts the caller's year " +
+                "({CallerYear}) -- treating as unresolved rather than trusting a possibly-stale record",
+                fileName, exactMatches[0].Id, exactMatches[0].Year, year);
+            exactMatches = [];
+        }
+
+        if (exactMatches.Count != 1)
+        {
+            _logger.LogInformation(
+                "scraper/movies/details-by-file: fileName={FileName} -- {Result}, nothing to resolve",
+                fileName, exactMatches.Count == 0 ? "no match" : $"{exactMatches.Count} ambiguous matches");
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"No unambiguous match for {fileName}."));
+        }
+
+        var dto = await BuildMovieDetailsDtoAsync(exactMatches[0].Id, ct, includeCastAndCollection: false);
+        if (dto is null)
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {exactMatches[0].Id} not found."));
+
+        return Ok(ApiResponse<ScraperMovieDetailsDto>.Ok(dto));
+    }
+
+    /// <summary>
     /// Builds one collection's ScraperCollectionDto from its own container MediaItem --
     /// factored out of BuildMovieDetailsDtoAsync (2026-09-12) so the same fallback-poster logic
     /// backs both an individual movie's embedded "collection" field AND
@@ -433,7 +471,16 @@ public class ScraperController : ControllerBase
     /// bytes, for the addon's NFO-rebuild flow) so collection/artwork resolution isn't
     /// duplicated between the two. Null if the item doesn't exist.
     /// </summary>
-    private async Task<ScraperMovieDetailsDto?> BuildMovieDetailsDtoAsync(int id, CancellationToken ct)
+    /// <summary>
+    /// includeCastAndCollection=false skips ResolveCastThumbnailsAsync's own extra DB
+    /// round-trip and the collection container build -- both real per-call cost, both fields
+    /// GetMovieDetailsByFile's only caller (Chronicle_Scraper's full_sync_check.py) never reads
+    /// at all, since it only diffs title/year/overview/tagline/mpaa/premiered/genre/director/
+    /// externalIds/the poster's own URL. GetMovieDetails (the real getdetails() scrape path)
+    /// still gets both, unchanged.
+    /// </summary>
+    private async Task<ScraperMovieDetailsDto?> BuildMovieDetailsDtoAsync(
+        int id, CancellationToken ct, bool includeCastAndCollection = true)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var stepSw = System.Diagnostics.Stopwatch.StartNew();
@@ -448,7 +495,7 @@ public class ScraperController : ControllerBase
         stepSw.Restart();
 
         ScraperCollectionDto? collection = null;
-        if (item.ParentId.HasValue)
+        if (includeCastAndCollection && item.ParentId.HasValue)
         {
             var parent = await _context.MediaItems.FindAsync([item.ParentId.Value], ct);
             if (parent is not null)
@@ -470,7 +517,8 @@ public class ScraperController : ControllerBase
         stepSw.Restart();
 
         var dto = BuildMovieDetails(item, collection, lib);
-        dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
+        if (includeCastAndCollection)
+            dto = dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
         var castMs = stepSw.ElapsedMilliseconds;
 
         var artworkSummary = dto.Artwork is null
@@ -1108,10 +1156,90 @@ public class ScraperController : ControllerBase
         return Ok(ApiResponse<ScraperEpisodeDetailsDto>.Ok(dto));
     }
 
+    /// <summary>
+    /// GET /api/v1/scraper/tv/episode-details-by-file?fileName=... -- same shape as
+    /// /tv/episode-details, resolved purely from the exact video file's own basename. Read-only,
+    /// same reasoning as /movies/details-by-file: never creates anything, 404s on no match or
+    /// genuine ambiguity, meant for Chronicle_Scraper's own full-library sync-check to resolve
+    /// every episode Kodi has by file path alone, with no Chronicle id required up front.
+    ///
+    /// episode (and optionally season) are the episode-side equivalent of that endpoint's own
+    /// year cross-check -- see its doc for the full reasoning (a stale MediaItemKnownFileNames
+    /// record must not be trusted outright, since this feeds an unsupervised correction, not an
+    /// interactive scrape a human can later notice went wrong). When episode is supplied and the
+    /// matched item's own Number disagrees, or season is supplied and disagrees with the
+    /// matched item's own parent season Number, this is treated as unresolved (404).
+    /// </summary>
+    [HttpGet("tv/episode-details-by-file")]
+    public async Task<IActionResult> GetEpisodeDetailsByFile(
+        [FromQuery] string? fileName, [FromQuery] int? season, [FromQuery] int? episode, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return BadRequest(ApiResponse<object>.Fail("FILENAME_REQUIRED", "fileName is required."));
+
+        var showLikeTypeIds = await GetShowLikeTypeIdsAsync(ct);
+
+        var knownFileNameHitIds = await _context.MediaItemKnownFileNames
+            .Where(k => k.FileName == fileName)
+            .Select(k => k.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+        var candidates = knownFileNameHitIds.Count == 0
+            ? []
+            : await _context.MediaItems
+                .Where(m => knownFileNameHitIds.Contains(m.Id) &&
+                            m.HierarchyLevel == 2 && showLikeTypeIds.Contains(m.MediaTypeId))
+                .ToListAsync(ct);
+
+        var exactMatches = candidates.Where(c =>
+            string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (exactMatches.Count == 1 && episode.HasValue && exactMatches[0].Number.HasValue &&
+            exactMatches[0].Number!.Value != episode.Value)
+        {
+            _logger.LogWarning(
+                "scraper/tv/episode-details-by-file: fileName={FileName} -- item {ItemId} has this exact " +
+                "filename recorded but its own episode number ({ExistingEpisode}) contradicts the caller's " +
+                "({CallerEpisode}) -- treating as unresolved rather than trusting a possibly-stale record",
+                fileName, exactMatches[0].Id, exactMatches[0].Number, episode);
+            exactMatches = [];
+        }
+        else if (exactMatches.Count == 1 && season.HasValue)
+        {
+            var seasonItem = exactMatches[0].ParentId.HasValue
+                ? await _context.MediaItems.FindAsync([exactMatches[0].ParentId!.Value], ct)
+                : null;
+            if (seasonItem?.Number.HasValue == true && seasonItem.Number!.Value != season.Value)
+            {
+                _logger.LogWarning(
+                    "scraper/tv/episode-details-by-file: fileName={FileName} -- item {ItemId}'s own season " +
+                    "({ExistingSeason}) contradicts the caller's ({CallerSeason}) -- treating as unresolved",
+                    fileName, exactMatches[0].Id, seasonItem.Number, season);
+                exactMatches = [];
+            }
+        }
+
+        if (exactMatches.Count != 1)
+        {
+            _logger.LogInformation(
+                "scraper/tv/episode-details-by-file: fileName={FileName} -- {Result}, nothing to resolve",
+                fileName, exactMatches.Count == 0 ? "no match" : $"{exactMatches.Count} ambiguous matches");
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"No unambiguous match for {fileName}."));
+        }
+
+        var dto = await BuildEpisodeDetailsDtoAsync(exactMatches[0].Id, ct, includeCast: false);
+        if (dto is null)
+            return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {exactMatches[0].Id} not found."));
+
+        return Ok(ApiResponse<ScraperEpisodeDetailsDto>.Ok(dto));
+    }
+
     /// <summary>Shared by GetEpisodeDetails and GetEpisodeSidecar -- see
-    /// BuildMovieDetailsDtoAsync's own doc for why this is factored out. Null if the item
-    /// doesn't exist.</summary>
-    private async Task<ScraperEpisodeDetailsDto?> BuildEpisodeDetailsDtoAsync(int id, CancellationToken ct)
+    /// BuildMovieDetailsDtoAsync's own doc for why this is factored out (including
+    /// includeCast=false's own reasoning -- GetEpisodeDetailsByFile's only caller,
+    /// full_sync_check.py, never reads cast at all). Null if the item doesn't exist.</summary>
+    private async Task<ScraperEpisodeDetailsDto?> BuildEpisodeDetailsDtoAsync(
+        int id, CancellationToken ct, bool includeCast = true)
     {
         var item = await _context.MediaItems.FindAsync([id], ct);
         if (item is null) return null;
@@ -1147,6 +1275,7 @@ public class ScraperController : ControllerBase
         var lib = await GetCallerLibraryEntryAsync(id, ct);
 
         var dto = BuildEpisodeDetails(item, season, showTitle, showYear, lib);
+        if (!includeCast) return dto;
         return dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
     }
 
@@ -1410,6 +1539,44 @@ public class ScraperController : ControllerBase
     // of two independent copies of this exact logic.
     private static string? TryGetScannedFileName(string? metadataJson) =>
         Chronicle.Services.Scan.FileIdentityJson.GetKnownFileName(metadataJson);
+
+    /// <summary>
+    /// The exact-filename lookup shared by SearchMovies' own fast-path and
+    /// GetMovieDetailsByFile: an indexed MediaItemKnownFileNames lookup, narrowed to
+    /// movie-like/top-level candidates, confirmed by re-reading each candidate's own
+    /// fileScanner record (the indexed table can theoretically drift from it), with collection
+    /// containers excluded. Returns every exact match found -- 0, 1, or more (a real, expected
+    /// case per MediaItemKnownFileName's own doc: two different films sharing a basename in
+    /// different folders) -- deciding what to do with more than one is each caller's own job
+    /// (SearchMovies falls back to year disambiguation; GetMovieDetailsByFile has no such hint
+    /// and treats it as unresolved). Factored out (2026-09-22) so a future change to this
+    /// matching rule can't update one call site and silently leave the other behind.
+    /// </summary>
+    private async Task<List<MediaItem>> FindExactFileNameMatchesAsync(
+        string fileName, List<int> movieLikeTypeIds, CancellationToken ct)
+    {
+        var knownFileNameHitIds = await _context.MediaItemKnownFileNames
+            .Where(k => k.FileName == fileName)
+            .Select(k => k.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+        var hits = knownFileNameHitIds.Count == 0
+            ? []
+            : await _context.MediaItems
+                .Where(m => knownFileNameHitIds.Contains(m.Id) &&
+                            movieLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel <= 1)
+                .ToListAsync(ct);
+
+        var exactMatches = hits.Where(c =>
+            string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (exactMatches.Count == 0) return exactMatches;
+
+        var containerIds = await _collections.GetCollectionContainerIdsAsync(
+            _context, exactMatches.Select(c => c.Id).ToList(), ct);
+        return containerIds.Count == 0
+            ? exactMatches
+            : exactMatches.Where(c => !containerIds.Contains(c.Id)).ToList();
+    }
 
     /// <summary>
     /// Narrows multiple items that all carry the exact same known filename down to one, using
