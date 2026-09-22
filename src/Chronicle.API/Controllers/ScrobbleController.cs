@@ -264,6 +264,18 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<CrossShowCorruptionCleanupResult>.Ok(result));
         }
 
+        /// <summary>
+        /// Repairs any (UserId, MediaItemId) pair left with interaction_events but no
+        /// UserLibrary row -- see IScrobbleService.RepairOrphanedUserLibrariesAsync's own doc.
+        /// </summary>
+        [HttpPost("admin/repair-orphaned-libraries")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> RepairOrphanedLibraries(CancellationToken ct)
+        {
+            var count = await _scrobbleService.RepairOrphanedUserLibrariesAsync(ct);
+            return Ok(ApiResponse<object>.Ok(new { repaired = count }));
+        }
+
         private int GetUserId() =>
             int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     }

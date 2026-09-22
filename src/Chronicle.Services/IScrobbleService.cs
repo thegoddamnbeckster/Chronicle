@@ -198,6 +198,13 @@ namespace Chronicle.Services
         /// reports what WOULD be affected without changing anything.
         /// </summary>
         Task<CrossShowCorruptionCleanupResult> CleanupCrossShowCorruptionAsync(bool dryRun, CancellationToken ct = default);
+
+        /// <summary>
+        /// Repairs any (UserId, MediaItemId) pair with interaction_events but no UserLibrary
+        /// row -- see ScrobbleService's own doc for when this can happen. Returns the number
+        /// of pairs repaired.
+        /// </summary>
+        Task<int> RepairOrphanedUserLibrariesAsync(CancellationToken ct = default);
     }
 
     public record CrossShowCorruptionCleanupResult(

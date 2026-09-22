@@ -937,6 +937,73 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task CleanupCrossShowCorruptionAsync_ItemWithMultipleSurvivingEvents_ReplaysAllWithoutDuplicateRowError()
+        {
+            // Regression test for a live bug (2026-09-22): replaying more than one surviving
+            // event for the same item without saving after each one let UpsertLibraryStateAsync
+            // re-query the database, still find no row (the real one was still unsaved), and
+            // create a second one -- a UNIQUE constraint violation on (UserId, MediaItemId) as
+            // soon as anything triggered a flush. This item has THREE surviving events after
+            // its poisoned one is removed, specifically to catch that regression.
+            var show1 = new MediaItem { Id = 641, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 642, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 643, MediaTypeId = 1, Name = "Episode A", ParentId = 641, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 644, MediaTypeId = 1, Name = "Episode B", ParentId = 642, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+
+            var t0 = DateTime.UtcNow.AddDays(-3);
+            var t1 = DateTime.UtcNow.AddDays(-2);
+            var t2 = DateTime.UtcNow.AddDays(-1);
+            var poisonedTime = DateTime.UtcNow;
+            _context.InteractionEvents.AddRange(
+                new InteractionEvent { UserId = 1, MediaItemId = 643, Timestamp = t0, ProgressPercent = 10, MarkedAsWatched = false, CreatedAt = t0 },
+                new InteractionEvent { UserId = 1, MediaItemId = 643, Timestamp = t1, ProgressPercent = 55, MarkedAsWatched = false, CreatedAt = t1 },
+                new InteractionEvent { UserId = 1, MediaItemId = 643, Timestamp = t2, ProgressPercent = 90, MarkedAsWatched = true, CreatedAt = t2 },
+                new InteractionEvent { UserId = 1, MediaItemId = 643, Timestamp = poisonedTime, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = poisonedTime },
+                new InteractionEvent { UserId = 1, MediaItemId = 644, Timestamp = poisonedTime, ProgressPercent = 100, MarkedAsWatched = true, CreatedAt = poisonedTime });
+            await _context.SaveChangesAsync();
+
+            var act = () => _service.CleanupCrossShowCorruptionAsync(dryRun: false);
+            await act.Should().NotThrowAsync();
+
+            (await _context.InteractionEvents.CountAsync(e => e.MediaItemId == 643)).Should().Be(3, "the three genuine, non-colliding events must survive");
+            var lib = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 643);
+            lib.Status.Should().Be(LibraryStatus.Completed, "the surviving t2 event already crossed the watched threshold");
+            lib.LastKnownProgressPercent.Should().Be(90);
+        }
+
+        [Fact]
+        public async Task RepairOrphanedUserLibrariesAsync_RebuildsRowForItemWithEventsButNoLibraryRow()
+        {
+            var item = new MediaItem { Id = 651, MediaTypeId = 1, Name = "Orphaned Item", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.Add(item);
+            var timestamp = DateTime.UtcNow;
+            _context.InteractionEvents.Add(new InteractionEvent
+            {
+                UserId = 1, MediaItemId = 651, Timestamp = timestamp, ProgressPercent = 85, MarkedAsWatched = true, CreatedAt = timestamp,
+            });
+            // Deliberately no matching UserLibrary row -- simulates the state an interrupted
+            // admin repair pass can leave behind.
+            await _context.SaveChangesAsync();
+
+            var repaired = await _service.RepairOrphanedUserLibrariesAsync();
+
+            repaired.Should().Be(1);
+            var lib = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 651);
+            lib.Status.Should().Be(LibraryStatus.Completed);
+        }
+
+        [Fact]
+        public async Task RepairOrphanedUserLibrariesAsync_NoOrphans_ReturnsZeroAndChangesNothing()
+        {
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 50.0, null, null));
+
+            var repaired = await _service.RepairOrphanedUserLibrariesAsync();
+
+            repaired.Should().Be(0);
+        }
+
+        [Fact]
         public async Task CleanupCrossShowCorruptionAsync_SameShowSharedTimestamp_NeverTouched()
         {
             // A legitimate "mark whole season as watched" batch -- must never be treated as

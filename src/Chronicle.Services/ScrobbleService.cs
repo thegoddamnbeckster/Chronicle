@@ -826,48 +826,89 @@ namespace Chronicle.Services
             // scrobble uses -- the result is identical to what it would be had the poisoned
             // events never landed, rather than a guess at what "should" be there.
             foreach (var (userId, mediaItemId) in affectedItems)
-            {
-                var existing = await _context.UserLibraries
-                    .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
-
-                var remaining = await _context.InteractionEvents
-                    .Where(e => e.UserId == userId && e.MediaItemId == mediaItemId)
-                    .OrderBy(e => e.Timestamp)
-                    .ToListAsync(ct);
-
-                if (remaining.Count == 0)
-                {
-                    // Nothing genuine ever happened for this item -- reset in place rather
-                    // than remove library membership entirely, matching the manual precedent
-                    // (School Spirits/Spider-Noir cleanup, 2026-09-06).
-                    if (existing != null)
-                    {
-                        existing.Status = LibraryStatus.Unwatched;
-                        existing.StartedAt = null;
-                        existing.CompletedAt = null;
-                        existing.ResumePositionPercent = null;
-                        existing.ResumeUpdatedAt = null;
-                        existing.LastKnownProgressPercent = null;
-                        existing.LastKnownProgressAt = null;
-                        existing.UpdatedAt = DateTime.UtcNow;
-                    }
-                    continue;
-                }
-
-                if (existing != null)
-                    _context.UserLibraries.Remove(existing);
-                await _context.SaveChangesAsync(ct);
-
-                foreach (var e in remaining)
-                    await UpsertLibraryStateAsync(userId, mediaItemId, e.ProgressPercent, e.MarkedAsWatched, e.Timestamp, ct);
-            }
-            await _context.SaveChangesAsync(ct);
+                await RebuildUserLibraryFromHistoryAsync(userId, mediaItemId, ct);
 
             return new CrossShowCorruptionCleanupResult(
                 DryRun: false,
                 PoisonedEventCount: poisonedEventIds.Count,
                 AffectedUserCount: affectedItems.Select(a => a.UserId).Distinct().Count(),
                 AffectedMediaItemCount: affectedItems.Count);
+        }
+
+        /// <summary>
+        /// Repairs any (UserId, MediaItemId) pair that has interaction_events but no
+        /// UserLibrary row at all -- an invariant UpsertLibraryStateAsync normally guarantees
+        /// (every scrobble upserts one), so a pair violating it only ever means a previous
+        /// admin repair pass was interrupted (see git history, 2026-09-22) before it could
+        /// rebuild that pair's row. Safe to call any time; a library with no such orphans
+        /// affects nothing.
+        /// </summary>
+        public async Task<int> RepairOrphanedUserLibrariesAsync(CancellationToken ct = default)
+        {
+            var orphaned = await _context.InteractionEvents
+                .Where(e => !_context.UserLibraries.Any(l => l.UserId == e.UserId && l.MediaItemId == e.MediaItemId))
+                .Select(e => new { e.UserId, e.MediaItemId })
+                .Distinct()
+                .ToListAsync(ct);
+
+            foreach (var pair in orphaned)
+                await RebuildUserLibraryFromHistoryAsync(pair.UserId, pair.MediaItemId, ct);
+
+            return orphaned.Count;
+        }
+
+        /// <summary>
+        /// Rebuilds a single (userId, mediaItemId)'s UserLibrary row from scratch, by deleting
+        /// whatever row is there now and replaying every one of that pair's InteractionEvents
+        /// (in timestamp order) through the same UpsertLibraryStateAsync logic a live scrobble
+        /// uses. Saves after every single step (the removal, and each replayed event) --
+        /// UpsertLibraryStateAsync looks up the current row by querying the database, not the
+        /// change tracker, so an unsaved change from the immediately-prior step would
+        /// otherwise be invisible to it and get re-created as a duplicate (root cause of the
+        /// UNIQUE constraint failure hit live 2026-09-22 when this saved only once per pair
+        /// instead of once per step).
+        /// </summary>
+        private async Task RebuildUserLibraryFromHistoryAsync(int userId, int mediaItemId, CancellationToken ct)
+        {
+            var existing = await _context.UserLibraries
+                .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+
+            var remaining = await _context.InteractionEvents
+                .Where(e => e.UserId == userId && e.MediaItemId == mediaItemId)
+                .OrderBy(e => e.Timestamp)
+                .ToListAsync(ct);
+
+            if (remaining.Count == 0)
+            {
+                // Nothing genuine ever happened for this item -- reset in place rather than
+                // remove library membership entirely, matching the manual precedent (School
+                // Spirits/Spider-Noir cleanup, 2026-09-06).
+                if (existing != null)
+                {
+                    existing.Status = LibraryStatus.Unwatched;
+                    existing.StartedAt = null;
+                    existing.CompletedAt = null;
+                    existing.ResumePositionPercent = null;
+                    existing.ResumeUpdatedAt = null;
+                    existing.LastKnownProgressPercent = null;
+                    existing.LastKnownProgressAt = null;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync(ct);
+                }
+                return;
+            }
+
+            if (existing != null)
+            {
+                _context.UserLibraries.Remove(existing);
+                await _context.SaveChangesAsync(ct);
+            }
+
+            foreach (var e in remaining)
+            {
+                await UpsertLibraryStateAsync(userId, mediaItemId, e.ProgressPercent, e.MarkedAsWatched, e.Timestamp, ct);
+                await _context.SaveChangesAsync(ct);
+            }
         }
     }
 }
