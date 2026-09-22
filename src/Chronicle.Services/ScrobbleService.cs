@@ -37,18 +37,32 @@ namespace Chronicle.Services
             // artifact, not real per-episode playback). No genuine single Kodi action (marking
             // an episode, season, or whole show watched) can ever span more than one show or
             // movie at the exact same instant, so that shape is definitive proof the claimed
-            // timestamp isn't a real, distinct watch event -- reject the "watched" claim itself
-            // (the underlying scrobble/progress event still gets recorded for audit purposes,
-            // just without corrupting the item's own watched status). Scoped to MarkedAsWatched
-            // only: a partial resume percentage has no equivalent "exact match across unrelated
-            // shows is impossible" property to lean on.
-            if (markedAsWatched && await IsCrossShowPoisonedTimestampAsync(userId, mediaItemId, timestamp, ct))
+            // timestamp isn't a real, distinct watch event.
+            //
+            // Checked regardless of markedAsWatched (confirmed live 2026-09-22: the same
+            // reconciliation feature also fires push_resume with a poisoned shared timestamp
+            // for items that never cross the watched threshold at all -- e.g. 17 different
+            // School Spirits episodes all claiming ProgressPercent=100 at one identical
+            // instant, which used to sail straight through since this check only ran when
+            // markedAsWatched was already true). A poisoned event still gets recorded for
+            // audit purposes (evt below), but must not move this item's derived state at
+            // all -- not just its watched flag, but its status/progress too, since none of
+            // it can be trusted once the timestamp itself is proven fabricated.
+            var isCrossShowPoisoned = await IsCrossShowPoisonedTimestampAsync(userId, mediaItemId, timestamp, ct);
+            if (isCrossShowPoisoned)
                 markedAsWatched = false;
 
             // Every scrobble (not just watched-threshold crossings) upserts the library
             // entry -- resume position needs to be current after every progress update,
-            // not just once an item is finished. See UpsertLibraryStateAsync.
-            var entry = await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
+            // not just once an item is finished. See UpsertLibraryStateAsync. A poisoned
+            // event is the one exception: it still gets recorded as an InteractionEvent
+            // below, but the `poisoned` flag tells UpsertLibraryStateAsync to leave every
+            // existing field alone (or, for a brand-new row, add it with no inferred
+            // status/progress) -- nothing about this item's derived state may move as a
+            // result of a timestamp already proven fabricated.
+            var entry = await UpsertLibraryStateAsync(
+                userId, mediaItemId, isCrossShowPoisoned ? null : request.ProgressPercent, markedAsWatched, timestamp, ct,
+                poisoned: isCrossShowPoisoned);
 
             // Idempotency guard, checked up front: Kodi's periodic reconciliation pass
             // resends every library item's state on every tick using Kodi's own lastplayed
@@ -93,7 +107,9 @@ namespace Chronicle.Services
                 // set, which would also discard the still-valid evt add), reload the row the
                 // other request just committed, and retry as an update against it.
                 _context.Entry(entry).State = EntityState.Detached;
-                entry = await UpsertLibraryStateAsync(userId, mediaItemId, request.ProgressPercent, markedAsWatched, timestamp, ct);
+                entry = await UpsertLibraryStateAsync(
+                    userId, mediaItemId, isCrossShowPoisoned ? null : request.ProgressPercent, markedAsWatched, timestamp, ct,
+                    poisoned: isCrossShowPoisoned);
                 await _context.SaveChangesAsync(ct);
                 return new ScrobbleResult(evt, markedAsWatched);
             }
@@ -622,7 +638,7 @@ namespace Chronicle.Services
         /// </summary>
         private async Task<UserLibrary> UpsertLibraryStateAsync(
             int userId, int mediaItemId, double? progressPercent, bool markedAsWatched,
-            DateTime timestamp, CancellationToken ct)
+            DateTime timestamp, CancellationToken ct, bool poisoned = false)
         {
             var entry = await _context.UserLibraries
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
@@ -633,15 +649,18 @@ namespace Chronicle.Services
                 {
                     UserId      = userId,
                     MediaItemId = mediaItemId,
-                    Status      = markedAsWatched ? LibraryStatus.Completed : LibraryStatus.Watching,
+                    // A poisoned event (see ScrobbleAsync's own doc) proves nothing about this
+                    // item -- not even the baseline "something happened" inference an ordinary
+                    // first-ever scrobble gets, since the claimed timestamp itself is fabricated.
+                    Status      = poisoned ? LibraryStatus.Unwatched : markedAsWatched ? LibraryStatus.Completed : LibraryStatus.Watching,
                     AddedAt     = DateTime.UtcNow,
                     UpdatedAt   = DateTime.UtcNow,
-                    StartedAt   = DateTime.UtcNow,
-                    CompletedAt = markedAsWatched ? timestamp : null,
+                    StartedAt   = poisoned ? null : DateTime.UtcNow,
+                    CompletedAt = markedAsWatched ? timestamp : null, // markedAsWatched is already forced false whenever poisoned
                 };
                 _context.UserLibraries.Add(entry);
             }
-            else
+            else if (!poisoned)
             {
                 // A scrobble crossing the watched threshold is a strong, unambiguous signal
                 // regardless of whatever status the entry was already in (including a stale
@@ -666,6 +685,13 @@ namespace Chronicle.Services
                 // Watching sorts on this), not go stale the moment its first scrobble lands.
                 entry.UpdatedAt = DateTime.UtcNow;
             }
+            // poisoned && entry != null: falls through untouched -- an existing row's status,
+            // dates, and UpdatedAt must all stay exactly as they were.
+
+            if (poisoned)
+                return entry; // progressPercent is always null for a poisoned call, so every
+                               // block below would no-op anyway -- returning early makes that
+                               // guarantee explicit rather than incidental.
 
             // Snapshot BEFORE either field below gets mutated -- LastKnownProgressPercent's own
             // ordering guard (further down) needs to compare against whichever of the two

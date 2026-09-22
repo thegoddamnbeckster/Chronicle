@@ -96,6 +96,74 @@ namespace Chronicle.Tests.Unit.Services
             second.MarkedAsWatched.Should().BeFalse(
                 "two different shows both claiming to be watched at the exact same instant is impossible for a real single Kodi action");
             second.Event.MarkedAsWatched.Should().BeFalse("the stored event must reflect the rejected claim, not the raw progress percent");
+
+            var libB = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 504);
+            libB.Status.Should().Be(LibraryStatus.Unwatched,
+                "a poisoned event must not even bump status to Watching -- none of its claimed data can be trusted");
+            libB.LastKnownProgressPercent.Should().BeNull("the fabricated 100% must never reach the item's progress display");
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_CrossShowSameTimestamp_SubThresholdProgressCollidingWithWatchedSibling_AlsoRejected()
+        {
+            // Regression test for a live bug (2026-09-22): the guard used to only run when THIS
+            // event's own markedAsWatched was already true, so a sub-threshold progress claim
+            // (Chronicle_Scraper's push_resume) sharing an impossible cross-show timestamp with
+            // a genuinely-watched sibling from another show sailed straight through untouched --
+            // e.g. some of the 17 School Spirits episodes hit this exact shape. The guard is now
+            // checked regardless of this event's own markedAsWatched value.
+            var show1 = new MediaItem { Id = 521, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 522, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 523, MediaTypeId = 1, Name = "Episode A", ParentId = 521, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 524, MediaTypeId = 1, Name = "Episode B", ParentId = 522, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+            await _context.SaveChangesAsync();
+
+            var timestamp = DateTime.UtcNow;
+            var device = "Chronicle Scraper (reconciled from local Kodi playback)";
+            // epA crosses the watched threshold first -- nothing to compare against yet, so it
+            // goes through as a genuine "watched" claim, same as any first-in-batch event.
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(523, 100.0, timestamp, device));
+            // epB claims only 55% -- never crosses the watched threshold on its own -- but
+            // shares the exact same impossible cross-show timestamp as epA's watched claim.
+            var second = await _service.ScrobbleAsync(1, new ScrobbleRequest(524, 55.0, timestamp, device));
+
+            second.Event.ProgressPercent.Should().Be(55.0, "the event itself still records what was claimed, for audit purposes");
+            var libB = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 524);
+            libB.Status.Should().Be(LibraryStatus.Unwatched, "a poisoned progress-only event must not bump status to Watching either");
+            libB.LastKnownProgressPercent.Should().BeNull();
+            libB.ResumePositionPercent.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_CrossShowPoisoned_ExistingLibraryRowLeftCompletelyUntouched()
+        {
+            // The other shape: an item that ALREADY has real history (e.g. genuinely
+            // Completed from a real earlier watch) must come through a poisoned event with
+            // that real state fully intact -- not reset, not bumped, not touched at all.
+            var show1 = new MediaItem { Id = 531, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 532, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 533, MediaTypeId = 1, Name = "Episode A", ParentId = 531, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 534, MediaTypeId = 1, Name = "Episode B", ParentId = 532, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+
+            var realWatchTime = DateTime.UtcNow.AddDays(-10);
+            _context.UserLibraries.Add(new UserLibrary
+            {
+                UserId = 1, MediaItemId = 534, Status = LibraryStatus.Completed, CompletedAt = realWatchTime,
+                LastKnownProgressPercent = 100, AddedAt = realWatchTime, UpdatedAt = realWatchTime,
+            });
+            await _context.SaveChangesAsync();
+
+            var timestamp = DateTime.UtcNow;
+            var device = "Chronicle Scraper (reconciled from local Kodi playback)";
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(533, 100.0, timestamp, device));
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(534, 100.0, timestamp, device));
+
+            var libB = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 534);
+            libB.Status.Should().Be(LibraryStatus.Completed);
+            libB.CompletedAt.Should().Be(realWatchTime, "a poisoned event must not overwrite a real prior completion timestamp");
+            libB.UpdatedAt.Should().Be(realWatchTime, "nothing about this row may change from a poisoned event, including UpdatedAt");
         }
 
         [Fact]
