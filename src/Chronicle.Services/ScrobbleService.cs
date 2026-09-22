@@ -794,11 +794,24 @@ namespace Chronicle.Services
             return currentId;
         }
 
+        /// <summary>
+        /// DeviceName Chronicle_Scraper's periodic Kodi reconciliation pass sends on every
+        /// push_resume/push_watched call -- see CleanupCrossShowCorruptionAsync's own doc for
+        /// why events from this specific source get a broader poisoning check than everything
+        /// else.
+        /// </summary>
+        private const string ReconciliationDeviceName = "Chronicle Scraper (reconciled from local Kodi playback)";
+
         public async Task<CrossShowCorruptionCleanupResult> CleanupCrossShowCorruptionAsync(bool dryRun, CancellationToken ct = default)
         {
-            var watchedEvents = await _context.InteractionEvents
-                .Where(e => e.MarkedAsWatched)
-                .Select(e => new { e.Id, e.UserId, e.MediaItemId, e.Timestamp })
+            // Loads every event, not just MarkedAsWatched ones -- confirmed live 2026-09-22:
+            // the reconciliation pass ALSO poisons sub-threshold progress-only pushes (e.g. 17
+            // School Spirits episodes all claiming ProgressPercent=100 at one identical Kodi
+            // lastplayed instant, none of them individually crossing the watched threshold
+            // after the live guard downgraded them). See the per-group check below for how a
+            // MarkedAsWatched=false group still qualifies as poisoned.
+            var allEvents = await _context.InteractionEvents
+                .Select(e => new { e.Id, e.UserId, e.MediaItemId, e.Timestamp, e.MarkedAsWatched, e.DeviceName })
                 .ToListAsync(ct);
 
             // Root id cache shared across the whole pass -- an item referenced by many
@@ -815,7 +828,7 @@ namespace Chronicle.Services
             var poisonedEventIds = new HashSet<int>();
             var affectedItems = new HashSet<(int UserId, int MediaItemId)>();
 
-            foreach (var group in watchedEvents.GroupBy(e => (e.UserId, e.Timestamp)))
+            foreach (var group in allEvents.GroupBy(e => (e.UserId, e.Timestamp)))
             {
                 var distinctItemIds = group.Select(e => e.MediaItemId).Distinct().ToList();
                 if (distinctItemIds.Count < 2) continue;
@@ -824,6 +837,22 @@ namespace Chronicle.Services
                 foreach (var itemId in distinctItemIds)
                     roots.Add(await RootOfAsync(itemId));
                 if (roots.Count < 2) continue; // same show legitimately sharing a timestamp -- not poisoned
+
+                // A cross-root collision is trustworthy proof of fabrication when EITHER at
+                // least one event in the group claims MarkedAsWatched=true (the original,
+                // narrower signal -- no single real action marks two different shows watched
+                // at once), OR every event in the group came from the reconciliation device.
+                // The latter is safe to treat just as strictly even below the watched
+                // threshold: that source is a periodic BATCH import of Kodi's own local
+                // lastplayed/playcount state, never live per-second playback, so a shared
+                // to-the-second timestamp across different shows is impossible there too --
+                // unlike two real devices genuinely watching different shows at once, which
+                // is exactly the case the watched-only rule exists to avoid falsely catching
+                // for ordinary live scrobbles.
+                var hasWatchedSibling = group.Any(e => e.MarkedAsWatched);
+                var allFromReconciliation = group.All(e =>
+                    e.DeviceName != null && e.DeviceName.Contains(ReconciliationDeviceName));
+                if (!hasWatchedSibling && !allFromReconciliation) continue;
 
                 foreach (var e in group)
                 {

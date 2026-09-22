@@ -1041,6 +1041,64 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task CleanupCrossShowCorruptionAsync_ReconciliationSourcedSubThresholdGroup_AlsoDeleted()
+        {
+            // Regression test for a live bug (2026-09-22): 17 School Spirits episodes were all
+            // pushed by the Kodi reconciliation device with ProgressPercent=100 and
+            // MarkedAsWatched=0 sharing one identical timestamp -- none of them individually
+            // crossing the watched threshold once the live guard had already downgraded them --
+            // so the original MarkedAsWatched=true-only detection here never touched them.
+            var show1 = new MediaItem { Id = 661, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 662, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 663, MediaTypeId = 1, Name = "Episode A", ParentId = 661, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 664, MediaTypeId = 1, Name = "Episode B", ParentId = 662, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+
+            var timestamp = DateTime.UtcNow;
+            const string device = "Chronicle Scraper (reconciled from local Kodi playback)";
+            _context.InteractionEvents.AddRange(
+                new InteractionEvent { UserId = 1, MediaItemId = 663, Timestamp = timestamp, ProgressPercent = 100, MarkedAsWatched = false, DeviceName = device, CreatedAt = timestamp },
+                new InteractionEvent { UserId = 1, MediaItemId = 664, Timestamp = timestamp, ProgressPercent = 100, MarkedAsWatched = false, DeviceName = device, CreatedAt = timestamp });
+            _context.UserLibraries.AddRange(
+                new UserLibrary { UserId = 1, MediaItemId = 663, Status = LibraryStatus.Watching, LastKnownProgressPercent = 100, AddedAt = timestamp, UpdatedAt = timestamp },
+                new UserLibrary { UserId = 1, MediaItemId = 664, Status = LibraryStatus.Watching, LastKnownProgressPercent = 100, AddedAt = timestamp, UpdatedAt = timestamp });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.CleanupCrossShowCorruptionAsync(dryRun: false);
+
+            result.PoisonedEventCount.Should().Be(2);
+            (await _context.InteractionEvents.CountAsync()).Should().Be(0);
+            var libA = await _context.UserLibraries.SingleAsync(l => l.MediaItemId == 663);
+            libA.Status.Should().Be(LibraryStatus.Unwatched);
+            libA.LastKnownProgressPercent.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task CleanupCrossShowCorruptionAsync_NonReconciliationSubThresholdGroup_LeftAlone()
+        {
+            // The narrower rule still governs everything else: two ordinary devices legitimately
+            // scrobbling sub-threshold progress for two different shows at a coincidentally
+            // identical timestamp, with no watched=true claim anywhere in the group, must not
+            // be treated as corruption.
+            var show1 = new MediaItem { Id = 671, MediaTypeId = 1, Name = "Show One", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var show2 = new MediaItem { Id = 672, MediaTypeId = 1, Name = "Show Two", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epA = new MediaItem { Id = 673, MediaTypeId = 1, Name = "Episode A", ParentId = 671, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            var epB = new MediaItem { Id = 674, MediaTypeId = 1, Name = "Episode B", ParentId = 672, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+            _context.MediaItems.AddRange(show1, show2, epA, epB);
+
+            var timestamp = DateTime.UtcNow;
+            _context.InteractionEvents.AddRange(
+                new InteractionEvent { UserId = 1, MediaItemId = 673, Timestamp = timestamp, ProgressPercent = 40, MarkedAsWatched = false, DeviceName = "Kodi Living Room", CreatedAt = timestamp },
+                new InteractionEvent { UserId = 1, MediaItemId = 674, Timestamp = timestamp, ProgressPercent = 25, MarkedAsWatched = false, DeviceName = "Kodi Bedroom", CreatedAt = timestamp });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.CleanupCrossShowCorruptionAsync(dryRun: false);
+
+            result.PoisonedEventCount.Should().Be(0);
+            (await _context.InteractionEvents.CountAsync()).Should().Be(2);
+        }
+
+        [Fact]
         public async Task RepairOrphanedUserLibrariesAsync_RebuildsRowForItemWithEventsButNoLibraryRow()
         {
             var item = new MediaItem { Id = 651, MediaTypeId = 1, Name = "Orphaned Item", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
