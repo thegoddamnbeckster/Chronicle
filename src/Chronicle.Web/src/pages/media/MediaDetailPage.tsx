@@ -1343,7 +1343,7 @@ export default function MediaDetailPage() {
           {/* Additional Images — every image available across all plugins for this item,
               grouped by the artwork type its source plugin reported. Browse-only: clicking a
               thumbnail opens it full size, which is the only place artwork can be assigned. */}
-          <PluginFold foldKey={`media.${mediaId}.additionalImages`} label="Additional Images">
+          <PluginFold foldKey={`media.${mediaId}.additionalImages`} label="Additional Images" defaultOpen={false}>
             <AdditionalImagesCard
               item={item}
               onOpenGallery={(slot, slotLabel, images, startIndex) =>

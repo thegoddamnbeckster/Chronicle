@@ -85,6 +85,7 @@ export function AdditionalImagesCard({ item, onOpenGallery }: AdditionalImagesCa
                           src={img.url}
                           alt={img.label}
                           className={boxStyles.thumbnail}
+                          loading="lazy"
                           onError={e => { e.currentTarget.style.display = 'none' }}
                         />
                         <span className={boxStyles.thumbnailLabel}>
