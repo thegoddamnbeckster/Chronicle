@@ -146,7 +146,19 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
     public async Task MovieSearch_ItemHasFilePathsButNoKnownFileNameRowYet_BackfillMakesItFindable()
     {
         var movieTypeId = EnsureMovieType();
-        const string title = "Scraper Backfill Probe";
+        // Deliberately unrelated to the search's own title below (no shared words at all --
+        // FindByNormalizedTitle does subset matching, so a stored title merely CONTAINING the
+        // search title as a substring/prefix -- e.g. adding words around it -- still matches).
+        // The ORIGINAL version of this test seeded the item under the exact title/year it then
+        // searched for, so the "before backfill" assertion passed for the wrong reason:
+        // ordinary title+year fallback matching found the item regardless of whether
+        // MediaItemKnownFileNames had anything in it at all, which is not what this test
+        // claims to prove. Caught in review (2026-09-22): this made the test pass even against
+        // a build with the backfill removed entirely. A genuinely unrelated stored title
+        // isolates the assertion to what it's actually meant to show -- that only the filename
+        // table (via the backfill) makes this item findable, not title matching.
+        const string storedTitle = "Zyzzyva Quokka Nebula Probe";
+        const string searchTitle = "Scraper Backfill Probe";
         const string fileName = "Scraper Backfill Probe (2010).mkv";
         int itemId;
         using (var scope = _factory.Services.CreateScope())
@@ -156,14 +168,14 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
             {
                 ["fileScanner"] = new JsonObject
                 {
-                    ["filePaths"] = new JsonArray($"F:\\Videos\\Movies\\{title}\\{fileName}"),
+                    ["filePaths"] = new JsonArray($"F:\\Videos\\Movies\\{storedTitle}\\{fileName}"),
                 },
             };
             var item = new MediaItem
             {
-                MediaTypeId = movieTypeId, Name = title, Year = 2010,
+                MediaTypeId = movieTypeId, Name = storedTitle, Year = 2010,
                 HierarchyLevel = 0,
-                NormalizedName = MediaItemNormalizer.NormalizeName(title),
+                NormalizedName = MediaItemNormalizer.NormalizeName(storedTitle),
                 MetadataJson = metadata.ToJsonString(),
                 CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
             };
@@ -176,12 +188,21 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
 
         var client = await AuthClientAsync();
 
-        // Before the backfill runs, the fast path has nothing to find this item by.
+        // Before the backfill runs, the fast path has nothing to find this item by, and the
+        // search's own title ("Scraper Backfill Probe") doesn't match the item's real stored
+        // name -- title fallback matching has nothing to find it by either. Deliberately
+        // omits fileName here (unlike the "after" call below): /movies/search always
+        // resolves-OR-CREATES, and since nothing would match, passing fileName here would
+        // create a stub and register THIS filename against it as a side effect -- poisoning
+        // the "after" call's own ambiguity check with a second, spurious claimant to the same
+        // filename. Caught in review (2026-09-22) via a live diagnostic showing exactly that:
+        // two items competing for one filename, entirely an artifact of this test calling the
+        // creating endpoint for a check that doesn't need to.
         var beforeResp = await client.GetAsync(
-            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(title)}&year=2010&fileName={Uri.EscapeDataString(fileName)}");
+            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(searchTitle)}&year=2010");
         beforeResp.EnsureSuccessStatusCode();
         (await beforeResp.Content.ReadAsStringAsync()).Should().NotContain($"\"id\":{itemId}",
-            "nothing has populated MediaItemKnownFileNames for this item yet");
+            "the search title doesn't match this item's real stored name, so title matching can't find it");
 
         using (var scope = _factory.Services.CreateScope())
         {
@@ -190,10 +211,11 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
         }
 
         var afterResp = await client.GetAsync(
-            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(title)}&year=2010&fileName={Uri.EscapeDataString(fileName)}");
+            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(searchTitle)}&year=2010&fileName={Uri.EscapeDataString(fileName)}");
         afterResp.EnsureSuccessStatusCode();
         (await afterResp.Content.ReadAsStringAsync()).Should().Contain($"\"id\":{itemId}",
-            "the backfill should have populated MediaItemKnownFileNames from the item's existing fileScanner.filePaths");
+            "the backfill should have populated MediaItemKnownFileNames from the item's existing fileScanner.filePaths, " +
+            "making it findable by filename alone despite the title mismatch");
     }
 
     [Fact]
