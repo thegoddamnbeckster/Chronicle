@@ -1712,7 +1712,7 @@ namespace Chronicle.Services
             var crossRefs = ExtractCrossRefIds(meta, source, mediaType.Name);
 
             // Build initial metadata JSON under the correct plugin blob key.
-            var providerBlobKey = SourceToPluginId(source) ?? source;
+            var providerBlobKey = pluginId ?? SourceToPluginId(source) ?? source;
             var initialMetaJson = BuildProviderMetaJson(providerBlobKey, meta);
 
             // Re-use existing item if already imported
@@ -1981,6 +1981,12 @@ namespace Chronicle.Services
             if (suggested.StartsWith("hardcover:", StringComparison.OrdinalIgnoreCase))
                 return ("hardcover", suggested);
 
+            // Wikipedia: "wikipedia:{lang}:{Article_Title}" -- the only source many people have.
+            // Root-caused live (2026-09-24): with no case here this fell through to "tmdb" below,
+            // so adding a Wikipedia-only person asked TMDB for a Wikipedia id and got a 404.
+            if (suggested.StartsWith("wikipedia:", StringComparison.OrdinalIgnoreCase))
+                return ("wikipedia", suggested);
+
             // "movie:*" or "tv:*" — stored verbatim with source="tmdb"
             return ("tmdb", suggested);
         }
@@ -2004,6 +2010,7 @@ namespace Chronicle.Services
             "simkl"      => "chronicle.plugin.simkl",
             "hardcover"  => "chronicle.plugin.hardcover",
             "musicbrainz"=> "chronicle.plugin.musicbrainz",
+            "wikipedia"  => "chronicle.plugin.wikipedia",
             _            => null,
         };
 

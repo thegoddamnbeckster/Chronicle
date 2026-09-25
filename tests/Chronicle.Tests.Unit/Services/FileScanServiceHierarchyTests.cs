@@ -888,4 +888,38 @@ public class FileScanServiceHierarchyTests
 
         Assert.Contains("tv:99999999", ex.Message);
     }
+
+    [Fact]
+    public async Task AddFromSearchAsync_WikipediaId_IsRoutedToWikipediaPlugin_NotTheMediaTypesFirstProvider()
+    {
+        // Root-caused live (2026-09-24): adding a person found only on Wikipedia failed with
+        // "Provider chronicle.plugin.tmdb could not find wikipedia:en:..." because a source
+        // with no explicit SourceToPluginId mapping fell through to the media type's first
+        // provider. Any source must resolve to its own "chronicle.plugin.{source}" plugin.
+        await using var context = NewInMemoryContext();
+        context.MediaTypes.Add(new MediaType
+        {
+            Id = 1, Name = "person", DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var wikipedia = new Mock<IMetadataProvider>();
+        wikipedia.Setup(p => p.PluginId).Returns("chronicle.plugin.wikipedia");
+        wikipedia.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Not Found", null, HttpStatusCode.NotFound));
+        var tmdb = new Mock<IMetadataProvider>();
+        tmdb.Setup(p => p.PluginId).Returns("chronicle.plugin.tmdb");
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.wikipedia")).Returns(wikipedia.Object);
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.tmdb")).Returns(tmdb.Object);
+
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddFromSearchAsync("wikipedia:en:Jenna_Jameson", mediaTypeId: 1, userId: 1));
+
+        wikipedia.Verify(p => p.GetByIdAsync("wikipedia:en:Jenna_Jameson", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        tmdb.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
