@@ -161,6 +161,11 @@ public sealed class PersonIdentitySplitService(
             scanned, split, detached);
     }
 
+    /// <summary>The string value of a JSON node, or null when it is absent or not a string --
+    /// GetValue&lt;string&gt;() throws on a number/object and would make one odd row fail every night.</summary>
+    private static string? StringOf(JsonNode? node) =>
+        node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
     /// <summary>Returns true when a new person record was created, false when the article was
     /// already owned by another record and was only detached from this one.</summary>
     internal async Task<bool> SplitAsync(
@@ -190,12 +195,12 @@ public sealed class PersonIdentitySplitService(
         MediaItem? stub = null;
         JsonObject? stubOverrides = null;
         var movedUrls = wikiHeadshots.Select(h => h.Url).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (wikiPartition["posterUrl"]?.GetValue<string>() is { Length: > 0 } wikiPoster)
+        if (StringOf(wikiPartition["posterUrl"]) is { Length: > 0 } wikiPoster)
             movedUrls.Add(wikiPoster);
 
         if (existingOwner is null)
         {
-            var stubName = wikiPartition["title"]?.GetValue<string>() is { Length: > 0 } t ? t : person.Name;
+            var stubName = StringOf(wikiPartition["title"]) is { Length: > 0 } t ? t : person.Name;
             stub = new MediaItem
             {
                 MediaTypeId    = person.MediaTypeId,
@@ -214,7 +219,7 @@ public sealed class PersonIdentitySplitService(
                 stubOverrides = new JsonObject();
                 foreach (var key in overrides.Select(kv => kv.Key).ToList())
                 {
-                    var url = overrides[key] is JsonObject o ? o["url"]?.GetValue<string>() : null;
+                    var url = overrides[key] is JsonObject o ? StringOf(o["url"]) : null;
                     if (url is not null && movedUrls.Contains(url))
                     {
                         stubOverrides[key] = overrides[key]!.DeepClone();
@@ -227,14 +232,16 @@ public sealed class PersonIdentitySplitService(
 
             stub.MetadataJson = stubRoot.ToJsonString();
             db.MediaItems.Add(stub);
-            await db.SaveChangesAsync(ct); // need the id to re-point rows
+            // No save here: the stub, the re-pointed rows and the original's edit must land in ONE
+            // SaveChanges, or a failure in between strands an orphan stub and the next nightly run
+            // (which still sees the article on the original) would create another.
         }
         else if (root["_overrides"] is JsonObject overrides)
         {
             // Drop pins that pointed at the departing photos; the article's home keeps its own.
             foreach (var key in overrides.Select(kv => kv.Key).ToList())
             {
-                var url = overrides[key] is JsonObject o ? o["url"]?.GetValue<string>() : null;
+                var url = overrides[key] is JsonObject o ? StringOf(o["url"]) : null;
                 if (url is not null && movedUrls.Contains(url)) overrides.Remove(key);
             }
             if (overrides.Count == 0) root.Remove("_overrides");
@@ -246,9 +253,9 @@ public sealed class PersonIdentitySplitService(
 
         if (stub is not null)
         {
-            foreach (var e in wikiExtIds) e.MediaItemId = stub.Id;
-            foreach (var h in wikiHeadshots) h.PersonMediaItemId = stub.Id;
-            if (wikiEnrichment is not null) wikiEnrichment.MediaItemId = stub.Id;
+            foreach (var e in wikiExtIds) e.MediaItem = stub;
+            foreach (var h in wikiHeadshots) h.PersonMediaItem = stub;
+            if (wikiEnrichment is not null) wikiEnrichment.MediaItem = stub;
         }
         else
         {

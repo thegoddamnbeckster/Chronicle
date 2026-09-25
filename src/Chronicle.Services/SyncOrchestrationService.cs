@@ -682,6 +682,13 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     {
         var ts = evt.WatchedAt.UtcDateTime;
 
+        // A watch dated at or before the user's own reset of this item is history they explicitly
+        // cleared -- re-importing it (a periodic Trakt/SIMKL sync) would resurrect it.
+        var resetAt = await db.UserLibraries.AsNoTracking()
+            .Where(l => l.UserId == userId && l.MediaItemId == mediaItemId)
+            .Select(l => l.WatchResetAt).FirstOrDefaultAsync(ct);
+        if (WatchResetGuard.IsAtOrBeforeReset(ts, null, resetAt)) return 0;
+
         // Approximate timestamps (source gave no real per-item time, so we fell back to
         // "now") are a fresh value on every sync run and can never match by exact equality.
         // Treat "any event already recorded for this item" as the dedup key instead, or a

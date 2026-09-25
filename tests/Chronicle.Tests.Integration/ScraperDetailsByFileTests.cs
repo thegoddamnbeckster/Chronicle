@@ -233,42 +233,7 @@ public class ScraperDetailsByFileTests : IClassFixture<ChronicleApiFactory>
         body.Should().MatchRegex(@"""mediaItemId"":\d+");
         body.Should().Contain("\"season\":2");
         body.Should().Contain("\"episode\":5");
-            // No watch events at all -> nothing independent.
-        body.Should().Contain("\"hasIndependentWatchEvent\":false");
-    }
-
-    [Theory]
-    [InlineData("Chronicle Scraper (reconciled from local Kodi playback)", false)]
-    [InlineData(null, true)]
-    [InlineData("Living Room Kodi", true)]
-    public async Task EpisodeDetailsByFile_HasIndependentWatchEvent_IgnoresOnlyTheScrapersOwnEcho(string? device, bool expected)
-    {
-        // Library Repair's fabricated-watched pass keeps a mark only when a REAL watch event
-        // exists; a history made purely of the scraper's own "reconciled from local Kodi
-        // playback" echoes is exactly what fabricated marks look like (confirmed live 2026-09-25).
-        var tvTypeId = EnsureTvType();
-        var fileName = $"Independent Probe {Guid.NewGuid():N} S01E01.mkv";
-        var episodeId = SeedEpisodeWithScannedFile(tvTypeId, "Independent Probe Show", 1, 1, "Ep", fileName);
-
-        var client = await AuthClientAsync();
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
-            var userId = db.Users.OrderByDescending(u => u.Id).First().Id;
-            db.InteractionEvents.Add(new InteractionEvent
-            {
-                UserId = userId, MediaItemId = episodeId, Timestamp = DateTime.UtcNow,
-                ProgressPercent = 100, MarkedAsWatched = true, DeviceName = device, CreatedAt = DateTime.UtcNow,
-            });
-            db.SaveChanges();
         }
-
-        var resp = await client.GetAsync(
-            $"/api/v1/scraper/tv/episode-details-by-file?fileName={Uri.EscapeDataString(fileName)}");
-
-        resp.EnsureSuccessStatusCode();
-        (await resp.Content.ReadAsStringAsync()).Should().Contain($"\"hasIndependentWatchEvent\":{expected.ToString().ToLowerInvariant()}");
-    }
 
     [Fact]
     public async Task EpisodeDetailsByFile_UnknownFile_Returns404AndNeverCreatesAnything()

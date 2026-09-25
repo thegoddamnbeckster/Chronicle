@@ -272,11 +272,9 @@ namespace Chronicle.Services
 
             var entries = await query.ToListAsync(ct);
             var now = DateTime.UtcNow;
-            // Kodi reports lastplayed as naive LOCAL time and the addon compares it against this stamp
-            // as plain wall-clock text, so the stamp is taken in the server's local clock (same
-            // household/timezone as the Kodi devices). A UTC stamp would sit hours "ahead" of local
-            // times and swallow a genuine rewatch made shortly after the reset.
-            var resetStamp = DateTime.Now;
+            // UTC, like every other server-side timestamp. Kodi's naive local lastplayed is converted
+            // at the two comparison points (see WatchResetGuard), never by storing a local stamp.
+            var resetStamp = now;
 
             // A leaf (episode/movie) with no library row can still be "watched" on a Kodi device
             // that reports it later; without a row there is nowhere to record the reset, so that
@@ -286,10 +284,12 @@ namespace Chronicle.Services
             if (!applyToAllUsers)
             {
                 var haveRow = entries.Select(e => e.MediaItemId).ToHashSet();
-                var parentIds = (await _context.MediaItems
-                        .Where(m => m.ParentId != null && treeIds.Contains(m.ParentId.Value))
-                        .Select(m => m.ParentId!.Value).ToListAsync(ct)).ToHashSet();
-                foreach (var leafId in treeIds.Where(id => id != mediaItemId && !parentIds.Contains(id) && !haveRow.Contains(id)))
+                // Only items at the DEEPEST level of their own type (episodes, movies, tracks) get a
+                // row -- never a season/collection that merely happens to have no children yet.
+                var leafIds = await _context.MediaItems
+                    .Where(m => treeIds.Contains(m.Id) && m.HierarchyLevel >= m.MediaType!.HierarchyLevels - 1)
+                    .Select(m => m.Id).ToListAsync(ct);
+                foreach (var leafId in leafIds.Where(id => !haveRow.Contains(id)))
                 {
                     var created = new UserLibrary
                     {

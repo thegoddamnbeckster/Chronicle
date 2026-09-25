@@ -57,7 +57,7 @@ namespace Chronicle.Services
                 var resetAt = await _context.UserLibraries.AsNoTracking()
                     .Where(l => l.UserId == userId && l.MediaItemId == mediaItemId)
                     .Select(l => l.WatchResetAt).FirstOrDefaultAsync(ct);
-                if (resetAt.HasValue && claimedAt <= resetAt.Value)
+                if (WatchResetGuard.IsAtOrBeforeReset(claimedAt, request.DeviceName, resetAt))
                     return new ScrobbleResult(new InteractionEvent
                     {
                         UserId = userId, MediaItemId = mediaItemId, Timestamp = claimedAt,
@@ -947,11 +947,12 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
 
             var resetAt = existing?.WatchResetAt;
-            var remaining = await _context.InteractionEvents
-                .Where(e => e.UserId == userId && e.MediaItemId == mediaItemId
-                         && (resetAt == null || e.Timestamp > resetAt))
+            var remaining = (await _context.InteractionEvents
+                .Where(e => e.UserId == userId && e.MediaItemId == mediaItemId)
                 .OrderBy(e => e.Timestamp)
-                .ToListAsync(ct);
+                .ToListAsync(ct))
+                .Where(e => !WatchResetGuard.IsAtOrBeforeReset(e.Timestamp, e.DeviceName, resetAt))
+                .ToList();
 
             if (remaining.Count == 0)
             {

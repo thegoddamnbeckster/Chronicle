@@ -53,7 +53,11 @@ public sealed class MovieExternalIdRepairService(
         if (tmdbMovieIds.Count < 2) return [];
 
         var foreign = new List<MediaExternalId>();
-        foreach (var group in rows.GroupBy(r => r.Source))
+        // The trigger is about TMDB *movie* ids, so within the tmdb source only "movie:" rows are
+        // judged -- a collection:/tv: id on the same item is a different kind of id, never foreign.
+        var judged = rows.Where(r => r.Source != "tmdb" ||
+                                     r.ExternalId.StartsWith("movie:", StringComparison.OrdinalIgnoreCase));
+        foreach (var group in judged.GroupBy(r => r.Source))
         {
             var distinct = group.Select(r => r.ExternalId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (distinct.Count < 2) continue;
