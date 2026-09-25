@@ -91,6 +91,30 @@ namespace Chronicle.Tests.Integration
         }
 
         [Fact]
+        public async Task GetByMedia_ReportsPlayCount_AndAResetStartsItOver()
+        {
+            // The media detail page shows "Plays N" beside the watch controls: watches since the last
+            // reset (history itself is kept, the count restarts).
+            var (client, mediaId) = await SetupAsync();
+            await client.PostAsJsonAsync("/api/v1/library", new { mediaItemId = mediaId, status = "Watching" });
+            await client.PostAsJsonAsync("/api/v1/scrobble", new { mediaItemId = mediaId, progressPercent = 100.0 });
+
+            async Task<int> PlayCountAsync()
+            {
+                var r = await client.GetAsync($"/api/v1/library/by-media/{mediaId}");
+                return JsonDocument.Parse(await r.Content.ReadAsStringAsync())
+                    .RootElement.GetProperty("data").GetProperty("playCount").GetInt32();
+            }
+
+            (await PlayCountAsync()).Should().Be(1);
+
+            var reset = await client.PostAsJsonAsync($"/api/v1/library/by-media/{mediaId}/reset-watch-progress", new { });
+            reset.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            (await PlayCountAsync()).Should().Be(0);
+        }
+
+        [Fact]
         public async Task AddToLibrary_WithoutAuth_Returns401()
         {
             var client = _factory.CreateClient();

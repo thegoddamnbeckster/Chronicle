@@ -169,6 +169,13 @@ beforeEach(() => {
   })
 })
 
+/** Opens a fold if it is closed. Folds start closed, but the fold-state cache is module-level and
+ * survives between tests, so a test can't assume which state it finds. */
+async function openFold(label: string) {
+  const button = screen.getByText(label).closest('button') as HTMLButtonElement
+  if (button.getAttribute('aria-expanded') !== 'true') await userEvent.setup().click(button)
+}
+
 describe('MediaDetailPage', () => {
   it('renders the loaded item\'s core info', async () => {
     renderMediaDetailPage()
@@ -287,14 +294,19 @@ describe('MediaDetailPage', () => {
     // The actor renders in the top on-screen row.
     expect(await screen.findByText('Onscreen Actor')).toBeInTheDocument()
 
-    // The director renders inside the "Crew" fold, not the top row.
+    // The actor sits in the "Cast" fold, which is open by default; every other fold starts closed.
+    expect(screen.getByText('Cast')).toBeInTheDocument()
+    expect(screen.queryByText('Behind Camera Director')).not.toBeInTheDocument()
+
+    // The director renders inside the "Crew" fold once it is opened, not the top row.
+    await openFold('Crew')
     const crewHeader = screen.getByText('Crew')
     const crewFold = crewHeader.closest('div') as HTMLElement
     expect(within(crewFold).getByText('Behind Camera Director')).toBeInTheDocument()
     expect(within(crewFold).queryByText('Onscreen Actor')).not.toBeInTheDocument()
   })
 
-  it('shows the character an actor plays but not for crew (2026-09-19)', async () => {
+  it('shows an actor by the character they play (no "Actor"/"as" wording) and a crew member by their role', async () => {
     const actor = makePerson({ id: 10, name: 'Onscreen Actor', roles: ['Actor'], characterName: 'Roy Kent' })
     const director = makePerson({ id: 11, name: 'Behind Camera Director', roles: ['Director'], characterName: null })
     mockedGetMediaPeople.mockResolvedValue([actor, director])
@@ -302,11 +314,14 @@ describe('MediaDetailPage', () => {
     renderMediaDetailPage()
     await screen.findByRole('heading', { name: 'Test Movie' })
 
-    expect(await screen.findByText('as Roy Kent')).toBeInTheDocument()
-    // Crew never shows a character line, even if characterName were ever non-null for one.
-    const crewHeader = screen.getByText('Crew')
-    const crewFold = crewHeader.closest('div') as HTMLElement
-    expect(within(crewFold).queryByText(/^as /)).not.toBeInTheDocument()
+    // The position is just the character -- saying "Actor" and "as" was redundant.
+    expect(await screen.findByText('Roy Kent')).toBeInTheDocument()
+    expect(screen.queryByText('as Roy Kent')).not.toBeInTheDocument()
+
+    // Crew keeps its role (folds start closed, so open it first).
+    await openFold('Crew')
+    const crewFold = screen.getByText('Crew').closest('div') as HTMLElement
+    expect(within(crewFold).getByText('Director')).toBeInTheDocument()
   })
 
   it('pins the poster image to a slot via the lightbox image controls', async () => {

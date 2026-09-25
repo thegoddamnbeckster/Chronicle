@@ -1,0 +1,16 @@
+.tag {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  z-index: 2;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.6rem;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  opacity: 0.75;
+}

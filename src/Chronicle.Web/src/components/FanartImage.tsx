@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { PosterProgressBar } from './PosterProgressBar'
+import { ArtTypeTag } from './ArtTypeTag'
 import styles from './FanartImage.module.css'
 
 interface FanartImageProps {
@@ -18,6 +19,8 @@ interface FanartImageProps {
    * CollectionMetadataBox's isFanartUrl branch). Omit, or pass null/0, to show no bar.
    */
   progressPercent?: number | null
+  /** Discreet bottom-corner tag naming the kind of art this is (Logo, Banner ...). */
+  artLabel?: string
 }
 
 /**
@@ -25,7 +28,7 @@ interface FanartImageProps {
  * Shows a shimmer skeleton labelled "fanart.tv" while the image loads so the
  * user knows Chronicle is waiting on an external CDN, not that it's broken.
  */
-export function FanartImage({ src, alt = '', wrapperClassName, imgClassName, minHeight = 80, progressPercent }: FanartImageProps) {
+export function FanartImage({ src, alt = '', wrapperClassName, imgClassName, minHeight = 80, progressPercent, artLabel }: FanartImageProps) {
   const [state, setState] = useState<'loading' | 'loaded' | 'error'>('loading')
 
   if (state === 'error') return null
@@ -48,6 +51,7 @@ export function FanartImage({ src, alt = '', wrapperClassName, imgClassName, min
         onError={() => setState('error')}
       />
       <PosterProgressBar percent={progressPercent} />
+      {artLabel && state === 'loaded' && <ArtTypeTag label={artLabel} />}
     </div>
   )
 }

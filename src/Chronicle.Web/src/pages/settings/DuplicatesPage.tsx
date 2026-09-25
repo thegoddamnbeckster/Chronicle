@@ -12,6 +12,7 @@ import { deleteMedia } from '@/api/media'
 import MergeModal from '@/components/MergeModal'
 import styles from './DuplicatesPage.module.css'
 import { PosterImage } from '@/components/PosterImage'
+import { displayExternalIds } from '@/utils/externalId'
 
 export default function DuplicatesPage() {
   const qc = useQueryClient()
@@ -133,10 +134,9 @@ function ItemCard({
   onDelete: () => void
   deleting: boolean
 }) {
-  // Show only the most useful external IDs (skip internal/noisy sources)
-  const displayIds = item.externalIds.filter(e =>
-    ['tmdb', 'imdb', 'tvdb', 'musicbrainz', 'simkl', 'trakt', 'hardcover', 'igdb'].includes(e.source.toLowerCase())
-  )
+  // Same display form as the merge dialog (see utils/externalId.ts) -- the two used to filter and
+  // format ids differently, so one film's cards could look like they disagreed.
+  const displayIds = displayExternalIds(item.externalIds)
 
   const handleDelete = () => {
     if (window.confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) onDelete()
@@ -163,8 +163,8 @@ function ItemCard({
         {displayIds.length > 0 && (
           <div className={styles.externalIds}>
             {displayIds.map(e => (
-              <span key={`${e.source}:${e.externalId}`} className={styles.idBadge}>
-                {e.source}: {e.externalId}
+              <span key={e.key} className={styles.idBadge}>
+                {e.label}: {e.value}
               </span>
             ))}
           </div>

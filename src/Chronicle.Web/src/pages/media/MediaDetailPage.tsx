@@ -22,6 +22,7 @@ import styles from './MediaDetailPage.module.css'
 import { IconHdd } from '@/components/FileStatusIcons'
 import { PosterImage } from '@/components/PosterImage'
 import { FanartImage } from '@/components/FanartImage'
+import { ArtTypeTag } from '@/components/ArtTypeTag'
 import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import { unmergeItem } from '@/api/duplicates'
 import { PersonCard } from '@/components/people/PersonCard'
@@ -154,7 +155,7 @@ interface PluginFoldProps {
   children: React.ReactNode
 }
 
-function PluginFold({ foldKey, label, iconUrl, defaultOpen = true, children }: PluginFoldProps) {
+function PluginFold({ foldKey, label, iconUrl, defaultOpen = false, children }: PluginFoldProps) {
   const { isOpen, toggle } = useFold(foldKey, defaultOpen)
 
   return (
@@ -243,6 +244,14 @@ export default function MediaDetailPage() {
     enabled: !isNaN(mediaId),
   })
   const onScreenPeople = peopleInvolved.filter(p => isOnScreenRole(p.roles))
+  // The on-screen group's heading: musicians/vocalists on a record, narrators on an audiobook,
+  // actors everywhere else.
+  const castLabel = (() => {
+    const t = (item?.mediaTypeName ?? '').toLowerCase()
+    if (t === 'music') return 'Band Members'
+    if (t === 'audiobook' || t === 'audiobooks') return 'Narrators'
+    return 'Cast'
+  })()
   const otherPeople = peopleInvolved.filter(p => !isOnScreenRole(p.roles))
 
   // Get the user's library entry for this item (if any)
@@ -668,6 +677,7 @@ export default function MediaDetailPage() {
             aria-hidden
           />
         )}
+        {hasBackdrop && <ArtTypeTag label="Backdrop" />}
         <div className={`${styles.backdropContent}${hasBackdrop ? ` ${styles.backdropContentActive}` : ''}`}>
       <div className={`${styles.topNav}${hasBackdrop ? ` ${styles.topNavBoxed}` : ''}`}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
@@ -725,6 +735,7 @@ export default function MediaDetailPage() {
           wrapperClassName={styles.fanartBannerWrap}
           imgClassName={styles.fanartBanner}
           minHeight={60}
+          artLabel="Banner"
         />
       )}
 
@@ -736,6 +747,7 @@ export default function MediaDetailPage() {
             imgClassName={styles.posterClickable}
             onClick={() => setLightboxIdx(0)}
             progressPercent={posterProgressPercent(libraryEntry?.status, libraryEntry?.resumePositionPercent, libraryEntry?.lastKnownProgressPercent)}
+            artLabel="Poster"
           />
           {fanartCharacter && (
             <FanartImage
@@ -743,6 +755,7 @@ export default function MediaDetailPage() {
               wrapperClassName={styles.fanartCharacterWrap}
               imgClassName={styles.fanartCharacter}
               minHeight={120}
+              artLabel="Character art"
             />
           )}
         </div>
@@ -755,6 +768,7 @@ export default function MediaDetailPage() {
               wrapperClassName={styles.fanartLogoWrap}
               imgClassName={styles.fanartLogo}
               minHeight={80}
+              artLabel="Logo"
             />
           )}
           <h1 className={styles.title}>{item.name}</h1>
@@ -1169,11 +1183,13 @@ export default function MediaDetailPage() {
           </div>
 
           {onScreenPeople.length > 0 && (
-            <div className={styles.peopleRow}>
-              {onScreenPeople.map(person => (
-                <PersonCard key={person.id} person={person} fullName />
-              ))}
-            </div>
+            <PluginFold foldKey={`media.${mediaId}.cast`} label={castLabel} defaultOpen>
+              <div className={styles.peopleRow}>
+                {onScreenPeople.map(person => (
+                  <PersonCard key={person.id} person={person} fullName />
+                ))}
+              </div>
+            </PluginFold>
           )}
 
           {(item.overview || fanartThumb || fanartDisc) && (
@@ -1184,6 +1200,7 @@ export default function MediaDetailPage() {
                   wrapperClassName={styles.fanartThumbWrap}
                   imgClassName={styles.fanartThumb}
                   minHeight={150}
+                  artLabel="Thumb"
                 />
               )}
               {item.overview && <p className={styles.overview}>{item.overview}</p>}
@@ -1193,6 +1210,7 @@ export default function MediaDetailPage() {
                   wrapperClassName={styles.fanartDiscWrap}
                   imgClassName={styles.fanartDisc}
                   minHeight={110}
+                  artLabel="Disc"
                 />
               )}
             </div>
@@ -1229,6 +1247,61 @@ export default function MediaDetailPage() {
                 {resetSubtreeMut.isPending ? 'Resetting…' : '↺ Reset Image Overrides (incl. contents)'}
               </button>
             )}
+            {/* Watch controls live on the refresh row (per-user request): status, rating, how many
+                times it has been watched, and how far along it is. Hidden for a collection container
+                itself -- a collection isn't watched or rated as a whole, only the movies inside it. */}
+            {!(item.hierarchyLevel === 0 && item.parentId == null && isFlatCollectionType && isKnownCollection) && (
+              libraryEntry ? (
+                <div className={styles.stripLibrary}>
+                  <label className={styles.stripLabel}>Status</label>
+                  <select
+                    className={styles.stripSelect}
+                    value={libraryEntry.status}
+                    onChange={e => updateMut.mutate({ status: e.target.value as LibraryStatus })}
+                  >
+                    {STATUS_OPTIONS.map(st => (
+                      <option key={st} value={st}>{getStatusLabel(st, item.mediaTypeName)}</option>
+                    ))}
+                  </select>
+                  <label className={styles.stripLabel}>Rating</label>
+                  <select
+                    className={styles.stripSelect}
+                    value={libraryEntry.userRating ?? ''}
+                    onChange={e =>
+                      updateMut.mutate({ rating: e.target.value ? Number(e.target.value) : undefined })
+                    }
+                  >
+                    <option value="">Not rated</option>
+                    {[...Array(10)].map((_, i) => (
+                      <option key={i + 1} value={i + 1}>{i + 1}</option>
+                    ))}
+                  </select>
+                  {libraryEntry.playCount != null && (
+                    <span className={styles.stripStat} title="Times watched since the last reset">
+                      Plays <strong>{libraryEntry.playCount}</strong>
+                    </span>
+                  )}
+                  {(() => {
+                    const pct = posterProgressPercent(
+                      libraryEntry.status, libraryEntry.resumePositionPercent, libraryEntry.lastKnownProgressPercent)
+                    return pct != null && pct > 0 ? (
+                      <span className={styles.stripStat} title="How far along it is">
+                        Progress <strong>{Math.round(pct)}%</strong>
+                      </span>
+                    ) : null
+                  })()}
+                </div>
+              ) : (
+                <div className={styles.addButtons}>
+                  <button className={styles.primaryBtn} onClick={() => addMut.mutate('Watching')} disabled={addMut.isPending}>
+                    + Add to Library
+                  </button>
+                  <button className={styles.secondaryBtn} onClick={() => addMut.mutate('PlanToWatch')} disabled={addMut.isPending}>
+                    {getPlanToLabel(item.mediaTypeName)}
+                  </button>
+                </div>
+              )
+            )}
             {refreshMut.isError && (
               <span className={styles.refreshError}>
                 {`Refresh failed: ${(refreshMut.error as Error).message}`}
@@ -1258,6 +1331,68 @@ export default function MediaDetailPage() {
           {isFlatCollectionType && (
             <CollectionMetadataBox mediaItemId={mediaId} compact={item.hierarchyLevel === 1} />
           )}
+
+      {/* Children (seasons, episodes, tracks, etc.) — sorted by number, then filename.
+          Flat-type collections are sorted by year ascending (oldest first).
+          For flat-type collections the CollectionMetadataBox already shows the children — skip. */}
+      {children.length > 0 && (() => {
+        const isMovieCollection = isFlatCollectionType && item.hierarchyLevel === 0
+
+        if (isMovieCollection) return null
+
+        const sortedChildren = [...children].sort((a, b) => {
+          if (isMovieCollection) {
+            // Oldest release first; null years sort to end
+            const ya = a.year ?? 9999
+            const yb = b.year ?? 9999
+            return ya !== yb ? ya - yb : a.name.localeCompare(b.name)
+          }
+          // Both have a number → numeric ascending
+          if (a.number != null && b.number != null) return a.number - b.number
+          // Only one has a number → numbered item comes first
+          if (a.number != null) return -1
+          if (b.number != null) return 1
+          // Neither has a number → natural sort on name (handles "E01" < "E02" < "E10")
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+        })
+        const childrenLabel = getChildrenLabel(item.mediaTypeName, item.ancestors?.length ?? 0)
+        const childIds = sortedChildren.map(c => c.id)
+        return (
+        <PluginFold foldKey={`media.${mediaId}.children`} label={`${childrenLabel} (${sortedChildren.length})`}>
+          <div className={styles.childGrid}>
+            {sortedChildren.map(child => (
+              <Link
+                key={child.id}
+                to={`/media/${child.id}`}
+                state={{ listIds: childIds, listLabel: childrenLabel }}
+                className={styles.childCard}
+              >
+                {(() => {
+                  const enriched = child.enrichmentStatuses != null &&
+                    Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
+                  const childEntry = childLibraryEntries.find(e => e.mediaItem.id === child.id)
+                  const childProgress = posterProgressPercent(childEntry?.status, childEntry?.resumePositionPercent, childEntry?.lastKnownProgressPercent)
+                  return (
+                    <PosterImage
+                      posterUrl={child.posterUrl}
+                      name={child.name}
+                      imgClassName={styles.childPoster}
+                      placeholderContent={enriched
+                        ? <span className={styles.childNoArt}>No art</span>
+                        : (child.number ?? child.name.charAt(0))}
+                      progressPercent={childProgress}
+                    />
+                  )
+                })()}
+                <div className={styles.childName}>{child.name}</div>
+                {child.year && <div className={styles.childYear}>{child.year}</div>}
+              </Link>
+            ))}
+          </div>
+        </PluginFold>
+        )
+      })()}
+
 
           {/* Per-plugin metadata boxes — one box per plugin that has data OR has been attempted.
               This ensures Fix Match is always available, even for NotFound / failed items.
@@ -1308,7 +1443,6 @@ export default function MediaDetailPage() {
                   foldKey={`media.${mediaId}.${pluginId}`}
                   label={plugin?.name ?? pluginId}
                   iconUrl={plugin?.iconUrl}
-                  defaultOpen={!pluginId.includes('fanarttv')}
                 >
                   <PluginMetadataBox
                     mediaId={mediaId}
@@ -1516,134 +1650,10 @@ export default function MediaDetailPage() {
             </div>
           )}
 
-          {/* Library actions -- hidden for a collection container itself (isKnownCollection,
-              same check the "Add to Collection"/"Add to a Collection" toggle above already
-              uses): a collection isn't something you watch or rate as a whole, only the
-              movies inside it are. Confirmed live (2026-08-29) this control had no such guard
-              at all -- a stray click on a collection's own page set its UserLibrary status to
-              "Watching" with zero backing interaction_event, ever, showing up in Continue
-              Watching for something nobody actually watched. */}
-          {!(item.hierarchyLevel === 0 && item.parentId == null && isFlatCollectionType && isKnownCollection) && (
-          <div className={styles.librarySection}>
-            {libraryEntry ? (
-              <div className={styles.libraryControls}>
-                <label className={styles.label}>Status</label>
-                <select
-                  className={styles.select}
-                  value={libraryEntry.status}
-                  onChange={e =>
-                    updateMut.mutate({ status: e.target.value as LibraryStatus })
-                  }
-                >
-                  {STATUS_OPTIONS.map(s => (
-                    <option key={s} value={s}>{getStatusLabel(s, item.mediaTypeName)}</option>
-                  ))}
-                </select>
-
-                <label className={styles.label}>Your Rating</label>
-                <select
-                  className={styles.select}
-                  value={libraryEntry.userRating ?? ''}
-                  onChange={e =>
-                    updateMut.mutate({
-                      rating: e.target.value ? Number(e.target.value) : undefined,
-                    })
-                  }
-                >
-                  <option value="">Not rated</option>
-                  {[...Array(10)].map((_, i) => (
-                    <option key={i + 1} value={i + 1}>{i + 1}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className={styles.addButtons}>
-                <button
-                  className={styles.primaryBtn}
-                  onClick={() => addMut.mutate('Watching')}
-                  disabled={addMut.isPending}
-                >
-                  + Add to Library
-                </button>
-                <button
-                  className={styles.secondaryBtn}
-                  onClick={() => addMut.mutate('PlanToWatch')}
-                  disabled={addMut.isPending}
-                >
-                  {getPlanToLabel(item.mediaTypeName)}
-                </button>
-              </div>
-            )}
-          </div>
-          )}
         </div>
       </div>
         </div>{/* backdropContent */}
       </div>{/* backdropSection */}
-
-      {/* Children (seasons, episodes, tracks, etc.) — sorted by number, then filename.
-          Flat-type collections are sorted by year ascending (oldest first).
-          For flat-type collections the CollectionMetadataBox already shows the children — skip. */}
-      {children.length > 0 && (() => {
-        const isMovieCollection = isFlatCollectionType && item.hierarchyLevel === 0
-
-        if (isMovieCollection) return null
-
-        const sortedChildren = [...children].sort((a, b) => {
-          if (isMovieCollection) {
-            // Oldest release first; null years sort to end
-            const ya = a.year ?? 9999
-            const yb = b.year ?? 9999
-            return ya !== yb ? ya - yb : a.name.localeCompare(b.name)
-          }
-          // Both have a number → numeric ascending
-          if (a.number != null && b.number != null) return a.number - b.number
-          // Only one has a number → numbered item comes first
-          if (a.number != null) return -1
-          if (b.number != null) return 1
-          // Neither has a number → natural sort on name (handles "E01" < "E02" < "E10")
-          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-        })
-        const childrenLabel = getChildrenLabel(item.mediaTypeName, item.ancestors?.length ?? 0)
-        const childIds = sortedChildren.map(c => c.id)
-        return (
-        <section className={styles.children}>
-          <h2 className={styles.childrenTitle}>
-            {childrenLabel} ({sortedChildren.length})
-          </h2>
-          <div className={styles.childGrid}>
-            {sortedChildren.map(child => (
-              <Link
-                key={child.id}
-                to={`/media/${child.id}`}
-                state={{ listIds: childIds, listLabel: childrenLabel }}
-                className={styles.childCard}
-              >
-                {(() => {
-                  const enriched = child.enrichmentStatuses != null &&
-                    Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
-                  const childEntry = childLibraryEntries.find(e => e.mediaItem.id === child.id)
-                  const childProgress = posterProgressPercent(childEntry?.status, childEntry?.resumePositionPercent, childEntry?.lastKnownProgressPercent)
-                  return (
-                    <PosterImage
-                      posterUrl={child.posterUrl}
-                      name={child.name}
-                      imgClassName={styles.childPoster}
-                      placeholderContent={enriched
-                        ? <span className={styles.childNoArt}>No art</span>
-                        : (child.number ?? child.name.charAt(0))}
-                      progressPercent={childProgress}
-                    />
-                  )
-                })()}
-                <div className={styles.childName}>{child.name}</div>
-                {child.year && <div className={styles.childYear}>{child.year}</div>}
-              </Link>
-            ))}
-          </div>
-        </section>
-        )
-      })()}
 
       {/* ── Additional Images: type-scoped gallery/promote modal ──────────── */}
       {gallerySlot && (

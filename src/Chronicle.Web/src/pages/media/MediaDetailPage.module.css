@@ -564,9 +564,41 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 .refreshStrip {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 8px;
 }
+
+/* Watch controls sitting on the same row as the refresh buttons. */
+.stripLibrary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.stripLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+.stripSelect {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.stripStat {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.stripStat strong { color: var(--text-primary); }
 
 .refreshBtn {
   font-size: 12px;

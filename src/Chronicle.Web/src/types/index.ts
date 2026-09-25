@@ -219,6 +219,9 @@ export interface LibraryEntry {
    *  Completed (unlike resumePositionPercent, which is cleared then). Null only when the item
    *  has never been scrobbled at all. */
   lastKnownProgressPercent: number | null
+  /** Times this item has been watched since its last reset (only set by the single-item
+   *  by-media lookup; null in list responses). */
+  playCount?: number | null
 }
 
 // ── Scrobble ──────────────────────────────────────────────────────────────────

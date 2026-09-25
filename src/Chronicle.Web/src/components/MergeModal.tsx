@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 import { mergeItems } from '@/api/duplicates'
 import styles from './MergeModal.module.css'
 import { PosterImage } from './PosterImage'
+import { displayExternalIds } from '@/utils/externalId'
 
 export interface MergeItem {
   id: number
@@ -87,9 +88,9 @@ export default function MergeModal({ itemA, itemB, onClose, onMerged }: Props) {
 
                   {item.externalIds && item.externalIds.length > 0 && (
                     <div className={styles.idChips}>
-                      {item.externalIds.map(e => (
-                        <span key={`${e.source}:${e.externalId}`} className={styles.idChip}>
-                          {e.source}: {e.externalId}
+                      {displayExternalIds(item.externalIds).map(e => (
+                        <span key={e.key} className={styles.idChip}>
+                          {e.label}: {e.value}
                         </span>
                       ))}
                     </div>

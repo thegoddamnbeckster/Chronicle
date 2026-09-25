@@ -258,7 +258,14 @@ namespace Chronicle.API.Controllers
                 return Ok(ApiResponse<LibraryEntryDto?>.Ok(null));
 
             var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
-            return Ok(ApiResponse<LibraryEntryDto?>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));
+            var dto = ToDto(entry, fallbackPosterUrl: fallbackPoster);
+
+            // Watches since the last reset only -- a reset starts the count over (history is kept).
+            var reset = entry.WatchResetAt;
+            var playCount = await _context.InteractionEvents.CountAsync(
+                e => e.UserId == userId && e.MediaItemId == mediaItemId && e.MarkedAsWatched &&
+                     (reset == null || e.Timestamp > reset), ct);
+            return Ok(ApiResponse<LibraryEntryDto?>.Ok(dto with { PlayCount = playCount }));
         }
 
         /// <summary>

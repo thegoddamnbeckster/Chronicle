@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { ArtTypeTag } from './ArtTypeTag'
 import { PosterProgressBar } from './PosterProgressBar'
 import styles from './PosterImage.module.css'
 
@@ -27,6 +28,8 @@ interface PosterImageProps {
    * themselves (see utils/posterProgress.ts's posterProgressPercent).
    */
   progressPercent?: number | null
+  /** Discreet bottom-corner tag naming the kind of art this is (Poster ...). Only shown once the image has loaded. */
+  artLabel?: string
 }
 
 /**
@@ -34,7 +37,7 @@ interface PosterImageProps {
  * until the image finishes loading. Prevents blank gaps when images load slowly
  * (e.g. from fanart.tv) and handles load errors gracefully.
  */
-export function PosterImage({ posterUrl, name, className, onClick, imgClassName, placeholderContent, lazy = false, progressPercent }: PosterImageProps) {
+export function PosterImage({ posterUrl, name, className, onClick, imgClassName, placeholderContent, lazy = false, progressPercent, artLabel }: PosterImageProps) {
   const [loaded, setLoaded] = useState(false)
 
   return (
@@ -57,6 +60,7 @@ export function PosterImage({ posterUrl, name, className, onClick, imgClassName,
         />
       )}
       <PosterProgressBar percent={progressPercent} />
+      {artLabel && loaded && <ArtTypeTag label={artLabel} />}
     </div>
   )
 }

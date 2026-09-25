@@ -257,7 +257,10 @@ namespace Chronicle.API.DTOs
         /// stopped at (96%) rather than always reading 100% for anything Completed. Null only
         /// when the item has never been scrobbled at all.
         /// </summary>
-        double? LastKnownProgressPercent = null
+        double? LastKnownProgressPercent = null,
+        /// <summary>Times the caller has watched this item since its last reset. Only filled by the
+        /// single-item by-media lookup (a count per row would be an N+1 on list endpoints).</summary>
+        int? PlayCount = null
     );
 
     public record NuclearResetRequestDto(string ConfirmationToken);

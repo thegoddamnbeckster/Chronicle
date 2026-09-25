@@ -37,14 +37,19 @@ export function PersonCard({
   navState?: { listIds: number[]; listLabel?: string }
   /** True on MediaDetailPage's own cast/crew section, which isn't virtualized and so has no
    * fixed row height to protect -- shows the full name unclamped (per-user request: names like
-   * "Jason Mantzoukas" or "Dee Bradley Baker" were getting cut off at 2 lines) and, for an
-   * actor, the character they play on this title. False (the default) keeps the catalog-wide
+   * "Jason Mantzoukas" or "Dee Bradley Baker" were getting cut off at 2 lines), the position
+   * (an actor's character, else their role) and no birth/death years. False (the default) keeps the catalog-wide
    * People grid's existing 2-line clamp, since PeopleLibraryPage's virtualized row height
    * depends on it (see that page's own CARD_INFO_HEIGHT doc). */
   fullName?: boolean
 }) {
   const dates = formatDateRange(person.birthDate, person.deathDate)
   const isActor = person.roles.some(r => r.toLowerCase() === 'actor')
+  // On a title's own cast tile the position IS the point: an actor's is the character they play
+  // (saying "Actor ... as" first is redundant), anyone else's is their role (Director, Composer).
+  const position = fullName && isActor && person.characterName
+    ? person.characterName
+    : person.roles.join(', ')
 
   return (
     <Link to={`/people/${person.id}`} state={navState} className={styles.personCard}>
@@ -56,13 +61,10 @@ export function PersonCard({
       </div>
       <div className={styles.info}>
         <div className={fullName ? styles.nameFull : styles.name}>{person.name}</div>
-        {person.roles.length > 0 && (
-          <div className={styles.positions}>{person.roles.join(', ')}</div>
-        )}
-        {fullName && isActor && person.characterName && (
-          <div className={styles.character}>as {person.characterName}</div>
-        )}
-        {dates && <div className={styles.dates}>{dates}</div>}
+        {position && <div className={styles.positions}>{position}</div>}
+        {/* Birth/death years belong to the person, not to a title's cast tile -- shown on the
+            catalog-wide People grid only. */}
+        {!fullName && dates && <div className={styles.dates}>{dates}</div>}
       </div>
     </Link>
   )
