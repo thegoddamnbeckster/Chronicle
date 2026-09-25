@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { PosterImage } from '@/components/PosterImage'
+import { thumbnailUrl } from '@/utils/thumbnailUrl'
 import type { PersonListItem } from '@/types'
 import styles from './PersonCard.module.css'
 
@@ -54,7 +55,7 @@ export function PersonCard({
   return (
     <Link to={`/people/${person.id}`} state={navState} className={styles.personCard}>
       <div className={styles.poster}>
-        <PosterImage posterUrl={person.posterUrl} name={person.name} lazy />
+        <PosterImage posterUrl={thumbnailUrl(person.posterUrl)} name={person.name} lazy />
         {person.deathDate && (
           <div className={styles.deceasedBar} title={`Died ${formatYear(person.deathDate)}`} />
         )}
