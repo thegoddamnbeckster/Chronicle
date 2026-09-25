@@ -43,7 +43,9 @@ public sealed class MovieExternalIdRepairService(
     /// Pure decision: given every external-id row on one item and the text corpus that attests
     /// ids (partitions JSON + enrichment ExternalIds), returns the rows to detach.
     /// </summary>
-    internal static List<MediaExternalId> FindForeignIds(IReadOnlyList<MediaExternalId> rows, string attestationCorpus)
+    internal static List<MediaExternalId> FindForeignIds(
+        IReadOnlyList<MediaExternalId> rows, string attestationCorpus,
+        IReadOnlyDictionary<string, string>? enrichedIdBySource = null)
     {
         var tmdbMovieIds = rows
             .Where(r => r.Source == "tmdb" && r.ExternalId.StartsWith("movie:", StringComparison.OrdinalIgnoreCase))
@@ -56,12 +58,34 @@ public sealed class MovieExternalIdRepairService(
             var distinct = group.Select(r => r.ExternalId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (distinct.Count < 2) continue;
 
-            var attested = distinct.Where(id => IsAttested(id, attestationCorpus)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // The provider's OWN enrichment row for this source is the strongest evidence: it is
+            // the id that provider actually resolved this item under. It outranks the loose
+            // text corpus, which can also mention a foreign id (confirmed live: a Fanart.tv
+            // partition carrying another film's id made the wrong TMDB id look attested).
+            HashSet<string> attested;
+            if (enrichedIdBySource is not null && enrichedIdBySource.TryGetValue(group.Key, out var enrichedId) &&
+                distinct.Any(id => SameCore(id, enrichedId)))
+                attested = distinct.Where(id => SameCore(id, enrichedId)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            else
+                attested = distinct.Where(id => IsAttested(id, attestationCorpus)).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (attested.Count == 0) continue; // can't tell them apart -- leave alone
 
             foreign.AddRange(group.Where(r => !attested.Contains(r.ExternalId)));
         }
         return foreign;
+    }
+
+    private static string Core(string id) => id[(id.LastIndexOf(':') + 1)..];
+
+    private static bool SameCore(string a, string b) =>
+        Core(a).Length > 0 && string.Equals(Core(a), Core(b), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Provider plugin id ("chronicle.plugin.thetvdb") to the external-id Source it writes
+    /// ("tvdb"); every other plugin's source is simply the last id segment.</summary>
+    internal static string SourceOfPlugin(string pluginId)
+    {
+        var last = pluginId[(pluginId.LastIndexOf('.') + 1)..];
+        return last == "thetvdb" ? "tvdb" : last;
     }
 
     /// <summary>An id counts as attested when its core token (the part after the last ':' -- "9291"
@@ -93,7 +117,7 @@ public sealed class MovieExternalIdRepairService(
             var allRows = await db.MediaExternalIds.Where(e => chunk.Contains(e.MediaItemId)).ToListAsync(ct);
             var enrichments = await db.MediaEnrichments.AsNoTracking()
                 .Where(e => chunk.Contains(e.MediaItemId) && e.ExternalId != null)
-                .Select(e => new { e.MediaItemId, e.ExternalId })
+                .Select(e => new { e.MediaItemId, e.PluginId, e.ExternalId })
                 .ToListAsync(ct);
 
             foreach (var item in items)
@@ -102,7 +126,10 @@ public sealed class MovieExternalIdRepairService(
                 var corpus = (item.MetadataJson ?? "") + "\n" +
                              string.Join("\n", enrichments.Where(e => e.MediaItemId == item.Id).Select(e => e.ExternalId));
 
-                var foreign = FindForeignIds(rows, corpus);
+                var enrichedIds = enrichments.Where(e => e.MediaItemId == item.Id)
+                    .GroupBy(e => SourceOfPlugin(e.PluginId))
+                    .ToDictionary(g => g.Key, g => g.First().ExternalId!, StringComparer.OrdinalIgnoreCase);
+                var foreign = FindForeignIds(rows, corpus, enrichedIds);
                 if (foreign.Count == 0) continue;
 
                 db.MediaExternalIds.RemoveRange(foreign);

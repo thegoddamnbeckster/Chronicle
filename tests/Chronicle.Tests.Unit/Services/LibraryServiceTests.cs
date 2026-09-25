@@ -468,7 +468,7 @@ public class LibraryServiceTests
         db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = withRow.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
-        var before = DateTime.UtcNow.AddSeconds(-1);
+        var before = DateTime.Now.AddSeconds(-1); // the stamp is the server local clock, see LibraryService
 
         await svc.ResetWatchProgressAsync(actingUserId: 1, mediaItemId: show.Id, applyToAllUsers: false);
 

@@ -53,4 +53,25 @@ public class MovieExternalIdRepairServiceTests
         Assert.False(MovieExternalIdRepairService.IsAttested("movie:985", Corpus));
         Assert.True(MovieExternalIdRepairService.IsAttested("movie:4985", Corpus));
     }
+
+    [Fact]
+    public void ProvidersOwnEnrichmentId_OutranksACorpusThatAlsoMentionsTheForeignId()
+    {
+        // Live: Alien Apocalypse (2023) had a Fanart.tv partition carrying another film's id, which
+        // made that film's TMDB id look attested by text alone. The TMDB enrichment row is decisive.
+        var corpus = """{"chronicle.plugin.fanarttv":{"externalId":"movie:14907"}}""" + "\nmovie:1181709";
+        var rows = new[] { Row("tmdb", "movie:1181709"), Row("tmdb", "movie:14907") };
+
+        var foreign = MovieExternalIdRepairService.FindForeignIds(
+            rows, corpus, new Dictionary<string, string> { ["tmdb"] = "movie:1181709" });
+
+        Assert.Single(foreign);
+        Assert.Equal("movie:14907", foreign[0].ExternalId);
+    }
+
+    [Theory]
+    [InlineData("chronicle.plugin.thetvdb", "tvdb")]
+    [InlineData("chronicle.plugin.tmdb", "tmdb")]
+    public void SourceOfPlugin_MapsPluginIdsToExternalIdSources(string pluginId, string source) =>
+        Assert.Equal(source, MovieExternalIdRepairService.SourceOfPlugin(pluginId));
 }

@@ -272,6 +272,11 @@ namespace Chronicle.Services
 
             var entries = await query.ToListAsync(ct);
             var now = DateTime.UtcNow;
+            // Kodi reports lastplayed as naive LOCAL time and the addon compares it against this stamp
+            // as plain wall-clock text, so the stamp is taken in the server's local clock (same
+            // household/timezone as the Kodi devices). A UTC stamp would sit hours "ahead" of local
+            // times and swallow a genuine rewatch made shortly after the reset.
+            var resetStamp = DateTime.Now;
 
             // A leaf (episode/movie) with no library row can still be "watched" on a Kodi device
             // that reports it later; without a row there is nowhere to record the reset, so that
@@ -298,7 +303,7 @@ namespace Chronicle.Services
 
             foreach (var entry in entries)
             {
-                entry.WatchResetAt = now;
+                entry.WatchResetAt = resetStamp;
                 entry.Status = LibraryStatus.Unwatched;
                 entry.StartedAt = null;
                 entry.CompletedAt = null;
