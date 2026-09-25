@@ -1831,6 +1831,9 @@ public class MetadataEnrichmentService(
                             KnownExternalIds: knownExternalIds.Count > 0 ? knownExternalIds : null,
                             KnownBirthYear:   mediaTypeName == "people"
                                                   ? ExtractKnownBirthYear(row.MediaItem.MetadataJson)
+                                                  : null,
+                            KnownCreditTitles: mediaTypeName == "people"
+                                                  ? await LoadCreditedTitlesAsync(db, row.MediaItemId, ct)
                                                   : null);
 
                     logger.LogDebug(
@@ -2066,6 +2069,20 @@ public class MetadataEnrichmentService(
                         .Select(i => (i.Url, (string?)i.ThumbnailUrl)));
                     await personResolutionService.RecordOwnPortraitAsync(
                         db, row.MediaItem!, photos, PluginIdHelper.ToSource(row.PluginId), ct);
+
+                    // Catch a mixed-up person the moment the evidence exists instead of at the next
+                    // nightly run: a freshly fetched provider partition (typically TMDB's, which
+                    // carries a birth date) may now prove an earlier name-searched Wikipedia article
+                    // belongs to a different person. Skipped for Wikipedia's own row (its search
+                    // already hard-rejects a known conflicting birth year) and when the splitter
+                    // isn't registered (unit tests construct this service directly).
+                    if (!row.PluginId.EndsWith(".wikipedia", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await using var splitScope = scopeFactory.CreateAsyncScope();
+                        var splitter = splitScope.ServiceProvider.GetService<PersonIdentitySplitService>();
+                        if (splitter is not null)
+                            await splitter.CheckAndSplitAsync(db, resolutionService, row.MediaItem!, ct);
+                    }
                 }
                 // Keep media_external_ids in sync with the enrichment result so that
                 // Fix Match (which calls this path with an IdOverride) actually persists
@@ -2723,6 +2740,18 @@ public class MetadataEnrichmentService(
     /// found; a genuine conflict between providers isn't resolved here since this is only a
     /// corroboration hint, not the source of truth.
     /// </summary>
+    /// <summary>Distinct titles this person is credited on, for MediaSearchContext.KnownCreditTitles.
+    /// Capped -- the Wikipedia check only needs a handful of names to corroborate against.</summary>
+    private static async Task<IReadOnlyList<string>?> LoadCreditedTitlesAsync(
+        ChronicleDbContext db, int personMediaItemId, CancellationToken ct)
+    {
+        var titles = await db.MediaCredits
+            .Where(c => c.PersonMediaItemId == personMediaItemId)
+            .Select(c => c.MediaItem!.Name)
+            .Distinct().Take(40).ToListAsync(ct);
+        return titles.Count > 0 ? titles : null;
+    }
+
     private static int? ExtractKnownBirthYear(string? metadataJson)
     {
         if (string.IsNullOrWhiteSpace(metadataJson)) return null;

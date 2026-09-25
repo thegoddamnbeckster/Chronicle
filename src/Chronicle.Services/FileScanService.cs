@@ -1629,6 +1629,11 @@ namespace Chronicle.Services
                     if (other.Metadata.ExternalId == m.ExternalId) continue;
                     var otherTk = TitleYearKey(other.Metadata.Title, other.Metadata.Year);
                     if (otherTk is null || otherTk != tk) continue;
+                    // A shared TITLE alone proves nothing without a year on BOTH sides: confirmed live
+                    // (2026-09-25) a year-less "The Longest Yard" absorbed the Wikipedia articles of
+                    // BOTH the 1974 and 2005 films as contributing ids, so its "In Library" badge
+                    // resolved onto the 1974 item. Different films share titles constantly.
+                    if (!m.Year.HasValue || !other.Metadata.Year.HasValue) continue;
                     if (!string.IsNullOrEmpty(other.Metadata.Source) && !sources.Contains(other.Metadata.Source))
                         sources.Add(other.Metadata.Source);
                     // Source is carried alongside the id itself -- not re-derived later from the

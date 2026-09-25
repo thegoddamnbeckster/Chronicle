@@ -95,5 +95,15 @@ public record MediaSearchContext(
     /// on title/type signals alone, which can't tell two same-named people apart. Null when no
     /// birth year is known yet (e.g. this is the very first provider to search for this item).
     /// </summary>
-    int? KnownBirthYear = null
+    int? KnownBirthYear = null,
+
+    /// <summary>
+    /// For a "people"-type item, the titles Chronicle already has this person credited on (from
+    /// credit lists a provider handed over with an id). The corroboration of last resort for a
+    /// name-searched candidate when no birth year is known: a same-named article that mentions
+    /// none of them, yet states its own birth year, is very likely a different real person
+    /// (confirmed live 2026-09-25: a TMDB credit-only "Cameron Brown" was welded onto the jazz
+    /// bassist's Wikipedia article). Null when the person has no credits.
+    /// </summary>
+    IReadOnlyList<string>? KnownCreditTitles = null
 );

@@ -169,12 +169,40 @@ public class MergeService(
         }
 
         // ── Consolidate external IDs onto winner ──────────────────────────────
+        // A non-people item has exactly ONE identity per source (enrichment itself replaces, never
+        // adds, a source's id). If the winner already carries a DIFFERENT id for a source, the
+        // loser's id names a different real-world item -- grafting it is how 93 movies came to own a
+        // remake's or original's TMDB/IMDb/Simkl/TVDB ids (confirmed live 2026-09-25: the 1974 "The
+        // Longest Yard" carried the 2005 film's whole id set, so both Add Media results resolved onto
+        // it). Such ids are dropped with the loser instead; the merge log above already snapshots
+        // them, so an Unmerge still restores them. People are exempt: two person records for one real
+        // person legitimately carry two ids from one provider (TMDB duplicate person entries).
+        var isPeople = await dbContext.MediaTypes.AnyAsync(t => t.Id == winner.MediaTypeId && t.Name == "people", ct);
+        var winnerSourceIds = winnerExternalIds
+            .GroupBy(e => e.Source, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Select(e => e.ExternalId).ToHashSet(StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+        var graftedIds = new List<MediaExternalId>();
         foreach (var eid in loserExternalIds)
         {
             if (winnerIdSet.Contains($"{eid.Source}:{eid.ExternalId}"))
+            {
                 dbContext.MediaExternalIds.Remove(eid);
+            }
+            else if (!isPeople && winnerSourceIds.TryGetValue(eid.Source, out var ownIds) &&
+                     !ownIds.Contains(eid.ExternalId))
+            {
+                logger.LogWarning(
+                    "Merge {LoserId} -> {WinnerId}: not grafting {Source}:{ExternalId} -- the winner already has " +
+                    "a different {Source} id ({OwnIds}), so this id names a different item",
+                    loserId, winnerId, eid.Source, eid.ExternalId, eid.Source, string.Join(", ", ownIds));
+                dbContext.MediaExternalIds.Remove(eid);
+            }
             else
+            {
                 eid.MediaItemId = winnerId;
+                graftedIds.Add(eid);
+            }
         }
 
         // ── Re-parent children ────────────────────────────────────────────────
@@ -384,8 +412,7 @@ public class MergeService(
         // ── Reset enrichment rows for plugins *newly introduced* by loser's IDs ─
         // Only reset for sources that were actually grafted onto the winner, not for
         // duplicate IDs that were deleted. Grafted = not already in winnerIdSet.
-        var newSources = loserExternalIds
-            .Where(e => !winnerIdSet.Contains($"{e.Source}:{e.ExternalId}"))
+        var newSources = graftedIds
             .Select(e => e.Source)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var enrichmentRows = await dbContext.MediaEnrichments

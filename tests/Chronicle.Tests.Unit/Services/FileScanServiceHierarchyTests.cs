@@ -922,4 +922,37 @@ public class FileScanServiceHierarchyTests
         wikipedia.Verify(p => p.GetByIdAsync("wikipedia:en:Jenna_Jameson", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
         tmdb.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task SearchMetadataAsync_YearlessCandidate_DoesNotAbsorbSameTitledCandidatesAsContributingIds()
+    {
+        // Live (2026-09-25): a year-less "The Longest Yard" collected the Wikipedia articles of both
+        // the 1974 and 2005 films as contributing ids, so its In Library badge resolved onto 1974.
+        await using var context = NewInMemoryContext();
+        MediaMetadata Meta(string id, string source, int? year) =>
+            new() { ExternalId = id, Source = source, Title = "The Longest Yard", Year = year };
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.simkl");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "movies" }]);
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(Meta("simkl:movie:1", "simkl", null), 80),
+                new(Meta("wikipedia:en:The_Longest_Yard_(1974_film)", "wikipedia", null), 70),
+                new(Meta("wikipedia:en:The_Longest_Yard_(2005_film)", "wikipedia", null), 70),
+                new(Meta("simkl:movie:2", "simkl", 2005), 80),
+                new(Meta("movie:9291", "tmdb", 2005), 80),
+            });
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviders()).Returns([provider.Object]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var results = await service.SearchMetadataAsync("the longest yard", "movies");
+
+        var yearless = results.First(r => r.ExternalId == "simkl:movie:1");
+        Assert.Null(yearless.ContributingExternalIds);
+        var dated = results.First(r => r.ExternalId == "simkl:movie:2");
+        Assert.Contains(dated.ContributingExternalIds!, c => c.ExternalId == "movie:9291");
+    }
 }

@@ -130,7 +130,8 @@ public sealed class PersonIdentitySplitService(
             ct.ThrowIfCancellationRequested();
             var page = await db.MediaItems.AsNoTracking()
                 .Where(m => m.MediaTypeId == peopleTypeId && m.Id > lastId &&
-                            m.MetadataJson != null && m.MetadataJson.Contains(WikipediaPluginId))
+                            m.MetadataJson != null && m.MetadataJson.Contains(WikipediaPluginId) &&
+                            m.MetadataJson.Contains(" births"))
                 .OrderBy(m => m.Id).Take(PageSize)
                 .Select(m => new { m.Id, m.MetadataJson })
                 .ToListAsync(ct);
@@ -159,6 +160,17 @@ public sealed class PersonIdentitySplitService(
         logger.LogInformation(
             "Person identity split: scanned {Scanned} people with a Wikipedia partition -- split {Split} onto new records, detached {Detached} duplicate attachments",
             scanned, split, detached);
+    }
+
+    /// <summary>Real-time entry point (see MetadataEnrichmentService): splits this person now if the
+    /// evidence already proves a conflict, instead of waiting for the nightly run. Returns true when
+    /// a split or detach happened.</summary>
+    public async Task<bool> CheckAndSplitAsync(
+        ChronicleDbContext db, IMetadataResolutionService resolution, MediaItem person, CancellationToken ct)
+    {
+        if (!TryDetectConflict(person.MetadataJson, out var trusted, out var wiki)) return false;
+        await SplitAsync(db, resolution, person.Id, trusted, wiki, ct);
+        return true;
     }
 
     /// <summary>The string value of a JSON node, or null when it is absent or not a string --
