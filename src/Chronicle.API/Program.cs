@@ -243,6 +243,14 @@ builder.Services.AddSingleton<DuplicatePersonAutoResolveService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<DuplicatePersonAutoResolveService>());
 
+builder.Services.AddSingleton<MovieExternalIdRepairService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<MovieExternalIdRepairService>());
+
+builder.Services.AddSingleton<PersonIdentitySplitService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<PersonIdentitySplitService>());
+
 builder.Services.AddSingleton<ScheduledScanService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<ScheduledScanService>());
