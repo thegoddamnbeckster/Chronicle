@@ -48,6 +48,24 @@ namespace Chronicle.Services
             // audit purposes (evt below), but must not move this item's derived state at
             // all -- not just its watched flag, but its status/progress too, since none of
             // it can be trusted once the timestamp itself is proven fabricated.
+            // A watch claim dated at or before the user's own explicit reset of this item is a
+            // pre-reset echo (e.g. a Kodi device still carrying the old playcount) -- record
+            // nothing and change nothing, or the reset could never stick. Only claims that carry
+            // their own timestamp can be pre-reset; a live scrobble ("now") is always newer.
+            if (request.Timestamp is { } claimedAt)
+            {
+                var resetAt = await _context.UserLibraries.AsNoTracking()
+                    .Where(l => l.UserId == userId && l.MediaItemId == mediaItemId)
+                    .Select(l => l.WatchResetAt).FirstOrDefaultAsync(ct);
+                if (resetAt.HasValue && claimedAt <= resetAt.Value)
+                    return new ScrobbleResult(new InteractionEvent
+                    {
+                        UserId = userId, MediaItemId = mediaItemId, Timestamp = claimedAt,
+                        ProgressPercent = request.ProgressPercent, DeviceName = request.DeviceName,
+                        MarkedAsWatched = false, CreatedAt = DateTime.UtcNow,
+                    }, false);
+            }
+
             var isCrossShowPoisoned = await IsCrossShowPoisonedTimestampAsync(userId, mediaItemId, timestamp, ct);
             if (isCrossShowPoisoned)
                 markedAsWatched = false;
@@ -800,7 +818,7 @@ namespace Chronicle.Services
         /// why events from this specific source get a broader poisoning check than everything
         /// else.
         /// </summary>
-        private const string ReconciliationDeviceName = "Chronicle Scraper (reconciled from local Kodi playback)";
+        public const string ReconciliationDeviceName = "Chronicle Scraper (reconciled from local Kodi playback)";
 
         public async Task<CrossShowCorruptionCleanupResult> CleanupCrossShowCorruptionAsync(bool dryRun, CancellationToken ct = default)
         {
@@ -928,8 +946,10 @@ namespace Chronicle.Services
             var existing = await _context.UserLibraries
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
 
+            var resetAt = existing?.WatchResetAt;
             var remaining = await _context.InteractionEvents
-                .Where(e => e.UserId == userId && e.MediaItemId == mediaItemId)
+                .Where(e => e.UserId == userId && e.MediaItemId == mediaItemId
+                         && (resetAt == null || e.Timestamp > resetAt))
                 .OrderBy(e => e.Timestamp)
                 .ToListAsync(ct);
 
@@ -963,6 +983,19 @@ namespace Chronicle.Services
             {
                 await UpsertLibraryStateAsync(userId, mediaItemId, e.ProgressPercent, e.MarkedAsWatched, e.Timestamp, ct);
                 await _context.SaveChangesAsync(ct);
+            }
+
+            // The row was rebuilt from scratch above -- carry the reset stamp over or the next
+            // pre-reset echo would be accepted again.
+            if (resetAt.HasValue)
+            {
+                var rebuilt = await _context.UserLibraries
+                    .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+                if (rebuilt != null)
+                {
+                    rebuilt.WatchResetAt = resetAt;
+                    await _context.SaveChangesAsync(ct);
+                }
             }
         }
     }

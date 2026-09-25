@@ -272,8 +272,33 @@ namespace Chronicle.Services
 
             var entries = await query.ToListAsync(ct);
             var now = DateTime.UtcNow;
+
+            // A leaf (episode/movie) with no library row can still be "watched" on a Kodi device
+            // that reports it later; without a row there is nowhere to record the reset, so that
+            // stale playcount would be pulled straight back in. Give each such leaf an Unwatched
+            // row carrying the reset stamp. Acting user only -- an all-users reset never invents
+            // rows for people who never touched the item.
+            if (!applyToAllUsers)
+            {
+                var haveRow = entries.Select(e => e.MediaItemId).ToHashSet();
+                var parentIds = (await _context.MediaItems
+                        .Where(m => m.ParentId != null && treeIds.Contains(m.ParentId.Value))
+                        .Select(m => m.ParentId!.Value).ToListAsync(ct)).ToHashSet();
+                foreach (var leafId in treeIds.Where(id => id != mediaItemId && !parentIds.Contains(id) && !haveRow.Contains(id)))
+                {
+                    var created = new UserLibrary
+                    {
+                        UserId = actingUserId, MediaItemId = leafId, Status = LibraryStatus.Unwatched,
+                        AddedAt = now, UpdatedAt = now,
+                    };
+                    _context.UserLibraries.Add(created);
+                    entries.Add(created);
+                }
+            }
+
             foreach (var entry in entries)
             {
+                entry.WatchResetAt = now;
                 entry.Status = LibraryStatus.Unwatched;
                 entry.StartedAt = null;
                 entry.CompletedAt = null;

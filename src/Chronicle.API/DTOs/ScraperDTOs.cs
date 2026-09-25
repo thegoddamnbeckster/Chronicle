@@ -107,7 +107,10 @@ namespace Chronicle.API.DTOs
         /// finished" signal to compare against Kodi's own lastplayed the same way it already
         /// compares resume timestamps.</summary>
         bool IsWatched = false,
-        DateTime? LastWatchedAt = null
+        DateTime? LastWatchedAt = null,
+        /// <summary>See UserLibrary.WatchResetAt -- lets a Kodi device clear its own stale
+        /// playcount when the user reset this item in Chronicle after Kodi's last play.</summary>
+        DateTime? WatchResetAt = null
     );
 
     public record ScraperShowDetailsDto(
@@ -167,6 +170,15 @@ namespace Chronicle.API.DTOs
         /// Scraper's Library Repair can reset exactly one episode's watch status by id after
         /// clearing fabricated playcount data from Kodi -- resetting via the show would wipe
         /// genuine watches too. Every other use of this DTO ignores it.</summary>
-        int? MediaItemId = null
+        int? MediaItemId = null,
+        /// <summary>True when this caller has at least one watch event for the episode that did
+        /// NOT come from the scraper's own "reconciled from local Kodi playback" echo -- i.e. a
+        /// real scrobble or import. False means every recorded watch is merely Kodi's own state
+        /// echoed back, which (when Kodi also shows several episodes of one show stamped with an
+        /// identical instant) is the signature of a fabricated mark, not real viewing. Lets
+        /// Library Repair decide automatically, with no per-show manual picking.</summary>
+        bool? HasIndependentWatchEvent = null,
+        /// <summary>See ScraperMovieDetailsDto.WatchResetAt.</summary>
+        DateTime? WatchResetAt = null
     );
 }

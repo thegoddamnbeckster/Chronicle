@@ -1151,6 +1151,47 @@ namespace Chronicle.Tests.Unit.Services
             (await _context.InteractionEvents.CountAsync()).Should().Be(2);
         }
 
+        [Fact]
+        public async Task ScrobbleAsync_WatchClaimDatedBeforeTheUsersReset_IsIgnoredEntirely()
+        {
+            // A Kodi device still carrying the old playcount re-reports it with its own old lastplayed;
+            // the user reset the episode after that, so the claim must change nothing (or a reset can
+            // never stick -- it used to undo itself within minutes).
+            var resetAt = new DateTime(2026, 9, 25, 9, 0, 0, DateTimeKind.Utc);
+            _context.UserLibraries.Add(new UserLibrary
+            {
+                UserId = 1, MediaItemId = 1, Status = LibraryStatus.Unwatched, WatchResetAt = resetAt,
+                AddedAt = resetAt, UpdatedAt = resetAt,
+            });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.ScrobbleAsync(1, new ScrobbleRequest(
+                1, 100.0, new DateTime(2026, 9, 19, 17, 10, 40), ScrobbleService.ReconciliationDeviceName));
+
+            result.MarkedAsWatched.Should().BeFalse();
+            (await _context.InteractionEvents.CountAsync()).Should().Be(0);
+            (await _context.UserLibraries.SingleAsync()).Status.Should().Be(LibraryStatus.Unwatched);
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_WatchClaimAfterTheReset_IsAGenuineRewatch()
+        {
+            var resetAt = new DateTime(2026, 9, 25, 9, 0, 0, DateTimeKind.Utc);
+            _context.UserLibraries.Add(new UserLibrary
+            {
+                UserId = 1, MediaItemId = 1, Status = LibraryStatus.Unwatched, WatchResetAt = resetAt,
+                AddedAt = resetAt, UpdatedAt = resetAt,
+            });
+            await _context.SaveChangesAsync();
+
+            var result = await _service.ScrobbleAsync(1, new ScrobbleRequest(
+                1, 100.0, new DateTime(2026, 9, 26, 20, 0, 0), "Kodi"));
+
+            result.MarkedAsWatched.Should().BeTrue();
+            (await _context.InteractionEvents.CountAsync()).Should().Be(1);
+            (await _context.UserLibraries.SingleAsync()).Status.Should().Be(LibraryStatus.Completed);
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

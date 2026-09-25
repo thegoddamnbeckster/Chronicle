@@ -1275,6 +1275,13 @@ public class ScraperController : ControllerBase
         var lib = await GetCallerLibraryEntryAsync(id, ct);
 
         var dto = BuildEpisodeDetails(item, season, showTitle, showYear, lib);
+        var callerId = GetUserId();
+        dto = dto with
+        {
+            HasIndependentWatchEvent = await _context.InteractionEvents.AnyAsync(
+                e => e.UserId == callerId && e.MediaItemId == id && e.MarkedAsWatched &&
+                     (e.DeviceName == null || e.DeviceName != ScrobbleService.ReconciliationDeviceName), ct),
+        };
         if (!includeCast) return dto;
         return dto with { Cast = await ResolveCastThumbnailsAsync(dto.Cast, ct) };
     }
@@ -1666,7 +1673,8 @@ public class ScraperController : ControllerBase
             ResumePositionPercent: lib?.ResumePositionPercent,
             ResumeUpdatedAt:       lib?.ResumeUpdatedAt,
             IsWatched:             lib?.Status == LibraryStatus.Completed,
-            LastWatchedAt:         lib?.CompletedAt
+            LastWatchedAt:         lib?.CompletedAt,
+            WatchResetAt:          lib?.WatchResetAt
         );
     }
 
@@ -1726,7 +1734,8 @@ public class ScraperController : ControllerBase
             ResumeUpdatedAt:       lib?.ResumeUpdatedAt,
             IsWatched:             lib?.Status == LibraryStatus.Completed,
             LastWatchedAt:         lib?.CompletedAt,
-            MediaItemId:           item.Id
+            MediaItemId:           item.Id,
+            WatchResetAt:          lib?.WatchResetAt
         );
     }
 

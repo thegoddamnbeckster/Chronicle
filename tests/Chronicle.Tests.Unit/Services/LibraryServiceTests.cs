@@ -447,6 +447,42 @@ public class LibraryServiceTests
     }
 
     [Fact]
+    public async Task ResetWatchProgressAsync_StampsWatchResetAt_AndGivesRowlessEpisodesAnUnwatchedRowWithTheStamp()
+    {
+        // A Kodi device can still report an episode watched that Chronicle has no row for; without
+        // a row carrying the reset stamp that stale playcount would be pulled straight back in.
+        var db = MakeDb();
+        var mt = new MediaType { Name = "tv", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        await db.SaveChangesAsync();
+        var show = new MediaItem { Name = "Stuart", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(show);
+        await db.SaveChangesAsync();
+        var season = new MediaItem { Name = "Season 1", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = show.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(season);
+        await db.SaveChangesAsync();
+        var withRow = new MediaItem { Name = "E1", MediaTypeId = mt.Id, HierarchyLevel = 2, ParentId = season.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var rowless = new MediaItem { Name = "E2", MediaTypeId = mt.Id, HierarchyLevel = 2, ParentId = season.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.AddRange(withRow, rowless);
+        await db.SaveChangesAsync();
+        db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = withRow.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var svc = new LibraryService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryService>.Instance);
+        var before = DateTime.UtcNow.AddSeconds(-1);
+
+        await svc.ResetWatchProgressAsync(actingUserId: 1, mediaItemId: show.Id, applyToAllUsers: false);
+
+        var rows = await db.UserLibraries.Where(l => l.UserId == 1).ToListAsync();
+        Assert.Equal(2, rows.Count); // the two episodes -- never a row invented for the show/season themselves
+        Assert.All(rows, r =>
+        {
+            Assert.Equal(LibraryStatus.Unwatched, r.Status);
+            Assert.NotNull(r.WatchResetAt);
+            Assert.True(r.WatchResetAt >= before);
+        });
+    }
+
+    [Fact]
     public async Task ResetWatchProgressAsync_NotApplyToAllUsers_OnlyResetsActingUsersOwnEntry()
     {
         var db = MakeDb();

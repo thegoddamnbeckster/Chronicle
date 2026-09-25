@@ -856,11 +856,13 @@ export default function MediaDetailPage() {
                 {unmergeOpen ? 'Cancel' : `Unmerge… (${item.mergeHistory.length})`}
               </button>
             )}
-            {libraryEntry && !resetProgressConfirm && (
+            {/* A show/season usually has no library entry of its own -- only its episodes do --
+                so children alone must be enough to offer the reset (it cascades to them). */}
+            {(libraryEntry || children.length > 0) && !resetProgressConfirm && (
               <button
                 className={styles.changeTypeBtn}
                 onClick={() => setResetProgressConfirm(true)}
-                title="Clear watched status and resume position back to never-watched. Watch count history is kept."
+                title="Reset watched status and resume position back to never-watched, for this item and everything under it (season, show). Kodi devices clear their own watched marks on their next sync. History is kept."
               >
                 Reset Watch Progress
               </button>

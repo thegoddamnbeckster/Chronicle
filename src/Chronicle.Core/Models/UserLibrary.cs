@@ -61,6 +61,17 @@ namespace Chronicle.Core.Models
         public double? LastKnownProgressPercent { get; set; }
         public DateTime? LastKnownProgressAt { get; set; }
 
+        /// <summary>
+        /// When the user last explicitly reset this item's watched status (a "rewatch" reset,
+        /// applied to an episode, a whole season or a whole show). Every watch claim whose own
+        /// timestamp is at or before this instant is a pre-reset echo -- typically a Kodi device
+        /// still carrying the old playcount -- and is ignored rather than re-marking the item
+        /// watched. Without it a Chronicle-side reset can never stick: Kodi's stale playcount is
+        /// pulled straight back in within minutes. It also tells the Kodi addon to clear its own
+        /// playcount when its lastplayed predates this instant. Null means never reset.
+        /// </summary>
+        public DateTime? WatchResetAt { get; set; }
+
         // Navigation
         public User? User { get; set; }
         public MediaItem? MediaItem { get; set; }
