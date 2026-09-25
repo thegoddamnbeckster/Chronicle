@@ -229,6 +229,8 @@ public class ScraperDetailsByFileTests : IClassFixture<ChronicleApiFactory>
         var body = await resp.Content.ReadAsStringAsync();
         body.Should().Contain("\"title\":\"The Long Way Home\"");
         body.Should().Contain("\"showTitle\":\"By File Probe Show\"");
+        // Library Repair needs the episode's own id to reset exactly one episode's watch status.
+        body.Should().MatchRegex(@"""mediaItemId"":\d+");
         body.Should().Contain("\"season\":2");
         body.Should().Contain("\"episode\":5");
     }

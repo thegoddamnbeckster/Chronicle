@@ -1725,7 +1725,8 @@ public class ScraperController : ControllerBase
             ResumePositionPercent: lib?.ResumePositionPercent,
             ResumeUpdatedAt:       lib?.ResumeUpdatedAt,
             IsWatched:             lib?.Status == LibraryStatus.Completed,
-            LastWatchedAt:         lib?.CompletedAt
+            LastWatchedAt:         lib?.CompletedAt,
+            MediaItemId:           item.Id
         );
     }
 

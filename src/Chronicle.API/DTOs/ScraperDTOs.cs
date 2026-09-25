@@ -162,6 +162,11 @@ namespace Chronicle.API.DTOs
         /// <summary>See ScraperMovieDetailsDto.IsWatched/LastWatchedAt -- same reasoning,
         /// per episode rather than per movie.</summary>
         bool IsWatched = false,
-        DateTime? LastWatchedAt = null
+        DateTime? LastWatchedAt = null,
+        /// <summary>This episode's own Chronicle MediaItem id. Added (2026-09-23) so Chronicle_
+        /// Scraper's Library Repair can reset exactly one episode's watch status by id after
+        /// clearing fabricated playcount data from Kodi -- resetting via the show would wipe
+        /// genuine watches too. Every other use of this DTO ignores it.</summary>
+        int? MediaItemId = null
     );
 }
