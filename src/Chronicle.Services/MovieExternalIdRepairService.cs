@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
@@ -74,6 +75,55 @@ public sealed class MovieExternalIdRepairService(
         return foreign;
     }
 
+    /// <summary>
+    /// The second rule: an id row that contradicts the id the item's OWN provider data names for the
+    /// same source. Live (2026-09-26): the 1990 "Total Recall" carried the 2012 remake's IMDb and
+    /// Simkl ids as its only rows for those sources, while its own TMDB record said tt0100802 and its
+    /// own Simkl enrichment said 54420 -- so nothing looked "multiple" and the first rule never fired,
+    /// and Kodi was then handed the remake's ids for the 1990 film.
+    /// <paramref name="authoritativeIds"/> is source -> the id the item's own provider data gives (the
+    /// provider's enrichment id, else the id its TMDB record cross-references). Rows of a source with
+    /// no authority, TMDB's own rows, and sources where a row already matches are left alone.
+    /// </summary>
+    internal static List<MediaExternalId> FindContradictedIds(
+        IReadOnlyList<MediaExternalId> rows, IReadOnlyDictionary<string, string> authoritativeIds)
+    {
+        var foreign = new List<MediaExternalId>();
+        foreach (var group in rows.Where(r => r.Source != "tmdb").GroupBy(r => r.Source))
+        {
+            if (!authoritativeIds.TryGetValue(group.Key, out var authority) || string.IsNullOrWhiteSpace(authority))
+                continue;
+            if (group.Any(r => SameCore(r.ExternalId, authority)))
+                continue; // an agreeing row exists; the first rule handles any extras
+            foreign.AddRange(group);
+        }
+        return foreign;
+    }
+
+    /// <summary>The imdb/tvdb ids an item's TMDB partition cross-references (extendedData.ids), keyed
+    /// by external-id source. Empty when the partition is missing or has none.</summary>
+    internal static Dictionary<string, string> TmdbCrossReferences(string? metadataJson)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(metadataJson)) return result;
+        try
+        {
+            using var doc = JsonDocument.Parse(metadataJson);
+            if (!doc.RootElement.TryGetProperty("chronicle.plugin.tmdb", out var tmdb) ||
+                !tmdb.TryGetProperty("extendedData", out var ext) || ext.ValueKind != JsonValueKind.Object ||
+                !ext.TryGetProperty("ids", out var ids) || ids.ValueKind != JsonValueKind.Object)
+                return result;
+            foreach (var source in new[] { "imdb", "tvdb" })
+            {
+                if (!ids.TryGetProperty(source, out var v)) continue;
+                var text = v.ValueKind == JsonValueKind.String ? v.GetString() : v.ValueKind == JsonValueKind.Number ? v.GetRawText() : null;
+                if (!string.IsNullOrWhiteSpace(text)) result[source] = text!;
+            }
+        }
+        catch (JsonException) { }
+        return result;
+    }
+
     private static string Core(string id) => id[(id.LastIndexOf(':') + 1)..];
 
     private static bool SameCore(string a, string b) =>
@@ -101,11 +151,11 @@ public sealed class MovieExternalIdRepairService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        var candidateIds = await db.MediaExternalIds.AsNoTracking()
-            .Where(e => e.Source == "tmdb" && e.ExternalId.StartsWith("movie:"))
-            .GroupBy(e => e.MediaItemId)
-            .Where(g => g.Select(x => x.ExternalId).Distinct().Count() > 1)
-            .Select(g => g.Key)
+        // Every flat-type item with a TMDB record: both rules need the item's own provider data.
+        var candidateIds = await db.MediaItems.AsNoTracking()
+            .Where(m => m.HierarchyLevel <= 1 && m.MediaType!.HierarchyLevels == 1 && m.MediaType.Name != "people" &&
+                        m.MetadataJson != null && m.MetadataJson.Contains("chronicle.plugin.tmdb"))
+            .Select(m => m.Id)
             .ToListAsync(ct);
 
         int repaired = 0, detachedRows = 0;
@@ -129,6 +179,15 @@ public sealed class MovieExternalIdRepairService(
                     .GroupBy(e => SourceOfPlugin(e.PluginId))
                     .ToDictionary(g => g.Key, g => g.First().ExternalId!, StringComparer.OrdinalIgnoreCase);
                 var foreign = FindForeignIds(rows, corpus, enrichedIds);
+
+                // Second rule: rows contradicting the item's own provider data. The enrichment id
+                // wins; the TMDB record's imdb/tvdb cross-references fill the sources with no
+                // enrichment row of their own.
+                var authority = TmdbCrossReferences(item.MetadataJson);
+                foreach (var (source, id) in enrichedIds) authority[source] = id;
+                foreach (var row in FindContradictedIds(rows, authority))
+                    if (!foreign.Contains(row)) foreign.Add(row);
+
                 if (foreign.Count == 0) continue;
 
                 db.MediaExternalIds.RemoveRange(foreign);
@@ -143,7 +202,7 @@ public sealed class MovieExternalIdRepairService(
         }
 
         logger.LogInformation(
-            "Movie external id repair: {Candidates} movie(s) with multiple TMDB ids checked -- repaired {Repaired}, detached {Rows} id row(s)",
+            "Movie external id repair: {Candidates} movie(s) checked -- repaired {Repaired}, detached {Rows} id row(s)",
             candidateIds.Count, repaired, detachedRows);
     }
 }

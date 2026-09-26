@@ -74,4 +74,39 @@ public class MovieExternalIdRepairServiceTests
     [InlineData("chronicle.plugin.tmdb", "tmdb")]
     public void SourceOfPlugin_MapsPluginIdsToExternalIdSources(string pluginId, string source) =>
         Assert.Equal(source, MovieExternalIdRepairService.SourceOfPlugin(pluginId));
+
+    [Fact]
+    public void RowsThatContradictTheItemsOwnProviderData_AreForeign_EvenWhenTheyAreTheOnlyRow()
+    {
+        // Live: the 1990 Total Recall carried the 2012 remake's IMDb and Simkl ids as its ONLY rows for
+        // those sources, while its own TMDB record and Simkl enrichment named its real ones.
+        var rows = new[] { Row("tmdb", "movie:861"), Row("imdb", "tt1386703"), Row("simkl", "simkl:143170"), Row("wikipedia", "wikipedia:en:Total_Recall_(1990_film)") };
+        var authority = new Dictionary<string, string> { ["imdb"] = "tt0100802", ["simkl"] = "simkl:movie:54420" };
+
+        var foreign = MovieExternalIdRepairService.FindContradictedIds(rows, authority);
+
+        Assert.Equal(["simkl:143170", "tt1386703"], foreign.Select(f => f.ExternalId).OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void ARowThatAgreesWithTheAuthority_IsKept_AndSourcesWithoutAuthorityAreNeverJudged()
+    {
+        var rows = new[] { Row("imdb", "tt0100802"), Row("tvdb", "999"), Row("tmdb", "movie:861") };
+        var authority = new Dictionary<string, string> { ["imdb"] = "tt0100802", ["tmdb"] = "movie:1" };
+
+        Assert.Empty(MovieExternalIdRepairService.FindContradictedIds(rows, authority));
+    }
+
+    [Fact]
+    public void TmdbCrossReferences_ReadsImdbAndTvdbFromTheTmdbRecord()
+    {
+        var json = """{"chronicle.plugin.tmdb":{"extendedData":{"ids":{"imdb":"tt0100802","tvdb":1751,"wikidata":"Q1"}}}}""";
+
+        var ids = MovieExternalIdRepairService.TmdbCrossReferences(json);
+
+        Assert.Equal("tt0100802", ids["imdb"]);
+        Assert.Equal("1751", ids["tvdb"]);
+        Assert.False(ids.ContainsKey("wikidata"));
+        Assert.Empty(MovieExternalIdRepairService.TmdbCrossReferences(null));
+    }
 }
