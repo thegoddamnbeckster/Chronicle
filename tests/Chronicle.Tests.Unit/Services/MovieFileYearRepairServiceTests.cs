@@ -47,6 +47,16 @@ public class MovieFileYearRepairServiceTests
     }
 
     [Fact]
+    public void StaleFolderOfADetachedFile_IsContradicted_ButOnlyWhenAProviderConfirmsTheItemYear()
+    {
+        // The state Total Recall was left in: file gone, folder still "(2012)" on the 1990 item.
+        Assert.True(MovieFileYearRepairService.HasContradictedFolder(Json(), 1990));
+        Assert.False(MovieFileYearRepairService.HasContradictedFolder(Json(), 2012));
+        var unconfirmed = new JsonObject { ["fileScanner"] = new JsonObject { ["folderPath"] = @"N:\Movies\Total Recall (2012)" } }.ToJsonString();
+        Assert.False(MovieFileYearRepairService.HasContradictedFolder(unconfirmed, 1990));
+    }
+
+    [Fact]
     public void OneYearOfNoise_IsNeverAContradiction() =>
         Assert.Empty(MovieFileYearRepairService.FindContradictedPaths(Json(@"N:\Movies\Total Recall (1991)\Total Recall (1991).mkv"), 1990));
 

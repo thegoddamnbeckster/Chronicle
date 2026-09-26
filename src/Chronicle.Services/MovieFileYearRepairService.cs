@@ -90,6 +90,25 @@ public sealed class MovieFileYearRepairService(
         return bad.Count > 0 && ProviderConfirmsYear(metadataJson, year) ? bad : [];
     }
 
+    /// <summary>True when the item's recorded scan folder names a year that contradicts its
+    /// provider-confirmed year -- left behind once the file itself was detached. Not harmless: the
+    /// Kodi scraper's title match treats "folder year == searched year" as a match, so a stale
+    /// "Total Recall (2012)" folder on the 1990 item made every search for the 2012 file resolve
+    /// straight back onto the 1990 film.</summary>
+    internal static bool HasContradictedFolder(string? metadataJson, int? itemYear)
+    {
+        if (itemYear is not { } year || string.IsNullOrEmpty(metadataJson)) return false;
+        try
+        {
+            if (JsonNode.Parse(metadataJson) is not JsonObject root ||
+                root["fileScanner"]?["folderPath"] is not JsonValue fp || !fp.TryGetValue<string>(out var folder))
+                return false;
+            return YearOfFilePath(folder) is { } folderYear && Math.Abs(folderYear - year) >= MinYearGap &&
+                   ProviderConfirmsYear(metadataJson, year);
+        }
+        catch (System.Text.Json.JsonException) { return false; }
+    }
+
     public async Task ExecuteAsync(CancellationToken ct)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -112,7 +131,7 @@ public sealed class MovieFileYearRepairService(
             {
                 scanned++;
                 var bad = FindContradictedPaths(item.MetadataJson, item.Year);
-                if (bad.Count == 0) continue;
+                if (bad.Count == 0 && !HasContradictedFolder(item.MetadataJson, item.Year)) continue;
 
                 await DetachAsync(db, item, bad, ct);
                 repaired++;
