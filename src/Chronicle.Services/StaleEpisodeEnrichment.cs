@@ -17,15 +17,14 @@ namespace Chronicle.Services;
 /// scheduled task: all metadata refresh belongs in the one per-plugin pass.
 ///
 /// Only rows completed BEFORE <see cref="FixedAt"/> are re-queued, so an episode a provider genuinely
-/// has no date for (an unannounced one) is fetched once after the fix and then left alone. Bounded per
-/// run so the provider queue is never flooded.
+/// has no date for (an unannounced one) is fetched once after the fix and then left alone. Every
+/// affected episode is queued -- there is deliberately no cap; the enrichment pass already paces
+/// provider calls itself.
 /// </summary>
 internal static class StaleEpisodeEnrichment
 {
     /// <summary>When the plugins started keeping the air date; rows completed earlier are stale.</summary>
     internal static readonly DateTime FixedAt = new(2026, 9, 26, 3, 0, 0, DateTimeKind.Utc);
-
-    internal const int MaxPerRun = 2000;
 
     /// <summary>Plugins whose episode output gained the air date (plugin id suffix).</summary>
     private static readonly string[] AirDatePlugins = [".tmdb", ".tvmaze"];
@@ -43,8 +42,6 @@ internal static class StaleEpisodeEnrichment
                         e.MediaItem.MediaType!.HierarchyLevels == 3 &&
                         e.MediaItem.MetadataJson != null &&
                         !e.MediaItem.MetadataJson.Contains("air_date"))
-            .OrderBy(e => e.Id)
-            .Take(MaxPerRun)
             .ToListAsync(ct);
 
         foreach (var row in rows)
