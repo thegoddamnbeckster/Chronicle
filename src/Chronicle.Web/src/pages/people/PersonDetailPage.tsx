@@ -206,8 +206,19 @@ export default function PersonDetailPage() {
           )}
           {bio && <p className={styles.bio}>{bio}</p>}
 
-          {isAdmin && (
-            <div className={styles.actionsRow}>
+          <div className={styles.actionsRow}>
+            {/* Same toolbar and button style as Merge/Remove; the pressed state shows which view is on. */}
+            <button
+              type="button"
+              className={`${styles.actionBtn} ${showAll ? styles.actionBtnOn : ''}`}
+              onClick={() => setShowAllOverride(!showAll)}
+              aria-pressed={showAll}
+              title="Show every credit this person has ever had, including titles that are not in the library"
+            >
+              {showAll ? 'Showing all credits' : 'Show all credits'}
+            </button>
+            {isAdmin && (
+              <>
               <button
                 className={styles.actionBtn}
                 onClick={() => setMergeSearchOpen(o => !o)}
@@ -235,8 +246,9 @@ export default function PersonDetailPage() {
                   </button>
                 </div>
               )}
-            </div>
-          )}
+              </>
+            )}
+          </div>
 
           {mergeSearchOpen && (
             <div className={styles.mergeSearch}>
@@ -315,11 +327,6 @@ export default function PersonDetailPage() {
           </div>
         </section>
       )}
-
-      <label className={styles.allCreditsToggle}>
-        <input type="checkbox" checked={showAll} onChange={e => setShowAllOverride(e.target.checked)} />
-        Show every credit (including titles not in the library)
-      </label>
 
       <div className={styles.credits}>
         {showAll && allCreditsLoading ? (

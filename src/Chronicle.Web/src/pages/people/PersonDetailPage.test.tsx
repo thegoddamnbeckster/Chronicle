@@ -74,7 +74,7 @@ describe('PersonDetailPage "show every credit"', () => {
 
   it('checking the box shows titles that are not in the library, marked and not linked', async () => {
     renderPage()
-    await userEvent.setup().click(await screen.findByLabelText(/show every credit/i))
+    await userEvent.setup().click(await screen.findByRole('button', { name: /show all credits/i }))
 
     const outside = await screen.findByText('Outside Movie')
     expect(outside).toBeInTheDocument()
@@ -88,7 +88,7 @@ describe('PersonDetailPage "show every credit"', () => {
     renderPage()
 
     expect(await screen.findByText('Outside Movie')).toBeInTheDocument()
-    expect(screen.getByLabelText(/show every credit/i)).toBeChecked()
+    expect(screen.getByRole('button', { name: /showing all credits/i })).toHaveAttribute('aria-pressed', 'true')
     expect(peopleApi.getPersonCredits).not.toHaveBeenCalled()
   })
 
