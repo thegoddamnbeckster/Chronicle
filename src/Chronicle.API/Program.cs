@@ -243,6 +243,10 @@ builder.Services.AddSingleton<DuplicatePersonAutoResolveService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<DuplicatePersonAutoResolveService>());
 
+builder.Services.AddSingleton<EpisodeAirDateBackfillService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<EpisodeAirDateBackfillService>());
+
 builder.Services.AddSingleton<MovieFileYearRepairService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<MovieFileYearRepairService>());
