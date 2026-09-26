@@ -13,6 +13,21 @@ export default function PreferencesPage() {
   const [diagSaving, setDiagSaving] = useState(false)
   const [nowPlayingEnabled, setNowPlayingEnabled] = useState(user?.showNowPlayingBanner ?? true)
   const [nowPlayingSaving, setNowPlayingSaving] = useState(false)
+  const [allCreditsEnabled, setAllCreditsEnabled] = useState(user?.showAllCredits ?? false)
+  const [allCreditsSaving, setAllCreditsSaving] = useState(false)
+
+  async function handleAllCreditsToggle(value: boolean) {
+    setAllCreditsEnabled(value)
+    setAllCreditsSaving(true)
+    try {
+      await updateMyPreferences({ showAllCredits: value })
+      if (user) setUser({ ...user, showAllCredits: value })
+    } catch {
+      setAllCreditsEnabled(!value) // revert on error
+    } finally {
+      setAllCreditsSaving(false)
+    }
+  }
 
   async function handleDiagToggle(value: boolean) {
     setDiagEnabled(value)
@@ -97,6 +112,30 @@ export default function PreferencesPage() {
             aria-pressed={nowPlayingEnabled}
           >
             {nowPlayingEnabled ? 'On' : 'Off'}
+          </button>
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionTitle}>People</h2>
+        <p className={styles.sectionDesc}>Options for person pages.</p>
+
+        <div className={styles.settingRow}>
+          <div>
+            <div className={styles.settingLabel}>Show every credit by default</div>
+            <div className={styles.settingDesc}>
+              Person pages list every credit the person has ever had, including titles that are not in
+              your library. Changing this applies to every person page; the toggle on a person page only
+              changes that view.
+            </div>
+          </div>
+          <button
+            className={`${styles.toggle} ${allCreditsEnabled ? styles.toggleOn : ''}`}
+            onClick={() => handleAllCreditsToggle(!allCreditsEnabled)}
+            disabled={allCreditsSaving}
+            aria-pressed={allCreditsEnabled}
+          >
+            {allCreditsEnabled ? 'On' : 'Off'}
           </button>
         </div>
       </section>

@@ -123,6 +123,21 @@ public record ProviderEpisodeSummary(
     string? StillUrl = null,
     string? AirDate = null);
 
+/// <summary>
+/// One title a person is credited on, as reported by a provider's own filmography (see
+/// <see cref="IMetadataProvider.GetPersonCreditsAsync"/>). <c>ExternalId</c> is the provider's id for
+/// the title in the same form the provider uses on titles (e.g. "movie:603"), so it can be matched to
+/// a title already in the library. <c>Role</c> is "Actor" for acting, else the crew job.
+/// </summary>
+public record ProviderPersonCredit(
+    string ExternalId,
+    string MediaType,
+    string Title,
+    int? Year,
+    string? PosterUrl,
+    string Role,
+    string? CharacterName = null);
+
 /// <summary>A single additional image from a metadata provider (back cover, booklet, still, etc.).</summary>
 public class AdditionalImage
 {

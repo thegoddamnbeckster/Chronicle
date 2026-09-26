@@ -29,6 +29,22 @@ namespace Chronicle.API.DTOs
         string? CharacterName
     );
 
+    /// <summary>A credit on the "every credit" view: MediaItemId is null for a title that is not in the
+    /// library (display-only card).</summary>
+    public record PersonFullCreditDto(
+        int? MediaItemId,
+        string Name,
+        string? PosterUrl,
+        int? Year,
+        string MediaTypeName,
+        string? CharacterName
+    );
+
+    public record PersonFullCreditGroupDto(
+        string Role,
+        List<PersonFullCreditDto> Items
+    );
+
     public record PersonCreditGroupDto(
         string Role,
         List<PersonCreditDto> Items

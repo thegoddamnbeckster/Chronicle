@@ -103,6 +103,8 @@ namespace Chronicle.Services
 
             if (patch.ShowNowPlayingBanner.HasValue) current.ShowNowPlayingBanner = patch.ShowNowPlayingBanner;
 
+            if (patch.ShowAllCredits.HasValue) current.ShowAllCredits = patch.ShowAllCredits;
+
             if (patch.DefaultFoldsOpen.HasValue)
                 current.DefaultFoldsOpen = patch.DefaultFoldsOpen;
 

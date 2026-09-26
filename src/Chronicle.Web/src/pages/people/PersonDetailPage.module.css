@@ -369,6 +369,29 @@
   border-color: var(--accent);
 }
 
+.allCreditsToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.creditCardStatic {
+  opacity: 0.75;
+}
+
+.creditCardStatic:hover {
+  border-color: var(--border);
+}
+
+.notInLibrary {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .creditInfo {
   padding: 6px 8px;
 }

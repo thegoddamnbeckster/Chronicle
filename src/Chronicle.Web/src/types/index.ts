@@ -7,6 +7,8 @@ export interface User {
   isAdmin: boolean
   showDiagnostics: boolean
   showNowPlayingBanner: boolean
+  /** Person pages show every credit (including titles not in the library) by default. */
+  showAllCredits: boolean
 }
 
 export interface AuthResponse {
@@ -186,6 +188,21 @@ export interface PersonCredit {
   year: number | null
   mediaTypeName: string
   characterName: string | null
+}
+
+/** A credit on the person page's "every credit" view; mediaItemId is null for a title not in the library. */
+export interface PersonFullCredit {
+  mediaItemId: number | null
+  name: string
+  posterUrl: string | null
+  year: number | null
+  mediaTypeName: string
+  characterName: string | null
+}
+
+export interface PersonFullCreditGroup {
+  role: string
+  items: PersonFullCredit[]
 }
 
 export interface PersonCreditGroup {

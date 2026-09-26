@@ -13,6 +13,10 @@ public class UserPreferences
     /// <summary>When true (default), the "Now Playing" banner shows active playback sessions
     /// at the top of the main content area. When false, it never renders.</summary>
     public bool? ShowNowPlayingBanner { get; set; }
+    /// <summary>Whether a person page shows every credit the person has ever had, including titles not in
+    /// the library (default false). The person page's own toggle only overrides this for the page being
+    /// viewed; changing this preference changes every person page.</summary>
+    public bool? ShowAllCredits { get; set; }
     /// <summary>
     /// Per-fold open/closed state. Keys: "media.{id}.{pluginId}", "backgroundTasks.{pluginId}".
     /// Values: true = open, false = closed.

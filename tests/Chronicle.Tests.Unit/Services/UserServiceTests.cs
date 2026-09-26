@@ -185,6 +185,19 @@ namespace Chronicle.Tests.Unit.Services
             prefs.ShowNowPlayingBanner.Should().BeNull();
         }
 
+        [Fact]
+        public async Task UpdatePreferencesAsync_ShowAllCredits_PersistsBothWays_AndIsUnsetByDefault()
+        {
+            var user = await _service.RegisterAsync("frank", "correct", null);
+            (await _service.GetPreferencesAsync(user.Id)).ShowAllCredits.Should().BeNull();
+
+            await _service.UpdatePreferencesAsync(user.Id, new UserPreferences { ShowAllCredits = true });
+            (await _service.GetPreferencesAsync(user.Id)).ShowAllCredits.Should().BeTrue();
+
+            await _service.UpdatePreferencesAsync(user.Id, new UserPreferences { ShowAllCredits = false });
+            (await _service.GetPreferencesAsync(user.Id)).ShowAllCredits.Should().BeFalse();
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

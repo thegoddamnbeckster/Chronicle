@@ -56,7 +56,8 @@ namespace Chronicle.API.Controllers
             var prefs = await _userService.GetPreferencesAsync(u.Id);
             return new(u.Id, u.Username, u.Email, u.DisplayName, u.IsAdmin,
                 prefs.ShowDiagnostics ?? u.IsAdmin,
-                prefs.ShowNowPlayingBanner ?? true);
+                prefs.ShowNowPlayingBanner ?? true,
+                prefs.ShowAllCredits ?? false);
         }
     }
 }

@@ -25,11 +25,15 @@ namespace Chronicle.API.Controllers
     {
         private readonly ChronicleDbContext _context;
         private readonly IPersonResolutionService _personResolutionService;
+        private readonly PersonFullCreditsService _fullCredits;
 
-        public PeopleController(ChronicleDbContext context, IPersonResolutionService personResolutionService)
+        public PeopleController(
+            ChronicleDbContext context, IPersonResolutionService personResolutionService,
+            PersonFullCreditsService fullCredits)
         {
             _context = context;
             _personResolutionService = personResolutionService;
+            _fullCredits = fullCredits;
         }
 
         /// <summary>Shared ordering/filtering pass behind both GetPeople and GetJumpPosition --
@@ -195,6 +199,27 @@ namespace Chronicle.API.Controllers
                 )).ToList();
 
             return Ok(ApiResponse<List<PersonCreditGroupDto>>.Ok(groups));
+        }
+
+        /// <summary>Every credit this person has ever had (acting and crew), including titles that are not in
+        /// the library -- the person page's "show every credit" toggle. Grouped by role like GetCredits, each
+        /// group newest first, no limit on the count.</summary>
+        [HttpGet("{id:int}/all-credits")]
+        public async Task<IActionResult> GetAllCredits(int id, CancellationToken ct)
+        {
+            var credits = await _fullCredits.GetAsync(_context, id, ct);
+            var groups = credits
+                .GroupBy(c => c.Role)
+                .OrderBy(g => g.Key)
+                .Select(g => new PersonFullCreditGroupDto(
+                    g.Key,
+                    g.DistinctBy(c => (c.MediaItemId, c.Name, c.Year))
+                     .OrderByDescending(c => c.Year ?? int.MinValue)
+                     .Select(c => new PersonFullCreditDto(
+                         c.MediaItemId, c.Name, c.PosterUrl, c.Year, c.MediaTypeName, c.CharacterName))
+                     .ToList()))
+                .ToList();
+            return Ok(ApiResponse<List<PersonFullCreditGroupDto>>.Ok(groups));
         }
 
         /// <summary>Every accumulated photo for this person (person_headshots -- Section 1.5),

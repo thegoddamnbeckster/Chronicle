@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, setMediaOverride, clearMediaOverride, deleteMedia, searchMedia } from '@/api/media'
-import { getPersonCredits, getPersonHeadshots } from '@/api/people'
+import { getPersonCredits, getPersonAllCredits, getPersonHeadshots } from '@/api/people'
 import { PosterImage } from '@/components/PosterImage'
 import { useAuth } from '@/hooks/useAuth'
 import MergeModal, { type MergeItem } from '@/components/MergeModal'
@@ -80,6 +80,21 @@ export default function PersonDetailPage() {
     queryKey: ['person-credits', personId],
     queryFn: () => getPersonCredits(personId),
     enabled: !Number.isNaN(personId),
+  })
+
+  // "Show every credit" (default off): the whole filmography, including titles that are not in the
+  // library. Only fetched once switched on -- it asks the metadata provider, which is slower than the
+  // library-only list above.
+  // The Preferences default decides every person page; the checkbox below is only a view-level override,
+  // dropped on navigating to another person and whenever the default itself changes.
+  const defaultShowAll = user?.showAllCredits ?? false
+  const [showAllOverride, setShowAllOverride] = useState<boolean | null>(null)
+  useEffect(() => { setShowAllOverride(null) }, [personId, defaultShowAll])
+  const showAll = showAllOverride ?? defaultShowAll
+  const { data: allCreditGroups, isLoading: allCreditsLoading, isError: allCreditsError } = useQuery({
+    queryKey: ['person-all-credits', personId],
+    queryFn: () => getPersonAllCredits(personId),
+    enabled: !Number.isNaN(personId) && showAll,
   })
 
   // Every photo Chronicle has ever accumulated for this person (person_headshots), not just
@@ -299,8 +314,51 @@ export default function PersonDetailPage() {
         </section>
       )}
 
+      <label className={styles.allCreditsToggle}>
+        <input type="checkbox" checked={showAll} onChange={e => setShowAllOverride(e.target.checked)} />
+        Show every credit (including titles not in the library)
+      </label>
+
       <div className={styles.credits}>
-        {creditGroups.length === 0 ? (
+        {showAll && allCreditsLoading ? (
+          <div className={styles.empty}>Loading every credit…</div>
+        ) : showAll && allCreditsError ? (
+          <div className={styles.empty}>Could not load the full credit list.</div>
+        ) : showAll && allCreditGroups ? (
+          allCreditGroups.length === 0 ? (
+            <div className={styles.empty}>No credits found.</div>
+          ) : (
+            allCreditGroups.map(group => (
+              <section key={group.role} className={styles.creditGroup}>
+                <h2 className={styles.creditGroupTitle}>{group.role} ({group.items.length})</h2>
+                <div className={styles.creditGrid}>
+                  {group.items.map((credit, i) => {
+                    const body = (
+                      <>
+                        <PosterImage posterUrl={credit.posterUrl} name={credit.name} lazy />
+                        <div className={styles.creditInfo}>
+                          <div className={styles.creditName}>{credit.name}</div>
+                          {credit.characterName && <div className={styles.creditCharacter}>{credit.characterName}</div>}
+                          {credit.year && <div className={styles.creditYear}>{credit.year}</div>}
+                          {credit.mediaItemId == null && <div className={styles.notInLibrary}>Not in library</div>}
+                        </div>
+                      </>
+                    )
+                    return credit.mediaItemId != null ? (
+                      <Link key={`${credit.mediaItemId}-${i}`} to={`/media/${credit.mediaItemId}`} className={styles.creditCard}>
+                        {body}
+                      </Link>
+                    ) : (
+                      <div key={`ext-${credit.name}-${credit.year}-${i}`} className={`${styles.creditCard} ${styles.creditCardStatic}`}>
+                        {body}
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            ))
+          )
+        ) : creditGroups.length === 0 ? (
           <div className={styles.empty}>No credits recorded yet.</div>
         ) : (
           creditGroups.map(group => (

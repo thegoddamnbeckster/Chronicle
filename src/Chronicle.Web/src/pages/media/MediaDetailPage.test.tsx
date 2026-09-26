@@ -57,6 +57,7 @@ const ADMIN_USER: User = {
   isAdmin: true,
   showDiagnostics: false,
   showNowPlayingBanner: true,
+  showAllCredits: false,
 }
 
 function makeItem(overrides: Partial<MediaItem> = {}): MediaItem {

@@ -76,6 +76,16 @@ public interface IMetadataProvider
         Task.FromResult<IReadOnlyList<ProviderEpisodeSummary>>([]);
 
     /// <summary>Downloads an image from the given URL and returns the raw bytes.</summary>
+    /// <summary>
+    /// Every credit this provider knows for a person (acting and crew), including titles that are
+    /// not in the Chronicle library -- backs the person page's "show every credit" toggle. Not every
+    /// provider has a filmography; the default is none. <paramref name="personExternalId"/> is the
+    /// id this provider previously returned for the person.
+    /// </summary>
+    Task<IReadOnlyList<ProviderPersonCredit>> GetPersonCreditsAsync(
+        string personExternalId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ProviderPersonCredit>>([]);
+
     Task<byte[]> GetImageAsync(string url, CancellationToken ct = default);
 
     /// <summary>

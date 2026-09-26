@@ -8,6 +8,8 @@ export interface UserPreferences {
   /** When true (default), the "Now Playing" banner shows active playback sessions at the
    *  top of the main content area. When false, it never renders. */
   showNowPlayingBanner?: boolean
+  /** Person pages show every credit, including titles not in the library, by default. */
+  showAllCredits?: boolean
   /** Active theme storage key ("{pluginId}:{themeKey}"), synced across devices. */
   theme?: string
 }

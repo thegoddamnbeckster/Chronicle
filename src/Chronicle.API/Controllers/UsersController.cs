@@ -34,7 +34,8 @@ namespace Chronicle.API.Controllers
             var prefs = await _userService.GetPreferencesAsync(userId);
             return Ok(ApiResponse<UserDto>.Ok(new UserDto(user.Id, user.Username, user.Email, user.DisplayName, user.IsAdmin,
                 prefs.ShowDiagnostics ?? user.IsAdmin,
-                prefs.ShowNowPlayingBanner ?? true)));
+                prefs.ShowNowPlayingBanner ?? true,
+                prefs.ShowAllCredits ?? false)));
         }
 
         /// <summary>The full profile, including contacts — the slim /me shape is fixed by the
@@ -105,6 +106,7 @@ namespace Chronicle.API.Controllers
                 folds                  = prefs.Folds ?? new Dictionary<string, bool>(),
                 createCollectionStubs  = prefs.CreateCollectionStubs ?? true,
                 showNowPlayingBanner   = prefs.ShowNowPlayingBanner ?? true,
+                showAllCredits         = prefs.ShowAllCredits ?? false,
                 theme                  = prefs.Theme,
             }));
         }
@@ -120,6 +122,7 @@ namespace Chronicle.API.Controllers
                 Folds                 = req.Folds,
                 CreateCollectionStubs = req.CreateCollectionStubs,
                 ShowNowPlayingBanner  = req.ShowNowPlayingBanner,
+                ShowAllCredits        = req.ShowAllCredits,
                 Theme                 = req.Theme,
             };
             await _userService.UpdatePreferencesAsync(userId, patch);
@@ -132,6 +135,7 @@ namespace Chronicle.API.Controllers
                 folds                 = prefs.Folds ?? new Dictionary<string, bool>(),
                 createCollectionStubs = prefs.CreateCollectionStubs ?? true,
                 showNowPlayingBanner  = prefs.ShowNowPlayingBanner ?? true,
+                showAllCredits        = prefs.ShowAllCredits ?? false,
                 theme                 = prefs.Theme,
             }));
         }
@@ -371,6 +375,7 @@ namespace Chronicle.API.Controllers
         Dictionary<string, bool>? Folds,
         bool? CreateCollectionStubs = null,
         bool? ShowNowPlayingBanner = null,
-        string? Theme = null
+        string? Theme = null,
+        bool? ShowAllCredits = null
     );
 }
