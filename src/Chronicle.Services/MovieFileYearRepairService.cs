@@ -144,6 +144,13 @@ public sealed class MovieFileYearRepairService(
             var kept = paths.Where(n => n is JsonValue v && v.TryGetValue<string>(out var s) && !badSet.Contains(s!))
                 .Select(n => n!.DeepClone()).ToList();
             scanner["filePaths"] = new JsonArray(kept.ToArray());
+
+            // The folder recorded for the detached file is stale too -- keeping it would leave the
+            // item pointing at the wrong film's folder.
+            if (scanner["folderPath"] is JsonValue fp && fp.TryGetValue<string>(out var folder) &&
+                YearOfFilePath(folder) is { } folderYear && item.Year is { } itemYear &&
+                Math.Abs(folderYear - itemYear) >= MinYearGap)
+                scanner["folderPath"] = null;
         }
         if (root["scraperResolvedFile"]?["fileName"] is JsonValue rf && rf.TryGetValue<string>(out var resolvedName) &&
             badNames.Contains(resolvedName))

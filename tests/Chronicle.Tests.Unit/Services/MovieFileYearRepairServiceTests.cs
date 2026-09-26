@@ -18,7 +18,11 @@ public class MovieFileYearRepairServiceTests
 {
     private static string Json(params string[] paths) => new JsonObject
     {
-        ["fileScanner"] = new JsonObject { ["filePaths"] = new JsonArray(paths.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()) },
+        ["fileScanner"] = new JsonObject
+        {
+            ["filePaths"] = new JsonArray(paths.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()),
+            ["folderPath"] = @"N:\Movies\Total Recall (2012)",
+        },
         ["chronicle.plugin.tmdb"] = new JsonObject { ["year"] = "1990", ["title"] = "Total Recall" },
         ["scraperResolvedFile"] = new JsonObject { ["fileName"] = "Total Recall (1990).mkv" },
     }.ToJsonString();
@@ -89,6 +93,8 @@ public class MovieFileYearRepairServiceTests
         var remaining = Chronicle.Services.Scan.FileIdentityJson.ExtractFilePaths(reloaded.MetadataJson);
         Assert.Equal([@"N:\Movies\Total Recall (1990)\Total Recall (1990).mkv"], remaining);
         Assert.Equal(["Total Recall (1990).mkv"], await db.MediaItemKnownFileNames.Select(k => k.FileName).ToListAsync());
+        // The folder recorded for the 2012 file went with it.
+        Assert.Null(JsonNode.Parse(reloaded.MetadataJson!)!["fileScanner"]!["folderPath"]);
         // The item itself is untouched: still the provider-confirmed 1990 film.
         Assert.Equal(1990, reloaded.Year);
         Assert.Contains("chronicle.plugin.tmdb", reloaded.MetadataJson);
