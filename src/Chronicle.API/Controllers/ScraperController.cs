@@ -87,6 +87,7 @@ public class ScraperController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(title))
             return BadRequest(ApiResponse<object>.Fail("TITLE_REQUIRED", "title is required."));
+        year = ReleaseYear.OrNull(year);
 
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var stepSw = System.Diagnostics.Stopwatch.StartNew();
@@ -326,6 +327,7 @@ public class ScraperController : ControllerBase
     public async Task<IActionResult> GetMovieDetailsByFile(
         [FromQuery] string? fileName, [FromQuery] int? year, CancellationToken ct)
     {
+        year = ReleaseYear.OrNull(year);
         if (string.IsNullOrWhiteSpace(fileName))
             return BadRequest(ApiResponse<object>.Fail("FILENAME_REQUIRED", "fileName is required."));
 
@@ -546,6 +548,7 @@ public class ScraperController : ControllerBase
     [HttpGet("tv/search")]
     public async Task<IActionResult> SearchShows([FromQuery] string? title, [FromQuery] int? year, CancellationToken ct)
     {
+        year = ReleaseYear.OrNull(year);
         if (string.IsNullOrWhiteSpace(title))
             return BadRequest(ApiResponse<object>.Fail("TITLE_REQUIRED", "title is required."));
 
