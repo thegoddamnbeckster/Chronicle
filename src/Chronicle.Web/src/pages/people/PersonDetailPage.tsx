@@ -76,11 +76,6 @@ export default function PersonDetailPage() {
     enabled: !Number.isNaN(personId),
   })
 
-  const { data: creditGroups = [] } = useQuery({
-    queryKey: ['person-credits', personId],
-    queryFn: () => getPersonCredits(personId),
-    enabled: !Number.isNaN(personId),
-  })
 
   // "Show every credit" (default off): the whole filmography, including titles that are not in the
   // library. Only fetched once switched on -- it asks the metadata provider, which is slower than the
@@ -91,10 +86,17 @@ export default function PersonDetailPage() {
   const [showAllOverride, setShowAllOverride] = useState<boolean | null>(null)
   useEffect(() => { setShowAllOverride(null) }, [personId, defaultShowAll])
   const showAll = showAllOverride ?? defaultShowAll
-  const { data: allCreditGroups, isLoading: allCreditsLoading, isError: allCreditsError } = useQuery({
+  const { data: allCredits, isLoading: allCreditsLoading, isError: allCreditsError } = useQuery({
     queryKey: ['person-all-credits', personId],
     queryFn: () => getPersonAllCredits(personId),
     enabled: !Number.isNaN(personId) && showAll,
+  })
+
+  // The library-only list (the default view); not fetched while the full list is what is shown.
+  const { data: creditGroups = [] } = useQuery({
+    queryKey: ['person-credits', personId],
+    queryFn: () => getPersonCredits(personId),
+    enabled: !Number.isNaN(personId) && !showAll,
   })
 
   // Every photo Chronicle has ever accumulated for this person (person_headshots), not just
@@ -324,11 +326,18 @@ export default function PersonDetailPage() {
           <div className={styles.empty}>Loading every credit…</div>
         ) : showAll && allCreditsError ? (
           <div className={styles.empty}>Could not load the full credit list.</div>
-        ) : showAll && allCreditGroups ? (
-          allCreditGroups.length === 0 ? (
+        ) : showAll && allCredits ? (
+          allCredits.groups.length === 0 ? (
             <div className={styles.empty}>No credits found.</div>
           ) : (
-            allCreditGroups.map(group => (
+            <>
+            {allCredits.incomplete && (
+              <div className={styles.incompleteWarning} role="alert">
+                Couldn&apos;t reach the metadata provider, so this is only the credits already in your library.
+                Try again later.
+              </div>
+            )}
+            {allCredits.groups.map(group => (
               <section key={group.role} className={styles.creditGroup}>
                 <h2 className={styles.creditGroupTitle}>{group.role} ({group.items.length})</h2>
                 <div className={styles.creditGrid}>
@@ -356,7 +365,8 @@ export default function PersonDetailPage() {
                   })}
                 </div>
               </section>
-            ))
+            ))}
+            </>
           )
         ) : creditGroups.length === 0 ? (
           <div className={styles.empty}>No credits recorded yet.</div>

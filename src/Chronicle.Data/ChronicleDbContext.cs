@@ -99,6 +99,7 @@ namespace Chronicle.Data
         public DbSet<MediaItemDuplicateCandidate> MediaItemDuplicateCandidates { get; set; } = null!;
         public DbSet<MediaItemDuplicateDismissal> MediaItemDuplicateDismissals { get; set; } = null!;
         public DbSet<PersonHeadshot> PersonHeadshots { get; set; } = null!;
+        public DbSet<PersonProviderCredit> PersonProviderCredits { get; set; } = null!;
         public DbSet<KodiDevice> KodiDevices { get; set; } = null!;
         public DbSet<KodiLibraryId> KodiLibraryIds { get; set; } = null!;
         public DbSet<KodiScanAck> KodiScanAcks { get; set; } = null!;
@@ -501,6 +502,31 @@ namespace Chronicle.Data
                 e.HasIndex(h => new { h.PersonMediaItemId, h.Url }).IsUnique()
                  .HasDatabaseName("idx_person_headshots_unique");
                 e.HasIndex(h => h.PersonMediaItemId).HasDatabaseName("idx_person_headshots_person");
+            });
+
+            modelBuilder.Entity<PersonProviderCredit>(e =>
+            {
+                e.ToTable("person_provider_credits");
+                e.HasKey(c => c.Id);
+                e.Property(c => c.Id).HasColumnName("id");
+                e.Property(c => c.PersonMediaItemId).HasColumnName("person_media_item_id");
+                e.Property(c => c.Source).HasColumnName("source").IsRequired();
+                e.Property(c => c.ExternalId).HasColumnName("external_id").IsRequired();
+                e.Property(c => c.MediaType).HasColumnName("media_type").IsRequired();
+                e.Property(c => c.Title).HasColumnName("title").IsRequired();
+                e.Property(c => c.Year).HasColumnName("year");
+                e.Property(c => c.PosterUrl).HasColumnName("poster_url");
+                e.Property(c => c.Role).HasColumnName("role").IsRequired();
+                e.Property(c => c.CharacterName).HasColumnName("character_name");
+                e.Property(c => c.FetchedAt).HasColumnName("fetched_at");
+
+                e.HasOne(c => c.PersonMediaItem)
+                 .WithMany()
+                 .HasForeignKey(c => c.PersonMediaItemId)
+                 .OnDelete(DeleteBehavior.Cascade);
+
+                e.HasIndex(c => new { c.PersonMediaItemId, c.Source, c.ExternalId, c.Role }).IsUnique()
+                 .HasDatabaseName("idx_person_provider_credits_unique");
             });
 
             // NormalizedName on MediaItem

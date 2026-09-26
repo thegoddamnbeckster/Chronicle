@@ -200,6 +200,12 @@ export interface PersonFullCredit {
   characterName: string | null
 }
 
+/** The "every credit" response; incomplete means the provider list could not be fetched. */
+export interface PersonAllCredits {
+  groups: PersonFullCreditGroup[]
+  incomplete: boolean
+}
+
 export interface PersonFullCreditGroup {
   role: string
   items: PersonFullCredit[]

@@ -207,19 +207,14 @@ namespace Chronicle.API.Controllers
         [HttpGet("{id:int}/all-credits")]
         public async Task<IActionResult> GetAllCredits(int id, CancellationToken ct)
         {
-            var credits = await _fullCredits.GetAsync(_context, id, ct);
-            var groups = credits
-                .GroupBy(c => c.Role)
-                .OrderBy(g => g.Key)
+            var result = await _fullCredits.GetAsync(_context, id, ct);
+            var groups = PersonFullCreditsService.GroupByRole(result.Credits)
                 .Select(g => new PersonFullCreditGroupDto(
-                    g.Key,
-                    g.DistinctBy(c => (c.MediaItemId, c.Name, c.Year))
-                     .OrderByDescending(c => c.Year ?? int.MinValue)
-                     .Select(c => new PersonFullCreditDto(
-                         c.MediaItemId, c.Name, c.PosterUrl, c.Year, c.MediaTypeName, c.CharacterName))
-                     .ToList()))
+                    g.Role,
+                    g.Items.Select(c => new PersonFullCreditDto(
+                        c.MediaItemId, c.Name, c.PosterUrl, c.Year, c.MediaTypeName, c.CharacterName)).ToList()))
                 .ToList();
-            return Ok(ApiResponse<List<PersonFullCreditGroupDto>>.Ok(groups));
+            return Ok(ApiResponse<PersonAllCreditsDto>.Ok(new PersonAllCreditsDto(groups, result.Incomplete)));
         }
 
         /// <summary>Every accumulated photo for this person (person_headshots -- Section 1.5),

@@ -40,6 +40,13 @@ namespace Chronicle.API.DTOs
         string? CharacterName
     );
 
+    /// <summary>The "every credit" response. Incomplete is true when the provider filmography could not be
+    /// obtained, so the groups are only what the library itself holds.</summary>
+    public record PersonAllCreditsDto(
+        List<PersonFullCreditGroupDto> Groups,
+        bool Incomplete
+    );
+
     public record PersonFullCreditGroupDto(
         string Role,
         List<PersonFullCreditDto> Items

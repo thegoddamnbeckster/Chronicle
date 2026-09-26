@@ -130,6 +130,7 @@ public record ProviderEpisodeSummary(
 /// a title already in the library. <c>Role</c> is "Actor" for acting, else the crew job.
 /// </summary>
 public record ProviderPersonCredit(
+    string Source,
     string ExternalId,
     string MediaType,
     string Title,

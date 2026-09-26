@@ -1,5 +1,5 @@
 import client from './client'
-import type { ApiResponse, PersonListItem, PersonCreditGroup, PersonFullCreditGroup, PersonHeadshot } from '@/types'
+import type { ApiResponse, PersonListItem, PersonCreditGroup, PersonAllCredits, PersonHeadshot } from '@/types'
 
 export interface GetPeopleParams {
   role?: string
@@ -41,9 +41,9 @@ export async function getPersonCredits(id: number): Promise<PersonCreditGroup[]>
   return data.data ?? []
 }
 
-export async function getPersonAllCredits(id: number): Promise<PersonFullCreditGroup[]> {
-  const { data } = await client.get<ApiResponse<PersonFullCreditGroup[]>>(`/people/${id}/all-credits`)
-  return data.data ?? []
+export async function getPersonAllCredits(id: number): Promise<PersonAllCredits> {
+  const { data } = await client.get<ApiResponse<PersonAllCredits>>(`/people/${id}/all-credits`)
+  return data.data ?? { groups: [], incomplete: false }
 }
 
 export async function getPersonHeadshots(id: number): Promise<PersonHeadshot[]> {
