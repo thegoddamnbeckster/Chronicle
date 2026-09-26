@@ -351,7 +351,7 @@ public class ScraperController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"No unambiguous match for {fileName}."));
         }
 
-        var dto = await BuildMovieDetailsDtoAsync(exactMatches[0].Id, ct, includeCastAndCollection: false);
+        var dto = await BuildMovieDetailsDtoAsync(exactMatches[0].Id, ct);
         if (dto is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {exactMatches[0].Id} not found."));
 

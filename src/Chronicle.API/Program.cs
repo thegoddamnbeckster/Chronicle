@@ -243,6 +243,10 @@ builder.Services.AddSingleton<DuplicatePersonAutoResolveService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<DuplicatePersonAutoResolveService>());
 
+builder.Services.AddSingleton<MovieFileYearRepairService>();
+builder.Services.AddSingleton<IScheduledTask>(
+    sp => sp.GetRequiredService<MovieFileYearRepairService>());
+
 builder.Services.AddSingleton<MovieExternalIdRepairService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<MovieExternalIdRepairService>());
