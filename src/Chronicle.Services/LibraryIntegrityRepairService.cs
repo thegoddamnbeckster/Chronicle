@@ -13,6 +13,9 @@ namespace Chronicle.Services;
 ///   3. Movie File Year Repair  -- a video file whose name year contradicts a provider-confirmed movie
 ///                                 year is detached so the next scan imports it properly.
 ///   4. Implausible Year Repair -- an impossible year (65535, 0 ...) becomes no year.
+///   5. Nested Movie Repair     -- a movie nested under another movie moves up into that movie's
+///                                 collection (a movie with children is mistaken for a container and
+///                                 can never be matched again).
 /// A failing pass is logged and never stops the ones after it.
 /// </summary>
 public sealed class LibraryIntegrityRepairService(
@@ -20,6 +23,7 @@ public sealed class LibraryIntegrityRepairService(
     MovieExternalIdRepairService movieExternalIds,
     MovieFileYearRepairService movieFileYear,
     ImplausibleYearRepairService implausibleYear,
+    NestedMovieRepairService nestedMovies,
     ILogger<LibraryIntegrityRepairService> logger) : IScheduledTask
 {
     public string TaskId      => "library_integrity_repair";
@@ -33,6 +37,7 @@ public sealed class LibraryIntegrityRepairService(
         await RunPassAsync("movie external id repair", movieExternalIds.ExecuteAsync, ct);
         await RunPassAsync("movie file year repair", movieFileYear.ExecuteAsync, ct);
         await RunPassAsync("implausible year repair", implausibleYear.ExecuteAsync, ct);
+        await RunPassAsync("nested movie repair", nestedMovies.ExecuteAsync, ct);
     }
 
     private async Task RunPassAsync(string name, Func<CancellationToken, Task> pass, CancellationToken ct)

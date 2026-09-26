@@ -246,6 +246,7 @@ builder.Services.AddSingleton<IScheduledTask>(
 // The three repair passes are plain singletons; ONE scheduled task runs them all in order.
 builder.Services.AddSingleton<MovieFileYearRepairService>();
 builder.Services.AddSingleton<ImplausibleYearRepairService>();
+builder.Services.AddSingleton<NestedMovieRepairService>();
 builder.Services.AddSingleton<MovieExternalIdRepairService>();
 builder.Services.AddSingleton<PersonIdentitySplitService>();
 builder.Services.AddSingleton<LibraryIntegrityRepairService>();
