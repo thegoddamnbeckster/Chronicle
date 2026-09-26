@@ -243,21 +243,13 @@ builder.Services.AddSingleton<DuplicatePersonAutoResolveService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<DuplicatePersonAutoResolveService>());
 
-builder.Services.AddSingleton<EpisodeAirDateBackfillService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<EpisodeAirDateBackfillService>());
-
+// The three repair passes are plain singletons; ONE scheduled task runs them all in order.
 builder.Services.AddSingleton<MovieFileYearRepairService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<MovieFileYearRepairService>());
-
 builder.Services.AddSingleton<MovieExternalIdRepairService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<MovieExternalIdRepairService>());
-
 builder.Services.AddSingleton<PersonIdentitySplitService>();
+builder.Services.AddSingleton<LibraryIntegrityRepairService>();
 builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<PersonIdentitySplitService>());
+    sp => sp.GetRequiredService<LibraryIntegrityRepairService>());
 
 builder.Services.AddSingleton<ScheduledScanService>();
 builder.Services.AddSingleton<IScheduledTask>(

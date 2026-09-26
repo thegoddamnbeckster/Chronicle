@@ -8,9 +8,10 @@ namespace Chronicle.Tests.Unit.Services;
 
 /// <summary>
 /// Confirmed live (2026-09-26): none of 3,851 episodes on a Kodi device had an air date, because the
-/// TMDB/TVmaze plugins kept only the year. Episodes enriched before the fix are re-queued once.
+/// TMDB/TVmaze plugins kept only the year. Episodes enriched before the fix are re-queued once, inside
+/// the plugin's own Fetch Missing Metadata run.
 /// </summary>
-public class EpisodeAirDateBackfillServiceTests
+public class StaleEpisodeEnrichmentTests
 {
     private static async Task<ChronicleDbContext> SeedAsync(
         string metadataJson, string pluginId, DateTime completedAt, int level = 2)
@@ -33,19 +34,28 @@ public class EpisodeAirDateBackfillServiceTests
         return db;
     }
 
-    private static readonly DateTime Before = EpisodeAirDateBackfillService.FixedAt.AddDays(-3);
+    private static readonly DateTime Before = StaleEpisodeEnrichment.FixedAt.AddDays(-3);
 
     [Theory]
     [InlineData("chronicle.plugin.tmdb")]
     [InlineData("chronicle.plugin.tvmaze")]
-    public async Task EpisodeWithoutAnAirDate_EnrichedBeforeTheFix_IsRequeued(string pluginId)
+    public async Task EpisodeWithoutAnAirDate_EnrichedBeforeTheFix_IsRequeuedForThatPlugin(string pluginId)
     {
         await using var db = await SeedAsync("""{"chronicle.plugin.tmdb":{"year":2023}}""", pluginId, Before);
 
-        var queued = await EpisodeAirDateBackfillService.RequeueAsync(db, default);
+        var queued = await StaleEpisodeEnrichment.RequeueAsync(db, pluginId, default);
 
         Assert.Equal(1, queued);
         Assert.Equal(EnrichmentStatus.Pending, (await db.MediaEnrichments.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task ARunForAnotherPlugin_NeverTouchesTheRow()
+    {
+        await using var db = await SeedAsync("""{"x":1}""", "chronicle.plugin.tmdb", Before);
+
+        Assert.Equal(0, await StaleEpisodeEnrichment.RequeueAsync(db, "chronicle.plugin.tvmaze", default));
+        Assert.Equal(0, await StaleEpisodeEnrichment.RequeueAsync(db, "chronicle.plugin.simkl", default));
     }
 
     [Fact]
@@ -54,7 +64,7 @@ public class EpisodeAirDateBackfillServiceTests
         await using var db = await SeedAsync(
             """{"chronicle.plugin.tmdb":{"extendedData":{"air_date":"2023-03-09"}}}""", "chronicle.plugin.tmdb", Before);
 
-        Assert.Equal(0, await EpisodeAirDateBackfillService.RequeueAsync(db, default));
+        Assert.Equal(0, await StaleEpisodeEnrichment.RequeueAsync(db, "chronicle.plugin.tmdb", default));
     }
 
     [Fact]
@@ -62,18 +72,16 @@ public class EpisodeAirDateBackfillServiceTests
     {
         // A provider with no date for an episode is fetched once after the fix, then left alone.
         await using var db = await SeedAsync("""{"chronicle.plugin.tmdb":{"year":2023}}""", "chronicle.plugin.tmdb",
-            EpisodeAirDateBackfillService.FixedAt.AddHours(1));
+            StaleEpisodeEnrichment.FixedAt.AddHours(1));
 
-        Assert.Equal(0, await EpisodeAirDateBackfillService.RequeueAsync(db, default));
+        Assert.Equal(0, await StaleEpisodeEnrichment.RequeueAsync(db, "chronicle.plugin.tmdb", default));
     }
 
     [Fact]
-    public async Task OtherProviders_AndNonEpisodes_AreLeftAlone()
+    public async Task NonEpisodes_AreLeftAlone()
     {
-        await using (var db = await SeedAsync("""{"x":1}""", "chronicle.plugin.simkl", Before))
-            Assert.Equal(0, await EpisodeAirDateBackfillService.RequeueAsync(db, default));
+        await using var db = await SeedAsync("""{"x":1}""", "chronicle.plugin.tmdb", Before, level: 0);
 
-        await using (var db2 = await SeedAsync("""{"x":1}""", "chronicle.plugin.tmdb", Before, level: 0))
-            Assert.Equal(0, await EpisodeAirDateBackfillService.RequeueAsync(db2, default));
+        Assert.Equal(0, await StaleEpisodeEnrichment.RequeueAsync(db, "chronicle.plugin.tmdb", default));
     }
 }

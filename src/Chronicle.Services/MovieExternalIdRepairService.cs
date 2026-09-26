@@ -30,13 +30,8 @@ namespace Chronicle.Services;
 /// </summary>
 public sealed class MovieExternalIdRepairService(
     IServiceScopeFactory scopeFactory,
-    ILogger<MovieExternalIdRepairService> logger) : IScheduledTask
+    ILogger<MovieExternalIdRepairService> logger)
 {
-    public string TaskId      => "movie_external_id_repair";
-    public string DisplayName => "Movie External ID Repair";
-    public string Description => "Finds movies that carry another film's external ids (e.g. a remake's TMDB id) and detaches the ids that no provider actually returned for that movie.";
-    public string DefaultCron => "15 3 * * *";
-
     private const int PageSize = 500;
 
     /// <summary>

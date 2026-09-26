@@ -189,6 +189,14 @@ public class MetadataEnrichmentService(
         await RemoveCollectionContainersPendingAsync(db, pluginId, ct);
         await RemoveHierarchyUnsupportedPendingAsync(db, pluginId, provider, ct);
 
+        // Episodes this plugin enriched before it kept the air date go back into the same queue, so
+        // this one pass refreshes them along with everything else that is missing.
+        var requeued = await StaleEpisodeEnrichment.RequeueAsync(db, pluginId, ct);
+        if (requeued > 0)
+            logger.LogInformation(
+                "EnrichPendingAsync: re-queued {Count} episode(s) for {PluginId} that were enriched before air dates were kept",
+                requeued, pluginId);
+
         var cutoff = DateTime.UtcNow - RetryWindow;
 
         // Loop until no more eligible items remain.

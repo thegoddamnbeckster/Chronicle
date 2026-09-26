@@ -39,13 +39,8 @@ namespace Chronicle.Services;
 /// </summary>
 public sealed class PersonIdentitySplitService(
     IServiceScopeFactory scopeFactory,
-    ILogger<PersonIdentitySplitService> logger) : IScheduledTask
+    ILogger<PersonIdentitySplitService> logger)
 {
-    public string TaskId      => "person_identity_split";
-    public string DisplayName => "Person Identity Split";
-    public string Description => "Finds people whose Wikipedia article is provably a different person than their credit-backed provider data (birth years disagree) and moves the article, its photos and its data onto a separate person record.";
-    public string DefaultCron => "45 2 * * *";
-
     /// <summary>Minimum birth-year difference treated as two different people.</summary>
     internal const int MinYearGap = 2;
 

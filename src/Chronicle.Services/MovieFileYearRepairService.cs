@@ -29,13 +29,8 @@ namespace Chronicle.Services;
 /// </summary>
 public sealed class MovieFileYearRepairService(
     IServiceScopeFactory scopeFactory,
-    ILogger<MovieFileYearRepairService> logger) : IScheduledTask
+    ILogger<MovieFileYearRepairService> logger)
 {
-    public string TaskId      => "movie_file_year_repair";
-    public string DisplayName => "Movie File Year Repair";
-    public string Description => "Detaches a video file from a movie whose release year the file name contradicts (e.g. \"Total Recall (2012).mkv\" sitting on the 1990 film) so the next scan imports it as the right movie.";
-    public string DefaultCron => "30 3 * * *";
-
     internal const int MinYearGap = 2;
     private const int PageSize = 500;
 
