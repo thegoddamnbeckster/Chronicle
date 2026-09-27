@@ -2187,8 +2187,13 @@ namespace Chronicle.Services
                 rep.AuthorFolderPath = (!parentIsRoot && parentDir is not null) ? parentDir : null;
 
                 // Always parse the folder name for series/year — used as fallback below.
-                var (folderTitle, folderYear, folderSeries) =
+                var (folderTitle, folderYear, folderSeries, folderSeriesNumber) =
                     ParseAudiobookFolderName(folderName);
+
+                // The book's position in its series ("Singularity - 2 - ...") becomes the item's Number so
+                // a series lists in reading order (children sort by Number). Only meaningful with a series.
+                if (folderSeries is not null && folderSeriesNumber.HasValue)
+                    rep.EpisodeNumber ??= folderSeriesNumber;
 
                 if (!string.IsNullOrWhiteSpace(rep.AudioAlbum))
                 {
@@ -2249,7 +2254,7 @@ namespace Chronicle.Services
         /// Fallback for non-matching names: extract year from any <c>(YYYY)</c>, then use the
         /// last non-placeholder segment as the title and any preceding ones as series.
         /// </summary>
-        private static (string Title, int? Year, string? Series)
+        internal static (string Title, int? Year, string? Series, int? SeriesNumber)
             ParseAudiobookFolderName(string folderName)
         {
             // Split on " - " to get raw segments.
@@ -2284,7 +2289,20 @@ namespace Chronicle.Services
                     .ToArray();
                 var series = preParts.Length > 0 ? string.Join(" - ", preParts) : null;
 
-                return (title, year, series);
+                // The series position is the numeric segment before the year ("Singularity - 2 - (2012) - ...").
+                // A decimal (a 1.5 novella) keeps its whole part; Number is an integer.
+                int? seriesNumber = null;
+                foreach (var p in raw[..yearIdx])
+                {
+                    if (double.TryParse(p, System.Globalization.NumberStyles.Number,
+                            System.Globalization.CultureInfo.InvariantCulture, out var n) && n >= 0 && n < 10000)
+                    {
+                        seriesNumber = (int)Math.Floor(n);
+                        break;
+                    }
+                }
+
+                return (title, year, series, seriesNumber);
             }
 
             // ── Fallback: no standalone (YYYY) segment found ─────────────────────
@@ -2304,11 +2322,11 @@ namespace Chronicle.Services
                 .Where(p => !IsPlaceholder(p))
                 .ToArray();
 
-            if (parts.Length == 0) return (folderName.Trim(), year, null);
-            if (parts.Length == 1) return (parts[0], year, null);
+            if (parts.Length == 0) return (folderName.Trim(), year, null, null);
+            if (parts.Length == 1) return (parts[0], year, null, null);
 
             // Last segment = title; everything else = series.
-            return (parts[^1], year, string.Join(" - ", parts[..^1]));
+            return (parts[^1], year, string.Join(" - ", parts[..^1]), null);
         }
 
         private static bool IsPlaceholder(string s) =>
@@ -2413,6 +2431,7 @@ namespace Chronicle.Services
                     GroupKey        = NormalizeGroupKey(authorName + "/" + (seriesName ?? "") + "/" + bookName),
                     Name            = bookName,
                     Year            = file.ParsedYear,
+                    Number          = seriesName is not null ? file.EpisodeNumber : null,
                     HierarchyLevel  = seriesName is not null ? 2 : 1,
                     ConfidenceScore = file.ConfidenceScore / 100.0,
                     SignalSources   = ["tags"],

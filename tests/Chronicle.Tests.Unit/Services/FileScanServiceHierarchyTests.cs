@@ -955,4 +955,31 @@ public class FileScanServiceHierarchyTests
         var dated = results.First(r => r.ExternalId == "simkl:movie:2");
         Assert.Contains(dated.ContributingExternalIds!, c => c.ExternalId == "movie:9291");
     }
+
+    [Theory]
+    [InlineData("Singularity - 2 - (2012) - A.I. Apocalypse", "A.I. Apocalypse", 2012, "Singularity", 2)]
+    [InlineData("Singularity - 1 - (2011) - Avogadro Corp", "Avogadro Corp", 2011, "Singularity", 1)]
+    [InlineData("Series - 1.5 - (2020) - A Novella", "A Novella", 2020, "Series", 1)]
+    [InlineData("- - (2015) - Armada", "Armada", 2015, null, null)]
+    public void ParseAudiobookFolderName_KeepsTheSeriesPosition(string folder, string title, int year, string? series, int? number)
+    {
+        var parsed = FileScanService.ParseAudiobookFolderName(folder);
+
+        Assert.Equal((title, (int?)year, series, number), parsed);
+    }
+
+    [Fact]
+    public void CollapseAudiobooksToFolders_ABookInASeries_CarriesItsSeriesPositionAsItsNumber()
+    {
+        var root = Path.Combine("C:", "Books", "William Hertling");
+        var bookFolder = Path.Combine(root, "Singularity - 2 - (2012) - A.I. Apocalypse");
+        var files = new List<ScannedFile>
+        {
+            new() { FilePath = Path.Combine(bookFolder, "01.mp3"), DurationSeconds = 1800 },
+        };
+
+        var result = FileScanService.CollapseAudiobooksToFoldersForTest(files, root);
+
+        Assert.Equal(2, Assert.Single(result).EpisodeNumber);
+    }
 }
