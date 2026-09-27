@@ -8,6 +8,8 @@ namespace Chronicle.Services;
 /// together, in this order, as a single scheduled job rather than one job per pass:
 ///   1. Person Identity Split   -- a name-searched Wikipedia article whose birth year contradicts the
 ///                                 credit-backed provider data becomes its own person record.
+///   1b. Year Overview Article Split -- a movie/show welded onto Wikipedia's own "YYYY in film"/
+///                                 "YYYY in television" year-overview page splits it onto its own record.
 ///   2. Movie External ID Repair -- ids no provider returned for a movie (a remake's or original's)
 ///                                 are detached.
 ///   3. Movie File Year Repair  -- a video file whose name year contradicts a provider-confirmed movie
@@ -28,6 +30,7 @@ namespace Chronicle.Services;
 /// </summary>
 public sealed class LibraryIntegrityRepairService(
     PersonIdentitySplitService personSplit,
+    YearOverviewArticleSplitService yearOverviewSplit,
     MovieExternalIdRepairService movieExternalIds,
     MovieFileYearRepairService movieFileYear,
     ImplausibleYearRepairService implausibleYear,
@@ -47,6 +50,7 @@ public sealed class LibraryIntegrityRepairService(
     public async Task ExecuteAsync(CancellationToken ct)
     {
         await RunPassAsync("person identity split", personSplit.ExecuteAsync, ct);
+        await RunPassAsync("year overview article split", yearOverviewSplit.ExecuteAsync, ct);
         await RunPassAsync("movie external id repair", movieExternalIds.ExecuteAsync, ct);
         await RunPassAsync("movie file year repair", movieFileYear.ExecuteAsync, ct);
         await RunPassAsync("implausible year repair", implausibleYear.ExecuteAsync, ct);

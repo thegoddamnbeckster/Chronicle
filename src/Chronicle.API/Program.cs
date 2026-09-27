@@ -255,6 +255,7 @@ builder.Services.AddSingleton<BookTitleFragmentRepairService>();
 builder.Services.AddSingleton<PersonFullCreditsService>();
 builder.Services.AddSingleton<MovieExternalIdRepairService>();
 builder.Services.AddSingleton<PersonIdentitySplitService>();
+builder.Services.AddSingleton<YearOverviewArticleSplitService>();
 builder.Services.AddSingleton<LibraryIntegrityRepairService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<LibraryIntegrityRepairService>());
