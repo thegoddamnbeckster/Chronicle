@@ -16,6 +16,8 @@ namespace Chronicle.Services;
 ///   5. Nested Movie Repair     -- a movie nested under another movie moves up into that movie's
 ///                                 collection (a movie with children is mistaken for a container and
 ///                                 can never be matched again).
+///   6. Misparented Child Repair -- a book filed under another book (wrong series/author) moves under
+///                                 its own author's same-named series.
 /// A failing pass is logged and never stops the ones after it.
 /// </summary>
 public sealed class LibraryIntegrityRepairService(
@@ -24,6 +26,7 @@ public sealed class LibraryIntegrityRepairService(
     MovieFileYearRepairService movieFileYear,
     ImplausibleYearRepairService implausibleYear,
     NestedMovieRepairService nestedMovies,
+    MisparentedChildRepairService misparentedChildren,
     ILogger<LibraryIntegrityRepairService> logger) : IScheduledTask
 {
     public string TaskId      => "library_integrity_repair";
@@ -38,6 +41,7 @@ public sealed class LibraryIntegrityRepairService(
         await RunPassAsync("movie file year repair", movieFileYear.ExecuteAsync, ct);
         await RunPassAsync("implausible year repair", implausibleYear.ExecuteAsync, ct);
         await RunPassAsync("nested movie repair", nestedMovies.ExecuteAsync, ct);
+        await RunPassAsync("misparented child repair", misparentedChildren.ExecuteAsync, ct);
     }
 
     private async Task RunPassAsync(string name, Func<CancellationToken, Task> pass, CancellationToken ct)
