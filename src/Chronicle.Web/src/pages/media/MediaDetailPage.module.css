@@ -1,7 +1,8 @@
-/* No max-width: fills the content column edge-to-edge like every other detail page
-   (PersonDetailPage's own .page has none) -- a fixed 1100px cap left a large empty gap on any
-   wider viewport. */
-.page { position: relative; }
+/* No max-width: fills the content column like every other detail page (PersonDetailPage's own
+   .page has none) -- a fixed 1100px cap left a large empty gap on any wider viewport. A little
+   of .page's own padding, on top of .content's shared 24px, keeps a visible gutter either side
+   instead of the grid's own card borders sitting flush against the content column's edge. */
+.page { position: relative; padding: 0 12px; }
 
 /* ── Backdrop hero ── */
 
@@ -11,11 +12,13 @@
 }
 
 .backdropActive {
-  /* Stretch edge-to-edge across the content column, overriding .page's max-width.
-   * margin-left: -24px pulls to content column left edge.
-   * width: full viewport minus the fixed sidebar width fills to the right edge.
+  /* Stretch edge-to-edge across the content column, overriding .page's own side padding.
+   * margin-left: -36px cancels .content's 24px PLUS .page's own 12px (see .page above) to
+   * still reach the content column's true left edge -- only the LEFT edge needs repositioning;
+   * once it starts there, the same width formula as before reaches the same right edge again,
+   * so the right margin and width formula are unchanged from before .page had its own padding.
    * overflow-x: clip on .content prevents a scrollbar if 100vw includes scrollbar gutter. */
-  margin: -24px 0 0 -24px;
+  margin: -24px 0 0 -36px;
   width: calc(100vw - var(--sidebar-width));
 }
 
@@ -23,9 +26,10 @@
   /* Below 768px the sidebar becomes an off-canvas overlay (see Layout.module.css)
    * and no longer occupies a grid column, so the viewport-minus-sidebar formula
    * above would wrongly shrink this section by the sidebar's width. .content's
-   * padding also drops to 12px on mobile, so the cancelling margin must match. */
+   * padding also drops to 12px on mobile, so the cancelling margin must match
+   * (12px from .content + .page's own 12px = 24px). */
   .backdropActive {
-    margin: -12px 0 0 -12px;
+    margin: -12px 0 0 -24px;
     width: 100vw;
   }
 }
