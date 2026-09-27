@@ -550,19 +550,33 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             await db.SaveChangesAsync(ct);
         }
 
+        // Some import sources (confirmed live 2026-09-27, Hardcover) give no SeriesName but fold the book's
+        // series position into the title itself ("He Who Fights with Monsters #4"): treated as a standalone
+        // title, that minted a brand-new duplicate of the already-scanned series book on every sync. The
+        // same split the file scanner uses for an embedded series tag applies here.
+        var seriesName = evt.SeriesName;
+        var bookNumber = (int?)null;
+        var bookTitle  = evt.Title;
+        if (seriesName is null && bookTitle is not null)
+        {
+            var (splitName, splitNumber) = FileScanService.SplitSeriesTag(bookTitle);
+            if (splitNumber.HasValue) (seriesName, bookNumber, bookTitle) = (splitName, splitNumber, splitName);
+        }
+
         // ── Level 1: Series (optional) ────────────────────────────────────────
         MediaItem? seriesItem = null;
-        if (evt.SeriesName is not null)
+        if (seriesName is not null)
         {
+            var seriesNameLower = seriesName.ToLowerInvariant();
             seriesItem = await db.MediaItems
                 .FirstOrDefaultAsync(i => i.ParentId == author.Id
                     && i.HierarchyLevel == 1
-                    && i.Name == evt.SeriesName, ct);
+                    && i.Name.ToLower() == seriesNameLower, ct);
             if (seriesItem is null)
             {
                 seriesItem = new MediaItem
                 {
-                    Name           = evt.SeriesName,
+                    Name           = seriesName,
                     MediaTypeId    = mediaType.Id,
                     HierarchyLevel = 1,
                     ParentId       = author.Id,
@@ -603,13 +617,27 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             }
         }
 
-        // Stage 3: title + year under the resolved parent
-        if (evt.Title is not null && evt.Year.HasValue)
+        // Stage 3: book position under the resolved series -- the file scanner already numbers a series'
+        // books (see FileScanService), so an import source that only carries the position (no year, an
+        // approximate/different title) still lands on the SAME book instead of minting a duplicate.
+        if (bookNumber.HasValue)
+        {
+            var byNumber = await db.MediaItems
+                .FirstOrDefaultAsync(i => i.ParentId == bookParentId && i.Number == bookNumber, ct);
+            if (byNumber is not null)
+            {
+                await GraftExternalIdAsync(db, byNumber.Id, pluginId, evt.ExternalId, ct);
+                return (byNumber, false);
+            }
+        }
+
+        // Stage 4: title + year under the resolved parent
+        if (bookTitle is not null && evt.Year.HasValue)
         {
             var byTitle = await db.MediaItems
                 .FirstOrDefaultAsync(i => i.ParentId == bookParentId
                     && i.Year == evt.Year
-                    && i.Name == evt.Title, ct);
+                    && i.Name == bookTitle, ct);
             if (byTitle is not null)
             {
                 await GraftExternalIdAsync(db, byTitle.Id, pluginId, evt.ExternalId, ct);
@@ -617,12 +645,13 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             }
         }
 
-        // Stage 4: create stub
-        var stubTitle = evt.Title ?? "Unknown";
+        // Stage 5: create stub
+        var stubTitle = bookTitle ?? "Unknown";
         var stub = new MediaItem
         {
             Name           = evt.Year.HasValue ? $"{stubTitle} ({evt.Year})" : stubTitle,
             Year           = evt.Year,
+            Number         = bookNumber,
             MediaTypeId    = mediaType.Id,
             HierarchyLevel = bookLevel,
             ParentId       = bookParentId,
