@@ -2193,7 +2193,7 @@ namespace Chronicle.Services
                 // The book's position in its series ("Singularity - 2 - ...") becomes the item's Number so
                 // a series lists in reading order (children sort by Number). Only meaningful with a series.
                 if (folderSeries is not null && folderSeriesNumber.HasValue)
-                    rep.EpisodeNumber ??= folderSeriesNumber;
+                    rep.EpisodeNumber = folderSeriesNumber; // the folder is authoritative for a book's position
 
                 if (!string.IsNullOrWhiteSpace(rep.AudioAlbum))
                 {
