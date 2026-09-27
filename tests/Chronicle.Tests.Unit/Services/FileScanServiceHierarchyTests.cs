@@ -968,6 +968,16 @@ public class FileScanServiceHierarchyTests
         Assert.Equal((title, (int?)year, series, number), parsed);
     }
 
+    [Theory]
+    [InlineData("- - (Unknown) - The Hidden Family", "The Hidden Family", null, null)]
+    [InlineData("The Merchant Princes - 1 - (Unknown) - The Family Trade", "The Family Trade", "The Merchant Princes", 1)]
+    public void ParseAudiobookFolderName_UnknownYearIsAMissingYear_NotASeries(string folder, string title, string? series, int? number)
+    {
+        var parsed = FileScanService.ParseAudiobookFolderName(folder);
+
+        Assert.Equal((title, (int?)null, series, number), parsed);
+    }
+
     [Fact]
     public void CollapseAudiobooksToFolders_ABookInASeries_CarriesItsSeriesPositionAsItsNumber()
     {

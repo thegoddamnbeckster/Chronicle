@@ -2274,6 +2274,12 @@ namespace Chronicle.Services
             int? year   = null;
             for (int i = 0; i < raw.Length; i++)
             {
+                // "(Unknown)" stands where the year would be: a missing year, NOT a series name.
+                if (string.Equals(raw[i], "(Unknown)", StringComparison.OrdinalIgnoreCase))
+                {
+                    yearIdx = i;
+                    break;
+                }
                 var m = _yearSegmentRegex.Match(raw[i]);
                 if (!m.Success || !DigitParsingHelper.TryParseDigits(m.Groups[1].Value, out var parsedYear)) continue;
                 year   = parsedYear;

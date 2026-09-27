@@ -250,6 +250,7 @@ builder.Services.AddSingleton<NestedMovieRepairService>();
 builder.Services.AddSingleton<MisparentedChildRepairService>();
 builder.Services.AddSingleton<AudiobookSeriesNumberRepairService>();
 builder.Services.AddSingleton<SeriesFragmentRepairService>();
+builder.Services.AddSingleton<UnknownSeriesRepairService>();
 builder.Services.AddSingleton<PersonFullCreditsService>();
 builder.Services.AddSingleton<MovieExternalIdRepairService>();
 builder.Services.AddSingleton<PersonIdentitySplitService>();
