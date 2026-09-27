@@ -1,4 +1,7 @@
-.page { max-width: 1100px; position: relative; }
+/* No max-width: fills the content column edge-to-edge like every other detail page
+   (PersonDetailPage's own .page has none) -- a fixed 1100px cap left a large empty gap on any
+   wider viewport. */
+.page { position: relative; }
 
 /* ── Backdrop hero ── */
 
@@ -1140,28 +1143,25 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .childCard:hover { transform: translateY(-2px); }
 
-.childPoster {
-  width: 100%;
-  max-height: 300px;
-  object-fit: contain;
-  object-position: top;
-  border-radius: var(--radius);
-  display: block;
-  margin-bottom: 6px;
-}
-
-.childPosterPlaceholder {
-  width: 100%;
+/* A fixed-height box (not just the poster image's own natural ratio) so every card -- real
+ * art or the "No art"/initial placeholder -- takes up exactly the same height. Without it, a
+ * shorter placeholder box next to a tall real cover made the grid's auto-sized rows stretch to
+ * the tallest card, leaving shorter cards' titles sitting well above their row's bottom edge
+ * instead of lining up under a consistent card border. */
+.childPosterBox {
   aspect-ratio: 2/3;
-  background: var(--bg-secondary);
+  margin-bottom: 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  color: var(--text-muted);
-  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.childPoster {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: top;
+  display: block;
 }
 
 .childNoArt {

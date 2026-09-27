@@ -252,6 +252,7 @@ builder.Services.AddSingleton<AudiobookSeriesNumberRepairService>();
 builder.Services.AddSingleton<SeriesFragmentRepairService>();
 builder.Services.AddSingleton<UnknownSeriesRepairService>();
 builder.Services.AddSingleton<BookTitleFragmentRepairService>();
+builder.Services.AddSingleton<SeriesNameFragmentRepairService>();
 builder.Services.AddSingleton<PersonFullCreditsService>();
 builder.Services.AddSingleton<MovieExternalIdRepairService>();
 builder.Services.AddSingleton<PersonIdentitySplitService>();

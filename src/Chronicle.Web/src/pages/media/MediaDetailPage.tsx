@@ -1358,7 +1358,11 @@ export default function MediaDetailPage() {
         const childrenLabel = getChildrenLabel(item.mediaTypeName, item.ancestors?.length ?? 0)
         const childIds = sortedChildren.map(c => c.id)
         return (
-        <PluginFold foldKey={`media.${mediaId}.children`} label={`${childrenLabel} (${sortedChildren.length})`}>
+        <PluginFold
+          foldKey={`media.${mediaId}.children`}
+          label={`${childrenLabel} (${sortedChildren.length})`}
+          defaultOpen={item.mediaTypeInternalName === 'audiobooks'}
+        >
           <div className={styles.childGrid}>
             {sortedChildren.map(child => (
               <Link
@@ -1376,6 +1380,7 @@ export default function MediaDetailPage() {
                     <PosterImage
                       posterUrl={child.posterUrl}
                       name={child.name}
+                      className={styles.childPosterBox}
                       imgClassName={styles.childPoster}
                       placeholderContent={enriched
                         ? <span className={styles.childNoArt}>No art</span>
