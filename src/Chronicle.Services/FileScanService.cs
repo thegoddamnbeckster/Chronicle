@@ -2161,6 +2161,11 @@ namespace Chronicle.Services
                     .Select(f => f.AudioGrouping)
                     .FirstOrDefault(g => !string.IsNullOrWhiteSpace(g));
 
+                // A series tag often carries the book's position ("Laundry Files #5"): that is the position,
+                // not part of the series name -- keeping it made one series item PER BOOK.
+                int? tagSeriesNumber = null;
+                if (series is not null) (series, tagSeriesNumber) = SplitSeriesTag(series);
+
                 // Propagate best author/series onto the representative.
                 if (author is not null) { rep.AudioAlbumArtist = author; rep.AudioArtist = author; }
                 if (series is not null)   rep.AudioGrouping = series;
@@ -2194,6 +2199,8 @@ namespace Chronicle.Services
                 // a series lists in reading order (children sort by Number). Only meaningful with a series.
                 if (folderSeries is not null && folderSeriesNumber.HasValue)
                     rep.EpisodeNumber = folderSeriesNumber; // the folder is authoritative for a book's position
+                else if (tagSeriesNumber.HasValue)
+                    rep.EpisodeNumber = tagSeriesNumber;    // else the position the series tag carried
 
                 if (!string.IsNullOrWhiteSpace(rep.AudioAlbum))
                 {
@@ -2327,6 +2334,23 @@ namespace Chronicle.Services
 
             // Last segment = title; everything else = series.
             return (parts[^1], year, string.Join(" - ", parts[..^1]), null);
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex _seriesTagPositionRegex = new(
+            @"^(?<name>.*?)[,\s]*\(?\s*(?:(?:book|vol\.?|volume)\s*)?#\s*(?<num>\d{1,4}(?:\.\d+)?)\s*\)?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// Splits a series tag such as "Laundry Files #5" or "Backyard Starship, Book #29" into the series
+        /// name and the book's position. A tag with no trailing "#N" is returned unchanged with no position.
+        /// </summary>
+        internal static (string Name, int? Number) SplitSeriesTag(string tag)
+        {
+            var m = _seriesTagPositionRegex.Match(tag.Trim());
+            if (!m.Success || string.IsNullOrWhiteSpace(m.Groups["name"].Value)) return (tag.Trim(), null);
+            var number = double.TryParse(m.Groups["num"].Value, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var n) ? (int?)Math.Floor(n) : null;
+            return (m.Groups["name"].Value.Trim(), number);
         }
 
         private static bool IsPlaceholder(string s) =>

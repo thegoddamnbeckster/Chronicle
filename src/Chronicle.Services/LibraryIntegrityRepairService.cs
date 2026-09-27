@@ -18,7 +18,8 @@ namespace Chronicle.Services;
 ///                                 can never be matched again).
 ///   6. Misparented Child Repair -- a book filed under another book (wrong series/author) moves under
 ///                                 its own author's same-named series.
-///   7. Audiobook Series Number Repair -- a series book with no Number gets its position from its folder
+///   7. Series Fragment Repair  -- one-book series named "Series #N" fold back into the real series.
+///   8. Audiobook Series Number Repair -- a series book with no Number gets its position from its folder
 ///                                 name, so the series lists in reading order.
 /// A failing pass is logged and never stops the ones after it.
 /// </summary>
@@ -29,6 +30,7 @@ public sealed class LibraryIntegrityRepairService(
     ImplausibleYearRepairService implausibleYear,
     NestedMovieRepairService nestedMovies,
     MisparentedChildRepairService misparentedChildren,
+    SeriesFragmentRepairService seriesFragments,
     AudiobookSeriesNumberRepairService seriesNumbers,
     ILogger<LibraryIntegrityRepairService> logger) : IScheduledTask
 {
@@ -45,6 +47,7 @@ public sealed class LibraryIntegrityRepairService(
         await RunPassAsync("implausible year repair", implausibleYear.ExecuteAsync, ct);
         await RunPassAsync("nested movie repair", nestedMovies.ExecuteAsync, ct);
         await RunPassAsync("misparented child repair", misparentedChildren.ExecuteAsync, ct);
+        await RunPassAsync("series fragment repair", seriesFragments.ExecuteAsync, ct);
         await RunPassAsync("audiobook series number repair", seriesNumbers.ExecuteAsync, ct);
     }
 
