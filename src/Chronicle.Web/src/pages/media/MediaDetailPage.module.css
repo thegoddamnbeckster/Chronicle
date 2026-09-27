@@ -1143,25 +1143,26 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .childCard:hover { transform: translateY(-2px); }
 
-/* A fixed-height box (not just the poster image's own natural ratio) so every card -- real
- * art or the "No art"/initial placeholder -- takes up exactly the same height. Without it, a
- * shorter placeholder box next to a tall real cover made the grid's auto-sized rows stretch to
- * the tallest card, leaving shorter cards' titles sitting well above their row's bottom edge
- * instead of lining up under a consistent card border. */
-.childPosterBox {
+/* PosterImage applies this same class to its root wrapper, its placeholder AND its <img> (see
+ * imgClassName in PosterImage.tsx) -- so aspect-ratio here has to be expressed as "2/3 of my OWN
+ * 100%-width", not a height percentage, on all three, or the root's height (auto, from its
+ * content) and the placeholder/img's height (100% of that same auto height) chase each other in
+ * a circle that the browser resolves by falling back to each element's own natural size. THAT
+ * was the previous attempt's bug: every card ended up a different height again (a short
+ * placeholder next to a tall real cover), so the grid's auto-sized rows still stretched
+ * unevenly and titles sat right on top of the row below instead of a consistent gap under a
+ * consistent card border. Sizing every one of the three from its own width sidesteps the whole
+ * circularity: they all compute the identical height independently. */
+.childPoster {
+  width: 100%;
   aspect-ratio: 2/3;
+  object-fit: contain;
+  object-position: top;
+  display: block;
   margin-bottom: 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-}
-
-.childPoster {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: top;
-  display: block;
 }
 
 .childNoArt {

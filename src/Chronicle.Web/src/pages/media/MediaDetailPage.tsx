@@ -1380,7 +1380,6 @@ export default function MediaDetailPage() {
                     <PosterImage
                       posterUrl={child.posterUrl}
                       name={child.name}
-                      className={styles.childPosterBox}
                       imgClassName={styles.childPoster}
                       placeholderContent={enriched
                         ? <span className={styles.childNoArt}>No art</span>
