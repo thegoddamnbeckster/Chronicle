@@ -366,6 +366,188 @@ public class BookSeriesServiceTests
     }
 
     [Fact]
+    public async Task ARealItemMatchedToAnAlternateEditionId_IsNotDuplicated_AndAnExistingStubForTheSlotIsRemoved()
+    {
+        // Root-caused live (2026-09-28): Dungeon Crawler Carl #1 was a real library item carrying
+        // hardcover:2333832 while the collapsed one-per-position representative was
+        // hardcover:446681 -- neither the id match nor the title+year fallback ("...: A LitRPG
+        // Adventure", 2021 vs 2020) found it, so a stub was minted beside every real item.
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = Item(1, "Dungeon Crawler Carl", 1, author.Id);
+        db.MediaItems.Add(series);
+        await db.SaveChangesAsync();
+        var real = Item(1, "Dungeon Crawler Carl: A LitRPG Adventure", 2, series.Id, number: 1);
+        var oldStub = Item(1, "Dungeon Crawler Carl", 2, series.Id, number: 1);
+        oldStub.IsStub = true;
+        db.MediaItems.AddRange(real, oldStub);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = series.Id, Source = "hardcover", ExternalId = "hardcover:series:1" },
+            new MediaExternalId { MediaItemId = real.Id, Source = "hardcover", ExternalId = "hardcover:2333832" },
+            new MediaExternalId { MediaItemId = oldStub.Id, Source = "hardcover", ExternalId = "hardcover:446681" });
+        await db.SaveChangesAsync();
+
+        var book = Book("hardcover:446681", "Dungeon Crawler Carl", 2020, 1);
+        book.ExtendedData = JsonSerializer.SerializeToElement(new { seriesPosition = 1.0, alternateIds = new[] { "hardcover:2333832" } });
+        var provider = Provider("Dungeon Crawler Carl", book);
+        await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default);
+
+        var books = await db.MediaItems.Where(m => m.ParentId == series.Id).ToListAsync();
+        Assert.Equal([real.Id], books.Select(b => b.Id));
+    }
+
+    [Fact]
+    public async Task ARateLimitedProvider_PropagatesTheError_AndKeepsTheSeriesExternalId()
+    {
+        // A throttled Hardcover says nothing about whether the stored series id is bad -- the old
+        // catch-everything branch deleted the id on ANY fetch failure, which during a rate-limit
+        // storm would have stripped it from every series in the sweep.
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = Item(1, "Some Series", 1, author.Id);
+        db.MediaItems.Add(series);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = series.Id, Source = "hardcover", ExternalId = "hardcover:series:1" });
+        await db.SaveChangesAsync();
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.Name).Returns("hardcover");
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("quota", null, System.Net.HttpStatusCode.TooManyRequests));
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default));
+
+        Assert.True(await db.MediaExternalIds.AnyAsync(e => e.MediaItemId == series.Id && e.ExternalId == "hardcover:series:1"));
+    }
+
+    private static async Task<MediaItem> SeriesWithHcIdAsync(ChronicleDbContext db, MediaItem author)
+    {
+        var series = Item(1, "Some Series", 1, author.Id);
+        db.MediaItems.Add(series);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = series.Id, Source = "hardcover", ExternalId = "hardcover:series:1" });
+        await db.SaveChangesAsync();
+        return series;
+    }
+
+    private static MediaMetadata BookWithAlternates(string id, string title, double position, params string[] alternates)
+    {
+        var b = Book(id, title, 2001, position);
+        b.ExtendedData = JsonSerializer.SerializeToElement(new { seriesPosition = position, alternateIds = alternates });
+        return b;
+    }
+
+    [Theory]
+    [InlineData(typeof(InvalidOperationException))] // what HardcoverClient throws for a persistent 401/403 or a GraphQL error
+    [InlineData(typeof(TimeoutException))]
+    public async Task ATransientOrAuthFailure_NeverDeletesTheSeriesExternalId(Type exceptionType)
+    {
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = await SeriesWithHcIdAsync(db, author);
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.Name).Returns("hardcover");
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync((Exception)Activator.CreateInstance(exceptionType, "boom")!);
+
+        await Assert.ThrowsAsync(exceptionType, () => NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default));
+
+        Assert.True(await db.MediaExternalIds.AnyAsync(e => e.MediaItemId == series.Id && e.ExternalId == "hardcover:series:1"));
+    }
+
+    [Theory]
+    [InlineData(typeof(ArgumentException))]
+    [InlineData(typeof(KeyNotFoundException))]
+    public async Task AnIdTheProviderSaysIsMalformedOrUnknown_IsRemoved(Type exceptionType)
+    {
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = await SeriesWithHcIdAsync(db, author);
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.Name).Returns("hardcover");
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync((Exception)Activator.CreateInstance(exceptionType, "gone")!);
+
+        var ok = await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default);
+
+        Assert.True(ok);
+        Assert.False(await db.MediaExternalIds.AnyAsync(e => e.MediaItemId == series.Id && e.ExternalId == "hardcover:series:1"));
+    }
+
+    [Fact]
+    public async Task SeveralStubsForOneSlot_AreCollapsedToTheRepresentativeOne()
+    {
+        // The Ready Player One shape: per-edition stubs at one position from before the collapse fix.
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = await SeriesWithHcIdAsync(db, author);
+        foreach (var id in new[] { "hardcover:20", "hardcover:10", "hardcover:30" })
+        {
+            var stub = Item(1, "Ready Player One", 2, series.Id, number: 1);
+            stub.IsStub = true;
+            db.MediaItems.Add(stub);
+            await db.SaveChangesAsync();
+            db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = stub.Id, Source = "hardcover", ExternalId = id });
+        }
+        await db.SaveChangesAsync();
+
+        var provider = Provider("Some Series", BookWithAlternates("hardcover:10", "Ready Player One", 1, "hardcover:20", "hardcover:30"));
+        await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default);
+
+        var left = await db.MediaItems.Where(m => m.ParentId == series.Id).Include(m => m.ExternalIds).ToListAsync();
+        Assert.Equal(["hardcover:10"], left.SelectMany(m => m.ExternalIds).Select(e => e.ExternalId));
+    }
+
+    [Fact]
+    public async Task AStubTheUserHasAddedToTheirLibrary_IsNeverAutoRemoved()
+    {
+        // Removing a media item cascade-deletes the user's library entry / play history / list entries.
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = await SeriesWithHcIdAsync(db, author);
+        var real = Item(1, "Dungeon Crawler Carl: A LitRPG Adventure", 2, series.Id, number: 1);
+        var stub = Item(1, "Dungeon Crawler Carl", 2, series.Id, number: 1);
+        stub.IsStub = true;
+        db.MediaItems.AddRange(real, stub);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = real.Id, Source = "hardcover", ExternalId = "hardcover:2" },
+            new MediaExternalId { MediaItemId = stub.Id, Source = "hardcover", ExternalId = "hardcover:1" });
+        db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = stub.Id, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        var provider = Provider("Some Series", BookWithAlternates("hardcover:1", "Dungeon Crawler Carl", 1, "hardcover:2"));
+        await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default);
+
+        Assert.True(await db.MediaItems.AnyAsync(m => m.Id == stub.Id));
+        Assert.True(await db.UserLibraries.AnyAsync(u => u.MediaItemId == stub.Id));
+    }
+
+    [Fact]
+    public async Task AManuallyPlacedRealBook_DoesNotCauseTheSlotsStubToBeRemoved()
+    {
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = await SeriesWithHcIdAsync(db, author);
+        var manual = Item(1, "Real Book", 1, author.Id); // the user pulled it OUT of the series
+        var stub = Item(1, "Book", 2, series.Id, number: 1);
+        stub.IsStub = true;
+        db.MediaItems.AddRange(manual, stub);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = manual.Id, Source = "hardcover", ExternalId = "hardcover:2" },
+            new MediaExternalId { MediaItemId = manual.Id, Source = "chronicle", ExternalId = "manual-series-member" },
+            new MediaExternalId { MediaItemId = stub.Id, Source = "hardcover", ExternalId = "hardcover:1" });
+        await db.SaveChangesAsync();
+
+        var provider = Provider("Some Series", BookWithAlternates("hardcover:1", "Book", 1, "hardcover:2"));
+        await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default);
+
+        Assert.True(await db.MediaItems.AnyAsync(m => m.Id == stub.Id));
+    }
+
+    [Fact]
     public async Task NewStubs_GetEnrichmentRowsSeededForEverySupportingPlugin()
     {
         var (db, _, author) = await SetupAsync();

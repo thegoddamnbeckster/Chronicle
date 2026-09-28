@@ -55,6 +55,17 @@ public class BookSeriesService(
         {
             seriesMeta = await provider.GetByIdAsync(seriesExtId.ExternalId, ct);
         }
+        // Only an id the provider says is malformed or does not exist is a "bad id" worth deleting.
+        // Anything else -- Hardcover rate-limiting us (a 429, or a 403 the API also uses for the daily
+        // cap), a network failure, a timeout, a GraphQL error, an expired token -- says nothing about
+        // the stored id and must propagate to the caller (the sweep stops on a throttle). The old
+        // catch-everything branch would have stripped the id from every series in the sweep while
+        // the provider was merely throttling us. Code review (2026-09-28) caught the first, narrower
+        // version of this guard still deleting on a persistent 403 / GraphQL InvalidOperationException.
+        catch (Exception ex) when (ex is not (ArgumentException or KeyNotFoundException or OperationCanceledException))
+        {
+            throw;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex,
@@ -106,7 +117,7 @@ public class BookSeriesService(
 
         var authoritative = results
             .Where(p => !string.IsNullOrEmpty(p.ExternalId))
-            .Select(p => p.ExternalId!)
+            .SelectMany(p => AllIdsFor(p))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Remove stale stubs: a stub of THIS series no longer in the provider's list, and never
@@ -115,6 +126,10 @@ public class BookSeriesService(
         var staleStubs = subtree.Where(m => m.ParentId == series.Id && m.IsStub &&
             !manuallyPlacedIds.Contains(m.Id) &&
             !m.ExternalIds.Any(e => authoritative.Contains(e.ExternalId))).ToList();
+        // Deleting a media item cascades to the user's library entry, play history and list
+        // entries for it -- a stub someone actually added/logged is never auto-removed.
+        var stubsWithUserData = await StubIdsWithUserDataAsync(db, staleStubs.Select(m => m.Id), ct);
+        staleStubs = staleStubs.Where(m => !stubsWithUserData.Contains(m.Id)).ToList();
         foreach (var stale in staleStubs)
         {
             db.MediaExternalIds.RemoveRange(stale.ExternalIds);
@@ -135,9 +150,45 @@ public class BookSeriesService(
 
             var position = TryGetSeriesPosition(part.ExtendedData);
 
-            var existing = subtree.FirstOrDefault(m => m.ExternalIds.Any(
-                    e => string.Equals(e.ExternalId, part.ExternalId, StringComparison.OrdinalIgnoreCase)))
-                ?? FindByNormalizedTitleYear(subtree, part);
+            // Match on the representative id OR any alternate edition id Hardcover lists at this
+            // position -- a library item matched to a different edition of the same book is still
+            // that book (root-caused live 2026-09-28: Dungeon Crawler Carl's real items carried
+            // edition ids the collapsed representative didn't, so every position got a duplicate
+            // stub beside its real item). A real (non-stub) item always wins over a stub of the
+            // same slot, and any leftover stub for the slot is removed below.
+            var partIds = AllIdsFor(part).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var representativeId = part.ExternalId;
+            var idMatches = subtree
+                .Where(m => m.ExternalIds.Any(e => partIds.Contains(e.ExternalId)))
+                .OrderBy(m => m.IsStub)
+                .ThenBy(m => m.ExternalIds.Any(e => string.Equals(e.ExternalId, representativeId, StringComparison.OrdinalIgnoreCase)) ? 0 : 1)
+                .ThenBy(m => m.Id)
+                .ToList();
+            var existing = idMatches.FirstOrDefault() ?? FindByNormalizedTitleYear(subtree, part);
+
+            // Several stubs for one slot (per-edition duplicates from before the collapse fix, or a
+            // stub beside a real item matched by an alternate edition id): keep exactly one -- the
+            // real item if there is one, else the stub carrying the representative id -- and remove
+            // the rest. Never when the keeper is a user's manual placement (its slot's stub may be
+            // the only placeholder left), and never a stub the user has data on.
+            if (existing is not null && !manuallyPlacedIds.Contains(existing.Id) && idMatches.Count > 1)
+            {
+                var candidates = idMatches.Where(m => m.IsStub && m.Id != existing.Id &&
+                    m.ParentId == series.Id && !manuallyPlacedIds.Contains(m.Id)).ToList();
+                var protectedIds = await StubIdsWithUserDataAsync(db, candidates.Select(m => m.Id), ct);
+                var redundantStubs = candidates.Where(m => !protectedIds.Contains(m.Id)).ToList();
+                foreach (var redundant in redundantStubs)
+                {
+                    db.MediaExternalIds.RemoveRange(redundant.ExternalIds);
+                    db.MediaEnrichments.RemoveRange(db.MediaEnrichments.Where(e => e.MediaItemId == redundant.Id));
+                    db.MediaItems.Remove(redundant);
+                    subtree.Remove(redundant);
+                    logger.LogInformation(
+                        "Removed redundant book stub {Id} \"{Name}\" from series {SeriesId} -- {KeeperId} \"{KeeperName}\" is the same book (matched by edition id)",
+                        redundant.Id, redundant.Name, series.Id, existing.Id, existing.Name);
+                }
+                if (redundantStubs.Count > 0) await db.SaveChangesAsync(ct);
+            }
 
             if (existing is not null)
             {
@@ -349,6 +400,32 @@ public class BookSeriesService(
         await db.SaveChangesAsync(ct);
 
         logger.LogInformation("Removed orphaned series {Id} \"{Name}\" -- no remaining children", candidate.Id, candidate.Name);
+    }
+
+    /// <summary>Ids among <paramref name="ids"/> that have a library entry, play history or a list
+    /// entry -- deleting such an item would cascade-delete the user's own data.</summary>
+    private static async Task<HashSet<int>> StubIdsWithUserDataAsync(
+        ChronicleDbContext db, IEnumerable<int> ids, CancellationToken ct)
+    {
+        var idList = ids.ToList();
+        if (idList.Count == 0) return [];
+        var result = new HashSet<int>();
+        result.UnionWith(await db.UserLibraries.Where(u => idList.Contains(u.MediaItemId)).Select(u => u.MediaItemId).ToListAsync(ct));
+        result.UnionWith(await db.InteractionEvents.Where(e => idList.Contains(e.MediaItemId)).Select(e => e.MediaItemId).ToListAsync(ct));
+        result.UnionWith(await db.MediaListItems.Where(l => idList.Contains(l.MediaItemId)).Select(l => l.MediaItemId).ToListAsync(ct));
+        return result;
+    }
+
+    /// <summary>The representative ExternalId plus every alternate edition id the provider listed
+    /// at the same position (ExtendedData.alternateIds).</summary>
+    private static IEnumerable<string> AllIdsFor(MediaMetadata part)
+    {
+        if (!string.IsNullOrEmpty(part.ExternalId)) yield return part.ExternalId;
+        if (part.ExtendedData is { ValueKind: JsonValueKind.Object } el &&
+            el.TryGetProperty("alternateIds", out var alts) && alts.ValueKind == JsonValueKind.Array)
+            foreach (var a in alts.EnumerateArray())
+                if (a.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(a.GetString()))
+                    yield return a.GetString()!;
     }
 
     private static MediaItem? FindByNormalizedTitleYear(List<MediaItem> subtree, MediaMetadata part)

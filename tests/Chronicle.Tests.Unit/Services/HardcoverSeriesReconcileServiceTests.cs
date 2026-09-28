@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins;
@@ -115,5 +117,145 @@ public class HardcoverSeriesReconcileServiceTests
         await svc.ExecuteAsync(default); // must not throw, and must still process "fine"
 
         Assert.Equal(1, await db.MediaItems.CountAsync(m => m.ParentId == fine.Id));
+    }
+
+    private static async Task<MediaItem> AddSeriesAsync(ChronicleDbContext db, MediaItem author, string name, int hcId)
+    {
+        var series = Item(name, 1, author.Id);
+        db.MediaItems.Add(series);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = series.Id, Source = "hardcover", ExternalId = $"hardcover:series:{hcId}" });
+        await db.SaveChangesAsync();
+        return series;
+    }
+
+    [Fact]
+    public async Task ASeriesSyncedRecently_IsNotRefetched_ButAStaleOrNeverSyncedOneIs()
+    {
+        // Root-caused live (2026-09-28): the sweep re-fetched every matched series after every
+        // fetch-missing-metadata run (~3,300 Hardcover requests a day against a 5,000/day cap).
+        var (db, svc, provider) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var fresh = await AddSeriesAsync(db, author, "Fresh", 1);
+        var stale = await AddSeriesAsync(db, author, "Stale", 2);
+        var never = await AddSeriesAsync(db, author, "Never", 3);
+        db.AppSettings.Add(new AppSetting
+        {
+            Key = HardcoverSeriesReconcileService.LastSyncedSettingKey,
+            Value = JsonSerializer.Serialize(new Dictionary<int, DateTime>
+            {
+                [fresh.Id] = DateTime.UtcNow.AddDays(-1),
+                [stale.Id] = DateTime.UtcNow.AddDays(-8),
+            }),
+        });
+        await db.SaveChangesAsync();
+        foreach (var n in new[] { 1, 2, 3 })
+            provider.Setup(p => p.GetByIdAsync($"hardcover:series:{n}", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new MediaMetadata { Title = n == 1 ? "Fresh" : n == 2 ? "Stale" : "Never", Results = [] });
+
+        await svc.ExecuteAsync(default);
+
+        provider.Verify(p => p.GetByIdAsync("hardcover:series:1", It.IsAny<CancellationToken>()), Times.Never);
+        provider.Verify(p => p.GetByIdAsync("hardcover:series:2", It.IsAny<CancellationToken>()), Times.Once);
+        provider.Verify(p => p.GetByIdAsync("hardcover:series:3", It.IsAny<CancellationToken>()), Times.Once);
+        var saved = JsonSerializer.Deserialize<Dictionary<int, DateTime>>(
+            (await db.AppSettings.SingleAsync(s => s.Key == HardcoverSeriesReconcileService.LastSyncedSettingKey)).Value)!;
+        Assert.True(saved[stale.Id] > DateTime.UtcNow.AddMinutes(-1)); // stamped now
+        Assert.True(saved[never.Id] > DateTime.UtcNow.AddMinutes(-1));
+    }
+
+    [Fact]
+    public async Task WhenHardcoverIsRateLimited_TheSweepStopsAtOnce_KeepsEveryExternalId_AndDoesNotMarkTheSeriesSynced()
+    {
+        var (db, svc, provider) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var first = await AddSeriesAsync(db, author, "First", 1);
+        var second = await AddSeriesAsync(db, author, "Second", 2);
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("quota", null, HttpStatusCode.TooManyRequests));
+
+        await svc.ExecuteAsync(default); // must not throw
+
+        // Stopped after the first failure, not one doomed call per series...
+        provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        // ...and a throttled provider is not evidence the stored ids are bad: both must survive.
+        Assert.Equal(2, await db.MediaExternalIds.CountAsync(e => e.ExternalId.StartsWith("hardcover:series:")));
+        var setting = await db.AppSettings.FirstOrDefaultAsync(s => s.Key == HardcoverSeriesReconcileService.LastSyncedSettingKey);
+        var saved = setting is null ? [] : JsonSerializer.Deserialize<Dictionary<int, DateTime>>(setting.Value)!;
+        Assert.Empty(saved);
+    }
+
+    [Fact]
+    public async Task ASinglePass_NeverChecksMoreThanTheCap()
+    {
+        var (db, svc, provider) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        for (var i = 1; i <= HardcoverSeriesReconcileService.MaxPerRun + 10; i++)
+            await AddSeriesAsync(db, author, $"S{i}", i);
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, CancellationToken _) => new MediaMetadata
+                { Title = db.MediaExternalIds.Where(e => e.ExternalId == id).Select(e => e.MediaItem!.Name).First(), Results = [] });
+
+        await svc.ExecuteAsync(default);
+
+        provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(HardcoverSeriesReconcileService.MaxPerRun));
+    }
+
+    [Fact]
+    public async Task ASeriesThatFails_IsNotRetriedNextPass_AndThreeFailuresInARowStopThePass()
+    {
+        var (db, svc, provider) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        for (var i = 1; i <= 5; i++) await AddSeriesAsync(db, author, $"S{i}", i);
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Hardcover API returned 403 after 3 attempts"));
+
+        await svc.ExecuteAsync(default);
+
+        provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(HardcoverSeriesReconcileService.MaxConsecutiveFailures));
+        // Their ids all survive (a failed fetch is not proof the id is bad)...
+        Assert.Equal(5, await db.MediaExternalIds.CountAsync(e => e.ExternalId.StartsWith("hardcover:series:")));
+        // ...and the failures are stamped so the next pass moves on to the untried ones first.
+        var saved = JsonSerializer.Deserialize<Dictionary<int, DateTime>>(
+            (await db.AppSettings.SingleAsync(s => s.Key == HardcoverSeriesReconcileService.LastSyncedSettingKey)).Value)!;
+        Assert.Equal(HardcoverSeriesReconcileService.MaxConsecutiveFailures, saved.Count);
+        Assert.All(saved.Values, at => Assert.True(DateTime.UtcNow - at < HardcoverSeriesReconcileService.StaleAfter));
+    }
+
+    [Fact]
+    public async Task StampsForSeriesThatNoLongerHaveAHardcoverId_ArePruned()
+    {
+        var (db, svc, provider) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var live = await AddSeriesAsync(db, author, "Live", 1);
+        db.AppSettings.Add(new AppSetting
+        {
+            Key = HardcoverSeriesReconcileService.LastSyncedSettingKey,
+            Value = JsonSerializer.Serialize(new Dictionary<int, DateTime> { [live.Id] = DateTime.UtcNow.AddDays(-1), [999999] = DateTime.UtcNow }),
+        });
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        var saved = JsonSerializer.Deserialize<Dictionary<int, DateTime>>(
+            (await db.AppSettings.SingleAsync(s => s.Key == HardcoverSeriesReconcileService.LastSyncedSettingKey)).Value)!;
+        Assert.Equal([live.Id], saved.Keys);
     }
 }
