@@ -110,6 +110,22 @@ export async function reparentToCollection(id: number, collectionId: number): Pr
   return data.data
 }
 
+/** Removes a book from its series, back to a standalone book under its author. NOT sticky --
+ *  the book is fully auto-manageable by the Hardcover series reconcile pass again afterward,
+ *  the same as unparentFromCollection for a movie. */
+export async function unparentFromSeries(id: number): Promise<MediaItem> {
+  const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/unparent-series`)
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to remove from series')
+  return data.data
+}
+
+/** Manually places a standalone book into an existing series by the same author. */
+export async function reparentToSeries(id: number, seriesId: number): Promise<MediaItem> {
+  const { data } = await client.post<ApiResponse<MediaItem>>(`/media/${id}/reparent-series`, { seriesId })
+  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to add to series')
+  return data.data
+}
+
 export interface CollectionSummary {
   id: number
   name: string

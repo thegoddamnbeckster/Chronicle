@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
+import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, unparentFromSeries, reparentToSeries, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, addToLibrary, updateLibraryEntry, resetWatchProgress } from '@/api/library'
 import { posterProgressPercent } from '@/utils/posterProgress'
@@ -418,6 +418,42 @@ export default function MediaDetailPage() {
     },
   })
 
+  // ── Add to Series / Remove from Series (books/audiobooks) ──────────────────────────
+  // Mirrors the movie-collection flows above exactly, scoped to the Author->Series->Book
+  // hierarchy instead of a flat collection type. Removing is NOT sticky -- see
+  // unparentFromSeries's own doc -- the book becomes fully auto-manageable again afterward,
+  // same as a movie leaving a collection.
+  const [joinSeriesOpen, setJoinSeriesOpen] = useState(false)
+
+  const { data: authorSeriesOptions = [] } = useQuery({
+    queryKey: ['media', item?.parentId, 'children'],
+    queryFn: () => getMediaChildren(item!.parentId!),
+    // Not gated on isBookHierarchyType here -- that check isn't computed until after item is
+    // narrowed below, but joinSeriesOpen can only become true from the "Add to a Series" button,
+    // which itself only renders when isBookHierarchyType is already true.
+    enabled: joinSeriesOpen && item?.parentId != null,
+  })
+  const seriesOptions = authorSeriesOptions.filter(c => c.id !== mediaId)
+
+  const unparentSeriesMut = useMutation({
+    mutationFn: () => unparentFromSeries(mediaId),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['media', item?.parentId, 'children'] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+    },
+  })
+
+  const joinSeriesMut = useMutation({
+    mutationFn: (seriesId: number) => reparentToSeries(mediaId, seriesId),
+    onSuccess: (updated) => {
+      qc.setQueryData(['media', mediaId], updated)
+      qc.invalidateQueries({ queryKey: ['media', item?.parentId, 'children'] })
+      qc.invalidateQueries({ queryKey: ['library'] })
+      setJoinSeriesOpen(false)
+    },
+  })
+
   // ── Merge with… ──────────────────────────────────────────────────────────
   const [mergeSearchOpen, setMergeSearchOpen] = useState(false)
   const [mergeSearchQuery, setMergeSearchQuery] = useState('')
@@ -633,6 +669,12 @@ export default function MediaDetailPage() {
   // type instead. Mirrors the backend's HierarchyLevels == 1 check.
   const currentMediaType = mediaTypes.find(t => t.id === item.mediaTypeId)
   const isFlatCollectionType = currentMediaType?.hierarchyLevels === 1
+
+  // Author -> Series -> Book types (audiobooks, books): a level-1 item is either a series
+  // container (has book children) or a standalone book by that author (no children) -- the
+  // same "no backend flag either way" approximation isFlatCollectionType's own sibling controls
+  // above live with for a brand-new collection, see isKnownCollection's own comment.
+  const isBookHierarchyType = (currentMediaType?.hierarchyLevels ?? 0) >= 3
 
   // children.length alone can't tell a brand-new, still-empty collection apart from a genuine
   // standalone movie -- both are HierarchyLevel 0 / no parent / no children. A collection tagged
@@ -852,6 +894,25 @@ export default function MediaDetailPage() {
                 title="Add this item into an existing collection"
               >
                 {joinCollectionOpen ? 'Cancel' : 'Add to a Collection'}
+              </button>
+            )}
+            {isAdmin && isBookHierarchyType && item.hierarchyLevel === 2 && item.parentId != null && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => unparentSeriesMut.mutate()}
+                disabled={unparentSeriesMut.isPending}
+                title="Remove this book from its series, back to a standalone book by its author"
+              >
+                {unparentSeriesMut.isPending ? 'Removing…' : 'Remove from Series'}
+              </button>
+            )}
+            {isAdmin && isBookHierarchyType && item.hierarchyLevel === 1 && item.parentId != null && children.length === 0 && (
+              <button
+                className={styles.changeTypeBtn}
+                onClick={() => setJoinSeriesOpen(o => !o)}
+                title="Add this book into an existing series by the same author"
+              >
+                {joinSeriesOpen ? 'Cancel' : 'Add to a Series'}
               </button>
             )}
             {isAdmin && (
@@ -1135,6 +1196,37 @@ export default function MediaDetailPage() {
                       <span className={styles.mergeResultText}>
                         <span className={styles.mergeResultName}>{result.name}</span>
                         <span className={styles.mergeResultType}>{result.itemCount} item{result.itemCount === 1 ? '' : 's'}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {joinSeriesOpen && (
+            <div className={styles.mergeSearch}>
+              {joinSeriesMut.isError && (
+                <p className={styles.changeTypeError}>
+                  {joinSeriesMut.error instanceof Error ? joinSeriesMut.error.message : 'Failed to add to series.'}
+                </p>
+              )}
+              {seriesOptions.length === 0 ? (
+                <p className={styles.removeFromCollectionEmpty}>This author has no other series to add it to.</p>
+              ) : (
+                <div className={styles.mergeSearchResults}>
+                  {seriesOptions.map(series => (
+                    <button
+                      key={series.id}
+                      className={styles.mergeSearchResult}
+                      onClick={() => joinSeriesMut.mutate(series.id)}
+                      disabled={joinSeriesMut.isPending}
+                    >
+                      {series.posterUrl && (
+                        <img src={series.posterUrl} alt="" className={styles.mergeResultPoster} />
+                      )}
+                      <span className={styles.mergeResultText}>
+                        <span className={styles.mergeResultName}>{series.name}</span>
                       </span>
                     </button>
                   ))}

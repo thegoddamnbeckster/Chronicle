@@ -37,6 +37,8 @@ namespace Chronicle.API.DTOs
 
     public record ReparentRequest([Required] int CollectionId);
 
+    public record ReparentToSeriesRequest([Required] int SeriesId);
+
     /// <summary>Lightweight listing row for the "Add Collection" management page.</summary>
     public record CollectionSummaryDto(int Id, string Name, string? PosterUrl, int ItemCount, int MediaTypeId);
 

@@ -23,6 +23,7 @@ namespace Chronicle.API.Controllers
         private readonly ChronicleDbContext _context;
         private readonly IMergeService _mergeService;
         private readonly IMovieCollectionService _movieCollectionService;
+        private readonly IBookSeriesService _bookSeriesService;
         private readonly IPluginRegistry _pluginRegistry;
         private readonly IMetadataResolutionService _resolutionService;
         private readonly OverrideResetProgressService _overrideResetProgress;
@@ -31,6 +32,7 @@ namespace Chronicle.API.Controllers
             IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
             ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
+            IBookSeriesService bookSeriesService,
             IPluginRegistry pluginRegistry,
             IMetadataResolutionService resolutionService, OverrideResetProgressService overrideResetProgress)
         {
@@ -40,6 +42,7 @@ namespace Chronicle.API.Controllers
             _contributionService     = contributionService;
             _context                 = context;
             _movieCollectionService  = movieCollectionService;
+            _bookSeriesService       = bookSeriesService;
             _pluginRegistry          = pluginRegistry;
             _mergeService    = mergeService;
             _resolutionService = resolutionService;
@@ -917,6 +920,61 @@ namespace Chronicle.API.Controllers
             catch (InvalidOperationException ex)
             {
                 return BadRequest(ApiResponse<MediaItemDto>.Fail("UNPARENT_INVALID", ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Removes a standalone book from its series, back to a standalone book under its author.
+        /// NOT sticky -- also clears the manual-placement marker, so the book is fully
+        /// auto-manageable again on the next Hardcover series reconcile, mirroring
+        /// <see cref="UnparentFromCollection"/> exactly. Admin only.
+        /// </summary>
+        [HttpPost("{id:int}/unparent-series")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> RemoveFromSeries(int id, CancellationToken ct)
+        {
+            try
+            {
+                await _bookSeriesService.RemoveFromSeriesAsync(_context, id, ct);
+                var updated = await _mediaService.GetByIdAsync(id, ct);
+                if (updated == null)
+                    return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
+            }
+            catch (MediaNotFoundException ex)
+            {
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("UNPARENT_INVALID", ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Manually places a standalone book into an existing series by the same author. Admin
+        /// only. Marks the placement as user-chosen so the Hardcover series reconcile pass never
+        /// reverts it.
+        /// </summary>
+        [HttpPost("{id:int}/reparent-series")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> ReparentIntoSeries(int id, [FromBody] ReparentToSeriesRequest body, CancellationToken ct)
+        {
+            try
+            {
+                await _bookSeriesService.ReparentIntoSeriesAsync(_context, id, body.SeriesId, ct);
+                var updated = await _mediaService.GetByIdAsync(id, ct);
+                if (updated == null)
+                    return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(updated)));
+            }
+            catch (MediaNotFoundException ex)
+            {
+                return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", ex.Message));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<MediaItemDto>.Fail("REPARENT_INVALID", ex.Message));
             }
         }
 

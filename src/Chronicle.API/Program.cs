@@ -134,6 +134,8 @@ builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IMediaListService, MediaListService>();
 builder.Services.AddScoped<IMergeService, MergeService>();
 builder.Services.AddScoped<IMovieCollectionService, MovieCollectionService>();
+builder.Services.AddScoped<IBookSeriesService, BookSeriesService>();
+builder.Services.AddScoped<HardcoverSeriesReconcileService>();
 builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
 // ScanProgressService and ImportProgressService are singletons so the scoped
 // FileScanService (writer) and the controller progress endpoints (reader) share the same state.

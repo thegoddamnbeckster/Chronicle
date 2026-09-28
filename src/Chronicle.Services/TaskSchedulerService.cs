@@ -184,6 +184,19 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
                     ? row.TaskId[(row.TaskId.IndexOf(':') + 1)..]
                     : row.TaskId;
                 await runner.RunAsync(row.PluginId, bareTaskId, ct);
+
+                // Per-user direction (2026-09-28): the Hardcover book-series reconcile pass runs
+                // as its own step chained right after Hardcover's own fetch-missing-metadata task,
+                // rather than on its own cron or inline per-book the way movie collections do it --
+                // there's nothing for it to reconcile until that pass has attached/refreshed the
+                // series ids it reads. This is a deliberate one-off special case for this one
+                // plugin/task pair, not a general task-dependency mechanism.
+                if (string.Equals(row.PluginId, "hardcover", StringComparison.OrdinalIgnoreCase) &&
+                    bareTaskId == FetchMissingMetadataTaskId)
+                {
+                    var reconcile = scope.ServiceProvider.GetRequiredService<HardcoverSeriesReconcileService>();
+                    await reconcile.ExecuteAsync(ct);
+                }
             }
             else
             {
