@@ -1389,7 +1389,13 @@ export default function MediaDetailPage() {
                   )
                 })()}
                 <div className={styles.childName}>{child.name}</div>
-                {child.year && <div className={styles.childYear}>{child.year}</div>}
+                {(child.number != null || child.year) && (
+                  <div className={styles.childYear}>
+                    {child.number != null && `#${child.number}`}
+                    {child.number != null && child.year ? ' · ' : ''}
+                    {child.year}
+                  </div>
+                )}
               </Link>
             ))}
           </div>

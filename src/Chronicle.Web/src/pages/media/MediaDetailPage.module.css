@@ -1152,7 +1152,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
  * 100%-width", not a height percentage, on all three, or the root's height (auto, from its
  * content) and the placeholder/img's height (100% of that same auto height) chase each other in
  * a circle that the browser resolves by falling back to each element's own natural size. THAT
- * was the previous attempt's bug: every card ended up a different height again (a short
+ * was an earlier attempt's bug: every card ended up a different height again (a short
  * placeholder next to a tall real cover), so the grid's auto-sized rows still stretched
  * unevenly and titles sat right on top of the row below instead of a consistent gap under a
  * consistent card border. Sizing every one of the three from its own width sidesteps the whole
@@ -1164,7 +1164,6 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   object-position: top;
   display: block;
   margin-bottom: 6px;
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
 }
@@ -1394,6 +1393,10 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   border-top: none;
   border-radius: 0 0 6px 6px;
   overflow: hidden;
+  /* Per-user request: whatever a fold holds (the children grid, cast row, ...) was sitting
+   * flush against this box's own border on every side -- this is the actual "outer border of
+   * the overall item box" the earlier per-card and per-poster attempts didn't address. */
+  padding: 14px;
 }
 
 /* ── Change Type button & modal ─────────────────────────────────────────── */
