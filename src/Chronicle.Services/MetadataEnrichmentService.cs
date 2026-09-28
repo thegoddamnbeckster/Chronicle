@@ -1849,7 +1849,11 @@ public class MetadataEnrichmentService(
                                                   : null,
                             KnownCreditTitles: mediaTypeName == "people"
                                                   ? await LoadCreditedTitlesAsync(db, row.MediaItemId, ct)
-                                                  : null);
+                                                  : null,
+                            // This is the one call site whose Name/HierarchyLevel/ParentName/
+                            // ChildNames above are all read directly off a real MediaItem row --
+                            // see MediaSearchContext.IsRealHierarchyPosition's own doc.
+                            IsRealHierarchyPosition: true);
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
@@ -3205,7 +3209,10 @@ public class MetadataEnrichmentService(
             .Include(m => m.MediaType)
             .Include(m => m.Parent)
             .Where(m => m.ParentId == parent.Id)
-            .OrderBy(m => m.Number).ThenBy(m => m.Name)
+            // SeriesPosition-first fallback to Number -- same rule as MediaService.GetChildrenAsync's
+            // own ordering (see its comment); code review (2026-09-29) caught this cascade order
+            // having drifted from that one in the same diff that introduced SeriesPosition.
+            .OrderBy(m => m.SeriesPosition ?? (double?)m.Number).ThenBy(m => m.Name)
             .ToListAsync(ct);
 
         foreach (var child in children)

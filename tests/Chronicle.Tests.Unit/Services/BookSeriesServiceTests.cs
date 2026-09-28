@@ -298,6 +298,71 @@ public class BookSeriesServiceTests
 
         var moved = await db.MediaItems.FindAsync(book.Id);
         Assert.Equal((newSeries.Id, (int?)null), (moved!.ParentId, moved.Number)); // moved, but #5 did not follow it here
+        Assert.Null(moved.SeriesPosition); // and the old series' precise position didn't survive either
+    }
+
+    [Fact]
+    public async Task FractionalPositions_ArePreservedOnSeriesPosition_SoTheyDontCollideOnNumber()
+    {
+        // Root-caused live (2026-09-29): Hardcover's "The Expanse" lists a companion novella at
+        // position 1.1 between the first two novels -- flooring to Number alone made two
+        // different books both show "#1" in the series list. SeriesPosition carries the precise
+        // value through so the UI can tell them apart, while Number keeps the floor for every
+        // other generic ordinal use (sorting fallback, next/prev nav).
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = Item(1, "The Expanse", 1, author.Id);
+        db.MediaItems.Add(series);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = series.Id, Source = "hardcover", ExternalId = "hardcover:series:1" });
+        await db.SaveChangesAsync();
+
+        var provider = Provider("The Expanse",
+            Book("hardcover:1", "Leviathan Wakes", 2011, 1),
+            Book("hardcover:2", "The Butcher of Anderson Station", 2011, 1.1),
+            Book("hardcover:3", "Caliban's War", 2012, 2));
+        await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default);
+
+        var books = await db.MediaItems.Where(m => m.ParentId == series.Id).OrderBy(m => m.SeriesPosition).ToListAsync();
+        Assert.Equal(["Leviathan Wakes", "The Butcher of Anderson Station", "Caliban's War"], books.Select(b => b.Name));
+        Assert.Equal([1, 1, 2], books.Select(b => b.Number)); // still both floor to 1 -- Number alone can't disambiguate
+        Assert.Equal([1.0, 1.1, 2.0], books.Select(b => b.SeriesPosition)); // SeriesPosition can
+    }
+
+    [Fact]
+    public async Task ABookKeepsItsKnownPosition_WhenTheProviderOmitsItOnALaterSync_RatherThanGoingStale()
+    {
+        // Code review (2026-09-29): the `changed` predicate's SeriesPosition comparison was
+        // unguarded, so a book keeping its old fractional SeriesPosition while a later sync omits
+        // seriesPosition entirely (still the same series) made `changed` true purely from
+        // "1.1 != null" -- entering the update block, bumping UpdatedAt and logging, even though
+        // neither branch inside it actually touches Number/SeriesPosition for this combination
+        // (floorPosition has no value, and the book isn't moving series). That's a wasted write+log
+        // on every future pass with no corresponding data change -- gating the comparison the same
+        // way as the Number clause (position.HasValue &&) fixes it: `changed` should stay false, and
+        // the book's existing values must be left exactly as they were.
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = Item(1, "Some Series", 1, author.Id);
+        db.MediaItems.Add(series);
+        await db.SaveChangesAsync();
+        var book = Item(1, "Book One", 2, series.Id, number: 1);
+        book.SeriesPosition = 1.1;
+        db.MediaItems.Add(book);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = series.Id, Source = "hardcover", ExternalId = "hardcover:series:1" },
+            new MediaExternalId { MediaItemId = book.Id, Source = "hardcover", ExternalId = "hardcover:1" });
+        await db.SaveChangesAsync();
+        var originalUpdatedAt = book.UpdatedAt;
+
+        // Later sync: same book, same series, but this time Hardcover's response carries no
+        // seriesPosition at all.
+        var provider = Provider("Some Series", Book("hardcover:1", "Book One", 2001, position: null));
+        await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default);
+
+        var unchanged = await db.MediaItems.FindAsync(book.Id);
+        Assert.Equal((series.Id, 1, 1.1, originalUpdatedAt), (unchanged!.ParentId, unchanged.Number, unchanged.SeriesPosition, unchanged.UpdatedAt));
     }
 
     [Fact]

@@ -528,7 +528,8 @@ namespace Chronicle.API.Controllers
                         && (e.MediaItem.MediaType?.SupportsCollections ?? false)
                         && directChildrenMeta?.Count > 0,
                     IsStub: e.MediaItem.IsStub,
-                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null);
+                    Ancestors: ancestors is { Count: > 0 } ? ancestors : null,
+                    SeriesPosition: e.MediaItem.SeriesPosition);
             }
 
             var userRatingSource = e.UserRating.HasValue

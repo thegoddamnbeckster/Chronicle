@@ -79,6 +79,18 @@ function getPlanToLabel(mediaTypeName: string): string {
 }
 
 /**
+ * Formats a child's series position for display, preferring the precise (possibly fractional)
+ * seriesPosition over the floored `number` -- see MediaItem.seriesPosition's own doc for why
+ * two different books can otherwise both show "#1". JS's own number-to-string conversion
+ * already drops a trailing ".0" for a whole number (1.0 -> "1"), so no extra formatting is
+ * needed to keep the common case looking exactly like it always has.
+ */
+function formatChildPosition(number: number | null, seriesPosition: number | null | undefined): string | null {
+  const value = seriesPosition ?? number
+  return value == null ? null : String(value)
+}
+
+/**
  * Returns the plural label for children of an item based on the parent's
  * media type and how deep in the hierarchy the parent is.
  *   TV  level 0 → "Seasons",  level 1 → "Episodes"
@@ -1439,11 +1451,16 @@ export default function MediaDetailPage() {
             const yb = b.year ?? 9999
             return ya !== yb ? ya - yb : a.name.localeCompare(b.name)
           }
-          // Both have a number → numeric ascending
-          if (a.number != null && b.number != null) return a.number - b.number
-          // Only one has a number → numbered item comes first
-          if (a.number != null) return -1
-          if (b.number != null) return 1
+          // Prefer the precise (possibly fractional) seriesPosition over the floored number --
+          // see MediaItem.seriesPosition's own doc for why two different books can otherwise
+          // both sort as tied at "1".
+          const pa = a.seriesPosition ?? a.number
+          const pb = b.seriesPosition ?? b.number
+          // Both have a position → numeric ascending
+          if (pa != null && pb != null) return pa - pb
+          // Only one has a position → positioned item comes first
+          if (pa != null) return -1
+          if (pb != null) return 1
           // Neither has a number → natural sort on name (handles "E01" < "E02" < "E10")
           return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
         })
@@ -1468,26 +1485,29 @@ export default function MediaDetailPage() {
                     Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
                   const childEntry = childLibraryEntries.find(e => e.mediaItem.id === child.id)
                   const childProgress = posterProgressPercent(childEntry?.status, childEntry?.resumePositionPercent, childEntry?.lastKnownProgressPercent)
+                  const childPosition = formatChildPosition(child.number, child.seriesPosition)
                   return (
-                    <PosterImage
-                      posterUrl={child.posterUrl}
-                      name={child.name}
-                      imgClassName={styles.childPoster}
-                      placeholderContent={enriched
-                        ? <span className={styles.childNoArt}>No art</span>
-                        : (child.number ?? child.name.charAt(0))}
-                      progressPercent={childProgress}
-                    />
+                    <>
+                      <PosterImage
+                        posterUrl={child.posterUrl}
+                        name={child.name}
+                        imgClassName={styles.childPoster}
+                        placeholderContent={enriched
+                          ? <span className={styles.childNoArt}>No art</span>
+                          : (childPosition ?? child.name.charAt(0))}
+                        progressPercent={childProgress}
+                      />
+                      <div className={styles.childName}>{child.name}</div>
+                      {(childPosition != null || child.year) && (
+                        <div className={styles.childYear}>
+                          {childPosition != null && `#${childPosition}`}
+                          {childPosition != null && child.year ? ' · ' : ''}
+                          {child.year}
+                        </div>
+                      )}
+                    </>
                   )
                 })()}
-                <div className={styles.childName}>{child.name}</div>
-                {(child.number != null || child.year) && (
-                  <div className={styles.childYear}>
-                    {child.number != null && `#${child.number}`}
-                    {child.number != null && child.year ? ' · ' : ''}
-                    {child.year}
-                  </div>
-                )}
               </Link>
             ))}
           </div>

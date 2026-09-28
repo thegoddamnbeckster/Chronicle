@@ -113,7 +113,10 @@ namespace Chronicle.Services
         {
             return await _context.MediaItems
                 .Where(m => m.ParentId == parentId)
-                .OrderBy(m => m.Number)
+                // SeriesPosition (set only for book-series children) is the precise, possibly
+                // fractional ordinal; Number is the floor of it and the only ordinal every other
+                // media type has, so it's the right fallback when SeriesPosition is null.
+                .OrderBy(m => m.SeriesPosition ?? (double?)m.Number)
                 .ThenBy(m => m.Name)
                 .ToListAsync(ct);
         }

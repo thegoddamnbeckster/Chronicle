@@ -78,6 +78,10 @@ export interface MediaItem {
   hierarchyLevel: number
   ancestors?: { id: number; name: string }[]
   number: number | null
+  /** Precise (possibly fractional) position within a book series, e.g. 1.1 for a companion
+   *  novella between books 1 and 2. Null for every item other than a book placed in a series
+   *  with a known Hardcover position -- fall back to `number` when absent. */
+  seriesPosition?: number | null
   createdAt: string
   updatedAt: string
   externalIds: ExternalId[]

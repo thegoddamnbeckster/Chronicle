@@ -1273,7 +1273,8 @@ namespace Chronicle.API.Controllers
                 IsCollectionContainer: isCollectionContainer,
                 Overrides: overrides,
                 BirthDate: m.BirthDate,
-                DeathDate: m.DeathDate
+                DeathDate: m.DeathDate,
+                SeriesPosition: m.SeriesPosition
             );
         }
 

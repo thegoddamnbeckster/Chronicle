@@ -274,7 +274,8 @@ public class FileScanController : ControllerBase
                 item.CreatedAt, item.UpdatedAt,
                 item.ExternalIds.Select(e => new ExternalIdDto(e.Source, e.ExternalId)).ToList(),
                 FileScannerMeta: fs,
-                ResolvedMetadata: null);
+                ResolvedMetadata: null,
+                SeriesPosition: item.SeriesPosition);
 
             return Ok(ApiResponse<MediaItemDto>.Ok(itemDto));
         }

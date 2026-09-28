@@ -45,6 +45,19 @@ namespace Chronicle.Core.Models
         /// <summary>Episode/season number within parent.</summary>
         public int? Number { get; set; }
 
+        /// <summary>
+        /// Precise (possibly fractional) position within a book series, e.g. Hardcover's 1.1 for
+        /// a companion novella sitting between books 1 and 2. Number above still stores
+        /// floor(SeriesPosition) for every existing generic ordinal use (sorting fallback,
+        /// next/prev navigation, matching/repair services) -- this field exists purely so the UI
+        /// can display "#1.1" instead of two different books both showing "#1". Root-caused live
+        /// (2026-09-29): The Expanse's "Leviathan Wakes" (position 1) and "The Butcher of Anderson
+        /// Station" (position 1.1) both floored to Number 1 and looked identical in the series
+        /// list. Null for every media type other than an Author-&gt;Series-&gt;Book book, and for
+        /// a book whose provider gave no position at all.
+        /// </summary>
+        public double? SeriesPosition { get; set; }
+
         /// <summary>Extra type-specific fields stored as JSON.</summary>
         public string? MetadataJson { get; set; }
 

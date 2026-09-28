@@ -105,5 +105,19 @@ public record MediaSearchContext(
     /// (confirmed live 2026-09-25: a TMDB credit-only "Cameron Brown" was welded onto the jazz
     /// bassist's Wikipedia article). Null when the person has no credits.
     /// </summary>
-    IReadOnlyList<string>? KnownCreditTitles = null
+    IReadOnlyList<string>? KnownCreditTitles = null,
+
+    /// <summary>
+    /// True only when Name/HierarchyLevel/ParentName/ChildNames above reflect a REAL MediaItem's
+    /// actual position in Chronicle's hierarchy -- set exclusively by the real per-item enrichment
+    /// pass (MetadataEnrichmentService). False for every other caller (a manual "Add Media"/search
+    /// box query, a file-scan candidate search), where HierarchyLevel simply defaults to 0 and
+    /// ParentName/ChildNames are never populated regardless of the item's true position.
+    /// A level-0 item structurally never HAS a ParentName (it has no parent), so a plugin that
+    /// wants to trust "this really is hierarchy level 0" -- as opposed to "the caller just never
+    /// set HierarchyLevel at all" -- needs this flag; ChildCount/ChildNames alone can't fill that
+    /// role for a level-0 item with zero children yet (see HardcoverMetadataProvider.SearchAsync's
+    /// own doc for the live bug a ChildNames-based guess for this once caused).
+    /// </summary>
+    bool IsRealHierarchyPosition = false
 );

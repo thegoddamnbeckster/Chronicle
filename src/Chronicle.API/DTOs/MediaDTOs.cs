@@ -181,7 +181,13 @@ namespace Chronicle.API.DTOs
         /// <summary>Promoted canonical fields for MediaTypeName == "people" -- null for every
         /// other media type. See MediaItem.BirthDate's own doc.</summary>
         DateTime? BirthDate = null,
-        DateTime? DeathDate = null
+        DateTime? DeathDate = null,
+        /// <summary>
+        /// Precise (possibly fractional) position within a book series -- see
+        /// MediaItem.SeriesPosition's own doc. Null for every item other than a book placed in a
+        /// series with a known Hardcover position.
+        /// </summary>
+        double? SeriesPosition = null
     );
 
     /// <summary>One manually-pinned field override on a media item. See MediaItemDto.Overrides.</summary>

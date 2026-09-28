@@ -149,20 +149,40 @@ public class BookSeriesService(
                 var floorPosition = position.HasValue ? (int?)Math.Floor(position.Value) : null;
                 var movingSeries = existing.ParentId != series.Id;
                 var changed = movingSeries || existing.HierarchyLevel != 2 ||
-                              (floorPosition.HasValue && existing.Number != floorPosition.Value);
+                              (floorPosition.HasValue && existing.Number != floorPosition.Value) ||
+                              // Gated by position.HasValue for the same reason as the Number clause
+                              // above -- code review (2026-09-29) caught this firing unconditionally,
+                              // which made `changed` true whenever a book kept its old fractional
+                              // position while a later sync merely omitted seriesPosition (still the
+                              // same series) -- entering the block below with neither branch actually
+                              // updating anything, causing a stale value plus a wasted write+log on
+                              // every single future pass. Ungated, it also fixes nothing this fix's
+                              // own guard below doesn't already handle for the "no position at all"
+                              // case (movingSeries or floorPosition.HasValue).
+                              (position.HasValue && existing.SeriesPosition != position);
                 if (changed)
                 {
                     var oldParentId = existing.ParentId;
                     existing.ParentId       = series.Id;
                     existing.HierarchyLevel = 2;
                     if (floorPosition.HasValue)
+                    {
                         existing.Number = floorPosition.Value;
+                        // Keep the precise value too -- see MediaItem.SeriesPosition's own doc for
+                        // why Number alone (e.g. two different books both at floor 1) isn't enough
+                        // to tell "Leviathan Wakes" (1) and "The Butcher of Anderson Station" (1.1)
+                        // apart in the series list.
+                        existing.SeriesPosition = position;
+                    }
                     else if (movingSeries)
+                    {
                         // Moved into a DIFFERENT series with no known position for it here --
                         // Hardcover's data can be incomplete (per-user direction), and the old
                         // series' number has no meaning in the new one, so it must not survive
                         // silently rather than being left for a human to notice is wrong.
                         existing.Number = null;
+                        existing.SeriesPosition = null;
+                    }
                     existing.UpdatedAt      = DateTime.UtcNow;
                     logger.LogInformation(
                         "Book {Id} \"{Name}\" placed in series \"{Series}\" ({SeriesId}) as #{Number} -- found already " +
@@ -184,6 +204,7 @@ public class BookSeriesService(
                 Name           = part.Title,
                 Year           = part.Year,
                 Number         = position.HasValue ? (int)Math.Floor(position.Value) : null,
+                SeriesPosition = position,
                 PosterUrl      = part.PosterUrl,
                 IsStub         = true,
                 CreatedAt      = DateTime.UtcNow,
@@ -280,6 +301,7 @@ public class BookSeriesService(
         book.ParentId       = authorId;
         book.HierarchyLevel = 1;
         book.Number         = null;
+        book.SeriesPosition = null;
         book.UpdatedAt      = DateTime.UtcNow;
 
         // NOT sticky, per user direction: clears the marker too, mirroring
