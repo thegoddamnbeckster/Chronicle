@@ -449,25 +449,25 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 14px;
-  /* .metaBoxed (this row's own parent) has its own 24px horizontal padding on top of
-   * .backdropContentActive's -- per-user report (2026-08-30, phone screenshot): that stacked
-   * padding was visibly narrowing the row and its cards. Cancel just this row's own parent
-   * padding (not backdropContent's too) so cards land flush with the hero banner's own text
-   * edge, not the raw viewport edge -- same idiom .backdropActive above already uses to break
-   * out of the same padding stack for the hero art. */
-  margin: 0 -24px 16px;
+  /* This row's DIRECT parent is .pluginFoldBody (the "Cast"/"Crew" collapsible box), which has
+   * its own 14px padding and `overflow: hidden` -- cancel exactly that, not .metaBoxed's 24px.
+   * (Originally this cancelled .metaBoxed's 24px padding directly, per-user report 2026-08-30,
+   * phone screenshot -- correct at the time, but PluginFold was added around this row afterward
+   * and nobody updated the offset. Leaving it at -24px overshot .pluginFoldBody's 14px padding
+   * by 10px per side, and since the fold clips overflow, that 10px of each edge card was hard
+   * cut off -- per-user report (2026-09-28, phone screenshot): person tiles didn't fit / edges
+   * clipped.) */
+  margin: 0 -14px 16px;
 }
 
 @media (min-width: 769px) {
   .peopleRow {
     grid-template-columns: repeat(auto-fill, 84px);
-    /* The -24px cancel-padding trick above is a mobile-only fix (see that rule's own comment,
-     * "phone screenshot") -- this media query only ever reset grid-template-columns, so on
-     * desktop the row kept the negative margin with nothing narrow to cancel, pulling its
-     * whole grid 24px further left/right than .metaBoxed's own content box. Per-user report
-     * (2026-09-07, desktop screenshot): the row's first column rendered clipped behind the
-     * sidebar because of exactly this -- it visually started under the sidebar's own opaque
-     * background rather than flush with the rest of the page's content edge. */
+    /* The negative cancel-margin above is a mobile-only fix (see that rule's own comment) --
+     * this media query only ever reset grid-template-columns, so on desktop the row kept the
+     * negative margin with nothing to cancel it against, pulling its whole grid past
+     * .pluginFoldBody's own padding box. Per-user report (2026-09-07, desktop screenshot): the
+     * row's first column rendered clipped behind the sidebar because of exactly this. */
     margin: 0 0 16px;
   }
 }
