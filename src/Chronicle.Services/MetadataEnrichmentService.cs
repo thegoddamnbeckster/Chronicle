@@ -255,8 +255,15 @@ public class MetadataEnrichmentService(
                             // but no "collection:" id yet -- see GetCollectionContainerIdsForExclusionAsync's
                             // own doc for why the id-only check above misses these. Re-evaluated
                             // every pass (not precomputed) for the same reason as the arm above.
+                            // HierarchyLevels == 1 (a FLAT type, e.g. movies) narrows this to a
+                            // genuine collection container -- root-caused live (2026-09-28):
+                            // "audiobooks" also carries SupportsCollections (for its own SERIES
+                            // grouping) but is a 3-level Author->Series->Book type, so its level-0
+                            // AUTHOR item was being caught by this same rule and never got its own
+                            // Hardcover bio/photo enrichment just for having series children.
                             !(x.MediaItem!.HierarchyLevel == 0 &&
                               x.MediaItem!.MediaType != null && x.MediaItem!.MediaType!.SupportsCollections &&
+                              x.MediaItem!.MediaType!.HierarchyLevels == 1 &&
                               db.MediaItems.Any(c => c.ParentId == x.MediaItemId)))
                 .OrderBy(x => x.MediaItem!.HierarchyLevel)
                 .Take(500)
@@ -2486,17 +2493,23 @@ public class MetadataEnrichmentService(
     ///   1. It already has a "collection:" external id (a real TMDB collection match, set by
     ///      MovieCollectionService.EnsureCollectionParentAsync/EnsureCollectionStubsAsync) --
     ///      the check this method's callers used exclusively before.
-    ///   2. It's a movie-shaped item (MediaType.SupportsCollections -- "movies", "anime_movies",
-    ///      "fanedits", "audiobooks") sitting at the top level with at least one real child, but
-    ///      with NO "collection:" id yet -- e.g. created via file-scanner import as a parent+
-    ///      children structure without ever going through a TMDB collection match. Root-caused
-    ///      live (2026-09-09): "Mobile Suit Gundam: The Origin Collection" has 6 real child films
-    ///      but zero external ids, so arm 1 alone never caught it -- it sat in chronicle.plugin.
-    ///      simkl/tmdb/fanarttv's queues forever, permanently NotFound, since no provider can
-    ///      ever match a container's own made-up title. Deliberately gated on SupportsCollections,
-    ///      not just "has children": a TV/anime show's children are seasons, not collection
-    ///      members, and must keep going through the normal per-item search. Same definition
-    ///      LibraryController already uses for the UI's own COLLECTION badge.
+    ///   2. It's a movie-shaped item (MediaType.SupportsCollections AND HierarchyLevels == 1 --
+    ///      "movies", "anime_movies", "fanedits") sitting at the top level with at least one real
+    ///      child, but with NO "collection:" id yet -- e.g. created via file-scanner import as a
+    ///      parent+children structure without ever going through a TMDB collection match.
+    ///      Root-caused live (2026-09-09): "Mobile Suit Gundam: The Origin Collection" has 6 real
+    ///      child films but zero external ids, so arm 1 alone never caught it -- it sat in
+    ///      chronicle.plugin.simkl/tmdb/fanarttv's queues forever, permanently NotFound, since no
+    ///      provider can ever match a container's own made-up title. Deliberately gated on
+    ///      SupportsCollections, not just "has children": a TV/anime show's children are seasons,
+    ///      not collection members, and must keep going through the normal per-item search.
+    ///      HierarchyLevels == 1 further narrows this to a type whose level-0 item genuinely has
+    ///      no identity of its own -- "audiobooks" also carries SupportsCollections (for its own
+    ///      SERIES-level grouping) but is a 3-level Author->Series->Book type, so without this a
+    ///      real author (a real person Hardcover can look up on its own) was wrongly excluded from
+    ///      its own enrichment for the "crime" of having series children (root-caused live
+    ///      2026-09-28: Isaac Asimov had zero Hardcover enrichment despite the plugin supporting
+    ///      author lookups, while every one of his series and books enriched normally).
     /// </summary>
     private static async Task<HashSet<int>> GetCollectionContainerIdsForExclusionAsync(
         ChronicleDbContext db, CancellationToken ct)
@@ -2508,7 +2521,7 @@ public class MetadataEnrichmentService(
 
         var byUnlinkedChildren = await db.MediaItems
             .Where(m => m.HierarchyLevel == 0
-                     && m.MediaType != null && m.MediaType.SupportsCollections
+                     && m.MediaType != null && m.MediaType.SupportsCollections && m.MediaType.HierarchyLevels == 1
                      && db.MediaItems.Any(c => c.ParentId == m.Id))
             .Select(m => m.Id)
             .ToListAsync(ct);

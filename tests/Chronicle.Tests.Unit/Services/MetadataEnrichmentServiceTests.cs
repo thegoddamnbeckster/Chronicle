@@ -724,6 +724,69 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichPendingAsync_DoesNotTreatAThreeLevelAuthorAsACollectionContainer()
+    {
+        // Root-caused live (2026-09-28): "audiobooks" carries SupportsCollections=true (for its
+        // own SERIES-level grouping, mirrored by BookSeriesService) but is a 3-level
+        // Author -> Series -> Book type, not a flat "movies"-shaped one. The collection-container
+        // exclusion (both here and in GetCollectionContainerIdsForExclusionAsync) used to catch
+        // ANY level-0 SupportsCollections item with children, wrongly netting a real audiobook
+        // AUTHOR alongside genuine flat collection containers -- Isaac Asimov had zero Hardcover
+        // enrichment despite the plugin supporting author lookups, purely for having series
+        // children. HierarchyLevels == 1 now narrows the exclusion to genuinely flat types, so
+        // this author's own Pending row must survive and actually be attempted.
+        var mt = new MediaType
+        {
+            Name = "audiobooks", DisplayName = "Audiobooks", HierarchyLevels = 3,
+            HierarchyLabels = "Author,Series,Book", InteractionVerb = "listened", ProgressUnit = "chapters",
+            SupportsCollections = true,
+        };
+        _db.MediaTypes.Add(mt);
+        await _db.SaveChangesAsync();
+
+        var author = new MediaItem
+        {
+            Name = "Isaac Asimov", MediaTypeId = mt.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(author);
+        await _db.SaveChangesAsync();
+        var series = new MediaItem
+        {
+            Name = "Foundation", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = author.Id,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(series);
+        await _db.SaveChangesAsync();
+
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = author.Id, PluginId = "chronicle.plugin.hardcover",
+            Status = EnrichmentStatus.Pending, MaxRetries = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var provider = SetupProvider("chronicle.plugin.hardcover", "audiobooks");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new ScoredCandidate(
+                    new MediaMetadata { Title = "Isaac Asimov", ExternalId = "hardcover:author:1" },
+                    Score: 90, ScoreReason: "author name exact")
+            ]);
+        provider.Setup(p => p.GetByIdAsync("hardcover:author:1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Isaac Asimov", ExternalId = "hardcover:author:1" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.hardcover");
+
+        provider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce,
+            "a real author with an identity of its own must still be searched, not silently excluded as a collection container");
+        var updated = await _db.MediaEnrichments.FindAsync(row.Id);
+        updated.Should().NotBeNull("the row must not be removed as a collection container");
+        updated!.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
     public async Task GetStatsAsync_ReturnsCountsPerPlugin()
     {
         // Seed a Plugin record — GetStatsAsync now returns one row per installed plugin
