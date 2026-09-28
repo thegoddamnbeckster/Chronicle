@@ -58,4 +58,42 @@ public static class PluginIdHelper
             .Select(kv => kv.Key)
             .ToList();
     }
+
+    /// <summary>
+    /// Removes every blob belonging to <paramref name="pluginIdOrSource"/> from a MetadataJson
+    /// document (via <see cref="FindProviderBlobKeys"/>) and returns the updated JSON, with
+    /// <paramref name="removed"/> reporting whether anything was actually there to remove.
+    /// Returns <paramref name="metadataJson"/> unchanged (removed=false) when it is null/blank,
+    /// isn't valid JSON, or has no blob for that provider.
+    ///
+    /// Shared by every caller that strips a provider's stale data so a match that no longer
+    /// backs an item can never keep contributing its old title/overview/poster via
+    /// MetadataResolutionService's priority walk -- originally only MediaController.
+    /// ClearExternalId (a user explicitly clearing a match) did this; MetadataEnrichmentService's
+    /// own automatic match-rejection path did not, so a row that flipped Completed -&gt; NotFound
+    /// (e.g. a later pass discovering the matched id now belongs to a different item) left its
+    /// already-merged blob sitting in place, no longer backed by any valid ExternalId, still
+    /// eligible to win MetadataResolutionService's resolution walk. Confirmed live (2026-09-28):
+    /// "Sing" (2016) kept displaying Sing 2's Wikipedia plot summary for days after Wikipedia's
+    /// own enrichment row was rejected to NotFound, because nothing had ever removed the blob.
+    /// </summary>
+    public static string? RemoveProviderBlob(string? metadataJson, string pluginIdOrSource, out bool removed)
+    {
+        removed = false;
+        if (string.IsNullOrWhiteSpace(metadataJson)) return metadataJson;
+        try
+        {
+            var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(metadataJson);
+            if (root is null) return metadataJson;
+            var keys = FindProviderBlobKeys(root, pluginIdOrSource);
+            if (keys.Count == 0) return metadataJson;
+            foreach (var key in keys) root.Remove(key);
+            removed = true;
+            return JsonSerializer.Serialize(root);
+        }
+        catch (JsonException)
+        {
+            return metadataJson; // malformed JSON — leave as-is
+        }
+    }
 }

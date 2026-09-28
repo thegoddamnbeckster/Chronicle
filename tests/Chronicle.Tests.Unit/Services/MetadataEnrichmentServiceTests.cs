@@ -1332,6 +1332,46 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichItemAsync_Force_PreviouslyCompletedMatchNowConflicts_ClearsTheStalePluginBlobFromTheEarlierMatch()
+    {
+        // Regression test (2026-09-28): unlike a Pending row rejected for the first time (which
+        // never had a chance to merge anything), a row that was previously Completed already has
+        // this plugin's own data merged into the item's MetadataJson from that earlier match.
+        // When a later pass discovers the matched id is now claimed by a different item and
+        // rejects to NotFound, the OLD blob must not be left behind -- still eligible to win
+        // MetadataResolutionService's resolution walk even though nothing backs it any more.
+        // Confirmed live: a "Sing" (2016) item kept displaying Sing 2's Wikipedia plot summary
+        // for days after Wikipedia's own row was rejected this exact way.
+        var owner = await SeedRootItem("Some Other Movie", 1999);
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = owner.Id, Source = "tmdb", ExternalId = "movie:78" });
+        await _db.SaveChangesAsync();
+
+        var item = await SeedRootItem("Sing 2", 2016);
+        item.MetadataJson = """{"chronicle.plugin.tmdb":{"source":"tmdb","title":"Sing 2","overview":"stale, from the earlier match"}}""";
+        await _db.SaveChangesAsync();
+        await SeedEnrichmentRow(item.Id, "chronicle.plugin.tmdb", "movie:999", EnrichmentStatus.Completed);
+
+        var provider = SetupProvider("chronicle.plugin.tmdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Some Other Movie", ExternalId = "movie:78" }, Score: 70),
+            });
+        provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Some Other Movie", ExternalId = "movie:78" });
+
+        var opts = new EnrichmentOptions(EnrichmentMode.Force, Cascade: false);
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.tmdb", opts);
+
+        var row = await _db.MediaEnrichments.FirstAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.tmdb");
+        row.Status.Should().Be(EnrichmentStatus.NotFound);
+
+        var updated = await _db.MediaItems.FindAsync(item.Id);
+        updated!.MetadataJson.Should().NotContain("chronicle.plugin.tmdb",
+            "the stale blob from the earlier (now-invalidated) match must be cleared, not left behind");
+    }
+
+    [Fact]
     public async Task EnrichPendingAsync_MatchedExternalIdOwnedByACollectionStub_MergesInstead()
     {
         // Root-caused live (2026-09-12, "Spider-Man: Brand New Day"): a real, freshly file-

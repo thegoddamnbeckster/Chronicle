@@ -419,27 +419,10 @@ namespace Chronicle.API.Controllers
             // at all, EVEN with fix (1) applied. Left a person's stale -- in one case actively
             // WRONG, a different real person's bio and photo -- Wikipedia data resolving
             // indefinitely after what looked like two successful clears in a row.
-            var keysToRemove = new List<string>();
-            if (!string.IsNullOrWhiteSpace(item.MetadataJson))
-            {
-                try
-                {
-                    var root = System.Text.Json.JsonSerializer.Deserialize<
-                        System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
-                    if (root is not null)
-                    {
-                        keysToRemove = Chronicle.Core.Helpers.PluginIdHelper.FindProviderBlobKeys(root, source);
-                        if (keysToRemove.Count > 0)
-                        {
-                            foreach (var key in keysToRemove) root.Remove(key);
-                            item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
-                        }
-                    }
-                }
-                catch { /* malformed JSON — leave as-is */ }
-            }
+            item.MetadataJson = Chronicle.Core.Helpers.PluginIdHelper.RemoveProviderBlob(
+                item.MetadataJson, source, out var blobRemoved);
 
-            if (toRemove.Count == 0 && keysToRemove.Count == 0)
+            if (toRemove.Count == 0 && !blobRemoved)
                 return NoContent(); // already fully absent — idempotent
 
             _context.MediaExternalIds.RemoveRange(toRemove);
@@ -547,21 +530,8 @@ namespace Chronicle.API.Controllers
                     .ToList();
                 _context.MediaExternalIds.RemoveRange(toRemove);
 
-                if (!string.IsNullOrWhiteSpace(item.MetadataJson))
-                {
-                    try
-                    {
-                        var root = System.Text.Json.JsonSerializer.Deserialize<
-                            System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
-                        if (root is not null)
-                        {
-                            foreach (var key in Chronicle.Core.Helpers.PluginIdHelper.FindProviderBlobKeys(root, "wikipedia"))
-                                root.Remove(key);
-                            item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
-                        }
-                    }
-                    catch { /* malformed JSON — leave as-is */ }
-                }
+                item.MetadataJson = Chronicle.Core.Helpers.PluginIdHelper.RemoveProviderBlob(
+                    item.MetadataJson, "wikipedia", out _);
 
                 await RemoveExternalIdsForUnsupportedTypeAsync(item, ct);
                 await ClearArtworkOnlyProviderDataAsync(item, ct);
@@ -810,21 +780,8 @@ namespace Chronicle.API.Controllers
             // for a blob stored under a different key-naming convention than the caller passed --
             // PluginIdHelper.FindProviderBlobKeys matches each blob by its own internal "source"
             // property instead.
-            if (!string.IsNullOrWhiteSpace(item.MetadataJson))
-            {
-                try
-                {
-                    var root = System.Text.Json.JsonSerializer.Deserialize<
-                        System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(item.MetadataJson);
-                    if (root is not null)
-                    {
-                        foreach (var key in Chronicle.Core.Helpers.PluginIdHelper.FindProviderBlobKeys(root, source))
-                            root.Remove(key);
-                        item.MetadataJson = System.Text.Json.JsonSerializer.Serialize(root);
-                    }
-                }
-                catch { /* malformed JSON — leave as-is */ }
-            }
+            item.MetadataJson = Chronicle.Core.Helpers.PluginIdHelper.RemoveProviderBlob(
+                item.MetadataJson, source, out _);
 
             // Store the suppress sentinel using the short source name (matches ExternalIds convention).
             _context.MediaExternalIds.Add(new Chronicle.Core.Models.MediaExternalId

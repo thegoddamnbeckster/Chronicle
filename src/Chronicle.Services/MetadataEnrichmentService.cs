@@ -1205,6 +1205,15 @@ public class MetadataEnrichmentService(
         row.LastAttemptedAt = DateTime.UtcNow;
         string searchQuery = string.Empty;
         List<ScoredCandidate> rawCandidates = [];
+
+        // Captured before anything below can touch row.Status: every "reject to NotFound"
+        // branch this method can reach -- an empty re-search, a provider 404, or an id already
+        // owned by a different item -- needs to know whether THIS row previously had a real,
+        // merged match, not just whatever forceRefreshHadMatch narrowly covers (it excludes Fix
+        // Match's own IdOverride, and a stored id that fails IsRootLevelIdTypeValid). See
+        // RejectToNotFoundAsync's own doc for the bug this closes.
+        var hadPriorMatch = row.Status == EnrichmentStatus.Completed;
+
         try
         {
             MediaMetadata? result = null;
@@ -1990,7 +1999,7 @@ public class MetadataEnrichmentService(
                         "Enrichment not found: plugin={Plugin} item={ItemId} name={Name} query={Query} totalResults={Total}",
                         provider.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?",
                         searchQuery, result?.TotalResults ?? 0);
-                    row.Status = EnrichmentStatus.NotFound;
+                    await RejectToNotFoundAsync(db, row, hadPriorMatch, errorMessage: null, ct);
                 }
             }
 
@@ -2055,10 +2064,9 @@ public class MetadataEnrichmentService(
                     "('{OtherName}') -- likely a duplicate. Leaving unmatched instead of merging.",
                     row.MediaItemId, row.MediaItem?.Name, row.PluginId, result!.ExternalId,
                     conflictOwner.Id, conflictOwner.Name);
-                row.Status       = EnrichmentStatus.NotFound;
-                row.ErrorMessage =
+                await RejectToNotFoundAsync(db, row, hadPriorMatch,
                     $"Matched external id {result.ExternalId} already belongs to a different item " +
-                    $"({conflictOwner.Id}, \"{conflictOwner.Name}\") -- likely a duplicate. Not merged.";
+                    $"({conflictOwner.Id}, \"{conflictOwner.Name}\") -- likely a duplicate. Not merged.", ct);
             }
             else if (result is not null && !string.IsNullOrEmpty(result.ExternalId))
             {
@@ -2189,8 +2197,7 @@ public class MetadataEnrichmentService(
                 logger.LogInformation(
                     "Enrichment not found: plugin={Plugin} item={ItemId} \"{Name}\" — provider returned 404",
                     row.PluginId, row.MediaItemId, row.MediaItem?.Name ?? "?");
-                row.Status       = EnrichmentStatus.NotFound;
-                row.ErrorMessage = ex.Message;
+                await RejectToNotFoundAsync(db, row, hadPriorMatch, ex.Message, ct);
             }
             else if (ex is InvalidOperationException)
             {
@@ -2330,6 +2337,45 @@ public class MetadataEnrichmentService(
             await CascadeToChildrenAsync(db, provider, pluginId, row.MediaItem!, options, ct, allProviders);
 
         return completedMeta;
+    }
+
+    /// <summary>
+    /// Sets a row to NotFound and, when <paramref name="hadPriorMatch"/> is true, clears this
+    /// plugin's own MetadataJson blob and re-resolves the item -- so a match this call is
+    /// invalidating can never keep contributing its old title/overview/poster via
+    /// MetadataResolutionService's priority walk once nothing backs it any more. Also drops the
+    /// item's own MediaExternalIds row for this plugin's source, so it stops claiming an id that
+    /// (in the conflict-rejection case) FindExternalIdOwnerConflictAsync may have just proven
+    /// belongs to a different item -- left in place, that stale row could trip the same conflict
+    /// check again on a future pass.
+    ///
+    /// Centralizes the fix for the three ways EnrichItemCoreLockedAsync can reject a row to
+    /// NotFound (an empty re-search, a provider 404, or an id already owned by a different item).
+    /// Code review (2026-09-28) caught the first version of this fix only covering the third one
+    /// inline -- a previously-Completed row reaching either of the other two through Fix Match's
+    /// own IdOverride (excluded from forceRefreshHadMatch's own check) or a stored id that fails
+    /// IsRootLevelIdTypeValid hit the exact same stale-blob bug, just through a different door.
+    /// See hadPriorMatch's own call-site doc for why it, not forceRefreshHadMatch, is the right
+    /// signal for "did this row actually have a real match to invalidate."
+    /// </summary>
+    private async Task RejectToNotFoundAsync(
+        ChronicleDbContext db, MediaItemEnrichment row, bool hadPriorMatch, string? errorMessage, CancellationToken ct)
+    {
+        row.Status       = EnrichmentStatus.NotFound;
+        row.ErrorMessage = errorMessage;
+        if (!hadPriorMatch || row.MediaItem is null) return;
+
+        row.MediaItem.MetadataJson = PluginIdHelper.RemoveProviderBlob(
+            row.MediaItem.MetadataJson, row.PluginId, out var blobRemoved);
+
+        var staleExternalIds = await db.MediaExternalIds
+            .Where(e => e.MediaItemId == row.MediaItemId && e.Source == PluginIdHelper.ToSource(row.PluginId))
+            .ToListAsync(ct);
+        if (staleExternalIds.Count > 0)
+            db.MediaExternalIds.RemoveRange(staleExternalIds);
+
+        if (blobRemoved || staleExternalIds.Count > 0)
+            await resolutionService.ResolveAsync(row.MediaItem, db, ct);
     }
 
     /// <summary>

@@ -99,4 +99,69 @@ public class PluginIdHelperTests
 
         PluginIdHelper.FindProviderBlobKeys(blobs, "wikipedia").Should().BeEmpty();
     }
+
+    // ── RemoveProviderBlob ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void RemoveProviderBlob_RemovesTheMatchingBlob_AndReportsRemoved()
+    {
+        var json = """
+            {"chronicle.plugin.tmdb": {"source": "tmdb", "title": "Real"},
+             "chronicle.plugin.wikipedia": {"source": "wikipedia", "title": "Wrong Match"}}
+            """;
+
+        var result = PluginIdHelper.RemoveProviderBlob(json, "wikipedia", out var removed);
+
+        removed.Should().BeTrue();
+        var remaining = ParseBlobs(result!);
+        remaining.Should().ContainKey("chronicle.plugin.tmdb");
+        remaining.Should().NotContainKey("chronicle.plugin.wikipedia");
+    }
+
+    [Fact]
+    public void RemoveProviderBlob_NoMatchingBlob_ReturnsInputUnchanged_AndReportsNotRemoved()
+    {
+        var json = """{"chronicle.plugin.tmdb": {"source": "tmdb"}}""";
+
+        var result = PluginIdHelper.RemoveProviderBlob(json, "wikipedia", out var removed);
+
+        removed.Should().BeFalse();
+        result.Should().Be(json);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void RemoveProviderBlob_NullOrBlankInput_ReturnsItUnchanged_AndReportsNotRemoved(string? json)
+    {
+        var result = PluginIdHelper.RemoveProviderBlob(json, "wikipedia", out var removed);
+
+        removed.Should().BeFalse();
+        result.Should().Be(json);
+    }
+
+    [Fact]
+    public void RemoveProviderBlob_MalformedJson_LeavesItAsIs_AndReportsNotRemoved()
+    {
+        const string malformed = "{not valid json";
+
+        var result = PluginIdHelper.RemoveProviderBlob(malformed, "wikipedia", out var removed);
+
+        removed.Should().BeFalse();
+        result.Should().Be(malformed);
+    }
+
+    [Fact]
+    public void RemoveProviderBlob_NeverRemovesReservedResolvedOrOverridesKeys()
+    {
+        var json = """{"_resolved": {"source": "wikipedia"}, "_overrides": {"source": "wikipedia"}}""";
+
+        var result = PluginIdHelper.RemoveProviderBlob(json, "wikipedia", out var removed);
+
+        removed.Should().BeFalse();
+        var remaining = ParseBlobs(result!);
+        remaining.Should().ContainKey("_resolved");
+        remaining.Should().ContainKey("_overrides");
+    }
 }
