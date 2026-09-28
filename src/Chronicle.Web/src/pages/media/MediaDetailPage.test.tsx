@@ -33,6 +33,8 @@ const mockedSearchMedia = vi.mocked(mediaApi.searchMedia)
 const mockedRefreshMedia = vi.mocked(mediaApi.refreshMedia)
 const mockedReparentToCollection = vi.mocked(mediaApi.reparentToCollection)
 const mockedUnparentFromCollection = vi.mocked(mediaApi.unparentFromCollection)
+const mockedReparentToSeries = vi.mocked(mediaApi.reparentToSeries)
+const mockedUnparentFromSeries = vi.mocked(mediaApi.unparentFromSeries)
 const mockedSetMediaOverride = vi.mocked(mediaApi.setMediaOverride)
 
 const mockedGetLibraryEntryForMedia = vi.mocked(libraryApi.getLibraryEntryForMedia)
@@ -282,6 +284,50 @@ describe('MediaDetailPage', () => {
     await user.click(result)
 
     expect(mockedReparentToCollection).toHaveBeenCalledWith(200, MEDIA_ID)
+  })
+
+  // --- Author -> Series -> Book membership: mirrors the two collection tests above exactly,
+  // scoped to a 3-level type instead of a flat one. ---
+
+  it('"Remove from Series" removes THIS book from its series (not sticky)', async () => {
+    const user = userEvent.setup()
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 1, name: 'audiobooks', displayName: 'Audiobooks', hierarchyLevels: 3 },
+    ])
+    mockedGetMedia.mockResolvedValue(makeItem({
+      mediaTypeId: 1, mediaTypeName: 'Audiobooks', hierarchyLevel: 2, parentId: 900, // a book, in series 900
+    }))
+    mockedUnparentFromSeries.mockResolvedValue(makeItem({ mediaTypeId: 1, hierarchyLevel: 1, parentId: 800 }))
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    await user.click(screen.getByRole('button', { name: 'Remove from Series' }))
+
+    expect(mockedUnparentFromSeries).toHaveBeenCalledWith(MEDIA_ID)
+  })
+
+  it('"Add to a Series" reparents THIS standalone book under the picked series by the same author', async () => {
+    const user = userEvent.setup()
+    const authorId = 800
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 1, name: 'audiobooks', displayName: 'Audiobooks', hierarchyLevels: 3 },
+    ])
+    mockedGetMedia.mockResolvedValue(makeItem({
+      mediaTypeId: 1, mediaTypeName: 'Audiobooks', hierarchyLevel: 1, parentId: authorId, // a standalone book
+    }))
+    mockedGetMediaChildren.mockImplementation(async (id) =>
+      id === MEDIA_ID ? [] : [makeItem({ id: 901, name: 'Some Series', mediaTypeId: 1, parentId: authorId, hierarchyLevel: 1 })])
+    mockedReparentToSeries.mockResolvedValue(makeItem({ mediaTypeId: 1, hierarchyLevel: 2, parentId: 901 }))
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    await user.click(screen.getByRole('button', { name: 'Add to a Series' }))
+    const result = await screen.findByRole('button', { name: /Some Series/ })
+    await user.click(result)
+
+    expect(mockedReparentToSeries).toHaveBeenCalledWith(MEDIA_ID, 901)
   })
 
   it('splits on-screen talent (actor) from crew (director) per the 2026-08-30 grouping rule', async () => {

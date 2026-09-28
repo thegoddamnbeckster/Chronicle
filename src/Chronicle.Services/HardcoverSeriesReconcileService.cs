@@ -37,6 +37,8 @@ public sealed class HardcoverSeriesReconcileService(
         var allProviders = registry.GetMetadataProviderEntries()
             .Select(e => (e.PluginId, e.Provider)).ToList();
 
+        const int PageSize = 200; // matches MovieCollectionService's own BulkBatchSize convention
+
         // Every level-1 item (a series, in an Author->Series->Book type) that Hardcover has
         // claimed as a series -- see BookSeriesService's own doc for why the ExternalId is
         // stored as the full "hardcover:series:{id}" string rather than a bare id.
@@ -49,20 +51,26 @@ public sealed class HardcoverSeriesReconcileService(
 
         var ok = 0;
         var badMatch = 0;
-        foreach (var seriesId in seriesIds)
+        foreach (var chunk in seriesIds.Chunk(PageSize))
         {
-            ct.ThrowIfCancellationRequested();
-            var series = await db.MediaItems.FirstOrDefaultAsync(m => m.Id == seriesId, ct);
-            if (series is null) continue;
-            try
+            // One query per PAGE, not per series -- an author with a couple dozen series (a real
+            // shape, per Hardcover's own author-series listing seen live) used to cost one extra
+            // round trip each; ChangeTracker.Clear() still runs once per page (not once per item)
+            // so a large sweep across many authors doesn't grow the tracker unbounded either.
+            var series = await db.MediaItems.Where(m => chunk.Contains(m.Id)).ToListAsync(ct);
+            foreach (var seriesItem in series)
             {
-                var succeeded = await bookSeriesService.EnsureSeriesStubsAsync(db, series, provider, ct, allProviders);
-                if (succeeded) ok++; else badMatch++;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Hardcover series reconcile: series {SeriesId} \"{Name}\" failed, left unchanged",
-                    seriesId, series.Name);
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var succeeded = await bookSeriesService.EnsureSeriesStubsAsync(db, seriesItem, provider, ct, allProviders);
+                    if (succeeded) ok++; else badMatch++;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Hardcover series reconcile: series {SeriesId} \"{Name}\" failed, left unchanged",
+                        seriesItem.Id, seriesItem.Name);
+                }
             }
             db.ChangeTracker.Clear();
         }

@@ -50,6 +50,7 @@ public class BookSeriesServiceTests
     {
         var mock = new Mock<IMetadataProvider>();
         mock.Setup(p => p.Name).Returns("hardcover");
+        mock.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "audiobooks" }]);
         mock.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MediaMetadata { Title = name, Results = results.ToList() });
         return mock;
@@ -198,6 +199,9 @@ public class BookSeriesServiceTests
         var wrongAuthorBook = Item(1, "Other Book", 1, otherAuthor.Id);
         db.MediaItems.AddRange(series, book, wrongAuthorBook);
         await db.SaveChangesAsync();
+        var existingSeriesBook = Item(1, "Already In It", 2, series.Id, number: 1); // a series needs a book of its own to be a real target
+        db.MediaItems.Add(existingSeriesBook);
+        await db.SaveChangesAsync();
 
         var svc = NewService();
         await svc.ReparentIntoSeriesAsync(db, book.Id, series.Id);
@@ -230,5 +234,100 @@ public class BookSeriesServiceTests
         Assert.Equal((author.Id, 1, (int?)null), (moved!.ParentId, moved.HierarchyLevel, moved.Number));
         Assert.Empty(await db.MediaExternalIds.Where(e => e.MediaItemId == book.Id).ToListAsync()); // marker cleared, not sticky
         Assert.Null(await db.MediaItems.FindAsync(series.Id)); // no children left -- removed
+    }
+
+    [Fact]
+    public async Task ReparentIntoSeries_RejectsATargetWithNoBooksOfItsOwn()
+    {
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var emptySeries = Item(1, "Not Really A Series", 1, author.Id); // structurally identical to a standalone book
+        var book = Item(1, "Book", 1, author.Id);
+        db.MediaItems.AddRange(emptySeries, book);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => NewService().ReparentIntoSeriesAsync(db, book.Id, emptySeries.Id));
+        Assert.Equal((author.Id, 1), ((await db.MediaItems.FindAsync(book.Id))!.ParentId, (await db.MediaItems.FindAsync(book.Id))!.HierarchyLevel));
+    }
+
+    [Fact]
+    public async Task ExternalIdMatch_IsCaseInsensitive()
+    {
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = Item(1, "Some Series", 1, author.Id);
+        var standalone = Item(1, "Book One", 1, author.Id);
+        db.MediaItems.AddRange(series, standalone);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = series.Id, Source = "hardcover", ExternalId = "hardcover:series:1" },
+            // Stored in a different case than what the provider returns below.
+            new MediaExternalId { MediaItemId = standalone.Id, Source = "hardcover", ExternalId = "HARDCOVER:1" });
+        await db.SaveChangesAsync();
+
+        var provider = Provider("Some Series", Book("hardcover:1", "Book One", 2001, 1));
+        await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default);
+
+        Assert.Equal(1, await db.MediaItems.CountAsync(m => m.Name == "Book One")); // matched, not duplicated
+        var moved = await db.MediaItems.FindAsync(standalone.Id);
+        Assert.Equal(series.Id, moved!.ParentId);
+    }
+
+    [Fact]
+    public async Task MovingToADifferentSeriesWithNoKnownPosition_ClearsTheStaleNumber_RatherThanKeepingTheOldSeriesPosition()
+    {
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var oldSeries = Item(1, "Old Series", 1, author.Id);
+        var newSeries = Item(1, "New Series", 1, author.Id);
+        db.MediaItems.AddRange(oldSeries, newSeries);
+        await db.SaveChangesAsync();
+        var book = Item(1, "Moved Book", 2, oldSeries.Id, number: 5); // #5 in the OLD series
+        var anchor = Item(1, "Anchor", 2, newSeries.Id, number: 1);   // gives newSeries a book of its own
+        db.MediaItems.AddRange(book, anchor);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = newSeries.Id, Source = "hardcover", ExternalId = "hardcover:series:2" },
+            new MediaExternalId { MediaItemId = book.Id, Source = "hardcover", ExternalId = "hardcover:9" });
+        await db.SaveChangesAsync();
+
+        // Hardcover now lists the book in New Series but with no position for it there.
+        var provider = Provider("New Series", Book("hardcover:9", "Moved Book"));
+        await NewService().EnsureSeriesStubsAsync(db, newSeries, provider.Object, default);
+
+        var moved = await db.MediaItems.FindAsync(book.Id);
+        Assert.Equal((newSeries.Id, (int?)null), (moved!.ParentId, moved.Number)); // moved, but #5 did not follow it here
+    }
+
+    [Fact]
+    public async Task NewStubs_GetEnrichmentRowsSeededForEverySupportingPlugin()
+    {
+        var (db, _, author) = await SetupAsync();
+        await using var _ = db;
+        var series = Item(1, "Some Series", 1, author.Id);
+        db.MediaItems.Add(series);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = series.Id, Source = "hardcover", ExternalId = "hardcover:series:1" });
+        await db.SaveChangesAsync();
+
+        var provider = Provider("Some Series", Book("hardcover:1", "Book One", 2001, 1));
+        var otherPlugin = new Mock<IMetadataProvider>();
+        otherPlugin.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "audiobooks" }]);
+        var unsupportedPlugin = new Mock<IMetadataProvider>();
+        unsupportedPlugin.Setup(p => p.GetSupportedMediaTypes())
+            .Returns([new MediaTypeSupport { MediaTypeName = "movies" }]);
+        var allProviders = new List<(string, IMetadataProvider)>
+        {
+            ("hardcover", provider.Object), ("chronicle.plugin.other", otherPlugin.Object),
+            ("chronicle.plugin.unsupported", unsupportedPlugin.Object),
+        };
+
+        await NewService().EnsureSeriesStubsAsync(db, series, provider.Object, default, allProviders);
+
+        var stub = await db.MediaItems.SingleAsync(m => m.Name == "Book One");
+        var enrichmentPlugins = await db.MediaEnrichments.Where(e => e.MediaItemId == stub.Id).Select(e => e.PluginId).ToListAsync();
+        Assert.Equal(["chronicle.plugin.other", "hardcover"], enrichmentPlugins.OrderBy(p => p));
     }
 }

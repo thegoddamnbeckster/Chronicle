@@ -135,7 +135,8 @@ public class BookSeriesService(
 
             var position = TryGetSeriesPosition(part.ExtendedData);
 
-            var existing = subtree.FirstOrDefault(m => m.ExternalIds.Any(e => e.ExternalId == part.ExternalId))
+            var existing = subtree.FirstOrDefault(m => m.ExternalIds.Any(
+                    e => string.Equals(e.ExternalId, part.ExternalId, StringComparison.OrdinalIgnoreCase)))
                 ?? FindByNormalizedTitleYear(subtree, part);
 
             if (existing is not null)
@@ -146,14 +147,22 @@ public class BookSeriesService(
                 if (existing.Id == series.Id) continue; // paranoia guard, shouldn't happen
 
                 var floorPosition = position.HasValue ? (int?)Math.Floor(position.Value) : null;
-                var changed = existing.ParentId != series.Id || existing.HierarchyLevel != 2 ||
+                var movingSeries = existing.ParentId != series.Id;
+                var changed = movingSeries || existing.HierarchyLevel != 2 ||
                               (floorPosition.HasValue && existing.Number != floorPosition.Value);
                 if (changed)
                 {
                     var oldParentId = existing.ParentId;
                     existing.ParentId       = series.Id;
                     existing.HierarchyLevel = 2;
-                    if (floorPosition.HasValue) existing.Number = floorPosition.Value;
+                    if (floorPosition.HasValue)
+                        existing.Number = floorPosition.Value;
+                    else if (movingSeries)
+                        // Moved into a DIFFERENT series with no known position for it here --
+                        // Hardcover's data can be incomplete (per-user direction), and the old
+                        // series' number has no meaning in the new one, so it must not survive
+                        // silently rather than being left for a human to notice is wrong.
+                        existing.Number = null;
                     existing.UpdatedAt      = DateTime.UtcNow;
                     logger.LogInformation(
                         "Book {Id} \"{Name}\" placed in series \"{Series}\" ({SeriesId}) as #{Number} -- found already " +
@@ -223,6 +232,12 @@ public class BookSeriesService(
             throw new InvalidOperationException("The book and the series must be the same media type.");
         if (series.HierarchyLevel != 1 || series.ParentId is null)
             throw new InvalidOperationException("The target is not a series.");
+        // A series and a standalone book are structurally identical (both level 1, same author)
+        // until the series actually has a book under it -- without this check, the picker (which
+        // can't otherwise tell the two apart either, see MediaDetailPage's own comment on it)
+        // could nest one standalone book under another, silently inventing a fake series.
+        if (!await db.MediaItems.AnyAsync(m => m.ParentId == series.Id, ct))
+            throw new InvalidOperationException("The target has no books of its own yet, so it isn't an existing series to add to.");
         if (book.HierarchyLevel != 1 || book.ParentId != series.ParentId)
             throw new InvalidOperationException(
                 "This book is not a standalone book by the series' own author -- remove it from its current series first.");
