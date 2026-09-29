@@ -1486,20 +1486,55 @@ public class ScraperController : ControllerBase
         // future scrape would keep minting new items forever instead of ever converging back
         // onto the existing (increasingly enriched) ones.
         if (!year.HasValue) return null;
-        var targetTokens = target.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        // Destemmed (trailing-plural-"s" stripped) so this tier also catches a token that's
+        // merely singular/plural of the same word -- root-caused live (2026-09-28): a Kodi
+        // scrape titled "Alien Resurrections Resurrected" (an extra descriptive word AND a
+        // pluralized one) never matched Chronicle's own "Alien Resurrection" fan edit. The
+        // subset check below already tolerates a whole extra/missing word (that's this tier's
+        // whole purpose); without destemming, "resurrections" vs "resurrection" was treated as
+        // two unrelated tokens instead of the same word, so even the destemmed-subset case never
+        // reached the subset test at all. A fresh, metadata-free duplicate got minted instead --
+        // exactly the sort of "mixed in with the movies" junk the user found live.
+        //
+        // PROPER subset only (strictly fewer tokens on one side), not IsSubsetOf -- caught by
+        // this fix's own test suite before it ever shipped: naive destemming alone turns "Alien"
+        // (single token {alien}) and "Aliens" (destems to the same single token {alien}) into
+        // EQUAL sets, which a plain (non-proper) subset check accepts as a match. Two genuinely
+        // different, unrelated films in the same year that differ by exactly one trailing "s" on
+        // an otherwise-identical token set would get silently merged onto each other -- exactly
+        // the franchise this bug was found in. A PROPER subset requires an extra token on one
+        // side (the "extra descriptive word" this tier exists for), which the equal-size
+        // Alien/Aliens case never has, so it's excluded while the real target case (a 3-token
+        // search against a 2-token candidate) still matches.
+        var targetTokens = target.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(DestemPlural).ToHashSet(StringComparer.Ordinal);
         if (targetTokens.Count == 0) return null;
 
         var subsetMatches = candidates.Where(m =>
         {
             if (m.Year != year) return false;
             var mTokens = NormalizeTitle(m.Name).Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .ToHashSet(StringComparer.Ordinal);
+                .Select(DestemPlural).ToHashSet(StringComparer.Ordinal);
             if (mTokens.Count == 0) return false;
-            return targetTokens.IsSubsetOf(mTokens) || mTokens.IsSubsetOf(targetTokens);
+            return targetTokens.IsProperSubsetOf(mTokens) || mTokens.IsProperSubsetOf(targetTokens);
         });
 
         return Richest(subsetMatches);
     }
+
+    /// <summary>
+    /// Strips a bare trailing "s" from an already-lowercased token, e.g. "resurrections" ->
+    /// "resurrection", so the subset-fallback tier above treats a singular/plural pair as the
+    /// same word instead of two unrelated tokens. Deliberately naive (no real stemmer, no
+    /// irregular plurals) and conservative: only words longer than 3 characters and not already
+    /// ending "ss" are touched, so short real words ("vs", "is") and words that already end in a
+    /// double-s ("glass", "class") are left alone rather than risk mangling a genuinely different
+    /// word into a false match.
+    /// </summary>
+    private static string DestemPlural(string token) =>
+        token.Length > 3 && token.EndsWith('s') && !token.EndsWith("ss")
+            ? token[..^1]
+            : token;
 
     // Matches a trailing "(YYYY)"/"[YYYY]" in a folder name -- same convention Kodi's own
     // useFolderNames year parsing and _trailingYearRe (this file) both already rely on.

@@ -236,4 +236,94 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
         var body = await resp.Content.ReadAsStringAsync();
         body.Should().Contain($"\"id\":{itemId}");
     }
+
+    /// <summary>
+    /// Root-caused live (2026-09-28): a Kodi scrape titled "Alien Resurrections Resurrected"
+    /// (an extra descriptive word, plus "Resurrections" pluralized) never matched Chronicle's
+    /// own "Alien Resurrection" fan edit item -- FindByNormalizedTitle's subset-fallback tier
+    /// already tolerates a whole extra/missing word, but treated "resurrections" and
+    /// "resurrection" as two unrelated tokens, so the subset relationship it was looking for
+    /// never held. A fresh, metadata-free duplicate got minted under "movies" instead of
+    /// reusing the existing, fully-enriched item -- exactly what a user spotted mixed into
+    /// their movie grid. Fixed via DestemPlural naively stripping a trailing "s" from each
+    /// token before the subset check.
+    /// </summary>
+    [Fact]
+    public async Task MovieSearch_TitleHasExtraWordAndPluralizedToken_StillMatchesTheSingularItem()
+    {
+        var movieTypeId = EnsureMovieType();
+        const string storedTitle = "Scraper Destem Probe";
+        const string searchTitle = "Scraper Destem Probes Resurrected"; // "Probes" (plural) + an extra word
+        int itemId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var item = new MediaItem
+            {
+                MediaTypeId = movieTypeId, Name = storedTitle, Year = 2019,
+                HierarchyLevel = 0,
+                NormalizedName = MediaItemNormalizer.NormalizeName(storedTitle),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(item);
+            db.SaveChanges();
+            itemId = item.Id;
+            // Deliberately no MediaItemKnownFileNames row and no fileName on the search below --
+            // this must go through pure title matching (the subset-fallback tier), not the
+            // filename fast path.
+        }
+
+        var client = await AuthClientAsync();
+        var resp = await client.GetAsync(
+            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(searchTitle)}&year=2019");
+
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain($"\"id\":{itemId}",
+            "a pluralized token plus one extra word should still resolve to the existing singular-titled item, not mint a duplicate");
+    }
+
+    /// <summary>
+    /// Guard rail for the destemming fix above, caught by this fix's OWN test suite before it
+    /// ever shipped: naive trailing-"s" stripping alone turns "Alien" ({alien}) and "Aliens"
+    /// ({alien}, destemmed) into EQUAL token sets. A plain (non-proper) subset check accepts
+    /// equal sets as a match, which would silently reuse one real, unrelated film's item for a
+    /// scrape of a completely different film that merely happens to share every token minus a
+    /// trailing "s" in the same year -- exactly this franchise's own "Alien" (1979) vs "Aliens"
+    /// (1986) shape. FindByNormalizedTitle's fallback tier requires a PROPER subset (the search
+    /// or candidate title needs a genuine extra word, not just a pluralized final word) so an
+    /// equal-after-destemming pair like this is correctly left unmatched -- each gets its own
+    /// item, exactly as it must.
+    /// </summary>
+    [Fact]
+    public async Task MovieSearch_TitleDiffersOnlyByPluralizationNoExtraWord_DoesNotCrossMatchDifferentItem()
+    {
+        var movieTypeId = EnsureMovieType();
+        const string singularTitle = "Scraper Destem Guard Probe";
+        const string pluralSearchTitle = "Scraper Destem Guard Probes"; // same word count, only the last token pluralized
+        int singularItemId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var item = new MediaItem
+            {
+                MediaTypeId = movieTypeId, Name = singularTitle, Year = 2021,
+                HierarchyLevel = 0,
+                NormalizedName = MediaItemNormalizer.NormalizeName(singularTitle),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(item);
+            db.SaveChanges();
+            singularItemId = item.Id;
+        }
+
+        var client = await AuthClientAsync();
+        var resp = await client.GetAsync(
+            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(pluralSearchTitle)}&year=2021");
+
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().NotContain($"\"id\":{singularItemId}",
+            "a same-year title differing only by pluralizing the final word (no extra word) must not reuse a different, unrelated item");
+    }
 }
