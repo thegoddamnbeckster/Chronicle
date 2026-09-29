@@ -1,49 +1,41 @@
+# Quick start: `docker compose up -d`. Uses SQLite (Chronicle's own default -- see CLAUDE.md)
+# with no extra services to stand up, so trying Chronicle is a single command on any OS Docker
+# runs on. For PostgreSQL instead, see docker-compose.postgres.yml's own header comment.
+#
+# Override the host-side port with a .env file (CHRONICLE_PORT=9000) or
+# `CHRONICLE_PORT=9000 docker compose up -d` -- the container always listens on 7979
+# internally (Chronicle's own default port; see PortManager.cs), only the published host port
+# changes. Bare `docker compose up -d` uses 7979 on the host too.
 services:
 
-  # ── PostgreSQL ───────────────────────────────────────────────────────────────
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB:       chronicle
-      POSTGRES_USER:     chronicle
-      POSTGRES_PASSWORD: chronicle      # Override via .env or secrets in production
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test:     ["CMD", "pg_isready", "-U", "chronicle"]
-      interval: 5s
-      timeout:  5s
-      retries:  10
-    networks:
-      - chronicle_net
-
-  # ── Chronicle API ─────────────────────────────────────────────────────────────
   api:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${CHRONICLE_PORT:-7979}:7979"
     environment:
-      # EF Core will pick "Host=..." and auto-select PostgreSQL provider
-      ConnectionStrings__DefaultConnection: >-
-        Host=db;Port=5432;Database=chronicle;Username=chronicle;Password=chronicle
-      # JWT secret — override with a real secret in production!
-      Security__JwtSecret: CHANGE_THIS_TO_A_LONG_RANDOM_SECRET_IN_PRODUCTION
+      # SQLite by default (Program.cs's own default when unset) -- pointed at /app/data, a
+      # volume-backed directory distinct from the app's own binaries, so an image update
+      # (which replaces everything else under /app) never touches it.
+      ConnectionStrings__DefaultConnection: Data Source=/app/data/chronicle.db
       ASPNETCORE_ENVIRONMENT: Production
     volumes:
+      # /app/keys holds the Data Protection key ring (encrypts every plugin's stored
+      # credentials) AND the auto-generated JWT signing secret (see Program.cs) -- without
+      # this volume, both silently reset on every image rebuild/recreate, logging every user
+      # out and breaking every configured plugin's saved settings at once.
+      - chronicle_keys:/app/keys
+      - chronicle_data:/app/data
       - chronicle_plugins:/app/plugins
       - chronicle_logs:/app/logs
-    depends_on:
-      db:
-        condition: service_healthy
     networks:
       - chronicle_net
 
 volumes:
-  postgres_data:
+  chronicle_keys:
+  chronicle_data:
   chronicle_plugins:
   chronicle_logs:
 

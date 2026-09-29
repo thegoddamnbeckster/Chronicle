@@ -9,11 +9,19 @@
 **/.gitignore
 **/.gitattributes
 **/node_modules
-src/Chronicle.Web
+# src/Chronicle.Web is intentionally NOT excluded -- the Dockerfile's build-web stage needs it
+# in the build context to build the frontend it copies into the runtime image's wwwroot.
 tests/
 docs/
 scripts/
 *.md
 Dockerfile
-docker-compose.yml
+docker-compose*.yml
 .dockerignore
+# Local, gitignored dev/production config -- must never leak into a built image. Without this,
+# `docker build` from a working directory that happens to have a local appsettings.Production.json
+# (e.g. from earlier manual testing) would silently bake that developer's own local config into
+# the image instead of using the environment variables docker-compose.yml sets explicitly.
+appsettings.Production.json
+appsettings.Development.json
+secrets.json

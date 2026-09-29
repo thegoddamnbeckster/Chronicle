@@ -6,7 +6,9 @@ import { readFileSync, existsSync } from 'fs'
 // Load ports from the single source of truth at the project root.
 // Walk up from this file's directory until ports.json is found.
 function loadPorts(): { api: number; web: number } {
-  const defaults = { api: 8080, web: 3000 }
+  // Chronicle's own documented defaults (see CLAUDE.md and PortManager.cs's matching fallback)
+  // -- these used to say 8080/3000, matching nothing else in the app or its docs.
+  const defaults = { api: 7979, web: 8888 }
   let dir = path.resolve(__dirname)
   for (let i = 0; i < 6; i++) {
     const candidate = path.join(dir, 'ports.json')

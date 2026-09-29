@@ -39,9 +39,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService(options => options.ServiceName = "Chronicle");
 
 // ── Port configuration ────────────────────────────────────────────────────────
-// Reads ports.json from the project root (searched upward from working directory).
+// Reads CHRONICLE_API_PORT/CHRONICLE_WEB_PORT env vars, then ports.json (searched upward
+// from AppContext.BaseDirectory), then Chronicle's own defaults (7979/8888) -- see
+// PortManager.LoadConfig's own doc. AppContext.BaseDirectory, not the process's working
+// directory: a Windows Service's CWD defaults to System32, not the install folder (same class
+// of gotcha the log path and SQLite path below already work around) -- and it still walks up
+// correctly to the repo-root ports.json in dev, just from one level deeper (bin/Debug/net9.0).
 // Must happen before any service or host configuration that depends on ports.
-var portConfig = PortManager.LoadConfig(Directory.GetCurrentDirectory());
+var portConfig = PortManager.LoadConfig(AppContext.BaseDirectory);
 // Skip port conflict check when running under EF design-time tools (migrations, scaffolding)
 // or when running integration tests (WebApplicationFactory sets environment to "Testing").
 
@@ -101,6 +106,23 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 var dbProvider = builder.Configuration.GetValue<string>("Database:Provider")
     ?? Environment.GetEnvironmentVariable("DATABASE_PROVIDER")
     ?? (connectionString.StartsWith("Host=", StringComparison.OrdinalIgnoreCase) ? "postgresql" : "sqlite");
+
+if (!dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
+{
+    // Anchor a relative SQLite path against ContentRootPath, not whatever the process's
+    // current working directory happens to be -- root-caused live (2026-09-29): a Windows
+    // Service's working directory defaults to System32, not the install folder (the exact
+    // same class of gotcha the log path above already works around). Left unrooted, the
+    // default "Data Source=chronicle.db" would try to create/open the database inside
+    // System32 instead of next to the app. A connection string with an already-absolute
+    // path (or Postgres, excluded above) passes through untouched.
+    var sqliteBuilder = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString);
+    if (!Path.IsPathRooted(sqliteBuilder.DataSource))
+    {
+        sqliteBuilder.DataSource = Path.Combine(builder.Environment.ContentRootPath, sqliteBuilder.DataSource);
+        connectionString = sqliteBuilder.ConnectionString;
+    }
+}
 
 builder.Services.AddDbContext<ChronicleDbContext>(options =>
 {
@@ -298,8 +320,39 @@ builder.Services.AddHostedService(
 // ── Authentication — JWT Bearer + API Key ─────────────────────────────────────
 // Both schemes are registered. The default authorization policy (below) accepts
 // either, so [Authorize] on any controller works with both JWT and X-API-Key.
-var jwtSecret = builder.Configuration["Security:JwtSecret"]
-    ?? throw new InvalidOperationException("Security:JwtSecret must be configured.");
+var jwtSecret = builder.Configuration["Security:JwtSecret"];
+if (string.IsNullOrWhiteSpace(jwtSecret))
+{
+    // No secret configured -- auto-generate one on first run and persist it, rather than
+    // require every self-hoster to remember to override a placeholder (the checked-in
+    // appsettings.Production.json used to ship a literal "CHANGE_THIS..." string that would
+    // silently work, unchanged, on every install that skipped that step -- every such
+    // deployment sharing one public, guessable signing key). Persisted inside keysDir (declared
+    // above for Data Protection) rather than loose at ContentRootPath -- one already-protected,
+    // already-backed-up "secrets" directory instead of two separate persistence paths a Docker
+    // volume or a backup script would each need to know about individually. Same reasoning as
+    // that directory's own placement: NOT AppContext.BaseDirectory (wiped by `dotnet build` in
+    // dev) and NOT the process's working directory (a Windows Service's CWD defaults to
+    // System32, not the install folder). A regenerated secret on every boot would silently log
+    // out every user and invalidate every API key each restart, so this reads back what it
+    // wrote before ever generating a second one.
+    Directory.CreateDirectory(keysDir.FullName);
+    var jwtSecretPath = Path.Combine(keysDir.FullName, "jwt.secret");
+    if (File.Exists(jwtSecretPath))
+    {
+        jwtSecret = File.ReadAllText(jwtSecretPath).Trim();
+    }
+    else
+    {
+        jwtSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
+        File.WriteAllText(jwtSecretPath, jwtSecret);
+        Log.Warning(
+            "Security:JwtSecret was not configured — generated and persisted a new random secret " +
+            "to {JwtSecretPath}. Set Security:JwtSecret explicitly (appsettings or an environment " +
+            "variable) if you need a specific value, e.g. to share it across multiple instances.",
+            jwtSecretPath);
+    }
+}
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -553,7 +606,42 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// ── Serve the built React frontend from this same origin ─────────────────────────
+// Production only needs to hit one port -- in dev, Vite owns the frontend (its own dev
+// server on ports.json's "web" port, proxying /api back to this process) and wwwroot simply
+// doesn't exist, so UseStaticFiles/the fallback below are harmless no-ops there. This is also
+// why production has no CORS policy configured above (see the Dev-only "Dev" policy): the web
+// build is always same-origin with the API in every deployment (Docker, Windows Service).
+app.UseStaticFiles();
+
 app.MapControllers();
+
+// Catch-all for React Router's client-side routes (e.g. a deep link to /media/123, which has
+// no server-side route of its own) -- anything that isn't an API/Swagger path and isn't a real
+// static asset falls through to index.html so the SPA's own router can take over. Scoped away
+// from /api and /swagger so a genuinely wrong API path still 404s as an API error instead of
+// silently returning an HTML page.
+app.MapFallback(async context =>
+{
+    if (context.Request.Path.StartsWithSegments("/api") ||
+        context.Request.Path.StartsWithSegments("/swagger"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var indexPath = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
+    if (File.Exists(indexPath))
+    {
+        context.Response.ContentType = "text/html";
+        await context.Response.SendFileAsync(indexPath);
+    }
+    else
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+    }
+});
 
 app.Run();
 

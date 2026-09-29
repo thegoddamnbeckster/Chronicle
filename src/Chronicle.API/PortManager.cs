@@ -6,33 +6,62 @@ namespace Chronicle.API;
 
 public static class PortManager
 {
+    /// <summary>Chronicle's own established defaults (see CLAUDE.md) -- used whenever nothing
+    /// more specific overrides them.</summary>
+    private const int DefaultApiPort = 7979;
+    private const int DefaultWebPort = 8888;
+
     /// <summary>
-    /// Searches for ports.json starting at <paramref name="searchRoot"/> and walking up
-    /// to the repository root. Falls back to defaults if not found.
+    /// Resolves the API/web ports, in order of precedence:
+    ///   1. CHRONICLE_API_PORT / CHRONICLE_WEB_PORT environment variables -- the standard,
+    ///      install-friendly override for a Docker deployment or a Windows Service (an
+    ///      installer can set these directly; there's no shell profile to source).
+    ///   2. ports.json, searched by walking up from <paramref name="searchRoot"/> -- the dev
+    ///      workflow's own mechanism (repo-root ports.json, shared with vite.config.ts), which
+    ///      also works unmodified for a packaged install that simply drops/edits ports.json
+    ///      next to the published exe.
+    ///   3. Chronicle's documented defaults (7979 / 8888) -- NOT the previous silent fallback of
+    ///      8080/3000, which matched nothing else in the app or its docs.
     /// </summary>
     public static PortConfig LoadConfig(string searchRoot)
     {
+        var (fileApi, fileWeb, source) = ReadPortsFile(searchRoot);
+
+        var api = ReadPortEnvVar("CHRONICLE_API_PORT") ?? fileApi ?? DefaultApiPort;
+        var web = ReadPortEnvVar("CHRONICLE_WEB_PORT") ?? fileWeb ?? DefaultWebPort;
+
+        Console.WriteLine($"[Chronicle] Ports resolved: api={api} web={web} (source: {source}, " +
+            "env vars CHRONICLE_API_PORT/CHRONICLE_WEB_PORT take precedence over both)");
+        return new PortConfig(api, web);
+    }
+
+    private static int? ReadPortEnvVar(string name)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (int.TryParse(raw, out var port) && port is > 0 and <= 65535) return port;
+        Console.WriteLine($"[Chronicle] Warning: {name}='{raw}' is not a valid port — ignoring it");
+        return null;
+    }
+
+    private static (int? Api, int? Web, string Source) ReadPortsFile(string searchRoot)
+    {
         var portsFile = FindPortsFile(searchRoot);
-        if (portsFile == null)
-        {
-            Console.WriteLine("[Chronicle] ports.json not found — using defaults (api:8080, web:3000)");
-            return new PortConfig(8080, 3000);
-        }
+        if (portsFile == null) return (null, null, "no ports.json found, using defaults");
 
         try
         {
             using var stream = File.OpenRead(portsFile);
             using var doc = JsonDocument.Parse(stream);
             var root = doc.RootElement;
-            int api = root.TryGetProperty("api", out var apiProp) ? apiProp.GetInt32() : 8080;
-            int web = root.TryGetProperty("web", out var webProp) ? webProp.GetInt32() : 3000;
-            Console.WriteLine($"[Chronicle] Ports loaded from {portsFile}  (api:{api}  web:{web})");
-            return new PortConfig(api, web);
+            int? api = root.TryGetProperty("api", out var apiProp) ? apiProp.GetInt32() : null;
+            int? web = root.TryGetProperty("web", out var webProp) ? webProp.GetInt32() : null;
+            return (api, web, portsFile);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Chronicle] Warning: could not parse ports.json ({ex.Message}) — using defaults");
-            return new PortConfig(8080, 3000);
+            Console.WriteLine($"[Chronicle] Warning: could not parse {portsFile} ({ex.Message}) — ignoring it");
+            return (null, null, "unparseable ports.json, using defaults");
         }
     }
 

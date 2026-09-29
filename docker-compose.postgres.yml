@@ -1,0 +1,38 @@
+# Optional override: PostgreSQL instead of the default SQLite.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+#
+# Set a real POSTGRES_PASSWORD (a .env file, or export it in your shell) before running this
+# in anything but a throwaway local test -- the value below is a placeholder, not a secret.
+services:
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       chronicle
+      POSTGRES_USER:     chronicle
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chronicle}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:     ["CMD", "pg_isready", "-U", "chronicle"]
+      interval: 5s
+      timeout:  5s
+      retries:  10
+    networks:
+      - chronicle_net
+
+  api:
+    environment:
+      # Overrides the base file's SQLite connection string -- EF Core picks the PostgreSQL
+      # provider automatically from the "Host=" prefix (see Program.cs's own comment on
+      # Database:Provider resolution).
+      ConnectionStrings__DefaultConnection: >-
+        Host=db;Port=5432;Database=chronicle;Username=chronicle;Password=${POSTGRES_PASSWORD:-chronicle}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
