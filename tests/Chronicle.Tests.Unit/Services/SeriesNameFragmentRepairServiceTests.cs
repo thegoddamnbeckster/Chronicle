@@ -17,17 +17,17 @@ namespace Chronicle.Tests.Unit.Services;
 public class SeriesNameFragmentRepairServiceTests
 {
     [Theory]
-    [InlineData("Undying Mercenaries - 13 - (Unknown)", "Undying Mercenaries", 13)]
-    [InlineData("Star Force - 11 - (Unknown)", "Star Force", 11)]
-    [InlineData("Star Force - 4.5 - (Unknown)", "Star Force", 4)]
-    [InlineData("Star Force - 3 - (2011)", "Star Force", 3)]
+    [InlineData("Undying Mercenaries - 13 - (Unknown)", "Undying Mercenaries", 13.0)]
+    [InlineData("Star Force - 11 - (Unknown)", "Star Force", 11.0)]
+    [InlineData("Star Force - 4.5 - (Unknown)", "Star Force", 4.5)]   // kept whole: SeriesPosition needs the .5
+    [InlineData("Star Force - 3 - (2011)", "Star Force", 3.0)]
     [InlineData("Star Force Universe", null, null)]
     [InlineData("Star Force - Starship Pandora", null, null)]
-    public void Split_OnlyTheBaseDashNumberDashParenShape_Matches(string name, string? baseName, int? number)
+    public void Split_OnlyTheBaseDashNumberDashParenShape_Matches(string name, string? baseName, double? position)
     {
         var result = SeriesNameFragmentRepairService.Split(name);
         if (baseName is null) Assert.Null(result);
-        else Assert.Equal((baseName, number!.Value), result);
+        else Assert.Equal((baseName, position!.Value), result);
     }
 
     private static (ChronicleDbContext db, SeriesNameFragmentRepairService svc) Setup()
@@ -45,9 +45,9 @@ public class SeriesNameFragmentRepairServiceTests
             services.GetRequiredService<IServiceScopeFactory>(), NullLogger<SeriesNameFragmentRepairService>.Instance));
     }
 
-    private static MediaItem Item(string name, int level, int? parentId, int? number = null) => new()
+    private static MediaItem Item(string name, int level, int? parentId, int? number = null, double? position = null) => new()
     {
-        MediaTypeId = 1, Name = name, HierarchyLevel = level, ParentId = parentId, Number = number,
+        MediaTypeId = 1, Name = name, HierarchyLevel = level, ParentId = parentId, Number = number, SeriesPosition = position,
         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
     };
 
@@ -136,5 +136,74 @@ public class SeriesNameFragmentRepairServiceTests
         await svc.ExecuteAsync(default);
 
         Assert.NotNull(await db.MediaItems.FindAsync(universe.Id));
+    }
+
+    [Fact]
+    public async Task ABookWithNoNumber_TakesTheFragmentNamesPosition_IntoBothNumberAndSeriesPosition()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var real = Item("Star Force", 1, author.Id);
+        var fragment = Item("Star Force - 4.5 - (Unknown)", 1, author.Id);
+        db.MediaItems.AddRange(real, fragment);
+        await db.SaveChangesAsync();
+        var novella = Item("Novella", 2, fragment.Id);
+        db.MediaItems.Add(novella);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        var moved = (await db.MediaItems.FindAsync(novella.Id))!;
+        Assert.Equal((real.Id, 4, 4.5), (moved.ParentId, moved.Number, moved.SeriesPosition));
+    }
+
+    [Fact]
+    public async Task ABookThatAlreadyHasItsOwnPosition_KeepsItUntouchedWhenMoved()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var real = Item("The Expanse", 1, author.Id);
+        var fragment = Item("The Expanse - 1 - (Unknown)", 1, author.Id);
+        db.MediaItems.AddRange(real, fragment);
+        await db.SaveChangesAsync();
+        var butcher = Item("The Butcher of Anderson Station", 2, fragment.Id, number: 1, position: 1.1);
+        db.MediaItems.Add(butcher);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        var moved = (await db.MediaItems.FindAsync(butcher.Id))!;
+        Assert.Equal((real.Id, 1, 1.1), (moved.ParentId, moved.Number, moved.SeriesPosition));
+    }
+
+    [Fact]
+    public async Task AFractionalBookIsNeverMergedIntoTheWholeNumberedBookThatSharesItsFlooredNumber()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var real = Item("The Expanse", 1, author.Id);
+        var fragment = Item("The Expanse - 1 - (Unknown)", 1, author.Id);
+        db.MediaItems.AddRange(real, fragment);
+        await db.SaveChangesAsync();
+        var leviathan = Item("Leviathan Wakes", 2, real.Id, number: 1, position: 1);
+        var butcher = Item("The Butcher of Anderson Station", 2, fragment.Id, number: 1, position: 1.1);
+        db.MediaItems.AddRange(leviathan, butcher);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        // Both survive as distinct books in the one real series.
+        Assert.NotNull(await db.MediaItems.FindAsync(leviathan.Id));
+        var moved = (await db.MediaItems.FindAsync(butcher.Id))!;
+        Assert.Equal((real.Id, 1.1), (moved.ParentId, moved.SeriesPosition));
     }
 }

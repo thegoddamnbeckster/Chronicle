@@ -29,16 +29,16 @@ public sealed class SeriesNameFragmentRepairService(
         @"^(?<base>.+?)\s*-\s*(?<num>\d{1,4}(?:\.\d+)?)\s*-\s*\((?:Unknown|\d{4})\)$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>Pure splitter, tested on its own: the base series name and position this fragment shape
-    /// names, or null when the name doesn't match it at all.</summary>
-    internal static (string Base, int Number)? Split(string name)
+    /// <summary>Pure splitter, tested on its own: the base series name and the exact (possibly fractional)
+    /// position this fragment shape names, or null when the name doesn't match it at all.</summary>
+    internal static (string Base, double Position)? Split(string name)
     {
         var m = FragmentShape.Match(name.Trim());
         if (!m.Success) return null;
         var baseName = m.Groups["base"].Value.Trim();
         return double.TryParse(m.Groups["num"].Value, System.Globalization.NumberStyles.Number,
             System.Globalization.CultureInfo.InvariantCulture, out var n) && baseName.Length > 0
-            ? (baseName, (int)Math.Floor(n)) : null;
+            ? (baseName, n) : null;
     }
 
     public async Task ExecuteAsync(CancellationToken ct)
@@ -66,9 +66,13 @@ public sealed class SeriesNameFragmentRepairService(
             var books = await db.MediaItems.Where(b => b.ParentId == fragment.Id).ToListAsync(ct);
             foreach (var book in books)
             {
-                var number = book.Number ?? s.Number;
+                // The book's own position wins over the fragment name's. Matched by the PRECISE position
+                // (falling back to Number), so a fractional 1.1 novella is never mistaken for -- and merged
+                // into -- book 1 just because both floor to Number 1.
+                var position = SeriesPositionHelper.Effective(book) ?? s.Position;
                 var existing = await db.MediaItems
-                    .FirstOrDefaultAsync(b => b.ParentId == series.Id && b.Number == number, ct);
+                    .FirstOrDefaultAsync(b => b.ParentId == series.Id &&
+                                              (b.SeriesPosition ?? (double?)b.Number) == position, ct);
                 if (existing is not null && existing.Id != book.Id)
                 {
                     logger.LogInformation(
@@ -83,7 +87,9 @@ public sealed class SeriesNameFragmentRepairService(
                 else
                 {
                     book.ParentId = series.Id;
-                    book.Number = number;
+                    // Only fills an empty Number (with its matching SeriesPosition) -- one the book already
+                    // has, and its own precise position, stay exactly as they were.
+                    SeriesPositionHelper.FillIfEmpty(book, s.Position);
                     book.UpdatedAt = DateTime.UtcNow;
                     await db.SaveChangesAsync(ct);
                     reparented++;

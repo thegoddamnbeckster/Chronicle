@@ -32,17 +32,17 @@ public sealed class SeriesFragmentRepairService(
             .ToListAsync(ct);
 
         var groups = series
-            .Select(s => (Item: s, Split: FileScanService.SplitSeriesTag(s.Name)))
+            .Select(s => (Item: s, Split: FileScanService.SplitSeriesTagPrecise(s.Name)))
             .GroupBy(x => (x.Item.ParentId, x.Item.MediaTypeId, Key: BaseKey(x.Split.Name)))
-            .Where(g => g.Any(x => x.Split.Number.HasValue))   // at least one "#N" fragment in the group
+            .Where(g => g.Any(x => x.Split.Position.HasValue))   // at least one "#N" fragment in the group
             .ToList();
 
         var moved = 0;
         var removed = 0;
         foreach (var g in groups)
         {
-            var fragments = g.Where(x => x.Split.Number.HasValue).ToList();
-            var whole = g.Where(x => !x.Split.Number.HasValue).Select(x => x.Item)
+            var fragments = g.Where(x => x.Split.Position.HasValue).ToList();
+            var whole = g.Where(x => !x.Split.Position.HasValue).Select(x => x.Item)
                 .OrderByDescending(s => db.MediaItems.Count(k => k.ParentId == s.Id)).FirstOrDefault();
 
             // No series with the bare name yet: the first fragment becomes it (renamed below).
@@ -54,7 +54,7 @@ public sealed class SeriesFragmentRepairService(
                 {
                     // The renamed fragment itself: give its own books their position, then drop the suffix.
                     foreach (var b in await db.MediaItems.Where(k => k.ParentId == fragment.Id && k.Number == null).ToListAsync(ct))
-                        b.Number = split.Number;
+                        SeriesPositionHelper.FillIfEmpty(b, split.Position);
                     fragment.Name = split.Name;
                     fragment.UpdatedAt = DateTime.UtcNow;
                     continue;
@@ -63,7 +63,7 @@ public sealed class SeriesFragmentRepairService(
                 foreach (var book in await db.MediaItems.Where(k => k.ParentId == fragment.Id).ToListAsync(ct))
                 {
                     book.ParentId = canonical.Id;
-                    book.Number ??= split.Number;
+                    SeriesPositionHelper.FillIfEmpty(book, split.Position);
                     book.UpdatedAt = DateTime.UtcNow;
                     moved++;
                 }

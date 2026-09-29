@@ -22,9 +22,9 @@ public class SeriesFragmentRepairServiceTests
             services.GetRequiredService<IServiceScopeFactory>(), NullLogger<SeriesFragmentRepairService>.Instance));
     }
 
-    private static MediaItem Item(string name, int level, int? parentId, int? number = null) => new()
+    private static MediaItem Item(string name, int level, int? parentId, int? number = null, double? position = null) => new()
     {
-        MediaTypeId = 1, Name = name, HierarchyLevel = level, ParentId = parentId, Number = number,
+        MediaTypeId = 1, Name = name, HierarchyLevel = level, ParentId = parentId, Number = number, SeriesPosition = position,
         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
     };
 
@@ -119,5 +119,82 @@ public class SeriesFragmentRepairServiceTests
     public void SplitSeriesTag_SeparatesTheNameFromThePosition(string tag, string name, int? number)
     {
         Assert.Equal((name, number), FileScanService.SplitSeriesTag(tag));
+    }
+
+    [Theory]
+    [InlineData("Laundry Files #1.5", "Laundry Files", 1.5)]
+    [InlineData("Laundry Files #5", "Laundry Files", 5.0)]
+    [InlineData("Laundry Files", "Laundry Files", null)]
+    public void SplitSeriesTagPrecise_KeepsAFractionalPositionWhole(string tag, string name, double? position)
+    {
+        Assert.Equal((name, position), FileScanService.SplitSeriesTagPrecise(tag));
+    }
+
+    [Fact]
+    public async Task AFractionalFragmentPosition_ReachesSeriesPosition_WhileNumberStaysFloored()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Charles Stross", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var whole = Item("The Laundry Files", 1, author.Id);
+        var frag = Item("The Laundry Files #1.5", 1, author.Id);
+        db.MediaItems.AddRange(whole, frag);
+        await db.SaveChangesAsync();
+        db.MediaItems.Add(Item("The Atrocity Archives", 2, whole.Id, number: 1)); // a series with a book is what makes it canonical
+        var novella = Item("Equoid", 2, frag.Id);
+        db.MediaItems.Add(novella);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        var moved = (await db.MediaItems.FindAsync(novella.Id))!;
+        Assert.Equal((whole.Id, 1, 1.5), (moved.ParentId, moved.Number, moved.SeriesPosition));
+    }
+
+    [Fact]
+    public async Task ABookWithItsOwnPrecisePosition_KeepsItWhenTheFragmentIsFolded()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var whole = Item("The Expanse", 1, author.Id);
+        var frag = Item("The Expanse #9", 1, author.Id);
+        db.MediaItems.AddRange(whole, frag);
+        await db.SaveChangesAsync();
+        db.MediaItems.Add(Item("Leviathan Wakes", 2, whole.Id, number: 1)); // a series with a book is what makes it canonical
+        var butcher = Item("The Butcher of Anderson Station", 2, frag.Id, number: 1, position: 1.1);
+        db.MediaItems.Add(butcher);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        var moved = (await db.MediaItems.FindAsync(butcher.Id))!;
+        Assert.Equal((whole.Id, 1, 1.1), (moved.ParentId, moved.Number, moved.SeriesPosition)); // "#9" never overwrites it
+    }
+
+    [Fact]
+    public async Task TheRenamedFragmentsOwnUnnumberedBooks_GetNumberAndSeriesPositionTogether()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var only = Item("Wandering #2.5", 1, author.Id); // no bare series: it becomes the canonical one
+        db.MediaItems.Add(only);
+        await db.SaveChangesAsync();
+        var book = Item("Interlude", 2, only.Id);
+        db.MediaItems.Add(book);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        var healed = (await db.MediaItems.FindAsync(book.Id))!;
+        Assert.Equal((2, 2.5), (healed.Number, healed.SeriesPosition));
+        Assert.Equal("Wandering", (await db.MediaItems.FindAsync(only.Id))!.Name);
     }
 }

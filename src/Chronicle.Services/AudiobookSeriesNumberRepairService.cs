@@ -37,10 +37,11 @@ public sealed class AudiobookSeriesNumberRepairService(
             var name = folder is null ? null : Path.GetFileName(folder.Replace('\\', '/').TrimEnd('/'));
             if (string.IsNullOrEmpty(name)) continue;
 
-            var (_, _, series, number) = FileScanService.ParseAudiobookFolderName(name);
-            if (series is null || number is null) continue;
+            // The precise parse: a "1.1" folder position must reach SeriesPosition whole, not floored.
+            var (_, _, series, position) = FileScanService.ParseAudiobookFolderNamePrecise(name);
+            if (series is null || position is null) continue;
 
-            book.Number = number;
+            if (!SeriesPositionHelper.FillIfEmpty(book, position)) continue;
             book.UpdatedAt = DateTime.UtcNow;
             fixedCount++;
         }

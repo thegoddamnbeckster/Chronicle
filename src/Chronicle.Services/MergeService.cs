@@ -131,6 +131,7 @@ public class MergeService(
             LoserParentId       = loser.ParentId,
             LoserYear           = loser.Year,
             LoserNumber         = loser.Number,
+            LoserSeriesPosition = loser.SeriesPosition,
             LoserExternalIdsJson = JsonSerializer.Serialize(
                 loserExternalIds.Select(e => new LoserExternalId(
                     e.Source, e.ExternalId, winnerIdSet.Contains($"{e.Source}:{e.ExternalId}")))),
@@ -379,7 +380,13 @@ public class MergeService(
                     {
                         winnerBlobs["fileScanner"] = loserBlobs["fileScanner"];
                         if (loser.Number.HasValue)
+                        {
                             winner.Number = loser.Number;
+                            // SeriesPosition is derived from Number for a book-series item: leaving the winner's own
+                            // (now describing a different Number) would silently contradict the value just copied.
+                            // Both are null for an episode, so this is a no-op there.
+                            winner.SeriesPosition = loser.SeriesPosition;
+                        }
                     }
                 }
 
@@ -467,6 +474,7 @@ public class MergeService(
             ParentId       = log.LoserParentId,
             Year           = log.LoserYear,
             Number         = log.LoserNumber,
+            SeriesPosition = log.LoserSeriesPosition,
             NormalizedName = MediaItemNormalizer.NormalizeName(log.LoserName),
             // Restore the loser's metadata blob so file paths (fileScanner.filePaths)
             // and any plugin data are available immediately after unmerge.

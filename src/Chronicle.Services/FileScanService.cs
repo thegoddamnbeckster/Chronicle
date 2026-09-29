@@ -2264,6 +2264,18 @@ namespace Chronicle.Services
         internal static (string Title, int? Year, string? Series, int? SeriesNumber)
             ParseAudiobookFolderName(string folderName)
         {
+            var (title, year, series, position) = ParseAudiobookFolderNamePrecise(folderName);
+            return (title, year, series, position.HasValue ? (int)Math.Floor(position.Value) : null);
+        }
+
+        /// <summary>
+        /// <see cref="ParseAudiobookFolderName"/> with the series position kept exactly as written
+        /// ("Expanse - 1.1 - (2012) - ..." is 1.1, not floor 1) -- for callers that write
+        /// <c>MediaItem.SeriesPosition</c> as well as <c>Number</c>.
+        /// </summary>
+        internal static (string Title, int? Year, string? Series, double? SeriesPosition)
+            ParseAudiobookFolderNamePrecise(string folderName)
+        {
             // Split on " - " to get raw segments.
             var raw = folderName.Split(new[] { " - " }, StringSplitOptions.None)
                                 .Select(p => p.Trim())
@@ -2303,19 +2315,20 @@ namespace Chronicle.Services
                 var series = preParts.Length > 0 ? string.Join(" - ", preParts) : null;
 
                 // The series position is the numeric segment before the year ("Singularity - 2 - (2012) - ...").
-                // A decimal (a 1.5 novella) keeps its whole part; Number is an integer.
-                int? seriesNumber = null;
+                // A decimal (a 1.5 novella) is returned whole here; ParseAudiobookFolderName floors it
+                // for Number (an integer).
+                double? seriesPosition = null;
                 foreach (var p in raw[..yearIdx])
                 {
                     if (double.TryParse(p, System.Globalization.NumberStyles.Number,
                             System.Globalization.CultureInfo.InvariantCulture, out var n) && n >= 0 && n < 10000)
                     {
-                        seriesNumber = (int)Math.Floor(n);
+                        seriesPosition = n;
                         break;
                     }
                 }
 
-                return (title, year, series, seriesNumber);
+                return (title, year, series, seriesPosition);
             }
 
             // ── Fallback: no standalone (YYYY) segment found ─────────────────────
@@ -2352,11 +2365,21 @@ namespace Chronicle.Services
         /// </summary>
         internal static (string Name, int? Number) SplitSeriesTag(string tag)
         {
+            var (name, position) = SplitSeriesTagPrecise(tag);
+            return (name, position.HasValue ? (int)Math.Floor(position.Value) : null);
+        }
+
+        /// <summary>
+        /// <see cref="SplitSeriesTag"/> with the position kept exactly as written ("Foo #1.5" is 1.5,
+        /// not floor 1) -- for callers that write <c>MediaItem.SeriesPosition</c> as well as <c>Number</c>.
+        /// </summary>
+        internal static (string Name, double? Position) SplitSeriesTagPrecise(string tag)
+        {
             var m = _seriesTagPositionRegex.Match(tag.Trim());
             if (!m.Success || string.IsNullOrWhiteSpace(m.Groups["name"].Value)) return (tag.Trim(), null);
-            var number = double.TryParse(m.Groups["num"].Value, System.Globalization.NumberStyles.Number,
-                System.Globalization.CultureInfo.InvariantCulture, out var n) ? (int?)Math.Floor(n) : null;
-            return (m.Groups["name"].Value.Trim(), number);
+            var position = double.TryParse(m.Groups["num"].Value, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var n) ? (double?)n : null;
+            return (m.Groups["name"].Value.Trim(), position);
         }
 
         private static bool IsPlaceholder(string s) =>

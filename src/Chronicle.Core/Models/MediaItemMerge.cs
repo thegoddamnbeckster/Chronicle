@@ -13,6 +13,12 @@ public class MediaItemMerge
     public int? LoserYear { get; set; }
     /// <summary>Loser's Number (episode/track ordinal) at merge time, restored onto the stub created by Unmerge.</summary>
     public int? LoserNumber { get; set; }
+    /// <summary>
+    /// Loser's precise (possibly fractional) book-series position at merge time, restored onto the stub
+    /// created by Unmerge. Without it, undoing a merge of e.g. a 1.1 novella recreates the stub with only
+    /// its floored Number. Null for merges logged before this column existed, and for non-book items.
+    /// </summary>
+    public double? LoserSeriesPosition { get; set; }
     /// <summary>JSON array of {Source, ExternalId} objects.</summary>
     public string LoserExternalIdsJson { get; set; } = "[]";
     /// <summary>JSON array of child MediaItem IDs that were re-parented to winner.</summary>

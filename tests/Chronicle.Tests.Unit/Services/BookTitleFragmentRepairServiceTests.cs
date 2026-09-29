@@ -33,9 +33,9 @@ public class BookTitleFragmentRepairServiceTests
             services.GetRequiredService<IServiceScopeFactory>(), NullLogger<BookTitleFragmentRepairService>.Instance));
     }
 
-    private static MediaItem Item(string name, int level, int? parentId, int? number = null) => new()
+    private static MediaItem Item(string name, int level, int? parentId, int? number = null, double? position = null) => new()
     {
-        MediaTypeId = 1, Name = name, HierarchyLevel = level, ParentId = parentId, Number = number,
+        MediaTypeId = 1, Name = name, HierarchyLevel = level, ParentId = parentId, Number = number, SeriesPosition = position,
         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
     };
 
@@ -99,5 +99,87 @@ public class BookTitleFragmentRepairServiceTests
 
         var still = (await db.MediaItems.FindAsync(lone.Id))!;
         Assert.Equal((author.Id, 1), (still.ParentId, still.HierarchyLevel));
+    }
+
+    [Fact]
+    public async Task AFractionalTitlePosition_ReachesSeriesPosition_WhileNumberStaysFloored()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var series = Item("The Expanse", 1, author.Id);
+        var fragment = Item("The Expanse #1.1", 1, author.Id);
+        db.MediaItems.AddRange(series, fragment);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        var moved = (await db.MediaItems.FindAsync(fragment.Id))!;
+        Assert.Equal((series.Id, 1, 1.1), (moved.ParentId, moved.Number, moved.SeriesPosition));
+    }
+
+    [Fact]
+    public async Task AFragmentReplacesAStalePositionTheStubAlreadyCarried()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var series = Item("Some Series", 1, author.Id);
+        var fragment = Item("Some Series #12", 1, author.Id, number: 3, position: 3.5); // leftover from an old placement
+        db.MediaItems.AddRange(series, fragment);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        var moved = (await db.MediaItems.FindAsync(fragment.Id))!;
+        Assert.Equal((12, 12.0), (moved.Number, moved.SeriesPosition));
+    }
+
+    [Fact]
+    public async Task AFractionalFragment_IsNotMergedIntoTheWholeNumberedBookSharingItsFlooredNumber()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var series = Item("The Expanse", 1, author.Id);
+        var fragment = Item("The Expanse #1.1", 1, author.Id);
+        db.MediaItems.AddRange(series, fragment);
+        await db.SaveChangesAsync();
+        var leviathan = Item("Leviathan Wakes", 2, series.Id, number: 1, position: 1);
+        db.MediaItems.Add(leviathan);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        Assert.NotNull(await db.MediaItems.FindAsync(leviathan.Id));
+        var moved = (await db.MediaItems.FindAsync(fragment.Id))!; // survived as its own book, not merged away
+        Assert.Equal((series.Id, 2, 1.1), (moved.ParentId, moved.HierarchyLevel, moved.SeriesPosition));
+    }
+
+    [Fact]
+    public async Task AWholeNumberedFragment_StillMergesIntoAScannedBookWhoseSeriesPositionIsUnset()
+    {
+        var (db, svc) = Setup();
+        await using var _ = db;
+        var author = Item("Author", 0, null);
+        db.MediaItems.Add(author);
+        await db.SaveChangesAsync();
+        var series = Item("Series", 1, author.Id);
+        var fragment = Item("Series #4", 1, author.Id);
+        db.MediaItems.AddRange(series, fragment);
+        await db.SaveChangesAsync();
+        var scanned = Item("Series 4", 2, series.Id, number: 4); // legacy row: Number only
+        db.MediaItems.Add(scanned);
+        await db.SaveChangesAsync();
+
+        await svc.ExecuteAsync(default);
+
+        Assert.Null(await db.MediaItems.FindAsync(fragment.Id));
     }
 }

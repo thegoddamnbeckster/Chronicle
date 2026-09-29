@@ -41,8 +41,9 @@ public sealed class BookTitleFragmentRepairService(
         var reparented = 0;
         foreach (var stub in candidates)
         {
-            var (baseName, number) = FileScanService.SplitSeriesTag(stub.Name);
-            if (!number.HasValue) continue;
+            // Precise: a "#1.5" title must reach SeriesPosition whole, not floored to 1.
+            var (baseName, position) = FileScanService.SplitSeriesTagPrecise(stub.Name);
+            if (!position.HasValue) continue;
 
             var baseNameLower = baseName.ToLowerInvariant();
             var series = await db.MediaItems.FirstOrDefaultAsync(s =>
@@ -50,8 +51,10 @@ public sealed class BookTitleFragmentRepairService(
                 s.Name.ToLower() == baseNameLower, ct);
             if (series is null) continue; // no sibling series container -- leave it, nothing to fold into
 
+            // Matched by the precise position (falling back to Number) so "#1.5" never merges into book 1.
             var scannedBook = await db.MediaItems
-                .FirstOrDefaultAsync(b => b.ParentId == series.Id && b.Number == number, ct);
+                .FirstOrDefaultAsync(b => b.ParentId == series.Id &&
+                                          (b.SeriesPosition ?? (double?)b.Number) == position, ct);
             if (scannedBook is not null)
             {
                 logger.LogInformation(
@@ -68,14 +71,15 @@ public sealed class BookTitleFragmentRepairService(
             {
                 stub.ParentId = series.Id;
                 stub.HierarchyLevel = 2;
-                stub.Number = number;
+                // The title's position replaces whatever the stub had, so both fields are overwritten together.
+                SeriesPositionHelper.Set(stub, position);
                 stub.Name = baseName;
                 stub.UpdatedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync(ct);
                 reparented++;
                 logger.LogInformation(
-                    "Book title fragment repair: \"{Stub}\" ({StubId}) moved into series \"{Series}\" ({SeriesId}) as book {Number}",
-                    stub.Name, stub.Id, series.Name, series.Id, number);
+                    "Book title fragment repair: \"{Stub}\" ({StubId}) moved into series \"{Series}\" ({SeriesId}) as book {Position}",
+                    stub.Name, stub.Id, series.Name, series.Id, position);
             }
         }
 
