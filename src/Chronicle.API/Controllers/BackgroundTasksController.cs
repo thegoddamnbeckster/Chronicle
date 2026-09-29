@@ -1,5 +1,6 @@
 using Chronicle.Data;
 using Chronicle.Services;
+using Chronicle.Services.Plugins;
 using Cronos;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,6 +15,7 @@ public class BackgroundTasksController : ControllerBase
 {
     private readonly ChronicleDbContext _db;
     private readonly ITaskSchedulerService _scheduler;
+    private readonly IPluginRegistry _pluginRegistry;
     // Every real IScheduledTask registered in DI -- used to tell a genuinely triggerable task
     // apart from a background_tasks row that exists purely for status display (see IsRunnable
     // below). Distinct from _scheduler: that's the runner, this is the registry of what it can run.
@@ -22,10 +24,12 @@ public class BackgroundTasksController : ControllerBase
     public BackgroundTasksController(
         ChronicleDbContext db,
         ITaskSchedulerService scheduler,
+        IPluginRegistry pluginRegistry,
         IEnumerable<IScheduledTask> registeredTasks)
     {
         _db        = db;
         _scheduler = scheduler;
+        _pluginRegistry = pluginRegistry;
         _registeredTaskIds = registeredTasks.Select(t => t.TaskId).ToHashSet();
     }
 
@@ -79,8 +83,15 @@ public class BackgroundTasksController : ControllerBase
             // Run Now would always fail with TASK_NOT_FOUND. Deliberately NOT the same signal
             // as IsEnabled/Schedulable: several genuinely runnable tasks (e.g. a disabled plugin
             // sync) are IsEnabled=false and/or Schedulable=false too.
+            //
+            // A plugin row additionally needs an actual handler: either one of PluginTaskRunner's
+            // well-known task IDs, or a matching IPluginTask discovered in the plugin's loaded
+            // assembly. Before this check existed, ANY row for an installed plugin reported
+            // runnable regardless -- PluginTaskRunner's default case for an unhandled custom
+            // task_id just logs a warning and returns (no exception), so Run Now recorded a false
+            // "succeeded" for a task that never actually did anything.
             IsRunnable:       r.PluginId is not null
-                                  ? r.Plugin is not null
+                                  ? r.Plugin is not null && IsPluginTaskRunnable(r.PluginId, r.TaskId)
                                   : _registeredTaskIds.Contains(r.TaskId),
             RunConfirmation:  r.RunConfirmationTitle is not null
                 ? new BackgroundTaskRunConfirmationDto(r.RunConfirmationTitle, r.RunConfirmationMessage ?? string.Empty)
@@ -158,6 +169,21 @@ public class BackgroundTasksController : ControllerBase
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// True if <paramref name="namespacedTaskId"/> (the stored "{pluginId}:{taskId}" row id) has
+    /// an actual handler -- same authority PluginTaskRunner.RunAsync itself uses, so this can't
+    /// drift from what Run Now will really do. See IsRunnable's own comment for the bug this closes.
+    /// </summary>
+    private bool IsPluginTaskRunnable(string pluginId, string namespacedTaskId)
+    {
+        var bareTaskId = namespacedTaskId.Contains(':')
+            ? namespacedTaskId[(namespacedTaskId.IndexOf(':') + 1)..]
+            : namespacedTaskId;
+
+        return PluginTaskRunner.WellKnownTaskIds.Contains(bareTaskId) ||
+               _pluginRegistry.GetPluginTask(pluginId, bareTaskId) is not null;
+    }
 
     private static bool TryParseCron(string expression, out CronExpression? parsed)
     {

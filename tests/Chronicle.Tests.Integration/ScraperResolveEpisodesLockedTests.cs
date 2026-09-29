@@ -314,6 +314,8 @@ public sealed class FakeSingleProviderPluginRegistry(FakeEpisodeListProvider pro
     public IReadOnlyList<IThemePlugin> GetThemePlugins() => [];
     public IReadOnlyList<ISidecarFormatPlugin> GetSidecarFormatPlugins() => [];
     public ISidecarFormatPlugin? GetSidecarFormatPlugin(string pluginId) => null;
+    public IReadOnlyList<IPluginTask> GetPluginTasks() => [];
+    public IPluginTask? GetPluginTask(string pluginId, string taskId) => null;
     public IReadOnlyList<LoadedPlugin> GetLoadedPlugins() => [];
 
     public Task<LoadedPlugin> LoadPluginAsync(

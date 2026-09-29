@@ -53,6 +53,16 @@ public interface IPluginRegistry
     /// </summary>
     ISidecarFormatPlugin? GetSidecarFormatPlugin(string pluginId);
 
+    /// <summary>Returns all loaded <see cref="IPluginTask"/> instances across all plugins.</summary>
+    IReadOnlyList<IPluginTask> GetPluginTasks();
+
+    /// <summary>
+    /// Returns the <see cref="IPluginTask"/> declared by the plugin whose <b>manifest</b> plugin ID
+    /// matches <paramref name="pluginId"/> and whose <see cref="IPluginTask.TaskId"/> matches
+    /// <paramref name="taskId"/> (both case-insensitive), or <c>null</c> if no such task is loaded.
+    /// </summary>
+    IPluginTask? GetPluginTask(string pluginId, string taskId);
+
     /// <summary>Returns all currently loaded plugins.</summary>
     IReadOnlyList<LoadedPlugin> GetLoadedPlugins();
 

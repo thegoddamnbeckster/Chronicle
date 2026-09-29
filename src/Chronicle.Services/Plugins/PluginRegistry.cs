@@ -125,6 +125,23 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<IPluginTask> GetPluginTasks()
+    {
+        lock (_lock)
+            return _plugins.Values.SelectMany(p => p.PluginTasks).ToList();
+    }
+
+    /// <inheritdoc/>
+    public IPluginTask? GetPluginTask(string pluginId, string taskId)
+    {
+        lock (_lock)
+            return _plugins.Values
+                .Where(p => string.Equals(p.Manifest.PluginId, pluginId, StringComparison.OrdinalIgnoreCase))
+                .SelectMany(p => p.PluginTasks)
+                .FirstOrDefault(t => string.Equals(t.TaskId, taskId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <inheritdoc/>
     public async Task<LoadedPlugin> LoadPluginAsync(
         int dbId,
         string dllPath,
@@ -191,13 +208,29 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         var fileScanners    = DiscoverAndInstantiate<IFileScannerPlugin>(assembly, _log);
         var themePlugins    = DiscoverAndInstantiate<IThemePlugin>(assembly, _log);
         var sidecarPlugins  = DiscoverAndInstantiate<ISidecarFormatPlugin>(assembly, _log);
+        var pluginTasks     = DiscoverAndInstantiate<IPluginTask>(assembly, _log);
+
+        // A stream-loaded assembly reports an empty Assembly.Location, so a plugin has no
+        // way to find its own directory on disk. Hand it one explicitly: a "data" folder next
+        // to its DLL/manifest.json, stable across reloads and redeploys (nothing else here
+        // ever deletes it), injected into every instance's settings under the reserved
+        // IPluginTask.DataDirectorySettingsKey so a custom task and its sibling provider(s)
+        // can agree on one path without either hard-coding it.
+        var dataDirectory = Path.Combine(Path.GetDirectoryName(dllPath)!, "data");
+        try { Directory.CreateDirectory(dataDirectory); }
+        catch (Exception ex) { _log.Warning(ex, "Failed to create plugin data directory {Dir}", dataDirectory); }
+
+        var settingsWithDataDir = new Dictionary<string, string>(settings)
+        {
+            [IPluginTask.DataDirectorySettingsKey] = dataDirectory,
+        };
 
         // Configure all providers with the supplied settings
         foreach (var provider in providers)
         {
             try
             {
-                provider.Configure(settings);
+                provider.Configure(settingsWithDataDir);
                 _log.Information("Configured metadata provider {PluginId}", provider.PluginId);
             }
             catch (Exception ex)
@@ -210,7 +243,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         {
             try
             {
-                ip.Configure(settings);
+                ip.Configure(settingsWithDataDir);
                 _log.Information("Configured import provider {PluginId}", ip.PluginId);
             }
             catch (Exception ex)
@@ -223,7 +256,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         {
             try
             {
-                fs.Configure(settings);
+                fs.Configure(settingsWithDataDir);
                 _log.Information("Configured file scanner {PluginId}", fs.PluginId);
             }
             catch (Exception ex)
@@ -236,7 +269,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         {
             try
             {
-                sc.Configure(settings);
+                sc.Configure(settingsWithDataDir);
                 _log.Information("Configured sidecar format plugin {PluginId}", sc.PluginId);
             }
             catch (Exception ex)
@@ -245,8 +278,21 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             }
         }
 
+        foreach (var task in pluginTasks)
+        {
+            try
+            {
+                task.Configure(settingsWithDataDir);
+                _log.Information("Configured plugin task {TaskId}", task.TaskId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "Failed to configure plugin task {TaskId}", task.TaskId);
+            }
+        }
+
         var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets,
-            importProviders, reportPlugins, fileScanners, themePlugins, sidecarPlugins);
+            importProviders, reportPlugins, fileScanners, themePlugins, sidecarPlugins, pluginTasks);
 
         LoadedPlugin? evicted;
         lock (_lock)
@@ -263,9 +309,9 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         }
 
         _log.Information(
-            "Plugin loaded: {Name} v{Version} — {Providers} metadata, {Widgets} widget(s), {Import} import, {Reports} report(s), {Scanners} scanner(s), {Themes} theme(s), {Sidecars} sidecar format(s)",
+            "Plugin loaded: {Name} v{Version} — {Providers} metadata, {Widgets} widget(s), {Import} import, {Reports} report(s), {Scanners} scanner(s), {Themes} theme(s), {Sidecars} sidecar format(s), {Tasks} custom task(s)",
             manifest.Name, manifest.Version, providers.Count, widgets.Count,
-            importProviders.Count, reportPlugins.Count, fileScanners.Count, themePlugins.Count, sidecarPlugins.Count);
+            importProviders.Count, reportPlugins.Count, fileScanners.Count, themePlugins.Count, sidecarPlugins.Count, pluginTasks.Count);
 
         return loaded;
         } // end try

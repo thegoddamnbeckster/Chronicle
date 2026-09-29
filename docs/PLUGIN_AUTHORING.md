@@ -421,6 +421,16 @@ public class MyCustomTask : IPluginTask
     // Must match the task_id declared in manifest.json exactly
     public string TaskId => "my-custom-sync";
 
+    // Called once after instantiation, same shape as IMetadataProvider.Configure. Chronicle
+    // always injects a stable, plugin-owned data directory under
+    // IPluginTask.DataDirectorySettingsKey ("__data_dir") -- use it for any file this task
+    // needs to persist between runs (a crawl cursor, a local cache a sibling IMetadataProvider
+    // also reads). It's the only way to get such a directory: Assembly.Location is empty for a
+    // plugin assembly Chronicle loads via LoadFromStream.
+    private string? _dataDir;
+    public void Configure(IReadOnlyDictionary<string, string> settings) =>
+        _dataDir = settings[IPluginTask.DataDirectorySettingsKey];
+
     public async Task RunAsync(CancellationToken ct)
     {
         // Your scheduled work here
@@ -429,8 +439,13 @@ public class MyCustomTask : IPluginTask
 ```
 
 Chronicle discovers `IPluginTask` implementations by scanning your plugin assembly at load
-time. The `TaskId` property is matched against the `task_id` declared in `manifest.json`.
-One class per declared custom task.
+time (`PluginRegistry.LoadPluginCoreAsync`, the same pass that discovers `IMetadataProvider`
+etc.). The `TaskId` property is matched against the `task_id` declared in `manifest.json`, and
+`PluginTaskRunner` dispatches to it — via `IPluginRegistry.GetPluginTask` — for any task_id that
+isn't one of the well-known ones. One class per declared custom task. See
+`Chronicle.Plugin.MoviesRemastered`'s `MoviesRemasteredSyncIndexTask` (task_id
+`sync-search-index`) for a complete real example, including a sibling `IMetadataProvider`
+reading back what the task wrote.
 
 ---
 
