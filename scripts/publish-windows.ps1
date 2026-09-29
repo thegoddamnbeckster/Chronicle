@@ -134,4 +134,4 @@ Write-Host "  Size     : $([math]::Round($size, 1)) MB" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Next: run Chronicle.API.exe / Start Chronicle.bat directly here, or install it as a" -ForegroundColor Cyan
 Write-Host "service: .\scripts\install-service.ps1 -InstallPath `"$((Resolve-Path $OutputDir).Path)`"" -ForegroundColor Cyan
-Write-Host "(publish straight to your real install location with -OutputDir if you'd rather skip a copy step, e.g. -OutputDir C:\Chronicle)" -ForegroundColor DarkGray
+Write-Host "(publish straight to your real install location with -OutputDir if you'd rather skip a copy step, e.g. -OutputDir `"$env:ProgramFiles\Chronicle`")" -ForegroundColor DarkGray

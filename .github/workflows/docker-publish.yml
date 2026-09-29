@@ -1,0 +1,76 @@
+name: Publish Docker image
+
+# Builds the image from ./Dockerfile (API + web frontend, see that file's own comments) and
+# pushes it to GitHub Container Registry whenever a version tag is pushed. No secrets to
+# configure: GITHUB_TOKEN already has package-write permission for this repo once the
+# `packages: write` permission below is granted, and ghcr.io authenticates with it directly.
+#
+# First real push: the resulting package (ghcr.io/thegoddamnbeckster/chronicle) is created
+# PRIVATE by default. Flip it to public once, in the repo's Packages tab (Package settings ->
+# Change visibility) -- otherwise `docker pull` fails for anyone who isn't a repo collaborator.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual trigger for a one-off rebuild of an existing tag (e.g. after fixing something in the
+  # Dockerfile itself without cutting a new version) without needing a throwaway tag just to
+  # trigger a rebuild.
+  workflow_dispatch:
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # amd64 only for now -- NOT verified on arm64 (Raspberry Pi, Apple Silicon hosts).
+          # SkiaSharp.NativeAssets.Linux.NoDependencies (see Chronicle.API.csproj's own comment
+          # on why it's referenced) may or may not ship arm64 native binaries; publishing a
+          # multi-arch image with an unverified arch would mean a self-hoster on a Pi pulls
+          # this, hits a DllNotFoundException on first QR-code render, and has a worse
+          # experience than arm64 not being offered at all. Add linux/arm64 here once someone
+          # has actually built and smoke-tested it on real arm64 hardware.
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

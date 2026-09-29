@@ -2,6 +2,15 @@
 
 **Universal Media Tracking Platform**
 
+[![Latest release](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle?label=version&color=6f42c1)](https://github.com/thegoddamnbeckster/Chronicle/releases/latest)
+
+## ⬇️ Download
+
+| | |
+|---|---|
+| 🪟 **Windows** | **[Download Chronicle-Setup.exe](https://github.com/thegoddamnbeckster/Chronicle/releases/latest)** — installer, sets up the service for you |
+| 🐳 **Docker** | `docker run -p 7979:7979 ghcr.io/thegoddamnbeckster/chronicle:latest` |
+
 Chronicle is a self-hosted, open-source media tracking application that lets you track any type of media — movies, TV shows, music, books, podcasts, audiobooks, anime, fan edits, and more. Built with privacy, extensibility, and user control as core principles.
 
 ---
@@ -9,7 +18,6 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 ## Project Status
 
 **Current Phase:** Active development
-**Current Version:** v0.10.0
 **Target v1.0:** Q4 2026
 
 ---
@@ -69,6 +77,12 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 | **[Hardcover](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover)** | Import/Sync + Metadata | Books, Audiobooks | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Hardcover?label=&color=a0522d)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover/releases/latest) |
 | **[File Scanner](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FileScanner)** | Scanner | All (local files) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.FileScanner?label=&color=4f72c4)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FileScanner/releases/latest) |
 | **[Fanart.tv](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanartTV)** | Artwork | Movies, TV, Anime, Fan Edits, Music | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.FanartTV?label=&color=F5A623)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanartTV/releases/latest) |
+| **[TheTVDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TheTVDB)** | Metadata | TV, Seasons, Episodes | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.TheTVDB?label=&color=6AB7E2)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TheTVDB/releases/latest) |
+| **[TVMaze](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TVMaze)** | Metadata | TV, Seasons, Episodes | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.TVMaze?label=&color=CF0000)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TVMaze/releases/latest) |
+| **[Wikipedia](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Wikipedia)** | Metadata | Fallback summaries/images for any media type | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Wikipedia?label=&color=000000)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Wikipedia/releases/latest) |
+| **[Movies Remastered (MRDb)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered)** | Metadata | Fan Edits (moviesremastered.com) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered?label=&color=CC0000)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered/releases/latest) |
+| **[Kodi NFO](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO)** | Sidecar Format | Movies, TV (reads/writes Kodi .nfo files) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO?label=&color=1B75BC)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO/releases/latest) |
+| **[Default Themes](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Themes.Default)** | Theme | All (Light, Dark, Navy & Pink, Dark Teal) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Themes.Default?label=)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Themes.Default/releases/latest) |
 
 ### React Frontend (20+ pages)
 - **Sonarr/Radarr aesthetic** — Dark teal/green theme
@@ -119,15 +133,16 @@ npm run dev
 
 Open `http://localhost:8888`. The first account you register is automatically admin.
 
-Create `src\Chronicle.API\appsettings.Development.json` with your secrets (this file is `.gitignore`d):
+Create `src\Chronicle.API\appsettings.Development.json` with your own secrets (this file is `.gitignore`d) — both keys are optional; leave either out and Chronicle generates/omits it automatically:
 
 ```json
 {
   "Security": { "JwtSecret": "your-64-char-secret" },
-  "GitHub": { "Token": "your-github-pat" },
-  "Urls": "http://localhost:7979"
+  "GitHub": { "Token": "your-github-pat" }
 }
 ```
+
+The port comes from `ports.json` at the repo root, not appsettings — see [PortManager.cs](src/Chronicle.API/PortManager.cs) for the full precedence order (env var → `ports.json` → the 7979 default).
 
 ---
 
@@ -143,8 +158,8 @@ src/
 └── Chronicle.Web/        # React 18 + TypeScript frontend
 
 tests/
-├── Chronicle.Tests.Unit/         # 529 passing
-└── Chronicle.Tests.Integration/  # 185 passing
+├── Chronicle.Tests.Unit/         # 939 passing
+└── Chronicle.Tests.Integration/  # 252 passing
 ```
 
 ---
@@ -152,7 +167,8 @@ tests/
 ## Roadmap
 
 ### Phase 1: MVP — Complete ✅
-- Core API, SQLite, JWT + API key auth, React frontend, Windows packaging
+- Core API, SQLite, JWT + API key auth, React frontend
+- Official packaging — Windows installer (registers a self-restarting Windows Service) and a Docker image; see [Download](#-download)
 
 ### Phase 2: Core Features — In Progress 🔄
 - ✅ Hierarchical file scanner (Show→Season→Episode, Artist→Album→Track, Audiobooks)
@@ -175,7 +191,6 @@ tests/
 - 🔲 Multi-user library sharing
 - 🔲 Plex scrobbler integration
 - 🔲 Custom media types via UI
-- 🔲 Docker support
 
 ### Phase 4: Ecosystem
 - 🔲 Native mobile apps
@@ -213,7 +228,7 @@ Chronicle has a fully documented plugin system. See [docs/PLUGIN_AUTHORING.md](d
 - Settings schema and encryption
 - Build/packaging and GitHub release publishing
 
-The six existing plugins serve as reference implementations across different complexity levels — from a simple API-key metadata provider (TMDB) to a full OAuth import provider (Trakt) to an HTML-scraping provider (FanEdit).
+The existing plugins (see the table above) serve as reference implementations across different complexity levels — from a simple API-key metadata provider (TMDB) to a full OAuth import provider (Trakt) to an HTML-scraping provider (FanEdit).
 
 ---
 

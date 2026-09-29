@@ -17,7 +17,10 @@
     existing install/port/account and reconfigures in place rather than erroring.
 
 .PARAMETER InstallPath
-    Directory where Chronicle.API.exe was published. Default: C:\Chronicle
+    Directory where Chronicle.API.exe was published. Default: Program Files\Chronicle (this
+    script grants the chosen -ServiceUser explicit write access here, below -- Chronicle
+    writes its own database/logs/keys into this same folder, which Program Files does not
+    allow by default for anything other than an administrator).
 
 .PARAMETER Port
     Port Chronicle listens on. Default: 7979 (Chronicle's own documented default -- see
@@ -45,7 +48,7 @@
     .\install-service.ps1 -ServiceUser "MYPC\chronicleuser" -ServicePassword "P@ssword1"
 #>
 param(
-    [string]$InstallPath     = "C:\Chronicle",
+    [string]$InstallPath     = (Join-Path ${env:ProgramFiles} "Chronicle"),
     [int]$Port               = 7979,
     [string]$ServiceUser     = "LocalService",
     [string]$ServicePassword = "",
@@ -112,8 +115,13 @@ if ($ServiceUser -in $builtInAccounts) {
         Write-Error "A -ServicePassword is required for custom account '$ServiceUser'."
         exit 1
     }
+    # ".\name", not a bare "name" -- New-Service's underlying Win32 API needs an explicit
+    # domain/machine qualifier to resolve a LOCAL account correctly instead of misinterpreting
+    # it (e.g. trying to resolve it against a domain that doesn't exist here). A name that
+    # already has one (a real "DOMAIN\user" or ".\user" the caller passed in) is left alone.
+    $qualifiedServiceUser = if ($ServiceUser -match '\\') { $ServiceUser } else { ".\$ServiceUser" }
     $credential = New-Object System.Management.Automation.PSCredential(
-        $ServiceUser,
+        $qualifiedServiceUser,
         (ConvertTo-SecureString $ServicePassword -AsPlainText -Force)
     )
     New-Service `
@@ -123,6 +131,107 @@ if ($ServiceUser -in $builtInAccounts) {
         -BinaryPathName "`"$ExePath`"" `
         -StartupType Automatic `
         -Credential $credential | Out-Null
+
+    # Root-caused (2026-09-29, while adding custom-account support for SMB share access):
+    # New-Service/sc.exe do NOT grant "Log on as a service" (SeServiceLogonRight) to a custom
+    # account -- only the Services MMC snap-in does that automatically, as a side effect of its
+    # own UI flow. Without it, the service is created successfully but fails to START with a
+    # logon failure (Win32 error 1069), silently, the first time SCM tries to start it. No
+    # built-in PowerShell cmdlet grants this right; LsaAddAccountRights via P/Invoke is the
+    # standard, well-established way to do it from a script. Skipped for the built-in accounts
+    # above (LocalService/NetworkService/LocalSystem already have it by design).
+    $bareUser = $ServiceUser.Split('\')[-1]
+    Add-Type -Namespace ChronicleInstall -Name LsaRights -MemberDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+public struct LSA_UNICODE_STRING {
+    public ushort Length;
+    public ushort MaximumLength;
+    public IntPtr Buffer;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct LSA_OBJECT_ATTRIBUTES {
+    public int Length;
+    public IntPtr RootDirectory;
+    public IntPtr ObjectName;
+    public int Attributes;
+    public IntPtr SecurityDescriptor;
+    public IntPtr SecurityQualityOfService;
+}
+
+public static class Native {
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern uint LsaOpenPolicy(
+        LSA_UNICODE_STRING[] SystemName, ref LSA_OBJECT_ATTRIBUTES ObjectAttributes,
+        int DesiredAccess, out IntPtr PolicyHandle);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern uint LsaAddAccountRights(
+        IntPtr PolicyHandle, byte[] AccountSid,
+        LSA_UNICODE_STRING[] UserRights, int CountOfRights);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern uint LsaClose(IntPtr ObjectHandle);
+}
+
+public static class LsaRightsGranter {
+    public static void GrantServiceLogonRight(string accountName) {
+        var sid = new System.Security.Principal.NTAccount(accountName)
+            .Translate(typeof(System.Security.Principal.SecurityIdentifier))
+            as System.Security.Principal.SecurityIdentifier;
+        var sidBytes = new byte[sid.BinaryLength];
+        sid.GetBinaryForm(sidBytes, 0);
+
+        var objectAttributes = new LSA_OBJECT_ATTRIBUTES();
+        IntPtr policyHandle;
+        uint status = Native.LsaOpenPolicy(null, ref objectAttributes, 0x00000800 /* POLICY_CREATE_ACCOUNT + lookup */, out policyHandle);
+        if (status != 0)
+            throw new InvalidOperationException("LsaOpenPolicy failed: " + status);
+
+        try {
+            var right = "SeServiceLogonRight";
+            var rightStr = new LSA_UNICODE_STRING {
+                Buffer = Marshal.StringToHGlobalUni(right),
+                Length = (ushort)(right.Length * 2),
+                MaximumLength = (ushort)((right.Length + 1) * 2)
+            };
+            var rights = new[] { rightStr };
+            status = Native.LsaAddAccountRights(policyHandle, sidBytes, rights, 1);
+            Marshal.FreeHGlobal(rightStr.Buffer);
+            if (status != 0)
+                throw new InvalidOperationException("LsaAddAccountRights failed: " + status);
+        } finally {
+            Native.LsaClose(policyHandle);
+        }
+    }
+}
+'@
+    [ChronicleInstall.LsaRights.LsaRightsGranter]::GrantServiceLogonRight("$env:COMPUTERNAME\$bareUser")
+    Write-Host "Granted '$bareUser' the right to log on as a service."
+}
+
+# ── Grant the service account write access to $InstallPath ────────────────────────────────
+# Root-caused live (2026-09-29): Chronicle writes its own database, logs, and encryption keys
+# directly into $InstallPath (see Program.cs -- everything is anchored to the app's own
+# directory, deliberately, so it works the same way regardless of install location). That's a
+# non-issue under C:\Chronicle (a plain folder, writable by anyone by default), but installing
+# under Program Files -- which LocalService/NetworkService/a custom account do NOT have write
+# access to by default -- would leave the service unable to create chronicle.db on first run.
+# Granting Modify (not Full Control) explicitly to just this folder, for just the account this
+# service actually runs as, fixes that everywhere without broadening what that account can do
+# anywhere else on the machine. Skipped for LocalSystem, which already has full access
+# everywhere by design -- an explicit grant would be a no-op.
+if ($ServiceUser -ne "LocalSystem") {
+    $aclAccount = switch ($ServiceUser) {
+        "LocalService"   { "NT AUTHORITY\LocalService" }
+        "NetworkService" { "NT AUTHORITY\NetworkService" }
+        default          { $ServiceUser }   # custom domain/local account, as given
+    }
+    icacls $InstallPath /grant "${aclAccount}:(OI)(CI)M" /T /Q | Out-Null
+    Write-Host "Granted $aclAccount write access to $InstallPath"
 }
 
 # ── Recovery actions ───────────────────────────────────────────────────────────

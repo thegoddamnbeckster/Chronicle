@@ -1,0 +1,87 @@
+name: Build Windows installer
+
+# Builds Chronicle-Setup-<version>.exe (installer/chronicle.iss) and attaches it to the
+# GitHub Release for the pushed tag. Mirrors docker-publish.yml's own trigger shape so "push a
+# version tag" is the one action that cuts every release artifact this project ships.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to attach the installer to the tag's GitHub Release
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: src/Chronicle.Web/package-lock.json
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          # Strip the leading "v" (tags are "v0.10.0"; installer/app version strings shouldn't
+          # carry it) -- same convention Chronicle.API.csproj's own SetVersionFromGit target
+          # already uses for the app's own version string.
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Publish Chronicle
+        shell: pwsh
+        run: .\scripts\publish-windows.ps1 -Version "${{ steps.version.outputs.version }}" -OutputDir ".\publish" -SkipTests
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=${{ steps.version.outputs.version }}" `
+            installer\chronicle.iss
+
+      # ── Code signing ─────────────────────────────────────────────────────────────────────
+      # Not wired up yet -- needs a SignPath.io open-source-program enrollment (free for MIT-
+      # licensed projects; see PROJECT_MAINTAINER: apply at https://signpath.io/apply, which
+      # verifies GitHub repo ownership) done by a repo maintainer, since it's a third-party
+      # account only the project owner can create. Once you have a SignPath organization,
+      # project, and signing policy set up, this step becomes roughly:
+      #
+      #   - name: Sign installer
+      #     uses: signpath/github-action-submit-signing-request@v1
+      #     with:
+      #       api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+      #       organization-id: '<from SignPath>'
+      #       project-slug: 'chronicle'
+      #       signing-policy-slug: 'release-signing'
+      #       artifact-configuration-slug: 'installer'
+      #       github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
+      #       wait-for-completion: true
+      #       output-artifact-directory: 'dist-signed'
+      #
+      # (SignPath signs an artifact you've already uploaded via actions/upload-artifact, then
+      # hands back a signed copy -- it doesn't sign a local file directly. See their GitHub
+      # Actions integration docs for the exact upload/download step shape.) Until this is
+      # wired up, the installer below is unsigned: Windows SmartScreen will show an "unknown
+      # publisher" warning on first run, which users have to click through manually.
+
+      - name: Upload installer to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Chronicle-Setup-*.exe
