@@ -31,6 +31,8 @@ if ($svc) {
     exit 1
 }
 
+Remove-NetFirewallRule -DisplayName "Chronicle" -ErrorAction SilentlyContinue
+
 Write-Host ""
 Write-Host "Chronicle service removed." -ForegroundColor Green
 Write-Host "Your data and configuration files have been left in place."

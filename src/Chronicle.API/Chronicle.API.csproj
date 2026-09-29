@@ -79,4 +79,39 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- plugins/ is gitignored (deployed at runtime by RunTestEnvironment.ps1/Deploy-Plugin.ps1
+         or the in-app catalog installer, never source-controlled), but the SDK's default
+         globbing is filesystem-based and doesn't know that: it swept up every manifest.json
+         (though not the DLLs, which aren't a default Content extension) this machine had
+         locally deployed and copied them into a real publish-windows.ps1 output, confirmed live
+         (2026-09-29). A published Chronicle is meant to install with ZERO plugins, matching the
+         "install Chronicle only, plugins come from the catalog" model, so this is fully
+         removed, not just excluded from the publish copy like the appsettings fix above: it was
+         never meant to be a build-output artifact for local dev either. -->
+    <Content Remove="plugins/**" />
+    <None Remove="plugins/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Both are gitignored, local-only override files, the Web SDK's default globbing picks
+         up any appsettings*.json under the project and copies it to both the build output AND
+         a `dotnet publish` output. CopyToOutputDirectory is left alone (dotnet run/build in dev
+         still needs its own appsettings.Development.json copied next to the DLL, exactly as
+         before), but CopyToPublishDirectory is turned off for both: confirmed live (2026-09-29)
+         that a real publish-windows.ps1 run picked up THIS machine's own local
+         appsettings.Production.json, making the published output depend on whatever a given
+         contributor's machine happened to have lying around instead of being reproducible from
+         a clean checkout. Docker's .dockerignore already excludes the same two files from its
+         build context for the identical reason, this is that fix's counterpart for a native
+         Windows publish. Real production config comes from environment variables or a
+         ports.json dropped in at deploy time (see PortManager.cs), not a baked-in file. -->
+    <Content Update="appsettings.Production.json">
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+    <Content Update="appsettings.Development.json">
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

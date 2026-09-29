@@ -1,10 +1,12 @@
 # Chronicle — Windows Publish Script
-# Builds a self-contained Windows x64 executable package
-# Usage: .\scripts\publish-windows.ps1 [-Version "0.1.0"] [-OutputDir ".\publish"]
+# Builds a self-contained Windows x64 executable (no .NET runtime needed on the target
+# machine) with the React frontend baked into wwwroot, ready for install-service.ps1.
+# Usage: .\scripts\publish-windows.ps1 [-Version "0.1.0"] [-OutputDir ".\publish"] [-SkipTests]
 
 param(
-    [string]$Version = "0.1.0",
-    [string]$OutputDir = ".\publish"
+    [string]$Version   = "0.1.0",
+    [string]$OutputDir = ".\publish",
+    [switch]$SkipTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,21 +24,28 @@ if (Test-Path $OutputDir) {
 New-Item -ItemType Directory -Path $OutputDir | Out-Null
 
 # ── 2. Run tests ──────────────────────────────────────────────────────────────
-Write-Host "Running tests..." -ForegroundColor Yellow
-& dotnet test "$Root\src\Chronicle.sln" --verbosity quiet
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Tests failed. Aborting publish."
-    exit 1
+if (-not $SkipTests) {
+    Write-Host "Running tests..." -ForegroundColor Yellow
+    & dotnet test "$Root\src\Chronicle.sln" --verbosity quiet
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Tests failed. Aborting publish. Pass -SkipTests to publish anyway (not recommended)."
+        exit 1
+    }
+    Write-Host "Tests passed." -ForegroundColor Green
+} else {
+    Write-Host "Skipping tests (-SkipTests)." -ForegroundColor Yellow
 }
-Write-Host "Tests passed." -ForegroundColor Green
 
 # ── 3. Publish backend ────────────────────────────────────────────────────────
+# Publishes directly INTO $OutputDir (not a subfolder) -- install-service.ps1 expects
+# Chronicle.API.exe at the root of whatever -InstallPath it's given, so this and that script
+# agree on layout without either needing to know about the other's internals.
 Write-Host "Publishing Chronicle.API..." -ForegroundColor Yellow
 & dotnet publish "$Root\src\Chronicle.API\Chronicle.API.csproj" `
     --configuration Release `
     --runtime win-x64 `
     --self-contained true `
-    --output "$OutputDir\api" `
+    --output "$OutputDir" `
     -p:PublishSingleFile=true `
     -p:PublishTrimmed=false `
     -p:Version=$Version
@@ -44,101 +53,85 @@ if ($LASTEXITCODE -ne 0) { Write-Error "Backend publish failed."; exit 1 }
 
 Write-Host "Backend published." -ForegroundColor Green
 
-# ── 4. Build frontend (if Node is available) ──────────────────────────────────
+# ── 4. Build frontend ──────────────────────────────────────────────────────────
+# Not optional (unlike the old version of this script) -- Program.cs now serves the web UI
+# directly from wwwroot (see its "Serve the built React frontend" comment), so a publish
+# without it is a Chronicle with no web UI at all, not a smaller/lesser install.
 $nodeAvailable = Get-Command node -ErrorAction SilentlyContinue
-if ($nodeAvailable) {
-    Write-Host "Building React frontend..." -ForegroundColor Yellow
-    Push-Location "$Root\src\Chronicle.Web"
-    & npm install --silent
-    if ($LASTEXITCODE -ne 0) { Write-Error "npm install failed."; exit 1 }
+if (-not $nodeAvailable) {
+    Write-Error "Node.js is required to build the web frontend (Program.cs serves it directly -- there is no API-only publish option). Install Node.js and re-run."
+    exit 1
+}
+Write-Host "Building React frontend..." -ForegroundColor Yellow
+Push-Location "$Root\src\Chronicle.Web"
+try {
+    & npm ci --silent
+    if ($LASTEXITCODE -ne 0) { Write-Error "npm ci failed."; exit 1 }
     & npm run build
     if ($LASTEXITCODE -ne 0) { Write-Error "Frontend build failed."; exit 1 }
+} finally {
     Pop-Location
-    # Copy built frontend into API's wwwroot
-    $wwwroot = "$OutputDir\api\wwwroot"
-    New-Item -ItemType Directory -Path $wwwroot -Force | Out-Null
-    Copy-Item -Path "$Root\src\Chronicle.Web\dist\*" -Destination $wwwroot -Recurse
-    Write-Host "Frontend built and copied." -ForegroundColor Green
-} else {
-    Write-Host "Node.js not found — skipping frontend build." -ForegroundColor Yellow
-    Write-Host "Install Node.js and re-run to include the web UI." -ForegroundColor Yellow
 }
+$wwwroot = Join-Path $OutputDir "wwwroot"
+New-Item -ItemType Directory -Path $wwwroot -Force | Out-Null
+Copy-Item -Path "$Root\src\Chronicle.Web\dist\*" -Destination $wwwroot -Recurse
+Write-Host "Frontend built and copied." -ForegroundColor Green
 
-# ── 5. Copy config template ───────────────────────────────────────────────────
-$configTemplate = "$OutputDir\appsettings.json"
-Copy-Item "$Root\src\Chronicle.API\appsettings.json" $configTemplate
-# Reset the JWT secret placeholder in the output copy
-(Get-Content $configTemplate) `
-    -replace '"JwtSecret": ".*?"', '"JwtSecret": "CHANGE_THIS_TO_A_RANDOM_SECRET_AT_LEAST_32_CHARS"' |
-    Set-Content $configTemplate
-
-# ── 6. Create start script ────────────────────────────────────────────────────
+# ── 5. Create start script (for running by hand, outside the Windows Service) ─────────────
 @"
 @echo off
 echo Starting Chronicle...
 Chronicle.API.exe
 pause
-"@ | Set-Content "$OutputDir\Start Chronicle.bat"
+"@ | Set-Content (Join-Path $OutputDir "Start Chronicle.bat")
 
-# ── 7. Create README ──────────────────────────────────────────────────────────
+# ── 6. Create README ──────────────────────────────────────────────────────────
 @"
 Chronicle v$Version
 ==================
 
 SETUP
 -----
-1. Open appsettings.json and set a strong JwtSecret (32+ random characters)
-2. Run "Start Chronicle.bat" (or Chronicle.API.exe directly)
-3. Open http://localhost:8080 in your browser
-4. Register your account (first account is automatically admin)
+1. Run "Start Chronicle.bat" (or Chronicle.API.exe directly), or install it as a Windows
+   service with install-service.ps1 for it to run automatically and restart itself if it
+   ever crashes.
+2. Open http://localhost:7979 in your browser (see PORT below to use a different one).
+3. Register your account (first account is automatically admin).
+4. Settings -> Plugins -> Browse Catalog to add metadata providers, scrobblers, etc.
+   Nothing is bundled -- Chronicle itself is the whole download; plugins are opt-in,
+   installed and updated from inside the app.
 
-CONFIGURATION
--------------
-All settings are in appsettings.json:
-  - ConnectionStrings.DefaultConnection : SQLite database file path
-  - Security.JwtSecret                  : MUST be changed before use
-  - Urls                                : Change port here (default :8080)
-
-API
----
-Swagger UI: http://localhost:8080/swagger
-Scrobble endpoint: POST http://localhost:8080/api/v1/scrobble
+PORT
+----
+Default is 7979. To use a different one, create a ports.json file next to
+Chronicle.API.exe:
+  { "api": 9000 }
+or set the CHRONICLE_API_PORT environment variable before starting it -- an environment
+variable always wins over ports.json if both are set.
 
 DATA
 ----
-The SQLite database (chronicle.db) is created in the same folder as the exe.
-Back it up regularly.
-"@ | Set-Content "$OutputDir\README.txt"
+Everything Chronicle writes -- the SQLite database, logs\, keys\ (encryption keys; do not
+delete or your plugin credentials stop decrypting) -- lives next to Chronicle.API.exe.
+Back up the whole folder, or at minimum chronicle.db and keys\, regularly. Nothing is
+written anywhere else on the machine.
 
-# ── 8. Build external plugins ─────────────────────────────────────────────────
-$PluginsOutDir = Join-Path $OutputDir "plugins"
-New-Item -ItemType Directory -Force -Path $PluginsOutDir | Out-Null
+The JWT signing secret is generated automatically on first run and stored in keys\ --
+there is nothing to configure for this.
 
-foreach ($pluginDir in @(
-    "W:\Scripts\Chronicle.Plugin.TMDB",
-    "W:\Scripts\Chronicle.Plugin.MusicBrainz"
-)) {
-    if (Test-Path $pluginDir) {
-        Write-Host "Building plugin: $pluginDir" -ForegroundColor Cyan
-        $pluginPublish = Join-Path $pluginDir "publish"
-        & dotnet publish $pluginDir -c Release -o $pluginPublish --no-self-contained
-        if ($LASTEXITCODE -ne 0) { Write-Error "Plugin build failed: $pluginDir"; exit 1 }
-        $manifestPath = Join-Path $pluginDir "manifest.json"
-        $pluginId = (Get-Content $manifestPath | ConvertFrom-Json).plugin_id
-        $dest = Join-Path $PluginsOutDir $pluginId
-        New-Item -ItemType Directory -Force -Path $dest | Out-Null
-        Copy-Item -Path (Join-Path $pluginPublish "*") -Destination $dest -Recurse -Force
-        Write-Host "  Deployed $pluginId to $dest" -ForegroundColor Green
-    } else {
-        Write-Host "  Plugin directory not found, skipping: $pluginDir" -ForegroundColor Yellow
-    }
-}
+API
+---
+Swagger UI: http://localhost:7979/swagger
+Scrobble endpoint: POST http://localhost:7979/api/v1/scrobble
+"@ | Set-Content (Join-Path $OutputDir "README.txt")
 
-# ── 9. Summary ────────────────────────────────────────────────────────────────
+# ── 7. Summary ────────────────────────────────────────────────────────────────
 $size = (Get-ChildItem $OutputDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
 Write-Host ""
 Write-Host "Publish complete!" -ForegroundColor Green
 Write-Host "  Location : $OutputDir" -ForegroundColor Cyan
 Write-Host "  Size     : $([math]::Round($size, 1)) MB" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "IMPORTANT: Edit appsettings.json and set a strong JwtSecret before distributing." -ForegroundColor Yellow
+Write-Host "Next: run Chronicle.API.exe / Start Chronicle.bat directly here, or install it as a" -ForegroundColor Cyan
+Write-Host "service: .\scripts\install-service.ps1 -InstallPath `"$((Resolve-Path $OutputDir).Path)`"" -ForegroundColor Cyan
+Write-Host "(publish straight to your real install location with -OutputDir if you'd rather skip a copy step, e.g. -OutputDir C:\Chronicle)" -ForegroundColor DarkGray
