@@ -134,7 +134,6 @@ Enrichment — TMDB                          [← Back to Background Tasks]
 │  ✓ Folder name detected: "Alanis Morissette"                            │
 │  ✓ Audio tags present                                                   │
 │  ✓ Year in folder: 1974                                                 │
-│  ✗ NFO file: not found                                                  │
 │  ✓ Local poster: found                                                  │
 │  Confidence: 87%  ████████████████░░░░                                  │
 │                                                                         │

@@ -83,14 +83,13 @@ For each root path:
    - `Show.Name.S02E05.Episode.Title.mp4` → show="Show Name", season=2, episode=5
    - `Show Name - 2x05 - Episode Title.mkv` → same
 2. **Embedded metadata** — Uses `TagLib#` (NuGet: `TagLibSharp`) to read MP4/MKV metadata tags
-3. **NFO sidecar** — Reads Kodi-compatible `.nfo` XML files if present alongside the video
 
 ### Audio files
 
 1. **Embedded ID3/Vorbis/FLAC tags** — Artist, Album, Track, Year, Genre via `TagLibSharp`
 2. **Folder structure** — `Artist/Album/01 - Track.flac` as fallback
 
-### Extraction priority: embedded tags > NFO sidecar > filename parsing
+### Extraction priority: embedded tags > filename parsing
 
 ---
 
@@ -98,7 +97,7 @@ For each root path:
 
 ### Match pipeline (in order)
 
-1. **External ID match** — If NFO contains TMDB/IMDB ID, look up `media_external_ids` directly
+1. **External ID match** — If embedded tags carry a TMDB/IMDB ID, look up `media_external_ids` directly
 2. **Database title+year match** — `media_items WHERE name = ? AND year = ?`
 3. **Fuzzy title match** — Levenshtein distance ≤ 2 on normalized title (lowercase, strip articles)
 4. **Metadata provider lookup** — If no local match and a provider plugin is loaded, call `IMetadataProvider.SearchAsync` to find and enrich the item

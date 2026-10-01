@@ -84,10 +84,9 @@ M4A, MP4, MKV, AVI, and most other formats without requiring external binaries.
 - Audio extensions added: `.mp3`, `.flac`, `.ogg`, `.m4a`, `.aac`, `.wma`, `.opus`
 - `ScanDirectoryAsync` pipeline:
   1. Parse filename (season/episode or title/year)
-  2. Try NFO sidecar (existing)
-  3. **New:** Read embedded tags via `EmbeddedTagReader`
-  4. Merge: NFO wins over tags wins over filename heuristics for each field
-  5. Attach local poster (existing)
+  2. **New:** Read embedded tags via `EmbeddedTagReader`
+  3. Merge: tags win over filename heuristics for each field
+  4. Attach local poster (existing)
 
 ---
 

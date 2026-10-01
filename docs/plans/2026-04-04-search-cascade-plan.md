@@ -233,7 +233,7 @@ internal static IReadOnlyList<string> BuildAltTitles(
         if (seen.Add(trimmed)) results.Add(trimmed);
     }
 
-    // 1. Precise name (NFO/reliable source) first
+    // 1. Precise name (reliable file-metadata source) first
     Add(preciseName);
 
     // 2. Year-stripped canonical name

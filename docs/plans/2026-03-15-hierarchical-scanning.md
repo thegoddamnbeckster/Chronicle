@@ -4,7 +4,7 @@
 
 **Goal:** Replace the flat file scanner with a multi-signal grouping pipeline that creates Artist→Album→Track / Show→Season→Episode hierarchies, shows grouped import previews with confidence scores, and adds a nuclear library reset to Settings.
 
-**Architecture:** A new `ScanGroupingService` extracts signals from folder structure, audio tags (TagLib#), and NFO files, then assembles them into a `ScanGroupResult` tree. `FileScanService` calls it during preview and persists the resulting hierarchy on import. The `FileScanController` gets two new endpoints (`/scan/preview-grouped`, `/scan/import-groups`). The `ScanPage` is updated to render grouped cards. A Danger Zone is added to `LibrarySettingsPage` with a nuclear reset.
+**Architecture:** A new `ScanGroupingService` extracts signals from folder structure, and audio tags (TagLib#), then assembles them into a `ScanGroupResult` tree. `FileScanService` calls it during preview and persists the resulting hierarchy on import. The `FileScanController` gets two new endpoints (`/scan/preview-grouped`, `/scan/import-groups`). The `ScanPage` is updated to render grouped cards. A Danger Zone is added to `LibrarySettingsPage` with a nuclear reset.
 
 **Tech Stack:** .NET 9, TagLibSharp NuGet, EF Core 9, React 18 + TypeScript, existing ChronicleDbContext
 
@@ -111,7 +111,7 @@ namespace Chronicle.Core.Models.Scan
         /// <summary>0.0 – 1.0. Average of member file scores, penalised for conflicts.</summary>
         public double ConfidenceScore { get; set; }
 
-        /// <summary>e.g. ["folder", "tags", "nfo"] — signals that contributed.</summary>
+        /// <summary>e.g. ["folder", "tags"] — signals that contributed.</summary>
         public List<string> SignalSources { get; set; } = [];
 
         /// <summary>True if any two signal sources disagreed on the group name.</summary>
@@ -431,184 +431,7 @@ git commit -m "feat(services): add TagSignalExtractor using TagLibSharp"
 
 ---
 
-## Task 5: NfoSignalExtractor
-
-**Files:**
-- Create: `src/Chronicle.Services/Scan/NfoSignalExtractor.cs`
-- Test: add to `ScanGroupingServiceTests.cs`
-
-**Step 1: Write the failing test**
-
-```csharp
-public class NfoSignalExtractorTests
-{
-    [Fact]
-    public void Extract_ParsesMusicNfo()
-    {
-        var nfo = """
-            <musicvideo>
-              <title>Enter Sandman</title>
-              <artist>Metallica</artist>
-              <album>Metallica</album>
-              <year>1991</year>
-            </musicvideo>
-            """;
-        var extractor = new NfoSignalExtractor();
-        var result = extractor.ParseXml(nfo);
-
-        result.Should().NotBeNull();
-        result!.Title.Should().Be("Enter Sandman");
-        result.Artist.Should().Be("Metallica");
-        result.Album.Should().Be("Metallica");
-        result.Year.Should().Be(1991);
-    }
-
-    [Fact]
-    public void Extract_ParsesTvNfo()
-    {
-        var nfo = """
-            <episodedetails>
-              <title>Pilot</title>
-              <showtitle>Breaking Bad</showtitle>
-              <season>1</season>
-              <episode>1</episode>
-            </episodedetails>
-            """;
-        var extractor = new NfoSignalExtractor();
-        var result = extractor.ParseXml(nfo);
-
-        result!.ShowTitle.Should().Be("Breaking Bad");
-        result.Season.Should().Be(1);
-        result.Episode.Should().Be(1);
-    }
-
-    [Fact]
-    public void FindSidecar_ReturnsNfoPathWhenExists()
-    {
-        // Can't test real filesystem easily; just verify null on missing
-        var extractor = new NfoSignalExtractor();
-        var result = extractor.FindSidecar(@"C:\nonexistent\file.mkv");
-        result.Should().BeNull();
-    }
-}
-```
-
-**Step 2: Run to confirm failure**
-```bash
-cd tests/Chronicle.Tests.Unit && dotnet test --filter "NfoSignalExtractorTests" -v normal
-```
-
-**Step 3: Create `NfoSignalExtractor.cs`**
-```csharp
-using System.Xml.Linq;
-
-namespace Chronicle.Services.Scan
-{
-    public class NfoSignal
-    {
-        public string? Title { get; set; }
-        public string? Artist { get; set; }
-        public string? Album { get; set; }
-        public string? ShowTitle { get; set; }
-        public int? Year { get; set; }
-        public int? Season { get; set; }
-        public int? Episode { get; set; }
-        public string? ExternalId { get; set; }  // e.g. tmdb id from <uniqueid type="tmdb">
-        public string? PosterUrl { get; set; }    // from <thumb> element
-    }
-
-    public class NfoSignalExtractor
-    {
-        private static readonly string[] _nfoExtensions = [".nfo"];
-
-        /// <summary>Finds a .nfo sidecar next to <paramref name="filePath"/>.</summary>
-        public string? FindSidecar(string filePath)
-        {
-            var dir  = Path.GetDirectoryName(filePath);
-            var stem = Path.GetFileNameWithoutExtension(filePath);
-            if (dir is null) return null;
-
-            // Prefer "title.nfo" alongside the file
-            var adjacent = Path.Combine(dir, stem + ".nfo");
-            if (File.Exists(adjacent)) return adjacent;
-
-            // Fall back to any .nfo in the same folder
-            try
-            {
-                return Directory.EnumerateFiles(dir, "*.nfo").FirstOrDefault();
-            }
-            catch { return null; }
-        }
-
-        /// <summary>Extracts signal from a .nfo file path.</summary>
-        public NfoSignal? Extract(string nfoPath)
-        {
-            if (!File.Exists(nfoPath)) return null;
-            try
-            {
-                return ParseXml(File.ReadAllText(nfoPath));
-            }
-            catch { return null; }
-        }
-
-        /// <summary>Parses NFO XML string — exposed for unit testing.</summary>
-        public NfoSignal? ParseXml(string xml)
-        {
-            if (string.IsNullOrWhiteSpace(xml)) return null;
-            try
-            {
-                var doc  = XDocument.Parse(xml.Trim());
-                var root = doc.Root;
-                if (root is null) return null;
-
-                string? Get(string name) =>
-                    root.Element(name)?.Value?.Trim() is { Length: > 0 } v ? v : null;
-
-                int? GetInt(string name) =>
-                    int.TryParse(Get(name), out var n) ? n : null;
-
-                var signal = new NfoSignal
-                {
-                    Title     = Get("title"),
-                    Artist    = Get("artist"),
-                    Album     = Get("album"),
-                    ShowTitle = Get("showtitle"),
-                    Year      = GetInt("year"),
-                    Season    = GetInt("season"),
-                    Episode   = GetInt("episode"),
-                    PosterUrl = Get("thumb"),
-                };
-
-                // <uniqueid type="tmdb">12345</uniqueid>
-                var uid = root.Elements("uniqueid")
-                    .FirstOrDefault(e =>
-                        string.Equals(e.Attribute("type")?.Value, "tmdb",
-                            StringComparison.OrdinalIgnoreCase));
-                signal.ExternalId = uid?.Value?.Trim() is { Length: > 0 } id ? id : null;
-
-                return signal;
-            }
-            catch { return null; }
-        }
-    }
-}
-```
-
-**Step 4: Run tests**
-```bash
-cd tests/Chronicle.Tests.Unit && dotnet test --filter "NfoSignalExtractorTests" -v normal
-```
-Expected: PASS
-
-**Step 5: Commit**
-```bash
-git add src/Chronicle.Services/Scan/NfoSignalExtractor.cs
-git commit -m "feat(services): add NfoSignalExtractor for sidecar .nfo files"
-```
-
----
-
-## Task 6: ScanGroupingService
+## Task 5: ScanGroupingService
 
 **Files:**
 - Create: `src/Chronicle.Services/Scan/ScanGroupingService.cs`
@@ -622,8 +445,7 @@ public class ScanGroupingServiceTests
 {
     private readonly ScanGroupingService _svc = new(
         new FolderSignalExtractor(),
-        new TagSignalExtractor(),
-        new NfoSignalExtractor());
+        new TagSignalExtractor());
 
     [Fact]
     public void Group_FlatMusicFiles_BuildsArtistAlbumTree()
@@ -707,12 +529,11 @@ public class ScanGroupingServiceTests
     }
 
     [Fact]
-    public void Group_NfoAndImageFiles_DoNotAppearInUngrouped()
+    public void Group_ImageFiles_DoNotAppearInUngrouped()
     {
         var files = new[]
         {
             @"C:\Music\Metallica\Black Album\01 Enter Sandman.mp3",
-            @"C:\Music\Metallica\Black Album\album.nfo",
             @"C:\Music\Metallica\Black Album\cover.jpg",
         };
 
@@ -750,7 +571,7 @@ namespace Chronicle.Services.Scan
     // Extensions that are metadata/sidecar — never become MediaItems themselves
     private static readonly HashSet<string> _sidecarExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".nfo", ".jpg", ".jpeg", ".png", ".webp", ".bmp",
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp",
         ".tbn", ".txt", ".xml", ".srt", ".sub", ".idx",
     };
 
@@ -758,16 +579,13 @@ namespace Chronicle.Services.Scan
     {
         private readonly FolderSignalExtractor _folder;
         private readonly TagSignalExtractor _tags;
-        private readonly NfoSignalExtractor _nfo;
 
         public ScanGroupingService(
             FolderSignalExtractor folder,
-            TagSignalExtractor tags,
-            NfoSignalExtractor nfo)
+            TagSignalExtractor tags)
         {
             _folder = folder;
             _tags   = tags;
-            _nfo    = nfo;
         }
 
         public ScanGroupResult Group(
@@ -786,8 +604,6 @@ namespace Chronicle.Services.Scan
 
                 var folderSignal = _folder.Extract(path, scanRoot);
                 var tagSignal    = _tags.Extract(path); // null for sidecars / non-audio
-                var nfoPath      = _nfo.FindSidecar(path);
-                var nfoSignal    = nfoPath != null ? _nfo.Extract(nfoPath) : null;
 
                 // For flat-grouped types (audiobooks etc.), all files in the same
                 // immediate folder = one item.  Sidecars are still silently absorbed.
@@ -826,8 +642,8 @@ namespace Chronicle.Services.Scan
                     continue;
                 }
 
-                // Level 0 name: first folder name (unless overridden by tag/nfo signal)
-                var level0Name = ResolveLevel0Name(folderSignal, tagSignal, nfoSignal, hierarchyLevels);
+                // Level 0 name: first folder name (unless overridden by tag signal)
+                var level0Name = ResolveLevel0Name(folderSignal, tagSignal, hierarchyLevels);
                 var level0Key  = Normalize(level0Name);
 
                 if (!rootGroups.TryGetValue(level0Key, out var rootGroup))
@@ -837,8 +653,8 @@ namespace Chronicle.Services.Scan
                         GroupKey        = level0Key,
                         Name            = level0Name,
                         HierarchyLevel  = 0,
-                        ConfidenceScore = ComputeRootConfidence(folderSignal, tagSignal, nfoSignal),
-                        SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 0),
+                        ConfidenceScore = ComputeRootConfidence(folderSignal, tagSignal),
+                        SignalSources   = BuildSources(folderSignal, tagSignal, 0),
                     };
                     rootGroups[level0Key] = rootGroup;
                     result.Groups.Add(rootGroup);
@@ -849,14 +665,14 @@ namespace Chronicle.Services.Scan
                 {
                     if (!isSidecar)
                     {
-                        var leafName = ResolveLeafName(folderSignal, tagSignal, nfoSignal);
+                        var leafName = ResolveLeafName(folderSignal, tagSignal);
                         rootGroup.Children.Add(new ScanGroup
                         {
                             GroupKey        = Normalize(leafName),
                             Name            = leafName,
                             HierarchyLevel  = 1,
-                            ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
-                            SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 1),
+                            ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal),
+                            SignalSources   = BuildSources(folderSignal, tagSignal, 1),
                         });
                     }
                     continue;
@@ -884,14 +700,14 @@ namespace Chronicle.Services.Scan
 
                 if (!isSidecar)
                 {
-                    var leafName = ResolveLeafName(folderSignal, tagSignal, nfoSignal);
+                    var leafName = ResolveLeafName(folderSignal, tagSignal);
                     level1Group.Children.Add(new ScanGroup
                     {
                         GroupKey        = Normalize(level1Key + "/" + leafName),
                         Name            = leafName,
                         HierarchyLevel  = 2,
-                        ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal, nfoSignal),
-                        SignalSources   = BuildSources(folderSignal, tagSignal, nfoSignal, 2),
+                        ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal),
+                        SignalSources   = BuildSources(folderSignal, tagSignal, 2),
                         Year            = tagSignal?.Year.HasValue == true ? (int?)tagSignal.Year.Value : null,
                     });
                 }
@@ -910,29 +726,25 @@ namespace Chronicle.Services.Scan
             s.Trim().ToLowerInvariant();
 
         private static string ResolveLevel0Name(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo, int levels)
+            FolderSignal folder, TagSignal? tag, int levels)
         {
             // Tag: prefer AlbumArtist over Artist for level-0 when music
             if (tag?.AlbumArtist is not null) return tag.AlbumArtist;
-            if (nfo?.Artist is not null)      return nfo.Artist;
-            if (nfo?.ShowTitle is not null)   return nfo.ShowTitle;
             return folder.FolderNames[0];
         }
 
         private static string ResolveLeafName(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo)
+            FolderSignal folder, TagSignal? tag)
         {
             if (tag?.Title is not null) return tag.Title;
-            if (nfo?.Title is not null) return nfo.Title;
             return folder.FileName;
         }
 
         private static double ComputeRootConfidence(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo)
+            FolderSignal folder, TagSignal? tag)
         {
             double score = 0.5; // folder alone
-            if (tag?.AlbumArtist is not null || tag?.Artist is not null) score += 0.25;
-            if (nfo?.Artist is not null || nfo?.ShowTitle is not null)   score += 0.25;
+            if (tag?.AlbumArtist is not null || tag?.Artist is not null) score += 0.5;
             // Conflict: tag artist name disagrees with folder name
             var folderName = folder.FolderNames.FirstOrDefault() ?? "";
             var tagName    = tag?.AlbumArtist ?? tag?.Artist ?? "";
@@ -946,20 +758,18 @@ namespace Chronicle.Services.Scan
         }
 
         private static double ComputeLeafConfidence(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo)
+            FolderSignal folder, TagSignal? tag)
         {
             double score = 0.5;
-            if (tag?.Title is not null) score += 0.25;
-            if (nfo?.Title is not null) score += 0.25;
+            if (tag?.Title is not null) score += 0.5;
             return Math.Clamp(score, 0.0, 1.0);
         }
 
         private static List<string> BuildSources(
-            FolderSignal folder, TagSignal? tag, NfoSignal? nfo, int level)
+            FolderSignal folder, TagSignal? tag, int level)
         {
             var sources = new List<string> { "folder" };
             if (tag is not null) sources.Add("tags");
-            if (nfo is not null) sources.Add("nfo");
             return sources;
         }
 
@@ -983,7 +793,6 @@ Expected: PASS
 ```csharp
 builder.Services.AddScoped<Chronicle.Services.Scan.FolderSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.TagSignalExtractor>();
-builder.Services.AddScoped<Chronicle.Services.Scan.NfoSignalExtractor>();
 builder.Services.AddScoped<Chronicle.Services.Scan.IScanGroupingService,
                             Chronicle.Services.Scan.ScanGroupingService>();
 ```
@@ -996,7 +805,7 @@ git commit -m "feat(services): add ScanGroupingService with multi-signal confide
 
 ---
 
-## Task 7: PreviewGrouped API Endpoint
+## Task 6: PreviewGrouped API Endpoint
 
 **Files:**
 - Modify: `src/Chronicle.Services/IFileScanService.cs`
@@ -1178,7 +987,7 @@ git commit -m "feat(api): add POST /scan/preview-grouped endpoint"
 
 ---
 
-## Task 8: ImportGroups API Endpoint
+## Task 7: ImportGroups API Endpoint
 
 **Files:**
 - Modify: `src/Chronicle.Services/IFileScanService.cs`
@@ -1397,7 +1206,7 @@ git commit -m "feat(api): add POST /scan/import-groups with hierarchical MediaIt
 
 ---
 
-## Task 9: Frontend — New Types and API Functions
+## Task 8: Frontend — New Types and API Functions
 
 **Files:**
 - Modify: `src/Chronicle.Web/src/types/index.ts`
@@ -1478,7 +1287,7 @@ git commit -m "feat(web): add ScanGroupResult types and previewGrouped/importGro
 
 ---
 
-## Task 10: Frontend — Grouped Scan Preview UI
+## Task 9: Frontend — Grouped Scan Preview UI
 
 **Files:**
 - Modify: `src/Chronicle.Web/src/pages/scan/ScanPage.tsx`
@@ -1884,7 +1693,7 @@ git commit -m "feat(web): replace flat scan preview with grouped ScanGroupCard U
 
 ---
 
-## Task 11: Library Reset — API Endpoints
+## Task 10: Library Reset — API Endpoints
 
 **Files:**
 - Modify: `src/Chronicle.API/Controllers/LibraryController.cs`
@@ -2040,7 +1849,7 @@ git commit -m "feat(api): add POST /library/reset and /library/clear-scanner-dat
 
 ---
 
-## Task 12: Frontend — Danger Zone in Library Settings
+## Task 11: Frontend — Danger Zone in Library Settings
 
 **Files:**
 - Modify: `src/Chronicle.Web/src/pages/settings/LibrarySettingsPage.tsx`
@@ -2341,7 +2150,7 @@ git commit -m "feat(web): add Danger Zone to Library Settings with Clear Scanner
 
 ---
 
-## Task 13: Run Full Test Suite
+## Task 12: Run Full Test Suite
 
 **Step 1: Run all backend tests**
 ```bash
@@ -2369,7 +2178,7 @@ git commit -m "fix: address test failures and type errors from hierarchical scan
 
 ---
 
-## Task 14: Finish the Branch
+## Task 13: Finish the Branch
 
 Use the `superpowers:finishing-a-development-branch` skill to merge this feature to `develop` (or `main` per project convention).
 

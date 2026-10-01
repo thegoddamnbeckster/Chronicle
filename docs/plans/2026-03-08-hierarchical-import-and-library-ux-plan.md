@@ -513,19 +513,7 @@ public sealed class FileScannerPlugin : IFileScannerPlugin
             else
                 scanned = FileNameParser.Parse(file);   // handles TV detection internally
 
-            // 2. NFO sidecar overrides (title, year, external ID)
-            var nfo = NfoParser.TryParse(file);
-            if (nfo is not null)
-            {
-                scanned.ParsedTitle         = nfo.ParsedTitle;
-                scanned.ParsedYear          = nfo.ParsedYear ?? scanned.ParsedYear;
-                scanned.SuggestedExternalId = nfo.SuggestedExternalId ?? scanned.SuggestedExternalId;
-                scanned.NfoPosterUrl        = nfo.NfoPosterUrl ?? scanned.NfoPosterUrl;
-                scanned.ConfidenceScore     = nfo.ConfidenceScore;
-                scanned.MediaTypeHint       = nfo.MediaTypeHint;
-            }
-
-            // 3. Embedded tag reading (audio/video metadata)
+            // 2. Embedded tag reading (audio/video metadata)
             var tags = EmbeddedTagReader.Read(file);
             scanned.AudioArtist       = tags.AudioArtist;
             scanned.AudioAlbumArtist  = tags.AudioAlbumArtist;

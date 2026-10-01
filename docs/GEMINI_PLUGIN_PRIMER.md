@@ -112,7 +112,7 @@ public record MediaSearchContext(
     /// <summary>0 = root (show/artist/movie), 1 = season/album, 2 = episode/track.</summary>
     int     HierarchyLevel   = 0,
     /// <summary>
-    /// Precise title read directly from file metadata (e.g. NFO title element, audio tag).
+    /// Precise title read directly from file metadata (e.g. an embedded audio/video tag).
     /// When present, use for exact case-insensitive comparison WITHOUT punctuation stripping.
     /// </summary>
     string? PreciseName      = null,

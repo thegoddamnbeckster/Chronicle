@@ -85,7 +85,7 @@ If both stages return zero candidates, the result is `NotFound`.
 The current scoring uses only title similarity and year. The following additional signals should be incorporated:
 
 ### PreciseName bonus (already partially wired)
-- If `context.PreciseName` is set (from an NFO sidecar) and matches the result title exactly → strong bonus (+20)
+- If `context.PreciseName` is set (from reliable file metadata) and matches the result title exactly → strong bonus (+20)
 - This is already in the code but should be verified to apply correctly when `AltTitles` is used
 
 ### Episode/season count validation (TV shows only)
@@ -111,7 +111,7 @@ The current scoring uses only title similarity and year. The following additiona
 
 `BuildAltTitles` in `MetadataEnrichmentService` already constructs the ordered list:
 
-1. `PreciseName` (if set — from NFO)
+1. `PreciseName` (if set — from file metadata)
 2. Year-stripped canonical name (e.g. `"(2019) Chernobyl"` → `"Chernobyl"`)
 3. FilenameStem (if different — often cleaner than the tagged title)
 4. Version-qualifier-stripped form (e.g. `"Blade Runner (Director's Cut)"` → `"Blade Runner"`)
@@ -149,7 +149,6 @@ The following changes are confined to `Chronicle.Plugin.TMDB\TmdbMetadataProvide
 
 - **Parent-gating** — seasons/episodes are not selected until the show is `Completed`
 - **TV hierarchy ID derivation** — `tv:{showId}/season:{N}/episode:{E}` compound IDs are constructed in `MetadataEnrichmentService` before `GetByIdAsync` is called; `SearchAsync` is never called for seasons or episodes
-- **NFO sidecar TMDB ID** — `TryReadNfoTmdbId` reads `tvshow.nfo` / `movie.nfo` and constructs a direct `GetByIdAsync` call, bypassing `SearchAsync` entirely for items that have NFO files
 - **HierarchyLevel ordering** — enrichment batch processes level 0 before level 1 before level 2
 
 ---

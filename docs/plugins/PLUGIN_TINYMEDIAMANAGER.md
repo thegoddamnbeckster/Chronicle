@@ -81,7 +81,7 @@ runtime, release_date, status, tagline, production_company
 ## Implementation Notes
 
 - TMM must have the API server feature enabled in its settings
-- TMM API returns `NFO`-compatible data structures
+- TMM API returns Kodi-compatible data structures
 - Local image paths (e.g. `/media/movies/Inception/poster.jpg`) should
   be served via Chronicle's own file server or mapped to Chronicle's
   media directory; do not copy images unless explicitly configured

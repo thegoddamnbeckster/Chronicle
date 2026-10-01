@@ -373,7 +373,7 @@ private static (FileScannerMetaDto? fs,
 
         var fsOut = fs != null && (
             fs.FilePath is not null || fs.LocalPosterPath is not null ||
-            fs.NfoPosterUrl is not null || fs.ImportedAt is not null) ? fs : null;
+            fs.ImportedAt is not null) ? fs : null;
 
         Dictionary<string, System.Text.Json.JsonElement>? pluginMeta = null;
         foreach (var prop in root.EnumerateObject())

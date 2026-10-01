@@ -297,7 +297,6 @@ W:\Scripts\Chronicle.Plugin.FileScanner\
 ├── ScanGroupingService.cs        # moved from Chronicle.Services
 ├── FolderSignalExtractor.cs      # moved from Chronicle.Services/Scan/
 ├── TagSignalExtractor.cs         # moved from Chronicle.Services/Scan/
-├── NfoSignalExtractor.cs         # moved from Chronicle.Services/Scan/
 └── manifest.json
 ```
 

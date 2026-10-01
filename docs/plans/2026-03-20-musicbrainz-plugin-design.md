@@ -111,7 +111,7 @@ public enum ResetScope { Single, AllExhausted, AllForPlugin }
 
 1. Query DB for items with `status IN (pending, failed)` where `last_attempted_at` is null or > retry window
 2. For each item, resolve the matching `IMetadataProvider` from the plugin registry
-3. If `external_id` already known (e.g. from file tags/NFO): call `GetByIdAsync`
+3. If `external_id` already known (e.g. from file tags): call `GetByIdAsync`
    Otherwise: call `SearchAsync` using item title + artist/year hints
 4. On success: merge returned data into `media_items.metadata_json[plugin_id]`, update images, set `status='completed'`
 5. On failure: increment `retry_count`, set `status='failed'` or `'exhausted'`, store error

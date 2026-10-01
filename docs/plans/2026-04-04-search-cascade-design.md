@@ -31,7 +31,7 @@ Before any stage, Chronicle extracts from the stored item:
 2. Filename stem, if meaningfully different (e.g. `"Kryptonite"` from `"01 - Kryptonite.mp3"`)
 3. Version-qualifier-stripped title, if different from #1 (e.g. `"Kryptonite"` from `"Kryptonite (LP version)"`)
 
-Duplicates are removed. `PreciseName` (NFO-sourced) prepended when present.
+Duplicates are removed. `PreciseName` (file-metadata-sourced) prepended when present.
 
 **SubItemNames** — names used to validate the candidate match:
 - HierarchyLevel 0 (artist/show): names of direct child items (albums, seasons)

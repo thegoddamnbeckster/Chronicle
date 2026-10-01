@@ -390,9 +390,9 @@ role-grouped credits view:
 
 ## 7. Kodi Integration
 
-Confirmed: zero actor-art concept exists today — `CastMemberDto` has no image field, the NFO
-writer's `add_actors()` emits no `<thumb>`, even though Kodi's own actor NFO schema supports it
-natively. This extends the existing REST-response pattern (Section 1, pattern #1 from the prior
+Confirmed: zero actor-art concept exists today — `CastMemberDto` has no image field, so the
+Kodi scraper addon's `xbmc.Actor(...)` cast entries never get a `thumbnail`, even though Kodi
+supports one natively. This extends the existing REST-response pattern (Section 1, pattern #1 from the prior
 research) — no file-writing workaround, since no local-file-precedence problem has been observed
 for actor thumbs the way it has for movie/set posters.
 
@@ -400,12 +400,11 @@ for actor thumbs the way it has for movie/set posters.
 - `ScraperController.cs`: when building a movie/show's cast list, resolve each credited person's
   headshot the same way the detail page would (`_overrides.poster_url` else most-recent
   `person_headshots` row, per Section 1.5) and populate `ThumbUrl`.
-- `Chronicle_Scraper/lib/nfo_common.py` `add_actors()`: one new line emitting
-  `<thumb>{escaped_url}</thumb>` inside each `<actor>` block, alongside the existing
-  `<name>`/`<role>`/`<order>`.
+- `Chronicle_Scraper` `setCast()` calls: pass `thumbnail=actor.get('thumbUrl')` to each
+  `xbmc.Actor(...)`, alongside the existing `name`/`role`/`order`.
 
-No addon-side Python restructuring needed beyond that one line — Kodi's own scraper protocol
-already knows how to consume `<actor><thumb>`, it's just never been supplied.
+No addon-side Python restructuring needed beyond that one line — Kodi's own scraper API
+already knows how to consume an actor thumbnail, it's just never been supplied.
 
 ---
 
@@ -441,7 +440,7 @@ Dependency-ordered; each phase is independently shippable and testable before th
 5. **Frontend** (Chronicle.Web): nav, `PeopleLibraryPage`, `PersonCard`, `PersonDetailPage`,
    credits-grouped-by-role section, `GlobalSearch` label tweak. Fully buildable/demoable once
    Phase 1 + at least Phase 2 have real data flowing.
-6. **Kodi wiring** (`Chronicle_Scraper`): `CastMemberDto.ThumbUrl` + NFO `<thumb>` line — small,
+6. **Kodi wiring** (`Chronicle_Scraper`): `CastMemberDto.ThumbUrl` + `xbmc.Actor` thumbnail — small,
    independent, can land any time after Phase 1's headshot resolution exists.
 7. **Follow-on (not scoped here):** MusicBrainz recording/release-level production credits
    (Section 4.2, second half) — deferred because it needs new relation-type-to-role mapping

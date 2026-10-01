@@ -207,7 +207,7 @@ If both stages return zero candidates, the result is `NotFound`.
 
 ### ISBN Short-Circuit
 
-If the file scanner has extracted an ISBN-10 or ISBN-13 from a file tag or NFO sidecar, the plugin can bypass search entirely:
+If the file scanner has extracted an ISBN-10 or ISBN-13 from a file tag, the plugin can bypass search entirely:
 
 1. Call `GetByIdAsync` with `isbn:{isbn13}` or `isbn10:{isbn10}` format
 2. Hardcover accepts ISBNs as alternate lookup keys

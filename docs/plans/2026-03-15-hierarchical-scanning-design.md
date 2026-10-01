@@ -15,7 +15,7 @@ The file scanner currently creates every music file as a flat root-level `MediaI
 ## Goals
 
 1. Scanner groups files into a proper hierarchy (Artist→Album→Track, Show→Season→Episode) or flat groups (Audiobook parts) before import
-2. Multiple signal sources (folder structure, embedded tags, NFO files) combine into a per-group confidence score
+2. Multiple signal sources (folder structure, embedded tags) combine into a per-group confidence score
 3. Import preview shows only root items with confidence scores; user accepts/rejects at root level
 4. Library page shows only root items (unchanged — `rootOnly` filter already handles this)
 5. Any media detail page with a parent gets an Up button for upward hierarchy traversal
@@ -50,12 +50,7 @@ For every file encountered during a scan, extract all available signals:
 **Tag signals** (weight 0.7)
 - Read via **TagLib#** for any audio/video file that supports embedded tags (MP3, FLAC, M4A, MP4, MKV, OGG, OPUS, WMA, AAC, etc.)
 - Fields used: `Artist`, `AlbumArtist`, `Album`, `Title`, `TrackNumber`, `DiscNumber`, `Year`, `Genre`
-- Image files (`.jpg`, `.png`, `.webp`) and `.nfo` files produce no tag signals — that is expected and fine
-
-**NFO signals** (weight 0.7)
-- If a `.nfo` file exists in the same folder (or is the scanned file itself), parse it as XML
-- Fields: `<title>`, `<artist>`, `<album>`, `<showtitle>`, `<season>`, `<episode>`, `<year>`, `<plot>`, `<thumb>`
-- NFO files are not imported as MediaItems themselves — they are metadata sources only
+- Image files (`.jpg`, `.png`, `.webp`) produce no tag signals — that is expected and fine
 
 ### Stage 2 — Confidence Scoring
 
@@ -65,7 +60,7 @@ Each signal source casts a weighted vote on:
 
 Confidence formula:
 - Base score = weighted average of agreeing signals
-- Agreement bonus: if folder name AND tag AND NFO all agree on the group key, multiply by 1.2 (capped at 1.0)
+- Agreement bonus: if folder name AND tag agree on the group key, multiply by 1.2 (capped at 1.0)
 - Conflict penalty: if tag says `Artist=X` but folder says `Artist=Y`, subtract 0.15
 
 The group's displayed confidence is the mean of its member scores, penalised 0.1 for each internal conflict.

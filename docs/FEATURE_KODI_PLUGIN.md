@@ -15,7 +15,6 @@
 
 **Kodi Guidelines Reference:**
 - [JSON-RPC API](https://kodi.wiki/view/JSON-RPC_API)
-- [NFO Files](https://kodi.wiki/view/NFO_files)
 - [Add-on guidelines](https://kodi.wiki/view/Add-on_rules)
 - [Video library metadata](https://kodi.wiki/view/Video_library)
 
@@ -296,35 +295,6 @@ POST /jsonrpc → VideoLibrary.SetMovieDetails
 
 ---
 
-## NFO File Generation (Optional)
-
-For Chronicle items that are **not** in Kodi's library (e.g. films watched on Netflix that Kodi has no local file for), the plugin can optionally generate `.nfo` stub files. This is **opt-in** and requires a configurable output directory.
-
-NFO format for movies (Kodi movie.nfo):
-```xml
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<movie>
-  <title>Movie Title</title>
-  <year>2023</year>
-  <uniqueid type="imdb" default="true">tt1234567</uniqueid>
-  <uniqueid type="tmdb">67890</uniqueid>
-  <userrating>8</userrating>
-  <playcount>2</playcount>
-  <lastplayed>2024-03-15</lastplayed>
-</movie>
-```
-
-NFO generation is governed by an additional setting:
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `generate_nfo` | Toggle | `false` | Generate .nfo stubs for unmatched items |
-| `nfo_output_dir` | FilePath | _(empty)_ | Directory where .nfo files are written |
-
-Kodi guidelines require that `.nfo` files use the correct schema. Chronicle follows the [Kodi NFO file format](https://kodi.wiki/view/NFO_files/Movies) exactly.
-
----
-
 ## Rate Limiting & Kodi Guidelines Compliance
 
 The [Kodi JSON-RPC API](https://kodi.wiki/view/JSON-RPC_API) has no documented rate limit, but Kodi is a local application so network latency is minimal. However, to avoid overwhelming Kodi during large syncs:
@@ -371,7 +341,6 @@ Registered via a new `SyncController` and backed by `ISyncService`.
 ### Phase 2 (Polish)
 - Scheduled sync (configurable interval via Quartz.NET or `IHostedService`)
 - Post-scrobble auto-sync (subscribe to scrobble events)
-- NFO file generation for unmatched items
 - Frontend: Sync button on Plugins page with live progress
 - Sync history log (last sync time, item counts, errors)
 
