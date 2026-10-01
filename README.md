@@ -40,7 +40,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 - **Global search** — Header search bar with debounced results, poster thumbnails, click-to-navigate
 
 ### File Scanner
-- **Multi-signal hierarchical grouping** — Combines folder names, embedded tags (via TagLib#), and NFO sidecar files to group files into Artist→Album→Track or Show→Season→Episode trees
+- **Multi-signal hierarchical grouping** — Combines folder names and embedded tags (via TagLib#) to group files into Artist→Album→Track or Show→Season→Episode trees
 - **Audiobook support** — Groups audio files by book folder; parses `Series - N - (Year) - Title` format; reads AudioAlbum, AudioGrouping, and Author tags; stores author for enrichment
 - **Confidence scoring** — Each group scored 0–100%; users can review and accept/reject before importing
 - **Year extraction** — Reads `(YYYY)` from folder names even when embedded tags use a different name
@@ -63,6 +63,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 
 ### Kodi Integration
 - **Scraper API** — Dedicated `/api/v1/scraper/*` endpoints let a Kodi addon ([Chronicle_Scraper](https://github.com/thegoddamnbeckster/Chronicle_Scraper)) use Chronicle as its metadata source instead of talking to TMDB/TVDB directly; covers movies, TV shows, seasons, and episodes (with show title/year, aired date, and runtime)
+- **Scrobbler** — A Kodi service addon ([Chronicle_Scrobbler](https://github.com/thegoddamnbeckster/Chronicle_Scrobbler)) scrobbles playback to Chronicle in real time and keeps watch history, watch counts, ratings, and artwork in sync both ways; pairs with Chronicle via QR-code device auth, so no password is ever typed into Kodi
 - **Kodi Movie Collections** — Chronicle can write collection posters/backdrops/logos and every backdrop as extrafanart directly into a shared UNC folder that Kodi instances point at, so collection artwork stays in sync across multiple Kodi installs sharing one library without each one re-scraping
 
 ### Installed Plugins
@@ -81,7 +82,6 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 | **[TVMaze](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TVMaze)** | Metadata | TV, Seasons, Episodes | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.TVMaze?label=&color=CF0000)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TVMaze/releases/latest) |
 | **[Wikipedia](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Wikipedia)** | Metadata | Fallback summaries/images for any media type | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Wikipedia?label=&color=808080)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Wikipedia/releases/latest) |
 | **[Movies Remastered (MRDb)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered)** | Metadata | Fan Edits (moviesremastered.com) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered?label=&color=CC0000)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered/releases/latest) |
-| **[Kodi NFO](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO)** | Sidecar Format | Movies, TV (reads/writes Kodi .nfo files) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO?label=&color=1B75BC)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO/releases/latest) |
 | **[Default Themes](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Themes.Default)** | Theme | All (Light, Dark, Navy & Pink, Dark Teal) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Themes.Default?label=)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Themes.Default/releases/latest) |
 
 ### React Frontend (20+ pages)
