@@ -160,18 +160,33 @@ public class PersonResolutionService(
                 .Distinct(StringComparer.Ordinal).ToList();
             var looses = byName.Select(c => MediaItemNormalizer.NormalizeNameLoose(c.PersonName)).Where(n => n.Length > 0)
                 .Distinct(StringComparer.Ordinal).ToList();
-            var dbByNorm = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
-            var dbByLoose = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
+            // Ids by name first, then the records by primary key. Measured on the live library
+            // (2026-10-02): asking SQLite for whole people records filtered by type AND name made
+            // it walk the type index (300,000 people, ~800 ms a query) instead of the name index;
+            // ids by name alone, with the type checked here, take a few milliseconds.
+            var normHits = new List<(int Id, string Key)>();
+            var looseHits = new List<(int Id, string Key)>();
             foreach (var chunk in norms.Chunk(500))
-                foreach (var m in await db.MediaItems
-                             .Where(m => m.MediaTypeId == peopleTypeId && chunk.Contains(m.NormalizedName!))
-                             .OrderBy(m => m.Id).ToListAsync(ct))
-                    dbByNorm.TryAdd(m.NormalizedName!, m);
+                normHits.AddRange((await db.MediaItems
+                        .Where(m => chunk.Contains(m.NormalizedName!))
+                        .Select(m => new { m.Id, m.NormalizedName, m.MediaTypeId }).ToListAsync(ct))
+                    .Where(m => m.MediaTypeId == peopleTypeId).Select(m => (m.Id, m.NormalizedName!)));
             foreach (var chunk in looses.Chunk(500))
-                foreach (var m in await db.MediaItems
-                             .Where(m => m.MediaTypeId == peopleTypeId && chunk.Contains(m.NormalizedNameLoose!))
-                             .OrderBy(m => m.Id).ToListAsync(ct))
-                    dbByLoose.TryAdd(m.NormalizedNameLoose!, m);
+                looseHits.AddRange((await db.MediaItems
+                        .Where(m => chunk.Contains(m.NormalizedNameLoose!))
+                        .Select(m => new { m.Id, m.NormalizedNameLoose, m.MediaTypeId }).ToListAsync(ct))
+                    .Where(m => m.MediaTypeId == peopleTypeId).Select(m => (m.Id, m.NormalizedNameLoose!)));
+
+            var recordsById = new Dictionary<int, MediaItem>();
+            foreach (var chunk in normHits.Concat(looseHits).Select(h => h.Id).Distinct().Chunk(500))
+                foreach (var m in await db.MediaItems.Where(m => chunk.Contains(m.Id)).ToListAsync(ct))
+                    recordsById[m.Id] = m;
+
+            // Lowest id per name wins, as the original FirstOrDefault over the index did.
+            var dbByNorm = normHits.OrderBy(h => h.Id).GroupBy(h => h.Key, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => recordsById[g.First().Id], StringComparer.Ordinal);
+            var dbByLoose = looseHits.OrderBy(h => h.Id).GroupBy(h => h.Key, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => recordsById[g.First().Id], StringComparer.Ordinal);
 
             // Ids this source already holds for every candidate, for the same-source conflict guard.
             var candidateIds = dbByNorm.Values.Concat(dbByLoose.Values).Concat(personByExtId.Values)

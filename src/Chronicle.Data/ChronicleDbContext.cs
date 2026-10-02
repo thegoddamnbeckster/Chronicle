@@ -551,6 +551,13 @@ namespace Chronicle.Data
                 // MediaTypeId check never needs a separate row lookup.
                 e.HasIndex(x => new { x.NormalizedName, x.MediaTypeId })
                  .HasDatabaseName("idx_media_items_normalized_name_mediatypeid");
+                // The loose-name twin of the index above. Without it, PersonResolutionService's
+                // loose-name step (reached by every person not matched otherwise, so by every new
+                // person) let SQLite pick the MediaTypeId index and walk all ~300,000 people:
+                // measured ~800 ms per lookup on the live library (2026-10-02), the root cause of
+                // credits being recorded at 2-5 a second.
+                e.HasIndex(x => new { x.NormalizedNameLoose, x.MediaTypeId })
+                 .HasDatabaseName("idx_media_items_normalized_name_loose_mediatypeid");
             });
 
             modelBuilder.Entity<MediaItemAlias>(e =>
