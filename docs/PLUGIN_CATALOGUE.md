@@ -55,9 +55,9 @@ The rest of this document indexes planned future plugins.
 |--------|-----------|-------|------|--------|
 | [TheTVDB](plugins/PLUGIN_THETVDB.md) | `Chronicle.Plugin.TheTVDB` | 📺 | API key (free) | Scaffolded |
 | [Gracenote](plugins/PLUGIN_GRACENOTE.md) | `Chronicle.Plugin.Gracenote` | 📺🎬🎵 | Partner credentials | Scaffolded |
-| [IMDb](plugins/PLUGIN_IMDB.md) | `Chronicle.Plugin.IMDb` | 📺🎬 | IMDb API key | Scaffolded |
+| [IMDb](plugins/PLUGIN_IMDB.md) | `Chronicle.Plugin.IMDb` | 📺🎬👤 | None (official non-commercial datasets) | Designed |
 | [JustWatch](plugins/PLUGIN_JUSTWATCH.md) | `Chronicle.Plugin.JustWatch` | 📺🎬 | None (public GraphQL) | Scaffolded |
-| [Rotten Tomatoes](plugins/PLUGIN_ROTTENTOMATOES.md) | `Chronicle.Plugin.RottenTomatoes` | 📺🎬 | API key (partner) | Scaffolded |
+| [Rotten Tomatoes](plugins/PLUGIN_ROTTENTOMATOES.md) | `Chronicle.Plugin.RottenTomatoes` | 📺🎬 | n/a | ❌ Rejected (Terms of Use forbid automated access) |
 | [PA TV Metadata](plugins/PLUGIN_PATVMETADATA.md) | `Chronicle.Plugin.PATVMetadata` | 📺📡 | API key | Scaffolded |
 | [InforPortugal](plugins/PLUGIN_INFORPORTUGAL.md) | `Chronicle.Plugin.InforPortugal` | 📺📡 | API key | Scaffolded |
 | [EPGdata.tv](plugins/PLUGIN_EPGDATA.md) | `Chronicle.Plugin.EPGData` | 📺📡 | API key | Scaffolded |

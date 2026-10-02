@@ -1,96 +1,23 @@
-# Chronicle.Plugin.RottenTomatoes — Design Document
+# Chronicle.Plugin.RottenTomatoes — Rejected
 
-**Plugin ID:** `chronicle.plugin.rottentomatoes`
-**Version:** 1.0.0
-**Media Types:** Movies (`movie`), TV (`tv`)
-**Auth:** API key (partner program — requires application)
-**API:** Rotten Tomatoes API — `https://api.rottentomatoes.com/api/public/v2.0`
+**Status:** Rejected 2026-10-01. Do not implement.
 
----
+## Why
 
-## Purpose
+Rotten Tomatoes has no usable API. The old `api.rottentomatoes.com/api/public/v1.0` partner API
+is gone; RT data is available only through a commercial Fandango data licence.
 
-[Rotten Tomatoes](https://www.rottentomatoes.com/) provides the well-known
-Tomatometer (critic score) and Audience Score for movies and TV shows.
-This plugin enriches Chronicle entries with RT scores and certified-fresh
-status. It is a **ratings enrichment** plugin, not a primary metadata source.
+The website itself can be read by a script: title pages embed their scores as JSON, and RT's
+search runs on a public Algolia index. But RT's Terms of Use (`/policies/terms-of-use`) prohibit
+"any automated method (including … robots, scripts, spiders, data extractors …) to collect data
+from, access or search, the Services" without Fandango's express written authorization. There is
+no personal-use exception for automated access.
 
----
+Chronicle only uses data sources whose terms allow it, so this plugin was dropped.
 
-## Supported Media Types
+## If RT scores are wanted later
 
-| Media Type | Priority | Notes |
-|-----------|---------|-------|
-| `movie` | 7 | Tomatometer + Audience Score |
-| `tv` | 7 | Tomatometer + Audience Score |
-
----
-
-## API Overview
-
-The official Rotten Tomatoes API requires a partner application. A widely-used
-alternative is the unofficial API endpoint which powers the RT website itself.
-
-| Operation | Endpoint |
-|-----------|---------|
-| Movie search | `GET /movies.json?q={title}&apikey={key}` |
-| Movie detail | `GET /movies/{id}.json?apikey={key}` |
-| Movie reviews | `GET /movies/{id}/reviews.json?apikey={key}` |
-| TV series search | `GET /tv_shows.json?q={title}&apikey={key}` |
-| TV series detail | `GET /tv_shows/{id}.json?apikey={key}` |
-
----
-
-## Settings Schema
-
-| Key | Label | Type | Required | Notes |
-|-----|-------|------|----------|-------|
-| `api_key` | Rotten Tomatoes API Key | Password | Yes | Requires partner application |
-| `include_reviews` | Fetch Critic Reviews | Boolean | No | Default: false (extra request) |
-| `max_reviews` | Max Reviews to Fetch | Number | No | Default: 5 |
-
----
-
-## Fields Populated
-
-```
-tomatometer_score, audience_score, critic_consensus,
-certified_fresh, tomatometer_count, audience_count,
-top_reviews (stored in metadata_json)
-```
-
----
-
-## Rate Limits
-
-- Official API: 10,000 req/day (partner tier)
-- Implement caching — RT scores update at most weekly
-- Respect `Retry-After` headers on 429 responses
-
----
-
-## Implementation Notes
-
-- Rotten Tomatoes IDs are internal (`ebert_meyer_award`, numeric); cross-reference
-  via IMDB ID where possible using the search endpoint
-- `tomatometer_status` values: `Certified-Fresh`, `Fresh`, `Rotten`
-- `audience_status` values: `Upright`, `Spilled`
-- For TV shows, season-level scores are separate from series-level scores
-- Store RT scores in `metadata_json` as they don't map to `MediaMetadata.Rating`
-  directly (two separate scores)
-
----
-
-## Scaffold Location
-
-```
-Chronicle.Plugin.RottenTomatoes/
-├── Chronicle.Plugin.RottenTomatoes.csproj
-├── README.md (this document)
-├── manifest.json
-├── RottenTomatoesPlugin.cs
-└── Models/
-    ├── RTMovie.cs
-    ├── RTSeries.cs
-    └── RTReview.cs
-```
+Only through a source that is itself licensed to provide them, never by reading
+rottentomatoes.com. Any such source plugs into the generic ratings model in
+[`docs/plans/2026-10-01-ratings-tracking-design.md`](../plans/2026-10-01-ratings-tracking-design.md)
+with no RT-specific code.
