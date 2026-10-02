@@ -867,10 +867,18 @@ public class ScraperController : ControllerBase
             .GroupBy(e => e.ParentId!.Value)
             .ToDictionary(g => g.Key, g => g.Select(e => e.Number!.Value).ToHashSet());
 
-        var seasonContainerByNumber = seasonRows.ToDictionary(s => s.Number!.Value);
-        var existingEpisodeNumbersBySeasonNumber = seasonRows.ToDictionary(
-            s => s.Number!.Value,
-            s => episodeNumbersBySeasonId.GetValueOrDefault(s.Id, new HashSet<int>()));
+        // Tolerates two rows sharing a season number (see TvSeasonIndex) -- a plain
+        // ToDictionary here threw on every request for a show in that state.
+        var seasonIndex = TvSeasonIndex.Build(seasonRows, episodeNumbersBySeasonId);
+        if (seasonIndex.DuplicatedSeasonNumbers.Count > 0)
+        {
+            _logger.LogWarning(
+                "scraper/tv/episodes: show {ShowId} has more than one row for season number(s) {Seasons}; " +
+                "using the oldest row of each as the container for new episodes",
+                show.Id, string.Join(", ", seasonIndex.DuplicatedSeasonNumbers));
+        }
+        var seasonContainerByNumber = seasonIndex.ContainerByNumber.ToDictionary();
+        var existingEpisodeNumbersBySeasonNumber = seasonIndex.EpisodeNumbersBySeasonNumber;
 
         IMetadataProvider? provider = null;
         string? showExternalId = null;

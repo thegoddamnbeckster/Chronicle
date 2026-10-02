@@ -244,6 +244,40 @@ public class ScraperResolveEpisodesLockedTests : IClassFixture<EpisodeProviderTe
         season2.Should().NotBeNull();
         db.MediaItems.Count(e => e.ParentId == season2!.Id && e.HierarchyLevel == 2).Should().Be(1);
     }
+
+    /// Confirmed live (2026-10-02): a show with two rows for the same season number (Big
+    /// Brother US, after the UK show was merged into it) made every resolution attempt throw
+    /// "An item with the same key has already been added" before any provider was asked.
+    [Fact]
+    public async Task GetEpisodes_DuplicateSeasonNumber_StillResolvesIntoOldestRowWithoutDuplicating()
+    {
+        var showId = SeedShow("show-5");
+        var olderSeasonId = SeedSeasonWithEpisodes(showId, seasonNumber: 1, 1, 2);
+        var newerSeasonId = SeedSeasonWithEpisodes(showId, seasonNumber: 1, 3);
+        _factory.Provider.SeasonEpisodes[1] =
+        [
+            new ProviderEpisodeSummary(1, "Episode 1"),
+            new ProviderEpisodeSummary(2, "Episode 2"),
+            new ProviderEpisodeSummary(3, "Episode 3"),
+            new ProviderEpisodeSummary(4, "Episode 4"),
+        ];
+
+        var client = await AuthClientAsync();
+        var resp = await client.GetAsync($"/api/v1/scraper/tv/episodes?showId={showId}");
+        resp.EnsureSuccessStatusCode();
+
+        _factory.Provider.QueriedSeasons.Should().Contain(1);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        db.MediaItems.Where(e => e.ParentId == olderSeasonId && e.HierarchyLevel == 2)
+            .Select(e => e.Number).ToList()
+            .Should().BeEquivalentTo(new int?[] { 1, 2, 4 },
+                "episode 3 already exists in the duplicate row and must not be created again");
+        db.MediaItems.Count(e => e.ParentId == newerSeasonId && e.HierarchyLevel == 2).Should().Be(1);
+        db.MediaItems.Count(s => s.ParentId == showId && s.HierarchyLevel == 1 && s.Number == 1)
+            .Should().Be(2, "resolution must not add a third season row");
+    }
 }
 
 /// <summary>Records every season number it was asked about, and returns whatever the test
