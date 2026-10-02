@@ -406,16 +406,6 @@ public class PluginService : IPluginService
                 result = await ProviderCallGuard.CallAsync(
                     t => loaded.ImportProviders[0].HealthCheckAsync(t), plugin.PluginId, "HealthCheckAsync", false,
                     msg => _log.Warning(msg), msg => _log.Error(msg), ct);
-            else if (loaded.SidecarFormatPlugins.Count > 0)
-                // ISidecarFormatPlugin has no HealthCheckAsync at all -- by design, it does
-                // pure local file I/O (reading/writing .nfo sidecars) with no external
-                // service or network dependency to verify. Falling through to the "no
-                // recognized provider type" branch below previously returned null here,
-                // which the controller turns into 404 PLUGIN_NOT_LOADED -- and the frontend
-                // renders that as a red "X UNHEALTHY / Health check request failed" badge
-                // for a plugin that is, in fact, loaded and working fine. Confirmed live
-                // (2026-09-04) for chronicle.plugin.kodi.nfo right after deploying it.
-                result = true;
             else
                 return null;
 

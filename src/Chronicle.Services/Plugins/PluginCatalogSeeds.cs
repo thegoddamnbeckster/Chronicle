@@ -16,7 +16,6 @@ public static class PluginCatalogSeeds
         new("hardcover",                           "thegoddamnbeckster/Chronicle.Plugin.Hardcover",          ["books", "audiobooks", "metadata", "sync"]),
         new("chronicle.plugin.thetvdb",            "thegoddamnbeckster/Chronicle.Plugin.TheTVDB",            ["tv", "metadata"]),
         new("chronicle.plugin.tvmaze",             "thegoddamnbeckster/Chronicle.Plugin.TVMaze",             ["tv", "metadata"]),
-        new("chronicle.plugin.kodi.nfo",           "thegoddamnbeckster/Chronicle.Plugin.Kodi.NFO",           ["movies", "tv", "kodi", "nfo", "local"]),
         new("chronicle.plugin.fanedit",            "thegoddamnbeckster/Chronicle.Plugin.FanEdit",            ["movies", "fanedits", "metadata"]),
         new("chronicle.plugin.simkl",              "thegoddamnbeckster/Chronicle.Plugin.Simkl",              ["movies", "tv", "anime", "metadata"]),
         new("chronicle.plugin.fanarttv",           "thegoddamnbeckster/Chronicle.Plugin.FanartTV",           ["movies", "tv", "music", "artwork", "metadata"]),

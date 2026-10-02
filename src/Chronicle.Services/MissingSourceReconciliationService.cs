@@ -12,8 +12,8 @@ namespace Chronicle.Services;
 /// Nightly scheduled task that detects media items whose scanned file or folder no longer
 /// exists on disk and clears the stale "fileScanner" LINK (folderPath/filePaths) -- while
 /// keeping everything else about the item exactly as-is: enrichment, external ids, ratings,
-/// library status, and even the rest of the fileScanner partition itself (importedAt, nfoPath,
-/// nfoRaw, nfoParsed) as a historical record. Per-user request (2026-09-05): "the information
+/// library status, and even the rest of the fileScanner partition itself (importedAt) as a
+/// historical record. Per-user request (2026-09-05): "the information
 /// needs to be kept, but the link from the file scanner needs to go away."
 ///
 /// This is deliberately the mirror image of a normal scan: FileScanService only ever looks at
@@ -120,8 +120,7 @@ public sealed class MissingSourceReconciliationService(
             if (stillPresent) continue;
 
             // Gone -- clear only the link (folderPath/filePaths). Every other fileScanner
-            // field (importedAt, nfoPath, nfoRaw, nfoParsed) and every other partition in
-            // MetadataJson is left exactly as it was.
+            // field (importedAt) and every other partition in MetadataJson is left exactly as it was.
             fs.Remove("folderPath");
             fs.Remove("filePaths");
             var tracked = await db.MediaItems.FirstAsync(m => m.Id == item.Id, ct);

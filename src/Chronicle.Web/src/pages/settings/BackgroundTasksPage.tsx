@@ -305,10 +305,6 @@ return (
   )
 }
 
-// The NFO rebuild queue status section that used to live here (NfoRebuildQueueSection) was
-// removed 2026-09-13 along with the server-side NFO generation/push/rebuild-queue system it
-// displayed status for -- see git history if it's ever needed again.
-
 // ── Schedule editor ──────────────────────────────────────────────────────────
 
 interface ScheduleEditorProps {

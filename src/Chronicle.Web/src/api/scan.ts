@@ -101,7 +101,6 @@ export async function importDirect(payload: {
     filePath: string
     parsedTitle: string
     parsedYear: number | null
-    suggestedExternalId: string | null
     mediaTypeHint: string
   }[]
   mediaTypeId: number

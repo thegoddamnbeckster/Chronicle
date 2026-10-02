@@ -131,12 +131,6 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
               {diag?.scannerSignals != null && (
                 <>
                   <span className={styles.signal}>
-                    <span className={diag.scannerSignals.hasNfo ? styles.signalYes : styles.signalNo}>
-                      {diag.scannerSignals.hasNfo ? '✓' : '✗'}
-                    </span>
-                    NFO sidecar
-                  </span>
-                  <span className={styles.signal}>
                     <span className={diag.scannerSignals.hasLocalPoster ? styles.signalYes : styles.signalNo}>
                       {diag.scannerSignals.hasLocalPoster ? '✓' : '✗'}
                     </span>

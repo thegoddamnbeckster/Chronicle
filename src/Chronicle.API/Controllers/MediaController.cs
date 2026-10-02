@@ -150,39 +150,6 @@ namespace Chronicle.API.Controllers
             return File(bytes, contentType);
         }
 
-        // ── GET /api/v1/media/{id}/nfo ────────────────────────────────────────────
-
-        /// <summary>
-        /// Parses the rich display fields (plot, cast, genres, rating, etc.) from the
-        /// sidecar found alongside the item's media file by the file scanner. The path comes
-        /// from the database (never from user input) and is validated to exist on disk.
-        /// Delegates the actual field extraction to whichever loaded
-        /// <see cref="Chronicle.Plugins.ISidecarFormatPlugin"/> recognizes it (Kodi's .nfo
-        /// today) -- this endpoint has no sidecar-schema knowledge of its own.
-        /// </summary>
-        [HttpGet("{id:int}/nfo")]
-        public async Task<IActionResult> GetNfoDetail(int id, CancellationToken ct)
-        {
-            var item = await _context.MediaItems.FindAsync([id], ct);
-            if (item is null) return NotFound();
-
-            var (fs, _) = ParseMetaJson(item.MetadataJson);
-            var nfoPath = fs?.NfoPath;
-
-            if (string.IsNullOrEmpty(nfoPath)) return NotFound();
-            if (!System.IO.File.Exists(nfoPath)) return NotFound();
-
-            System.Text.Json.JsonElement? detail = null;
-            foreach (var plugin in _pluginRegistry.GetSidecarFormatPlugins())
-            {
-                detail = plugin.ExtractCuratedFields(nfoPath);
-                if (detail is not null) break;
-            }
-            if (detail is null) return NotFound();
-
-            return Ok(ApiResponse<System.Text.Json.JsonElement?>.Ok(detail));
-        }
-
         [HttpGet("{id:int}/children")]
         public async Task<IActionResult> GetChildren(int id, CancellationToken ct)
         {
@@ -1468,7 +1435,7 @@ namespace Chronicle.API.Controllers
             var (fs, _) = ParseMetaJson(item.MetadataJson);
 
             // Restore poster from file scanner if it has one, otherwise wipe it.
-            item.PosterUrl      = fs?.NfoPosterUrl ?? fs?.LocalPosterPath;
+            item.PosterUrl      = fs?.LocalPosterPath;
             item.Overview       = null;
             item.RuntimeMinutes = null;
             // Name and Year are intentionally left as-is — they were either set from the
@@ -1520,7 +1487,7 @@ namespace Chronicle.API.Controllers
                 // which deserialises into a FileScannerMetaDto with all-null fields because the
                 // property names don't match.  Extract filePaths[0] (or folderPath for parent
                 // items) from the raw JSON so the File Scanner card appears on the media detail page.
-                if (fs is not null && fs.FilePath is null && fs.LocalPosterPath is null && fs.NfoPosterUrl is null)
+                if (fs is not null && fs.FilePath is null && fs.LocalPosterPath is null)
                     fs = TryExtractFilePathFromNewFormat(json) ?? fs;
 
                 // Suppress a completely empty FileScannerMetaDto — but keep it when ImportedAt
@@ -1528,8 +1495,7 @@ namespace Chronicle.API.Controllers
                 // it carries technical/identity data only (e.g. a contribution with no file path,
                 // such as a MusicBee push that reported size/bitrate/duration but no local path).
                 var fsOut = (fs?.FilePath is not null || fs?.LocalPosterPath is not null ||
-                             fs?.NfoPosterUrl is not null || fs?.ImportedAt is not null ||
-                             fs?.Fingerprint is not null || fs?.NfoRaw is not null)
+                             fs?.ImportedAt is not null || fs?.Fingerprint is not null)
                     ? fs : null;
 
                 // All non-fileScanner keys are plugin metadata — pass raw JsonElements so
@@ -1629,24 +1595,6 @@ namespace Chronicle.API.Controllers
                         iat.TryGetDateTime(out var dt))
                         importedAt = dt;
 
-                    string? nfoPath = null;
-                    if (sect.TryGetProperty("nfoPath", out var np))
-                        nfoPath = np.GetString();
-
-                    // NfoRaw/NfoParsed -- the lossless-ingestion fields (see
-                    // FileScanService.FileScannerMetaJson's own doc). Read here the same way
-                    // as every other hierarchical-format field in this method: this fallback
-                    // exists BECAUSE a straight Deserialize<FileScannerMetaDto> against this
-                    // shape comes back all-null (property names don't match the flat format),
-                    // so anything not explicitly re-extracted here is silently lost for every
-                    // TV show/season/episode, even though FileScanService already stored it.
-                    string? nfoRaw = null;
-                    if (sect.TryGetProperty("nfoRaw", out var nr) && nr.ValueKind == System.Text.Json.JsonValueKind.String)
-                        nfoRaw = nr.GetString();
-                    System.Text.Json.JsonElement? nfoParsed = null;
-                    if (sect.TryGetProperty("nfoParsed", out var npEl) && npEl.ValueKind != System.Text.Json.JsonValueKind.Null)
-                        nfoParsed = npEl.Clone();
-
                     // Leaf items (episodes/tracks): first entry in filePaths array
                     if (sect.TryGetProperty("filePaths", out var arr) &&
                         arr.ValueKind == System.Text.Json.JsonValueKind.Array)
@@ -1655,8 +1603,7 @@ namespace Chronicle.API.Controllers
                         {
                             var path = el.GetString();
                             if (!string.IsNullOrEmpty(path))
-                                return new FileScannerMetaDto(path, null, null, importedAt,
-                                    NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
+                                return new FileScannerMetaDto(path, null, importedAt);
                         }
                     }
 
@@ -1666,15 +1613,13 @@ namespace Chronicle.API.Controllers
                     {
                         var folderPath = fp.GetString();
                         if (!string.IsNullOrEmpty(folderPath))
-                            return new FileScannerMetaDto(folderPath, null, null, importedAt,
-                                NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
+                            return new FileScannerMetaDto(folderPath, null, importedAt);
                     }
 
                     // fileScanner section exists but no path recorded yet (older import).
                     // Still return a non-null DTO so the File Scanner card is shown.
-                    if (importedAt.HasValue || nfoPath is not null || nfoRaw is not null)
-                        return new FileScannerMetaDto(null, null, null, importedAt,
-                            NfoPath: nfoPath, NfoRaw: nfoRaw, NfoParsed: nfoParsed);
+                    if (importedAt.HasValue)
+                        return new FileScannerMetaDto(null, null, importedAt);
                 }
             }
             catch { /* ignore malformed JSON */ }

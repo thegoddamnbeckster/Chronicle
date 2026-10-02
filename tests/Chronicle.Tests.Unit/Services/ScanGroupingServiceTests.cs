@@ -8,46 +8,6 @@ using Moq;
 
 namespace Chronicle.Tests.Unit.Services;
 
-/// <summary>
-/// Minimal ISidecarFormatPlugin test double for ScanGroupingServiceTests -- exists only so
-/// the class can construct a real IPluginRegistry, never asserted on directly. Deliberately a
-/// pre-configured lookup table rather than a real filesystem-scanning implementation: the
-/// real Kodi FindSidecar/ExtractSignal convention (stem-based .nfo matching, tvshow.nfo/
-/// season*.nfo exclusion, XML field parsing) lives in the separate Chronicle.Plugin.Kodi.NFO
-/// repo and is already covered by that repo's own tests -- this double only needs to prove
-/// ScanGroupingService correctly threads whatever a sidecar plugin returns through its own
-/// grouping logic, not re-verify Kodi's file-finding convention a second time. Also sidesteps
-/// CodeQL's cs/path-injection query, which (confirmed against two different real fixes, an
-/// inline lgtm[] suppression and an absolute-path containment check, on 2026-09-02) flags any
-/// FindSidecar-shaped method that touches the filesystem with a parameter-derived path, no
-/// matter how it's guarded -- a lookup table has no such sink at all.
-/// </summary>
-file sealed class FakeNfoSidecarPlugin(IReadOnlyDictionary<string, string>? sidecarsByMediaPath = null)
-    : ISidecarFormatPlugin
-{
-    private readonly IReadOnlyDictionary<string, string> _sidecarsByMediaPath =
-        sidecarsByMediaPath ?? new Dictionary<string, string>();
-
-    public string PluginId => "test.fake.nfo";
-    public string Name => "Fake NFO";
-    public string Version => "0.0.0";
-    public string Author => "test";
-
-    public MediaTypeSupport[] GetSupportedMediaTypes() => [];
-    public PluginSettingsSchema GetSettingsSchema() => new() { Settings = [] };
-    public void Configure(IReadOnlyDictionary<string, string> settings) { }
-
-    public string? FindSidecar(string mediaFilePath) =>
-        _sidecarsByMediaPath.TryGetValue(mediaFilePath, out var sidecarPath) ? sidecarPath : null;
-
-    // Not exercised by any current ScanGroupingServiceTests assertion (they only check
-    // NfoPath threading, not parsed signal content) -- see class doc for why a real XML
-    // parse isn't needed here.
-    public SidecarSignal? ExtractSignal(string sidecarPath) => null;
-
-    public SidecarCapture? CaptureLossless(string sidecarPath) => null;
-}
-
 public class ScanGroupModelTests
 {
     [Fact]
@@ -124,26 +84,11 @@ public class TagSignalExtractorTests
     }
 }
 
-// NfoSignalExtractorTests lived here -- deleted alongside Chronicle.Services.Scan's
-// NfoSignalExtractor/NfoDetailParser (see docs/plans/2026-09-02-kodi-nfo-plugin-design.md).
-// Equivalent coverage now lives in the Chronicle.Plugin.Kodi.NFO repo's own
-// KodiNfoReaderTests.cs (ParseSignalXml_MusicNfo_ExtractsArtistAndAlbum,
-// ParseSignalXml_Episode_ExtractsShowTitleSeasonEpisode, FindSidecar_*).
-
 public class ScanGroupingServiceTests
 {
     private readonly ScanGroupingService _svc = new(
         new FolderSignalExtractor(),
-        new TagSignalExtractor(),
-        CreateRegistryWithFakeNfoPlugin());
-
-    private static IPluginRegistry CreateRegistryWithFakeNfoPlugin()
-    {
-        var registry = new Mock<IPluginRegistry>();
-        registry.Setup(r => r.GetSidecarFormatPlugins())
-            .Returns([new FakeNfoSidecarPlugin()]);
-        return registry.Object;
-    }
+        new TagSignalExtractor());
 
     [Fact]
     public void Group_FlatMusicFiles_BuildsArtistAlbumTree()
@@ -248,7 +193,7 @@ public class ScanGroupingServiceTests
     }
 
     [Fact]
-    public void Group_NfoAndImageFiles_DoNotAppearInUngrouped()
+    public void Group_StrayNonMediaFiles_DoNotAppearInUngrouped()
     {
         var files = new[]
         {
@@ -345,49 +290,5 @@ public class ScanGroupingServiceTests
         var season = show.Children[0];
         season.Name.Should().Be("Season 1");
         season.Children.Should().HaveCount(1);
-    }
-
-    /// <summary>
-    /// Regression test (2026-09-01): a per-episode .nfo sidecar was found and parsed for
-    /// signal purposes (title/season/episode) but its path was never carried onto the
-    /// episode's own ScanGroup, so UpsertGroupItemAsync always persisted a null
-    /// fileScanner.nfoPath for episodes -- which the frontend's NFO-details panel is
-    /// gated on (see MediaDetailPage.tsx's nfoDetail query), so it never rendered for TV
-    /// episodes even when a real, correctly-matched sidecar existed on disk. The flat
-    /// (movies) branch always set this correctly; this was the one hierarchical leaf path
-    /// that didn't. Uses its own locally-scoped ScanGroupingService (not the shared _svc)
-    /// with a FakeNfoSidecarPlugin pre-configured to resolve this test's specific
-    /// videoPath -> nfoPath -- see that class's doc for why it's a lookup table rather than
-    /// a real filesystem-scanning double.
-    /// </summary>
-    [Fact]
-    public void Group_EpisodeWithNfoSidecar_CarriesNfoPathOntoEpisodeGroup()
-    {
-        var dir = Directory.CreateTempSubdirectory("chronicle_scangroup_test_");
-        try
-        {
-            var showDir = Directory.CreateDirectory(Path.Combine(dir.FullName, "Breaking Bad"));
-            var videoPath = Path.Combine(showDir.FullName, "Breaking.Bad.S01E01.mkv");
-            var nfoPath = Path.Combine(showDir.FullName, "Breaking.Bad.S01E01.nfo");
-            File.WriteAllText(videoPath, "");
-            File.WriteAllText(nfoPath, "<episodedetails><title>Pilot</title><aired>2008-01-20</aired></episodedetails>");
-
-            var registry = new Mock<IPluginRegistry>();
-            registry.Setup(r => r.GetSidecarFormatPlugins())
-                .Returns([new FakeNfoSidecarPlugin(new Dictionary<string, string> { [videoPath] = nfoPath })]);
-            var svc = new ScanGroupingService(
-                new FolderSignalExtractor(), new TagSignalExtractor(), registry.Object);
-
-            var result = svc.Group([videoPath], scanRoot: dir.FullName, hierarchyLevels: 3);
-
-            var show = result.Groups.Should().ContainSingle().Which;
-            var season = show.Children.Should().ContainSingle().Which;
-            var episode = season.Children.Should().ContainSingle().Which;
-            episode.NfoPath.Should().Be(nfoPath);
-        }
-        finally
-        {
-            dir.Delete(recursive: true);
-        }
     }
 }

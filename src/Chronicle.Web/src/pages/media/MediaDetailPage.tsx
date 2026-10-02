@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, unparentFromSeries, reparentToSeries, getNfoDetail, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
+import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, unparentFromSeries, reparentToSeries, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, addToLibrary, updateLibraryEntry, resetWatchProgress } from '@/api/library'
 import { posterProgressPercent } from '@/utils/posterProgress'
@@ -12,7 +12,6 @@ import { getMyPreferences, updateMyPreferences } from '@/api/users'
 import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus, LibraryEntry } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
-import { JsonTree } from '@/components/JsonTree'
 import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
 import { SlotGalleryModal } from '@/components/SlotGalleryModal'
@@ -242,12 +241,6 @@ export default function MediaDetailPage() {
     queryKey: ['library', 'children', mediaId, childIdsForLibrary],
     queryFn: () => getLibraryEntriesForMediaIds(childIdsForLibrary),
     enabled: childIdsForLibrary.length > 0,
-  })
-
-  const { data: nfoDetail } = useQuery({
-    queryKey: ['media', mediaId, 'nfo'],
-    queryFn: () => getNfoDetail(mediaId),
-    enabled: !isNaN(mediaId) && !!item?.fileScannerMeta?.nfoPath,
   })
 
   const { data: peopleInvolved = [] } = useQuery({
@@ -1542,9 +1535,8 @@ export default function MediaDetailPage() {
               // reinstall doesn't redo the work), but that's a reason to keep the DATA, not a
               // reason to keep rendering a box for a plugin that isn't currently active.
               // NOTE: `!plugin` (id not found in the registry at all) is deliberately NOT
-              // filtered here -- pluginIds like "scraperResolvedFile" and
-              // "chronicle_scraper.legacy_nfo" are legitimate non-plugin metadata source tags
-              // (written by the Kodi scraper's NFO ingestion, never registered as a plugin)
+              // filtered here -- pluginIds like "scraperResolvedFile" are legitimate non-plugin
+              // metadata source tags (written by the Kodi scraper, never registered as a plugin)
               // and must keep showing; there's no reliable way from here to tell those apart
               // from an actually-uninstalled plugin's leftover id.
               if (plugin && !plugin.isEnabled) return null
@@ -1619,7 +1611,6 @@ export default function MediaDetailPage() {
             (item.fileScannerMeta &&
               (item.fileScannerMeta.filePath ||
                 item.fileScannerMeta.localPosterPath ||
-                item.fileScannerMeta.nfoPosterUrl ||
                 item.fileScannerMeta.importedAt))) && (
             <div className={styles.scannerBox}>
               <div className={styles.scannerHeader}>File Scanner</div>
@@ -1664,108 +1655,6 @@ export default function MediaDetailPage() {
                       />
                       <span className={styles.scannerPath}>{item.fileScannerMeta.localPosterPath}</span>
                     </div>
-                  </div>
-                )}
-                {item.fileScannerMeta?.nfoPosterUrl && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>NFO</span>
-                    {item.fileScannerMeta.nfoPosterUrl.startsWith('http') ? (
-                      <a
-                        href={item.fileScannerMeta.nfoPosterUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={styles.tmdbImageLink}
-                      >
-                        {item.fileScannerMeta.nfoPosterUrl}
-                      </a>
-                    ) : (
-                      <span className={styles.scannerPath}>{item.fileScannerMeta.nfoPosterUrl}</span>
-                    )}
-                  </div>
-                )}
-                {nfoDetail?.plot && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Plot</span>
-                    <span className={styles.tmdbValue}>{nfoDetail.plot}</span>
-                  </div>
-                )}
-                {nfoDetail && nfoDetail.genres.length > 0 && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Genres</span>
-                    <div className={styles.tmdbTags}>
-                      {nfoDetail.genres.map(g => (
-                        <span key={g} className={styles.tmdbTag}>{g}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {nfoDetail?.rating != null && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Rating</span>
-                    <span className={styles.tmdbValue}>{nfoDetail.rating.toFixed(1)}</span>
-                  </div>
-                )}
-                {(nfoDetail?.runtimeMinutes || nfoDetail?.mpaa || nfoDetail?.premiered) && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Details</span>
-                    <span className={styles.tmdbValue}>
-                      {[
-                        nfoDetail?.runtimeMinutes ? `${nfoDetail.runtimeMinutes} min` : null,
-                        nfoDetail?.mpaa,
-                        nfoDetail?.premiered,
-                      ].filter(Boolean).join(' · ')}
-                    </span>
-                  </div>
-                )}
-                {nfoDetail?.studio && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Studio</span>
-                    <span className={styles.tmdbValue}>{nfoDetail.studio}</span>
-                  </div>
-                )}
-                {nfoDetail?.director && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Director</span>
-                    <span className={styles.tmdbValue}>{nfoDetail.director}</span>
-                  </div>
-                )}
-                {nfoDetail && nfoDetail.writers.length > 0 && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Writers</span>
-                    <span className={styles.tmdbValue}>{nfoDetail.writers.join(', ')}</span>
-                  </div>
-                )}
-                {nfoDetail?.collectionName && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Collection</span>
-                    <span className={styles.tmdbValue}>{nfoDetail.collectionName}</span>
-                  </div>
-                )}
-                {nfoDetail && nfoDetail.actors.length > 0 && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Cast</span>
-                    <span className={styles.tmdbValue}>
-                      {nfoDetail.actors
-                        .map(a => a.role ? `${a.name} (${a.role})` : a.name)
-                        .join(', ')}
-                    </span>
-                  </div>
-                )}
-                {/* Full, unfiltered capture of the .nfo sidecar -- every element and attribute,
-                    not just the curated fields above. Collapsed by default (native <details>,
-                    no extra state needed): this exists so nothing the sidecar actually contains
-                    is ever silently invisible, not as a replacement for the curated rows above. */}
-                {item.fileScannerMeta?.nfoParsed != null && (
-                  <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>Full NFO Data</span>
-                    <details>
-                      <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>
-                        Every field found in the .nfo file
-                      </summary>
-                      <div className={styles.tmdbValue} style={{ marginTop: '0.5rem' }}>
-                        <JsonTree data={item.fileScannerMeta.nfoParsed} depth={0} />
-                      </div>
-                    </details>
                   </div>
                 )}
               </div>

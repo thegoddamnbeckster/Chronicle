@@ -58,8 +58,7 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{portConfig.Api}");
 // port -- see that controller's own doc for why (SSRF guard: an authenticated caller could
 // otherwise register 127.0.0.1:<this port> as a "Kodi device" and use whatever future feature
 // pushes to registered devices to attack Chronicle's own API on a schedule the attacker
-// doesn't even need to trigger themselves -- the original concrete case, NfoPushService's own
-// per-edit pushes, was removed 2026-09-13, but the guard itself stays general-purpose).
+// doesn't even need to trigger themselves; the guard is general-purpose).
 builder.Services.AddSingleton(portConfig);
 
 // ── Serilog ───────────────────────────────────────────────────────────────────
@@ -78,8 +77,8 @@ builder.Host.UseSerilog((ctx, services, cfg) => cfg
     // .NET's own IHttpClientFactory logging handlers log every request (success AND failure) at
     // Information, full exception included on failure -- confirmed live (2026-09-11) this
     // produced two near-identical multi-line stack traces per call against an unreachable
-    // device (originally observed via the now-removed KodiRpcClient, superseded by the
-    // now-also-removed NfoPushService), on top of Chronicle's own one-line warning for the same
+    // device (originally observed via the now-removed KodiRpcClient), on top of Chronicle's
+    // own one-line warning for the same
     // failure. Warning-and-up only: nothing meaningful is lost (a genuinely unexpected
     // HttpClient problem would still surface at Warning+), and this still applies to every
     // other outbound HttpClient call Chronicle makes, not just that one.
@@ -276,6 +275,7 @@ builder.Services.AddSingleton<AudiobookSeriesNumberRepairService>();
 builder.Services.AddSingleton<SeriesFragmentRepairService>();
 builder.Services.AddSingleton<UnknownSeriesRepairService>();
 builder.Services.AddSingleton<BookTitleFragmentRepairService>();
+builder.Services.AddSingleton<LegacyNfoPurgeService>();
 builder.Services.AddSingleton<SeriesNameFragmentRepairService>();
 builder.Services.AddSingleton<PersonFullCreditsService>();
 builder.Services.AddSingleton<MovieExternalIdRepairService>();
@@ -492,6 +492,11 @@ using (var scope = app.Services.CreateScope())
         // cost this table replaces. A no-op after the first successful run (see the method's
         // own doc).
         await fileScanService.BackfillKnownFileNamesAsync();
+
+        // One-time removal of all NFO-derived data and the retired Kodi NFO sidecar plugin --
+        // must run before PluginHostService (a hosted service, started at app.Run) would
+        // otherwise auto-register that plugin's folder again. No-op after the first run.
+        await app.Services.GetRequiredService<LegacyNfoPurgeService>().RunOnceAsync();
 
         // NOTE: media_enrichment seeding from external IDs (SeedEnrichmentRowsFromExternalIdsAsync)
         // deliberately does NOT run here. Its per-plugin media-type filter depends on

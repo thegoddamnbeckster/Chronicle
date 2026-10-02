@@ -47,9 +47,7 @@ namespace Chronicle.API.DTOs
     /// the character/role they played. Shared between the scraper and web-facing media DTOs.</summary>
     /// <summary>ThumbUrl is the credited person's own resolved headshot (Chronicle's
     /// person_headshots-backed poster, see docs/plans/2026-08-28-people-section-design.md
-    /// Section 7) -- null when Chronicle hasn't resolved a photo for them yet. Kodi's own
-    /// actor NFO schema already supports &lt;actor&gt;&lt;thumb&gt;, previously just never
-    /// supplied.</summary>
+    /// Section 7) -- null when Chronicle hasn't resolved a photo for them yet.</summary>
     public record CastMemberDto(string Name, string? Role, string? ThumbUrl = null);
 
     /// <summary>A non-actor credit -- director, writer, producer, executive producer,

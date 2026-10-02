@@ -20,7 +20,7 @@ namespace Chronicle.Services.Scan
         // Video containers (.mkv, .mp4, .avi, etc.) are intentionally excluded:
         // they rarely carry useful embedded tags, and opening them with TagLib on
         // a slow/network drive causes a costly synchronous read for every file.
-        // Folder structure and NFO sidecars are the authoritative signal for video.
+        // Folder structure and filenames are the authoritative signal for video.
         private static readonly HashSet<string> _supported = new(StringComparer.OrdinalIgnoreCase)
         {
             ".mp3", ".flac", ".m4a", ".ogg", ".opus",

@@ -74,7 +74,6 @@ namespace Chronicle.API.DTOs
     public record FileScannerMetaDto(
         string? FilePath,
         string? LocalPosterPath,
-        string? NfoPosterUrl,
         DateTime? ImportedAt = null,
         /// <summary>Size+modified-time fingerprint (see FileIdentityJson) — changes when the underlying file changes.</summary>
         string? Fingerprint = null,
@@ -83,17 +82,7 @@ namespace Chronicle.API.DTOs
         int? BitrateKbps = null,
         int? SampleRateHz = null,
         int? DurationSeconds = null,
-        string? FileType = null,
-        string? NfoPath = null,
-        /// <summary>Raw .nfo sidecar text, captured verbatim at import time -- the actual
-        /// lossless-ingestion guarantee (see FileScanService.FileScannerMetaJson's own doc).
-        /// Present for movies, fan edits, and every level of a TV hierarchy (shows, seasons,
-        /// episodes) that had a matched sidecar at import time.</summary>
-        string? NfoRaw = null,
-        /// <summary>Generic, complete structured view of the same sidecar (every element and
-        /// attribute, via XmlToJsonConverter) -- a display/query convenience over NfoRaw, not
-        /// a replacement for it.</summary>
-        JsonElement? NfoParsed = null
+        string? FileType = null
     );
 
     public record RefreshLogDto(

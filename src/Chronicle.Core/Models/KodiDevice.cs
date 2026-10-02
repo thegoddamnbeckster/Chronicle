@@ -2,9 +2,7 @@ namespace Chronicle.Core.Models
 {
     /// <summary>
     /// A Kodi instance that has self-registered its own remote-control (JSON-RPC over HTTP)
-    /// address, so Chronicle's server can push a freshly-built NFO straight to it instead of
-    /// waiting for that Kodi instance to notice a change on its own (a manual/scheduled
-    /// "Recreate local NFO" pass, or its next ordinary library scan). Registered by
+    /// address. Registered by
     /// Chronicle_Scraper's movie addon (lib/device_registration.py) using whatever LAN IP it
     /// resolves for itself and Kodi's own configured webserver settings (read locally via
     /// xbmc.executeJSONRPC, which this addon always has access to regardless of whether

@@ -99,7 +99,7 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
 
     public async Task SignalNewContentAsync(string mediaTypeName, CancellationToken ct = default)
     {
-        if (!NfoKindHelper.IsVideoLibraryType(mediaTypeName)) return;
+        if (!VideoLibraryTypeHelper.IsVideoLibraryType(mediaTypeName)) return;
 
         var setting = await db.AppSettings.FindAsync([NewContentSignalKey], ct);
         var now = DateTime.UtcNow.ToString("O");

@@ -9,14 +9,7 @@ namespace Chronicle.Services.Scan;
 /// Built-in implementation of <see cref="IFileScannerPlugin"/> that ships with Chronicle.
 /// Uses local file system enumeration combined with <see cref="FolderSignalExtractor"/> and
 /// <see cref="TagSignalExtractor"/> to produce <see cref="ScannedFile"/> results without any
-/// external API calls. Deliberately does NOT read sidecar files (e.g. Kodi's .nfo) itself:
-/// plugins are instantiated via bare Activator.CreateInstance (see
-/// PluginRegistry.DiscoverAndInstantiate) with no DI, so this class can never be given
-/// IPluginRegistry to look up an installed ISidecarFormatPlugin -- knowing a sidecar's schema
-/// at all would mean hardcoding one format's knowledge into core, the exact thing
-/// Chronicle.Plugin.Kodi.NFO exists to avoid. FileScanService.ApplyNfoSignals runs as a
-/// compensating step against every ScanDirectoryAsync result instead, since FileScanService
-/// (a real DI-registered service) can reach the registry.
+/// external API calls.
 /// </summary>
 public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
 {
@@ -26,7 +19,7 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
     public string Name        => "Built-in File Scanner";
     public string Version     => "1.0.0";
     public string Author      => "Chronicle";
-    public string Description => "Scans local directories and extracts metadata from filenames, NFO sidecars, and embedded audio/video tags.";
+    public string Description => "Scans local directories and extracts metadata from filenames and embedded audio/video tags.";
 
     // ── Internal state ────────────────────────────────────────────────────────
 
@@ -124,23 +117,17 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
             "movies" =>
                 header +
                 "How scores are assigned for Movies:\n" +
-                "• 100 — NFO sidecar has an external ID (e.g. tmdbid tag)\n" +
-                "• 90  — NFO sidecar has title + year\n" +
-                "• 78  — NFO sidecar has title only\n" +
                 "• 75  — Folder name includes a year, e.g. \"Interstellar (2014)\"\n" +
-                "• 55  — Folder name only — no year, no sidecar\n\n" +
-                "Recommended: 75 for year-named folders; lower to 55 to import everything; " +
-                "raise to 90+ to require NFO sidecars.",
+                "• 55  — Folder name only — no year\n\n" +
+                "Recommended: 75 for year-named folders; lower to 55 to import everything.",
 
             "tv" =>
                 header +
                 "How scores are assigned for TV Shows (score is for the show root folder):\n" +
                 "• Base 55  — Folder name alone, e.g. \"Breaking Bad\"\n" +
                 "• +20      — Folder name includes a year, e.g. \"Breaking Bad (2008)\"\n" +
-                "• +20      — NFO sidecar in show folder has a show title\n" +
                 "• −15      — Audio tag artist name conflicts with folder name\n\n" +
-                "Typical results: folder+year = 75, folder+NFO = 75, folder+year+NFO = 95, " +
-                "folder only = 55.\n\n" +
+                "Typical results: folder+year = 75, folder only = 55.\n\n" +
                 "Recommended: 75 for year-named show folders; 55 to import everything.",
 
             "music" =>
@@ -148,19 +135,15 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
                 "How scores are assigned for Music (score is for the artist root folder):\n" +
                 "• Base 55  — Folder name alone, e.g. \"Metallica\"\n" +
                 "• +20      — Embedded audio tags have an artist name\n" +
-                "• +20      — NFO sidecar has an artist name\n" +
                 "• +20      — Folder name includes a year, e.g. \"Metallica (1981)\"\n" +
                 "• −15      — Tag artist name conflicts with folder name\n\n" +
-                "Typical results: folder+tags = 75, folder+NFO = 75, folder+tags+year = 95, " +
+                "Typical results: folder+tags = 75, folder+tags+year = 95, " +
                 "folder only = 55.\n\n" +
                 "Recommended: 75 requires at least one corroborating signal; 55 imports everything.",
 
             _ =>
                 header +
                 "How scores are assigned:\n" +
-                "• 100 — NFO sidecar has an external ID\n" +
-                "• 90  — NFO sidecar has title + year\n" +
-                "• 78  — NFO sidecar has title only\n" +
                 "• 75  — Folder name includes a year\n" +
                 "• 55  — Folder name only\n\n" +
                 "Recommended: 75 for year-named folders; 55 to import everything.",
@@ -284,10 +267,6 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
         var (fnTitle, fnYear) = ParseTitleYear(fileName);
 
         // ── Populate ScannedFile from signals (priority: tag > filename) ──────────
-        // Sidecar (e.g. Kodi .nfo) signal is NOT applied here -- this class has no way to
-        // reach a loaded ISidecarFormatPlugin (see class doc). FileScanService.ApplyNfoSignals
-        // overlays it onto every field below afterward, same priority as before (sidecar wins
-        // when present).
 
         // Title
         scanned.ParsedTitle = tagSig?.Title ?? fnTitle;
@@ -297,13 +276,8 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
             (tagSig?.Year.HasValue == true ? (int?)tagSig.Year.Value : null)
             ?? fnYear;
 
-        // External ID (sidecar-only signal; left for ApplyNfoSignals to fill in)
-        scanned.SuggestedExternalId = null;
-
-        // Poster URLs
-        scanned.NfoPosterUrl    = null;
+        // Poster
         scanned.LocalPosterPath = FindLocalPoster(filePath);
-        scanned.NfoPath         = null;
 
         // TV fields
         scanned.ShowTitle     = null;
@@ -341,8 +315,7 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
         // Media type hint
         scanned.MediaTypeHint = InferMediaTypeHint(scanned, folderSig);
 
-        // Confidence score (sidecar-aware scoring is layered on afterward by
-        // FileScanService.ApplyNfoSignals -- see that method's own doc)
+        // Confidence score
         scanned.ConfidenceScore = ComputeConfidence(scanned, tagSig);
 
         return scanned;
@@ -400,11 +373,8 @@ public sealed class BuiltInFileScannerPlugin : IFileScannerPlugin
 
     /// <summary>
     /// Assigns a confidence score reflecting how much structural signal was found from
-    /// tags/filename alone. Mirrors the scoring levels documented in
-    /// <see cref="ScannedFile.ConfidenceScore"/> minus the sidecar tiers (100/85/78) --
-    /// FileScanService.ApplyNfoSignals raises the score into those tiers afterward when a
-    /// sidecar is present, exactly reproducing what this method used to do directly against
-    /// NfoSignal before sidecar knowledge moved out of core.
+    /// tags/filename. Mirrors the scoring levels documented in
+    /// <see cref="ScannedFile.ConfidenceScore"/>.
     /// </summary>
     private static int ComputeConfidence(ScannedFile f, TagSignal? tag)
     {

@@ -15,7 +15,7 @@ namespace Chronicle.Core.Helpers;
 public static class CreditRoleHelper
 {
     /// <summary>MediaType names whose credits genuinely represent an actor playing a character.
-    /// Deliberately its own list, not a reuse of NfoKindHelper's video-library classification --
+    /// Deliberately its own list, not a reuse of VideoLibraryTypeHelper's video-library classification --
     /// today's membership happens to be identical, but the two questions ("is this Kodi-relevant"
     /// vs. "do this type's credits have a character concept") are conceptually independent and
     /// shouldn't be coupled just because they coincide right now.</summary>

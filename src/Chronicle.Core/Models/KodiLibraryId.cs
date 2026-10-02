@@ -13,14 +13,10 @@ namespace Chronicle.Core.Models
     /// -- not just during an explicit rebuild pass, so this mapping stays fresh even for
     /// devices that never run a rebuild.
     ///
-    /// Originally required by NfoPushService to call VideoLibrary.RefreshMovie/RefreshTVShow/
-    /// RefreshEpisode (all of which take Kodi's own internal id, not a file path) to make an
-    /// ALREADY-IMPORTED item reconsider its local NFO -- removed 2026-09-13 along with the rest
-    /// of the server-side NFO generation system, so this mapping has no current server-side
-    /// consumer. Left in place (both the table and the report-kodi-id endpoint both Kodi addons
-    /// still call on every ordinary scan) since it's a harmless write with no NFO/scanning
-    /// implications, and a future feature may want the same "which Kodi id is this on which
-    /// device" mapping again.
+    /// No current server-side consumer. Left in place (both the table and the report-kodi-id
+    /// endpoint both Kodi addons still call on every ordinary scan) since it's a harmless write
+    /// with no scanning implications, and a future feature may want the same "which Kodi id is
+    /// this on which device" mapping.
     /// </summary>
     public class KodiLibraryId
     {

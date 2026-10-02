@@ -19,17 +19,10 @@ namespace Chronicle.Core.Models.Scan
         /// <summary>Local path to a folder image (.jpg/.png) if one was found.</summary>
         public string? PosterPath { get; set; }
 
-        /// <summary>
-        /// Absolute path to a .nfo sidecar file, if one was found. Only matching-relevant
-        /// fields are parsed at scan time — this lets the richer fields (plot, cast, genres,
-        /// rating, etc.) be parsed on demand for display without re-scanning.
-        /// </summary>
-        public string? NfoPath { get; set; }
-
         /// <summary>0.0 – 1.0. Average of member file scores, penalised for conflicts.</summary>
         public double ConfidenceScore { get; set; }
 
-        /// <summary>e.g. ["folder", "tags", "nfo"] — signals that contributed.</summary>
+        /// <summary>e.g. ["folder", "tags"] — signals that contributed.</summary>
         public List<string> SignalSources { get; set; } = [];
 
         /// <summary>True if any two signal sources disagreed on the group name.</summary>

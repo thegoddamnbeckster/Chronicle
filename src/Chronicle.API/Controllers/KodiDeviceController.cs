@@ -15,14 +15,8 @@ namespace Chronicle.API.Controllers;
 /// Backs Chronicle_Scraper's device self-registration (lib/device_registration.py), per-item
 /// Kodi-internal-id reporting, the new-content scan signal, and the scan-active heartbeat.
 /// Grouped under the same "api/v1/scraper" prefix the addons already call into, even though
-/// ScraperController itself is untouched by these.
-///
-/// NFO writing/rebuilding (server-side and client-side alike) was removed entirely 2026-09-13
-/// -- per-user direction, after it was identified as the actual mechanism by which a stale or
-/// unexpected local NFO file could block Kodi from ever re-scanning an item. Neither Kodi
-/// addon requires a local NFO to work; Chronicle's own API is the source of truth both
-/// scrapers read from directly. See git history for the removed nfo-rebuild-queue
-/// claim/complete/release/reseed-all/status endpoints if you need the old rationale.
+/// ScraperController itself is untouched by these. Chronicle's own API is the source of truth
+/// both scrapers read from directly.
 /// </summary>
 [ApiController]
 [Route("api/v1/scraper")]
@@ -69,14 +63,10 @@ public class KodiDeviceController(IKodiDeviceService devices, PortConfig portCon
                 "API_KEY_REQUIRED", "Device registration requires an API key, not a JWT."));
         if (string.IsNullOrWhiteSpace(request.Host) || request.Port <= 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_DEVICE", "host and a positive port are required."));
-        // SSRF guard: refuse to register Chronicle's own listening port as a "Kodi device" --
-        // the now-removed NfoPushService used to fire an authenticated-context outbound request
-        // at whatever got registered here on every edit to an item this "device" reported, so an
-        // attacker with a leaked API key registering 127.0.0.1:<this port> would otherwise have
-        // gotten a standing, repeatable way to hit Chronicle's own API on a schedule they don't
-        // control. That concrete attack is moot now that NfoPushService is gone, but the guard
-        // stays as a general safeguard against whatever future feature next pushes to a
-        // registered device. Doesn't attempt a general private/public IP-range policy (reverse
+        // SSRF guard: refuse to register Chronicle's own listening port as a "Kodi device" -- a
+        // general safeguard against any feature that pushes to a registered device, which an
+        // attacker with a leaked API key could otherwise aim at 127.0.0.1:<this port> to hit
+        // Chronicle's own API on a schedule they don't control. Doesn't attempt a general private/public IP-range policy (reverse
         // proxies, Docker networking, and IPv6 all make that a real design decision, not a
         // one-line guard) -- worth a follow-up if broader hardening is wanted.
         if (request.Port == portConfig.Api)
@@ -161,9 +151,8 @@ public class KodiDeviceController(IKodiDeviceService devices, PortConfig portCon
     }
 
     /// <summary>POST /api/v1/scraper/scan-active -- heartbeat telling Chronicle "a Kodi device is
-    /// actively scanning right now," so NfoGenerationService's own scheduled sweep pauses itself
-    /// for the duration -- see IKodiDeviceService.ReportScanActivityAsync/IsScanActiveAsync's own
-    /// docs. Call once from the addon's xbmc.Monitor.onScanStarted() hook and again periodically
+    /// actively scanning right now" -- see IKodiDeviceService.ReportScanActivityAsync/
+    /// IsScanActiveAsync's own docs. Call once from the addon's xbmc.Monitor.onScanStarted() hook and again periodically
     /// while a scan is still running (there's no onScanProgress callback); no explicit "finished"
     /// endpoint by design -- the flag just expires a couple of minutes after the last heartbeat.
     /// No API-key/registered-device requirement, same reasoning as kodi-scan-signal above: this

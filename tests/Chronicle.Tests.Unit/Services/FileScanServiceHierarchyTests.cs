@@ -362,13 +362,12 @@ public class FileScanServiceHierarchyTests
 
         var registry = new Mock<IPluginRegistry>();
         registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
-        registry.Setup(r => r.GetSidecarFormatPlugins()).Returns([]);
         var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
 
         var request = new DirectImportRequest(
             Files: [new DirectImportFile(
                 FilePath: @"F:\Videos\Movies\Some Movie (2020)\Some Movie (2020).mkv",
-                ParsedTitle: "Some Movie", ParsedYear: 2020, SuggestedExternalId: null,
+                ParsedTitle: "Some Movie", ParsedYear: 2020,
                 MediaTypeHint: "movies")],
             MediaTypeId: 1, UserId: 1);
 

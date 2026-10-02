@@ -37,94 +37,6 @@ namespace Chronicle.Services
             _groupingService = groupingService;
         }
 
-        /// <summary>
-        /// Locates and losslessly reads a sidecar for <paramref name="filePath"/>, for import
-        /// paths (ImportApprovedAsync, ImportDirectAsync/ImportSingleFileAsync) that only ever
-        /// receive a bare file path with no upstream ScannedFile/ScanGroup already carrying a
-        /// resolved NfoPath (unlike the grouped-scan and Identify flows, which compute it once
-        /// up front and thread it through). Asks every loaded <see cref="ISidecarFormatPlugin"/>
-        /// in turn (Kodi's .nfo today) -- same rule ScanGroupingService/ApplyNfoSignals use, so
-        /// an item found this way and one found via a grouped scan agree on which sidecar
-        /// belongs to it.
-        /// </summary>
-        private (string? path, string? raw, JsonElement? parsed) LookupNfo(string filePath)
-        {
-            foreach (var plugin in _registry.GetSidecarFormatPlugins())
-            {
-                var nfoPath = plugin.FindSidecar(filePath);
-                if (nfoPath is null) continue;
-                var capture = plugin.CaptureLossless(nfoPath);
-                return (nfoPath, capture?.RawText, capture?.Parsed);
-            }
-            return (null, null, null);
-        }
-
-        /// <summary>
-        /// Captures a sidecar already located at <paramref name="sidecarPath"/> losslessly, by
-        /// asking every loaded <see cref="ISidecarFormatPlugin"/> in turn until one recognizes
-        /// it. Used where the path is already known (e.g. ScannedFile.NfoPath, ScanGroup.NfoPath)
-        /// and only the raw+parsed capture is still needed.
-        /// </summary>
-        private SidecarCapture? CaptureSidecar(string? sidecarPath)
-        {
-            if (sidecarPath is null) return null;
-            foreach (var plugin in _registry.GetSidecarFormatPlugins())
-            {
-                var capture = plugin.CaptureLossless(sidecarPath);
-                if (capture is not null) return capture;
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// Overlays sidecar-format-plugin (e.g. Kodi .nfo) signal onto raw scanner results.
-        /// BuiltInFileScannerPlugin itself cannot do this: plugins are instantiated via bare
-        /// Activator.CreateInstance (see PluginRegistry.DiscoverAndInstantiate) with no DI, so
-        /// it can never receive IPluginRegistry to look up installed ISidecarFormatPlugins. This
-        /// is the compensating step, run once against every ScanDirectoryAsync result, that
-        /// reproduces exactly what BuiltInFileScannerPlugin's own ParseFile used to do directly
-        /// against the old NfoSignalExtractor -- same field-priority rules (sidecar wins over
-        /// tag/filename-derived values when present), now driven through the plugin registry.
-        /// </summary>
-        private void ApplyNfoSignals(IEnumerable<Chronicle.Plugins.Models.ScannedFile> files)
-        {
-            var sidecarPlugins = _registry.GetSidecarFormatPlugins();
-            if (sidecarPlugins.Count == 0) return;
-
-            foreach (var file in files)
-            {
-                string? nfoPath = null;
-                SidecarSignal? nfo = null;
-                foreach (var plugin in sidecarPlugins)
-                {
-                    var candidate = plugin.FindSidecar(file.FilePath);
-                    if (candidate is null) continue;
-                    nfoPath = candidate;
-                    nfo = plugin.ExtractSignal(candidate);
-                    break;
-                }
-                if (nfoPath is null) continue;
-
-                file.NfoPath = nfoPath;
-                if (nfo is null) continue;
-
-                if (nfo.Title is not null)     file.ParsedTitle         = nfo.Title;
-                if (nfo.Year.HasValue)         file.ParsedYear          = nfo.Year;
-                file.SuggestedExternalId       = nfo.ExternalId;
-                file.NfoPosterUrl              = nfo.PosterUrl;
-                file.ShowTitle                 = nfo.ShowTitle;
-                if (nfo.Season.HasValue)       file.SeasonNumber        = nfo.Season;
-                if (nfo.Episode.HasValue)      file.EpisodeNumber       = nfo.Episode;
-
-                if (nfo.ExternalId is not null)
-                    file.ConfidenceScore = 100;
-                else if (nfo.Title is not null && nfo.Year.HasValue)
-                    file.ConfidenceScore = 85;
-                else if (nfo.Title is not null)
-                    file.ConfidenceScore = 78;
-            }
-        }
-
         public async Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync()
         {
             var scanners = _registry.GetFileScannerPlugins();
@@ -173,7 +85,6 @@ namespace Chronicle.Services
                 request.Path, request.Recursive, threshold, mediaType.Name);
 
             var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
-            ApplyNfoSignals(scannedFiles);
 
             // Audiobooks: each book folder is one library entry regardless of how many
             // audio files (parts) or support files (covers, extras) it contains.
@@ -227,10 +138,6 @@ namespace Chronicle.Services
                     mediaItem = await CreateStubItemAsync(file, request.MediaTypeId, ct);
                     _log.Debug("Created stub media item {Title} ({Year})", file.ParsedTitle, file.ParsedYear);
                 }
-
-                // Store external ID if we have one and the item is new (or it's missing)
-                if (file.SuggestedExternalId is not null)
-                    await UpsertExternalIdAsync(mediaItem!.Id, file.SuggestedExternalId, ct);
 
                 // Upsert library entry
                 var existing = await _context.UserLibraries
@@ -398,7 +305,6 @@ namespace Chronicle.Services
                         throw new DirectoryNotFoundException(
                             $"Scan path is not accessible: {request.Path}.{hint}", dnfe);
                     }
-                    ApplyNfoSignals(fallback);
                     _progress.Complete();
                     return BuildPreview(fallback);
                 }
@@ -426,7 +332,6 @@ namespace Chronicle.Services
             }
 
             _progress.Complete();
-            ApplyNfoSignals(allFiles);
 
             _log.Information("Preview complete: {Count} files found across {Dirs} directories",
                 allFiles.Count, dirsToScan.Count);
@@ -443,7 +348,6 @@ namespace Chronicle.Services
                     f.ParsedTitle,
                     f.ParsedYear,
                     f.ConfidenceScore,
-                    f.SuggestedExternalId,
                     string.IsNullOrEmpty(f.MediaTypeHint) ? "movie" : f.MediaTypeHint))
                 .ToList();
             return new ScanPreview(results);
@@ -491,52 +395,31 @@ namespace Chronicle.Services
                 var candidates = new List<MetadataCandidate>();
                 try
                 {
-                    // High-confidence NFO match — fetch by external ID directly
-                    if (file.SuggestedExternalId is not null && file.ConfidenceScore >= 85)
+                    // Title-only search — do NOT append the year to the query string.
+                    // TMDB treats the query as plain text; the year is not in the
+                    // stored title so appending it returns zero results.  ScoreCandidate
+                    // already handles year matching on the returned candidates.
+                    var query = file.ParsedTitle;
+
+                    var searchResults = await ProviderCallGuard.CallAsync(
+                        t => provider.SearchAsync(new MediaSearchContext(query, file.ParsedYear), t),
+                        provider.PluginId, "SearchAsync", (IReadOnlyList<ScoredCandidate>)[],
+                        msg => _log.Warning(msg), msg => _log.Error(msg), ct);
+
+                    foreach (var c in searchResults.Take(5))
                     {
-                        var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                            async t => (MediaMetadata?)await provider.GetByIdAsync(file.SuggestedExternalId, t), provider.PluginId, "GetByIdAsync",
-                            null, msg => _log.Warning(msg), msg => _log.Error(msg), ct);
-                        if (meta is not null)
-                        {
-                            candidates.Add(new MetadataCandidate(
-                                meta.ExternalId,
-                                meta.Title,
-                                meta.Year,
-                                meta.PosterUrl,
-                                meta.Overview,
-                                meta.Rating,
-                                95));
-                        }
+                        var r = c.Metadata;
+                        candidates.Add(new MetadataCandidate(
+                            r.ExternalId,
+                            r.Title,
+                            r.Year,
+                            r.PosterUrl,
+                            r.Overview,
+                            r.Rating,
+                            ScoreCandidate(file, r)));
                     }
-                    else
-                    {
-                        // Title-only search — do NOT append the year to the query string.
-                        // TMDB treats the query as plain text; the year is not in the
-                        // stored title so appending it returns zero results.  ScoreCandidate
-                        // already handles year matching on the returned candidates.
-                        var query = file.ParsedTitle;
 
-                        var searchResults = await ProviderCallGuard.CallAsync(
-                            t => provider.SearchAsync(new MediaSearchContext(query, file.ParsedYear), t),
-                            provider.PluginId, "SearchAsync", (IReadOnlyList<ScoredCandidate>)[],
-                            msg => _log.Warning(msg), msg => _log.Error(msg), ct);
-
-                        foreach (var c in searchResults.Take(5))
-                        {
-                            var r = c.Metadata;
-                            candidates.Add(new MetadataCandidate(
-                                r.ExternalId,
-                                r.Title,
-                                r.Year,
-                                r.PosterUrl,
-                                r.Overview,
-                                r.Rating,
-                                ScoreCandidate(file, r)));
-                        }
-
-                        candidates = [.. candidates.OrderByDescending(c => c.MatchScore)];
-                    }
+                    candidates = [.. candidates.OrderByDescending(c => c.MatchScore)];
                 }
                 catch (Exception ex)
                 {
@@ -626,16 +509,12 @@ namespace Chronicle.Services
                         }
                         else
                         {
-                            // Record the approved file's own path (and any .nfo sidecar next
-                            // to it) the same way every other import path does -- this branch
-                            // previously called SerializeMetadata(tmdbMeta: meta) with no
-                            // scanner data at all, so a brand-new item created here had no
-                            // fileScanner section whatsoever: no file path, no NFO, nothing,
-                            // even though approval.FilePath was right here. Confirmed gap
-                            // (2026-09-02) while closing out NFO lossless-ingestion coverage --
-                            // not previously about NFO specifically, this item's own file path
-                            // was never tracked either.
-                            var (nfoPath, nfoRaw, nfoParsed) = LookupNfo(approval.FilePath);
+                            // Record the approved file's own path the same way every other
+                            // import path does -- this branch previously called
+                            // SerializeMetadata(tmdbMeta: meta) with no scanner data at all, so a
+                            // brand-new item created here had no fileScanner section whatsoever,
+                            // even though approval.FilePath was right here (confirmed gap,
+                            // 2026-09-02).
                             mediaItem = new MediaItem
                             {
                                 MediaTypeId    = request.MediaTypeId,
@@ -645,8 +524,7 @@ namespace Chronicle.Services
                                 PosterUrl      = meta.PosterUrl,
                                 RuntimeMinutes = meta.RuntimeMinutes,
                                 MetadataJson   = SerializeMetadata(tmdbMeta: meta,
-                                    scannerFilePath: approval.FilePath,
-                                    scannerNfoPath: nfoPath, scannerNfoRaw: nfoRaw, scannerNfoParsed: nfoParsed),
+                                    scannerFilePath: approval.FilePath),
                                 HierarchyLevel = 0,
                                 CreatedAt      = DateTime.UtcNow,
                                 UpdatedAt      = DateTime.UtcNow,
@@ -732,11 +610,6 @@ namespace Chronicle.Services
                         continue;
                     }
 
-                    // DirectImportFileDto never carried an NfoPath from the client (the scanner
-                    // resolved one at scan-preview time, but ImportDirectAsync only ever receives
-                    // title/year/filePath back) -- look it up fresh the same way scan time did, so
-                    // this flow's items get the same lossless NFO capture as every other import path.
-                    var (nfoPath, nfoRaw, nfoParsed) = LookupNfo(file.FilePath);
                     var item = new MediaItem
                     {
                         Name           = file.ParsedTitle,
@@ -745,8 +618,7 @@ namespace Chronicle.Services
                         HierarchyLevel = 0,
                         Year           = file.ParsedYear,
                         Number         = file.EpisodeNumber ?? file.AudioTrackNumber,
-                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath,
-                            scannerNfoPath: nfoPath, scannerNfoRaw: nfoRaw, scannerNfoParsed: nfoParsed),
+                        MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
                         CreatedAt      = DateTime.UtcNow,
                         UpdatedAt      = DateTime.UtcNow,
                     };
@@ -766,13 +638,6 @@ namespace Chronicle.Services
                 if (newCount > 0)
                     await _context.SaveChangesAsync(ct);
                 imported = newCount;
-
-                // Upsert ExternalIds for any file that carries an NFO/external ID hint.
-                foreach (var (file, item) in pairs)
-                {
-                    if (!string.IsNullOrEmpty(file.SuggestedExternalId))
-                        await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
-                }
 
                 // Upsert a library entry for the requesting user.
                 // Other users get entries auto-created by GetForUserAsync on their first library view.
@@ -1042,10 +907,6 @@ namespace Chronicle.Services
                 return false;
             }
 
-            // Same NFO lookup as ImportDirectAsync's flat branch and for the same reason --
-            // this covers TV episodes (this method is also the leaf-item creator for the
-            // hierarchical/Direct-import path) and audiobook chapters alike.
-            var (nfoPath, nfoRaw, nfoParsed) = LookupNfo(file.FilePath);
             var item = new MediaItem
             {
                 Name           = file.ParsedTitle,
@@ -1054,16 +915,12 @@ namespace Chronicle.Services
                 HierarchyLevel = hierarchyLevel,
                 Year           = file.ParsedYear,
                 Number         = file.EpisodeNumber ?? file.AudioTrackNumber,
-                MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath,
-                    scannerNfoPath: nfoPath, scannerNfoRaw: nfoRaw, scannerNfoParsed: nfoParsed),
+                MetadataJson   = SerializeMetadata(scannerFilePath: file.FilePath),
                 CreatedAt      = DateTime.UtcNow,
                 UpdatedAt      = DateTime.UtcNow,
             };
             _context.MediaItems.Add(item);
             await _context.SaveChangesAsync(ct);
-
-            if (!string.IsNullOrEmpty(file.SuggestedExternalId))
-                await UpsertExternalIdAsync(item.Id, file.SuggestedExternalId!, ct);
 
             if (addLibraryEntry)
                 await UpsertLibraryEntryAsync(userIds, item.Id, ct);
@@ -1133,26 +990,14 @@ namespace Chronicle.Services
             var byPath = await FindItemByFilePathAsync(file.FilePath, ct);
             if (byPath is not null) return byPath;
 
-            // 2. Match by external ID
-            if (file.SuggestedExternalId is not null)
-            {
-                var (source, extId) = ParseSuggestedExternalId(file.SuggestedExternalId);
-                var byExtId = await _context.MediaExternalIds
-                    .Include(e => e.MediaItem)
-                    .FirstOrDefaultAsync(e => e.Source == source && e.ExternalId == extId
-                                           && e.MediaItem!.MediaTypeId == mediaTypeId, ct);
-                if (byExtId?.MediaItem is not null)
-                    return byExtId.MediaItem;
-            }
-
-            // 3. Match by title + year
+            // 2. Match by title + year
             if (file.ParsedYear.HasValue)
             {
                 var hit = await FindByTitleAsync(file.ParsedTitle, mediaTypeId, file.ParsedYear, ct);
                 if (hit is not null) return hit;
             }
 
-            // 4. Title-only match (lower confidence — only when year is unknown)
+            // 3. Title-only match (lower confidence — only when year is unknown)
             if (!file.ParsedYear.HasValue)
             {
                 var hit = await FindByTitleAsync(file.ParsedTitle, mediaTypeId, year: null, ct);
@@ -1322,51 +1167,7 @@ namespace Chronicle.Services
         private async Task<MediaItem> CreateStubItemAsync(
             Chronicle.Plugins.Models.ScannedFile file, int mediaTypeId, CancellationToken ct)
         {
-            // Enrich with full TMDB metadata when we have an external ID and a provider is loaded
-            if (file.SuggestedExternalId is not null)
-            {
-                var provider = _registry.GetMetadataProviders().FirstOrDefault();
-                if (provider is not null)
-                {
-                    try
-                    {
-                        var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                            async t => (MediaMetadata?)await provider.GetByIdAsync(file.SuggestedExternalId, t), provider.PluginId, "GetByIdAsync",
-                            null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
-                            ?? throw new InvalidOperationException(
-                                $"Provider {provider.PluginId} did not return metadata for {file.SuggestedExternalId}");
-                        var enriched = new MediaItem
-                        {
-                            MediaTypeId    = mediaTypeId,
-                            Name           = meta.Title,
-                            NormalizedName = MediaItemNormalizer.NormalizeName(meta.Title),
-                            Year           = meta.Year,
-                            Overview       = meta.Overview,
-                            PosterUrl      = meta.PosterUrl,
-                            RuntimeMinutes = meta.RuntimeMinutes,
-                            MetadataJson   = SerializeMetadata(tmdbMeta: meta, scannedFile: file),
-                            HierarchyLevel = 0,
-                            CreatedAt      = DateTime.UtcNow,
-                            UpdatedAt      = DateTime.UtcNow,
-                        };
-                        _context.MediaItems.Add(enriched);
-                        // Caught in review (2026-09-20): this flat-scan stub creator writes
-                        // fileScanner data (via SerializeMetadata's scannedFile param) but,
-                        // unlike UpsertGroupItemAsync's own write sites, never synced
-                        // MediaItemKnownFileNames -- see ImportDirectAsync's own identical fix
-                        // for the full failure scenario.
-                        await SyncKnownFileNamesAsync(enriched, [file.FilePath], ct);
-                        await _context.SaveChangesAsync(ct);
-                        return enriched;
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.Warning(ex, "TMDB enrichment failed for '{Title}', falling back to stub", file.ParsedTitle);
-                    }
-                }
-            }
-
-            // Fallback: filename-only stub
+            // Filename-only stub
             var runtimeMinutes = file.TotalDurationSeconds.HasValue
                 ? (int)Math.Round(file.TotalDurationSeconds.Value / 60.0)
                 : file.DurationSeconds.HasValue
@@ -1378,7 +1179,7 @@ namespace Chronicle.Services
                 Name           = file.ParsedTitle,
                 NormalizedName = MediaItemNormalizer.NormalizeName(file.ParsedTitle),
                 Year           = file.ParsedYear,
-                PosterUrl      = file.NfoPosterUrl ?? file.LocalPosterPath,
+                PosterUrl      = file.LocalPosterPath,
                 RuntimeMinutes = runtimeMinutes,
                 MetadataJson   = SerializeMetadata(scannedFile: file),
                 HierarchyLevel = 0,
@@ -2095,8 +1896,8 @@ namespace Chronicle.Services
         ///     and dropped).
         ///
         /// The representative entry for each folder uses:
-        ///   - <c>ParsedTitle</c> from AudioAlbum tag → NFO title → folder name
-        ///   - <c>ParsedYear</c>  from AudioYear tag → NFO year → year in folder name
+        ///   - <c>ParsedTitle</c> from AudioAlbum tag → folder name
+        ///   - <c>ParsedYear</c>  from AudioYear tag → year in folder name
         ///   - <c>AudioArtist/AudioAlbumArtist</c> and <c>AudioGrouping</c> from the best-tagged file
         ///   - <c>FilePath</c> set to the book folder path (for stable rescan dedup)
         /// </summary>
@@ -2170,7 +1971,7 @@ namespace Chronicle.Services
                 if (author is not null) { rep.AudioAlbumArtist = author; rep.AudioArtist = author; }
                 if (series is not null)   rep.AudioGrouping = series;
 
-                // Resolve title: AudioAlbum tag > NFO-provided ParsedTitle (score ≥ 78)
+                // Resolve title: AudioAlbum tag > tag-derived ParsedTitle (title+year tags, score ≥ 78)
                 //                > folder name parsed as "<Series> - <Num> - (<Year>) - <Title>".
                 //
                 // Author resolution priority: embedded tags > parent folder name (user's layout
@@ -2216,7 +2017,7 @@ namespace Chronicle.Services
                     if (series is null && !string.IsNullOrWhiteSpace(folderSeries))
                         rep.AudioGrouping = folderSeries;
                 }
-                else if (rep.ConfidenceScore < 78) // no NFO — derive from folder names
+                else if (rep.ConfidenceScore < 78) // no strong title+year tag signal — derive from folder names
                 {
                     rep.ParsedTitle = folderTitle;
                     if (folderYear.HasValue) rep.ParsedYear ??= folderYear;
@@ -2711,34 +2512,21 @@ namespace Chronicle.Services
         // (flat scan, direct import, hierarchical group scan) agrees on one schema and
         // FileIdentityJson's matching helpers work regardless of which path created the item.
         private sealed record FileScannerMetaJson(
-            List<string>? FilePaths, string? LocalPosterPath, string? NfoPosterUrl,
-            string? Author = null, string? Series = null, string? FolderPath = null,
-            string? NfoPath = null,
-            /// <summary>Raw .nfo sidecar text, captured verbatim at import time -- the
-            /// lossless-ingestion guarantee itself. NfoParsed (a generic structured view
-            /// of the same content, via XmlToJsonConverter) is a convenience for display/
-            /// querying; NfoRaw is what makes this immune to that converter ever missing a
-            /// tag, and to the source .nfo file being edited, moved, or deleted later.</summary>
-            string? NfoRaw = null,
-            JsonElement? NfoParsed = null);
+            List<string>? FilePaths, string? LocalPosterPath,
+            string? Author = null, string? Series = null, string? FolderPath = null);
 
         private sealed record MediaMetaJsonRoot(TmdbMetaJson? Tmdb, FileScannerMetaJson? FileScanner);
 
         /// <summary>
         /// Builds the MetadataJson blob for a MediaItem.
         /// Pass <paramref name="existingJson"/> to preserve the other provider's data when only one changes.
-        /// Pass <paramref name="scannerFilePath"/> to record a plain file path without a full ScannedFile;
-        /// pair it with <paramref name="scannerNfoPath"/>/Raw/Parsed (see LookupNfo) when the caller
-        /// resolved a sidecar for that path itself, since a bare path alone carries no NFO signal.
+        /// Pass <paramref name="scannerFilePath"/> to record a plain file path without a full ScannedFile.
         /// </summary>
         private string SerializeMetadata(
             Chronicle.Plugins.Models.MediaMetadata? tmdbMeta = null,
             string? existingJson = null,
             Chronicle.Plugins.Models.ScannedFile? scannedFile = null,
-            string? scannerFilePath = null,
-            string? scannerNfoPath = null,
-            string? scannerNfoRaw = null,
-            JsonElement? scannerNfoParsed = null)
+            string? scannerFilePath = null)
         {
             // Preserve existing filescanner section when refreshing TMDB only
             FileScannerMetaJson? fsData = null;
@@ -2756,17 +2544,12 @@ namespace Chronicle.Services
             if (scannedFile is not null)
             {
                 var author = scannedFile.AudioAlbumArtist ?? scannedFile.AudioArtist;
-                var nfoCapture = CaptureSidecar(scannedFile.NfoPath);
                 fsData = new FileScannerMetaJson(
                     [scannedFile.FilePath],
                     scannedFile.LocalPosterPath,
-                    scannedFile.NfoPosterUrl,
                     Author: string.IsNullOrWhiteSpace(author) ? null : author,
                     Series: scannedFile.AudioGrouping,
-                    FolderPath: Path.GetDirectoryName(scannedFile.FilePath),
-                    NfoPath: scannedFile.NfoPath,
-                    NfoRaw: nfoCapture?.RawText,
-                    NfoParsed: nfoCapture?.Parsed);
+                    FolderPath: Path.GetDirectoryName(scannedFile.FilePath));
             }
 
             // Override with a plain file path (direct import without full ScannedFile).
@@ -2774,8 +2557,7 @@ namespace Chronicle.Services
             // identifying path — don't derive FolderPath here, it would be wrong for the
             // folder case.
             if (scannerFilePath is not null)
-                fsData = new FileScannerMetaJson([scannerFilePath], null, null,
-                    NfoPath: scannerNfoPath, NfoRaw: scannerNfoRaw, NfoParsed: scannerNfoParsed);
+                fsData = new FileScannerMetaJson([scannerFilePath], null);
 
             var tmdbData = tmdbMeta is null ? null : new TmdbMetaJson(
                 tmdbMeta.Rating,
@@ -2858,7 +2640,6 @@ namespace Chronicle.Services
             _progress.UpdateFolder(request.Path, 1, 0);
 
             var scannedFiles = await scanner.ScanDirectoryAsync(request.Path, request.Recursive, ct);
-            ApplyNfoSignals(scannedFiles);
             var collapsed    = CollapseAudiobooksToFolders(scannedFiles, request.Path);
 
             _progress.Complete();
@@ -2890,7 +2671,6 @@ namespace Chronicle.Services
                 var score  = f.ConfidenceScore / 100.0;
                 var signals = new List<string>();
                 if (!string.IsNullOrWhiteSpace(f.AudioAlbum))   signals.Add("tags");
-                if (!string.IsNullOrWhiteSpace(f.NfoPosterUrl)) signals.Add("nfo");
                 if (signals.Count == 0)                          signals.Add("folder");
 
                 return new Chronicle.Core.Models.Scan.ScanGroup
@@ -3484,15 +3264,6 @@ namespace Chronicle.Services
                         group.Name, existing.Id, existing.Name);
             }
 
-            // Read once, used by whichever branch below actually needs it -- lossless
-            // ingestion of the sidecar itself (see FileScannerMetaJson's own doc), not just
-            // its path. Every hierarchy level that can carry an NfoPath goes through this one
-            // method (shows, seasons, episodes, and flat/movie-shaped groups alike), so this
-            // single read covers all of them rather than needing a per-level special case.
-            var nfoCapture = CaptureSidecar(group.NfoPath);
-            var nfoRaw     = nfoCapture?.RawText;
-            var nfoParsed  = nfoCapture?.Parsed;
-
             if (existing is not null)
             {
                 existing.UpdatedAt   = DateTime.UtcNow;
@@ -3505,7 +3276,6 @@ namespace Chronicle.Services
                 existingNode["fileScanner"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(
                     new {
                         importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath,
-                        nfoPath = group.NfoPath, nfoRaw, nfoParsed,
                     }));
                 existing.MetadataJson = existingNode.ToJsonString();
                 await SyncKnownFileNamesAsync(existing, group.Files, ct);
@@ -3534,7 +3304,6 @@ namespace Chronicle.Services
                 {
                     fileScanner = new {
                         importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath,
-                        nfoPath = group.NfoPath, nfoRaw, nfoParsed,
                     }
                 }),
                 CreatedAt = DateTime.UtcNow,

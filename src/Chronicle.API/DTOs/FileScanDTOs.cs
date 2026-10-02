@@ -40,7 +40,6 @@ namespace Chronicle.API.DTOs
         string ParsedTitle,
         int? ParsedYear,
         int ConfidenceScore,
-        string? SuggestedExternalId,
         string MediaTypeHint
     );
 
@@ -110,7 +109,6 @@ namespace Chronicle.API.DTOs
         [Required] string FilePath,
         [Required] string ParsedTitle,
         int? ParsedYear,
-        string? SuggestedExternalId,
         string MediaTypeHint = "movie",
         string? ShowTitle = null,
         int? SeasonNumber = null,
@@ -184,8 +182,7 @@ namespace Chronicle.API.DTOs
         List<string> Files,
         string? FolderPath = null,
         string? Author = null,
-        string? Series = null,
-        string? NfoPath = null);
+        string? Series = null);
 
     public record ScanGroupResultDto(
         List<ScanGroupDto> Groups,
@@ -203,6 +200,5 @@ namespace Chronicle.API.DTOs
         string? PosterPath,
         List<ImportGroupDto> Children,
         List<string> Files,
-        string? FolderPath = null,
-        string? NfoPath = null);
+        string? FolderPath = null);
 }

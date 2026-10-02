@@ -47,7 +47,6 @@ export interface EnrichmentDiagnostics {
   topCandidates: EnrichmentCandidate[]
   scannerSignals?: {
     folderPath: string | null
-    hasNfo: boolean
     hasLocalPoster: boolean
     confidenceScore: number | null
   } | null

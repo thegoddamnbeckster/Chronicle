@@ -265,7 +265,7 @@ public static class MediaItemMatcher
     /// Called AFTER the show itself is resolved (by the caller, via the existing
     /// title/year/externalIds matcher above) -- this only handles the season/episode
     /// step, reusing FindEpisodeAsync's own lookup first so an already-scraped episode
-    /// (with its own real title, from TMDB/TVDB/NFO import) is always preferred over
+    /// (with its own real title, from a TMDB/TVDB import) is always preferred over
     /// creating a new stub. episodeTitle is otherwise the FALLBACK name only, used
     /// when no existing episode is found -- never overwrites a real title an existing
     /// episode already has. The one exception: an existing episode whose own Name is

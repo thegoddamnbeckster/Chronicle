@@ -19,7 +19,7 @@ public interface IKodiDeviceService
 
     /// <summary>Records that Chronicle imported at least one new movie/TV item, so any Kodi
     /// device that hasn't scanned since is due for one -- see IsScanNeededAsync's own doc for
-    /// the pull side of this. mediaTypeName is checked against NfoKindHelper.IsVideoLibraryType
+    /// the pull side of this. mediaTypeName is checked against VideoLibraryTypeHelper.IsVideoLibraryType
     /// (a music/book/etc. import has nothing for Kodi's video library to discover); a
     /// non-video-library name is a silent no-op. Global, not per-device or per-media-type: one
     /// app_settings timestamp, since a full local VideoLibrary.Scan (the only thing achievable
@@ -56,9 +56,7 @@ public interface IKodiDeviceService
     Task ReportScanActivityAsync(CancellationToken ct = default);
 
     /// <summary>True if some Kodi device renewed the scan-activity flag (see
-    /// ReportScanActivityAsync) within its own TTL. Originally consumed by the now-removed
-    /// NfoGenerationService (deleted 2026-09-13 along with all server-side NFO writing) to pause
-    /// its own scheduled sweep while a scan was active. No current caller -- left in place since
+    /// ReportScanActivityAsync) within its own TTL. No current caller -- left in place since
     /// ReportScanActivityAsync's own endpoint is still actively called by both Kodi addons on
     /// every scan start, and a future feature may want the same "is a scan active" signal.</summary>
     Task<bool> IsScanActiveAsync(CancellationToken ct = default);

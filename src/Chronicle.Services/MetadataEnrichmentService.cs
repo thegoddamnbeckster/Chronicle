@@ -1546,81 +1546,6 @@ public class MetadataEnrichmentService(
                         async t => (MediaMetadata?)await provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
             }
 
-            // ── NFO sidecar fallback (root items only, TMDB-style plugins) ─────────
-            // Before doing a name search, check whether the item's scan folder contains
-            // a tvshow.nfo or movie.nfo with a <uniqueid type="tmdb"> element.
-            // This handles ambiguous show names (e.g. "What If") where year-based search
-            // may still pick the wrong entry — an NFO is an authoritative identifier.
-            // Only TMDB-compatible plugins recognise the numeric ID; skip for others.
-            if (result is null && string.IsNullOrEmpty(row.ExternalId)
-                && row.MediaItem?.ParentId is null            // root item only
-                && row.PluginId.Contains("tmdb", StringComparison.OrdinalIgnoreCase))
-            {
-                var folderPath = TryGetFileScannerFolderPath(row.MediaItem!.MetadataJson);
-                if (!string.IsNullOrEmpty(folderPath))
-                {
-                    var nfoId = TryReadNfoTmdbId(folderPath);
-                    if (!string.IsNullOrEmpty(nfoId))
-                    {
-                        // Determine prefix: TV shows get "tv:", movies get "movie:"
-                        var mtName = NormalizeMediaTypeName(row.MediaItem.MediaType?.Name ?? string.Empty);
-                        var prefix = mtName == "tv" ? "tv" : "movie";
-                        row.ExternalId = $"{prefix}:{nfoId}";
-                        logger.LogInformation(
-                            "NFO sidecar match: item={ItemId} ({Name}) → {ExternalId}",
-                            row.MediaItemId, row.MediaItem.Name, row.ExternalId);
-                        try
-                        {
-                            var nfoResult = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                                async t => (MediaMetadata?)await provider.GetByIdAsync(row.ExternalId, t), provider.PluginId, "GetByIdAsync", null, msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
-
-                            // Sanity-check against the item's ORIGINAL scanned title (derived from
-                            // the file scanner's folder path), NOT row.MediaItem.Name. A local NFO
-                            // is "authoritative" about which ID to use, but the file itself can be
-                            // stale/wrong (leftover from a different tool, copy-paste mistake, a
-                            // previous mis-scrape) -- confirmed directly: "Dave Matthews Band -
-                            // Weekend On The Rocks (2005).avi" had a movie.nfo pointing at TMDB
-                            // movie:72738, which is actually "VH1 Storytellers", a different DMB
-                            // concert film. Trusting the ID unconditionally silently renamed the
-                            // item to the wrong title with no way to tell from the log alone.
-                            //
-                            // Using Name instead of the folder path is a trap: once a bad match
-                            // renames the item, Name IS the wrong title, so comparing a new
-                            // candidate against it compares "wrong" against "wrong" and always
-                            // passes -- this exact item survived a Refresh All for that reason
-                            // before this fix. The on-disk folder name never gets corrupted, so
-                            // it's the only reliable ground truth for what this item actually is.
-                            var originalTitle = TryGetOriginalScannedTitle(row.MediaItem.MetadataJson)
-                                ?? row.MediaItem.Name;
-                            if (nfoResult is not null && !IsTitleMatchAcceptable(originalTitle, nfoResult.Title))
-                            {
-                                logger.LogWarning(
-                                    "NFO sidecar match REJECTED: item={ItemId} \"{Name}\" (original scanned title " +
-                                    "\"{OriginalTitle}\") -> {ExternalId} resolved to \"{MatchedTitle}\", which has " +
-                                    "insufficient title overlap with the original scanned title -- the local NFO file " +
-                                    "is almost certainly stale or wrong. Falling through to a normal name search " +
-                                    "instead of trusting it. Check the folder's .nfo file directly if this keeps " +
-                                    "happening for the same item.",
-                                    row.MediaItemId, row.MediaItem.Name, originalTitle, row.ExternalId, nfoResult.Title);
-                                row.ExternalId = null; // reset — fall through to name search
-                            }
-                            else
-                            {
-                                result = nfoResult;
-                            }
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex)
-                        {
-                            logger.LogWarning(
-                                "NFO sidecar GetByIdAsync failed for {ExternalId}: {ErrorMessage}",
-                                row.ExternalId, ex.Message);
-                            row.ExternalId = null; // reset — fall through to name search
-                        }
-                    }
-                }
-            }
-
             if (result is null && row.ExternalId is null && row.MediaItem is not null)
             {
                 var supportedTypes = provider.GetSupportedMediaTypes()
@@ -2402,13 +2327,10 @@ public class MetadataEnrichmentService(
             using var doc = JsonDocument.Parse(item.MetadataJson);
             if (!doc.RootElement.TryGetProperty("fileScanner", out var fs)) return null;
             string? folder = fs.TryGetProperty("folderPath", out var fp) ? fp.GetString() : null;
-            bool hasNfo    = fs.TryGetProperty("nfoPosterUrl", out var npo)
-                             && npo.ValueKind == JsonValueKind.String
-                             && !string.IsNullOrEmpty(npo.GetString());
             bool hasPoster = fs.TryGetProperty("localPosterPath", out var lp)
                              && lp.ValueKind == JsonValueKind.String
                              && !string.IsNullOrEmpty(lp.GetString());
-            return new EnrichScannerSignals(folder, hasNfo, hasPoster, null);
+            return new EnrichScannerSignals(folder, hasPoster, null);
         }
         catch { return null; }
     }
@@ -2771,7 +2693,7 @@ public class MetadataEnrichmentService(
             if (seen.Add(trimmed)) results.Add(trimmed);
         }
 
-        // 1. Precise name (NFO/reliable source) first
+        // 1. Precise name (folder-derived title, when available) first
         Add(preciseName);
 
         // 2. Year-stripped canonical name (strip both prefix and suffix patterns)
@@ -3004,93 +2926,6 @@ public class MetadataEnrichmentService(
         return tier1;
     }
 
-    // ── NFO sidecar helpers ───────────────────────────────────────────────────
-
-    /// <summary>
-    /// Extracts the folder path stored by the file scanner in a media item's MetadataJson,
-    /// so that enrichment can look for NFO sidecars without re-walking the file system.
-    /// </summary>
-    private static string? TryGetFileScannerFolderPath(string? metadataJson)
-    {
-        if (string.IsNullOrEmpty(metadataJson)) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(metadataJson);
-            if (doc.RootElement.TryGetProperty("fileScanner", out var fs) &&
-                fs.TryGetProperty("folderPath", out var fp))
-                return fp.GetString();
-        }
-        catch { /* malformed JSON */ }
-        return null;
-    }
-
-    /// <summary>
-    /// Derives the item's ORIGINAL scanned title from the file scanner's stored folder path,
-    /// rather than the item's current (possibly already-corrupted) Name. A prior bad match can
-    /// permanently overwrite MediaItem.Name -- e.g. "Dave Matthews Band - Weekend On The Rocks
-    /// (2005)" got renamed to "Dave Matthews Band - VH1 Storytellers" by an earlier wrong match.
-    /// Comparing a NEW candidate against the already-wrong Name is comparing "wrong" against
-    /// "wrong", which passes as a match and can never self-heal. The folder name on disk doesn't
-    /// change when a match goes wrong, so it's the only reliable ground truth left. Falls back to
-    /// the current Name (old behaviour) if the folder path isn't available.
-    /// </summary>
-    private static string? TryGetOriginalScannedTitle(string? metadataJson)
-    {
-        var folderPath = TryGetFileScannerFolderPath(metadataJson);
-        if (string.IsNullOrEmpty(folderPath)) return null;
-        var leaf = Path.GetFileName(folderPath.TrimEnd('\\', '/'));
-        return string.IsNullOrWhiteSpace(leaf) ? null : leaf;
-    }
-
-    /// <summary>
-    /// Looks for tvshow.nfo / movie.nfo (and any *.nfo as fallback) in
-    /// <paramref name="folderPath"/> and returns the numeric TMDB ID from
-    /// &lt;uniqueid type="tmdb"&gt; if present. Delegates the actual sidecar-format knowledge
-    /// to whichever loaded <see cref="ISidecarFormatPlugin"/> recognizes the file (Kodi's
-    /// .nfo today) instead of the hardcoded NfoSignalExtractor this used to call directly --
-    /// see docs/plans/2026-09-02-kodi-nfo-plugin-design.md for why. This is the one caller in
-    /// this class that needs a specific WELL-KNOWN FILENAME rather than "the sidecar next to
-    /// this exact media file", so it probes each candidate name through the plugin's own
-    /// FindSidecar convention (e.g. Kodi's FindSidecar("tvshow.nfo") resolves to itself via
-    /// its own stem-match rule) rather than reimplementing that convention here.
-    /// </summary>
-    private string? TryReadNfoTmdbId(string folderPath)
-    {
-        if (!Directory.Exists(folderPath)) return null;
-        try
-        {
-            using var scope = scopeFactory.CreateScope();
-            var sidecarPlugins = scope.ServiceProvider.GetRequiredService<IPluginRegistry>()
-                .GetSidecarFormatPlugins();
-            if (sidecarPlugins.Count == 0) return null;
-
-            // Prefer well-known names (Kodi/Jellyfin convention)
-            foreach (var name in new[] { "tvshow.nfo", "movie.nfo" })
-            {
-                var probePath = Path.Combine(folderPath, name);
-                foreach (var plugin in sidecarPlugins)
-                {
-                    var sidecarPath = plugin.FindSidecar(probePath);
-                    if (sidecarPath is null) continue;
-                    var id = plugin.ExtractSignal(sidecarPath)?.ExternalId;
-                    if (!string.IsNullOrEmpty(id)) return id;
-                }
-            }
-            // Fallback: first *.nfo found in the folder (excluding sub-folders)
-            var any = Directory.EnumerateFiles(folderPath, "*.nfo").FirstOrDefault();
-            if (any is not null)
-            {
-                foreach (var plugin in sidecarPlugins)
-                {
-                    var id = plugin.ExtractSignal(any)?.ExternalId;
-                    if (!string.IsNullOrEmpty(id)) return id;
-                }
-            }
-        }
-        catch { /* I/O error — network drive unavailable etc. */ }
-        return null;
-    }
-
     // ── Diagnostics DTOs (serialised to DiagnosticsJson) ─────────────────────
 
     private sealed record EnrichDiagnostics(
@@ -3110,7 +2945,6 @@ public class MetadataEnrichmentService(
 
     private sealed record EnrichScannerSignals(
         string? FolderPath,
-        bool HasNfo,
         bool HasLocalPoster,
         double? ConfidenceScore);
 

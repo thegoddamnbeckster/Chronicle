@@ -35,7 +35,6 @@ namespace Chronicle.Services
         string ParsedTitle,
         int? ParsedYear,
         int ConfidenceScore,
-        string? SuggestedExternalId,
         string MediaTypeHint
     );
 
@@ -112,7 +111,6 @@ namespace Chronicle.Services
         string FilePath,
         string ParsedTitle,
         int? ParsedYear,
-        string? SuggestedExternalId,
         string MediaTypeHint,
         // Hierarchy fields (populated by FileScanner v1.1.0+)
         string? ShowTitle = null,
@@ -140,8 +138,7 @@ namespace Chronicle.Services
         List<ScanGroupImport> Children,
         List<string> Files,
         string? FolderPath = null,
-        int? Number = null,
-        string? NfoPath = null)
+        int? Number = null)
     {
         /// <summary>Total file count across this group and all descendants.</summary>
         public int TotalFileCount => Files.Count + Children.Sum(c => c.TotalFileCount);

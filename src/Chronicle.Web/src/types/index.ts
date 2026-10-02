@@ -25,37 +25,7 @@ export interface ExternalId {
 export interface FileScannerMeta {
   filePath: string | null
   localPosterPath: string | null
-  nfoPosterUrl: string | null
   importedAt: string | null
-  nfoPath: string | null
-  /** Raw .nfo sidecar text, captured verbatim at import time -- the actual
-   *  lossless-ingestion guarantee. Present for movies, fan edits, and every level
-   *  of a TV hierarchy (shows, seasons, episodes) that had a matched sidecar. */
-  nfoRaw?: string | null
-  /** Generic, complete structured view of the same sidecar (every element and
-   *  attribute) -- a display convenience over nfoRaw, not a replacement for it. */
-  nfoParsed?: unknown | null
-}
-
-export interface NfoActor {
-  name: string | null
-  role: string | null
-}
-
-export interface NfoDetail {
-  title: string | null
-  originalTitle: string | null
-  plot: string | null
-  genres: string[]
-  rating: number | null
-  mpaa: string | null
-  studio: string | null
-  runtimeMinutes: number | null
-  premiered: string | null
-  director: string | null
-  writers: string[]
-  actors: NfoActor[]
-  collectionName: string | null
 }
 
 export interface RefreshLog {
@@ -368,7 +338,6 @@ export interface ScannedFile {
   parsedTitle: string
   parsedYear: number | null
   confidenceScore: number
-  suggestedExternalId: string | null
   mediaTypeHint: string
 }
 
@@ -417,7 +386,6 @@ export interface ScanGroupDto {
   folderPath: string | null
   author: string | null
   series: string | null
-  nfoPath: string | null
 }
 
 export interface ScanGroupResult {
@@ -435,7 +403,6 @@ export interface ImportGroupPayload {
   children: ImportGroupPayload[]
   files: string[]
   folderPath: string | null
-  nfoPath: string | null
 }
 
 export interface MediaTypeOption {

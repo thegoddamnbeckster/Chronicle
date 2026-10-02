@@ -138,8 +138,8 @@ public class PluginCatalogService
 
                     // The DLL's assembly name is the entry_type's namespace with its final
                     // (class name) segment dropped -- confirmed against every manifest in
-                    // this catalog (e.g. "Chronicle.Plugin.Kodi.NFO.KodiNfoPlugin" ->
-                    // "Chronicle.Plugin.Kodi.NFO.dll"), since every one of these projects
+                    // this catalog (e.g. "Chronicle.Plugin.TMDB.TmdbMetadataProvider" ->
+                    // "Chronicle.Plugin.TMDB.dll"), since every one of these projects
                     // uses its root namespace as its assembly name.
                     if (!string.IsNullOrWhiteSpace(manifest.EntryType))
                     {

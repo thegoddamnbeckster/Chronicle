@@ -682,9 +682,6 @@ namespace Chronicle.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
-            // The nfo_rebuild_queue table/NfoRebuildQueueItem mapping that used to live here was
-            // removed 2026-09-13 along with NfoRebuildQueueService and the rest of the
-            // server-side NFO generation system -- see the DropNfoRebuildQueue migration.
         }
     }
 }

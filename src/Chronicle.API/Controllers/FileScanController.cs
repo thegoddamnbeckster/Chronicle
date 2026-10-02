@@ -124,7 +124,7 @@ public class FileScanController : ControllerBase
             var result = new ScanPreviewDto(
                 preview.Files.Select(f => new ScannedFileDto(
                     f.FilePath, f.ParsedTitle, f.ParsedYear,
-                    f.ConfidenceScore, f.SuggestedExternalId, f.MediaTypeHint
+                    f.ConfidenceScore, f.MediaTypeHint
                 )).ToList()
             );
             return Ok(ApiResponse<ScanPreviewDto>.Ok(result));
@@ -160,7 +160,7 @@ public class FileScanController : ControllerBase
         {
             var files = dto.Files.Select(f => new ScannedFileResult(
                 f.FilePath, f.ParsedTitle, f.ParsedYear,
-                f.ConfidenceScore, f.SuggestedExternalId, f.MediaTypeHint
+                f.ConfidenceScore, f.MediaTypeHint
             )).ToList();
 
             var result = await _scanService.IdentifyAsync(new IdentifyRequest(files, dto.MediaTypeId), ct);
@@ -168,7 +168,7 @@ public class FileScanController : ControllerBase
             var dto2 = new IdentifyResultDto(
                 result.Results.Select(r => new FileIdentificationDto(
                     new ScannedFileDto(r.File.FilePath, r.File.ParsedTitle, r.File.ParsedYear,
-                        r.File.ConfidenceScore, r.File.SuggestedExternalId, r.File.MediaTypeHint),
+                        r.File.ConfidenceScore, r.File.MediaTypeHint),
                     r.Candidates.Select(c => new MetadataCandidateDto(
                         c.ExternalId, c.Title, c.Year, c.PosterUrl,
                         c.Overview, c.Rating, c.MatchScore, c.Source, c.Genres, c.Cast, c.Sources,
@@ -336,7 +336,7 @@ public class FileScanController : ControllerBase
         {
             var files = dto.Files
                 .Select(f => new DirectImportFile(
-                    f.FilePath, f.ParsedTitle, f.ParsedYear, f.SuggestedExternalId, f.MediaTypeHint,
+                    f.FilePath, f.ParsedTitle, f.ParsedYear, f.MediaTypeHint,
                     f.ShowTitle, f.SeasonNumber, f.EpisodeNumber, f.EpisodeTitle, f.AudioTrackNumber))
                 .ToList();
 
@@ -486,12 +486,12 @@ public class FileScanController : ControllerBase
         g.PosterPath, (int)Math.Round(g.ConfidenceScore * 100),
         g.SignalSources, g.HasConflicts,
         g.Children.Select(ToGroupDto).ToList(),
-        g.Files, g.FolderPath, g.Author, g.Series, g.NfoPath);
+        g.Files, g.FolderPath, g.Author, g.Series);
 
     private static Chronicle.Services.ScanGroupImport ToGroupImport(ImportGroupDto g) =>
         new(g.Name, g.Year, g.PosterPath,
             g.Children.Select(ToGroupImport).ToList(),
-            g.Files, g.FolderPath, g.Number, g.NfoPath);
+            g.Files, g.FolderPath, g.Number);
 
     /// <summary>
     /// Returns a snapshot of the currently-running preview scan (folder being scanned,

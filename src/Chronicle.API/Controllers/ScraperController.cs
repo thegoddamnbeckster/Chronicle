@@ -442,8 +442,8 @@ public class ScraperController : ControllerBase
     /// already relies on -- this endpoint only supplies the list to iterate, not a second way to
     /// push art.
     ///
-    /// Identifies a real collection the same way NfoRebuildQueueService's own seeding does: a
-    /// movie-type, HierarchyLevel-0 item carrying its own "collection:" MediaExternalId marker
+    /// Identifies a real collection as a movie-type, HierarchyLevel-0 item carrying its own
+    /// "collection:" MediaExternalId marker
     /// (see MediaService.CreateAsync) -- not by having children, since a fresh, not-yet-imported
     /// collection stub has none yet either.
     /// </summary>
@@ -468,10 +468,8 @@ public class ScraperController : ControllerBase
     }
 
     /// <summary>
-    /// Resolves and assembles the full ScraperMovieDetailsDto for one item -- shared by
-    /// GetMovieDetails (JSON, for Kodi's getdetails step) and GetMovieSidecar (raw sidecar
-    /// bytes, for the addon's NFO-rebuild flow) so collection/artwork resolution isn't
-    /// duplicated between the two. Null if the item doesn't exist.
+    /// Resolves and assembles the full ScraperMovieDetailsDto for one item (Kodi's getdetails
+    /// step). Null if the item doesn't exist.
     /// </summary>
     /// <summary>
     /// includeCastAndCollection=false skips ResolveCastThumbnailsAsync's own extra DB
@@ -589,8 +587,8 @@ public class ScraperController : ControllerBase
     /// those two instead exchange the addon's own opaque lookup string (see
     /// tv_addon/python/tvshow_scraper.py's _resolve_lookup_id doc for why getartwork is
     /// different). Root-caused live (2026-09-12): Kodi's own getartwork call passes back the
-    /// show's default uniqueid (imdb, since Chronicle's own NFOs always mark it default="true")
-    /// as a bare string like "tt27497393" -- neither a Chronicle internal id nor the addon's own
+    /// show's default uniqueid (imdb) as a bare string like "tt27497393" -- neither a Chronicle
+    /// internal id nor the addon's own
     /// lookup-string format, so every getartwork call failed to resolve anything and Kodi's
     /// "Choose Art" picker showed zero options for every TV show, for every user, always.
     ///
@@ -640,125 +638,6 @@ public class ScraperController : ControllerBase
             title     = resolved?.Title ?? item.Name,
             year      = resolved?.Year ?? item.Year,
             posterUrl = resolved?.PosterUrl ?? item.PosterUrl,
-        }));
-    }
-
-    /// <summary>
-    /// Resolves a single EPISODE by external id (e.g. tmdb "3455959") to Chronicle's own
-    /// internal item id -- the counterpart ResolveShowByExternalId provides for shows, needed
-    /// for the exact same reason: Kodi's episode-level "NfoUrl" action hands the addon a raw
-    /// episode NFO with only that NFO's own embedded ids, never a Chronicle lookup string and
-    /// -- root-caused live (2026-09-12) -- never any identifying context for which SHOW the
-    /// episode belongs to either (confirmed via captured params: action/nfo/pathSettings only,
-    /// no folder path, no show title). A show/season/episode-number guess would risk matching
-    /// the wrong show entirely when Kodi is scraping several shows concurrently (confirmed via
-    /// kodi.log: each NfoUrl/getdetails call for what a human would call "the same show" lands
-    /// on a different worker thread, so there is no thread-local way to correlate an episode
-    /// call back to the show call that preceded it either) -- resolving by the episode's OWN
-    /// globally-unique external id sidesteps needing that context at all.
-    ///
-    /// This is the fix for a real household show stuck at 5 of 38 episodes no matter how many
-    /// times it was rescanned, restarted, or removed-and-rescanned from Kodi's library: once
-    /// Chronicle's own write_nfo feature had written a sidecar .nfo next to EVERY episode file,
-    /// Kodi began firing episode-level NfoUrl for every one of them -- and unlike a failed
-    /// SHOW-level NfoUrl (confirmed live to fall back cleanly to Kodi's normal find/getepisode-
-    /// list flow), a failed EPISODE-level NfoUrl does NOT fall back: kodi.log showed Kodi
-    /// abandoning the rest of that show's episode scan entirely after the very first episode's
-    /// NfoUrl call came back empty, rather than proceeding to ask for getepisodelist/getepisode-
-    /// details normally. With every episode NFO'd, that first failure landed on episode 1 every
-    /// time, silently capping the show at whatever had scanned in before its NFOs existed.
-    ///
-    /// Unlike the show endpoint, episode-level ids are not known to reliably land in
-    /// MediaExternalIds (episodes created by EnsureEpisodesResolvedAsync's lightweight stub
-    /// path never get a row there at all -- see StampProviderPartition), so every source falls
-    /// back to the MetadataJson text search, not just imdb/tvdb/trakt.
-    /// </summary>
-    [HttpGet("tv/resolve-episode-by-external-id")]
-    public async Task<IActionResult> ResolveEpisodeByExternalId(
-        [FromQuery] string source, [FromQuery] string externalId, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(externalId))
-            return BadRequest(ApiResponse<object>.Fail(
-                "EXTERNAL_ID_REQUIRED", "source and externalId are both required."));
-
-        var sourceLower = source.ToLowerInvariant();
-
-        var item = await _context.MediaExternalIds
-            .Where(x => x.Source == sourceLower && x.ExternalId == externalId)
-            .Select(x => x.MediaItem)
-            .FirstOrDefaultAsync(ct);
-
-        if (item is null || item.HierarchyLevel != 2)
-        {
-            // Root-caused live (2026-09-12): a bare numeric externalId (e.g. a TMDB episode id
-            // like "3335323") is short enough to turn up as a coincidental SUBSTRING inside a
-            // totally unrelated item's MetadataJson -- confirmed live against a music track
-            // whose MusicBrainz cover-art URL happened to contain "...43335323700...", matched
-            // ahead of the real TV episode purely because a blind `LIKE '%id%'` scan (with no
-            // media-type scope and no notion of a JSON key) came back with whichever row
-            // happened first in table order. Silently resolving to the wrong episode is worse
-            // than resolving to none: NfoUrl has no fallback (see this endpoint's own doc), so
-            // this single bad match was permanently capping whole shows at whatever had scanned
-            // in before their NFOs existed -- and it will keep happening for entirely NEW
-            // episodes too, not just this one-time backlog, since any short numeric id can
-            // collide with an unrelated field anywhere in the library.
-            //
-            // Fixed by reusing CollectExternalIds -- the exact same parser that derives the
-            // externalIds this endpoint's sibling (/tv/episode-details) actually sends to Kodi's
-            // NFO in the first place -- instead of a substring guess. The `LIKE` below is still
-            // there, but only as a cheap pre-filter to avoid parsing every TV/anime item's JSON
-            // on every call; the real match is the exact string comparison against the parsed
-            // ids afterward, so a coincidental digit run anywhere else in an item's MetadataJson
-            // can no longer produce a false match.
-            var showLikeTypeIds = await GetShowLikeTypeIdsAsync(ct);
-            var candidates = await _context.MediaItems
-                .Where(m => m.HierarchyLevel == 2 && showLikeTypeIds.Contains(m.MediaTypeId)
-                         && m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, $"%{externalId}%"))
-                .ToListAsync(ct);
-
-            item = candidates.FirstOrDefault(m =>
-            {
-                ScraperExternalIdsDto? ids;
-                try
-                {
-                    using var doc = JsonDocument.Parse(m.MetadataJson!);
-                    ids = CollectExternalIds(doc.RootElement);
-                }
-                catch (JsonException)
-                {
-                    return false;
-                }
-                var value = sourceLower switch
-                {
-                    "imdb"  => ids?.Imdb,
-                    "tvdb"  => ids?.Tvdb,
-                    "tmdb"  => ids?.Tmdb,
-                    "trakt" => ids?.Trakt,
-                    _       => null,
-                };
-                return value == externalId;
-            });
-        }
-
-        if (item is null || item.HierarchyLevel != 2)
-            return NotFound(ApiResponse<object>.Fail(
-                "MEDIA_NOT_FOUND", $"No episode found for {source}:{externalId}."));
-
-        var season = 1;
-        if (item.ParentId.HasValue)
-        {
-            var parent = await _context.MediaItems.FindAsync([item.ParentId.Value], ct);
-            if (parent is not null && parent.HierarchyLevel == 1)
-                season = parent.Number ?? 1;
-        }
-
-        var resolved = ParseResolvedCore(item.MetadataJson);
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            id      = item.Id,
-            title   = resolved?.Title ?? item.Name,
-            season,
-            episode = item.Number ?? 0,
         }));
     }
 
@@ -1470,8 +1349,8 @@ public class ScraperController : ControllerBase
             if (exact is not null) return exact;
         }
 
-        // Missing-subtitle-word fallback -- confirmed directly (2026-08-29): a stale/legacy
-        // local NFO can leave Kodi permanently searching under a truncated title (e.g. "The
+        // Missing-subtitle-word fallback -- confirmed directly (2026-08-29): Kodi can end up
+        // permanently searching under a truncated title (e.g. "The
         // Toxic Avenger" for what Chronicle's own enriched item is titled "The Toxic Avenger
         // Unrated") -- every scrape misses the exact-token-set match above AND has no fileName
         // to short-circuit with (find_movie_location itself fails to locate the file under the
@@ -1770,17 +1649,6 @@ public class ScraperController : ControllerBase
         );
     }
 
-    // Server-side sidecar (NFO) building/writing -- GET movies/sidecar, GET tv/sidecar, and the
-    // already-removed GET tv/episode-sidecar -- was removed entirely 2026-09-13, along with
-    // NfoPushService/NfoGenerationService/NfoRebuildQueueService (their only callers). Per-user
-    // direction: neither Kodi addon requires a local NFO to function, so a system whose entire
-    // purpose was writing real .nfo files onto the same shares Kodi scans was a standing threat
-    // to Kodi ever re-scanning an item, not a feature worth the risk. ISidecarFormatPlugin's
-    // read side (FindSidecar/ExtractSignal/CaptureLossless/ExtractCuratedFields) is unaffected --
-    // FileScanService, ScanGroupingService, and MetadataEnrichmentService still use it to read
-    // whatever NFO a file already has, from any source. See git history for the removed
-    // ResolveSidecarPlugin helper and DTO-to-plugin mapping functions if you need them again.
-
     // ── Cross-provider aggregation ───────────────────────────────────────────
     // Every chronicle.plugin.* partition in MetadataJson is a candidate. Fields are
     // taken from the first partition that has them, in whatever order the providers
@@ -1979,8 +1847,7 @@ public class ScraperController : ControllerBase
     /// the same name-based lookup PersonResolutionService itself falls back to when no
     /// external id is available, so it carries the identical common-name collision caveat
     /// (accepted, not solved, by this design). A person Chronicle hasn't resolved yet (or has
-    /// no headshot for) simply keeps ThumbUrl null -- Kodi's own NFO writer already treats a
-    /// missing &lt;thumb&gt; as "no actor photo", nothing new to handle there.
+    /// no headshot for) simply keeps ThumbUrl null, which Kodi treats as "no actor photo".
     /// </summary>
     private async Task<List<CastMemberDto>?> ResolveCastThumbnailsAsync(List<CastMemberDto>? cast, CancellationToken ct)
     {
