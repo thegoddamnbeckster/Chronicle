@@ -303,6 +303,23 @@ public sealed class DuplicateCleanupService : IScheduledTask
                 foreach (var loserProjection in orderedProjections.Skip(1))
                 {
                     if (!itemsById.TryGetValue(loserProjection.Id, out var loser)) continue;
+
+                    // A matching title and year is only a hint. Two shows can share both
+                    // (Big Brother US and UK, 2000) while carrying different TMDB/TVDB/TVmaze
+                    // ids -- direct proof they are distinct, so leave them alone.
+                    var winnerIds = await context.MediaExternalIds
+                        .Where(e => e.MediaItemId == winner.Id).ToListAsync(ct);
+                    var loserIds = await context.MediaExternalIds
+                        .Where(e => e.MediaItemId == loser.Id).ToListAsync(ct);
+                    if (ExternalIdConflictHelper.HasConflict(winnerIds, loserIds))
+                    {
+                        _log.Information(
+                            "DuplicateCleanup: title-match '{Key}' -- {WId} and {LId} carry conflicting external ids, " +
+                            "so they are different items; skipping",
+                            $"{group.Key.Item1} / {group.Key.Year}", winner.Id, loser.Id);
+                        continue;
+                    }
+
                     _log.Information(
                         "DuplicateCleanup: title-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         $"{group.Key.Item1} / {group.Key.Year}", winner.Id, winner.Name, loser.Id, loser.Name);

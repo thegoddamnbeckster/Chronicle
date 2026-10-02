@@ -413,6 +413,37 @@ public class DuplicateCleanupServiceTests : IDisposable
         distinctYears.Should().Be(3, "three genuinely different years must never collapse into fewer than three surviving Year values");
     }
 
+    // Confirmed live (2026-10-02): Big Brother US (file-scanned) and Big Brother UK (a Simkl
+    // stub, no files) share a title and year, which is all Pass 3 looked at, so it folded the UK
+    // show -- 21 seasons of episodes -- into the US one.
+    [Fact]
+    public async Task RunAsync_DoesNotMergeSameTitleSameYearShows_WhenExternalIdsConflict()
+    {
+        var us = new MediaItem
+        {
+            Name = "Big Brother", Year = 2000, MediaTypeId = _tvType.Id, HierarchyLevel = 0,
+            MetadataJson = JsonSerializer.Serialize(new { fileScanner = new { folderPath = "J:/TV/Big Brother (US) (2000)" } }),
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var uk = new MediaItem
+        {
+            Name = "Big Brother", Year = 2000, MediaTypeId = _tvType.Id, HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _context.MediaItems.AddRange(us, uk);
+        await _context.SaveChangesAsync();
+
+        _context.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = us.Id, Source = "tmdb", ExternalId = "tv:10160" },
+            new MediaExternalId { MediaItemId = uk.Id, Source = "tmdb", ExternalId = "tv:11366" });
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(0, "different TMDB ids prove these are two different shows despite the identical title and year");
+        _context.MediaItems.Count(m => m.Name == "Big Brother").Should().Be(2);
+    }
+
     [Fact]
     public async Task RunAsync_DoesNotMergeSameParentSameName_WhenExternalIdsConflict()
     {
