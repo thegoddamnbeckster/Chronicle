@@ -92,22 +92,60 @@ namespace Chronicle.Services
             if (!allLevels)
                 q = q.Where(m => m.HierarchyLevel == 0);
 
-            if (!string.IsNullOrWhiteSpace(query))
-                q = q.Where(m =>
-                    EF.Functions.Like(m.Name, $"%{query}%") ||
-                    m.Aliases.Any(a => EF.Functions.Like(a.Alias, $"%{query}%")));
-
             if (mediaTypeId.HasValue)
                 q = q.Where(m => m.MediaTypeId == mediaTypeId.Value);
 
             if (page < 1) page = 1;
 
+            if (string.IsNullOrWhiteSpace(query))
+                return await q
+                    .OrderBy(m => m.Name)
+                    .Skip((page - 1) * perPage)
+                    .Take(perPage)
+                    .ToListAsync(ct);
+
+            // Best matches first. Results are capped at a page, so the order decides what's
+            // found at all: root-caused live (2026-10-02), "invincible" matched 215 items and
+            // the TV show and the film titled exactly that never made the 20 shown, because
+            // results came back in insertion order behind dozens of tracks and comic issues
+            // (the old OrderBy(SortName) did nothing: SortName is never set).
+            //   0  the whole title (or an alias) is the query, ignoring case
+            //   1  the title starts with the query
+            //   2  the query starts a word in the title
+            //   3  anywhere else in the title or an alias
+            // then top-level items before seasons/albums before episodes/tracks, then A-Z.
+            // LIKE folds ASCII case only (SQLite), so the exact tiers are ASCII-case-insensitive.
+            var term     = query.Trim();
+            var exact    = EscapeLike(term);
+            var contains = $"%{exact}%";
+            var prefix   = $"{exact}%";
+            var wordStart = $"% {exact}%";
+
+            q = q.Where(m =>
+                EF.Functions.Like(m.Name, contains, LikeEscape) ||
+                m.Aliases.Any(a => EF.Functions.Like(a.Alias, contains, LikeEscape)));
+
             return await q
-                .OrderBy(m => m.SortName)
+                .OrderBy(m =>
+                    EF.Functions.Like(m.Name, exact, LikeEscape) ||
+                    m.Aliases.Any(a => EF.Functions.Like(a.Alias, exact, LikeEscape)) ? 0
+                    : EF.Functions.Like(m.Name, prefix, LikeEscape) ? 1
+                    : EF.Functions.Like(m.Name, wordStart, LikeEscape) ? 2
+                    : 3)
+                .ThenBy(m => m.HierarchyLevel)
+                .ThenBy(m => m.Name.ToLower())
+                .ThenBy(m => m.Id)
                 .Skip((page - 1) * perPage)
                 .Take(perPage)
                 .ToListAsync(ct);
         }
+
+        private const string LikeEscape = "\\";
+
+        /// <summary>Makes user text match literally inside a LIKE pattern: % and _ in a title
+        /// ("100% Wolf", "Fast_Track") are characters to find, not wildcards.</summary>
+        private static string EscapeLike(string text) =>
+            text.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
         public async Task<IEnumerable<MediaItem>> GetChildrenAsync(int parentId, CancellationToken ct = default)
         {
