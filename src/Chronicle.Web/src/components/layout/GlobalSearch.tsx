@@ -5,6 +5,8 @@ import type { MediaItem } from '@/types'
 import styles from './GlobalSearch.module.css'
 import { PosterImage } from '@/components/PosterImage'
 
+const DROPDOWN_ROWS = 10
+
 export default function GlobalSearch() {
   const [query, setQuery]       = useState('')
   const [results, setResults]   = useState<MediaItem[]>([])
@@ -20,7 +22,9 @@ export default function GlobalSearch() {
     if (!q.trim()) { setResults([]); setOpen(false); return }
     setLoading(true)
     try {
-      const hits = await searchMedia(q, undefined, 1, true)
+      // 10 rows normally; more when there are more exact title matches than that (the
+      // server grows the page to fit them all), so an exact match is never cut off.
+      const hits = await searchMedia(q, undefined, 1, true, DROPDOWN_ROWS)
       setResults(hits)
       setOpen(hits.length > 0)
     } catch {
@@ -101,7 +105,7 @@ export default function GlobalSearch() {
 
       {open && results.length > 0 && (
         <ul className={styles.dropdown} role="listbox">
-          {results.slice(0, 10).map(item => (
+          {results.map(item => (
             <li
               key={item.id}
               className={styles.result}

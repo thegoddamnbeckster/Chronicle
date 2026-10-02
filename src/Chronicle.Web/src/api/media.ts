@@ -6,9 +6,13 @@ export async function getMediaTypes(): Promise<MediaTypeOption[]> {
   return data.data ?? []
 }
 
-export async function searchMedia(query: string, mediaTypeId?: number, page = 1, allLevels = false): Promise<MediaItem[]> {
+/** Best matches first. The first page can come back longer than `perPage`: it always holds
+ * every exact title match, however many there are. */
+export async function searchMedia(
+  query: string, mediaTypeId?: number, page = 1, allLevels = false, perPage = 20,
+): Promise<MediaItem[]> {
   const { data } = await client.get<ApiResponse<MediaItem[]>>('/media/search', {
-    params: { query, mediaTypeId, page, perPage: 20, allLevels: allLevels || undefined },
+    params: { query, mediaTypeId, page, perPage, allLevels: allLevels || undefined },
   })
   return data.data ?? []
 }

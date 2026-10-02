@@ -127,6 +127,41 @@ public sealed class MediaServiceSearchTests : IDisposable
     }
 
     [Fact]
+    public async Task MoreExactMatchesThanAPage_FirstPageGrowsToShowThemAll()
+    {
+        // The user's example: 11 exact matches with room for 10 shows all 11.
+        for (var i = 0; i < 5; i++) Add($"Feel Invincible {i}", "music", 2);
+        var exact = Enumerable.Range(0, 11).Select(_ => Add("Invincible", "music", 2).Id).ToList();
+
+        var first = (await _svc.SearchAsync("invincible", page: 1, perPage: 10, allLevels: true)).ToList();
+
+        first.Should().HaveCount(11);
+        first.Select(r => r.Id).Should().BeEquivalentTo(exact);
+    }
+
+    [Fact]
+    public async Task FewerExactMatchesThanAPage_PageSizeIsUnchanged()
+    {
+        Add("Invincible", "tv");
+        for (var i = 0; i < 15; i++) Add($"Feel Invincible {i:D2}", "music", 2);
+
+        (await _svc.SearchAsync("invincible", perPage: 10, allLevels: true)).Should().HaveCount(10);
+    }
+
+    [Fact]
+    public async Task AfterAGrownFirstPage_TheNextPageContinuesWhereItStopped()
+    {
+        Enumerable.Range(0, 12).ToList().ForEach(_ => Add("Invincible", "music", 2));
+        var partial = Enumerable.Range(0, 15).Select(i => Add($"Feel Invincible {i:D2}", "music", 2).Id).ToList();
+
+        var first = (await _svc.SearchAsync("invincible", page: 1, perPage: 10, allLevels: true)).ToList();
+        var second = (await _svc.SearchAsync("invincible", page: 2, perPage: 10, allLevels: true)).ToList();
+
+        first.Should().HaveCount(12);
+        second.Select(r => r.Id).Should().Equal(partial.Take(10), "nothing is skipped or repeated");
+    }
+
+    [Fact]
     public async Task WithoutAllLevels_OnlyTopLevelItems()
     {
         Add("Invincible", "music", 2);

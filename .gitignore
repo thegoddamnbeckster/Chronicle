@@ -111,3 +111,6 @@ build_check/
 run_sql.bat
 mb_test_output*.txt
 commit_msg*.txt
+
+# Local database backups (never committed)
+backups/

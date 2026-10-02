@@ -125,6 +125,16 @@ namespace Chronicle.Services
                 EF.Functions.Like(m.Name, contains, LikeEscape) ||
                 m.Aliases.Any(a => EF.Functions.Like(a.Alias, contains, LikeEscape)));
 
+            // Every exact match is always shown: when there are more of them than a page holds,
+            // the first page grows to fit them all (per-user request, 2026-10-02: 11 exact
+            // matches with room for 10 shows 11). Later pages continue right after it.
+            var exactCount = await q.CountAsync(m =>
+                EF.Functions.Like(m.Name, exact, LikeEscape) ||
+                m.Aliases.Any(a => EF.Functions.Like(a.Alias, exact, LikeEscape)), ct);
+            var firstPage = Math.Max(perPage, exactCount);
+            var skip = page == 1 ? 0 : firstPage + (page - 2) * perPage;
+            var take = page == 1 ? firstPage : perPage;
+
             return await q
                 .OrderBy(m =>
                     EF.Functions.Like(m.Name, exact, LikeEscape) ||
@@ -135,8 +145,8 @@ namespace Chronicle.Services
                 .ThenBy(m => m.HierarchyLevel)
                 .ThenBy(m => m.Name.ToLower())
                 .ThenBy(m => m.Id)
-                .Skip((page - 1) * perPage)
-                .Take(perPage)
+                .Skip(skip)
+                .Take(take)
                 .ToListAsync(ct);
         }
 
