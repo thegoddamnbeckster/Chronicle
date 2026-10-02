@@ -84,6 +84,15 @@ input, select, textarea {
   width: 100%;
 }
 
+/* The open dropdown list of a native <select> is drawn by the browser and ignores the
+   control's own background, so the themed (often light) text rendered on a default white
+   list and could not be read. Give the options the same themed colors as the control. */
+select option,
+select optgroup {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
 input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
 }
