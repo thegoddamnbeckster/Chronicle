@@ -3412,6 +3412,10 @@ public class MetadataEnrichmentService(
             logger.LogWarning(
                 "Refused to store untyped simkl id {ExternalId} on media item {MediaItemId}; expected simkl:{{movie|tv|anime}}:id",
                 extId, mediaItemId);
+            // Still flush -- the caller may have staged unrelated changes on this same context
+            // and relies on this method's SaveChangesAsync as the commit point (see the
+            // already-owned branch below).
+            await db.SaveChangesAsync(ct);
             return;
         }
 
