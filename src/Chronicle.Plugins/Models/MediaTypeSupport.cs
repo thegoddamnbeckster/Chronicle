@@ -34,6 +34,16 @@ public class MediaTypeSupport
     /// <summary>Unit of progress tracking, e.g. "minutes", "pages", "percent".</summary>
     public string ProgressUnit { get; set; } = "minutes";
 
+    /// <summary>
+    /// True when this plugin should enrich items of this type (keep its ids on them, appear in their
+    /// Metadata Assignment, run its own enrichment pass) but must NOT take part in finding/identifying
+    /// them -- i.e. it is left out of Add Media and file-scan identity search. For types another
+    /// plugin owns the identity of: Fan Edits are identified by the FanEdit plugin alone, and a generic
+    /// movie database that also searched them would only return the unedited original film. Defaults
+    /// to false, so every existing declaration keeps taking part in search.
+    /// </summary>
+    public bool EnrichOnly { get; set; }
+
     /// <summary>Lower numbers = higher priority when multiple providers support the same type.</summary>
     public int DefaultPriority { get; set; } = 10;
 

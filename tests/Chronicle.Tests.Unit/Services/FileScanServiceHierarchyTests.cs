@@ -955,6 +955,43 @@ public class FileScanServiceHierarchyTests
         Assert.Contains(dated.ContributingExternalIds!, c => c.ExternalId == "movie:9291");
     }
 
+    [Fact]
+    public async Task SearchMetadataAsync_EnrichOnlyDeclaration_IsLeftOutOfSearchForThatTypeOnly()
+    {
+        // A plugin that enriches Fan Edits but doesn't identify them (TMDB, IMDb) must not be asked to
+        // search the type -- yet its ordinary "movies" declaration still takes part in movie search.
+        await using var context = NewInMemoryContext();
+
+        Mock<IMetadataProvider> Provider(string pluginId, string title, params MediaTypeSupport[] types)
+        {
+            var p = new Mock<IMetadataProvider>();
+            p.Setup(x => x.PluginId).Returns(pluginId);
+            p.Setup(x => x.GetSupportedMediaTypes()).Returns(types);
+            p.Setup(x => x.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new List<ScoredCandidate>
+                {
+                    new(new MediaMetadata { ExternalId = $"{pluginId}:1", Source = pluginId, Title = title, Year = 1977 }, 90),
+                });
+            return p;
+        }
+
+        var fanEdit  = Provider("chronicle.plugin.fanedit", "Star Wars Despecialized",
+            new MediaTypeSupport { MediaTypeName = "fanedits" });
+        var generic  = Provider("chronicle.plugin.tmdb", "Star Wars",
+            new MediaTypeSupport { MediaTypeName = "movies" },
+            new MediaTypeSupport { MediaTypeName = "fanedits", EnrichOnly = true });
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviders()).Returns([fanEdit.Object, generic.Object]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        await service.SearchMetadataAsync("star wars", "fanedits");
+        fanEdit.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        generic.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        await service.SearchMetadataAsync("star wars", "movies");
+        generic.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
     [Theory]
     [InlineData("Singularity - 2 - (2012) - A.I. Apocalypse", "A.I. Apocalypse", 2012, "Singularity", 2)]
     [InlineData("Singularity - 1 - (2011) - Avogadro Corp", "Avogadro Corp", 2011, "Singularity", 1)]

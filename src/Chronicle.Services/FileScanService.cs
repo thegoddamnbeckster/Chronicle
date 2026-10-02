@@ -1299,6 +1299,8 @@ namespace Chronicle.Services
         /// No parent-type broadening — if the user selected "Anime", only providers that
         /// declare "anime" are searched (not every "tv" provider).
         /// Parent-type hints are used for enrichment seeding only, not for search.
+        /// A declaration marked <see cref="MediaTypeSupport.EnrichOnly"/> is skipped: that plugin
+        /// enriches the type but doesn't take part in identifying items of it.
         /// </summary>
         private IReadOnlyList<IMetadataProvider> ProvidersForType(string mediaTypeHint)
         {
@@ -1308,7 +1310,8 @@ namespace Chronicle.Services
             var normalizedType = NormalizeMediaTypeName(mediaTypeHint);
 
             return all.Where(p => p.GetSupportedMediaTypes().Any(t =>
-                    string.Equals(NormalizeMediaTypeName(t.MediaTypeName), normalizedType,
+                    !t.EnrichOnly
+                    && string.Equals(NormalizeMediaTypeName(t.MediaTypeName), normalizedType,
                         StringComparison.OrdinalIgnoreCase)))
                 .ToList();
         }

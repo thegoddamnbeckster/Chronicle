@@ -1283,8 +1283,7 @@ namespace Chronicle.API.Controllers
         /// <summary>
         /// Removes external-ID rows (and their MetadataJson blob key) whose owning plugin
         /// does not declare support for this item's CURRENT media type — e.g. a leftover
-        /// "tmdb" ID on an item that is now "Fan Edits" (TMDB never declares "fanedits" as a
-        /// supported type). These become orphaned after a type change or a corrected bad
+        /// "tmdb" ID on an item that is now "Music" (TMDB declares no music type). These become orphaned after a type change or a corrected bad
         /// match: the owning plugin no longer runs against this item at all, so nothing in
         /// the normal enrichment cycle will ever touch or clear them — but they keep feeding
         /// OTHER providers' cross-reference lookups (see ClearArtworkOnlyProviderDataAsync)
