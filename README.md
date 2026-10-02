@@ -71,6 +71,7 @@ Chronicle is a self-hosted, open-source media tracking application that lets you
 | Plugin | Type | Media Types | Release |
 |--------|------|-------------|---------|
 | **[TMDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TMDB)** | Metadata | Movies, TV, Anime, Fan Edits, Seasons, Episodes | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.TMDB?label=&color=01b4e4)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TMDB/releases/latest) |
+| **[IMDb](https://github.com/thegoddamnbeckster/Chronicle.Plugin.IMDb)** | Metadata + Ratings | Movies, TV, Anime, Music Videos, Video Games, People, Seasons, Episodes (local index of IMDb's non-commercial datasets; about 10 GB) | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.IMDb?label=&color=F5C518)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.IMDb/releases/latest) |
 | **[MusicBrainz](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz)** | Metadata | Music (albums, artists), Audiobooks | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz?label=&color=ba478f)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz/releases/latest) |
 | **[Trakt](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Trakt)** | Import/Sync + Metadata | Movies, TV | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Trakt?label=&color=ed1c24)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Trakt/releases/latest) |
 | **[SIMKL](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl)** | Import/Sync + Metadata | Movies, TV, Anime | [![](https://img.shields.io/github/v/release/thegoddamnbeckster/Chronicle.Plugin.Simkl?label=&color=0c9a40)](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl/releases/latest) |
@@ -173,6 +174,7 @@ tests/
 ### Phase 2: Core Features — In Progress 🔄
 - ✅ Hierarchical file scanner (Show→Season→Episode, Artist→Album→Track, Audiobooks)
 - ✅ TMDB plugin (movies, TV, anime, fan edits, seasons, episodes)
+- ✅ IMDb plugin — metadata, credits and ratings from IMDb's non-commercial datasets, including the new Music Videos and Video Games types
 - ✅ MusicBrainz plugin (albums, artists, audiobooks)
 - ✅ Background metadata enrichment (nightly, full hierarchy, drill-down page)
 - ✅ Metadata Assignment (per-type per-field plugin priority config)
