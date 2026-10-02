@@ -1779,7 +1779,7 @@ namespace Chronicle.Services
             if (suggested.StartsWith("trakt:", StringComparison.OrdinalIgnoreCase))
                 return ("trakt", suggested);
 
-            // SIMKL: "simkl:NNN"
+            // SIMKL: "simkl:{movie|tv|anime}:NNN" (an untyped "simkl:NNN" is stale -- see SimklIdHelper)
             if (suggested.StartsWith("simkl:", StringComparison.OrdinalIgnoreCase))
                 return ("simkl", suggested);
 

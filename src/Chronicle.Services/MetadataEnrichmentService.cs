@@ -3404,6 +3404,17 @@ public class MetadataEnrichmentService(
     {
         var (source, extId) = DeriveExternalIdSourceAndId(rawExternalId, excludePluginId);
 
+        // An untyped "simkl:NNN" id is unusable (the plugin can't parse it) and duplicates the
+        // typed form -- see SimklIdHelper. Never store one; the canonical id is written by the
+        // plugin itself.
+        if (string.Equals(source, "simkl", StringComparison.OrdinalIgnoreCase) && SimklIdHelper.IsUntyped(extId))
+        {
+            logger.LogWarning(
+                "Refused to store untyped simkl id {ExternalId} on media item {MediaItemId}; expected simkl:{{movie|tv|anime}}:id",
+                extId, mediaItemId);
+            return;
+        }
+
         // Root-caused a real duplicate (2026-08-30, "Dogma" / "Dogma (film)"): two MediaItems
         // ended up carrying the identical (source, externalId) pair because nothing checked
         // whether another item already owned it before writing. If one does, this item is
