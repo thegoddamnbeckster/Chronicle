@@ -194,12 +194,14 @@ public class TaskSchedulerServiceTests
         await db.SaveChangesAsync();
 
         var tcs = new TaskCompletionSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var task = new Mock<IScheduledTask>();
         task.Setup(t => t.TaskId).Returns("test_task");
         task.Setup(t => t.DisplayName).Returns("T");
         task.Setup(t => t.Description).Returns("d");
         task.Setup(t => t.DefaultCron).Returns("* * * * *");
         task.Setup(t => t.ExecuteAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => started.TrySetResult())
             .Returns(tcs.Task);
 
         var scopeFactory = MakeScopeFactory(db);
@@ -211,12 +213,18 @@ public class TaskSchedulerServiceTests
         // this first call returns -- no wait needed before the second Tick.
         await svc.TickAsync(CancellationToken.None);
 
+        // ...but the ExecuteAsync CALL itself only happens once that un-awaited Task.Run actually
+        // gets a thread-pool thread. Run alone that's near-instant; under the whole unit suite's
+        // parallel load it routinely hadn't happened yet by the Verify below ("expected once,
+        // but was 0 times"). Wait on a signal from the mock itself rather than a guessed delay.
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
         db.BackgroundTasks.First().NextRunAt = DateTime.UtcNow.AddMinutes(-1);
         await db.SaveChangesAsync();
 
         // The second TickAsync's "already running, skip" decision happens synchronously inside
         // the awaited call itself (the _running.TryAdd check), not in the background dispatch --
-        // no further wait is needed once it returns.
+        // so it never dispatches a second run that could land late; the count is final here.
         await svc.TickAsync(CancellationToken.None);
 
         task.Verify(t => t.ExecuteAsync(It.IsAny<CancellationToken>()), Times.Once);
