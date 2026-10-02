@@ -415,7 +415,7 @@ automated access.
    It has to ship with the plugin.
 5. **Media type changes C1–C3** (§11): type capabilities in the type definition, labels from
    the type, credit fixes.
-6. **Genre alias map** (§10.7) and **TMDB passing on people's IMDb IDs** (§10.6).
+6. **Genre alias map with compound splitting** (§10.7) and **TMDB passing on people's IMDb IDs** (§10.6).
 
 ---
 
@@ -431,6 +431,9 @@ automated access.
 | Search scoring | The shared cascade and `ScoreCandidate` points used by TMDB/TVMaze/TheTVDB, unchanged (§5.2) |
 | Games type name | `game`, displayed "Video Games", shared with IGDB/LaunchBox/RAWG/Steam so Chronicle has one games type |
 | Adult titles | Indexed by default and flagged `is_adult`; hidden with a library filter, not by dropping data |
+| Disagreements with other providers | Highest precedence wins, no IMDb-specific rules (§10.2) |
+| People | Resolved exactly like TMDB's (§10.6) |
+| Genres | Merged through a shared alias map; unmappable ones become new options (§10.7) |
 
 ---
 
@@ -452,16 +455,13 @@ at all). Rules:
 - All of the show's unnumbered episodes are kept in the show's data as `unplaced_episodes`
   (declared field, `structured`), so nothing IMDb knows about is dropped.
 
-### 10.2 Numbering that disagrees with other providers
+### 10.2 When IMDb disagrees with other providers
 
-IMDb's season/episode numbering can differ from TMDB/TheTVDB (split or merged seasons, anime
-absolute numbering, double episodes). Before attaching episode data, the plugin compares IMDb's
-per-season episode counts and titles with the children Chronicle already has (`ChildCount` /
-`ChildNames`).
-
-- Counts and titles agree: attach by number.
-- They disagree: match by title only (as in 10.1) and record a `numbering_mismatch` diagnostic
-  on the season, so it shows in the Enrichment drill-down instead of silently attaching wrong data.
+No special handling. IMDb attaches its data the same way every other provider does (episodes
+by season/episode number), and wherever its values differ from another provider's (titles,
+years, numbering-derived episode data, genres, anything else), **the provider with the highest
+precedence in Metadata Assignment wins**. IMDb's own values stay stored in its partition either
+way, so changing the precedence order changes what's shown without re-fetching anything.
 
 ### 10.3 Titles that vanish from the dataset
 
@@ -484,26 +484,100 @@ wiped because a dump lost a row.
 - **After a rebuild,** only items whose IMDb data actually changed (rating, votes, title, credits
   hash) are re-resolved, not the whole library.
 
-### 10.5 Fix Match input
+### 10.5 Fix Match input (pasting an IMDb link)
 
-`fixMatchHint` accepts `tt…`, `nm…`, `https://www.imdb.com/title/tt…/`,
-`https://m.imdb.com/title/tt…/` and `imdb.com/name/nm…`, ignoring query strings. An episode
-item accepts an episode `tt…` directly; its show and numbers are looked up in `title.episode`.
+Fix Match is where a user corrects a wrong match by pasting an ID or a link. IMDb links come in
+these shapes; the plugin pulls the ID out of any of them and ignores everything else in the URL
+(query strings such as `?ref_=...`, trailing sub-pages, language or region path segments):
 
-### 10.6 People cross-references
+| Link | Example | Resolves to |
+|------|---------|-------------|
+| Title page | `https://www.imdb.com/title/tt0133093/` | the movie, show, special, music video or game `tt…` |
+| Title sub-pages | `.../title/tt0133093/fullcredits`, `/reviews`, `/plotsummary`, `/episodes/?season=2` | the same `tt…` (an episodes link resolves to the show) |
+| Episode page | `https://www.imdb.com/title/tt2301451/` | the episode's own `tt…`; its show, season and number come from `title.episode` |
+| Mobile | `https://m.imdb.com/title/tt0133093/` | same as the title page |
+| IMDbPro | `https://pro.imdb.com/title/tt0133093/` | same as the title page |
+| Person page | `https://www.imdb.com/name/nm0000206/` (and its sub-pages) | the person `nm…` (people items only) |
+| Bare ID | `tt0133093`, `nm0000206` | as above |
 
-TMDB's person records carry an IMDb `nm` ID, but the TMDB plugin doesn't pass it on today. Once
-it does (`ids.imdb` on people), IMDb's person data attaches to existing people by ID, with no
-name matching. Until then, IMDb people attach only through IMDb's own credits on matched titles.
+Rejected with a clear message (they don't identify a single title or person): lists
+(`/list/ls…`), user pages (`/user/ur…`), companies (`/company/co…`), events (`/event/ev…`),
+search and keyword pages. A `tt` pasted on a people item, or an `nm` on a title, is also rejected.
 
-### 10.7 Genres
+### 10.6 People: resolved exactly the way TMDB resolves them
 
-IMDb uses its own 28 genres (`Sci-Fi`, `Film-Noir`, `Reality-TV`, `Talk-Show`, `Game-Show`,
-`Adult`, `Short`, …), which don't match TMDB's names (`Science Fiction`, …). Genre comes from
-whichever provider wins precedence, so filtering a library by genre would split across names.
-Needed: a DB-configurable genre alias map (same pattern as `metadata_field_aliases`), applied
-when genres are resolved and seeded with the obvious pairs. IMDb's `Adult` and `Short` genres
-are kept as genres *and* reflected in `is_adult` / `title_format`.
+IMDb follows TMDB's person handling step for step, so people from both providers land on the
+same person items:
+
+1. **Credits carry the person's ID.** Every cast/crew entry IMDb returns has
+   `ExternalPersonId = "imdb:nm…"` (TMDB uses `"tmdb:{id}"`).
+2. **`PersonResolutionService` resolves each credit** with its existing algorithm: match by
+   external ID first; then by name, with the existing same-source-conflict guard (a name match
+   is refused when that person already has a *different* `imdb` ID); otherwise create a person
+   stub. The ID is stored in `media_external_ids` under source `imdb` in the same
+   `"imdb:nm…"` form TMDB's people use.
+3. **People enrichment is ID-only.** `SearchAsync` for a `people` item reads
+   `KnownExternalIds["imdb"]`, strips the `imdb:` prefix (same as TMDB's
+   `ExtractPersonTmdbId`) and fetches that person; no name search, ever.
+4. **Filmography** comes from `GetPersonCreditsAsync` (§6), in the same `ProviderPersonCredit`
+   shape TMDB returns.
+5. **Headshots:** IMDb's datasets have no images, so IMDb contributes none; people keep
+   TMDB's/Wikipedia's headshots.
+
+Cross-provider linking: TMDB's person records carry the IMDb `nm` ID, but the TMDB plugin
+doesn't pass it on today. Once it does (`ids.imdb` on people), a person matched by TMDB and the
+same person credited by IMDb resolve to one item by ID instead of by name.
+
+### 10.7 Genres: merged where possible, new options otherwise
+
+The same genre already arrives under different names from different providers (live data,
+2026-10-01: "Sci-Fi" / "Science Fiction" / "Science-Fiction"; "Sport" / "Sports";
+"Kids" / "Children"; TMDB's TV compounds like "Action & Adventure"). Precedence picks which
+provider's genre list an item shows, so without merging, the same genre splits across names
+in filters. This is a core Chronicle change for all providers, not IMDb-specific:
+
+- **Genre alias map:** DB-configurable (same pattern as `metadata_field_aliases`), seeded as
+  below and editable in Settings. Applied when genres are resolved and in the library's genre
+  filter. Each provider partition still keeps the provider's original names.
+- **Compound genres are split** into their parts (e.g. "Action & Adventure" → Action, Adventure).
+- **Anything that doesn't map becomes its own genre option** in filters, never dropped.
+
+IMDb's 28 genres:
+
+| IMDb | Merged into | | IMDb | Merged into |
+|------|-------------|-|------|-------------|
+| Action | Action | | Horror | Horror |
+| Adult | Adult (also TVMaze's) | | Music | Music |
+| Adventure | Adventure | | Musical | Musical (also Simkl's) |
+| Animation | Animation | | Mystery | Mystery |
+| Biography | **Biography** *(new option)* | | News | News |
+| Comedy | Comedy | | Reality-TV | Reality |
+| Crime | Crime | | Romance | Romance |
+| Documentary | Documentary | | Sci-Fi | Science Fiction |
+| Drama | Drama | | Short | **Short** *(new option)* |
+| Family | Family | | Sport | Sport |
+| Fantasy | Fantasy | | Talk-Show | Talk Show |
+| Film-Noir | **Film Noir** *(new option)* | | Thriller | Thriller |
+| Game-Show | Game Show | | War | War |
+| History | History | | Western | Western |
+
+Seed merges for the existing providers:
+
+| Names in use | Merged into |
+|--------------|-------------|
+| Sci-Fi, Science-Fiction, Science Fiction | Science Fiction |
+| Sports, Sport | Sport |
+| Kids, Children | Kids |
+| Talk, Talk Show | Talk Show |
+| Historical, History | History |
+| Superhero, Superheroes | Superhero |
+| Action & Adventure | Action + Adventure |
+| Sci-Fi & Fantasy | Science Fiction + Fantasy |
+| War & Politics | War + Politics *(Politics is a new option)* |
+
+Everything else already in use (e.g. Simkl's anime genres such as Isekai and Mecha, TVMaze's
+Legal and Medical) stays as its own option. IMDb's `Adult` and `Short` are also reflected in
+`is_adult` / `title_format`.
 
 ### 10.8 Adult titles
 
