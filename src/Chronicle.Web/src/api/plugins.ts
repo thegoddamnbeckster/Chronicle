@@ -64,7 +64,8 @@ export async function updatePluginSettings(
 }
 
 // SettingType enum values as serialised by the .NET API (integer, not string):
-// Text=0, Password=1, Number=2, Boolean=3, Dropdown=4, MultiSelect=5, Url=6, FilePath=7, TextArea=8
+// Text=0, Password=1, Number=2, Boolean=3, Dropdown=4, MultiSelect=5, Url=6, FilePath=7, TextArea=8,
+// Notice=9 (a read-only callout, not an input -- holds no value)
 export const SettingType = {
   Text: 0,
   Password: 1,
@@ -75,6 +76,7 @@ export const SettingType = {
   Url: 6,
   FilePath: 7,
   TextArea: 8,
+  Notice: 9,
 } as const
 
 export type SettingTypeValue = (typeof SettingType)[keyof typeof SettingType]

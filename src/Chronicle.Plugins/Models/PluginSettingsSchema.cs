@@ -45,5 +45,11 @@ public enum SettingType
     MultiSelect,
     Url,
     FilePath,
-    TextArea
+    TextArea,
+    /// <summary>
+    /// Not an input: a callout shown in the settings form (e.g. a disk-space warning), using the
+    /// definition's Label as its heading and Description as its text. Holds no value and is
+    /// never saved.
+    /// </summary>
+    Notice
 }

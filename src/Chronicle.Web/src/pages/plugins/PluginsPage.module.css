@@ -652,6 +652,27 @@
   line-height: 1.4;
 }
 
+.settingsNotice {
+  background: var(--status-warning-bg);
+  border: 1px solid var(--status-warning-border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+}
+
+.settingsNoticeTitle {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--status-warning-fg);
+  margin-bottom: 0.2rem;
+}
+
+.settingsNoticeText {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.45;
+}
+
 .fieldHint {
   font-size: 0.78rem;
   color: var(--text-muted);

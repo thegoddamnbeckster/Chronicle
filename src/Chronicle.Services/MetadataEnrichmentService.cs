@@ -3311,6 +3311,14 @@ public class MetadataEnrichmentService(
             // IMDB IDs from any plugin are stored in a shared "imdb" source row.
             source = "imdb";
             extId  = rawExternalId[5..];
+
+            // A person's IMDb id keeps its prefix ("imdb:nm0000206"): that's the form
+            // PersonResolutionService records from every credit's ExternalPersonId, so a person
+            // matched directly by the IMDb plugin and the same person credited on a title must
+            // land on the identical (source, externalId) pair. Same reason, and same bug class,
+            // as TMDB's "person:N" -> "tmdb:N" rewrite below (39,000+ duplicate people).
+            if (extId.StartsWith("nm", StringComparison.OrdinalIgnoreCase))
+                extId = "imdb:" + extId;
         }
         else if (excludePluginId is not null)
         {

@@ -1963,6 +1963,80 @@ public class MetadataEnrichmentServiceTests : IDisposable
         extId.ExternalId.Should().Be("tmdb:12898");
     }
 
+    [Fact]
+    public async Task EnrichPendingAsync_ImdbPersonEnrichment_KeepsTheImdbPrefixOnPeopleOnly()
+    {
+        // Same bug class as the TMDB test above: IMDb credits carry ExternalPersonId
+        // "imdb:nm…", which PersonResolutionService stores verbatim, so a person matched
+        // directly by the IMDb plugin must store that same form, not the bare "nm…" every
+        // other "imdb:" id is stripped to. Titles keep the bare "tt…" form other plugins share.
+        var peopleType = new MediaType
+        {
+            Name = "people", DisplayName = "People", HierarchyLevels = 1,
+            HierarchyLabels = "Person", InteractionVerb = "viewed", ProgressUnit = "percent",
+        };
+        _db.MediaTypes.Add(peopleType);
+        await _db.SaveChangesAsync();
+        var person = new MediaItem
+        {
+            Name = "Keanu Reeves", MediaTypeId = peopleType.Id,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(person);
+        await _db.SaveChangesAsync();
+        await SeedEnrichmentRow(person.Id, "chronicle.plugin.imdb", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.imdb", "people");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "Keanu Reeves", ExternalId = "imdb:nm0000206" }, Score: 100),
+            });
+        provider.Setup(p => p.GetByIdAsync("imdb:nm0000206", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Keanu Reeves", ExternalId = "imdb:nm0000206" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.imdb");
+
+        var extId = await _db.MediaExternalIds
+            .FirstAsync(e => e.MediaItemId == person.Id && e.Source == "imdb");
+        extId.ExternalId.Should().Be("imdb:nm0000206");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ImdbTitleEnrichment_StoresTheBareTtIdOtherPluginsShare()
+    {
+        var moviesType = new MediaType
+        {
+            Name = "movies", DisplayName = "Movies", HierarchyLevels = 1,
+            InteractionVerb = "watched", ProgressUnit = "minutes",
+        };
+        _db.MediaTypes.Add(moviesType);
+        await _db.SaveChangesAsync();
+        var movie = new MediaItem
+        {
+            Name = "The Matrix", Year = 1999, MediaTypeId = moviesType.Id,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(movie);
+        await _db.SaveChangesAsync();
+        await SeedEnrichmentRow(movie.Id, "chronicle.plugin.imdb", null, EnrichmentStatus.Pending);
+
+        var provider = SetupProvider("chronicle.plugin.imdb", "movies");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate>
+            {
+                new(new MediaMetadata { Title = "The Matrix", Year = 1999, ExternalId = "imdb:tt0133093" }, Score: 80),
+            });
+        provider.Setup(p => p.GetByIdAsync("imdb:tt0133093", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "The Matrix", Year = 1999, ExternalId = "imdb:tt0133093" });
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.imdb");
+
+        var extId = await _db.MediaExternalIds
+            .FirstAsync(e => e.MediaItemId == movie.Id && e.Source == "imdb");
+        extId.ExternalId.Should().Be("tt0133093");
+    }
+
     private static IServiceScopeFactory BuildScopeFactory(ChronicleDbContext db, IPluginRegistry registry)
     {
         var services = new ServiceCollection();

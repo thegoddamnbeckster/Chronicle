@@ -1,9 +1,11 @@
 # Chronicle.Plugin.IMDb — Design Document
 
 **Plugin ID:** `chronicle.plugin.imdb`
-**Version:** 1.0.0 (design rev. 2 — supersedes the RapidAPI-based scaffold design)
+**Version:** 1.0.0 (design rev. 2 — supersedes the RapidAPI-based scaffold design). Implemented
+2026-10-02 in `Chronicle.Plugin.IMDb`; where the build differs from the original design, the
+sections below say so, and §12 lists what still depends on Chronicle core work.
 **Kind:** Full metadata provider (TMDB-style), plus scores for the generic ratings model
-**Media Types:** `movies`, `tv` (Show / Season / Episode), `anime`, `anime_movies`, `fanedits` (source film), `music_videos` (new), `game` ("Video Games", shared with the game plugins), `people` (contributor). See §5.3
+**Media Types:** `movies`, `tv` (Show / Season / Episode), `anime`, `anime_movies`, `music_videos` (new), `game` ("Video Games", shared with the game plugins), `people` (contributor). Fan edits get IMDb data through cross-references, like TMDB (§5.3)
 **Auth:** None
 **Data source:** IMDb Non-Commercial Datasets — `https://datasets.imdbws.com/` (refreshed daily)
 **Research verified live:** 2026-10-01
@@ -115,7 +117,7 @@ Chronicle.Plugin.IMDb/
 └── tests/  (fixture TSV slices + scoring tests)
 ```
 
-### 4.1 Index (`{__data_dir}/imdb.db`, SQLite, read-only to the provider)
+### 4.1 Index (`{__data_dir}/imdb-*.db`, SQLite, read-only to the provider)
 
 - Integer keys: `tt0133093` → 133093, `nm0000206` → 206. Text IDs are rebuilt on output.
 - Tables: `titles`, `akas` (filtered, below), `episodes`, `ratings`, `principals`, `crew`,
@@ -129,8 +131,13 @@ Chronicle.Plugin.IMDb/
   1. Download changed files only (HTTP `Last-Modified`), streaming to disk.
   2. Build a **new** `imdb.new.db` with one bulk-insert transaction per table
      (journal off, sync off, indexes created *after* the load).
-  3. Swap it in atomically (`imdb.db` → `imdb.old.db`, `imdb.new.db` → `imdb.db`). A failed or
-     interrupted build never touches the working index.
+  3. Swap it in atomically. As built: each build is its own file (`imdb-{timestamp}-{id}.db`)
+     and `current-index.txt` names the live one; the swap rewrites that pointer (temp file +
+     move). Renaming the database itself doesn't work on Windows while a reader has it open.
+     Readers open the file the pointer names on every call, and superseded files are deleted
+     once nothing holds them. A failed or interrupted build never touches the working index.
+     Every file's header row is checked first: a truncated download decompresses as an empty
+     file, and if IMDb changes a file's columns the build must stop rather than load wrong data.
   4. Delete the downloaded `.gz` files unless `keep_downloads` is on.
 - Default schedule: full rebuild **weekly**; ratings-only refresh (the 8.7 MB file) **daily**,
   which updates scores in place.
@@ -139,17 +146,20 @@ Chronicle.Plugin.IMDb/
 
 ### 4.3 Size, scope & the disk-space warning
 
-Rough estimate for a full index with integer keys: **5–9 GB on disk**, plus ~2 GB of
-downloads while a sync runs. Principals (102 M rows) and akas (59.5 M) are most of it. A first
-build is likely tens of minutes. The spike measures the real numbers, and the warning text
-below is updated with them.
+Measured on the full 2026-10-02 datasets with the default scope (nothing dropped): **1.9 GB of
+downloads and a 10.1 GB index**, built in 8 minutes after a 3.5-minute download (10m56s in all).
+Principals (102 M rows) and akas (59.5 M) are most of it. The first layout was 12.4 GB; clustering
+akas, crew and principals on (title, ordering) `WITHOUT ROWID` removed a title index per table.
+A new index is built beside the live one, so a sync needs about 12 GB free on top of the current
+index (the task checks for 15 GB before starting). The original estimate here was 5–9 GB and 30+
+minutes; the warning text below uses the measured numbers.
 
 **Users are warned before they commit to it, in three places:**
 
 1. **Top of the plugin's settings page:** a `SettingType.Notice` callout (severity `warning`):
-   > **Disk space:** this plugin downloads IMDb's datasets (~2 GB) and builds a local index of
-   > roughly 5–9 GB in the plugin's data folder. The first build can take 30+ minutes. Use the
-   > scope settings below to make it smaller.
+   > **Disk space:** this plugin downloads IMDb's datasets (about 2 GB) and builds a local index
+   > of about 10 GB in the plugin's data folder. A sync takes around 10-15 minutes and needs about
+   > 12 GB free on top of the current index. Use the scope settings below to make it smaller.
 2. **The sync task's run confirmation** (manifest `run_confirmation`), with the same numbers.
 3. **Each scope setting's description** says what it saves.
 
@@ -173,13 +183,21 @@ Defaults keep everything (nothing dropped); the settings are there for users sho
 
 | Level | ExternalId | Example |
 |-------|-----------|---------|
-| Movie / show | `tt…` | `tt0133093` |
-| Season | `{showTconst}/season:{N}` (IMDb has no season entity) | `tt0903747/season:5` |
-| Episode | episode's own `tt…`, resolved from show + season + episode via `title.episode` | `tt2301451` |
-| Person | `nm…` | `nm0000206` |
+| Movie / show | `imdb:tt…` | `imdb:tt0133093` |
+| Season | `imdb:{showTconst}/season:{N}` (IMDb has no season entity) | `imdb:tt0903747/season:5` |
+| Episode | episode's own `imdb:tt…`, resolved from show + season + episode via `title.episode` | `imdb:tt2301451` |
+| Person | `imdb:nm…` | `imdb:nm0000206` |
 
-`GetAcceptedCrossRefPrefixes()` → `["imdb:"]`. Seasons and episodes are derived from the show,
-never searched.
+The `imdb:` prefix is the form Chronicle already uses for IMDb ids from every plugin:
+`MetadataEnrichmentService` strips it into the one shared `imdb` row of `media_external_ids`, so
+TMDB's cross-reference `tt0133093` and IMDb's own match are the same row. People are the
+exception: they keep `imdb:nm…` in that row (core change, 2026-10-02), because that's the form
+`PersonResolutionService` records from credits (the same fix TMDB's `person:N` → `tmdb:N` needed).
+
+`GetAcceptedCrossRefPrefixes()` → `["imdb:"]`. Seasons and episodes are found through the parent
+show's IMDb id (`KnownExternalIds["parent_imdb"]`), the way TVMaze and TheTVDB find theirs, and
+are never searched by name. Chronicle's built-in season/episode id derivation only understands
+TMDB's `tv:` ids, so it doesn't apply.
 
 ### 5.2 Search (`SearchAsync`): the shared scoring method
 
@@ -190,7 +208,14 @@ endpoint. Scores stay directly comparable with every other plugin's, and Chronic
 threshold (`DefaultConfidenceThreshold = 50`) applies unchanged.
 
 **Stage 0: known ID.** `KnownExternalIds["imdb"]` present → `GetByIdAsync`, score 100,
-reason `"cross-reference ID match"`. Most movies and shows already have one from TMDB (§8).
+reason `"cross-reference ID match"`. Most movies and shows already have one from TMDB (§8). As built: if that id
+points at the wrong kind of title (a series on a movie item), IMDb leaves the item unmatched
+instead of searching, because whatever a search picked would replace the shared `imdb` id that
+TVMaze, Simkl and Fanart.tv trust and reset all of them; Fix Match settles which side is wrong. An
+id IMDb has dropped falls through to the normal search. Ties between equal scores go to a title
+matched by its own primary or original title over one matched through a regional alternate,
+then to votes (live case: "Love" also matches *Amour* through a regional title, and *Amour* has
+more votes than *Love* (2015)).
 
 **Candidate source.** Titles to try = `AltTitles` (deduplicated, case-insensitive), falling back
 to `[Name]`, with any residual `(YYYY)` suffix stripped exactly as TMDB does. Each title is
@@ -248,7 +273,7 @@ Counts exclude adult titles unless noted.
 | `tvPilot` | 1 | Unaired pilot | `tv` |
 | `videoGame` | 50 K | Video games | **`game`** ("Video Games"): the same type IGDB, LaunchBox, RAWG and Steam declare; whichever loads first registers it |
 | (people) `name.basics` | 15.7 M | Actors, directors, writers, crew | `people` (contributor; ID-based only) |
-| `fanedits` | n/a | IMDb has no fan edits | `fanedits` searches IMDb as movies, the same as TMDB, to pick up the source film's data |
+| `fanedits` | n/a | IMDb has no fan edits | Not declared, the same as TMDB: declaring it put generic movie results in Add Media's Fan Edits search. A fan edit still gets the source film's IMDb data through cross-reference seeding (fan edits count as movies there) |
 
 **New media types.** The plugin declares them through `GetSupportedMediaTypes()` with a
 `DisplayName`, which is how plugins already add media types to Chronicle:
@@ -273,9 +298,12 @@ registers the type first, IMDb only contributes to it.
 - **Not split further:** talk, reality, news and game shows (70 K series, 3.4 M episodes) are
   ordinary `tvSeries` in IMDb. They stay in `tv`, identifiable by genre.
 
-**To verify in the spike:** how reliably music videos credit the performing artist (often as
-`self`), since that decides whether `artist` can be filled automatically or only by precedence
-from another provider.
+**Measured (2026-10-02): IMDb's datasets contain no actual music videos.** IMDb's own
+`musicVideo` title type is left out of the non-commercial dumps entirely (Michael Jackson's
+*Thriller*, tt0088263, is in none of the seven files). The 28.8 K `video` + *Music* rows are
+concert films, music specials and similar. So for `music_videos` IMDb can only match those, and
+`artist` is filled from their `self` credits; actual music videos need another provider. The
+type itself stays, since it's real whatever IMDb covers.
 
 ### 5.4 Video games & ROM collections
 
@@ -315,7 +343,7 @@ the job of a dedicated game plugin and is noted here only so nobody expects it f
 | `Year` | `startYear` |
 | `RuntimeMinutes` | `runtimeMinutes` |
 | `Genres` | `genres` |
-| `original_title`, `alternate_titles` | `originalTitle`; akas with region/language/types (also copied to `AlternateNames` for search) |
+| `original_title`, `alternate_titles` | `originalTitle`; akas with region/language/types. Only the original title is copied to `AlternateNames`: Chronicle feeds stored alternate names to every provider's search as extra queries, and 70 regional titles would mean up to 140 extra searches against rate-limited providers |
 | `Cast` | principals `actor`/`actress`/`self` ordered by billing, with character names; `ExternalPersonId = "imdb:nm…"` |
 | `Crew` | `title.crew` directors + writers, plus non-acting principals with their job |
 | `Ratings` | `[{ Key: "imdb", Value: averageRating, Scale: 10, Votes: numVotes, Url: "https://www.imdb.com/title/tt…/" }]` |
@@ -342,6 +370,13 @@ remain the preferred guide.
 `birth_date`/`death_date` (year only, stored as year precision), professions → `Tags`,
 known-for titles in `ExtendedData`, and `GetPersonCreditsAsync` with the **complete** IMDb
 filmography: every principal and crew credit, with role and character, from the by-person index.
+Episode credits are listed once per show, as TMDB lists them, with the bare `tt…` id so titles
+already in the library link up.
+
+As built: the years are sent as `birthYear` / `deathYear`, not `birthDate` / `deathDate`.
+Chronicle parses `birthDate` as a full date, so a bare year would be rejected, and if IMDb
+outranked TMDB or Wikipedia for that field it would push out a real date. They move to
+`birth_date` / `death_date` once partial-date precision exists (field registry design).
 
 ---
 
@@ -376,7 +411,7 @@ filmography: every principal and crew credit, with role and character, from the 
     { "task_id": "sync-imdb-datasets", "display_name": "Sync IMDb Datasets",
       "default_cron": "0 3 * * 1", "default_enabled": false,
       "run_confirmation": { "title": "Download IMDb datasets?",
-        "message": "Downloads ~2 GB from IMDb and builds a local index of roughly 5-9 GB in the plugin's data folder. The first build can take 30+ minutes; later runs only rebuild when IMDb has published new files. See the plugin settings to reduce the index size." } },
+        "message": "Downloads about 2 GB from IMDb and builds a local index of about 10 GB in the plugin's data folder, which takes around 10-15 minutes and needs about 12 GB free. Later runs only rebuild when IMDb has published new files. See the plugin settings to make the index smaller." } },
     { "task_id": "refresh-imdb-ratings", "display_name": "Refresh IMDb Ratings",
       "default_cron": "0 4 * * *", "default_enabled": true },
     { "task_id": "fetch-missing-metadata", "display_name": "Fetch Missing Metadata" },
@@ -470,11 +505,20 @@ absent after a rebuild, its last IMDb data is **kept**, the enrichment row gets 
 `imdb-missing` diagnostic, and the item is listed in the drill-down for a Fix Match. Nothing is
 wiped because a dump lost a row.
 
+As built: `GetByIdAsync` throws `ImdbIdMissingException` (message starting `imdb-missing:`),
+which Chronicle records as Failed and eventually Exhausted, keeping the data. It deliberately
+isn't `KeyNotFoundException`: Chronicle answers that by re-searching and, if nothing matches,
+deleting the item's IMDb data **and** its shared `imdb` external id, which TMDB and others use
+too. A season number IMDb doesn't have does throw `KeyNotFoundException`, since that's a
+numbering difference worth a fresh look, not a deleted title.
+
 ### 10.4 Index lifecycle
 
-- **No index yet** (fresh install): `SearchAsync`/`GetByIdAsync` return nothing,
-  `HealthCheckAsync` returns false, and the plugin page says "Run *Sync IMDb Datasets* first"
-  (same pattern as MRDb's search index).
+- **No index yet** (fresh install): `HealthCheckAsync` returns false and the settings notice says
+  to run *Sync IMDb Datasets* first. As built, `SearchAsync`/`GetByIdAsync` throw
+  `ImdbIndexUnavailableException`, an `HttpRequestException` with no status code, rather than
+  returning nothing: Chronicle treats that as "provider unreachable" and leaves items Pending,
+  where an empty result would have marked the whole library NotFound before the first sync.
 - **Schema version** stamped in the index. A plugin update with a new schema triggers a rebuild
   instead of reading an incompatible file.
 - **One sync at a time** (lock file in `__data_dir`). Readers keep using the old file until the
@@ -482,7 +526,10 @@ wiped because a dump lost a row.
 - **Disk full / download failure:** the build aborts, the working index stays in place, and the
   task reports the error.
 - **After a rebuild,** only items whose IMDb data actually changed (rating, votes, title, credits
-  hash) are re-resolved, not the whole library.
+  hash) are re-resolved, not the whole library. **Not built:** a plugin task can't reach
+  Chronicle's database, so library items pick up new IMDb data when they're next re-read
+  (*Re-sync All Metadata*, local reads only, off by default like TMDB's). Doing this
+  automatically needs a Chronicle hook a task can call (§12).
 
 ### 10.5 Fix Match input (pasting an IMDb link)
 
@@ -691,3 +738,27 @@ no games library, so there is no Kodi work for games.
 C1–C3 land before or with the IMDb plugin. C4–C7 are separate repo changes (FileScanner, Kodi
 addons) that can follow. Until then, music videos and games still work through Add Media,
 search, enrichment and the web UI.
+
+---
+
+## 12. Implementation status (v1.0.0, 2026-10-02)
+
+**Built:** the plugin (index build and swap, sync and ratings tasks, shared-scoring search,
+seasons and episodes via the parent show, unnumbered-episode title matching, people by id,
+filmographies, Fix Match link parsing, scope settings), `SettingType.Notice` with the disk-space
+warning, the IMDb person-id storage fix, and `RunTestEnvironment.ps1` and `PluginCatalogSeeds`
+entries. Tests: fixture TSV slices end to end, plus enrichment tests for id storage.
+
+**Stored but not yet visible**, waiting on core work: everything in §3 marked ➕ new is in the
+IMDb partition under the declared `blob_keys` names (`originalTitle`, `alternateTitles`,
+`endYear`, `titleFormat`, `isAdult`, `episodeCount`, `unplacedEpisodes`, `professions`,
+`knownFor`, `artist`, `ratings`), so nothing is dropped and no plugin change is needed when the
+following land:
+
+| Depends on | Design |
+|------------|--------|
+| Declared fields shown and precedence-governed (nothing reads the manifest's `metadata_fields` yet) | plugin-declared fields design |
+| Scores as their own fields, `rating_sources`, attribution shown in the UI. This one is a licence requirement; until then the attribution is in the plugin description, the settings notice and every stored record | ratings design |
+| Year-precision birth/death dates; one credit per character; `Self` / `Archive Footage` roles | field registry design §6 |
+| Media type capabilities and labels (C1–C3), genre alias map (§10.7), IMDb-id backfill (§8.3) | this document |
+| A hook for a plugin task to re-resolve changed items after a sync (§10.4) | new |

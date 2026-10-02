@@ -358,6 +358,7 @@ export default function PluginsPage() {
       // Start with schema defaults, then overlay any saved values
       const values: Record<string, string> = {}
       for (const def of s.settings) {
+        if (def.type === SettingType.Notice) continue // a callout, never a saved value
         if (def.defaultValue !== undefined) values[def.key] = def.defaultValue
       }
       Object.assign(values, saved)
@@ -735,6 +736,16 @@ export default function PluginsPage() {
                             const isTmdbApiKey =
                               plugin.pluginId.toLowerCase().includes('tmdb') &&
                               def.key === 'api_key'
+
+                            // A notice is a callout (e.g. a disk-space warning), not an input.
+                            if (def.type === SettingType.Notice) {
+                              return (
+                                <div key={def.key} className={styles.settingsNotice} role="note">
+                                  <strong className={styles.settingsNoticeTitle}>{def.label}</strong>
+                                  {def.description && <p className={styles.settingsNoticeText}>{def.description}</p>}
+                                </div>
+                              )
+                            }
 
                             return (
                               <div key={def.key} className={styles.fieldGroup}>
