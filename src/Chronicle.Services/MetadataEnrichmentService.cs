@@ -3026,20 +3026,21 @@ public class MetadataEnrichmentService(
         // MediaCredit.Role with no character name at all -- same shape as a Crew entry's Job.
         var castIsActing = CreditRoleHelper.CastEntryIsActingCredit(item.MediaType?.Name);
         var billingOrder = 0;
+        var credits = new List<CreditToRecord>(result.Cast.Count + result.Crew.Count);
         foreach (var cast in result.Cast)
-        {
-            await personResolutionService.ResolveAndRecordCreditAsync(
-                db, item.Id, cast.Name, cast.ExternalPersonId, source, cast.ProfileImageUrl,
-                role: castIsActing ? "Actor" : (cast.Role ?? "Cast"),
-                characterName: castIsActing ? cast.Role : null,
-                billingOrder: billingOrder++, ct);
-        }
+            credits.Add(new CreditToRecord(
+                cast.Name, cast.ExternalPersonId, cast.ProfileImageUrl,
+                Role: castIsActing ? "Actor" : (cast.Role ?? "Cast"),
+                CharacterName: castIsActing ? cast.Role : null,
+                BillingOrder: billingOrder++));
         foreach (var crew in result.Crew)
-        {
-            await personResolutionService.ResolveAndRecordCreditAsync(
-                db, item.Id, crew.Name, crew.ExternalPersonId, source, crew.ProfileImageUrl,
-                role: crew.Job ?? "Crew", characterName: null, billingOrder: null, ct);
-        }
+            credits.Add(new CreditToRecord(
+                crew.Name, crew.ExternalPersonId, crew.ProfileImageUrl,
+                Role: crew.Job ?? "Crew", CharacterName: null, BillingOrder: null));
+
+        // One batch per title: a few queries and one save for all new people, instead of
+        // several queries and two saves per credit (see ResolveAndRecordCreditsAsync).
+        await personResolutionService.ResolveAndRecordCreditsAsync(db, item.Id, credits, source, ct);
 
         await db.SaveChangesAsync(ct);
     }

@@ -27,6 +27,20 @@ public interface IPersonResolutionService
         CancellationToken ct = default);
 
     /// <summary>
+    /// <see cref="ResolveAndRecordCreditAsync"/> for a whole credit list at once: the same
+    /// algorithm and rules, but people are looked up in a few queries and new person stubs are
+    /// created in one save, instead of several queries and two saves per credit. Use it when
+    /// recording a title's full cast and crew. Same caller contract: clear the title's existing
+    /// rows for <paramref name="source"/> first; the credit rows themselves are added but not saved.
+    /// </summary>
+    Task ResolveAndRecordCreditsAsync(
+        ChronicleDbContext db,
+        int titleMediaItemId,
+        IReadOnlyList<CreditToRecord> credits,
+        string source,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Steps 1-4 only: resolves (creating a stub if necessary) the person, records a newly-
     /// supplied external id, and returns it -- WITHOUT writing/touching any media_credits row.
     /// For a caller that already has an existing credit row it just wants to point at the
@@ -48,3 +62,12 @@ public interface IPersonResolutionService
         ChronicleDbContext db, MediaItem person, IEnumerable<(string Url, string? ThumbnailUrl)> photos,
         string source, CancellationToken ct = default);
 }
+
+/// <summary>One credit for <see cref="IPersonResolutionService.ResolveAndRecordCreditsAsync"/>.</summary>
+public sealed record CreditToRecord(
+    string PersonName,
+    string? ExternalPersonId,
+    string? ProfileImageUrl,
+    string Role,
+    string? CharacterName,
+    int? BillingOrder);

@@ -77,6 +77,233 @@ public class PersonResolutionService(
     }
 
     /// <summary>
+    /// The same algorithm as <see cref="ResolveAndRecordCreditAsync"/> applied to a whole credit
+    /// list, built for speed. Root-caused live (2026-10-02): the IMDb plugin's first full run was
+    /// recording 2-5 credits a second, because every credit ran its own lookups and every new
+    /// person cost two separate saves (stub, then its enrichment rows), each one a write the
+    /// other enrichment workers had to queue behind. Here, people are found with a handful of
+    /// set queries and every new stub of the batch is saved in one go.
+    ///
+    /// Same rules, in the same order, credit by credit: (1) external id; (2) exact normalized
+    /// name, then (2b) loose name, each refused when that person already holds a different id
+    /// from this source (counting ids assigned earlier in this same batch); (3) otherwise a new
+    /// stub; (4) record the id. Name locks: every name this batch might create is locked (in
+    /// sorted order, so two batches can't deadlock) BEFORE the name lookups and held until the
+    /// new stubs are saved, which keeps the original guarantee that two workers never create
+    /// two stubs for one name. As before, a lock that can't be had in time is proceeded without.
+    /// One deliberate improvement: a credit whose id another credit in the same batch already
+    /// attached goes to that same person, even under a different spelling, instead of a second
+    /// stub carrying the same id.
+    /// </summary>
+    public async Task ResolveAndRecordCreditsAsync(
+        ChronicleDbContext db, int titleMediaItemId, IReadOnlyList<CreditToRecord> credits, string source,
+        CancellationToken ct = default)
+    {
+        var list = credits.Where(c => !string.IsNullOrWhiteSpace(c.PersonName)).ToList();
+        if (list.Count == 0) return;
+
+        var peopleTypeId = await GetPeopleMediaTypeIdAsync(db, ct);
+        static string? Id(CreditToRecord c) => string.IsNullOrWhiteSpace(c.ExternalPersonId) ? null : c.ExternalPersonId;
+
+        // Ids from this source already attached to someone, in the database or earlier in this
+        // context (the "pending" half of the original HasConflictingSourceIdAsync check).
+        var personByExtId = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
+        var extIdsOf = new Dictionary<int, HashSet<string>>();
+        void Attach(MediaItem p, string extId)
+        {
+            personByExtId.TryAdd(extId, p);
+            if (!extIdsOf.TryGetValue(p.Id, out var set)) extIdsOf[p.Id] = set = new HashSet<string>(StringComparer.Ordinal);
+            set.Add(extId);
+        }
+
+        // Step 1, for the whole list: external ids.
+        var extIds = list.Select(Id).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        foreach (var chunk in extIds.Chunk(500))
+        {
+            var rows = await db.MediaExternalIds
+                .Where(x => x.Source == source && chunk.Contains(x.ExternalId)
+                            && x.MediaItem != null && x.MediaItem.MediaTypeId == peopleTypeId)
+                .OrderBy(x => x.MediaItemId)
+                .Select(x => new { x.ExternalId, Person = x.MediaItem! })
+                .ToListAsync(ct);
+            foreach (var r in rows) personByExtId.TryAdd(r.ExternalId, r.Person);
+        }
+
+        // Everything else goes through the name steps: lock those names first.
+        var byName = list.Where(c => Id(c) is not { } x || !personByExtId.ContainsKey(x)).ToList();
+        var lockKeys = byName
+            .Select(c => MediaItemNormalizer.NormalizeNameLoose(c.PersonName))
+            .Where(k => k.Length > 0)
+            .Select(k => $"{peopleTypeId}|{k}")
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        var held = new List<SemaphoreSlim>();
+        var created = new List<MediaItem>();
+        var people = new MediaItem[list.Count];
+        try
+        {
+            foreach (var key in lockKeys)
+            {
+                var sem = _personNameLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+                if (await sem.WaitAsync(NameLockTimeout, ct))
+                    held.Add(sem);
+                else
+                    logger.LogWarning(
+                        "PersonResolutionService: couldn't acquire name lock {Key} within {TimeoutS}s -- " +
+                        "proceeding without it (may create a duplicate stub; dedupe endpoints can clean it up later)",
+                        key, NameLockTimeout.TotalSeconds);
+            }
+
+            // Steps 2/2b lookups for the whole list, read under the locks.
+            var norms = byName.Select(c => MediaItemNormalizer.NormalizeName(c.PersonName)).Where(n => n.Length > 0)
+                .Distinct(StringComparer.Ordinal).ToList();
+            var looses = byName.Select(c => MediaItemNormalizer.NormalizeNameLoose(c.PersonName)).Where(n => n.Length > 0)
+                .Distinct(StringComparer.Ordinal).ToList();
+            var dbByNorm = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
+            var dbByLoose = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
+            foreach (var chunk in norms.Chunk(500))
+                foreach (var m in await db.MediaItems
+                             .Where(m => m.MediaTypeId == peopleTypeId && chunk.Contains(m.NormalizedName!))
+                             .OrderBy(m => m.Id).ToListAsync(ct))
+                    dbByNorm.TryAdd(m.NormalizedName!, m);
+            foreach (var chunk in looses.Chunk(500))
+                foreach (var m in await db.MediaItems
+                             .Where(m => m.MediaTypeId == peopleTypeId && chunk.Contains(m.NormalizedNameLoose!))
+                             .OrderBy(m => m.Id).ToListAsync(ct))
+                    dbByLoose.TryAdd(m.NormalizedNameLoose!, m);
+
+            // Ids this source already holds for every candidate, for the same-source conflict guard.
+            var candidateIds = dbByNorm.Values.Concat(dbByLoose.Values).Concat(personByExtId.Values)
+                .Select(p => p.Id).Distinct().ToList();
+            foreach (var chunk in candidateIds.Chunk(500))
+                foreach (var x in await db.MediaExternalIds
+                             .Where(x => x.Source == source && chunk.Contains(x.MediaItemId))
+                             .Select(x => new { x.MediaItemId, x.ExternalId }).ToListAsync(ct))
+                    (extIdsOf.TryGetValue(x.MediaItemId, out var s) ? s : extIdsOf[x.MediaItemId] = new HashSet<string>(StringComparer.Ordinal)).Add(x.ExternalId);
+            foreach (var e in db.ChangeTracker.Entries<MediaExternalId>()
+                         .Where(e => e.State == EntityState.Added && e.Entity.Source == source))
+                (extIdsOf.TryGetValue(e.Entity.MediaItemId, out var s) ? s : extIdsOf[e.Entity.MediaItemId] = new HashSet<string>(StringComparer.Ordinal)).Add(e.Entity.ExternalId);
+
+            // Stubs created by this batch, keyed like the database lookups (first one wins, as
+            // FirstOrDefault over the ids did).
+            var newByNorm = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
+            var newByLoose = new Dictionary<string, MediaItem>(StringComparer.Ordinal);
+            var newExtIds = new Dictionary<MediaItem, HashSet<string>>(ReferenceEqualityComparer.Instance);
+            bool Conflicts(MediaItem p, string? extId)
+            {
+                if (extId is null) return false;
+                var ids = p.Id != 0 && extIdsOf.TryGetValue(p.Id, out var s) ? s
+                        : newExtIds.TryGetValue(p, out var n) ? n : null;
+                return ids is not null && ids.Any(x => x != extId);
+            }
+
+            for (var i = 0; i < list.Count; i++)
+            {
+                var c = list[i];
+                var extId = Id(c);
+                MediaItem? person = extId is not null && personByExtId.TryGetValue(extId, out var byId) ? byId : null;
+
+                if (person is null)
+                {
+                    var norm = MediaItemNormalizer.NormalizeName(c.PersonName);
+                    var loose = MediaItemNormalizer.NormalizeNameLoose(c.PersonName);
+                    if (loose.Length > 0)
+                    {
+                        var nameMatch = dbByNorm.GetValueOrDefault(norm) ?? newByNorm.GetValueOrDefault(norm);
+                        if (nameMatch is not null && !Conflicts(nameMatch, extId)) person = nameMatch;
+                        if (person is null)
+                        {
+                            var looseMatch = dbByLoose.GetValueOrDefault(loose) ?? newByLoose.GetValueOrDefault(loose);
+                            if (looseMatch is not null && !Conflicts(looseMatch, extId)) person = looseMatch;
+                        }
+                    }
+
+                    if (person is null)
+                    {
+                        person = new MediaItem
+                        {
+                            MediaTypeId    = peopleTypeId,
+                            Name           = c.PersonName,
+                            NormalizedName = norm,
+                            HierarchyLevel = 0,
+                            IsStub         = true,
+                            CreatedAt      = DateTime.UtcNow,
+                            UpdatedAt      = DateTime.UtcNow,
+                        };
+                        db.MediaItems.Add(person);
+                        created.Add(person);
+                        newExtIds[person] = new HashSet<string>(StringComparer.Ordinal);
+                        if (norm.Length > 0) newByNorm.TryAdd(norm, person);
+                        if (loose.Length > 0) newByLoose.TryAdd(loose, person);
+                    }
+                }
+
+                // Step 4: record the id against the person, once.
+                if (extId is not null)
+                {
+                    var known = person.Id != 0 && extIdsOf.TryGetValue(person.Id, out var s) ? s
+                              : newExtIds.TryGetValue(person, out var n) ? n : null;
+                    if (known is null || !known.Contains(extId))
+                    {
+                        db.MediaExternalIds.Add(new MediaExternalId { MediaItem = person, Source = source, ExternalId = extId });
+                        if (person.Id != 0) Attach(person, extId);
+                        else { newExtIds[person].Add(extId); personByExtId.TryAdd(extId, person); }
+                    }
+                    else
+                    {
+                        personByExtId.TryAdd(extId, person);
+                    }
+                }
+                people[i] = person;
+            }
+
+            // One save for every new stub (and the ids recorded above), still under the locks.
+            if (created.Count > 0 || db.ChangeTracker.HasChanges())
+                await db.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            foreach (var sem in held) sem.Release();
+        }
+
+        // Step 7 for the new stubs (added, saved with the credits below).
+        foreach (var person in created)
+        {
+            await SeedEnrichmentRowsAsync(db, person.Id, ct, save: false);
+            logger.LogInformation(
+                "PersonResolutionService: created new person stub {PersonId} \"{Name}\" (first credited via {Source})",
+                person.Id, person.Name, source);
+        }
+
+        // Step 6: the credit rows.
+        for (var i = 0; i < list.Count; i++)
+        {
+            var c = list[i];
+            db.MediaCredits.Add(new MediaCredit
+            {
+                MediaItemId       = titleMediaItemId,
+                PersonName        = c.PersonName,
+                Role              = c.Role,
+                CharacterName     = c.CharacterName,
+                BillingOrder      = c.BillingOrder,
+                Source            = source,
+                ExternalPersonId  = c.ExternalPersonId,
+                PersonMediaItemId = people[i].Id,
+            });
+        }
+
+        // Step 5: headshots, once per person (each call saves and re-resolves only if a photo is new).
+        foreach (var group in list.Select((c, i) => (c.ProfileImageUrl, Person: people[i]))
+                     .Where(x => !string.IsNullOrWhiteSpace(x.ProfileImageUrl))
+                     .GroupBy(x => x.Person.Id))
+        {
+            var urls = group.Select(x => (x.ProfileImageUrl!, (string?)null)).Distinct().ToList();
+            await RecordHeadshotsIfNewAsync(db, group.First().Person, urls, source, ct);
+        }
+    }
+
+    /// <summary>
     /// Feed path 1 of Section 1.5 -- a person's own enrichment (Wikipedia's bio photo, TMDB's
     /// own /person/{id} profile picture plus its full alternate-photo gallery, ...) returning
     /// one or more photos for the person item directly. Previously unimplemented: only the
@@ -419,7 +646,7 @@ public class PersonResolutionService(
         }
     }
 
-    private async Task SeedEnrichmentRowsAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct)
+    private async Task SeedEnrichmentRowsAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct, bool save = true)
     {
         var toAdd = new List<MediaItemEnrichment>();
         foreach (var (pluginId, provider, _) in pluginRegistry.GetMetadataProviderEntries())
@@ -440,7 +667,7 @@ public class PersonResolutionService(
         if (toAdd.Count > 0)
         {
             db.MediaEnrichments.AddRange(toAdd);
-            await db.SaveChangesAsync(ct);
+            if (save) await db.SaveChangesAsync(ct);
         }
     }
 }

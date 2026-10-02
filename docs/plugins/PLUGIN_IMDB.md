@@ -345,7 +345,7 @@ the job of a dedicated game plugin and is noted here only so nobody expects it f
 | `Genres` | `genres` |
 | `original_title`, `alternate_titles` | `originalTitle`; akas with region/language/types. Only the original title is copied to `AlternateNames`: Chronicle feeds stored alternate names to every provider's search as extra queries, and 70 regional titles would mean up to 140 extra searches against rate-limited providers |
 | `Cast` | principals `actor`/`actress`/`self` ordered by billing, with character names; `ExternalPersonId = "imdb:nm…"` |
-| `Crew` | `title.crew` directors + writers, plus non-acting principals with their job |
+| `Crew` | `title.crew` directors + writers, plus non-acting principals with their job. As built (v1.0.2): **a series is credited with its principals only.** IMDb's `title.crew` for a series is every director and writer of every episode (222 for *Law & Order: SVU*), and crediting them on the show created a person record for each and dominated the first full run's time, duplicating what each episode credits itself. The full list stays in the show's data as `seriesCrew` (names and `nm` ids) and in every person's filmography |
 | `Ratings` | `[{ Key: "imdb", Value: averageRating, Scale: 10, Votes: numVotes, Url: "https://www.imdb.com/title/tt…/" }]` |
 | `end_year`, `title_format`, `is_adult` | `endYear`, `titleType`, `isAdult` (via `MediaMetadata.Fields`) |
 | `ExtendedData` | `ids.imdb`, raw principals rows (category, job, characters, ordering), `ratingFetchedAt`. Everything here is also exposed through a declared field above; ExtendedData is the lossless raw copy |
