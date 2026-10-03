@@ -1741,6 +1741,10 @@ public class ScraperController : ControllerBase
 
         void Add(string artType, string? url, string source)
         {
+            // Fanart.tv hosts images whose file names contain spaces ("S_78901 (1).jpg"); Kodi's curl and
+            // the addon's urllib both refuse such a URL, so the image never loads. Encoded before the
+            // dedup check so the raw and encoded forms of one image can't both be offered.
+            url = ArtworkUrlHelper.Encode(url);
             if (string.IsNullOrEmpty(url) || !seen.Add(artType + "|" + url)) return;
             if (!result.TryGetValue(artType, out var list))
                 result[artType] = list = [];
