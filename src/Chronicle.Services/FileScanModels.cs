@@ -85,7 +85,8 @@ namespace Chronicle.Services
 
     public record ImportApproval(
         string FilePath,
-        string ExternalId
+        string ExternalId,
+        string? Source = null
     );
 
     public record ImportApprovedRequest(

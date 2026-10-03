@@ -452,12 +452,22 @@ namespace Chronicle.Services
                 ct.ThrowIfCancellationRequested();
                 try
                 {
+                    // Route to the plugin that owns the approval's source (the candidate's own), not just
+                    // the first loaded provider; that provider remains the fallback when the source is
+                    // unknown or its plugin isn't installed.
+                    var approvalSource = ResolveSource(approval.ExternalId, approval.Source);
+                    var approvalProvider =
+                        (approvalSource is not null && SourceToPluginId(approvalSource) is { } approvalPluginId
+                            ? _registry.GetMetadataProvider(approvalPluginId) : null)
+                        ?? provider;
                     var meta = await ProviderCallGuard.CallAsync<MediaMetadata?>(
-                        async t => (MediaMetadata?)await provider.GetByIdAsync(approval.ExternalId, t), provider.PluginId, "GetByIdAsync",
+                        async t => (MediaMetadata?)await approvalProvider.GetByIdAsync(approval.ExternalId, t), approvalProvider.PluginId, "GetByIdAsync",
                         null, msg => _log.Warning(msg), msg => _log.Error(msg), ct)
                         ?? throw new InvalidOperationException(
-                            $"Provider {provider.PluginId} did not return metadata for {approval.ExternalId}");
-                    var (source, extId) = ParseSuggestedExternalId(approval.ExternalId);
+                            $"Provider {approvalProvider.PluginId} did not return metadata for {approval.ExternalId}");
+                    var (source, extId) = ParseSuggestedExternalId(
+                        approval.ExternalId,
+                        approvalSource ?? Chronicle.Core.Helpers.PluginIdHelper.ToSource(approvalProvider.PluginId));
 
                     // Check if an item with this external ID already exists
                     var existingExt = await _context.MediaExternalIds
@@ -505,7 +515,7 @@ namespace Chronicle.Services
                             mediaItem.RuntimeMinutes   = meta.RuntimeMinutes;
                             mediaItem.MetadataJson     = SerializeMetadata(tmdbMeta: meta, existingJson: mediaItem.MetadataJson);
                             mediaItem.UpdatedAt        = DateTime.UtcNow;
-                            await UpsertExternalIdAsync(mediaItem.Id, approval.ExternalId, ct);
+                            await UpsertExternalIdAsync(mediaItem.Id, approval.ExternalId, ct, source);
                         }
                         else
                         {
@@ -531,7 +541,7 @@ namespace Chronicle.Services
                             };
                             _context.MediaItems.Add(mediaItem);
                             await _context.SaveChangesAsync(ct);
-                            await UpsertExternalIdAsync(mediaItem.Id, approval.ExternalId, ct);
+                            await UpsertExternalIdAsync(mediaItem.Id, approval.ExternalId, ct, source);
                         }
                     }
 
@@ -1192,9 +1202,10 @@ namespace Chronicle.Services
             return stub;
         }
 
-        private async Task UpsertExternalIdAsync(int mediaItemId, string suggestedExternalId, CancellationToken ct)
+        private async Task UpsertExternalIdAsync(
+            int mediaItemId, string suggestedExternalId, CancellationToken ct, string idSource)
         {
-            var (source, extId) = ParseSuggestedExternalId(suggestedExternalId);
+            var (source, extId) = ParseSuggestedExternalId(suggestedExternalId, idSource);
 
             var exists = await _context.MediaExternalIds.AnyAsync(
                 e => e.MediaItemId == mediaItemId && e.Source == source && e.ExternalId == extId, ct);
@@ -1463,17 +1474,22 @@ namespace Chronicle.Services
 
         public async Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(
             string externalId, int mediaTypeId, int userId, CancellationToken ct = default,
-            List<ContributingExternalId>? contributingExternalIds = null)
+            List<ContributingExternalId>? contributingExternalIds = null, string? resultSource = null)
         {
             var mediaType = await _context.MediaTypes.FirstOrDefaultAsync(t => t.Id == mediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {mediaTypeId} not found.");
 
-            // Derive which plugin should handle this externalId.
-            var (idSource, _) = ParseSuggestedExternalId(externalId);
-            var pluginId = SourceToPluginId(idSource);
+            // Which plugin handles this id: the one that owns the search result's own source. An id's
+            // shape cannot tell you who issued it (TMDB's "movie:550", MusicBrainz's and Last.fm's
+            // "artist:..." all look alike), which is why this used to be a list of known prefixes and
+            // sent anything else to the wrong plugin. Falls back to an id prefix that names an
+            // installed plugin, then to the first provider supporting the media type.
+            var resolvedSource = ResolveSource(externalId, resultSource);
+            var pluginId = resolvedSource is null ? null : SourceToPluginId(resolvedSource);
             var provider = (pluginId is not null ? _registry.GetMetadataProvider(pluginId) : null)
                 ?? ProvidersForType(mediaType.Name).FirstOrDefault()
                 ?? throw new InvalidOperationException("No metadata provider is loaded.");
+            var idSource = resolvedSource ?? Chronicle.Core.Helpers.PluginIdHelper.ToSource(provider.PluginId);
 
             // ProviderCallGuard only retries TRANSIENT network failures (see its own doc) -- a
             // definitive HTTP error like a 404 (a stale/invalid id, or a provider-side removal)
@@ -1514,7 +1530,7 @@ namespace Chronicle.Services
                 "meta.ExternalId={MetaExternalId} meta.Year={Year}",
                 provider.PluginId, externalId, meta.Title, meta.ExternalId, meta.Year);
 
-            var (source, extId) = ParseSuggestedExternalId(externalId);
+            var (source, extId) = ParseSuggestedExternalId(externalId, idSource);
 
             // Extract cross-reference IDs from the provider's ExtendedData (e.g. Trakt → TMDB/IMDB IDs).
             // These are used to pre-seed enrichment rows so other plugins don't text-search and mis-match.
@@ -1567,7 +1583,7 @@ namespace Chronicle.Services
                     item.MetadataJson   = MergeProviderBlob(item.MetadataJson, providerBlobKey, meta);
                     item.UpdatedAt      = DateTime.UtcNow;
                     await _context.SaveChangesAsync(ct);
-                    await UpsertExternalIdAsync(item.Id, externalId, ct);
+                    await UpsertExternalIdAsync(item.Id, externalId, ct, source);
                 }
                 else
                 {
@@ -1586,7 +1602,7 @@ namespace Chronicle.Services
                     };
                     _context.MediaItems.Add(item);
                     await _context.SaveChangesAsync(ct);
-                    await UpsertExternalIdAsync(item.Id, externalId, ct);
+                    await UpsertExternalIdAsync(item.Id, externalId, ct, source);
 
                     // Track which plugin IDs have already had an enrichment row added in this call.
                     // AnyAsync only queries the DB, not in-memory tracked entities, so without this
@@ -1672,7 +1688,7 @@ namespace Chronicle.Services
                                 ExternalId  = contribId,
                                 Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
                             });
-                            await UpsertExternalIdAsync(item.Id, contribId, ct);
+                            await UpsertExternalIdAsync(item.Id, contribId, ct, contrib.Source);
                         }
                     }
 
@@ -1721,7 +1737,7 @@ namespace Chronicle.Services
                                 ExternalId  = xId,
                                 Status      = Chronicle.Core.Models.EnrichmentStatus.Pending,
                             });
-                            await UpsertExternalIdAsync(item.Id, xId, ct);
+                            await UpsertExternalIdAsync(item.Id, xId, ct, xSource);
                         }
                     }
                 }
@@ -1773,31 +1789,38 @@ namespace Chronicle.Services
         /// "tv:1396"        → ("tmdb", "tv:1396")
         /// "imdb:tt0137523" → ("imdb", "tt0137523")
         /// </summary>
-        private static (string source, string externalId) ParseSuggestedExternalId(string suggested)
+        // Which source an external id belongs to: the one the caller knows (a search result carries its own),
+        // else the id's own prefix when that names an installed plugin's source ("imdb:tt0124770" when an
+        // IMDb plugin is installed), else null -- the caller then falls back to the provider it ended up
+        // using. There is deliberately no list of plugin prefixes here: it used to be one ("imdb:", "trakt:",
+        // "simkl:", "hardcover:", "wikipedia:", and everything else "tmdb"), so any plugin not on it had its
+        // ids filed under TMDB and handed to the wrong provider.
+        internal string? ResolveSource(string externalId, string? explicitSource)
         {
-            if (suggested.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
-                return ("imdb", suggested[5..]);
+            if (!string.IsNullOrWhiteSpace(explicitSource))
+                return explicitSource.Trim().ToLowerInvariant();
 
-            // Trakt: "trakt:movie:NNN", "trakt:show:NNN", "trakt:episode:NNN"
-            if (suggested.StartsWith("trakt:", StringComparison.OrdinalIgnoreCase))
-                return ("trakt", suggested);
+            var colon = externalId.IndexOf(':');
+            if (colon > 0)
+            {
+                var prefix = externalId[..colon].ToLowerInvariant();
+                if (SourceToPluginId(prefix) is not null) return prefix;
+            }
+            return null;
+        }
 
-            // SIMKL: "simkl:{movie|tv|anime}:NNN" (an untyped "simkl:NNN" is stale -- see SimklIdHelper)
-            if (suggested.StartsWith("simkl:", StringComparison.OrdinalIgnoreCase))
-                return ("simkl", suggested);
-
-            // Hardcover: "hardcover:NNN"
-            if (suggested.StartsWith("hardcover:", StringComparison.OrdinalIgnoreCase))
-                return ("hardcover", suggested);
-
-            // Wikipedia: "wikipedia:{lang}:{Article_Title}" -- the only source many people have.
-            // Root-caused live (2026-09-24): with no case here this fell through to "tmdb" below,
-            // so adding a Wikipedia-only person asked TMDB for a Wikipedia id and got a 404.
-            if (suggested.StartsWith("wikipedia:", StringComparison.OrdinalIgnoreCase))
-                return ("wikipedia", suggested);
-
-            // "movie:*" or "tv:*" — stored verbatim with source="tmdb"
-            return ("tmdb", suggested);
+        // The (source, stored id) pair written to media_external_ids for an id from a KNOWN source.
+        // Ids are stored exactly as the plugin issued them, except IMDb's, which is stored bare
+        // ("tt0137523"): every plugin that reports an IMDb id shares one "imdb" row per item. That one
+        // storage rule is the only source-specific thing left here; it is persisted-data format, mirrored
+        // by MetadataEnrichmentService's own "imdb:" handling, and is NOT changed without migrating the
+        // existing rows.
+        internal static (string source, string externalId) ParseSuggestedExternalId(string suggested, string source)
+        {
+            if (string.Equals(source, "imdb", StringComparison.OrdinalIgnoreCase)
+                && suggested.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
+                return (source, suggested[5..]);
+            return (source, suggested);
         }
 
         // Produces a normalised "title|year" deduplication key, or null if title is missing.
@@ -1811,17 +1834,33 @@ namespace Chronicle.Services
             return $"{normalized}|{year?.ToString() ?? ""}";
         }
 
-        // Maps a short source name to the full canonical plugin ID used in the registry.
-        private static string? SourceToPluginId(string source) => source switch
+        // Maps a short source name ("imdb", "tmdb", "simkl", ...) to the plugin ID of the INSTALLED plugin
+        // that owns it, or null when no installed plugin does. Derived entirely from the plugin registry
+        // (each plugin's short name is PluginIdHelper.ToSource of its own id) -- there is deliberately no
+        // list of plugins in this method: nothing here should need editing when a plugin is added or
+        // removed, and an uninstalled plugin must not be "found".
+        //
+        // This used to be a fixed switch over six plugins. Two real failures came from that:
+        //   * an unlisted source returned null, so when the IMDb plugin returned "imdb:tt0124770" for an
+        //     Anime Movies search, Add to Library gave the id to the first provider supporting the type
+        //     (Simkl), which could not resolve it: "Provider chronicle.plugin.simkl could not find
+        //     imdb:tt0124770 -- it may be stale or invalid" (reported 2026-10-03, and it recurred for
+        //     every IMDb-sourced result the first provider couldn't resolve);
+        //   * a listed source could return an id that is not the registered one -- the switch said
+        //     "chronicle.plugin.hardcover" while the Hardcover plugin's real id is "hardcover", so that
+        //     lookup quietly failed too.
+        internal string? SourceToPluginId(string source)
         {
-            "tmdb"       => "chronicle.plugin.tmdb",
-            "trakt"      => "chronicle.plugin.trakt",
-            "simkl"      => "chronicle.plugin.simkl",
-            "hardcover"  => "chronicle.plugin.hardcover",
-            "musicbrainz"=> "chronicle.plugin.musicbrainz",
-            "wikipedia"  => "chronicle.plugin.wikipedia",
-            _            => null,
-        };
+            if (string.IsNullOrEmpty(source)) return null;
+
+            foreach (var (pluginId, _, _) in _registry.GetMetadataProviderEntries())
+            {
+                if (string.Equals(Chronicle.Core.Helpers.PluginIdHelper.ToSource(pluginId), source,
+                        StringComparison.OrdinalIgnoreCase))
+                    return pluginId;
+            }
+            return null;
+        }
 
         private static List<(string source, string id)> ExtractCrossRefIds(
             Chronicle.Plugins.Models.MediaMetadata meta, string fromSource, string? mediaTypeName = null) =>

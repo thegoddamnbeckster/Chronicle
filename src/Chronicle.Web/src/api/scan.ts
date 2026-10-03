@@ -88,7 +88,7 @@ export async function identifyFiles(payload: {
 }
 
 export async function importApproved(payload: {
-  approvals: { filePath: string; externalId: string }[]
+  approvals: { filePath: string; externalId: string; source?: string | null }[]
   mediaTypeId: number
 }): Promise<ImportSummary> {
   const { data } = await client.post<ApiResponse<ImportSummary>>('/scan/import', payload)
@@ -176,9 +176,12 @@ export async function addFromSearch(
   externalId: string,
   mediaTypeId: number,
   contributingExternalIds?: ContributingExternalId[],
+  source?: string | null,
 ): Promise<MediaItem> {
+  // source is the chosen result's own source: the server routes the id to the plugin that owns it
+  // rather than guessing from the id's shape.
   const { data } = await client.post<ApiResponse<MediaItem>>('/scan/add',
-    { externalId, mediaTypeId, contributingExternalIds })
+    { externalId, mediaTypeId, contributingExternalIds, source })
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to add media')
   return data.data
 }

@@ -88,7 +88,11 @@ namespace Chronicle.API.DTOs
 
     public record ImportApprovalDto(
         [Required] string FilePath,
-        [Required] string ExternalId
+        [Required] string ExternalId,
+        /// <summary>The source (plugin short name, e.g. "imdb") of the chosen candidate -- the candidate's
+        /// own <c>Source</c>. Lets the server route the id to the plugin that issued it instead of guessing
+        /// from the id's shape.</summary>
+        string? Source = null
     );
 
     public record ImportRequestDto(
@@ -132,7 +136,15 @@ namespace Chronicle.API.DTOs
         /// Each will be pre-seeded as an enrichment row so the provider uses the known
         /// ID directly instead of running a text search.
         /// </summary>
-        List<ContributingExternalIdDto>? ContributingExternalIds = null
+        List<ContributingExternalIdDto>? ContributingExternalIds = null,
+        /// <summary>
+        /// The source (plugin short name, e.g. "imdb", "tmdb", "lastfm") of the search result being added -- the
+        /// result's own <c>Source</c>. The id says nothing reliable about who issued it (TMDB's "movie:550",
+        /// MusicBrainz's and Last.fm's "artist:..." look alike), so the server routes by this instead of guessing
+        /// from the id's prefix. Optional for older clients; without it an id whose prefix names an installed
+        /// plugin still routes correctly.
+        /// </summary>
+        string? Source = null
     );
 
     // ── Scan progress ──────────────────────────────────────────────────────────

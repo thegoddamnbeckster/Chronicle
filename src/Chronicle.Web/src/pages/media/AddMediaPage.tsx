@@ -25,18 +25,6 @@ function rankResults(results: MetadataSearchResult[], query: string): MetadataSe
   return [...results].sort((a, b) => titleScore(a.title, query) - titleScore(b.title, query))
 }
 
-function resolveSource(result: MetadataSearchResult): string | null {
-  // Prefer the server-populated field; fall back to deriving from externalId format.
-  if (result.source) return result.source
-  const id = result.externalId.toLowerCase()
-  if (id.startsWith('movie:') || id.startsWith('tv:')) return 'tmdb'
-  if (id.startsWith('simkl:')) return 'simkl'
-  if (id.startsWith('trakt:')) return 'trakt'
-  if (id.startsWith('release:') || id.startsWith('release-group:')) return 'musicbrainz'
-  if (id.startsWith('hardcover:')) return 'hardcover'
-  return null
-}
-
 function ResultPoster({ result }: { result: MetadataSearchResult }) {
   const [errored, setErrored] = useState(false)
   const proxied = result.posterUrl
@@ -178,7 +166,7 @@ export default function AddMediaPage() {
     setAddError(null)
     try {
       const item = await addFromSearch(result.externalId, selectedType.id,
-        result.contributingExternalIds ?? undefined)
+        result.contributingExternalIds ?? undefined, result.source)
       setAddedIds(prev => new Set(prev).add(result.externalId))
       navigate(`/media/${item.id}`)
     } catch (err) {
@@ -233,7 +221,7 @@ export default function AddMediaPage() {
             // Use multi-source list when present, otherwise fall back to single source
             const allSources: string[] = r.sources && r.sources.length > 1
               ? r.sources
-              : (resolveSource(r) ? [resolveSource(r)!] : [])
+              : (r.source ? [r.source] : [])
 
             return (
               <div key={r.externalId} className={styles.card}>

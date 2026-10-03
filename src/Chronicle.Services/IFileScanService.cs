@@ -63,8 +63,10 @@ namespace Chronicle.Services
         /// <summary>
         /// Fetches full metadata for <paramref name="externalId"/>, creates (or updates) a
         /// MediaItem, adds it to the user's library, and returns the saved item.
+        /// <paramref name="resultSource"/> is the chosen search result's own source (plugin short name);
+        /// the id is routed to the plugin that owns that source.
         /// </summary>
-        Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(string externalId, int mediaTypeId, int userId, CancellationToken ct = default, List<ContributingExternalId>? contributingExternalIds = null);
+        Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(string externalId, int mediaTypeId, int userId, CancellationToken ct = default, List<ContributingExternalId>? contributingExternalIds = null, string? resultSource = null);
 
         /// <summary>
         /// Returns the confidence threshold for the given media type. Reads the per-type key

@@ -263,7 +263,8 @@ public class FileScanController : ControllerBase
         try
         {
             var item = await _scanService.AddFromSearchAsync(dto.ExternalId, dto.MediaTypeId, userId, ct,
-                dto.ContributingExternalIds?.Select(x => new ContributingExternalId(x.Source, x.ExternalId)).ToList());
+                dto.ContributingExternalIds?.Select(x => new ContributingExternalId(x.Source, x.ExternalId)).ToList(),
+                dto.Source);
 
             var fs = ParseFileScannerMeta(item.MetadataJson);
             var itemDto = new MediaItemDto(
@@ -302,7 +303,7 @@ public class FileScanController : ControllerBase
         try
         {
             var approvals = dto.Approvals
-                .Select(a => new ImportApproval(a.FilePath, a.ExternalId))
+                .Select(a => new ImportApproval(a.FilePath, a.ExternalId, a.Source))
                 .ToList();
 
             var request = new ImportApprovedRequest(approvals, dto.MediaTypeId, userId);

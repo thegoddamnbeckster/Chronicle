@@ -879,11 +879,13 @@ public class FileScanServiceHierarchyTests
 
         var registry = new Mock<IPluginRegistry>();
         registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.tmdb")).Returns(provider.Object);
+        registry.Setup(r => r.GetMetadataProviderEntries())
+            .Returns([("chronicle.plugin.tmdb", provider.Object, (string?)null)]);
 
         var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.AddFromSearchAsync("tv:99999999", mediaTypeId: 1, userId: 1));
+            () => service.AddFromSearchAsync("tv:99999999", mediaTypeId: 1, userId: 1, resultSource: "tmdb"));
 
         Assert.Contains("tv:99999999", ex.Message);
     }
@@ -912,6 +914,11 @@ public class FileScanServiceHierarchyTests
         var registry = new Mock<IPluginRegistry>();
         registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.wikipedia")).Returns(wikipedia.Object);
         registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.tmdb")).Returns(tmdb.Object);
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns(
+        [
+            ("chronicle.plugin.wikipedia", wikipedia.Object, (string?)null),
+            ("chronicle.plugin.tmdb",      tmdb.Object,      (string?)null),
+        ]);
 
         var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
 
@@ -920,6 +927,150 @@ public class FileScanServiceHierarchyTests
 
         wikipedia.Verify(p => p.GetByIdAsync("wikipedia:en:Jenna_Jameson", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
         tmdb.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AddFromSearchAsync_ImdbId_IsRoutedToTheImdbPlugin_NotTheMediaTypesFirstProvider()
+    {
+        // Reported 2026-10-03: adding "Patlabor: The Movie" from an Anime Movies search failed with
+        // "Provider chronicle.plugin.simkl could not find imdb:tt0124770 -- it may be stale or invalid".
+        // The IMDb plugin returned the result, but "imdb" had no owning plugin, so the id went to the
+        // first provider supporting the type (Simkl), which cannot resolve an IMDb id it never issued.
+        await using var context = NewInMemoryContext();
+        context.MediaTypes.Add(new MediaType
+        {
+            Id = 1, Name = "anime_movies", DisplayName = "Anime Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var simkl = new Mock<IMetadataProvider>();
+        simkl.Setup(p => p.PluginId).Returns("chronicle.plugin.simkl");
+        simkl.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "anime_movies" }]);
+        var imdb = new Mock<IMetadataProvider>();
+        imdb.Setup(p => p.PluginId).Returns("chronicle.plugin.imdb");
+        imdb.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "anime_movies" }]);
+        imdb.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Not Found", null, HttpStatusCode.NotFound));   // we only care who was asked
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.simkl")).Returns(simkl.Object);
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.imdb")).Returns(imdb.Object);
+        registry.Setup(r => r.GetMetadataProviders()).Returns([simkl.Object, imdb.Object]);   // Simkl FIRST
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns(
+        [
+            ("chronicle.plugin.simkl", simkl.Object, (string?)null),
+            ("chronicle.plugin.imdb",  imdb.Object,  (string?)null),
+        ]);
+
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddFromSearchAsync("imdb:tt0124770", mediaTypeId: 1, userId: 1));
+
+        imdb.Verify(p => p.GetByIdAsync("imdb:tt0124770", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        simkl.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AddFromSearchAsync_IsRoutedByTheResultsOwnSource_NotByTheShapeOfItsId()
+    {
+        // MusicBrainz's and Last.fm's ids both look like "artist:...". The old code guessed the source from the
+        // id's prefix and filed anything it didn't recognise under TMDB, so a Last.fm result went to the wrong
+        // plugin. The search result carries its own source; that is what decides.
+        await using var context = NewInMemoryContext();
+        context.MediaTypes.Add(new MediaType
+        {
+            Id = 1, Name = "music", DisplayName = "Music", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var musicbrainz = new Mock<IMetadataProvider>();
+        musicbrainz.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        musicbrainz.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        var lastfm = new Mock<IMetadataProvider>();
+        lastfm.Setup(p => p.PluginId).Returns("chronicle.plugin.lastfm");
+        lastfm.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        lastfm.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Not Found", null, HttpStatusCode.NotFound));
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz")).Returns(musicbrainz.Object);
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.lastfm")).Returns(lastfm.Object);
+        registry.Setup(r => r.GetMetadataProviders()).Returns([musicbrainz.Object, lastfm.Object]);   // MusicBrainz FIRST
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns(
+        [
+            ("chronicle.plugin.musicbrainz", musicbrainz.Object, (string?)null),
+            ("chronicle.plugin.lastfm",      lastfm.Object,      (string?)null),
+        ]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddFromSearchAsync("artist:Radiohead", mediaTypeId: 1, userId: 1, resultSource: "lastfm"));
+
+        lastfm.Verify(p => p.GetByIdAsync("artist:Radiohead", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        musicbrainz.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AddFromSearchAsync_ImdbResultWithItsSource_GoesToTheImdbPlugin()
+    {
+        await using var context = NewInMemoryContext();
+        context.MediaTypes.Add(new MediaType
+        {
+            Id = 1, Name = "anime_movies", DisplayName = "Anime Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var simkl = new Mock<IMetadataProvider>();
+        simkl.Setup(p => p.PluginId).Returns("chronicle.plugin.simkl");
+        simkl.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "anime_movies" }]);
+        var imdb = new Mock<IMetadataProvider>();
+        imdb.Setup(p => p.PluginId).Returns("chronicle.plugin.imdb");
+        imdb.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "anime_movies" }]);
+        imdb.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Not Found", null, HttpStatusCode.NotFound));
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.simkl")).Returns(simkl.Object);
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.imdb")).Returns(imdb.Object);
+        registry.Setup(r => r.GetMetadataProviders()).Returns([simkl.Object, imdb.Object]);
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns(
+        [
+            ("chronicle.plugin.simkl", simkl.Object, (string?)null),
+            ("chronicle.plugin.imdb",  imdb.Object,  (string?)null),
+        ]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.AddFromSearchAsync("imdb:tt0124770", mediaTypeId: 1, userId: 1, resultSource: "imdb"));
+
+        imdb.Verify(p => p.GetByIdAsync("imdb:tt0124770", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        simkl.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public void ResolveSource_PrefersTheCallersSource_ThenAnInstalledPluginsPrefix_ElseNull()
+    {
+        var service = ServiceWithPlugins("chronicle.plugin.imdb", "chronicle.plugin.simkl");
+
+        Assert.Equal("lastfm", service.ResolveSource("artist:Radiohead", "LastFM"));       // explicit wins, normalised
+        Assert.Equal("imdb",   service.ResolveSource("imdb:tt0124770", null));              // prefix names an installed plugin
+        Assert.Equal("imdb",   service.ResolveSource("imdb:tt0124770", "  "));              // blank source = absent
+        Assert.Null(service.ResolveSource("movie:550", null));                              // says nothing about who issued it
+        Assert.Null(service.ResolveSource("trakt:movie:1", null));                          // trakt is not installed here
+    }
+
+    [Theory]
+    [InlineData("imdb", "imdb:tt0124770", "tt0124770")]        // IMDb ids are stored bare (shared cross-reference row)
+    [InlineData("tmdb", "movie:550", "movie:550")]              // everything else exactly as issued
+    [InlineData("trakt", "trakt:movie:1", "trakt:movie:1")]
+    [InlineData("lastfm", "artist:Radiohead", "artist:Radiohead")]
+    [InlineData("hardcover", "hardcover:123", "hardcover:123")]
+    public void ParseSuggestedExternalId_StoresIdsAsIssued_ExceptTheImdbBareForm(string source, string id, string expected)
+    {
+        var (s, stored) = FileScanService.ParseSuggestedExternalId(id, source);
+
+        Assert.Equal(source, s);
+        Assert.Equal(expected, stored);
     }
 
     [Fact]
@@ -953,6 +1104,62 @@ public class FileScanServiceHierarchyTests
         Assert.Null(yearless.ContributingExternalIds);
         var dated = results.First(r => r.ExternalId == "simkl:movie:2");
         Assert.Contains(dated.ContributingExternalIds!, c => c.ExternalId == "movie:9291");
+    }
+
+    // ── SourceToPluginId ──────────────────────────────────────────────────────
+
+    private static FileScanService ServiceWithPlugins(params string[] pluginIds)
+    {
+        var context = NewInMemoryContext();
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries())
+            .Returns(pluginIds.Select(id => (id, new Mock<IMetadataProvider>().Object, (string?)null)).ToList());
+        return new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+    }
+
+    [Theory]
+    [InlineData("tmdb",        "chronicle.plugin.tmdb")]
+    [InlineData("trakt",       "chronicle.plugin.trakt")]
+    [InlineData("simkl",       "chronicle.plugin.simkl")]
+    [InlineData("musicbrainz", "chronicle.plugin.musicbrainz")]
+    [InlineData("wikipedia",   "chronicle.plugin.wikipedia")]
+    [InlineData("imdb",        "chronicle.plugin.imdb")]
+    [InlineData("lastfm",      "chronicle.plugin.lastfm")]
+    public void SourceToPluginId_ResolvesToWhicheverInstalledPluginOwnsTheSource(string source, string expected)
+    {
+        // Reported 2026-10-03: "imdb:tt0124770" from the IMDb plugin had no owning plugin, so Add to
+        // Library handed it to Simkl (first provider for Anime Movies), which failed with
+        // "Provider chronicle.plugin.simkl could not find imdb:tt0124770 -- it may be stale or invalid".
+        var service = ServiceWithPlugins(
+            "chronicle.plugin.tmdb", "chronicle.plugin.trakt", "chronicle.plugin.simkl",
+            "chronicle.plugin.musicbrainz", "chronicle.plugin.wikipedia", "chronicle.plugin.imdb",
+            "chronicle.plugin.lastfm");
+
+        Assert.Equal(expected, service.SourceToPluginId(source));
+    }
+
+    [Fact]
+    public void SourceToPluginId_ReturnsTheRegisteredIdEvenWhenItIsNotInTheChroniclePluginForm()
+    {
+        // The Hardcover plugin's real id is "hardcover" (not "chronicle.plugin.hardcover", which the old
+        // fixed list returned -- an id that is not in the registry at all).
+        Assert.Equal("hardcover", ServiceWithPlugins("hardcover").SourceToPluginId("hardcover"));
+    }
+
+    [Fact]
+    public void SourceToPluginId_IsCaseInsensitive()
+    {
+        Assert.Equal("chronicle.plugin.imdb", ServiceWithPlugins("chronicle.plugin.imdb").SourceToPluginId("IMDb"));
+    }
+
+    [Theory]
+    [InlineData("imdb")]
+    [InlineData("tmdb")]
+    [InlineData("")]
+    public void SourceToPluginId_APluginThatIsNotInstalledIsNotFound(string source)
+    {
+        // Nothing is assumed about plugins: with only Simkl installed, no other source resolves.
+        Assert.Null(ServiceWithPlugins("chronicle.plugin.simkl").SourceToPluginId(source));
     }
 
     [Fact]
