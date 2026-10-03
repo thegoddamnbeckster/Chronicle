@@ -150,7 +150,7 @@ public sealed class MovieFileYearRepairService(
     {
         var root = JsonNode.Parse(item.MetadataJson!) as JsonObject ?? new JsonObject();
         var badSet = badPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var badNames = badPaths.Select(Path.GetFileName).Where(n => !string.IsNullOrEmpty(n))
+        var badNames = badPaths.Select(Chronicle.Core.Helpers.FilePathHelper.GetFileName).Where(n => !string.IsNullOrEmpty(n))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         if (root["fileScanner"] is JsonObject scanner && scanner["filePaths"] is JsonArray paths)

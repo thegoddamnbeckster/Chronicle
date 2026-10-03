@@ -3369,7 +3369,8 @@ namespace Chronicle.Services
         /// so ScraperController.SearchMovies's filename fast-path can look these up via a
         /// plain index instead of a `LIKE '%...%'` scan over MetadataJson -- see that model's
         /// own doc for the ~590ms-per-search cost this replaces. Base filenames only (via
-        /// Path.GetFileName) -- the fast-path lookup only ever has a bare filename to match
+        /// FilePathHelper.GetFileName, which understands both '\' and '/' on any OS: stored paths are often
+        /// Windows paths read back elsewhere) -- the fast-path lookup only ever has a bare filename to match
         /// against, never a full path. No-ops when nothing actually changed, to avoid a
         /// needless delete+insert on every single already-correct item during a routine
         /// rescan (the overwhelmingly common case).
@@ -3377,9 +3378,8 @@ namespace Chronicle.Services
         private async Task SyncKnownFileNamesAsync(MediaItem item, IReadOnlyList<string> filePaths, CancellationToken ct)
         {
             var newNames = filePaths
-                .Select(Path.GetFileName)
+                .Select(Chronicle.Core.Helpers.FilePathHelper.GetFileName)
                 .Where(n => !string.IsNullOrEmpty(n))
-                .Select(n => n!)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             // item.Id is 0 for a not-yet-saved new item -- nothing existing to reconcile
@@ -3436,7 +3436,7 @@ namespace Chronicle.Services
         /// </summary>
         public async Task EnsureKnownFileNameAsync(MediaItem item, string fileName, CancellationToken ct = default)
         {
-            var baseName = Path.GetFileName(fileName);
+            var baseName = Chronicle.Core.Helpers.FilePathHelper.GetFileName(fileName);
             if (string.IsNullOrEmpty(baseName)) return;
 
             // item.Id is 0 for a not-yet-saved item -- nothing to check against yet, and the
