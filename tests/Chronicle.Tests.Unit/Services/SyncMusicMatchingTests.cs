@@ -16,8 +16,7 @@ namespace Chronicle.Tests.Unit.Services;
 
 /// <summary>
 /// Music plays imported from a listening service (Last.fm) must land on the library's own Artist → Album →
-/// Track items. The library is named by the file scanner -- albums carry a "(2000) " year prefix, tracks
-/// keep qualifiers like "(LP version)" -- so a play that fails to match mints a duplicate of every level.
+/// Track items. Names must match exactly (case-insensitive); only a MusicBrainz recording id matches otherwise.
 /// </summary>
 public class SyncMusicMatchingTests : IDisposable
 {
@@ -71,13 +70,13 @@ public class SyncMusicMatchingTests : IDisposable
         ArtistName: artist, AlbumName: album);
 
     [Fact]
-    public async Task ExistingTrack_IsMatched_AcrossYearPrefixedAlbumAndCaseDifferences()
+    public async Task ExistingTrack_IsMatched_WhenNamesMatchExactlyIgnoringCase()
     {
         var artist = Add("3 Doors Down", 0);
-        var album  = Add("(2000) The Better Life", 1, artist);
+        var album  = Add("The Better Life", 1, artist);
         var track  = Add("Kryptonite", 2, album);
 
-        var (item, isNew) = await _svc.MatchOrCreateAsync(_db, Play("3 Doors Down", "The Better Life", "kryptonite"), PluginId, default);
+        var (item, isNew) = await _svc.MatchOrCreateAsync(_db, Play("3 doors down", "the better life", "KRYPTONITE"), PluginId, default);
 
         isNew.Should().BeFalse();
         item.Id.Should().Be(track.Id);
@@ -85,15 +84,29 @@ public class SyncMusicMatchingTests : IDisposable
     }
 
     [Fact]
-    public async Task TrackWithAReleaseQualifier_MatchesTheUnqualifiedPlay()
+    public async Task YearPrefixedAlbum_IsNotTheSameAlbum()
     {
         var artist = Add("3 Doors Down", 0);
-        var album  = Add("(2000) Kryptonite", 1, artist);
+        var album  = Add("(2000) The Better Life", 1, artist);
+        Add("Kryptonite", 2, album);
+
+        var (item, isNew) = await _svc.MatchOrCreateAsync(_db, Play("3 Doors Down", "The Better Life", "Kryptonite"), PluginId, default);
+
+        isNew.Should().BeTrue();
+        item.ParentId.Should().NotBe(album.Id);
+    }
+
+    [Fact]
+    public async Task TrackWithAReleaseQualifier_IsNotTheSameTrack()
+    {
+        var artist = Add("3 Doors Down", 0);
+        var album  = Add("Kryptonite", 1, artist);
         var track  = Add("Kryptonite (LP version)", 2, album);
 
-        var (item, _) = await _svc.MatchOrCreateAsync(_db, Play("3 Doors Down", "Kryptonite", "Kryptonite"), PluginId, default);
+        var (item, isNew) = await _svc.MatchOrCreateAsync(_db, Play("3 Doors Down", "Kryptonite", "Kryptonite"), PluginId, default);
 
-        item.Id.Should().Be(track.Id);
+        isNew.Should().BeTrue();
+        item.Id.Should().NotBe(track.Id);
     }
 
     [Fact]
@@ -142,7 +155,7 @@ public class SyncMusicMatchingTests : IDisposable
     public async Task PlayWithNoAlbum_FindsTheTrackUnderTheArtistsRealAlbum()
     {
         var artist = Add("Some Band", 0);
-        var album  = Add("(1999) Some Album", 1, artist);
+        var album  = Add("Some Album", 1, artist);
         var track  = Add("Deep Cut", 2, album);
 
         var (item, isNew) = await _svc.MatchOrCreateAsync(_db, Play("Some Band", null, "Deep Cut"), PluginId, default);
@@ -200,13 +213,5 @@ public class SyncMusicMatchingTests : IDisposable
         second.isNew.Should().BeFalse();
         second.item.Id.Should().Be(first.item.Id);
         (await _db.MediaItems.CountAsync()).Should().Be(3);
-    }
-
-    [Theory]
-    [InlineData("(2000) The Better Life", "thebetterlife")]
-    [InlineData("[1999] Some Album", "somealbum")]
-    public void MusicNameKeys_IncludeTheAlbumNameWithItsYearPrefixRemoved(string name, string expectedKey)
-    {
-        SyncOrchestrationService.MusicNameKeys(name, albumYearPrefix: true).Should().Contain(expectedKey);
     }
 }
