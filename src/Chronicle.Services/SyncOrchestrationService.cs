@@ -220,6 +220,10 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         if ((mappedType == "books" || mappedType == "audiobooks") && evt.AuthorName is not null)
             return await MatchOrCreateBookAsync(db, evt, pluginId, ct);
 
+        // Route music plays to the Artist→Album→Track hierarchy builder.
+        if (mappedType == "music" && !string.IsNullOrWhiteSpace(evt.ArtistName))
+            return await MatchOrCreateMusicAsync(db, evt, pluginId, ct);
+
         // 1. Own provider ExternalId match
         var byOwn = await db.MediaExternalIds
             .Where(e => e.Source == SourceFromPluginId(pluginId) && e.ExternalId == evt.ExternalId)
@@ -690,6 +694,168 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         await db.SaveChangesAsync(ct);
 
         return (stub, true);
+    }
+
+    // ── Music hierarchy ───────────────────────────────────────────────────────
+
+    internal const string UnknownAlbumName = "Unknown Album";
+
+    private static readonly System.Text.RegularExpressions.Regex AlbumYearPrefix =
+        new(@"^\s*[\(\[]\s*\d{4}\s*[\)\]]\s*[-–]?\s*", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Finds or creates the Artist → Album → Track chain for one imported play.
+    ///
+    /// The library's own music is named by the file scanner, which does not match what a listening service
+    /// reports: albums carry their year as a prefix ("(2000) The Better Life") and tracks keep release
+    /// qualifiers ("Kryptonite (LP version)"). Matching is therefore by loose name, with the album's year
+    /// prefix and a trailing parenthetical set aside as further attempts, and a play only becomes a new stub
+    /// when nothing in the library fits. The importing plugin's own ExternalId is NOT grafted onto an
+    /// existing item: a play carries a name-built id that would overwrite the richer id the metadata
+    /// plugin already stored for it.
+    /// </summary>
+    private async Task<(MediaItem item, bool isNew)> MatchOrCreateMusicAsync(
+        ChronicleDbContext db, ImportedWatchEvent evt, string pluginId, CancellationToken ct)
+    {
+        var mediaType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "music", ct)
+            ?? throw new InvalidOperationException("Media type 'music' not found in database.");
+        var source = SourceFromPluginId(pluginId);
+
+        // Track shortcuts: an id match needs no artist/album at all.
+        var byOwn = await db.MediaExternalIds
+            .Where(e => e.Source == source && e.ExternalId == evt.ExternalId)
+            .Select(e => e.MediaItemId).FirstOrDefaultAsync(ct);
+        if (byOwn != 0 && await db.MediaItems.FindAsync([byOwn], ct) is { } ownItem)
+            return (ownItem, false);
+
+        foreach (var (src, extId) in evt.AdditionalIds)
+        {
+            var byAdditional = await db.MediaExternalIds
+                .Where(e => e.Source == src && e.ExternalId == extId)
+                .Select(e => e.MediaItemId).FirstOrDefaultAsync(ct);
+            if (byAdditional != 0 && await db.MediaItems.FindAsync([byAdditional], ct) is { } found)
+                return (found, false);
+        }
+
+        // Level 0: Artist
+        var artistName = evt.ArtistName!.Trim();
+        var artist = await FindMusicItemAsync(db, mediaType.Id, 0, null, artistName, albumYearPrefix: false, ct)
+            ?? await CreateMusicItemAsync(db, mediaType.Id, 0, null, artistName, ct);
+
+        // A play with no album: the track may already sit under one of the artist's real albums, so look there
+        // before an "Unknown Album" is created for it.
+        var hasAlbum = !string.IsNullOrWhiteSpace(evt.AlbumName);
+        if (!hasAlbum && await FindTrackUnderArtistAsync(db, mediaType.Id, artist.Id, evt.Title, ct) is { } underArtist)
+            return (underArtist, false);
+
+        // Level 1: Album
+        var albumName = hasAlbum ? evt.AlbumName!.Trim() : UnknownAlbumName;
+        var album = await FindMusicItemAsync(db, mediaType.Id, 1, artist.Id, albumName, albumYearPrefix: true, ct)
+            ?? await CreateMusicItemAsync(db, mediaType.Id, 1, artist.Id, albumName, ct);
+
+        // Level 2: Track
+        var track = await FindMusicItemAsync(db, mediaType.Id, 2, album.Id, evt.Title, albumYearPrefix: false, ct);
+        if (track is not null) return (track, false);
+
+        var stub = await CreateMusicItemAsync(db, mediaType.Id, 2, album.Id, evt.Title.Trim(), ct);
+        foreach (var (s, v) in evt.AdditionalIds)
+            db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = stub.Id, Source = s, ExternalId = v });
+        await db.SaveChangesAsync(ct);
+        return (stub, true);
+    }
+
+    /// <summary>The name forms a music item may be matched under, most exact first.</summary>
+    internal static IReadOnlyList<string> MusicNameKeys(string name, bool albumYearPrefix)
+    {
+        var bare = albumYearPrefix ? AlbumYearPrefix.Replace(name, string.Empty) : name;
+        var keys = new[]
+        {
+            MediaItemNormalizer.NormalizeNameLoose(name),
+            MediaItemNormalizer.NormalizeNameLoose(bare),
+            MediaItemNormalizer.NormalizeNameLoose(MediaItemNormalizer.StripTrailingParenthetical(bare)),
+        }.Where(k => k.Length > 0).Distinct().ToList();
+
+        // A name made only of stripped punctuation ("!!!", "?") normalizes to nothing; without a key it could never
+        // match, and every play of it would mint a new duplicate.
+        if (keys.Count == 0 && !string.IsNullOrWhiteSpace(name))
+            keys.Add(name.Trim().ToLowerInvariant());
+        return keys;
+    }
+
+    private static async Task<MediaItem?> FindMusicItemAsync(
+        ChronicleDbContext db, int mediaTypeId, int level, int? parentId, string name,
+        bool albumYearPrefix, CancellationToken ct)
+    {
+        // Cheap indexed lookup first (the stored loose-normalized name), so the common case -- a play of
+        // something already in the library -- never loads and re-normalizes every sibling.
+        var incomingKeys = MusicNameKeys(name, albumYearPrefix);
+        var direct = await db.MediaItems
+            .FirstOrDefaultAsync(i => i.MediaTypeId == mediaTypeId && i.HierarchyLevel == level && i.ParentId == parentId
+                && i.NormalizedNameLoose != null && incomingKeys.Contains(i.NormalizedNameLoose), ct);
+        if (direct is not null) return direct;
+
+        var siblings = await db.MediaItems
+            .Where(i => i.MediaTypeId == mediaTypeId && i.HierarchyLevel == level && i.ParentId == parentId)
+            .Select(i => new { i.Id, i.Name })
+            .ToListAsync(ct);
+        if (siblings.Count == 0) return null;
+
+        // Each sibling is compared in the same set of forms, so "(2000) The Better Life" matches
+        // "The Better Life" from either side and "Kryptonite" matches "Kryptonite (LP version)".
+        var sibKeys = siblings.Select(s => (s.Id, Keys: MusicNameKeys(s.Name, albumYearPrefix))).ToList();
+        foreach (var key in incomingKeys)
+        {
+            var hit = sibKeys.FirstOrDefault(s => s.Keys.Contains(key));
+            if (hit.Id != 0) return await db.MediaItems.FindAsync([hit.Id], ct);
+        }
+        return null;
+    }
+
+    private static async Task<MediaItem?> FindTrackUnderArtistAsync(
+        ChronicleDbContext db, int mediaTypeId, int artistId, string title, CancellationToken ct)
+    {
+        var albumIds = await db.MediaItems
+            .Where(i => i.MediaTypeId == mediaTypeId && i.HierarchyLevel == 1 && i.ParentId == artistId)
+            .Select(i => i.Id).ToListAsync(ct);
+        if (albumIds.Count == 0) return null;
+
+        var tracks = (await db.MediaItems
+                .Where(i => i.HierarchyLevel == 2 && i.ParentId != null && albumIds.Contains(i.ParentId.Value))
+                .Select(i => new { i.Id, i.Name })
+                .ToListAsync(ct))
+            .Select(t => (t.Id, Keys: MusicNameKeys(t.Name, false))).ToList();
+        foreach (var key in MusicNameKeys(title, albumYearPrefix: false))
+        {
+            var hit = tracks.FirstOrDefault(t => t.Keys.Contains(key));
+            if (hit.Id != 0) return await db.MediaItems.FindAsync([hit.Id], ct);
+        }
+        return null;
+    }
+
+    private async Task<MediaItem> CreateMusicItemAsync(
+        ChronicleDbContext db, int mediaTypeId, int level, int? parentId, string name, CancellationToken ct)
+    {
+        var item = new MediaItem
+        {
+            Name = name, MediaTypeId = mediaTypeId, HierarchyLevel = level, ParentId = parentId,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        db.MediaItems.Add(item);
+        await db.SaveChangesAsync(ct);
+
+        // Pending enrichment rows for every metadata plugin that handles music.
+        foreach (var (mpPluginId, mp, _) in _registry.GetMetadataProviderEntries())
+        {
+            if (!mp.GetSupportedMediaTypes().Any(t => string.Equals(t.MediaTypeName, "music", StringComparison.OrdinalIgnoreCase)))
+                continue;
+            db.MediaEnrichments.Add(new MediaItemEnrichment
+            {
+                MediaItemId = item.Id, PluginId = mpPluginId,
+                Status = EnrichmentStatus.Pending, MaxRetries = 3,
+            });
+        }
+        await db.SaveChangesAsync(ct);
+        return item;
     }
 
     private static async Task<int> GetRootItemIdAsync(

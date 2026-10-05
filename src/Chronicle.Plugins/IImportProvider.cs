@@ -86,7 +86,14 @@ public record ImportedWatchEvent(
     /// <summary>Series name — used to find/create the Level-1 Series parent stub. Null = standalone book.</summary>
     string? SeriesName     = null,
     /// <summary>Numeric position within the series (e.g. 1.0, 2.5).</summary>
-    double? SeriesPosition = null
+    double? SeriesPosition = null,
+    // ── Music parent context (media type "music": Artist -> Album -> Track) ──
+    /// <summary>Artist name -- used to find/create the Level-0 Artist parent. Set on every music event;
+    /// its presence is what routes the event to the music hierarchy builder.</summary>
+    string? ArtistName = null,
+    /// <summary>Album name -- used to find/create the Level-1 Album parent. Null/blank = the source did not
+    /// say which album the track was played from.</summary>
+    string? AlbumName  = null
 );
 
 /// <summary>
