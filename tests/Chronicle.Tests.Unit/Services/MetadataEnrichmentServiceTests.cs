@@ -50,6 +50,71 @@ public class MetadataEnrichmentServiceTests : IDisposable
         updated.LastCompletedAt.Should().NotBeNull();
     }
 
+    /// <summary>A scanner-created artist "C+C Music Factory" against a provider that calls it "C C Music Factory".</summary>
+    private async Task<MediaItemEnrichment> EnrichScannerArtistAgainst(ScoredCandidate candidate)
+    {
+        var item = new MediaItem
+        {
+            Name = "C+C Music Factory",
+            MediaTypeId = (await EnsureMediaTypeAsync("music")).Id,
+            HierarchyLevel = 0,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            MetadataJson = """{"fileScanner":{"folderPath":"E:/Music/C+C Music Factory"}}""",
+        };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+        var row = new MediaItemEnrichment
+        {
+            MediaItemId = item.Id, PluginId = "chronicle.plugin.lastfm",
+            Status = EnrichmentStatus.Pending, MaxRetries = 3,
+        };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.lastfm");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate> { candidate });
+        provider.Setup(p => p.GetByIdAsync(candidate.Metadata.ExternalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(candidate.Metadata);
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.lastfm")).Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.lastfm");
+        return (await _db.MediaEnrichments.FindAsync(row.Id))!;
+    }
+
+    private static MediaMetadata CandidateMeta() =>
+        new() { Title = "C C Music Factory", ExternalId = "artist:C%20C%20Music%20Factory" };
+
+    [Fact]
+    public async Task EnrichPendingAsync_AnIdentifierMatch_IsNotRejectedForANameThatDiffersByPunctuation()
+    {
+        var row = await EnrichScannerArtistAgainst(
+            new ScoredCandidate(CandidateMeta(), 100, "musicbrainz id match") { IdentifierMatch = true });
+
+        row.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ANameOnlyMatchWithTooLittleOverlap_IsStillRejected_AndSaysWhy()
+    {
+        var row = await EnrichScannerArtistAgainst(new ScoredCandidate(CandidateMeta(), 100, "title exact"));
+
+        row.Status.Should().Be(EnrichmentStatus.NotFound);
+        row.DiagnosticsJson.Should().Contain("word overlap is under 60%")
+            .And.NotContain("none met the confidence");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ALowScore_IsRejectedAsBelowTheThreshold_AndSaysSo()
+    {
+        var row = await EnrichScannerArtistAgainst(new ScoredCandidate(CandidateMeta(), 10, "weak"));
+
+        row.Status.Should().Be(EnrichmentStatus.NotFound);
+        row.DiagnosticsJson.Should().Contain("below the confidence threshold");
+    }
+
     [Fact]
     public async Task GetEnrichmentRecordsAsync_OmitsRowForNoLongerInstalledPlugin()
     {

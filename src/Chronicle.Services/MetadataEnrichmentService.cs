@@ -1205,6 +1205,8 @@ public class MetadataEnrichmentService(
         row.LastAttemptedAt = DateTime.UtcNow;
         string searchQuery = string.Empty;
         List<ScoredCandidate> rawCandidates = [];
+        // Which gate turned the top candidate away, so the diagnostics can say so instead of blaming the threshold.
+        string? gateRejection = null;
 
         // Captured before anything below can touch row.Status: every "reject to NotFound"
         // branch this method can reach -- an empty re-search, a provider 404, or an id already
@@ -1828,6 +1830,8 @@ public class MetadataEnrichmentService(
                             "scored {Score} (below threshold {Threshold}) — leaving as NotFound.",
                             row.MediaItemId, row.MediaItem.Name, topCandidate.Metadata.Title,
                             topCandidate.Score, DefaultConfidenceThreshold);
+                        gateRejection = $"The best candidate (\"{topCandidate.Metadata.Title}\") scored {topCandidate.Score}, " +
+                                        $"below the confidence threshold of {DefaultConfidenceThreshold}.";
                         topCandidate = null;
                     }
 
@@ -1836,11 +1840,16 @@ public class MetadataEnrichmentService(
                     // include a subtitle (e.g. "Alien - Darksteel Cut") from being silently
                     // identified as the canonical movie ("Alien") just because the first word
                     // matches. Sync-created items are exempt — their Name is already canonical.
+                    // A candidate found through an identifier the item already holds is confirmed by that id, so the
+                    // name check does not apply to it (see ScoredCandidate.IdentifierMatch).
                     if (topCandidate is not null
+                        && !topCandidate.IdentifierMatch
                         && row.MediaItem.HierarchyLevel == 0
                         && IsFileScannerItem(row.MediaItem)
                         && !IsTitleMatchAcceptable(row.MediaItem.Name, topCandidate.Metadata.Title))
                     {
+                        gateRejection = $"The best candidate (\"{topCandidate.Metadata.Title}\") scored {topCandidate.Score}, " +
+                                        "but its name has too little in common with this item's name (the word overlap is under 60%).";
                         logger.LogInformation(
                             "Enrichment skipped for item {ItemId} '{ItemName}': matched title '{MatchedTitle}' " +
                             "has insufficient token overlap with item name — leaving as NotFound. " +
@@ -2225,6 +2234,8 @@ public class MetadataEnrichmentService(
                 // the confidence gate or title-overlap check further up. Reporting both cases
                 // with the same "no results" text was actively misleading: the candidate list
                 // shown right below this message could contain the correct match.
+                EnrichmentStatus.NotFound when gateRejection is not null =>
+                    gateRejection + " Use Fix Match to pick one manually if it's correct.",
                 EnrichmentStatus.NotFound when rawCandidates.Count > 0 =>
                     $"{rawCandidates.Count} candidate(s) were returned but none met the confidence " +
                     "threshold to be auto-selected. Use Fix Match to pick one manually if it's correct.",
