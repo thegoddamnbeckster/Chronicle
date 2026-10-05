@@ -304,10 +304,17 @@ namespace Chronicle.Services.Scan
 
                 if (level1Group is null)
                 {
+                    // A non-season level-1 folder is an album: "(2000) The Better Life" is the name "The Better
+                    // Life" released in 2000. The year goes in the Year field, never in the name.
+                    var level1Resolved = ResolveLevel1Name(level1Name, folderSignal);
+                    var (level1Clean, level1Year) = level1Resolved == level1Name
+                        ? FolderNameYear.Split(level1Name)
+                        : (level1Resolved, (int?)null);
                     level1Group = new ScanGroup
                     {
                         GroupKey        = level1Key,
-                        Name            = ResolveLevel1Name(level1Name, folderSignal),
+                        Name            = level1Clean,
+                        Year            = level1Year,
                         Number          = ResolveLevel1Number(level1Name, folderSignal),
                         HierarchyLevel  = 1,
                         ConfidenceScore = 0.75,

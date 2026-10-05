@@ -29,6 +29,8 @@ namespace Chronicle.Services;
 ///                                 year) folds into the real "Base" series.
 ///   10. Audiobook Series Number Repair -- a series book with no Number gets its position from its folder
 ///                                 name, so the series lists in reading order.
+///   11. Album Name Year Repair -- an album named after its folder ("(2000) Title") gets the plain name and
+///                                 the year in its Year field.
 /// A failing pass is logged and never stops the ones after it.
 /// </summary>
 public sealed class LibraryIntegrityRepairService(
@@ -44,6 +46,7 @@ public sealed class LibraryIntegrityRepairService(
     BookTitleFragmentRepairService bookTitleFragments,
     SeriesNameFragmentRepairService seriesNameFragments,
     AudiobookSeriesNumberRepairService seriesNumbers,
+    AlbumNameYearRepairService albumNameYear,
     ILogger<LibraryIntegrityRepairService> logger) : IScheduledTask
 {
     public string TaskId      => "library_integrity_repair";
@@ -65,6 +68,7 @@ public sealed class LibraryIntegrityRepairService(
         await RunPassAsync("book title fragment repair", bookTitleFragments.ExecuteAsync, ct);
         await RunPassAsync("series name fragment repair", seriesNameFragments.ExecuteAsync, ct);
         await RunPassAsync("audiobook series number repair", seriesNumbers.ExecuteAsync, ct);
+        await RunPassAsync("album name year repair", albumNameYear.ExecuteAsync, ct);
     }
 
     private async Task RunPassAsync(string name, Func<CancellationToken, Task> pass, CancellationToken ct)

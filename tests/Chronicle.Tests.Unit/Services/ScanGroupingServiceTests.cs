@@ -117,6 +117,32 @@ public class ScanGroupingServiceTests
         result.Ungrouped.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData("(2000) The Better Life", "The Better Life", 2000)]
+    [InlineData("The Better Life (2000)", "The Better Life", 2000)]
+    [InlineData("[1999] Some Album", "Some Album", 1999)]
+    [InlineData("Some Album", "Some Album", null)]
+    public void Group_AlbumFolder_HasItsYearMovedOutOfTheName(string folder, string name, int? year)
+    {
+        var files = new[] { $"C:/Music/Some Band/{folder}/01 Track.mp3", $"C:/Music/Some Band/{folder}/02 Other.mp3" };
+
+        var album = _svc.Group(files, scanRoot: @"C:/Music", hierarchyLevels: 3).Groups[0].Children[0];
+
+        album.Name.Should().Be(name);
+        album.Year.Should().Be(year);
+    }
+
+    [Fact]
+    public void Group_AlbumNameWithABracketThatIsNotAYear_IsLeftAlone()
+    {
+        var files = new[] { @"C:/Music/Some Band/Live (Remastered)/01 Track.mp3" };
+
+        var album = _svc.Group(files, scanRoot: @"C:/Music", hierarchyLevels: 3).Groups[0].Children[0];
+
+        album.Name.Should().Be("Live (Remastered)");
+        album.Year.Should().BeNull();
+    }
+
     [Fact]
     public void Group_FlatGroupedType_PutsAllFilesInOneGroup()
     {
