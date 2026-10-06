@@ -50,7 +50,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         updated.LastCompletedAt.Should().NotBeNull();
     }
 
-    /// <summary>A scanner-created artist "C+C Music Factory" against a provider that calls it "C C Music Factory".</summary>
+    /// <summary>A scanner-created artist "C+C Music Factory" against a provider candidate with a different name.</summary>
     private async Task<MediaItemEnrichment> EnrichScannerArtistAgainst(ScoredCandidate candidate)
     {
         var item = new MediaItem
@@ -85,7 +85,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     private static MediaMetadata CandidateMeta() =>
-        new() { Title = "C C Music Factory", ExternalId = "artist:C%20C%20Music%20Factory" };
+        new() { Title = "Music Factory Orchestra", ExternalId = "artist:Music%20Factory%20Orchestra" };
 
     [Fact]
     public async Task EnrichPendingAsync_AnIdentifierMatch_IsNotRejectedForANameThatDiffersByPunctuation()

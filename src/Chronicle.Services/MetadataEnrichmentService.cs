@@ -1846,7 +1846,7 @@ public class MetadataEnrichmentService(
                         && !topCandidate.IdentifierMatch
                         && row.MediaItem.HierarchyLevel == 0
                         && IsFileScannerItem(row.MediaItem)
-                        && !IsTitleMatchAcceptable(row.MediaItem.Name, topCandidate.Metadata.Title))
+                        && !IsCandidateNameAcceptable(row.MediaItem.Name, topCandidate.Metadata))
                     {
                         gateRejection = $"The best candidate (\"{topCandidate.Metadata.Title}\") scored {topCandidate.Score}, " +
                                         "but its name has too little in common with this item's name (the word overlap is under 60%).";
@@ -3159,29 +3159,18 @@ public class MetadataEnrichmentService(
     /// as "Alien" (1979): the item has three meaningful tokens [alien, darksteel, cut] while the
     /// matched title has only one [alien], giving Jaccard = 1/3 ≈ 0.33 → rejected.
     /// </summary>
-    private static bool IsTitleMatchAcceptable(string itemName, string? matchedTitle)
+    internal static bool IsTitleMatchAcceptable(string itemName, string? matchedTitle)
     {
         if (string.IsNullOrWhiteSpace(matchedTitle)) return false;
 
         // Strip trailing year/bracket: "Alien - Darksteel Cut (2023)" → "Alien - Darksteel Cut"
-        var strippedItem  = _trailingYearRe.Replace(itemName, "").Trim();
-        var strippedTitle = _trailingYearRe.Replace(matchedTitle, "").Trim();
-
-        // Normalise: lower, replace common separators with space, collapse whitespace.
-        static string Norm(string s) =>
-            System.Text.RegularExpressions.Regex.Replace(
-                s.ToLowerInvariant()
-                 .Replace(":", " ")
-                 .Replace("-", " ")
-                 .Replace(",", " ")
-                 .Replace("'", "")
-                 .Replace("\"", ""),
-                @"\s+", " ").Trim();
-
-        var normItem  = Norm(strippedItem);
-        var normTitle = Norm(strippedTitle);
+        var normItem  = NormalizeForOverlap(_trailingYearRe.Replace(itemName, "").Trim());
+        var normTitle = NormalizeForOverlap(_trailingYearRe.Replace(matchedTitle, "").Trim());
 
         if (normItem == normTitle) return true;   // exact match after normalisation
+
+        // Same letters, different word breaks ("Stopmotion" / "Stop-Motion", "Mar.IA" / "Maria").
+        if (normItem.Replace(" ", "") == normTitle.Replace(" ", "")) return true;
 
         // Token Jaccard similarity
         var itemTokens  = normItem .Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
@@ -3192,6 +3181,35 @@ public class MetadataEnrichmentService(
 
         if (union == 0) return true;
         return (double)intersection / union >= 0.60;
+    }
+
+    /// <summary>
+    /// True when the candidate's title, or any other name it is known by (an original or regional title the
+    /// provider matched through), covers the item's name. A film catalogued as "Saltwater" that the file
+    /// scanner named by its other title "Atomic Shark" is the same film; comparing only the primary title
+    /// turned the provider's own exact alternate-title match away.
+    /// </summary>
+    internal static bool IsCandidateNameAcceptable(string itemName, MediaMetadata candidate) =>
+        IsTitleMatchAcceptable(itemName, candidate.Title)
+        || candidate.AlternateNames.Any(n => IsTitleMatchAcceptable(itemName, n));
+
+    /// <summary>
+    /// Lower-cases, folds diacritics, turns every non-letter/digit into a space, and drops a leading article, so
+    /// "Cowboys vs. Dinosaurs" and "Cowboys vs Dinosaurs", "Mārama" and "Marama", "The Flu" and "Flu" compare equal.
+    /// </summary>
+    private static string NormalizeForOverlap(string s)
+    {
+        // Apostrophes are dropped, not turned into a break: "Rick's" is "ricks", not "rick s".
+        var folded = new string(s.Normalize(System.Text.NormalizationForm.FormD)
+            .Where(ch => ch != '\'' && ch != '\u2019')
+            .Where(ch => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark)
+            .Select(ch => char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ')
+            .ToArray());
+        folded = System.Text.RegularExpressions.Regex.Replace(folded, @"\s+", " ").Trim();
+        foreach (var article in new[] { "the ", "a ", "an " })
+            if (folded.StartsWith(article, StringComparison.Ordinal) && folded.Length > article.Length)
+            { folded = folded[article.Length..]; break; }
+        return folded;
     }
 
     /// <summary>
