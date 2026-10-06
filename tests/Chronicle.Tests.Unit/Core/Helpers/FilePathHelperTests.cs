@@ -28,4 +28,17 @@ public class FilePathHelperTests
 
         FilePathHelper.GetFileName(path).Should().Be(Path.GetFileName(path));
     }
+
+    [Theory]
+    [InlineData("Flight Risk (2025).mkv", 2025)]
+    [InlineData(@"F:\Movies\Coherence (2014)\Coherence (2014).mkv", 2014)]
+    [InlineData("Movie [1999].mkv", 1999)]
+    [InlineData("2001 A Space Odyssey (1968).mkv", 1968)]      // the last bracketed year, not a number in the title
+    [InlineData("Blade Runner 2049.mkv", null)]                 // an unbracketed number is not a release year
+    [InlineData("No Year.mkv", null)]
+    [InlineData("Far Future (2999).mkv", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void YearInFileName(string? path, int? expected) =>
+        FilePathHelper.YearInFileName(path).Should().Be(expected);
 }

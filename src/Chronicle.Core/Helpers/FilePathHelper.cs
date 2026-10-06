@@ -24,4 +24,17 @@ public static class FilePathHelper
         var lastSeparator = path.LastIndexOfAny(['\\', '/']);
         return lastSeparator < 0 ? path : path[(lastSeparator + 1)..];
     }
+
+    private static readonly System.Text.RegularExpressions.Regex BracketedYear =
+        new(@"[\(\[]((?:19|20)\d{2})[\)\]]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// The "(YYYY)" or "[YYYY]" a file name carries ("Flight Risk (2025).mkv" gives 2025): the last one when there
+    /// are several, from the file-name part of a path of either style. Null when the name has none.
+    /// </summary>
+    public static int? YearInFileName(string? path)
+    {
+        var matches = BracketedYear.Matches(GetFileName(path));
+        return matches.Count > 0 && int.TryParse(matches[^1].Groups[1].Value, out var year) ? year : null;
+    }
 }

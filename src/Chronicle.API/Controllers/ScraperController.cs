@@ -88,6 +88,12 @@ public class ScraperController : ControllerBase
         if (string.IsNullOrWhiteSpace(title))
             return BadRequest(ApiResponse<object>.Fail("TITLE_REQUIRED", "title is required."));
         year = ReleaseYear.OrNull(year);
+        // The year in the file's own name. Kodi's request year sometimes disagrees with it by a year (live,
+        // 2026-10-02/03: "Flight Risk (2025).mkv" and "Coherence (2014).mkv" were requested as 2024 and 2013), and
+        // an exact-year match then misses the item the file scanner already created from that same file and
+        // mints a duplicate stub with the wrong year. The file's year is tried as a second match and is the year
+        // a newly created item gets.
+        var fileYear = ReleaseYear.OrNull(Chronicle.Core.Helpers.FilePathHelper.YearInFileName(fileName));
 
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var stepSw = System.Diagnostics.Stopwatch.StartNew();
@@ -161,7 +167,7 @@ public class ScraperController : ControllerBase
             // filename record is unreliable for this candidate," not as a confirmed match --
             // falling through to normal title+year matching below instead of trusting it.
             if (filenameMatch is not null && year.HasValue && filenameMatch.Year.HasValue &&
-                filenameMatch.Year.Value != year.Value)
+                filenameMatch.Year.Value != year.Value && filenameMatch.Year.Value != fileYear)
             {
                 _logger.LogWarning(
                     "scraper/movies/search: title={Title} year={Year} fileName={FileName} -- item {ItemId} has " +
@@ -200,14 +206,15 @@ public class ScraperController : ControllerBase
             if (containerIds.Count > 0)
                 candidates = candidates.Where(c => !containerIds.Contains(c.Id)).ToList();
 
-            existing = FindByNormalizedTitle(candidates, title, year);
+            existing = FindByNormalizedTitle(candidates, title, year)
+                ?? (fileYear.HasValue && fileYear != year ? FindByNormalizedTitle(candidates, title, fileYear) : null);
             _logger.LogInformation(
                 "scraper/movies/search: title={Title} year={Year} -- title matching: {Result} in {Ms}ms",
                 title, year, existing is null ? "no match" : $"matched item {existing.Id}", stepSw.ElapsedMilliseconds);
         }
 
         stepSw.Restart();
-        var item = await ResolveOrCreateAsync(existing, movieTypeId, title, year, fileName, ct,
+        var item = await ResolveOrCreateAsync(existing, movieTypeId, title, fileYear ?? year, fileName, ct,
             oppositeFamilyTypeIds: await GetShowLikeTypeIdsAsync(ct));
         _logger.LogInformation(
             "scraper/movies/search: title={Title} year={Year} -- resolve-or-create: {Ms}ms (total request: {TotalMs}ms)",

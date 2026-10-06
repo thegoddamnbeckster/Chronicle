@@ -326,4 +326,59 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
         body.Should().NotContain($"\"id\":{singularItemId}",
             "a same-year title differing only by pluralizing the final word (no extra word) must not reuse a different, unrelated item");
     }
+
+    // ── Kodi's request year a year off the year in the file's own name (live 2026-10-02/03: Flight Risk (2025).mkv ──
+    // ── requested as 2024, Coherence (2014).mkv as 2013 -- each minted a duplicate item with the wrong year) ───────
+
+    private async Task<(int Id, string Body)> SearchAsync(string title, int requestYear, string fileName)
+    {
+        var client = await AuthClientAsync();
+        var resp = await client.GetAsync(
+            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(title)}&year={requestYear}&fileName={Uri.EscapeDataString(fileName)}");
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync();
+        var id = System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("data").GetProperty("id").GetInt32();
+        return (id, body);
+    }
+
+    [Fact]
+    public async Task MovieSearch_RequestYearIsOffByOne_ButTheFilesYearMatchesAnExistingItem_UsesThatItem()
+    {
+        var movieTypeId = EnsureMovieType();
+        const string title = "Scraper File Year Probe One";
+        var existingId = SeedItemWithScannedFile(movieTypeId, title, 2025, $"{title} (2025).mkv");
+
+        // Same file, but Kodi asked for 2024.
+        var (id, _) = await SearchAsync(title, 2024, $"{title} (2025).mkv");
+
+        id.Should().Be(existingId);
+    }
+
+    [Fact]
+    public async Task MovieSearch_RequestYearIsOffByOne_ItemHasNoRecordedFile_StillMatchesByTheFilesYear_AndMakesNoDuplicate()
+    {
+        var movieTypeId = EnsureMovieType();
+        const string title = "Scraper File Year Probe Two";
+        int existingId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var item = new MediaItem
+            {
+                MediaTypeId = movieTypeId, Name = title, Year = 2025, HierarchyLevel = 0,
+                NormalizedName = MediaItemNormalizer.NormalizeName(title),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(item);
+            db.SaveChanges();
+            existingId = item.Id;
+        }
+
+        var (id, _) = await SearchAsync(title, 2024, $"{title} (2025).mkv");
+
+        id.Should().Be(existingId);
+        using var check = _factory.Services.CreateScope();
+        check.ServiceProvider.GetRequiredService<ChronicleDbContext>().MediaItems
+            .Count(m => m.Name == title).Should().Be(1, "no duplicate item may be created");
+    }
 }

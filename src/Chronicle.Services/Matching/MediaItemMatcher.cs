@@ -174,7 +174,7 @@ public static class MediaItemMatcher
         // opposite of tonight's earlier "Rick and Morty" fix. Confirmed "Robot Jox
         // Collection" itself carries the "collection:487727" external id, so that signal
         // alone is enough without needing the type-ambiguous children check at all.
-        return await db.MediaItems.FirstOrDefaultAsync(m =>
+        var exact = await db.MediaItems.FirstOrDefaultAsync(m =>
             m.MediaTypeId == mediaTypeId &&
             (!year.HasValue || m.Year == year) &&
             (m.Name == title      || m.Name == nameWithYear  ||
@@ -183,6 +183,25 @@ public static class MediaItemMatcher
              m.Name == deparenthesized) &&
             !db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId.StartsWith("collection:")),
             ct);
+        if (exact is not null || !year.HasValue) return exact;
+
+        // No item of exactly that year. Two sources routinely give the same film's year a year apart (a festival
+        // premiere and the general release; a December release counted in the next year), and an exact-year-only
+        // match then mints a duplicate item for every such film. When exactly ONE same-titled item sits within a
+        // year of it, that is the same film. Two or more in range is genuinely ambiguous (a remake a year later)
+        // and still matches nothing.
+        int before = year.Value - 1, after = year.Value + 1;
+        var nameBefore = $"{title} ({before})";
+        var nameAfter  = $"{title} ({after})";
+        var near = await db.MediaItems
+            .Where(m => m.MediaTypeId == mediaTypeId && (m.Year == before || m.Year == after) &&
+                (m.Name == title      || m.Name == dashTitle  || m.Name == colonTitle ||
+                 m.Name == deparenthesized ||
+                 m.Name == nameBefore || m.Name == nameAfter) &&
+                !db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.ExternalId.StartsWith("collection:")))
+            .Take(2)
+            .ToListAsync(ct);
+        return near.Count == 1 ? near[0] : null;
     }
 
     // ── Recovering season/episode embedded in an unidentified scrobble's raw title ──

@@ -101,6 +101,56 @@ namespace Chronicle.Tests.Unit.Services.Matching
             match!.Id.Should().Be(1);
         }
 
+        private async Task AddMovie(int id, string name, int? year)
+        {
+            _db.MediaItems.Add(new MediaItem
+            {
+                Id = id, MediaTypeId = 2, Name = name, Year = year,
+                HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+        }
+
+        [Theory]
+        [InlineData(2014, 2013)]   // the source says a year earlier than the library
+        [InlineData(2014, 2015)]   // ... or a year later
+        public async Task FindByTitleYearAsync_AYearApart_MatchesTheOnlySameTitledItem(int stored, int requested)
+        {
+            await AddMovie(1, "Coherence", stored);
+
+            var match = await MediaItemMatcher.FindByTitleYearAsync(_db, "Coherence", requested, mediaTypeId: 2, default);
+
+            match.Should().NotBeNull();
+            match!.Id.Should().Be(1);
+        }
+
+        [Fact]
+        public async Task FindByTitleYearAsync_ExactYearBeatsANeighbouringYear()
+        {
+            await AddMovie(1, "Halloween", 2017);
+            await AddMovie(2, "Halloween", 2018);
+
+            (await MediaItemMatcher.FindByTitleYearAsync(_db, "Halloween", 2018, mediaTypeId: 2, default))!.Id.Should().Be(2);
+        }
+
+        [Fact]
+        public async Task FindByTitleYearAsync_TwoSameTitledItemsWithinAYear_IsAmbiguousAndMatchesNothing()
+        {
+            await AddMovie(1, "Halloween", 2017);
+            await AddMovie(2, "Halloween", 2019);
+
+            (await MediaItemMatcher.FindByTitleYearAsync(_db, "Halloween", 2018, mediaTypeId: 2, default)).Should().BeNull();
+        }
+
+        [Fact]
+        public async Task FindByTitleYearAsync_TwoYearsApart_IsADifferentFilm()
+        {
+            await AddMovie(1, "Dune", 1984);
+
+            (await MediaItemMatcher.FindByTitleYearAsync(_db, "Dune", 2021, mediaTypeId: 2, default)).Should().BeNull();
+            (await MediaItemMatcher.FindByTitleYearAsync(_db, "Dune", 1986, mediaTypeId: 2, default)).Should().BeNull();
+        }
+
         [Fact]
         public async Task FindByTitleYearAsync_ExcludesCollectionContainer_EvenOnExactTitleMatch()
         {

@@ -108,6 +108,15 @@ public record MediaSearchContext(
     IReadOnlyList<string>? KnownCreditTitles = null,
 
     /// <summary>
+    /// For a "people"-type item, the ids the titles it is credited on carry IN THE SEARCHING PROVIDER'S OWN
+    /// id space (the searching provider's own source: an IMDb plugin gets the credited films' IMDb ids). A
+    /// provider that can list who worked on a title by its own id can confirm a person by name AND credit
+    /// without guessing from the name alone -- two people sharing a name are told apart by the work they
+    /// are credited on. Null when the person has no credits that carry such an id.
+    /// </summary>
+    IReadOnlyList<string>? KnownCreditExternalIds = null,
+
+    /// <summary>
     /// True only when Name/HierarchyLevel/ParentName/ChildNames above reflect a REAL MediaItem's
     /// actual position in Chronicle's hierarchy -- set exclusively by the real per-item enrichment
     /// pass (MetadataEnrichmentService). False for every other caller (a manual "Add Media"/search

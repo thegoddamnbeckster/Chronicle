@@ -1786,6 +1786,10 @@ public class MetadataEnrichmentService(
                             KnownCreditTitles: mediaTypeName == "people"
                                                   ? await LoadCreditedTitlesAsync(db, row.MediaItemId, ct)
                                                   : null,
+                            KnownCreditExternalIds: mediaTypeName == "people"
+                                                  ? await LoadCreditedExternalIdsAsync(
+                                                        db, row.MediaItemId, PluginIdHelper.ToSource(provider.PluginId), ct)
+                                                  : null,
                             // This is the one call site whose Name/HierarchyLevel/ParentName/
                             // ChildNames above are all read directly off a real MediaItem row --
                             // see MediaSearchContext.IsRealHierarchyPosition's own doc.
@@ -2754,6 +2758,22 @@ public class MetadataEnrichmentService(
             .Select(c => c.MediaItem!.Name)
             .Distinct().Take(40).ToListAsync(ct);
         return titles.Count > 0 ? titles : null;
+    }
+
+    /// <summary>
+    /// The ids, in <paramref name="source"/>'s id space, of the titles this person is credited on. The credited
+    /// titles' own external ids under that source (the credits come from other providers, but the titles
+    /// themselves usually carry this provider's id too).
+    /// </summary>
+    private static async Task<IReadOnlyList<string>?> LoadCreditedExternalIdsAsync(
+        ChronicleDbContext db, int personMediaItemId, string source, CancellationToken ct)
+    {
+        var ids = await db.MediaCredits
+            .Where(c => c.PersonMediaItemId == personMediaItemId)
+            .Join(db.MediaExternalIds.Where(e => e.Source == source),
+                  c => c.MediaItemId, e => e.MediaItemId, (c, e) => e.ExternalId)
+            .Distinct().Take(60).ToListAsync(ct);
+        return ids.Count > 0 ? ids : null;
     }
 
     private static int? ExtractKnownBirthYear(string? metadataJson)
