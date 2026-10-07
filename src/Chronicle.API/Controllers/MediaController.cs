@@ -1656,6 +1656,19 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>Files that live with this item without being it (subtitles, artwork, extras), as recorded by scans
+        /// that had related-file bundling on. Files no longer seen carry a MissingSince time.</summary>
+        [HttpGet("{id:int}/related-files")]
+        public async Task<IActionResult> GetRelatedFiles(int id, CancellationToken ct)
+        {
+            var rows = await _context.MediaItemRelatedFiles.AsNoTracking()
+                .Where(r => r.MediaItemId == id)
+                .OrderBy(r => r.Kind).ThenBy(r => r.Path)
+                .Select(r => new RelatedFileDto(r.Id, r.Path, r.Kind, r.SizeBytes, r.DiscoveredAt, r.MissingSince))
+                .ToListAsync(ct);
+            return Ok(ApiResponse<List<RelatedFileDto>>.Ok(rows));
+        }
+
         /// <summary>Returns merge history for this item (as winner).</summary>
         [HttpGet("{id:int}/merges")]
         public async Task<IActionResult> GetMerges(int id, CancellationToken ct)

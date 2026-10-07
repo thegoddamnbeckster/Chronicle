@@ -26,6 +26,7 @@ import { ArtTypeTag } from '@/components/ArtTypeTag'
 import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import { unmergeItem } from '@/api/duplicates'
 import { PersonCard } from '@/components/people/PersonCard'
+import RelatedFilesBox from '@/components/RelatedFilesBox'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
   'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
@@ -1526,6 +1527,8 @@ export default function MediaDetailPage() {
               </div>
             </PluginFold>
           )}
+
+          <RelatedFilesBox mediaId={mediaId} />
 
           {/* Additional Images — every image available across all plugins for this item,
               grouped by the artwork type its source plugin reported. Browse-only: clicking a

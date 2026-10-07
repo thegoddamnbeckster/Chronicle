@@ -130,7 +130,8 @@ namespace Chronicle.Services
 
     public record ImportGroupsRequest(
         List<ScanGroupImport> Groups,
-        int MediaTypeId);
+        int MediaTypeId,
+        bool BundleRelatedFiles = false);
 
     public record ScanGroupImport(
         string Name,
@@ -139,7 +140,8 @@ namespace Chronicle.Services
         List<ScanGroupImport> Children,
         List<string> Files,
         string? FolderPath = null,
-        int? Number = null)
+        int? Number = null,
+        List<string>? RelatedFiles = null)
     {
         /// <summary>Total file count across this group and all descendants.</summary>
         public int TotalFileCount => Files.Count + Children.Sum(c => c.TotalFileCount);

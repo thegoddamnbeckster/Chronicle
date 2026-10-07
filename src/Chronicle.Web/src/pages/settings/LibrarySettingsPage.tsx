@@ -14,6 +14,7 @@ import {
 import { clearScannerData, nuclearReset } from '@/api/library'
 import { getAppSettings, putAppSetting } from '@/api/settings'
 import { neutralStatusLabel } from '@/utils/typeWording'
+import ScanSettingsSection from './ScanSettingsSection'
 import styles from './LibrarySettingsPage.module.css'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -525,6 +526,8 @@ export default function LibrarySettingsPage() {
           </div>
         </div>
       </section>
+
+      {isAdmin && <ScanSettingsSection />}
 
       {/* ── Watch Progress ──────────────────────────────────────────────── */}
       {isAdmin && <section className={styles.section}>

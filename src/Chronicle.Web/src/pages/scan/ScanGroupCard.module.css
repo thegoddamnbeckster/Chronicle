@@ -122,3 +122,24 @@
 .childYear  { color: var(--text-muted); font-size: 0.8rem; }
 .childCount { color: var(--text-muted); font-size: 0.78rem; }
 .childConfidence { font-size: 0.78rem; font-weight: 600; padding: 1px 5px; border-radius: 8px; }
+
+.mismatchBadge {
+  font-size: 0.75rem;
+  color: var(--warning, #f59e0b);
+  background: rgba(245, 158, 11, 0.12);
+  padding: 1px 6px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mismatchBtn {
+  font-size: 0.75rem;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}

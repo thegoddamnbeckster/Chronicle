@@ -24,19 +24,20 @@ interface FormState {
   collections: boolean
   trackable: boolean
   scan: string
+  hints: string
   active: boolean
 }
 
 const BLANK: FormState = {
   name: '', displayName: '', description: '', levels: '1', labels: '', verb: 'watched', unit: 'minutes',
-  collections: false, trackable: true, scan: '', active: true,
+  collections: false, trackable: true, scan: '', hints: '', active: true,
 }
 
 function fromType(t: MediaTypeAdmin): FormState {
   return {
     name: t.name, displayName: t.displayName, description: t.description ?? '', levels: String(t.hierarchyLevels),
     labels: t.hierarchyLabels.join(', '), verb: t.interactionVerb, unit: t.progressUnit,
-    collections: t.supportsCollections, trackable: t.isTrackable, scan: t.scanStrategy ?? '', active: t.isActive,
+    collections: t.supportsCollections, trackable: t.isTrackable, scan: t.scanStrategy ?? '', hints: t.scanHints ?? '', active: t.isActive,
   }
 }
 
@@ -53,6 +54,7 @@ function toInput(f: FormState, creating: boolean): MediaTypeInput {
     isTrackable: f.trackable,
     scanStrategy: f.scan === '' ? null : f.scan,
     isActive: f.active,
+    scanHints: f.hints.trim(),
   }
 }
 
@@ -224,6 +226,21 @@ export default function MediaTypesPage() {
               <select id="mt-scan" className={styles.textInput} value={form.scan} onChange={e => set('scan', e.target.value)}>
                 {SCAN_STRATEGIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
+            </div>
+          </div>
+          <div className={styles.formRow}>
+            <div className={styles.formGroup}>
+              <label className={styles.label} htmlFor="mt-hints">What its files look like (optional)</label>
+              <textarea
+                id="mt-hints" className={styles.textInput} rows={3} spellCheck={false} value={form.hints}
+                onChange={e => set('hints', e.target.value)}
+                placeholder={'{"filePatterns":[],"folderPatterns":[],"extensions":[".mkv"]}'}
+              />
+              <span className={styles.hint}>
+                Lets the scanner notice a folder that was scanned as the wrong type. Patterns are regular expressions
+                matched against file and folder names; extensions are the file types this kind holds. Leave empty to
+                never flag this type.
+              </span>
             </div>
           </div>
           <div className={styles.formRow}>

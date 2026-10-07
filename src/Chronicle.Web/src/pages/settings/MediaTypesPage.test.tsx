@@ -13,12 +13,12 @@ vi.mock('@/api/mediaTypes', async importOriginal => {
 const TV: api.MediaTypeAdmin = {
   id: 1, name: 'tv', displayName: 'TV Shows', description: null, hierarchyLevels: 3, hierarchyLabels: ['Show', 'Season', 'Episode'],
   interactionVerb: 'watched', progressUnit: 'minutes', isBuiltIn: true, isActive: true, supportsCollections: false, isTrackable: true,
-  scanStrategy: null, isUserModified: false, itemCount: 120, plugins: [{ pluginId: 'p.tmdb', name: 'TMDB' }],
+  scanStrategy: null, isUserModified: false, itemCount: 120, plugins: [{ pluginId: 'p.tmdb', name: 'TMDB' }], scanHints: null,
 }
 const COMICS: api.MediaTypeAdmin = {
   id: 9, name: 'comics', displayName: 'Comics', description: 'Comic books', hierarchyLevels: 3, hierarchyLabels: ['Series', 'Volume', 'Issue'],
   interactionVerb: 'read', progressUnit: 'pages', isBuiltIn: false, isActive: true, supportsCollections: false, isTrackable: true,
-  scanStrategy: null, isUserModified: true, itemCount: 0, plugins: [],
+  scanStrategy: null, isUserModified: true, itemCount: 0, plugins: [], scanHints: '{"extensions":[".cbz"]}',
 }
 
 const renderPage = () => render(<MemoryRouter><MediaTypesPage /></MemoryRouter>)
@@ -76,7 +76,7 @@ describe('MediaTypesPage', () => {
 
     await waitFor(() => expect(api.createMediaType).toHaveBeenCalledWith({
       name: 'board-games', displayName: 'Board Games', description: '', hierarchyLevels: 2, hierarchyLabels: ['Game', 'Expansion'],
-      interactionVerb: 'played', progressUnit: 'sessions', supportsCollections: false, isTrackable: true, scanStrategy: null, isActive: true,
+      interactionVerb: 'played', progressUnit: 'sessions', supportsCollections: false, isTrackable: true, scanStrategy: null, isActive: true, scanHints: '',
     }))
     expect(await screen.findByText('Added Board Games.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -114,6 +114,21 @@ describe('MediaTypesPage', () => {
 
     await waitFor(() => expect(api.updateMediaType).toHaveBeenCalledWith(1, expect.objectContaining({ displayName: 'Television', hierarchyLevels: 3 })))
     expect(vi.mocked(api.updateMediaType).mock.calls[0][1]).not.toHaveProperty('name')
+  })
+
+  it('shows the scan hints of a type for editing and sends them back (an emptied box clears them)', async () => {
+    vi.mocked(api.updateMediaType).mockResolvedValue(COMICS)
+    renderPage()
+    const row = (await screen.findByText(/Comics/, { selector: 'span' })).closest('div')!.parentElement!
+    await userEvent.click(within(row).getByRole('button', { name: 'Edit' }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit media type' })
+    const hints = within(dialog).getByLabelText('What its files look like (optional)')
+    expect(hints).toHaveValue('{"extensions":[".cbz"]}')
+
+    await userEvent.clear(hints)
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.updateMediaType).toHaveBeenCalledWith(9, expect.objectContaining({ scanHints: '' })))
   })
 
   it('warns when the chosen action word is one Chronicle has no special wording for', async () => {

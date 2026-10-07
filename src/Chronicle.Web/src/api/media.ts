@@ -235,3 +235,19 @@ export async function fetchProxiedPoster(url: string): Promise<Blob> {
   })
   return data
 }
+
+export interface RelatedFile {
+  id: number
+  path: string
+  kind: string
+  sizeBytes: number | null
+  discoveredAt: string
+  /** Set when a later scan no longer found the file. */
+  missingSince: string | null
+}
+
+/** Subtitles, artwork and extras recorded for an item by scans that had bundling on. */
+export async function getRelatedFiles(mediaId: number): Promise<RelatedFile[]> {
+  const { data } = await client.get<ApiResponse<RelatedFile[]>>(`/media/${mediaId}/related-files`)
+  return data.data ?? []
+}

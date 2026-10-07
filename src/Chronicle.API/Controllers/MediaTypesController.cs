@@ -3,6 +3,7 @@ using Chronicle.API.DTOs;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services;
+using Chronicle.Services.Scan;
 using Chronicle.Services.Plugins;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,11 +16,12 @@ public sealed record PluginRefDto(string PluginId, string Name);
 public sealed record MediaTypeAdminDto(
     int Id, string Name, string DisplayName, string? Description, int HierarchyLevels, string[] HierarchyLabels,
     string InteractionVerb, string ProgressUnit, bool IsBuiltIn, bool IsActive, bool SupportsCollections, bool IsTrackable,
-    string? ScanStrategy, bool IsUserModified, int ItemCount, IReadOnlyList<PluginRefDto> Plugins);
+    string? ScanStrategy, bool IsUserModified, int ItemCount, IReadOnlyList<PluginRefDto> Plugins, string? ScanHints = null);
 
 public sealed record MediaTypeRequest(
     string? Name, string DisplayName, string? Description, int HierarchyLevels, string[]? HierarchyLabels,
-    string InteractionVerb, string ProgressUnit, bool SupportsCollections, bool IsTrackable, string? ScanStrategy, bool IsActive = true);
+    string InteractionVerb, string ProgressUnit, bool SupportsCollections, bool IsTrackable, string? ScanStrategy, bool IsActive = true,
+    string? ScanHints = null);
 
 /// <summary>
 /// Settings -> Media Types. Lists every media type with how many items it holds and which installed plugins handle it,
@@ -66,7 +68,7 @@ public class MediaTypesController : ControllerBase
         new(t.Id, t.Name, t.DisplayName, t.Description, t.HierarchyLevels, MediaTypeRules.SplitLabels(t.HierarchyLabels),
             t.InteractionVerb, t.ProgressUnit, t.IsBuiltIn, t.IsActive, t.SupportsCollections, t.IsTrackable, t.ScanStrategy,
             t.IsUserModified, knownCount ?? await _db.MediaItems.CountAsync(i => i.MediaTypeId == t.Id),
-            plugins.TryGetValue(t.Name, out var list) ? list : []);
+            plugins.TryGetValue(t.Name, out var list) ? list : [], t.ScanHintsJson);
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
@@ -91,6 +93,9 @@ public class MediaTypesController : ControllerBase
         if (MediaTypeRules.Validate(input, creating: true) is { } problem)
             return BadRequest(ApiResponse<object>.Fail("INVALID_MEDIA_TYPE", problem));
 
+        if (ScanHints.Validate(req.ScanHints) is { } hintsProblem)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SCAN_HINTS", hintsProblem));
+
         var name = input.Name!.Trim();
         if (await _db.MediaTypes.AnyAsync(t => t.Name == name, ct))
             return Conflict(ApiResponse<object>.Fail("MEDIA_TYPE_EXISTS", $"A media type named '{name}' already exists."));
@@ -101,6 +106,7 @@ public class MediaTypesController : ControllerBase
             HierarchyLevels = input.HierarchyLevels, HierarchyLabels = MediaTypeRules.JoinLabels(input.HierarchyLabels),
             InteractionVerb = input.InteractionVerb, ProgressUnit = input.ProgressUnit,
             SupportsCollections = input.SupportsCollections, IsTrackable = input.IsTrackable, ScanStrategy = input.ScanStrategy,
+            ScanHintsJson = string.IsNullOrWhiteSpace(req.ScanHints) ? null : req.ScanHints.Trim(),
             IsBuiltIn = false, IsActive = true,
             // Made by a person: no plugin's declaration may rewrite it later.
             IsUserModified = true, CreatedAt = DateTime.UtcNow,
@@ -121,6 +127,9 @@ public class MediaTypesController : ControllerBase
         if (MediaTypeRules.Validate(input, creating: false) is { } problem)
             return BadRequest(ApiResponse<object>.Fail("INVALID_MEDIA_TYPE", problem));
 
+        if (ScanHints.Validate(req.ScanHints) is { } hintsProblem)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SCAN_HINTS", hintsProblem));
+
         var items = await _db.MediaItems.CountAsync(i => i.MediaTypeId == id, ct);
         if (items > 0 && input.HierarchyLevels != type.HierarchyLevels)
             return Conflict(ApiResponse<object>.Fail("HAS_ITEMS",
@@ -137,6 +146,9 @@ public class MediaTypesController : ControllerBase
         type.SupportsCollections = input.SupportsCollections;
         type.IsTrackable = input.IsTrackable;
         type.ScanStrategy = input.ScanStrategy;
+        // Omitted = leave as is; an empty string clears the hints.
+        if (req.ScanHints is not null)
+            type.ScanHintsJson = string.IsNullOrWhiteSpace(req.ScanHints) ? null : req.ScanHints.Trim();
         type.IsActive = input.IsActive;
         type.IsUserModified = true;
         await _db.SaveChangesAsync(ct);

@@ -26,6 +26,17 @@ namespace Chronicle.Tests.Unit.Security
         }
 
         [Fact]
+        public async Task Snapshot_AlsoCarriesTheScannerLists_ButNothingElse()
+        {
+            var (cache, _) = Build(("auth.session_idle_hours", "2"), ("scan.sidecar_extensions", ".vtt"), ("email.password", "secret"), ("import_batch_size", "50"));
+
+            await cache.RefreshAsync();
+
+            cache.Snapshot.Should().ContainKey("scan.sidecar_extensions")
+                .And.NotContainKey("email.password").And.NotContainKey("import_batch_size");
+        }
+
+        [Fact]
         public async Task Snapshot_ContainsOnlyAuthSettings()
         {
             var (cache, _) = Build(("auth.session_idle_hours", "2"));

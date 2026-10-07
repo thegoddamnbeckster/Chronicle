@@ -56,6 +56,13 @@ namespace Chronicle.Core.Models
         /// </summary>
         public bool IsUserModified { get; set; }
 
+        /// <summary>
+        /// JSON describing what files of this type look like, used by the scanner to notice a folder that was
+        /// scanned as the wrong type: <c>{"filePatterns":[regex],"folderPatterns":[regex],"extensions":[".mkv"]}</c>.
+        /// Patterns are distinctive (an S01E02 name); extensions are broad. Null = no hints, never flagged.
+        /// </summary>
+        public string? ScanHintsJson { get; set; }
+
         public DateTime CreatedAt { get; set; }
     }
 

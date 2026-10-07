@@ -398,7 +398,7 @@ public class FileScanController : ControllerBase
         _importProgress.Reset();
 
         var groups = request.Groups.Select(ToGroupImport).ToList();
-        var importRequest = new ImportGroupsRequest(groups, request.MediaTypeId);
+        var importRequest = new ImportGroupsRequest(groups, request.MediaTypeId, request.BundleRelatedFiles);
 
         // Capture the service provider so the background task can create its own scope
         // (FileScanService is scoped — it cannot be used across requests without a scope).
@@ -485,12 +485,13 @@ public class FileScanController : ControllerBase
         g.PosterPath, (int)Math.Round(g.ConfidenceScore * 100),
         g.SignalSources, g.HasConflicts,
         g.Children.Select(ToGroupDto).ToList(),
-        g.Files, g.FolderPath, g.Author, g.Series);
+        g.Files, g.FolderPath, g.Author, g.Series,
+        g.RelatedFiles, g.SuggestedMediaTypeId, g.SuggestedMediaTypeName, g.SuggestedMediaTypeReason);
 
     private static Chronicle.Services.ScanGroupImport ToGroupImport(ImportGroupDto g) =>
         new(g.Name, g.Year, g.PosterPath,
             g.Children.Select(ToGroupImport).ToList(),
-            g.Files, g.FolderPath, g.Number);
+            g.Files, g.FolderPath, g.Number, g.RelatedFiles);
 
     /// <summary>
     /// Returns a snapshot of the currently-running preview scan (folder being scanned,

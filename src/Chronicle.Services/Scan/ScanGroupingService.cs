@@ -13,41 +13,19 @@ namespace Chronicle.Services.Scan
         private static readonly Regex _yearPresentRe = new(@"\(\d{4}\)",                    RegexOptions.Compiled);
         private static readonly Regex _seasonNumRe   = new(@"(?:Season|S)\s*0*(\d+)",        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        // Extensions that are metadata/sidecar — never become MediaItems themselves
-        private static readonly HashSet<string> _sidecarExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".jpg", ".jpeg", ".png", ".webp", ".bmp",
-            ".tbn", ".txt", ".xml", ".srt", ".sub", ".idx", ".ass",
-            ".cue", ".log",
-        };
-
-        // Folder names whose entire contents are treated as sidecar/supplemental material.
-        // Any file inside one of these folders is excluded from grouping (same as a sidecar file),
-        // regardless of its extension (e.g. theme-music .mp3, .actors images, extras .mkv, etc.).
-        private static readonly HashSet<string> _sidecarFolderNames = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "theme-music", "theme music", ".theme",
-            ".actors",
-            "extrafanart", "extrathumbs",
-            "behind the scenes", "behindthescenes",
-            "deleted scenes", "deletedscenes",
-            "featurettes",
-            "interviews",
-            "scenes",
-            "shorts",
-            "trailers",
-            "extras",
-        };
-
         private readonly FolderSignalExtractor _folder;
         private readonly TagSignalExtractor _tags;
 
+        private readonly Chronicle.Services.Security.ICachedAppSettings? _settings;
+
         public ScanGroupingService(
             FolderSignalExtractor folder,
-            TagSignalExtractor tags)
+            TagSignalExtractor tags,
+            Chronicle.Services.Security.ICachedAppSettings? settings = null)
         {
-            _folder = folder;
-            _tags   = tags;
+            _folder   = folder;
+            _tags     = tags;
+            _settings = settings;
         }
 
         /// <summary>
@@ -64,9 +42,12 @@ namespace Chronicle.Services.Scan
             TagSignal? Tag);
 
         public ScanGroupResult Group(
-            IEnumerable<string> filePaths, string scanRoot, int hierarchyLevels)
+            IEnumerable<string> filePaths, string scanRoot, int hierarchyLevels, ScanGroupOptions? options = null)
         {
             var result = new ScanGroupResult();
+            // Which extensions / folder names count as supplemental: app_settings, falling back to the defaults.
+            var rules = SidecarRules.From(_settings?.Snapshot);
+            var related = new List<string>();
             // root key → ScanGroup
             var rootGroups = new Dictionary<string, ScanGroup>(StringComparer.OrdinalIgnoreCase);
 
@@ -80,12 +61,12 @@ namespace Chronicle.Services.Scan
             {
                 var path = pathList[i];
                 var ext = Path.GetExtension(path);
-                bool isSidecar = _sidecarExtensions.Contains(ext);
+                bool isSidecar = rules.Extensions.Contains(ext);
 
                 // Treat any file inside a known supplemental folder as a sidecar,
                 // regardless of its extension (e.g. theme-music/*.mp3, .actors/*.jpg).
                 var folderSignal = _folder.Extract(path, scanRoot);
-                if (!isSidecar && folderSignal.FolderNames.Any(f => _sidecarFolderNames.Contains(f)))
+                if (!isSidecar && folderSignal.FolderNames.Any(f => rules.Folders.Contains(f)))
                     isSidecar = true;
 
                 // Anything that's neither a recognized sidecar NOR a recognized playable media
@@ -116,6 +97,9 @@ namespace Chronicle.Services.Scan
 
                 if (sig.IsJunk)
                     continue;
+
+                if (sig.IsSidecar && options?.CollectRelatedFiles == true)
+                    related.Add(path);
 
                 bool isSidecar = sig.IsSidecar;
                 var folderSignal = sig.Folder;
@@ -361,6 +345,12 @@ namespace Chronicle.Services.Scan
 
             // Remove root groups that ended up with no files at all (sidecar-only folders)
             result.Groups.RemoveAll(g => g.TotalFileCount == 0);
+
+            if (related.Count > 0)
+                RelatedFileAttacher.Attach(result.Groups, related);
+
+            if (options?.ScannedType is { } scanned && options.MismatchCandidates is { Count: > 0 } candidates)
+                MediaTypeMismatchDetector.Annotate(result.Groups, scanned, candidates);
 
             return result;
         }

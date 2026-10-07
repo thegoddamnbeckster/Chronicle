@@ -139,6 +139,8 @@ export interface ImportProgressState {
 export async function importGroups(payload: {
   groups: ImportGroupPayload[]
   mediaTypeId: number
+  /** Remember subtitles, artwork and extras with each item. */
+  bundleRelatedFiles?: boolean
 }): Promise<{ started: boolean }> {
   const { data } = await client.post<ApiResponse<{ started: boolean }>>(
     '/scan/import-groups', payload, { signal: AbortSignal.timeout(12 * 60 * 60 * 1000) })

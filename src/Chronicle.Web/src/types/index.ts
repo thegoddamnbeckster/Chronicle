@@ -397,6 +397,12 @@ export interface ScanGroupDto {
   folderPath: string | null
   author: string | null
   series: string | null
+  /** Subtitles, artwork, extras found with this group (not importable items themselves). */
+  relatedFiles?: string[] | null
+  /** Set when the files look like a different media type than the one scanned. */
+  suggestedMediaTypeId?: number | null
+  suggestedMediaTypeName?: string | null
+  suggestedMediaTypeReason?: string | null
 }
 
 export interface ScanGroupResult {
@@ -414,6 +420,7 @@ export interface ImportGroupPayload {
   children: ImportGroupPayload[]
   files: string[]
   folderPath: string | null
+  relatedFiles?: string[] | null
 }
 
 export interface MediaTypeOption {

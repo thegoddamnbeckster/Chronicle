@@ -254,7 +254,8 @@ namespace Chronicle.Services
             group.Children.Select(ToScanGroupImport).ToList(),
             group.Files,
             group.FolderPath,
-            group.Number);
+            group.Number,
+            group.RelatedFiles);
 
         // ── Preview ───────────────────────────────────────────────────────────────
 
@@ -2671,7 +2672,11 @@ namespace Chronicle.Services
             _log.Information("Grouped preview: {Count} files found, grouping with {Levels} hierarchy levels",
                 allPaths.Count, mediaType.HierarchyLevels);
 
-            return _groupingService.Group(allPaths, request.Path, mediaType.HierarchyLevels);
+            // Related files are always collected so the review page can show the count; they are only stored when
+            // the import asks for it. The other types are offered as candidates for the wrong-type check.
+            var candidates = await _context.MediaTypes.AsNoTracking().Where(t => t.IsActive && t.ScanHintsJson != null).ToListAsync(ct);
+            return _groupingService.Group(allPaths, request.Path, mediaType.HierarchyLevels,
+                new ScanGroupOptions(CollectRelatedFiles: true, MismatchCandidates: candidates, ScannedType: mediaType));
         }
 
         private async Task<ScanGroupResult> PreviewAudiobooksAsync(
@@ -2796,6 +2801,8 @@ namespace Chronicle.Services
 
                     if (rootIsNew)
                         createdItemIds.Add(rootItem.Id);
+                    if (request.BundleRelatedFiles)
+                        await SyncRelatedFilesAsync(rootItem, rootGroup.RelatedFiles, rootGroup.FolderPath, ct);
 
                     // Library entry only at root level — create for every user so all
                     // accounts can see file-scanned content regardless of who triggered the import.
@@ -2830,7 +2837,7 @@ namespace Chronicle.Services
                     // Persist children recursively — no library entries
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
                         rootItem.Id, hierarchyLevel: 1, mediaType.HierarchyLevels, createdItemIds,
-                        filePathIndex, folderPathIndex, ct);
+                        filePathIndex, folderPathIndex, request.BundleRelatedFiles, ct);
 
                     pendingInBatch++;
 
@@ -2898,6 +2905,7 @@ namespace Chronicle.Services
             int parentId, int hierarchyLevel, int totalHierarchyLevels, List<int> createdItemIds,
             Dictionary<string, MediaItem> filePathIndex,
             Dictionary<string, MediaItem> folderPathIndex,
+            bool bundleRelatedFiles,
             CancellationToken ct)
         {
             foreach (var child in children)
@@ -2907,11 +2915,58 @@ namespace Chronicle.Services
                     filePathIndex, folderPathIndex, ct);
                 if (isNew)
                     createdItemIds.Add(item.Id);
+                if (bundleRelatedFiles)
+                    await SyncRelatedFilesAsync(item, child.RelatedFiles, child.FolderPath, ct);
                 if (child.Children.Count > 0)
                     await PersistChildGroupsAsync(child.Children, mediaTypeId,
                         item.Id, hierarchyLevel + 1, totalHierarchyLevels, createdItemIds,
-                        filePathIndex, folderPathIndex, ct);
+                        filePathIndex, folderPathIndex, bundleRelatedFiles, ct);
             }
+        }
+
+        /// <summary>Brings an item's recorded related files in line with what the scan just saw: new files are added,
+        /// known ones keep their row (and lose any "missing" mark), and files no longer seen are marked missing rather
+        /// than deleted, so nothing is silently forgotten.</summary>
+        internal async Task SyncRelatedFilesAsync(MediaItem item, IReadOnlyList<string>? seen, string? folderPath, CancellationToken ct)
+        {
+            seen ??= [];
+            var rules = SidecarRules.Defaults;
+            var existing = item.Id == 0
+                ? new List<MediaItemRelatedFile>()
+                : await _context.MediaItemRelatedFiles.Where(r => r.MediaItemId == item.Id).ToListAsync(ct);
+            var byPath = existing.ToDictionary(r => r.Path, StringComparer.OrdinalIgnoreCase);
+            var now = DateTime.UtcNow;
+            var seenSet = new HashSet<string>(seen, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var path in seenSet)
+            {
+                long? size = null;
+                try { size = new FileInfo(path).Length; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+
+                if (byPath.TryGetValue(path, out var row))
+                {
+                    row.MissingSince = null;
+                    row.SizeBytes = size ?? row.SizeBytes;
+                    continue;
+                }
+                var folders = (Path.GetDirectoryName(path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+                _context.MediaItemRelatedFiles.Add(new MediaItemRelatedFile
+                {
+                    MediaItem = item.Id == 0 ? item : null,
+                    MediaItemId = item.Id,
+                    Path = path,
+                    Kind = rules.Classify(path, folders),
+                    SizeBytes = size,
+                    DiscoveredAt = now,
+                });
+            }
+            // Only files from the folder this group covers can be judged missing: a second group that resolves to
+            // the same item (another folder) must not mark the first group's files as gone.
+            if (string.IsNullOrEmpty(folderPath)) return;
+            var prefix = folderPath.Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            foreach (var row in existing.Where(r => !seenSet.Contains(r.Path) && r.MissingSince is null
+                && r.Path.Replace('/', Path.DirectorySeparatorChar).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                row.MissingSince = now;
         }
 
         public async Task BackfillFolderPathsAsync(CancellationToken ct = default)

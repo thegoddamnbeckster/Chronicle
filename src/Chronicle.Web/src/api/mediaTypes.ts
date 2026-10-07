@@ -20,6 +20,8 @@ export interface MediaTypeAdmin {
   isUserModified: boolean
   itemCount: number
   plugins: PluginRef[]
+  /** JSON describing what files of this type look like (used to spot a folder scanned as the wrong type). */
+  scanHints: string | null
 }
 
 export interface MediaTypeInput {
@@ -35,6 +37,8 @@ export interface MediaTypeInput {
   isTrackable: boolean
   scanStrategy: string | null
   isActive: boolean
+  /** Omit to leave unchanged; an empty string clears. */
+  scanHints?: string
 }
 
 export const SCAN_STRATEGIES = [

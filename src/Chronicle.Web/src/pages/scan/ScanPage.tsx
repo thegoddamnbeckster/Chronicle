@@ -9,7 +9,7 @@ import { getMediaTypes } from '@/api/media'
 import { useBackgroundActivity } from '@/contexts/BackgroundActivityContext'
 import type { ScanGroupResult, MediaTypeOption, ScanFolder } from '@/types'
 import PathInput from '@/components/PathInput'
-import ScanGroupCard, { groupToPayload } from './ScanGroupCard'
+import ScanGroupCard, { groupToPayload, relatedFileCount } from './ScanGroupCard'
 import styles from './ScanPage.module.css'
 
 type Step = 'configure' | 'review' | 'done'
@@ -403,6 +403,7 @@ export default function ScanPage() {
   const [rejectedKeys, setRejectedKeys] = useState<Set<string>>(new Set())
   const [importResult, setImportResult] = useState<{ imported: number; failed: number; duplicates: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [bundleRelated, setBundleRelated] = useState(false)
 
   // ── Scan progress (polled while preview mutation is pending) ─────────────
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null)
@@ -428,9 +429,11 @@ export default function ScanPage() {
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const previewMut = useMutation({
-    mutationFn: () => {
-      if (!mediaTypeId) throw new Error('Select a media type.')
-      return previewGrouped({ path: path.trim(), recursive, mediaTypeId: Number(mediaTypeId) })
+    // `typeOverride` is for "Switch to X and rescan", where the state update has not landed yet.
+    mutationFn: (typeOverride?: number) => {
+      const typeId = typeOverride ?? mediaTypeId
+      if (!typeId) throw new Error('Select a media type.')
+      return previewGrouped({ path: path.trim(), recursive, mediaTypeId: Number(typeId) })
     },
     onSuccess: (data) => {
       setGroupResult(data)
@@ -449,7 +452,7 @@ export default function ScanPage() {
         .filter(g => !rejectedKeys.has(g.groupKey))
         .map(groupToPayload)
       if (toImport.length === 0) throw new Error('No groups selected for import.')
-      return importGroups({ groups: toImport, mediaTypeId: Number(mediaTypeId) })
+      return importGroups({ groups: toImport, mediaTypeId: Number(mediaTypeId), bundleRelatedFiles: bundleRelated })
     },
     onMutate: () => {
       const count = groupResult?.groups.filter(g => !rejectedKeys.has(g.groupKey)).length ?? 0
@@ -536,6 +539,12 @@ export default function ScanPage() {
       next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
+  }
+
+  // Offered only for types this installation can scan; the whole folder is rescanned as that type.
+  const handleSwitchType = (typeId: number) => {
+    setMediaTypeId(typeId)
+    previewMut.mutate(typeId)
   }
 
   const canScan = path.trim() !== '' && mediaTypeId !== '' && !previewMut.isPending
@@ -637,7 +646,7 @@ export default function ScanPage() {
           <button
             className={styles.scanBtn}
             disabled={!canScan}
-            onClick={() => previewMut.mutate()}
+            onClick={() => previewMut.mutate(undefined)}
           >
             {previewMut.isPending ? 'Scanning…' : 'Scan Directory'}
           </button>
@@ -724,6 +733,13 @@ export default function ScanPage() {
             </div>
           )}
 
+          {groupResult.groups.some(g => relatedFileCount(g) > 0) && (
+            <label className={styles.checkLabel}>
+              <input type="checkbox" checked={bundleRelated} onChange={e => setBundleRelated(e.target.checked)} />
+              Remember subtitles, artwork and extras with each item
+            </label>
+          )}
+
           <div className={styles.groupList}>
             {groupResult.groups.map(g => (
               <ScanGroupCard
@@ -731,6 +747,7 @@ export default function ScanPage() {
                 group={g}
                 checked={!rejectedKeys.has(g.groupKey)}
                 onToggle={toggleRejected}
+                onSwitchType={g.suggestedMediaTypeId != null && supportedTypes.some(t => t.id === g.suggestedMediaTypeId) ? handleSwitchType : undefined}
               />
             ))}
           </div>

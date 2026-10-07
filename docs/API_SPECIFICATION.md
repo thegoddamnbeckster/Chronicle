@@ -643,6 +643,16 @@ Authorization: Bearer {token}          # Admin only
 Background job — returns `202 Accepted`, or `409` if a reset is already running. Poll
 reset-progress below.
 
+### Related files and scan hints
+
+* `GET /api/v1/media/{id}/related-files` -> `[{ id, path, kind, sizeBytes, discoveredAt, missingSince }]`. `kind` is
+  `subtitle | artwork | theme | extra | booklet | other`. Recorded by scans that had related-file bundling on.
+* `POST /api/v1/scan/preview-grouped` groups now carry `relatedFiles[]` and, when the files look like another media type,
+  `suggestedMediaTypeId`, `suggestedMediaTypeName`, `suggestedMediaTypeReason`.
+* `POST /api/v1/scan/import-groups` accepts `bundleRelatedFiles` (default `false`) and a `relatedFiles[]` per group.
+* `/api/v1/media-types` (admin) returns and accepts `scanHints` (JSON string; omitted on update = unchanged, empty =
+  cleared; invalid -> `400 INVALID_SCAN_HINTS`). See `docs/SCANNING.md`.
+
 ### Clear every override for one media type
 
 ```http

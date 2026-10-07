@@ -32,6 +32,8 @@ namespace Chronicle.Services.Security
     public sealed class CachedAppSettings : ICachedAppSettings
     {
         public const string Prefix = "auth.";
+        /// <summary>Other families read on hot paths: scanner sidecar lists.</summary>
+        public const string ScanPrefix = "scan.";
         private static readonly TimeSpan CacheFor = TimeSpan.FromMinutes(1);
 
         private readonly IServiceScopeFactory _scopes;
@@ -69,7 +71,7 @@ namespace Chronicle.Services.Security
                 var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
                 _snapshot = await db.AppSettings
                     .AsNoTracking()
-                    .Where(s => s.Key.StartsWith(Prefix))
+                    .Where(s => s.Key.StartsWith(Prefix) || s.Key.StartsWith(ScanPrefix))
                     .ToDictionaryAsync(s => s.Key, s => s.Value);
             }
             catch (Exception ex)

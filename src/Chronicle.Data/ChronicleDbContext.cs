@@ -80,6 +80,7 @@ namespace Chronicle.Data
         public DbSet<UserContact> UserContacts => Set<UserContact>();
         public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
         public DbSet<Notification> Notifications => Set<Notification>();
+        public DbSet<MediaItemRelatedFile> MediaItemRelatedFiles => Set<MediaItemRelatedFile>();
         public DbSet<MediaType> MediaTypes => Set<MediaType>();
         public DbSet<MediaItem> MediaItems => Set<MediaItem>();
         public DbSet<MediaExternalId> MediaExternalIds => Set<MediaExternalId>();
@@ -148,6 +149,19 @@ namespace Chronicle.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            modelBuilder.Entity<MediaItemRelatedFile>(entity =>
+            {
+                entity.ToTable("media_item_related_files");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.MediaItemId, e.Path }).IsUnique();
+                entity.Property(e => e.Path).IsRequired().HasMaxLength(1000);
+                entity.Property(e => e.Kind).IsRequired().HasMaxLength(20);
+                entity.HasOne(e => e.MediaItem)
+                    .WithMany()
+                    .HasForeignKey(e => e.MediaItemId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
             modelBuilder.Entity<Notification>(entity =>
             {
                 entity.ToTable("notifications");
@@ -191,6 +205,7 @@ namespace Chronicle.Data
                 entity.Property(e => e.IsTrackable).HasDefaultValue(true);
                 entity.Property(e => e.ScanStrategy).HasMaxLength(30);
                 entity.Property(e => e.IsUserModified).HasDefaultValue(false);
+                entity.Property(e => e.ScanHintsJson).HasMaxLength(4000);
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 // Seed: built-in media types

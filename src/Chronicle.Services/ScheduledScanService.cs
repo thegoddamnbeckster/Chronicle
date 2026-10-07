@@ -120,7 +120,7 @@ public sealed class ScheduledScanService : IScheduledTask
 
             _importProgress.UpdateStatus($"Importing: {preview.Folder.Path}");
 
-            var importRequest = new ImportGroupsRequest(preview.PassingGroups, preview.Folder.MediaTypeId);
+            var importRequest = new ImportGroupsRequest(preview.PassingGroups, preview.Folder.MediaTypeId, preview.BundleRelatedFiles);
 
             using var importScope = _scopeFactory.CreateScope();
             var fileScanSvc = importScope.ServiceProvider.GetRequiredService<IFileScanService>();
@@ -204,7 +204,21 @@ public sealed class ScheduledScanService : IScheduledTask
         ScanFolder Folder,
         List<ScanGroupImport> PassingGroups,
         int PassingFileCount,
-        int BelowThresholdCount);
+        int BelowThresholdCount,
+        bool BundleRelatedFiles = false);
+
+    public const string MismatchActionKey = "scan.mismatch_action";
+    public const string BundleRelatedFilesKey = "scan.bundle_related_files";
+
+    /// <summary>Splits groups into those safe to import and those that look like a different media type. With the
+    /// "flag" action (the default) the second kind is held back for a person to look at; with "ignore" nothing is held.</summary>
+    internal static (List<ScanGroup> Import, List<ScanGroup> Held) HoldBackMismatches(IEnumerable<ScanGroup> groups, string? action)
+    {
+        var all = groups.ToList();
+        if (string.Equals(action, "ignore", StringComparison.OrdinalIgnoreCase))
+            return (all, []);
+        return (all.Where(g => g.SuggestedMediaTypeId is null).ToList(), all.Where(g => g.SuggestedMediaTypeId is not null).ToList());
+    }
 
     private async Task<FolderPreview> PreviewFolderAsync(
         ScanFolder folder,
@@ -237,6 +251,30 @@ public sealed class ScheduledScanService : IScheduledTask
             var passing = scanResult.Groups
                 .Where(g => g.ConfidenceScore >= thresholdFraction)
                 .ToList();
+
+            // Settings read once per folder: what to do with files that look like another media type, and
+            // whether to remember subtitles / artwork / extras with their items.
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var settings = await db.AppSettings.AsNoTracking()
+                .Where(a => a.Key == MismatchActionKey || a.Key == BundleRelatedFilesKey)
+                .ToDictionaryAsync(a => a.Key, a => a.Value, ct);
+            settings.TryGetValue(MismatchActionKey, out var mismatchAction);
+            bool bundle = settings.TryGetValue(BundleRelatedFilesKey, out var bundleText)
+                          && bool.TryParse(bundleText, out var b) && b;
+
+            var (importable, held) = HoldBackMismatches(passing, mismatchAction);
+            passing = importable;
+            if (held.Count > 0)
+            {
+                foreach (var g in held)
+                    _log.Warning("ScheduledScanService: held back '{Name}' in {Path}: {Reason}", g.Name, folder.Path, g.SuggestedMediaTypeReason);
+                var notifier = scope.ServiceProvider.GetService<Notifications.INotificationService>();
+                if (notifier is not null)
+                    await notifier.NotifyAdminsAsync(Chronicle.Core.Models.NotificationKinds.ScanReview,
+                        $"{held.Count} item{(held.Count == 1 ? "" : "s")} in {folder.Path} may be the wrong type",
+                        string.Join("; ", held.Take(3).Select(g => $"{g.Name}: looks like {g.SuggestedMediaTypeName}")),
+                        "/scan", dedupeKey: $"scan.review:{folder.Id}", ct: ct);
+            }
             var below = scanResult.Groups
                 .Where(g => g.ConfidenceScore < thresholdFraction)
                 .ToList();
@@ -264,7 +302,7 @@ public sealed class ScheduledScanService : IScheduledTask
             var importGroups = passing.Select(FileScanService.ToScanGroupImport).ToList();
             int fileCount    = importGroups.Sum(g => g.TotalFileCount);
 
-            return new FolderPreview(folder, importGroups, fileCount, below.Count);
+            return new FolderPreview(folder, importGroups, fileCount, below.Count, bundle);
         }
         catch (OperationCanceledException)
         {

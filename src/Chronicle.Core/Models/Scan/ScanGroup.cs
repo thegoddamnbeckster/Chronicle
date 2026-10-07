@@ -42,6 +42,16 @@ namespace Chronicle.Core.Models.Scan
         /// <summary>Series name from the Grouping tag (iTunes ©grp / ID3 TIT1), populated for audiobooks.</summary>
         public string? Series { get; set; }
 
+        /// <summary>Supplemental files (subtitles, artwork, extras, booklets) found with this group. Only
+        /// filled in when the caller asks the grouper to collect them; never importable items themselves.</summary>
+        public List<string> RelatedFiles { get; set; } = [];
+
+        /// <summary>When the files look like a different media type than the one being scanned: that type's id,
+        /// name and the reason, for the review page and the scheduled scan to act on. Null = no mismatch seen.</summary>
+        public int? SuggestedMediaTypeId { get; set; }
+        public string? SuggestedMediaTypeName { get; set; }
+        public string? SuggestedMediaTypeReason { get; set; }
+
         /// <summary>Total number of leaf files under this group (recursive).</summary>
         public int TotalFileCount =>
             Files.Count + Children.Sum(c => c.TotalFileCount);
