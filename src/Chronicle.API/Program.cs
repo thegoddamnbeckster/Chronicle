@@ -122,7 +122,7 @@ if (!dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
     }
 }
 
-builder.Services.AddDbContext<ChronicleDbContext>(options =>
+builder.Services.AddDbContext<ChronicleDbContext>((serviceProvider, options) =>
 {
     if (dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
     {
@@ -141,6 +141,9 @@ builder.Services.AddDbContext<ChronicleDbContext>(options =>
             : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sqliteFile))!, "temp");
         options.AddInterceptors(new SqliteBusyTimeoutInterceptor(sqliteTemp));
     }
+
+    // Tells the web UI which library items changed (provider-independent).
+    options.AddInterceptors(serviceProvider.GetRequiredService<Chronicle.Services.Live.LibraryChangeInterceptor>());
 });
 
 // ── Services ──────────────────────────────────────────────────────────────────
@@ -306,6 +309,11 @@ builder.Services.AddSingleton<IScheduledTask>(
 
 // Database backups / restore / maintenance (Settings -> Database) and their scheduled tasks.
 builder.Services.AddSingleton<IDatabaseAdminService, DatabaseAdminService>();
+// Live library updates (which items changed) and the notification bell.
+builder.Services.AddSingleton<Chronicle.Services.Live.LibraryChangeFeed>();
+builder.Services.AddSingleton<Chronicle.Services.Live.LibraryChangeInterceptor>();
+builder.Services.AddScoped<Chronicle.Services.Notifications.INotificationService, Chronicle.Services.Notifications.NotificationService>();
+builder.Services.AddSingleton<IScheduledTask, Chronicle.Services.Notifications.NotificationCleanupTask>();
 builder.Services.AddSingleton<IAppRestart, AppRestart>();
 builder.Services.AddSingleton<IScheduledTask, DatabaseBackupTask>();
 builder.Services.AddSingleton<IScheduledTask, DatabaseLightMaintenanceTask>();

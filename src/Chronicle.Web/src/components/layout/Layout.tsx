@@ -10,6 +10,8 @@ import ActivityPanel from './ActivityPanel'
 import AppFooter from './AppFooter'
 import GlobalSearch from './GlobalSearch'
 import NowPlayingBanner from './NowPlayingBanner'
+import NotificationBell from './NotificationBell'
+import { useLiveUpdates } from '@/hooks/useLiveUpdates'
 import styles from './Layout.module.css'
 
 /** The app shell's own scrollable content region (the <main> below) -- exposed so a page
@@ -25,6 +27,8 @@ export default function Layout() {
   const mainRef = useRef<HTMLElement>(null)
   const location = useLocation()
   useScrollRestoration(mainRef)
+  // Keeps open pages current and the bell's count fresh; only polls while the tab is visible.
+  useLiveUpdates(!!user)
 
   useEffect(() => {
     getDiagnostics()
@@ -65,6 +69,7 @@ export default function Layout() {
         <span className={styles.logo}>Chronicle</span>
         <GlobalSearch />
         <div className={styles.headerRight}>
+          <NotificationBell />
           <span className={styles.username}>{user.username}</span>
           <button className={styles.logoutBtn} onClick={logout}>Logout</button>
         </div>

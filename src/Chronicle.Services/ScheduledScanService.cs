@@ -149,6 +149,14 @@ public sealed class ScheduledScanService : IScheduledTask
                 await db.SaveChangesAsync(ct);
             }
 
+            // The nightly scan imports on its own; this is how anyone finds out it found something.
+            if (summary.Imported > 0)
+                await (importScope.ServiceProvider.GetService<Notifications.INotificationService>()?.NotifyAdminsAsync(
+                    Chronicle.Core.Models.NotificationKinds.ScanImported,
+                    $"{summary.Imported} new item{(summary.Imported == 1 ? "" : "s")} found in {preview.Folder.Path}",
+                    summary.Failed > 0 ? $"{summary.Failed} could not be imported." : null,
+                    "/library", ct: ct) ?? Task.FromResult(0));
+
             // New file(s) may be invisible to every Kodi device's own VideoLibrary until it
             // runs its own local scan -- VideoLibrary.Refresh* only works on an item Kodi
             // already has a library entry for, so a brand-new file needs a real

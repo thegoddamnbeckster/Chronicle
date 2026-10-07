@@ -79,6 +79,7 @@ namespace Chronicle.Data
         public DbSet<User> Users => Set<User>();
         public DbSet<UserContact> UserContacts => Set<UserContact>();
         public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+        public DbSet<Notification> Notifications => Set<Notification>();
         public DbSet<MediaType> MediaTypes => Set<MediaType>();
         public DbSet<MediaItem> MediaItems => Set<MediaItem>();
         public DbSet<MediaExternalId> MediaExternalIds => Set<MediaExternalId>();
@@ -143,6 +144,23 @@ namespace Chronicle.Data
 
                 entity.HasOne(e => e.User)
                     .WithMany(u => u.Contacts)
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<Notification>(entity =>
+            {
+                entity.ToTable("notifications");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.UserId, e.ReadAt, e.CreatedAt });
+                entity.HasIndex(e => new { e.UserId, e.Kind, e.DedupeKey });
+                entity.Property(e => e.Kind).IsRequired().HasMaxLength(40);
+                entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.Body).HasMaxLength(1000);
+                entity.Property(e => e.Link).HasMaxLength(300);
+                entity.Property(e => e.DedupeKey).HasMaxLength(200);
+                entity.HasOne(e => e.User)
+                    .WithMany()
                     .HasForeignKey(e => e.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
             });

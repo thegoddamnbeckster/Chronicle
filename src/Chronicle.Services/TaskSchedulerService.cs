@@ -241,6 +241,16 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
             row.NextRunAt        = await ComputeNextRunAtAsync(db, row, succeeded);
 
             await db.SaveChangesAsync();
+
+            // Tell the administrators a task broke, so nobody has to open the Background Tasks page to find out.
+            // One unread notice per task: a task failing every few minutes does not bury the bell.
+            if (!succeeded)
+                await (scope.ServiceProvider.GetService<Notifications.INotificationService>()?.NotifyAdminsAsync(
+                    Chronicle.Core.Models.NotificationKinds.TaskFailed,
+                    $"{row.DisplayName} failed",
+                    string.IsNullOrWhiteSpace(error) ? "The task stopped with an error." : error,
+                    "/settings/background-tasks",
+                    dedupeKey: $"task:{taskId}") ?? Task.FromResult(0));
         }
         catch (Exception ex)
         {

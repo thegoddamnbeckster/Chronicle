@@ -117,6 +117,11 @@ namespace Chronicle.Services
 
             if (!string.IsNullOrEmpty(patch.Theme)) current.Theme = patch.Theme;
 
+            // null = leave alone; an empty list = receive everything again.
+            if (patch.MutedNotificationKinds is not null)
+                current.MutedNotificationKinds = patch.MutedNotificationKinds
+                    .Where(Chronicle.Core.Models.NotificationKinds.IsKnown).Distinct().ToArray();
+
             user.PreferencesJson = JsonSerializer.Serialize(current);
             user.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();

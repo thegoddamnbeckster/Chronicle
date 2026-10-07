@@ -42,8 +42,10 @@ namespace Chronicle.Tests.Integration
                 // Suppress TransactionIgnoredWarning — InMemory doesn't support real
                 // transactions but the production code uses them; tests still verify
                 // the logical behaviour correctly.
-                services.AddDbContext<ChronicleDbContext>(opts =>
+                services.AddDbContext<ChronicleDbContext>((sp, opts) =>
                     opts.UseInMemoryDatabase(_dbName)
+                        // The same change-tracking hook the real registration in Program.cs adds.
+                        .AddInterceptors(sp.GetRequiredService<Chronicle.Services.Live.LibraryChangeInterceptor>())
                         .ConfigureWarnings(w =>
                             w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning)));
             });

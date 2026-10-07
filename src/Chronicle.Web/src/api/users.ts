@@ -13,6 +13,8 @@ export interface UserPreferences {
   showAllCredits?: boolean
   /** Active theme storage key ("{pluginId}:{themeKey}"), synced across devices. */
   theme?: string
+  /** Notification kinds this person has switched off. */
+  mutedNotificationKinds?: string[]
 }
 
 export async function getMyPreferences(): Promise<UserPreferences> {

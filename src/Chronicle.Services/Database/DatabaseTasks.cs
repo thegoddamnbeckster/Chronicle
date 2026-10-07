@@ -1,3 +1,5 @@
+using Chronicle.Core.Models;
+using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 
 namespace Chronicle.Services.Database
@@ -9,8 +11,13 @@ namespace Chronicle.Services.Database
     public sealed class DatabaseBackupTask : IScheduledTask
     {
         private readonly IDatabaseAdminService _db;
+        private readonly IServiceScopeFactory? _scopes;
         private readonly ILogger _log = Log.ForContext<DatabaseBackupTask>();
-        public DatabaseBackupTask(IDatabaseAdminService db) => _db = db;
+        public DatabaseBackupTask(IDatabaseAdminService db, IServiceScopeFactory? scopes = null)
+        {
+            _db = db;
+            _scopes = scopes;
+        }
 
         public string TaskId => "database_backup";
         public string DisplayName => "Database Backup";
@@ -23,6 +30,20 @@ namespace Chronicle.Services.Database
             catch (DatabaseAdminException ex) when (ex.Code == "UNSUPPORTED")
             {
                 _log.Information("Database backup skipped: {Reason}", ex.Message);
+                return;
+            }
+
+            // The nightly run is also the daily check on how big the database has become.
+            if (_scopes is null) return;
+            var status = await _db.GetStatusAsync(ct);
+            if (status.Supported && status.OverWarnSize)
+            {
+                using var scope = _scopes.CreateScope();
+                await (scope.ServiceProvider.GetService<Notifications.INotificationService>()?.NotifyAdminsAsync(
+                    NotificationKinds.DatabaseSize,
+                    $"The database is {DatabaseAdminService.Format(status.DatabaseBytes + status.WalBytes)}",
+                    $"That is over the {DatabaseAdminService.Format(status.WarnSizeBytes)} warning size. A full rebuild can reclaim free space.",
+                    "/settings/database", dedupeKey: "database-size", ct: ct) ?? Task.FromResult(0));
             }
         }
     }

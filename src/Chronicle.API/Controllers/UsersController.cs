@@ -122,6 +122,7 @@ namespace Chronicle.API.Controllers
                 showNowPlayingBanner   = prefs.ShowNowPlayingBanner ?? true,
                 showAllCredits         = prefs.ShowAllCredits ?? false,
                 theme                  = prefs.Theme,
+                mutedNotificationKinds = prefs.MutedNotificationKinds ?? [],
             }));
         }
 
@@ -138,6 +139,7 @@ namespace Chronicle.API.Controllers
                 ShowNowPlayingBanner  = req.ShowNowPlayingBanner,
                 ShowAllCredits        = req.ShowAllCredits,
                 Theme                 = req.Theme,
+                MutedNotificationKinds = req.MutedNotificationKinds,
             };
             await _userService.UpdatePreferencesAsync(userId, patch);
             var prefs = await _userService.GetPreferencesAsync(userId);
@@ -151,6 +153,7 @@ namespace Chronicle.API.Controllers
                 showNowPlayingBanner  = prefs.ShowNowPlayingBanner ?? true,
                 showAllCredits        = prefs.ShowAllCredits ?? false,
                 theme                 = prefs.Theme,
+                mutedNotificationKinds = prefs.MutedNotificationKinds ?? [],
             }));
         }
 
@@ -399,6 +402,7 @@ namespace Chronicle.API.Controllers
         bool? CreateCollectionStubs = null,
         bool? ShowNowPlayingBanner = null,
         string? Theme = null,
-        bool? ShowAllCredits = null
+        bool? ShowAllCredits = null,
+        string[]? MutedNotificationKinds = null
     );
 }

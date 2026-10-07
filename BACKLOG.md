@@ -11,7 +11,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Media type per file** — FileScanner should determine the media type of each file itself; it shouldn't matter what kind of media a folder holds. Speed is secondary (background process). Today the scan request still takes a `MediaTypeId` (`FileScanService.cs`), and the Audiobooks and hierarchical paths branch on it.
 - **Scan results: type mismatch correction** — If the movie scanner detects something that looks like TV (S01E01, etc.), re-classify and match against the correct type. *(unverified)*
 - **Related-files assumption** — Checkbox on the scan/review page: "Treat all files in a matched item's folder as related to that item." Files sharing a folder with a confidently matched item (e.g. `Dark Matter (2024)\theme.mp3`) are bundled onto it as related/attached files (shown on its detail page) instead of surfacing as separate low-confidence items. Applies to TV (theme, artwork, extras), movies (subtitles, featurettes) and albums (booklets, cue sheets). Partial groundwork: `ScanGroupingService` already drops sidecar extensions and supplemental folders from grouping, but nothing attaches them to the parent and there is no toggle.
-- **Notify when background scans find new items** — `ScheduledScanService` runs scans on a schedule; there is no user-facing notification when it finds something new. *(unverified)*
+- **Notify when background scans find new items — DONE** (the bell; administrators; mutable per person).
 - **Flexible pattern matching** — Handle messy/unorganised folder structures (e.g. `E:\Video Downloads\MCM Download Parser`). Smarter fallback when standard patterns fail.
 - **User-defined file types** — FileScanner plugin: let the user add their own filetypes.
 - **Music filename parsing** — Audio extensions are supported (`FileNameParser.cs`); confirm Artist - Album - Track filename parsing is also covered, or whether it relies only on embedded tags (`EmbeddedTagReader.cs`).
@@ -20,7 +20,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Library / Media Detail
 
-- **Live poster updates** — When background refresh updates an item, the library view should reflect it without a full reload. Only `NowPlayingBanner` polls today. *(unverified for the library)*
+- **Live poster updates — DONE.** The shell polls a change feed every 15 s (visible tabs only); item pages refresh immediately and the library grid at most every 30 s. See `docs/NOTIFICATIONS_AND_LIVE_UPDATES.md`. Not covered: bulk statements that bypass change tracking call `MarkAllChanged`; any new one must too.
 - **Local images** — Image thumbnails work for remote art; local images still need the backend to serve them.
 - **All file paths** — Detail page shows the single `fileScannerMeta.filePath`. Still needed: every associated file (internal Chronicle store and original on-disk path), listing all of them for multi-file items (cuts, episodes).
 

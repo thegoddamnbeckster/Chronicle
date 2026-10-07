@@ -1,0 +1,104 @@
+.root { position: relative; display: inline-flex; }
+
+.bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.bell:hover { background: var(--bg-tertiary, var(--bg-secondary)); color: var(--text-primary); }
+.bell svg { width: 20px; height: 20px; }
+
+.badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 50;
+  width: min(380px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.panelHeader, .panelFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.panelHeader { border-bottom: 1px solid var(--border); }
+.panelFooter { border-top: 1px solid var(--border); font-size: 12px; }
+.actions { display: inline-flex; gap: 10px; }
+
+.linkBtn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.linkBtn:disabled { color: var(--text-muted); cursor: default; }
+
+.list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.list li { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
+.unread { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.read { opacity: 0.75; }
+
+.item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.item:hover { background: var(--bg-tertiary, rgba(255, 255, 255, 0.04)); }
+.title { font-size: 13px; font-weight: 600; }
+.body { font-size: 12px; color: var(--text-secondary); }
+.when { font-size: 11px; color: var(--text-muted); }
+
+.dismiss {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+.dismiss:hover { color: var(--danger); }
+
+.empty { margin: 0; padding: 18px 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
