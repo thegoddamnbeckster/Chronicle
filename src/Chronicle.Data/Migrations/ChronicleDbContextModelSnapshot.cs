@@ -42,6 +42,13 @@ namespace Chronicle.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("full");
+
                     b.Property<string>("Token")
                         .IsRequired()
                         .HasColumnType("TEXT");

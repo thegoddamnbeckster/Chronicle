@@ -51,7 +51,7 @@ namespace Chronicle.Tests.Integration
                 user.IsAdmin = true;
                 await db.SaveChangesAsync();
 
-                // The role lives in the JWT, so re-login to pick up the promotion.
+                // Sessions read the role live, so this re-login is not required; it just keeps the helper's token fresh.
                 var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { username, password });
                 token = (await Json(login)).GetProperty("data").GetProperty("token").GetString()!;
             }
@@ -261,7 +261,7 @@ namespace Chronicle.Tests.Integration
 
             await admin.Client.PutAsJsonAsync($"/api/v1/users/{target.Id}/admin", new { isAdmin = true });
 
-            // The role is carried in the JWT, so it takes effect on the next login.
+            // (A fresh login also works; see SessionAuthTests for the no-re-login guarantee.)
             var login = await _factory.CreateClient()
                 .PostAsJsonAsync("/api/v1/auth/login", new { username = target.Username, password = "Password123!" });
             var token = (await Json(login)).GetProperty("data").GetProperty("token").GetString()!;
@@ -293,7 +293,7 @@ namespace Chronicle.Tests.Integration
         [Fact]
         public async Task DeactivatingUser_ImmediatelyKillsTheirExistingSession()
         {
-            // The token is stateless and valid for 24 h — blocking a new login isn't enough,
+            // Sessions can outlive a login attempt — blocking a new login isn't enough,
             // the session already in the browser has to stop working too.
             var admin  = await NewAccountAsync(admin: true);
             var target = await NewAccountAsync();
@@ -302,11 +302,17 @@ namespace Chronicle.Tests.Integration
 
             await admin.Client.PutAsJsonAsync($"/api/v1/users/{target.Id}/active", new { isActive = false });
 
-            // Same client, same unexpired token.
+            // Same client, same session key.
             (await target.Client.GetAsync("/api/v1/users/me")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 
+            // Reactivating restores the ACCOUNT, not the old session: deactivation ended it for
+            // good, so the user signs in again and gets a fresh key.
             await admin.Client.PutAsJsonAsync($"/api/v1/users/{target.Id}/active", new { isActive = true });
-            (await target.Client.GetAsync("/api/v1/users/me")).StatusCode.Should().Be(HttpStatusCode.OK);
+            (await target.Client.GetAsync("/api/v1/users/me")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+            var relogin = await _factory.CreateClient()
+                .PostAsJsonAsync("/api/v1/auth/login", new { username = target.Username, password = "Password123!" });
+            relogin.StatusCode.Should().Be(HttpStatusCode.OK);
         }
 
         [Fact]

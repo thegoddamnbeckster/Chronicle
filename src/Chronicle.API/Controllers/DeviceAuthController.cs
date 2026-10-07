@@ -1,7 +1,9 @@
 using System.Security.Claims;
+using Chronicle.API.Authentication;
 using Chronicle.API.DTOs;
 using Chronicle.Core.Exceptions;
 using Chronicle.Services;
+using Chronicle.Services.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QRCoder;
@@ -28,11 +30,37 @@ public class DeviceAuthController : ControllerBase
 {
     private readonly IDeviceAuthService _deviceAuth;
     private readonly ILogger<DeviceAuthController> _log;
+    private readonly ILoginThrottle _throttle;
+    private readonly AuthAuditLog _audit;
+    private readonly ICachedAppSettings _settings;
 
-    public DeviceAuthController(IDeviceAuthService deviceAuth, ILogger<DeviceAuthController> log)
+    // Pairing is unauthenticated by design (the box has no key yet), so it is the one place an
+    // anonymous caller can create rows and probe for codes. A code is 6 characters (~1 billion
+    // combinations) and a poll on an approved code hands over a live API key, so guesses are
+    // limited per address. Real use - a few boxes, one poll every ~5 s - stays far below these.
+    public const string InitiatesPerHourKey = "auth.pairing_initiates_per_address_hour";
+    public const string MissesPer15MinKey = "auth.pairing_misses_per_address_15min";
+    private int InitiatesPerHour => (int)_settings.Snapshot.GetPositive(InitiatesPerHourKey, 10);
+    private int MissesPer15Min => (int)_settings.Snapshot.GetPositive(MissesPer15MinKey, 20);
+    private static readonly TimeSpan Hour = TimeSpan.FromHours(1);
+    private static readonly TimeSpan QuarterHour = TimeSpan.FromMinutes(15);
+
+    public DeviceAuthController(IDeviceAuthService deviceAuth, ILogger<DeviceAuthController> log,
+        ILoginThrottle throttle, AuthAuditLog audit, ICachedAppSettings settings)
     {
         _deviceAuth = deviceAuth;
         _log        = log;
+        _throttle   = throttle;
+        _audit      = audit;
+        _settings   = settings;
+    }
+
+    private IActionResult TooMany(TimeSpan retryAfter, string? message = null)
+    {
+        var seconds = (int)Math.Ceiling(retryAfter.TotalSeconds);
+        Response.Headers.RetryAfter = seconds.ToString();
+        return StatusCode(StatusCodes.Status429TooManyRequests,
+            ApiResponse<object>.Fail("TOO_MANY_ATTEMPTS", message ?? $"Too many requests. Try again in {seconds} seconds."));
     }
 
     // ── Device-side (no auth required) ────────────────────────────────────────
@@ -52,10 +80,20 @@ public class DeviceAuthController : ControllerBase
             HttpContext.Connection.RemoteIpAddress, Request.Headers["X-Forwarded-For"].ToString(),
             Request.Host, Request.Headers.UserAgent.ToString(), Request.ContentType, request?.DeviceName);
 
+        var address = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var allowed = _throttle.CheckAction("pair-initiate", address, InitiatesPerHour, Hour);
+        if (!allowed.Allowed)
+        {
+            _audit.DevicePairingThrottled(HttpContext, "initiate", allowed.RetryAfter);
+            return TooMany(allowed.RetryAfter);
+        }
+        _throttle.RecordAction("pair-initiate", address);
+
         try
         {
             var baseUrl = GetBaseUrl();
             var result  = await _deviceAuth.InitiateAsync(request?.DeviceName, baseUrl);
+            _audit.DevicePairing(HttpContext, "started", result.Code, request?.DeviceName);
 
             var dto = new InitiateDeviceAuthResponseDto(
                 result.Code,
@@ -70,6 +108,10 @@ public class DeviceAuthController : ControllerBase
                 result.Code, baseUrl, result.VerificationUrl);
 
             return Ok(ApiResponse<InitiateDeviceAuthResponseDto>.Ok(dto));
+        }
+        catch (TooManyPendingDeviceCodesException ex)
+        {
+            return TooMany(TimeSpan.FromMinutes(5), ex.Message);
         }
         catch (Exception ex)
         {
@@ -87,7 +129,17 @@ public class DeviceAuthController : ControllerBase
         _log.LogInformation("DeviceAuth.Poll: Code={Code} RemoteIp={RemoteIp} UserAgent={UserAgent}",
             code, HttpContext.Connection.RemoteIpAddress, Request.Headers.UserAgent.ToString());
 
+        var address = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var allowed = _throttle.CheckAction("pair-miss", address, MissesPer15Min, QuarterHour);
+        if (!allowed.Allowed)
+        {
+            _audit.DevicePairingThrottled(HttpContext, "poll", allowed.RetryAfter);
+            return TooMany(allowed.RetryAfter);
+        }
+
         var result = await _deviceAuth.PollAsync(code);
+        if (!result.Found) _throttle.RecordAction("pair-miss", address);
+        if (result.ApiKey is not null) _audit.DevicePairing(HttpContext, "key collected", code);
         var dto    = new PollDeviceAuthResponseDto(result.Status, result.ApiKey);
 
         _log.LogInformation("DeviceAuth.Poll: Code={Code} Status={Status}", code, result.Status);
@@ -103,9 +155,18 @@ public class DeviceAuthController : ControllerBase
         _log.LogInformation("DeviceAuth.GetQr: Code={Code} RemoteIp={RemoteIp}",
             code, HttpContext.Connection.RemoteIpAddress);
 
+        var address = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var allowed = _throttle.CheckAction("pair-miss", address, MissesPer15Min, QuarterHour);
+        if (!allowed.Allowed)
+        {
+            _audit.DevicePairingThrottled(HttpContext, "qr", allowed.RetryAfter);
+            return TooMany(allowed.RetryAfter);
+        }
+
         var url = await _deviceAuth.GetVerificationUrlAsync(code, GetBaseUrl());
         if (url is null)
         {
+            _throttle.RecordAction("pair-miss", address);
             _log.LogWarning("DeviceAuth.GetQr: Code={Code} not found", code);
             return NotFound();
         }
@@ -140,7 +201,7 @@ public class DeviceAuthController : ControllerBase
 
     /// <summary>Return info about the pending code for the approval page.</summary>
     [HttpGet("{code}")]
-    [Authorize]
+    [Authorize(Policy = AuthPolicies.SessionOnly)]   // approving a pairing mints an API key: a login is required, not a key
     public async Task<IActionResult> GetInfo(string code)
     {
         var info = await _deviceAuth.GetInfoAsync(code);
@@ -153,7 +214,7 @@ public class DeviceAuthController : ControllerBase
 
     /// <summary>Approve the device. Called when the user clicks "Allow".</summary>
     [HttpPost("{code}/approve")]
-    [Authorize]
+    [Authorize(Policy = AuthPolicies.SessionOnly)]   // approving a pairing mints an API key: a login is required, not a key
     public async Task<IActionResult> Approve(string code)
     {
         try
@@ -177,7 +238,7 @@ public class DeviceAuthController : ControllerBase
 
     /// <summary>Deny the device. Called when the user clicks "Deny".</summary>
     [HttpPost("{code}/deny")]
-    [Authorize]
+    [Authorize(Policy = AuthPolicies.SessionOnly)]   // approving a pairing mints an API key: a login is required, not a key
     public async Task<IActionResult> Deny(string code)
     {
         try

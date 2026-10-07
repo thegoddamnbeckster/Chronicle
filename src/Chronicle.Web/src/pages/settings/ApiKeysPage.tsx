@@ -3,6 +3,9 @@ import {
   listApiTokens,
   createApiToken,
   revokeApiToken,
+  listApiKeyScopes,
+  setApiTokenScope,
+  type ApiKeyScopeInfo,
   type ApiTokenDto,
   type CreateTokenResponse,
 } from '@/api/apiTokens'
@@ -24,6 +27,9 @@ export default function ApiKeysPage() {
   // Create form state
   const [name, setName] = useState('')
   const [expiresAt, setExpiresAt] = useState('')
+  const [scopes, setScopes] = useState<ApiKeyScopeInfo[]>([])
+  // Least privilege that fits the usual use (a Kodi box or scrobbler) is the default.
+  const [scope, setScope] = useState('device')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
@@ -33,7 +39,17 @@ export default function ApiKeysPage() {
 
   useEffect(() => {
     loadTokens()
+    listApiKeyScopes().then(setScopes).catch(() => { /* the selector just stays empty */ })
   }, [])
+
+  async function handleScopeChange(id: number, next: string) {
+    try {
+      await setApiTokenScope(id, next)
+      setTokens(prev => prev.map(t => (t.id === id ? { ...t, scope: next } : t)))
+    } catch {
+      alert('Could not change the access for that key.')
+    }
+  }
 
   async function loadTokens() {
     try {
@@ -53,7 +69,7 @@ export default function ApiKeysPage() {
     setCreateError('')
     setNewToken(null)
     try {
-      const result = await createApiToken(name.trim(), expiresAt || null)
+      const result = await createApiToken(name.trim(), expiresAt || null, scope)
       setNewToken(result)
       setName('')
       setExpiresAt('')
@@ -119,6 +135,13 @@ export default function ApiKeysPage() {
                 onChange={e => setExpiresAt(e.target.value)}
               />
             </div>
+            <div className={styles.formGroup}>
+              <label className={styles.label} htmlFor="key-scope">Access</label>
+              <select id="key-scope" className={styles.textInput} value={scope}
+                      onChange={e => setScope(e.target.value)}>
+                {scopes.map(s => <option key={s.scope} value={s.scope}>{s.scope}</option>)}
+              </select>
+            </div>
             <button
               type="submit"
               className={styles.createBtn}
@@ -127,6 +150,9 @@ export default function ApiKeysPage() {
               {creating ? 'Creating…' : 'Create Key'}
             </button>
           </div>
+          {scopes.find(s => s.scope === scope) && (
+            <p className={styles.hint}>{scopes.find(s => s.scope === scope)!.description}</p>
+          )}
           {createError && <p className={styles.errorMsg}>{createError}</p>}
         </form>
 
@@ -162,8 +188,18 @@ export default function ApiKeysPage() {
                     Created {formatDate(t.createdAt)}
                     {t.lastUsedAt ? ` · Last used ${formatDate(t.lastUsedAt)}` : ' · Never used'}
                     {t.expiresAt ? ` · Expires ${formatDate(t.expiresAt)}` : ''}
+                    {t.scope === 'full' ? ' · Full access - restrict it if a narrower scope fits' : ''}
                   </span>
                 </div>
+                <select
+                  aria-label={`Access for ${t.name}`}
+                  className={styles.textInput}
+                  value={t.scope}
+                  onChange={e => void handleScopeChange(t.id, e.target.value)}
+                  title={scopes.find(s => s.scope === t.scope)?.description}
+                >
+                  {scopes.map(s => <option key={s.scope} value={s.scope}>{s.scope}</option>)}
+                </select>
                 <button
                   className={styles.revokeBtn}
                   onClick={() => handleRevoke(t.id)}

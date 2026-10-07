@@ -18,10 +18,12 @@ public class ApiTokenService : IApiTokenService
 
     /// <inheritdoc/>
     public async Task<(ApiToken Token, string RawValue)> CreateTokenAsync(
-        int userId, string name, DateTime? expiresAt, CancellationToken ct = default)
+        int userId, string name, DateTime? expiresAt, CancellationToken ct = default, string scope = ApiKeyScopes.Full)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Token name must not be empty.", nameof(name));
+        if (!ApiKeyScopes.IsKnown(scope))
+            throw new ArgumentException($"Unknown API key scope '{scope}'.", nameof(scope));
 
         // Format: chr_live_ + 32 lowercase hex chars (16 cryptographically random bytes)
         var rawBytes = RandomNumberGenerator.GetBytes(16);
@@ -34,7 +36,8 @@ public class ApiTokenService : IApiTokenService
             Token = HashToken(rawToken),   // Only the SHA-256 hash is persisted
             CreatedAt = DateTime.UtcNow,
             ExpiresAt = expiresAt,
-            IsActive = true
+            IsActive = true,
+            Scope = scope,
         };
 
         _db.ApiTokens.Add(token);
@@ -93,6 +96,21 @@ public class ApiTokenService : IApiTokenService
             return false;
 
         token.IsActive = false;
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<bool> SetScopeAsync(int tokenId, int userId, string scope, CancellationToken ct = default)
+    {
+        if (!ApiKeyScopes.IsKnown(scope))
+            throw new ArgumentException($"Unknown API key scope '{scope}'.", nameof(scope));
+
+        var token = await _db.ApiTokens
+            .FirstOrDefaultAsync(t => t.Id == tokenId && t.UserId == userId && t.IsActive, ct);
+        if (token is null)
+            return false;
+
+        token.Scope = scope;
         await _db.SaveChangesAsync(ct);
         return true;
     }

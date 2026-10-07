@@ -23,7 +23,11 @@ Chronicle provides a comprehensive REST API for programmatic access to all featu
 
 ## Authentication
 
-### JWT Token Authentication (Web/Mobile)
+### Session Key Authentication (Web UI)
+
+A login returns a **session key** that Chronicle generates and keeps track of. The key is opaque
+(`chr_sess_...`), carries no data, and is checked against the server's in-memory session store on
+every request. See `docs/plans/2026-10-07-session-keys-design.md`.
 
 **Login:**
 ```http
@@ -36,43 +40,67 @@ Content-Type: application/json
 }
 ```
 
-**Response:**
+**Response** (the key is in `token` for compatibility with existing clients):
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "dGVzdCByZWZyZXNoIHRva2Vu...",
-  "expires_at": "2026-01-13T15:30:00Z",
-  "user": {
-    "id": 5,
-    "username": "jsmith",
-    "email": "jsmith@example.com",
-    "role": "admin"
+  "success": true,
+  "data": {
+    "token": "chr_sess_Zk3...",
+    "user": { "id": 5, "username": "jsmith", "email": "jsmith@example.com", "isAdmin": true }
   }
 }
 ```
 
-**Using Token:**
+**Using the key:**
 ```http
 GET /api/v1/users/me
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Authorization: Bearer chr_sess_Zk3...
 ```
 
-**Refresh Token:**
-```http
-POST /api/v1/auth/refresh
-Content-Type: application/json
+**Rules**
+- One key per login. Several logins (browsers/devices) are several independent sessions.
+- **Restarting the API ends every session.** The store is memory-only; everyone signs in again.
+- A session also ends on logout, when the user's password is changed or reset, when the account
+  is deactivated or deleted, after an idle period (`auth.session_idle_hours`, default 24) and
+  after a maximum lifetime (`auth.session_max_days`, default 30).
+- The user's role and active state are read on every request, so a demotion or deactivation
+  applies to the very next call.
+- Polling calls send `X-Chronicle-Background: 1`; they are authenticated but do not count as
+  activity, so an abandoned tab cannot keep its session alive.
+- Every sign-in attempt and every rejected key is written to the log with the caller's address.
 
-{
-  "refresh_token": "dGVzdCByZWZyZXNoIHRva2Vu..."
-}
-```
+**Session endpoints** (browser session required; an API key is refused)
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/auth/logout` | End the calling session |
+| POST | `/api/v1/auth/logout-all` | End all of the caller's sessions |
+| GET | `/api/v1/auth/sessions` | List the caller's sessions (`isCurrent` marks this one) |
+| DELETE | `/api/v1/auth/sessions/{id}` | End one of the caller's sessions (404 for anyone else's) |
+| GET | `/api/v1/users/{id}/sessions` | Admin: list a user's sessions |
+| DELETE | `/api/v1/users/{id}/sessions` | Admin: end all of a user's sessions |
+
+**Errors you may see on sign-in:** `429 TOO_MANY_ATTEMPTS` (with `Retry-After`) after repeated
+failures, or too many registrations from one address. See `docs/SECURITY.md` for the limits.
 
 ### API Key Authentication (Scrobblers/Scripts)
+
+Keys have a `scope` (`full`, `device`, `bridge`); see `docs/SECURITY.md`. Key management
+(`/api/v1/tokens*`) and device-pairing approval need a browser login, not a key.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/tokens` | List your keys (each with its `scope`) |
+| POST | `/api/v1/tokens` | Create a key: `{ name, expiresAt?, scope? }` (scope defaults to `full`) |
+| GET | `/api/v1/tokens/scopes` | The scopes available, with descriptions |
+| PUT | `/api/v1/tokens/{id}/scope` | Change a key's scope |
+| DELETE | `/api/v1/tokens/{id}` | Revoke a key |
+
 
 **Create API Key:**
 ```http
 POST /api/v1/auth/api-keys
-Authorization: Bearer {jwt_token}
+Authorization: Bearer {session_key}
 Content-Type: application/json
 
 {
@@ -327,12 +355,12 @@ any number of each kind; at most one per kind can be `isPrimary`.
 - **Self-destruction is blocked.** An admin cannot delete or deactivate their own account
   (`400 CANNOT_DELETE_SELF` / `CANNOT_DEACTIVATE_SELF`), nor reset their own password without
   the current one (`400 USE_SELF_ENDPOINT`).
-- **Deactivating or deleting cuts off live sessions immediately.** Tokens are stateless and
-  live 24 hours, so a signature check alone would leave a removed account working for up to a
-  day. JWT validation consults an in-memory block list (no per-request database hit), and the
-  `X-API-Key` handler refuses keys belonging to a deactivated account. Reactivating restores
-  access at once.
-- **Role changes take effect on next login** — the role lives in the JWT.
+- **Deactivating or deleting ends the user's sessions immediately and for good.** Their session
+  keys are revoked, and the `X-API-Key` handler refuses keys belonging to a deactivated account.
+  Reactivating restores the account, not the old sessions: the user signs in again.
+- **Role changes take effect on the next request** — sessions read the role live; no re-login.
+- **A changed or reset password ends the user's other sessions** (a self-service change keeps the
+  session that made it).
 - **Deleting a user never touches shared media.** `media_items` has no owner column. The
   account's own rows (library, interaction events, API tokens, lists, contacts) go with it;
   `media_item_merges.merged_by_user_id` is nulled rather than left dangling. Prefer

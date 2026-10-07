@@ -11,6 +11,17 @@ export interface User {
   showAllCredits: boolean
 }
 
+/** A signed-in browser session. The key itself is never sent back to the client. */
+export interface SessionInfo {
+  id: string
+  createdAt: string
+  lastSeenAt: string
+  expiresAt: string
+  userAgent: string | null
+  remoteIp: string | null
+  isCurrent: boolean
+}
+
 export interface AuthResponse {
   token: string
   user: User

@@ -47,10 +47,10 @@ RUN addgroup -S chronicle && adduser -S chronicle -G chronicle
 # Everything this container needs to survive being recreated (an image update, not just a
 # restart) lives under bind-mounted /app subdirectories -- see docker-compose.yml's volumes.
 # Without a volume, /app/keys (Data Protection, which encrypts every plugin's stored
-# credentials, AND the auto-generated JWT signing secret Program.cs persists inside it) and
-# /app/data (the SQLite database, when not overridden to point at PostgreSQL) would silently
-# reset on every `docker compose up` after a rebuild -- logging every user out, breaking every
-# configured plugin's saved settings, and losing the entire library, all at once.
+# credentials) and /app/data (the SQLite database, when not overridden to point at PostgreSQL)
+# would silently reset on every `docker compose up` after a rebuild -- breaking every
+# configured plugin's saved settings and losing the entire library, all at once. (Browser
+# sessions are deliberately NOT persisted: a container restart signs everyone out.)
 RUN mkdir -p /app/plugins /app/logs /app/keys /app/data \
     && chown -R chronicle:chronicle /app
 

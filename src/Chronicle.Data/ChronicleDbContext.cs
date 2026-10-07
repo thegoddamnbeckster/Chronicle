@@ -314,6 +314,7 @@ namespace Chronicle.Data
                 entity.HasIndex(e => e.UserId);
                 entity.Property(e => e.Token).IsRequired();
                 entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Scope).IsRequired().HasMaxLength(20).HasDefaultValue("full");
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 entity.HasOne(e => e.User)

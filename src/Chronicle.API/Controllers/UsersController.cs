@@ -1,8 +1,10 @@
 using System.Security.Claims;
+using Chronicle.API.Authentication;
 using Chronicle.API.DTOs;
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Services;
+using Chronicle.Services.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -14,10 +16,14 @@ namespace Chronicle.API.Controllers
     public class UsersController : ControllerBase
     {
         private readonly IUserService _userService;
+        private readonly ISessionStore _sessions;
+        private readonly AuthAuditLog _audit;
 
-        public UsersController(IUserService userService)
+        public UsersController(IUserService userService, ISessionStore sessions, AuthAuditLog audit)
         {
             _userService = userService;
+            _sessions = sessions;
+            _audit = audit;
         }
 
         // ── Self-service ──────────────────────────────────────────────────────
@@ -71,6 +77,14 @@ namespace Chronicle.API.Controllers
                 return BadRequest(ApiResponse<object>.Fail("INVALID_CREDENTIALS", "Current password is incorrect."));
 
             await _userService.ChangePasswordAsync(user.Id, req.NewPassword, ct);
+
+            // A changed password must not leave older sessions (a borrowed browser, a stolen
+            // key) signed in. The caller's own session stays so they are not logged out of the
+            // page they just used.
+            var current = Guid.TryParse(User.FindFirstValue(SessionAuthenticationHandler.SessionIdClaimType), out var g) ? g : (Guid?)null;
+            var ended = _sessions.RevokeAllForUser(user.Id, current);
+            _audit.SessionsRevoked(HttpContext, CurrentUserId, user.Id, ended, "password changed");
+
             return Ok(ApiResponse<object>.Ok(new { changed = true }));
         }
 
@@ -200,6 +214,8 @@ namespace Chronicle.API.Controllers
             try
             {
                 await _userService.ChangePasswordAsync(id, req.NewPassword, ct);
+                var ended = _sessions.RevokeAllForUser(id);
+                _audit.SessionsRevoked(HttpContext, CurrentUserId, id, ended, "password reset by admin");
                 return Ok(ApiResponse<object>.Ok(new { changed = true }));
             }
             catch (UserNotFoundException ex)
@@ -240,6 +256,11 @@ namespace Chronicle.API.Controllers
             try
             {
                 var user = await _userService.SetActiveAsync(id, req.IsActive, ct);
+                if (!req.IsActive)
+                {
+                    var ended = _sessions.RevokeAllForUser(id);
+                    _audit.SessionsRevoked(HttpContext, CurrentUserId, id, ended, "account deactivated");
+                }
                 return Ok(ApiResponse<UserAccountDto>.Ok(UserAccountDto.From(user)));
             }
             catch (UserNotFoundException ex)
@@ -267,6 +288,8 @@ namespace Chronicle.API.Controllers
             try
             {
                 await _userService.DeleteUserAsync(id, ct);
+                var ended = _sessions.RevokeAllForUser(id);
+                _audit.SessionsRevoked(HttpContext, CurrentUserId, id, ended, "account deleted");
                 return Ok(ApiResponse<object>.Ok(new { deleted = true }));
             }
             catch (UserNotFoundException ex)
@@ -277,6 +300,30 @@ namespace Chronicle.API.Controllers
             {
                 return Conflict(ApiResponse<object>.Fail("LAST_ADMIN", ex.Message));
             }
+        }
+
+        // ── Admin: a user's browser sessions ──────────────────────────────────
+
+        /// <summary>A user's active sessions. Session-scheme only, like the self routes.</summary>
+        [HttpGet("{id:int}/sessions")]
+        [Authorize(Policy = AuthPolicies.SessionAdmin)]
+        public IActionResult ListUserSessions(int id)
+        {
+            var list = _sessions.ListForUser(id)
+                .Select(s => new SessionDto(s.SessionId, s.CreatedAt, s.LastSeenAt, s.AbsoluteExpiresAt,
+                    s.UserAgent, s.RemoteIp, false))
+                .ToList();
+            return Ok(ApiResponse<List<SessionDto>>.Ok(list));
+        }
+
+        /// <summary>Ends all of a user's sessions (including the admin's own, if it is their own id).</summary>
+        [HttpDelete("{id:int}/sessions")]
+        [Authorize(Policy = AuthPolicies.SessionAdmin)]
+        public IActionResult RevokeUserSessions(int id)
+        {
+            var ended = _sessions.RevokeAllForUser(id);
+            _audit.SessionsRevoked(HttpContext, CurrentUserId, id, ended, "ended by admin");
+            return Ok(ApiResponse<object>.Ok(new { revoked = ended }));
         }
 
         // ── Admin-on-behalf contacts ──────────────────────────────────────────

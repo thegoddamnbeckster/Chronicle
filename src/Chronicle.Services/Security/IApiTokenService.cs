@@ -9,7 +9,7 @@ public interface IApiTokenService
     /// Returns the persisted token (with its database Id) and the one-time-visible raw value.
     /// The raw value is NEVER stored — callers must show it to the user immediately.
     /// </summary>
-    Task<(ApiToken Token, string RawValue)> CreateTokenAsync(int userId, string name, DateTime? expiresAt, CancellationToken ct = default);
+    Task<(ApiToken Token, string RawValue)> CreateTokenAsync(int userId, string name, DateTime? expiresAt, CancellationToken ct = default, string scope = ApiKeyScopes.Full);
 
     /// <summary>
     /// Validates a raw API key supplied in the X-API-Key header.
@@ -27,4 +27,8 @@ public interface IApiTokenService
     /// Returns <c>false</c> if the token was not found or already revoked.
     /// </summary>
     Task<bool> RevokeTokenAsync(int tokenId, int userId, CancellationToken ct = default);
+
+    /// <summary>Changes what an existing key may do. Returns false if it is not the user's active key.
+    /// Throws ArgumentException for an unknown scope.</summary>
+    Task<bool> SetScopeAsync(int tokenId, int userId, string scope, CancellationToken ct = default);
 }

@@ -116,8 +116,8 @@ delete or your plugin credentials stop decrypting) -- lives next to Chronicle.AP
 Back up the whole folder, or at minimum chronicle.db and keys\, regularly. Nothing is
 written anywhere else on the machine.
 
-The JWT signing secret is generated automatically on first run and stored in keys\ --
-there is nothing to configure for this.
+Browser sessions are server-side and held in memory: restarting Chronicle signs everyone
+out, and there is no signing secret to configure.
 
 API
 ---

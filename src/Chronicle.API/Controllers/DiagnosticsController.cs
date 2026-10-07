@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Chronicle.API.DTOs;
 using System.Diagnostics;
@@ -9,6 +10,7 @@ namespace Chronicle.API.Controllers;
 
 [ApiController]
 [Route("api/v1/[controller]")]
+[Authorize(Roles = "Admin")] // server paths, DB location, git info: registration is open, so "logged in" is not enough
 public class DiagnosticsController : ControllerBase
 {
     private readonly IConfiguration _config;

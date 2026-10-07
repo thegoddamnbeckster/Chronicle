@@ -14,6 +14,10 @@ namespace Chronicle.Core.Models
         public DateTime? ExpiresAt { get; set; }
         public bool IsActive { get; set; } = true;
 
+        /// <summary>What this key may do: "full" (everything its owner can), "device" or "bridge".
+        /// See ApiKeyScopes. Keys that existed before scopes were introduced stay "full".</summary>
+        public string Scope { get; set; } = "full";
+
         // Navigation
         public User? User { get; set; }
     }

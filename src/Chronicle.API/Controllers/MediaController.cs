@@ -121,7 +121,7 @@ namespace Chronicle.API.Controllers
         /// is validated to exist on disk before the bytes are sent.
         /// </summary>
         [HttpGet("{id:int}/local-poster")]
-        [AllowAnonymous] // Poster images are not sensitive
+        [Authorize(Policy = Authentication.AuthPolicies.ImageRead)] // <img> tag: session header or HttpOnly session cookie
         public async Task<IActionResult> GetLocalPoster(int id, CancellationToken ct)
         {
             var item = await _context.MediaItems.FindAsync([id], ct);
@@ -703,7 +703,6 @@ namespace Chronicle.API.Controllers
 
         /// <summary>Polls the state of the current (or most recent) bulk override reset job.</summary>
         [HttpGet("overrides/reset-progress")]
-        [AllowAnonymous]
         public IActionResult GetOverrideResetProgress()
         {
             var s = _overrideResetProgress.GetSnapshot();
@@ -1910,31 +1909,30 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
-        /// Server-side image proxy — fetches an external image URL and streams it back,
-        /// bypassing browser CORS restrictions on third-party CDNs (Trakt, Fanart.tv, etc.).
+        /// Server-side image proxy -- fetches an external image URL and relays it, bypassing
+        /// browser CORS restrictions on third-party CDNs (Trakt, Fanart.tv, etc.). Requires a
+        /// session (the web client fetches it with its token and shows a blob URL), and the
+        /// fetch itself refuses private/loopback/link-local destinations, non-image content,
+        /// and anything over 10 MB -- see <see cref="Helpers.SafeImageFetcher"/>.
         /// </summary>
         [HttpGet("poster-proxy")]
-        [AllowAnonymous]
         public async Task<IActionResult> PosterProxy([FromQuery] string url, CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                || (uri.Scheme != "https" && uri.Scheme != "http"))
-                return BadRequest("Invalid URL.");
-
-            using var http = new System.Net.Http.HttpClient();
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("Chronicle/1.0");
-            http.Timeout = TimeSpan.FromSeconds(10);
-            try
+            var result = await Helpers.SafeImageFetcher.Default.FetchAsync(url, ct);
+            switch (result.Status)
             {
-                var resp = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
-                if (!resp.IsSuccessStatusCode) return NotFound();
-                var contentType = resp.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
-                var stream = await resp.Content.ReadAsStreamAsync(ct);
-                return File(stream, contentType);
-            }
-            catch
-            {
-                return NotFound();
+                case Helpers.SafeImageFetcher.FetchStatus.Ok:
+                    Response.Headers["X-Content-Type-Options"] = "nosniff";
+                    Response.Headers["Cache-Control"] = "private, max-age=3600";
+                    return File(result.Bytes!, result.ContentType!);
+                case Helpers.SafeImageFetcher.FetchStatus.BadRequest:
+                    return BadRequest("Invalid URL.");
+                case Helpers.SafeImageFetcher.FetchStatus.TooLarge:
+                    return StatusCode(StatusCodes.Status413PayloadTooLarge);
+                case Helpers.SafeImageFetcher.FetchStatus.UnsupportedType:
+                    return StatusCode(StatusCodes.Status415UnsupportedMediaType);
+                default:
+                    return NotFound();
             }
         }
     }

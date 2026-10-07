@@ -35,6 +35,12 @@ public class PluginsController : ControllerBase
     /// <summary>Maximum permitted favicon file size (100 KB).</summary>
     private const int MaxIconBytes = 100 * 1024;
 
+    /// <summary>Icon fetch rules: https only, 100 KB, and SVG allowed in addition to the raster set
+    /// (it is rasterised to PNG below, so a browser never receives markup).</summary>
+    private static readonly Helpers.SafeImageFetcher.FetchOptions IconFetchOptions = new(
+        MaxIconBytes, HttpsOnly: true,
+        ExtraContentTypes: ["image/svg+xml", "image/x-icon", "image/vnd.microsoft.icon"]);
+
     /// <summary>Maximum edge length (px) when rasterising an SVG favicon.</summary>
     private const int SvgRenderSize = 64;
 
@@ -169,7 +175,7 @@ public class PluginsController : ControllerBase
     /// </summary>
     // Favicons are not sensitive — allow unauthenticated access so <img> tags work.
     [HttpGet("{id:int}/icon")]
-    [AllowAnonymous]
+    [Authorize(Policy = Chronicle.API.Authentication.AuthPolicies.ImageRead)] // <img> tag: session header or session cookie
     public async Task<IActionResult> GetPluginIcon(int id, CancellationToken ct)
     {
         // Resolve iconUrl from the in-memory registry (not user-supplied input)
@@ -183,7 +189,7 @@ public class PluginsController : ControllerBase
         if (iconUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
             return ServeDataUri(id, iconUrl);
 
-        // Require HTTPS to prevent loading resources from plain-HTTP sites
+        // https only (the fetcher also enforces this, including across redirects)
         if (!Uri.TryCreate(iconUrl, UriKind.Absolute, out var uri) ||
             !uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
         {
@@ -196,56 +202,27 @@ public class PluginsController : ControllerBase
         if (_cache.TryGetValue(cacheKey, out (byte[] Data, string ContentType) cached))
             return File(cached.Data, cached.ContentType);
 
-        // Fetch from external site using the dedicated named HttpClient
+        // Fetch through the shared filtered fetcher: it refuses private, loopback and cloud-metadata
+        // destinations (also on redirects and after DNS), non-image content and oversize bodies. The
+        // URL comes from a plugin manifest, which is vetted, but a compromised or careless manifest
+        // must not be able to aim the server at its own network.
         byte[] rawBytes;
         string rawContentType;
-        try
+        var fetched = await Helpers.SafeImageFetcher.Default.FetchAsync(iconUrl, ct, IconFetchOptions);
+        switch (fetched.Status)
         {
-            var http = _httpClientFactory.CreateClient("favicon");
-            using var response = await http.GetAsync(iconUrl, ct);
-
-            if (!response.IsSuccessStatusCode)
-                return NotFound();
-
-            rawContentType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant()
-                             ?? string.Empty;
-
-            // Accept SVG and all standard raster formats
-            var isSvg    = rawContentType.StartsWith("image/svg", StringComparison.OrdinalIgnoreCase);
-            var isRaster = RasterContentTypePrefixes.Any(p =>
-                rawContentType.StartsWith(p, StringComparison.OrdinalIgnoreCase));
-
-            if (!isSvg && !isRaster)
-            {
+            case Helpers.SafeImageFetcher.FetchStatus.Ok:
+                rawBytes = fetched.Bytes!;
+                rawContentType = fetched.ContentType!;
+                break;
+            case Helpers.SafeImageFetcher.FetchStatus.UnsupportedType:
                 return StatusCode(415, ApiResponse<object>.Fail(
-                    "INVALID_ICON_TYPE",
-                    $"Remote server returned unsupported content type '{rawContentType}'."));
-            }
-
-            // Read body — limit to MaxIconBytes to prevent oversized payloads
-            using var stream = await response.Content.ReadAsStreamAsync(ct);
-            var buffer    = new byte[MaxIconBytes + 1];
-            var totalRead = 0;
-
-            int read;
-            while ((read = await stream.ReadAsync(buffer.AsMemory(totalRead), ct)) > 0)
-            {
-                totalRead += read;
-                if (totalRead > MaxIconBytes)
-                    return StatusCode(502, ApiResponse<object>.Fail(
-                        "ICON_TOO_LARGE",
-                        $"Plugin icon exceeds the {MaxIconBytes / 1024} KB limit."));
-            }
-
-            rawBytes = buffer[..totalRead];
-        }
-        catch (TaskCanceledException)
-        {
-            return StatusCode(504);
-        }
-        catch (HttpRequestException)
-        {
-            return StatusCode(502);
+                    "INVALID_ICON_TYPE", "Remote server returned an unsupported content type for the plugin icon."));
+            case Helpers.SafeImageFetcher.FetchStatus.TooLarge:
+                return StatusCode(502, ApiResponse<object>.Fail(
+                    "ICON_TOO_LARGE", $"Plugin icon exceeds the {MaxIconBytes / 1024} KB limit."));
+            default:
+                return NotFound();
         }
 
         // If SVG: rasterise to PNG so the browser never receives executable markup.

@@ -11,10 +11,8 @@ using Chronicle.Services.Plugins;
 using Chronicle.Services.Reports;
 using Chronicle.Services.Security;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Serilog;
 using Serilog.Events;
@@ -140,7 +138,6 @@ builder.Services.AddDbContext<ChronicleDbContext>(options =>
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
-builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IApiTokenService, ApiTokenService>();
 builder.Services.AddScoped<IUserService, UserService>();
 // Singleton so the scoped UserService (writer) and the JWT validation event (reader) share
@@ -189,14 +186,8 @@ builder.Services.AddScoped<IKodiDeviceService, KodiDeviceService>();
 // ── In-memory cache (used for plugin favicon proxy caching) ───────────────────
 builder.Services.AddMemoryCache();
 
-// ── Named HttpClient for fetching external favicons ───────────────────────────
-// Separate named client so we can give it a short timeout and safe headers.
-builder.Services.AddHttpClient("favicon", c =>
-{
-    c.Timeout = TimeSpan.FromSeconds(10);
-    c.DefaultRequestHeaders.UserAgent.ParseAdd(
-        "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
-});
+// (Plugin icons are fetched by Helpers/SafeImageFetcher, which refuses private/loopback
+// destinations; there is deliberately no general-purpose "favicon" HttpClient any more.)
 
 // ── Named HttpClient for validating metadata-provider image URLs before persisting them ───────
 // Short timeout: this runs inline on every enrichment, once per URL field (see
@@ -318,88 +309,59 @@ builder.Services.AddSingleton<ITaskSchedulerService>(
 builder.Services.AddHostedService(
     sp => sp.GetRequiredService<TaskSchedulerService>());
 
-// ── Authentication — JWT Bearer + API Key ─────────────────────────────────────
-// Both schemes are registered. The default authorization policy (below) accepts
-// either, so [Authorize] on any controller works with both JWT and X-API-Key.
-var jwtSecret = builder.Configuration["Security:JwtSecret"];
-if (string.IsNullOrWhiteSpace(jwtSecret))
-{
-    // No secret configured -- auto-generate one on first run and persist it, rather than
-    // require every self-hoster to remember to override a placeholder (the checked-in
-    // appsettings.Production.json used to ship a literal "CHANGE_THIS..." string that would
-    // silently work, unchanged, on every install that skipped that step -- every such
-    // deployment sharing one public, guessable signing key). Persisted inside keysDir (declared
-    // above for Data Protection) rather than loose at ContentRootPath -- one already-protected,
-    // already-backed-up "secrets" directory instead of two separate persistence paths a Docker
-    // volume or a backup script would each need to know about individually. Same reasoning as
-    // that directory's own placement: NOT AppContext.BaseDirectory (wiped by `dotnet build` in
-    // dev) and NOT the process's working directory (a Windows Service's CWD defaults to
-    // System32, not the install folder). A regenerated secret on every boot would silently log
-    // out every user and invalidate every API key each restart, so this reads back what it
-    // wrote before ever generating a second one.
-    Directory.CreateDirectory(keysDir.FullName);
-    var jwtSecretPath = Path.Combine(keysDir.FullName, "jwt.secret");
-    if (File.Exists(jwtSecretPath))
-    {
-        jwtSecret = File.ReadAllText(jwtSecretPath).Trim();
-    }
-    else
-    {
-        jwtSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
-        File.WriteAllText(jwtSecretPath, jwtSecret);
-        Log.Warning(
-            "Security:JwtSecret was not configured — generated and persisted a new random secret " +
-            "to {JwtSecretPath}. Set Security:JwtSecret explicitly (appsettings or an environment " +
-            "variable) if you need a specific value, e.g. to share it across multiple instances.",
-            jwtSecretPath);
-    }
-}
+// ── Authentication — session key + API key ────────────────────────────────────
+// The web UI signs in with a server-issued session key (Authorization: Bearer chr_sess_...),
+// checked against an in-memory store on every request. The store is deliberately not
+// persisted: restarting the API ends every session. Scrobblers/Kodi/bridges use X-API-Key.
+// The default authorization policy (below) accepts either, so [Authorize] on any controller
+// works with both. Design: docs/plans/2026-10-07-session-keys-design.md
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<ICachedAppSettings, CachedAppSettings>();
+builder.Services.AddSingleton<ISessionPolicyProvider, SessionPolicyProvider>();
+builder.Services.AddSingleton<ILoginThrottle, LoginThrottle>();
+builder.Services.AddSingleton(_ => AuthAuditLog.CreateDefault());
+builder.Services.AddSingleton<ISessionStore, SessionStore>();
+builder.Services.AddHostedService<SessionSweepService>();
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
-            ValidateIssuer = true,
-            ValidIssuer = "Chronicle",
-            ValidateAudience = true,
-            ValidAudience = "Chronicle",
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero
-        };
-        options.Events = new JwtBearerEvents
-        {
-            // Tokens are stateless and live 24 h, so a signature check alone would let a
-            // deactivated or deleted account keep working until its token expired. The cache
-            // is in-memory, so this costs no database round trip per request.
-            OnTokenValidated = context =>
-            {
-                var idClaim = context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                if (int.TryParse(idClaim, out var uid) &&
-                    context.HttpContext.RequestServices
-                           .GetRequiredService<IDeactivatedUserCache>().IsBlocked(uid))
-                {
-                    context.Fail("Account is deactivated or no longer exists.");
-                }
-                return Task.CompletedTask;
-            }
-        };
-    })
+builder.Services.AddAuthentication(SessionAuthenticationHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, SessionAuthenticationHandler>(
+        SessionAuthenticationHandler.SchemeName, _ => { })
+    .AddScheme<AuthenticationSchemeOptions, SessionCookieAuthenticationHandler>(
+        SessionCookieAuthenticationHandler.SchemeName, _ => { })
     .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
         ApiKeyAuthenticationHandler.SchemeName, _ => { });
 
 // Default policy accepts either Bearer JWT or X-API-Key authentication.
 builder.Services.AddAuthorization(options =>
 {
+    // Routes only a real browser login may use (session management). Named policies, because an
+    // [Authorize(AuthenticationSchemes = ...)] attribute is MERGED with the default policy and
+    // would still accept an API key.
+    options.AddPolicy(AuthPolicies.SessionOnly, p => p
+        .AddAuthenticationSchemes(SessionAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser());
+    options.AddPolicy(AuthPolicies.SessionAdmin, p => p
+        .AddAuthenticationSchemes(SessionAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser()
+        .RequireRole("Admin"));
+
+    // Image routes an <img> tag loads. A tag cannot send an Authorization header, so these also
+    // accept the session cookie (see SessionCookieAuthenticationHandler). Read-only GET routes only.
+    options.AddPolicy(AuthPolicies.ImageRead, p => p
+        .AddAuthenticationSchemes(
+            SessionAuthenticationHandler.SchemeName,
+            SessionCookieAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser());
+
     options.DefaultPolicy = new AuthorizationPolicyBuilder()
         .AddAuthenticationSchemes(
-            JwtBearerDefaults.AuthenticationScheme,
+            SessionAuthenticationHandler.SchemeName,
             ApiKeyAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
+        .AddRequirements(new ApiKeyScopeRequirement())   // a scoped API key stays inside its scope
         .Build();
 });
+builder.Services.AddSingleton<IAuthorizationHandler, ApiKeyScopeHandler>();
 
 // ── Controllers + Swagger ─────────────────────────────────────────────────────
 builder.Services.AddControllers()
@@ -409,10 +371,10 @@ builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Chronicle API", Version = "v1" });
 
-    // JWT Bearer
+    // Session key (web UI)
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
+        Description = "Session key from POST /api/v1/auth/login, sent as the Bearer scheme. Example: \"Bearer chr_sess_...\"",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
@@ -548,6 +510,32 @@ var forwardedHeadersOptions = new ForwardedHeadersOptions
 };
 forwardedHeadersOptions.KnownNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
+
+// Security:TrustedProxies - comma/semicolon separated addresses or CIDR ranges of the reverse
+// proxy in front of Chronicle (e.g. "172.18.0.0/16" for a Docker network). When set, only those
+// sources may supply X-Forwarded-For/Proto/Host, so nobody else can claim an address (which the
+// audit log and the login throttle both rely on). When unset the old behaviour is kept - anyone
+// may - because the right range depends on how Chronicle is deployed; a warning says so.
+var trustedProxies = (builder.Configuration["Security:TrustedProxies"] ?? string.Empty)
+    .Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+if (trustedProxies.Length > 0)
+{
+    foreach (var entry in trustedProxies)
+    {
+        if (entry.Contains('/') && System.Net.IPNetwork.TryParse(entry, out var network))
+            forwardedHeadersOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(network.BaseAddress, network.PrefixLength));
+        else if (System.Net.IPAddress.TryParse(entry, out var proxy))
+            forwardedHeadersOptions.KnownProxies.Add(proxy);
+        else
+            Log.Warning("Security:TrustedProxies entry '{Entry}' is not an address or CIDR range and was ignored", entry);
+    }
+}
+else
+{
+    Log.Warning("Security:TrustedProxies is not set: X-Forwarded-For is trusted from ANY client, so a client can " +
+                "claim any address in the audit log and dodge per-address login throttling. Set it to your reverse " +
+                "proxy's address or network (for example 172.18.0.0/16 for Docker).");
+}
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
 // Catch TaskCanceledException / OperationCanceledException caused by the client

@@ -2,138 +2,111 @@
 
 Items collected from dev sessions. Roughly priority-ordered within each section.
 
+**Last audited against the code: 2026-10-07.** Designs for the unbuilt items: `docs/plans/2026-10-07-backlog-designs.md`. Done items from the old list were moved to "Completed" at the bottom. Items tagged *(unverified)* were not found in a quick code search, but may exist under a name I didn't look for.
+
 ---
 
 ## File Scanner
 
-- **Browse button** — Every path input in the UI needs a folder-picker button. No exceptions. No manual typing of paths.
-- **Persistent scan folders** — Scan paths saved to DB/settings. Pre-populated on the scan page. Scanning re-runs automatically on a background schedule (configurable interval).
-- **Media Type** - It should not matter what kind of media is in a particular folder (although that is convenient).  The FileScanner plugin should determine the media type of each file.  Speed does not the most important factor as this should primarily be a background process.
-- **Background scanning** — Scans run silently in the background and notify the user when new items are found.
-- **Scan progress feedback** — Show current folder being scanned in real time, not a frozen spinner.
-- **Music support** — FileScanner plugin: add audio extensions (.mp3, .flac, .m4a, .ogg, .wav, .aac), music filename parsing (Artist - Album - Track, etc.), register "Music" as a supported media type.
-- **Other file support** - FileScanner plugin: allow user to add their own filetypes.
-- **Flexible pattern matching** — Handle messy/unorganized folder structures (e.g. `E:\Video Downloads\MCM Download Parser`). Smarter fallback when standard patterns fail.
-- **Scan results: accept items** — From the scan results page, user can approve/reject individual detected items before they're imported.
-- **Scan results: show media type** — ✓ Implemented: `mediaTypeHint` badge shown in Preview table (Type column) and Review list rows.
-- **Scan results: type mismatch correction** — If the movie scanner detects something that looks like TV (S01E01, etc.), automatically re-classify and match against the correct type.
-- **Confidence score info** — ✓ Implemented: ⓘ tooltip on the Confidence column header in the Preview table shows the full scoring formula on hover.
-- **Related-files assumption** — A checkbox option on the scan/review page: "Treat all files in a matched item's folder as related to that item." When checked, any file that shares a folder with a confidently-matched media item is bundled with it rather than imported as a separate top-level item. Example: `D:\Video\TV\Dark Matter (2024)\theme.mp3` — the scanner matches `Dark Matter` from the folder name; `theme.mp3` in the same folder is the show's theme music and belongs to Dark Matter, not a standalone Music entry. Without this option the scanner surfaces `theme` as a 50%-confidence Music item, which is wrong. The bundled files are stored as related/attached files on the parent item (accessible from its detail page) and are excluded from the main scan results table so the user only sees and approves the primary matched items. Applies equally to: TV show folders (theme, artwork, extras), movie folders (subtitles, featurettes), music album folders (booklet scans, cue sheets), etc.
+- **Media type per file** — FileScanner should determine the media type of each file itself; it shouldn't matter what kind of media a folder holds. Speed is secondary (background process). Today the scan request still takes a `MediaTypeId` (`FileScanService.cs`), and the Audiobooks and hierarchical paths branch on it.
+- **Scan results: type mismatch correction** — If the movie scanner detects something that looks like TV (S01E01, etc.), re-classify and match against the correct type. *(unverified)*
+- **Related-files assumption** — Checkbox on the scan/review page: "Treat all files in a matched item's folder as related to that item." Files sharing a folder with a confidently matched item (e.g. `Dark Matter (2024)\theme.mp3`) are bundled onto it as related/attached files (shown on its detail page) instead of surfacing as separate low-confidence items. Applies to TV (theme, artwork, extras), movies (subtitles, featurettes) and albums (booklets, cue sheets). Partial groundwork: `ScanGroupingService` already drops sidecar extensions and supplemental folders from grouping, but nothing attaches them to the parent and there is no toggle.
+- **Notify when background scans find new items** — `ScheduledScanService` runs scans on a schedule; there is no user-facing notification when it finds something new. *(unverified)*
+- **Flexible pattern matching** — Handle messy/unorganised folder structures (e.g. `E:\Video Downloads\MCM Download Parser`). Smarter fallback when standard patterns fail.
+- **User-defined file types** — FileScanner plugin: let the user add their own filetypes.
+- **Music filename parsing** — Audio extensions are supported (`FileNameParser.cs`); confirm Artist - Album - Track filename parsing is also covered, or whether it relies only on embedded tags (`EmbeddedTagReader.cs`).
 
 ---
 
-## Library
+## Library / Media Detail
 
-- **Indent sub-items in tree** — ✓ Implemented: sidebar nav children (under Media/Settings groups) are indented 12px relative to group headers and top-level links.
-- **Content** - as media is added ot the library, the library should display it dynamically.
-- **Live poster updates** — When the background metadata refresh process updates a library item (new poster, metadata), the main library view should reflect the change without a full page reload. Cards should show the updated poster as soon as it becomes available.
-- **Metadata** - Metadata can be downloaded by any metadata plugin, not just TMDB.  Each set of metadata per media item shall be shown in it's own box labelled for that metadata provider (TMDB, Trakt, SIMKL, TinyMediaManager, LastFM, etc).  Each box will be labelled for the metadata provider's name and have the metadata provider's icon.  
-
----
-
-## Lists
-
-- **Editable list name** — ✓ Already implemented (click title to rename inline)
-
----
-
-## Substack Plugin
-
-- Pull all subscribed podcasts and their episodes.
-- Track which episodes have been listened to and at what progress.
-- Locate a podcast from within Chronicle.
-- Scrobble source: if a podcast is played through the Substack website, report it to Chronicle as listened.
-
----
-
-## User Management
-
-- Settings section for managing users: add new users, set/reset passwords, associate API keys to users.
-- Admin-only. First registered user is already admin.
-- May specify user type (readonly, admin, metadata editor, etc)
-- **Password reset** — Users must be able to regain access when they forget or lose their password. Preferred path: email-based reset (user requests a reset link, time-limited token sent to their registered address, link opens a set-new-password page). Fallback for installs with no SMTP configured: admin can trigger a one-time reset token from the User Management settings page that the user can enter on the login screen. Either way the token must be single-use and expire (e.g. 1 hour). SMTP settings (host, port, from address, credentials) should be configurable under Settings → Email.
-
----
-
-## Media Detail
-
-- **All file paths** — Display every file path associated with a media item in the metadata page, both internal (Chronicle's data store) and external (original path on disk). If multiple files exist (e.g. different cuts, multiple episodes), list them all.
-- **Image thumbnails** — ✓ Implemented: TMDB poster/backdrop shown as 80px thumbnails; clicking opens full size in new tab. (Local images still outstanding — requires backend to serve them.)
+- **Live poster updates** — When background refresh updates an item, the library view should reflect it without a full reload. Only `NowPlayingBanner` polls today. *(unverified for the library)*
+- **Local images** — Image thumbnails work for remote art; local images still need the backend to serve them.
+- **All file paths** — Detail page shows the single `fileScannerMeta.filePath`. Still needed: every associated file (internal Chronicle store and original on-disk path), listing all of them for multi-file items (cuts, episodes).
 
 ---
 
 ## Plugins
 
-- **Plugin catalog from GitHub** — Move the plugin catalog out of the hard-coded server array and into a `plugins.json` file stored in the Chronicle GitHub repo. The server should fetch this file at startup (or on demand) so new plugins can be listed by editing the file, without a code deploy. Users should be able to browse the catalog and choose which plugins to install.
-- **Adding and removing** - the user should be able to add new plugins based on plugins.json from github and remove them from the local Chronicle app.  Chronicle should immediately reflect the changes and add or remove menu items and UI elements depending on the plugin.
-- **plugin files** plugins are to be built in their own repos.  Finished files and their hashes are to be registered in plugins.json.
-- **Security ** When downloading files from github, Chronicle will confirm that the hash at github matches the downloaded file's hash.  Downloaded files will be treated as hostile until they can be verified as safe - we must ensure that the user's computer is never compromised.  Security is paramount.  If this means scanning the file with an external security service, then this should be an option.  Either locally or online.
-- **included plugins** - Filescanner must be included as part of the Chronicle install.  Filescanner will remain a separate project and repo, but the dll needs to be included with the main Chronicle installation.
-
----
-
-## Background Services
-
-- **Background Tasks page (Settings → Background Tasks)** — A dedicated settings page listing every registered background process in Chronicle (e.g. Metadata Refresh, future: library scan, database maintenance, plugin updates). Each row shows: process name, last run date/time, result of last run (success / failed / never run), next scheduled run date/time, and a "Run Now" button that triggers it immediately. Clicking a row expands detail (e.g. items processed, errors). The schedule interval for each configurable process should be editable inline. This is the single place a user goes to understand what Chronicle is doing in the background and to manually kick off anything without waiting for the next scheduled window.
-
----
-
-## General UI
-
-- **No broken images** — All image elements need `onError` fallback to the letter-placeholder. Applied to: LibraryPage ✓, MediaDetailPage ✓, AddMediaPage ✓, PluginsPage ✓, ListDetailPage ✓, MediaDetailPage child grid ✓. All pages covered.
+- **Plugin integrity** — Intent: unknown plugins must never get onto the system. Allowlist (installs only from `PluginCatalogSeeds.cs` repos) already exists. Replace the removed SHA-256 pinning (2026-09-04) with: (1) hash the DLL at install and store it; (2) re-verify on every load to catch on-disk tampering; (3) show the admin when a hash changes on update; (4) later, author signing (`docs/FEATURE_PLUGIN_SECURITY.md`). First audit whether the manual DLL install route (`POST /api/v1/plugins`) bypasses the allowlist.
+- **Bundled plugins** — FileScanner must ship with the Chronicle install (separate repo, DLL included). Chronicle's releases currently ship source/tag only (see CLAUDE.md), so confirm the installer story.
+- **Catalog source** — The old item asked for a `plugins.json` in the repo. What was built instead is `PluginCatalogSeeds.cs`, a hard-coded list of repos, resolved live from each repo's latest GitHub release and manifest. Adding a plugin therefore still needs a code deploy. Decide whether to move the seed list out to a hosted file.
 
 ---
 
 ## Database
 
-- **Database Migration** - Chronicle will maintain a database schema build script.  Each version change of the database requires it's own unique database build script and upgrade and downgrade scripts for the previous version to the current version.  This will be updated with any new additions to the database as they're added.  As versions change, upgrade and downgrade scripts must also be provided for each version.  These will be version to version.  If version 3 adds a table, then if the user is at version 2, they will run the upgrade script to get to version 3.  If they desire to return to version 2, they will run the downgrade script.  Brand new installs, or when the user wishes to initialize their database, they would use the full schema build script.
-- **Maintenance** - Chronicle will maintain it's own database in the background automatically.  Rebuilding indexes, updating statistics...whatever needs to be maintained.  Chronicle will do this automatically.  The user may run these manually also, so this functionality needs to be exposed in a Database section under settings.  We must keep track of the last time that these maintenance steps were taken.
-- **Database constraints** - Chronicle must monitor the size of the database.  If the database becomes too large for SQLite to handle, then Chronicle needs a way to migrate from sqlite to a more robust database system that is capable of handling the data.  Should the user wish to stay with sqlite, then Chronicle needs to provide options to free space in the database so that it can run.
-- **Database backups** - Chronicle should maintain 10 backups of it's database as a zip file.  The interface should expose the backups as downloads.  The user should be able to upload a backed up file and it should then be checked to ensure that it is a valid backup and then allow a restore to occur autmoatically through the interface.  The interface should then restart and reload itself using the new database as the current database file.
-
---
-
-## Media
-
-- **Media Types** - The user may register any media type.  If there is a plugin available for that media type, Chronicle should ask to download something for it.
-- **Adding a plugin** - Adding a plugin that will handle a specific media type (or types) will register it automatically within Chronicle.  Chronicle will then use that plugin to scan existing media (if appropriate) and that metadata will then become available to Chronicle.
-- **Default media types** - Default media types will be Movies, Music and TV.  Plugins for these will be included as part of the Chronicle install, but they will be subject to updates as they become available.
-- **No Hardcoding** - Chronicle will not be hardcoded for any media types.  Specific UI for particular media types will not be added unless there is a plugin for that specific media type.  "Watches" on the dashboard, for example, should be tied to visual media only.  TV, Movies, etc.  "Watches" does not apply to music.  "Listens" would be more appropriate.
+- **Backups** — Keep 10 rolling zip backups; expose them as downloads; accept an uploaded backup, validate it, restore it via the UI, then restart and reload on the new DB. No backup code found. *(unverified)*
+- **Maintenance** — Automatic background maintenance (index rebuilds, statistics, etc.), also runnable manually from a Settings → Database section, with last-run times recorded. No maintenance code found. *(unverified)*
+- **Size limits / SQLite → Postgres** — Monitor DB size; offer migration to Postgres (a compose file exists: `docker-compose.postgres.yml`) or ways to free space if the user stays on SQLite.
+- **Migration scripts — decided: not building.** EF Core code-first migrations (107 so far, auto-applied at startup) are the upgrade path. Backup/restore is the way back. A full-schema script can be generated from EF if ever needed.
 
 ---
 
-## Completed (recent)
+## Users
 
-- Auth: global `AuthContext` — auth state initialized once at app root; login/register call `setUser` directly so navigation to `/` never flashes blank; `RequireAuth` handles loading/redirect; Layout no longer needs auth checks
+- **Password reset** — Email-based reset link, or an admin-issued one-time token for installs without SMTP; single-use, expires (~1h); SMTP configurable under Settings → Email. Only the admin set-password route exists (`UsersController.ResetUserPassword`). No self-service reset, tokens or SMTP settings found. *(unverified)*
 
-- FileScanner confidence scores: Title(Year)=85, dotted=70, fallback=50
-- Default scan threshold lowered 80 → 70
-- ExternalIds added to MediaItemDto and all DTO constructors
-- LibraryPage: clickable cards linking to detail page
-- LibraryPage: media type badge overlaid on poster
-- LibraryPage: broken image `onError` fallback
-- MediaDetailPage: external IDs / metadata source chips
-- MediaDetailPage: broken image `onError` fallback
-- LibraryPage: status filter, sort (9 options), per-section paging (6/24/100/all), Save as Preset, Manage Presets, Reset
-- LibraryPage: TMDB rating badge (★) on cards
-- Add Media: TMDB scraper-backed search with media type selector pills (Movies, TV Shows, Music + dynamic from API)
-- MediaDetailPage: TMDB metadata box always shown (not gated on existing external ID)
-- MediaDetailPage: Refresh works for items with no external ID — auto-searches TMDB by name, stores found ID, then fetches full metadata
-- MediaDetailPage: Refresh immediately updates poster and metadata in UI (`setQueryData`); also invalidates library so source list reflects new poster
-- MediaDetailPage: prev/next navigation bar when accessed from a list (library passes sorted+filtered item IDs as router state)
-- LibraryPage: card links pass sorted list + label as router nav state for prev/next traversal
-- Layout: loading guard — no longer redirects to /login during initial auth check (prevents redirect loop)
-- Background metadata refresh v2: `MetadataRefreshService` runs every 4h (configurable via `app_settings`), cycles all library root items × all active metadata plugins, writes per-plugin timestamps to `media_item_refresh_log`, surfaces last-refresh date in each provider's metadata box; `GET /api/v1/settings/app` + `PUT /api/v1/settings/app/{key}` (Admin) expose the interval setting
-- Background metadata refresh: `MetadataRefreshService` refreshes all library root items on a 24h staleness cycle; new items (`MetadataRefreshedAt = null`) processed first; 500ms delay between API calls; 30s startup delay
-- `MetadataRefreshedAt` column added to `media_items` (EF migration + model)
-- LibraryPage: fold-scoped prev/next — navigating to detail page passes only the IDs visible in the current fold (not the full list)
-- MediaDetailPage: hierarchical Up button — navigates to parent item (`↑ Up`) or back to library at the card's position (`↑ Library`) with hash-scroll restoration
-- MediaDetailPage: single-item delete with inline confirmation strip; navigates to `/library` on success
-- LibraryPage: multi-select batch delete — select mode with checkmark overlay, Select All, Delete (N) toolbar button, modal confirmation
-- `scripts/RunTestEnvironment.ps1` — dev startup script (was `dev.ps1` at repo root); launches API on :8080 and Web on :3000 in separate windows
-- Dark Teal theme — dark teal backgrounds, white primary text, neon green (#00ff88) accent; added to Preferences theme picker
-- Lists: click-through to metadata — already implemented via `<Link to="/media/{id}">` on each row
-- Lists: editable list name — already implemented (click title to rename inline)
-- General UI: broken image `onError` fallback — all img tags across all pages now covered (ListDetailPage, MediaDetailPage child grid)
-- Sidebar nav: sub-items under Media/Settings groups indented 12px (`NavGroup.module.css` padding-left)
-- Scan page: confidence score ⓘ tooltip on Preview table header shows full scoring formula on hover
+---
+
+## Media Types
+
+- **User-registered media types** — Plugin-driven registration already works (a plugin's `MediaTypeSupport` is upserted into `media_types` at startup). Missing: a Settings → Media Types page so the user can add/edit types with no plugin, a "no plugin handles this type" prompt linking to the catalog, and protecting user edits from the startup upsert. See `docs/plans/2026-10-07-backlog-designs.md` §5.
+- **No hardcoding** — Each remaining case is a bug. Interaction verbs ("Watch"/"Listen"/"Read") come from the media type row, not code: fix Dashboard "Watch Time"/"Total Watch Time" and HistoryPage "Watch History". `FileScanService`'s `"audiobooks"` name check becomes a media-type property.
+
+---
+
+## Substack Plugin (not started — no repo or code found)
+
+- Pull subscribed podcasts and episodes.
+- Track listened episodes and progress.
+- Locate a podcast from inside Chronicle.
+- Scrobble source: a podcast played on the Substack site is reported to Chronicle as listened.
+
+---
+
+## Security
+
+Design and audit: `docs/plans/2026-10-07-session-keys-design.md`.
+
+- **Re-scope existing API keys** — keys created before scopes existed are still `full`. On Settings -> API Keys, change each Kodi / scrobbler key to `device` and the Audiobookshelf bridge key to `bridge`. (Left unchanged automatically so no device could break.)
+- **Set `Security:TrustedProxies`** for the production Docker deployment (see `docker-compose.yml`), so only the reverse proxy can supply a client address.
+- Done 2026-10-07: login/registration/pairing throttling, API-key scopes, session cookie for image routes, forwarded-header trust option, injectable audit log, plugin icons fetched through the filtered fetcher; earlier: session keys (restart ends all sessions; logout; session list; password change/deactivation end sessions), F-1 diagnostics now authenticated, F-2 poster proxy locked down, F-3 progress endpoints authenticated, auth/connection logging.
+
+---
+
+## Completed
+
+**File Scanner**
+- Browse button on path inputs (`PathInput` + `FolderPickerModal`).
+- Persistent scan folders (`ScanFolderController` / `ScanFolderService`) with scheduled background scanning (`ScheduledScanService`).
+- Scan progress feedback (`ScanProgressService`).
+- Accept/reject individual detected groups on the scan page (`ScanPage` / `ScanGroupCard`).
+- Media type badge in scan results; confidence-score tooltip.
+- Music audio extensions (.mp3, .flac, .m4a, .ogg, .wav, .aac and more) in FileScanner.
+- FileScanner plugin now at v1.2.1.
+
+**Library / Detail**
+- Per-provider metadata boxes (`PluginMetadataBox`, generic JSON renderer, enrichment drill-down).
+- Metadata assignment/precedence (`docs/METADATA_ASSIGNMENT.md`), artwork pinning with overrides at five reset scopes.
+- Library: clickable cards, type badge, status filter, 9 sorts, per-section paging, presets, TMDB rating, fold-scoped prev/next, hierarchical Up button, single and multi-select delete, merge/dedup.
+- Image thumbnails (remote), broken-image fallback everywhere, sidebar indentation.
+- Add Media with scraper-backed search; Refresh for items with no external ID; collections and movie sets.
+
+**Users**
+- Settings → Users: My Profile and Manage Users (add, deactivate, delete, admin password reset, API keys, last-admin guard, contacts).
+- Auth: global `AuthContext`; JWT plus API keys; device auth.
+- Roles/user types beyond Admin (readonly, metadata editor) — *check*; only the Admin role was seen in controllers.
+
+**Plugins**
+- Catalog with install, update and uninstall from GitHub releases, plus an update-check task.
+- Plugin set: 80+ sibling plugin repos exist on disk.
+
+**Background services**
+- Settings → Background Tasks page (`BackgroundTasksPage`): last/next run, Run Now, per-plugin tasks, scheduler.
+- Metadata refresh service (configurable interval).
+
+**Other**
+- Dashboard, Reports, History, People, Lists (inline rename, click-through), Stats.
+- Dark Teal theme and the Themes plugin.
+- Dev startup script `scripts/RunTestEnvironment.ps1` (API 7979, web 8888, ABS bridge 9877).

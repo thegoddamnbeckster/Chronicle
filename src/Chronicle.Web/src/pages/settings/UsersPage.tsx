@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import {
   listUsers,
@@ -14,6 +14,8 @@ import {
   type UserAccountDto,
 } from '@/api/users'
 import ContactsEditor from '@/components/settings/ContactsEditor'
+import SessionsList from '@/components/settings/SessionsList'
+import { listUserSessions, endUserSessions } from '@/api/auth'
 import styles from './UsersPage.module.css'
 
 function formatDate(iso: string | null): string {
@@ -255,6 +257,8 @@ function UserDetail({ user, onChanged }: { user: UserAccountDto; onChanged: () =
   const [email, setEmail] = useState(user.email ?? '')
   const [saving, setSaving] = useState(false)
   const [detailError, setDetailError] = useState('')
+  // Stable identity: SessionsList reloads whenever `load` changes, so an inline arrow would loop.
+  const loadSessions = useCallback(() => listUserSessions(user.id), [user.id])
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -313,6 +317,17 @@ function UserDetail({ user, onChanged }: { user: UserAccountDto; onChanged: () =
         </div>
         {detailError && <p className={styles.error}>{detailError}</p>}
       </form>
+
+      <h3 className={styles.detailHeading}>Signed-in sessions</h3>
+      <SessionsList
+        load={loadSessions}
+        emptyText="Not signed in anywhere."
+        onEndAll={{
+          label: 'End all sessions',
+          confirm: `End every session for ${user.username}? They will have to sign in again.`,
+          run: () => endUserSessions(user.id),
+        }}
+      />
 
       <h3 className={styles.detailHeading}>Contact Methods</h3>
       <ContactsEditor

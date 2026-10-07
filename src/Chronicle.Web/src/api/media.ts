@@ -223,3 +223,15 @@ export async function refreshMediaForPlugin(
     throw err
   }
 }
+
+/**
+ * Fetches a third-party image through the server-side poster proxy as a Blob. The proxy needs
+ * the session key, which an <img src> can't send, so callers turn the Blob into an object URL.
+ */
+export async function fetchProxiedPoster(url: string): Promise<Blob> {
+  const { data } = await client.get<Blob>('/media/poster-proxy', {
+    params: { url },
+    responseType: 'blob',
+  })
+  return data
+}

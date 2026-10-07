@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Chronicle.API.Authentication;
 using Chronicle.API.DTOs;
 using Chronicle.Services.Security;
 using Microsoft.AspNetCore.Authorization;
@@ -8,7 +9,9 @@ namespace Chronicle.API.Controllers;
 
 [ApiController]
 [Route("api/v1/tokens")]
-[Authorize]
+// Credentials are managed with a real login only: an API key (even a "full" one) must not be
+// able to mint, widen or revoke keys, or a single leaked key could entrench itself.
+[Authorize(Policy = AuthPolicies.SessionOnly)]
 public class ApiTokensController : ControllerBase
 {
     private readonly IApiTokenService _tokenService;
@@ -26,7 +29,7 @@ public class ApiTokensController : ControllerBase
         var tokens = await _tokenService.GetTokensForUserAsync(userId, HttpContext.RequestAborted);
 
         var dtos = tokens
-            .Select(t => new ApiTokenDto(t.Id, t.Name, t.CreatedAt, t.LastUsedAt, t.ExpiresAt))
+            .Select(t => new ApiTokenDto(t.Id, t.Name, t.CreatedAt, t.LastUsedAt, t.ExpiresAt, t.Scope))
             .ToList();
 
         return Ok(ApiResponse<List<ApiTokenDto>>.Ok(dtos));
@@ -40,13 +43,39 @@ public class ApiTokensController : ControllerBase
     public async Task<IActionResult> CreateToken([FromBody] CreateApiTokenRequest request)
     {
         var userId = GetUserId();
+        var scope = string.IsNullOrWhiteSpace(request.Scope) ? ApiKeyScopes.Full : request.Scope.Trim().ToLowerInvariant();
+        if (!ApiKeyScopes.IsKnown(scope))
+            return BadRequest(ApiResponse<object>.Fail("UNKNOWN_SCOPE",
+                $"Unknown scope '{request.Scope}'. Use one of: {string.Join(", ", ApiKeyScopes.All)}."));
+
         var (token, rawValue) = await _tokenService.CreateTokenAsync(
-            userId, request.Name, request.ExpiresAt, HttpContext.RequestAborted);
+            userId, request.Name, request.ExpiresAt, HttpContext.RequestAborted, scope);
 
         var dto = new CreateApiTokenResponse(
-            token.Id, token.Name, rawValue, token.CreatedAt, token.ExpiresAt);
+            token.Id, token.Name, rawValue, token.CreatedAt, token.ExpiresAt, token.Scope);
 
         return Ok(ApiResponse<CreateApiTokenResponse>.Ok(dto));
+    }
+
+    /// <summary>The scopes a key can be given, with plain-language descriptions.</summary>
+    [HttpGet("scopes")]
+    public IActionResult GetScopes() =>
+        Ok(ApiResponse<List<ApiKeyScopeDto>>.Ok(
+            ApiKeyScopes.All.Select(s => new ApiKeyScopeDto(s, ApiKeyScopes.Describe(s))).ToList()));
+
+    /// <summary>Changes what an existing key may do. Takes effect on the key's next request.</summary>
+    [HttpPut("{id:int}/scope")]
+    public async Task<IActionResult> SetScope(int id, [FromBody] SetApiTokenScopeRequest request)
+    {
+        var scope = request.Scope.Trim().ToLowerInvariant();
+        if (!ApiKeyScopes.IsKnown(scope))
+            return BadRequest(ApiResponse<object>.Fail("UNKNOWN_SCOPE",
+                $"Unknown scope '{request.Scope}'. Use one of: {string.Join(", ", ApiKeyScopes.All)}."));
+
+        var changed = await _tokenService.SetScopeAsync(id, GetUserId(), scope, HttpContext.RequestAborted);
+        return changed
+            ? Ok(ApiResponse<object>.Ok(new { id, scope }))
+            : NotFound(ApiResponse<object>.Fail("TOKEN_NOT_FOUND", "Token not found or already revoked."));
     }
 
     /// <summary>Revokes (soft-deletes) an API token owned by the authenticated user.</summary>

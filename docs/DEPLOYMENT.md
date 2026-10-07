@@ -402,13 +402,17 @@ server {
     
     # Proxy Settings
     location / {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://localhost:7979;   # or http://<chronicle-container-name>:7979 on a shared Docker network
         proxy_http_version 1.1;
         
-        # Headers
+        # Headers. This nginx is the edge (nothing in front of it), so it OVERWRITES
+        # X-Forwarded-For with the address that really connected to it. Do not use
+        # $proxy_add_x_forwarded_for here: that appends to whatever the client sent, and a client
+        # could prepend a fake address. If another proxy sits in front of this one, trust that one
+        # instead (see "Telling Chronicle which proxy to trust").
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Port $server_port;
@@ -446,6 +450,50 @@ sudo certbot --nginx -d chronicle.example.com
 # Auto-renewal
 sudo certbot renew --dry-run
 ```
+
+### Telling Chronicle which proxy to trust
+
+Chronicle writes the caller's address to its security log (`AUTH ...` lines) and uses it to
+rate-limit failed logins. Behind a proxy that address comes from `X-Forwarded-For`, and by default
+Chronicle believes that header from ANY sender - so a client could fake its address. Setting
+`Security:TrustedProxies` makes Chronicle believe the header only when it arrives from your proxy.
+
+The value is whatever address (or network) your proxy connects to Chronicle FROM. That depends on
+your setup, so it is never hard-coded: discover it, then put it in `.env`.
+
+1. **Fix the proxy headers first** (the nginx block above) and confirm the log shows real client
+   addresses: make one failed login, then `docker compose logs api | grep "AUTH login FAILED"`.
+   At this point the address is correct only because every sender is still trusted.
+2. **Find the proxy's address.**
+   - Proxy and Chronicle in Docker on a shared network - use that network's range, which survives
+     the proxy container being recreated with a new address:
+     `docker network ls`, then
+     `docker network inspect <shared-network> --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'`.
+     Use the user-defined network both containers are on, not the default `bridge`.
+   - Proxy on the host or another machine - use the address Chronicle sees it connect from: make a
+     request through it and read `connection from ...` in the `AUTH` log line (shown whenever a
+     forwarded address was applied).
+   Prefer the narrowest value that still covers the proxy: a single address if it never changes,
+   otherwise the shared network's subnet.
+3. **Set it** in `.env` next to `docker-compose.yml` (no edits to the compose file needed):
+   `CHRONICLE_TRUSTED_PROXIES=<address-or-cidr>` (several values may be separated by commas), then
+   `docker compose up -d`.
+4. **Prove it.** Two checks.
+   - *The setting is honoured.* Temporarily set `CHRONICLE_TRUSTED_PROXIES=192.0.2.1` (an address
+     reserved for documentation, so nothing real matches it) and run `docker compose up -d`. Then
+     send a request with a fake header:
+     `curl -s -o /dev/null -H "X-Forwarded-For: 6.6.6.6" -H "Content-Type: application/json" -d '{"username":"probe","password":"xxxxxxxx"}' http://localhost:7979/api/v1/auth/login`
+     and look at `docker compose logs api | grep "login FAILED" | tail -1`. It must NOT show
+     `6.6.6.6`. (Do not use this curl as the final test with your real value set: a request from
+     the Docker host can arrive from the proxy network's gateway address, which may be inside the
+     trusted range, so the fake header would then be believed - correctly, as far as Chronicle can tell.)
+   - *Real addresses come through.* Put your real value back, `docker compose up -d`, make a failed
+     login through the proxy from a normal browser, and confirm the log line shows your own address.
+
+Mistakes to avoid: a range that is too wide (any container in it can then claim an address); a
+range that does NOT include the proxy (every user then appears to come from the proxy's own
+address and one person's failed logins throttle everyone); and trusting the default `bridge`
+network by habit.
 
 ### Caddy (Simpler Alternative)
 

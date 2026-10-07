@@ -39,7 +39,6 @@ public class FileScanController : ControllerBase
     /// The frontend uses this to conditionally show the Scan page in the navigation.
     /// </summary>
     [HttpGet("status")]
-    [AllowAnonymous]
     public async Task<IActionResult> GetStatus()
     {
         var (available, names) = await _scanService.GetStatusAsync();
@@ -452,7 +451,6 @@ public class FileScanController : ControllerBase
     /// Poll every 500 ms while IsRunning is true; stop when IsComplete is true.
     /// </summary>
     [HttpGet("import-progress")]
-    [AllowAnonymous]
     public IActionResult GetImportProgress()
     {
         var state = _importProgress.GetState();
@@ -501,7 +499,6 @@ public class FileScanController : ControllerBase
     /// Polled by the frontend every 500 ms while the "Scan Directory" request is pending.
     /// </summary>
     [HttpGet("progress")]
-    [AllowAnonymous]
     public IActionResult GetProgress()
     {
         var snap = _progress.GetSnapshot();

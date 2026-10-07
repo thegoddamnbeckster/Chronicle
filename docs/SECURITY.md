@@ -67,49 +67,81 @@ CREATE TABLE users (
 
 ### Session Management
 
-**JWT Tokens:**
+**Session keys** (web UI; replaced the earlier JWTs on 2026-10-07):
 
-```json
-{
-  "sub": "user_id_123",
-  "username": "jsmith",
-  "role": "admin",
-  "iat": 1704672000,
-  "exp": 1704758400
-}
-```
+- Chronicle generates a random 256-bit key (`chr_sess_...`) at login. It is opaque: no claims,
+  nothing to decode or forge.
+- Only a SHA-256 hash of the key is kept, in a memory-only store. Nothing is written to disk, so
+  **restarting the API ends every session**.
+- The key is sent as `Authorization: Bearer ...` and checked on every request. The user's role
+  and active state are read live on each request.
+- One key per login; a user may have many sessions (cap 20; the least recently used is dropped).
+- Expiry: idle timeout (`auth.session_idle_hours`, default 24) and an absolute lifetime
+  (`auth.session_max_days`, default 30). Automatic polling does not count as activity.
+- Ended by logout, password change/reset, deactivation, deletion, expiry or restart.
+- Never logged: the key, the password. Rejected keys are logged by a short hash tag only.
+- Session management endpoints require a real login; an API key cannot use them.
 
-**Token Properties:**
-- Signed with HMAC-SHA256
-- 24-hour expiration (configurable)
-- Refresh token for extended sessions
-- Stored in HTTP-only cookies (web)
-- Stored securely in keychain (mobile apps)
+**Connection logging.** Logins (success and failure), registrations, logouts, session revocations
+and every rejected session key or API key are logged under `Chronicle.Auth` with the caller's
+address and user-agent. Repeated rejections from the same source for the same reason are
+throttled to one line per minute so a stale browser tab cannot flood the log.
 
-**Token Management:**
-```sql
-CREATE TABLE active_sessions (
-    id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    token_hash TEXT NOT NULL,  -- Hash of JWT
-    device_name TEXT,
-    ip_address TEXT,
-    user_agent TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL,
-    last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    FOREIGN KEY (user_id) REFERENCES users(id)
-);
-```
+**Session features** (Settings → My Profile → Active Sessions; admins can see and end a user's
+sessions from Manage Users):
+- View active sessions (device, address, signed-in and last-active times)
+- End an individual session
+- "Sign out everywhere"
+- Automatic cleanup of expired sessions (every 5 minutes)
 
-**Session Features:**
-- View active sessions in UI
-- Revoke individual sessions
-- "Logout all devices" option
-- Automatic cleanup of expired sessions
+**Sign-in throttling.** Failed sign-ins are counted per (address, username), per address, and per
+username across all addresses, in memory (a restart clears them). A caller over a limit gets `429`
+with `Retry-After` and is refused even with the right password until the oldest failures age out.
+New accounts are limited per address per hour, and device pairing is limited the same way (pairing
+starts per address per hour; unknown-code guesses per address per 15 minutes; at most 200 unexpired
+codes). Every limit is an `app_settings` row and applies within about a minute:
+
+| Setting | Default |
+|---|---|
+| `auth.login_max_failures_per_address_user` | 5 |
+| `auth.login_max_failures_per_address` | 20 |
+| `auth.login_max_failures_per_user` | 30 |
+| `auth.login_window_minutes` | 15 |
+| `auth.register_max_per_address_hour` | 10 |
+| `auth.pairing_initiates_per_address_hour` | 10 |
+| `auth.pairing_misses_per_address_15min` | 20 |
+| `auth.session_idle_hours` / `auth.session_max_days` | 24 / 30 |
+
+The per-username limit is deliberately the most generous: it is the one an attacker can use to lock
+the real user out for a while. If that ever happens, restarting the API clears all counters.
+
+Behind a reverse proxy, set `Security:TrustedProxies` (addresses or CIDR ranges, comma separated)
+so only the proxy can supply `X-Forwarded-For`. Unset, any client can claim an address; Chronicle
+then logs a warning at startup, and the audit log shows the real connection address next to any
+forwarded one.
+
+**Session cookie for images.** Login also sets `chronicle_session` (HttpOnly, SameSite=Strict, path
+`/api/`) holding the same key. Its only job is to let `<img>` tags, which cannot send an
+Authorization header, load `media/{id}/local-poster` and `plugins/{id}/icon`. The cookie is
+accepted by those two read-only routes alone, never counts as activity, and ends with the session.
+The icon route fetches the image named in the plugin's manifest through the same filtered fetcher as
+the poster proxy, so a manifest cannot aim the server at its own network.
 
 ### API Key Authentication
+
+**Scopes.** An API key used to carry its owner's full privileges. Each key now has a scope:
+
+| Scope | For | May call |
+|---|---|---|
+| `full` | scripts that need everything their owner can do | anything the owner can, except manage keys, sessions and pairing (those need a login) |
+| `device` | Kodi boxes and the Audiobookshelf scrobbler | scrobble, the Kodi scraper, `users/me`, reading lists, rating via `library/{id}`, resetting watch progress |
+| `bridge` | the Audiobookshelf metadata bridge | search/read/create/refresh media items only |
+
+A `device` or `bridge` key is never an administrator, even when its owner is, and a request outside
+its scope gets `403` and an `AUTH api-key scope denied` log line. Keys created before scopes
+existed stay `full` until changed (API Keys page, or `PUT /api/v1/tokens/{id}/scope`); keys paired
+through the QR flow from now on are `device`. The rules live in code (`ApiKeyScopes`) rather than
+the UI, because they are a security boundary.
 
 For scrobblers and automation:
 

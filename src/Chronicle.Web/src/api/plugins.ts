@@ -1,4 +1,4 @@
-import client from './client'
+import client, { BACKGROUND_REQUEST } from './client'
 
 export interface PluginDto {
   id: number
@@ -141,7 +141,7 @@ export interface PluginAuthFailure {
 }
 
 export async function getAuthFailures(): Promise<PluginAuthFailure[]> {
-  const res = await client.get<{ data: PluginAuthFailure[] }>('/plugins/auth-failures')
+  const res = await client.get<{ data: PluginAuthFailure[] }>('/plugins/auth-failures', BACKGROUND_REQUEST)
   return res.data.data
 }
 

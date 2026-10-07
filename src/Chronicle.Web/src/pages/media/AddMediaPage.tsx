@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getMediaTypes } from '@/api/media'
+import { getMediaTypes, fetchProxiedPoster } from '@/api/media'
 import { searchMetadata, addFromSearch } from '@/api/scan'
 import type { MetadataSearchResult, MediaTypeOption } from '@/types'
 import styles from './AddMediaPage.module.css'
@@ -27,13 +27,35 @@ function rankResults(results: MetadataSearchResult[], query: string): MetadataSe
 
 function ResultPoster({ result }: { result: MetadataSearchResult }) {
   const [errored, setErrored] = useState(false)
-  const proxied = result.posterUrl
-    ? `/api/v1/media/poster-proxy?url=${encodeURIComponent(result.posterUrl)}`
-    : null
-  if (proxied && !errored) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+
+  // The poster proxy requires the session key, which an <img src> can't send, so fetch the
+  // bytes through the authenticated API client and display them via an object URL.
+  useEffect(() => {
+    // This component instance can be reused for a different search result: drop the previous
+    // result's image and error before starting (or skipping) the next fetch.
+    setObjectUrl(null)
+    setErrored(false)
+    if (!result.posterUrl) return
+    let cancelled = false
+    let created: string | null = null
+    fetchProxiedPoster(result.posterUrl)
+      .then(blob => {
+        if (cancelled) return
+        created = URL.createObjectURL(blob)
+        setObjectUrl(created)
+      })
+      .catch(() => { if (!cancelled) setErrored(true) })
+    return () => {
+      cancelled = true
+      if (created) URL.revokeObjectURL(created)
+    }
+  }, [result.posterUrl])
+
+  if (objectUrl && !errored) {
     return (
       <img
-        src={proxied}
+        src={objectUrl}
         alt={result.title}
         className={styles.poster}
         onError={() => setErrored(true)}
