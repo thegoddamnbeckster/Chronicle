@@ -245,9 +245,9 @@ export default function DatabasePage() {
             </div>
             <p className={styles.hint}>
               Stored beside the database in <code>{status.backupDirectory}</code>. Copy them somewhere else too: a backup on
-              the same disk does not protect against that disk failing. A backup holds your library, accounts and settings
-              but NOT the <code>keys</code> folder, which is what decrypts saved plugin passwords and API keys - keep a copy
-              of that folder as well if you may ever restore onto a fresh install.
+              the same disk does not protect against that disk failing. A backup holds everything in the database -
+              accounts (password hashes), API key hashes and plugin credentials (stored as entered) - so treat the files
+              as sensitive and keep them somewhere only you can read.
             </p>
             {uploadPct !== null && <p className={styles.hint}>Uploading… {uploadPct}%</p>}
 

@@ -61,6 +61,9 @@ export default function LoginPage() {
           )}
         </form>
         <p className={styles.footer}>
+          <Link to="/forgot-password">Forgot password?</Link>
+        </p>
+        <p className={styles.footer}>
           No account? <Link to="/register">Register</Link>
         </p>
       </div>

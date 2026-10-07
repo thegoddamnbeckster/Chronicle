@@ -80,6 +80,16 @@ Authorization: Bearer chr_sess_Zk3...
 | GET | `/api/v1/users/{id}/sessions` | Admin: list a user's sessions |
 | DELETE | `/api/v1/users/{id}/sessions` | Admin: end all of a user's sessions |
 
+**Forgotten passwords**
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/v1/auth/forgot-password` | `{ identifier }` (username or email). Always `200`; `emailEnabled` says whether this server can send mail. `429` when limits are hit. |
+| POST | `/api/v1/auth/reset-password` | `{ token, newPassword }` (8+ characters). `400 INVALID_RESET_CODE` for an unknown, expired or used code. Ends all of the account's sessions. |
+| POST | `/api/v1/users/{id}/reset-token` | Administrator, browser session only. Returns `{ token, expiresAt, resetUrl, username }` once. |
+| GET/PUT | `/api/v1/settings/email` | Administrator, browser session only. The password is write-only (`hasPassword` is returned instead). |
+| POST | `/api/v1/settings/email/test` | `{ to }`. `502 EMAIL_FAILED` carries a plain-language reason. |
+
 **Errors you may see on sign-in:** `429 TOO_MANY_ATTEMPTS` (with `Retry-After`) after repeated
 failures, or too many registrations from one address. See `docs/SECURITY.md` for the limits.
 

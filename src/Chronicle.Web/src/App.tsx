@@ -22,6 +22,9 @@ import ApiKeysPage from '@/pages/settings/ApiKeysPage'
 import LibrarySettingsPage from '@/pages/settings/LibrarySettingsPage'
 import BackgroundTasksPage from '@/pages/settings/BackgroundTasksPage'
 import DatabasePage from '@/pages/settings/DatabasePage'
+import EmailSettingsPage from '@/pages/settings/EmailSettingsPage'
+import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage'
+import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 import EnrichmentDrillDownPage from '@/pages/settings/EnrichmentDrillDownPage'
 import PluginsPage from '@/pages/plugins/PluginsPage'
 import ListsPage from '@/pages/lists/ListsPage'
@@ -61,6 +64,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       {/* Device-auth approval page — accessible without being logged in (page handles auth check).
           Short path on purpose: the code itself is now the whole point of brevity (a LAN
           pairing code someone might type by hand), so the route around it stays minimal too. */}
@@ -98,6 +103,7 @@ export default function App() {
         <Route path="settings/library" element={<LibrarySettingsPage />} />
         <Route path="settings/background-tasks" element={<BackgroundTasksPage />} />
         <Route path="settings/database" element={<DatabasePage />} />
+        <Route path="settings/email" element={<EmailSettingsPage />} />
         <Route path="settings/enrichment/:pluginId" element={<EnrichmentDrillDownPage />} />
         <Route path="settings/metadata-assignment" element={<MetadataAssignmentPage />} />
         <Route path="settings/field-aliases" element={<FieldAliasesPage />} />

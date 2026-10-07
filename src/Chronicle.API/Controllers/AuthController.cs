@@ -17,14 +17,21 @@ namespace Chronicle.API.Controllers
         private readonly ISessionStore _sessions;
         private readonly ILoginThrottle _throttle;
         private readonly AuthAuditLog _audit;
+        private readonly IPasswordResetService _reset;
+        private readonly ResetMailDispatcher _mail;
+        private readonly ICachedAppSettings _settings;
 
         public AuthController(IUserService userService, ISessionStore sessions,
-            ILoginThrottle throttle, AuthAuditLog audit)
+            ILoginThrottle throttle, AuthAuditLog audit,
+            IPasswordResetService reset, ResetMailDispatcher mail, ICachedAppSettings settings)
         {
             _userService = userService;
             _sessions = sessions;
             _throttle = throttle;
             _audit = audit;
+            _reset = reset;
+            _mail = mail;
+            _settings = settings;
         }
 
         private string? CallerAddress => HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -96,6 +103,79 @@ namespace Chronicle.API.Controllers
                 _throttle.RecordLoginFailure(CallerAddress, request.Username);
                 _audit.LoginFailed(HttpContext, request.Username, "invalid username or password, or account inactive");
                 return Unauthorized(ApiResponse<AuthResponse>.Fail("INVALID_CREDENTIALS", "Invalid username or password."));
+            }
+        }
+
+        // ── Forgotten password ────────────────────────────────────────────────
+
+        public const string ForgotPerAddressKey = "auth.forgot_per_address_hour";
+        public const string ForgotPerIdentifierKey = "auth.forgot_per_identifier_hour";
+        public const string ResetMissesKey = "auth.reset_misses_per_address_15min";
+
+        /// <summary>
+        /// "I forgot my password." Always answers the same way whether or not the account exists or has an
+        /// address, so it cannot be used to find out who has an account. The email, if any, is sent in the
+        /// background so the response time does not give it away either.
+        /// </summary>
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request, CancellationToken ct)
+        {
+            var s = _settings.Snapshot;
+            var identifier = request.Identifier.Trim().ToLowerInvariant();
+            var byAddress = _throttle.CheckAction("forgot-address", CallerAddress, (int)s.GetPositive(ForgotPerAddressKey, 5), TimeSpan.FromHours(1));
+            // Per identifier as well, so one person cannot be mail-bombed from many addresses.
+            var byIdentifier = _throttle.CheckAction("forgot-identifier", identifier, (int)s.GetPositive(ForgotPerIdentifierKey, 3), TimeSpan.FromHours(1));
+            if (!byAddress.Allowed || !byIdentifier.Allowed)
+            {
+                var wait = byAddress.Allowed ? byIdentifier.RetryAfter : byAddress.RetryAfter;
+                _audit.PasswordResetThrottled(HttpContext, "request", wait);
+                return TooManyAttempts(wait, "password reset requests");
+            }
+            _throttle.RecordAction("forgot-address", CallerAddress);
+            _throttle.RecordAction("forgot-identifier", identifier);
+
+            var mails = await _reset.RequestByEmailAsync(identifier, ct);
+            _audit.PasswordResetRequested(HttpContext, request.Identifier, mails.Count);
+            foreach (var mail in mails) _mail.Dispatch(mail);
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                message = "If that account exists and has an email address on file, a reset link is on its way.",
+                emailEnabled = await _reset.EmailConfiguredAsync(ct),
+            }));
+        }
+
+        /// <summary>
+        /// Sets a new password using a token from an email or from an administrator. Single use. Ends the
+        /// account's existing sessions. Does not sign the person in: they sign in with the new password.
+        /// </summary>
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request, CancellationToken ct)
+        {
+            var blocked = _throttle.CheckAction("reset-miss", CallerAddress, (int)_settings.Snapshot.GetPositive(ResetMissesKey, 10), TimeSpan.FromMinutes(15));
+            if (!blocked.Allowed)
+            {
+                _audit.PasswordResetThrottled(HttpContext, "redeem", blocked.RetryAfter);
+                return TooManyAttempts(blocked.RetryAfter, "attempts to use a reset code");
+            }
+
+            var result = await _reset.RedeemAsync(request.Token, request.NewPassword, ct);
+            switch (result.Status)
+            {
+                case RedeemStatus.Ok:
+                    var ended = _sessions.RevokeAllForUser(result.UserId);
+                    _audit.PasswordResetCompleted(HttpContext, result.UserId, result.Username!, ended);
+                    return Ok(ApiResponse<object>.Ok(new { changed = true }));
+
+                case RedeemStatus.WeakPassword:
+                    return BadRequest(ApiResponse<object>.Fail("WEAK_PASSWORD",
+                        $"Choose a password of at least {PasswordResetService.MinPasswordLength} characters."));
+
+                default:
+                    _throttle.RecordAction("reset-miss", CallerAddress);
+                    _audit.PasswordResetRejected(HttpContext, "unknown, expired or already used reset code");
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_RESET_CODE",
+                        "That reset code is not valid. It may have expired or already been used - ask for a new one."));
             }
         }
 

@@ -302,30 +302,6 @@ namespace Chronicle.API.Controllers
             }
         }
 
-        // ── Admin: a user's browser sessions ──────────────────────────────────
-
-        /// <summary>A user's active sessions. Session-scheme only, like the self routes.</summary>
-        [HttpGet("{id:int}/sessions")]
-        [Authorize(Policy = AuthPolicies.SessionAdmin)]
-        public IActionResult ListUserSessions(int id)
-        {
-            var list = _sessions.ListForUser(id)
-                .Select(s => new SessionDto(s.SessionId, s.CreatedAt, s.LastSeenAt, s.AbsoluteExpiresAt,
-                    s.UserAgent, s.RemoteIp, false))
-                .ToList();
-            return Ok(ApiResponse<List<SessionDto>>.Ok(list));
-        }
-
-        /// <summary>Ends all of a user's sessions (including the admin's own, if it is their own id).</summary>
-        [HttpDelete("{id:int}/sessions")]
-        [Authorize(Policy = AuthPolicies.SessionAdmin)]
-        public IActionResult RevokeUserSessions(int id)
-        {
-            var ended = _sessions.RevokeAllForUser(id);
-            _audit.SessionsRevoked(HttpContext, CurrentUserId, id, ended, "ended by admin");
-            return Ok(ApiResponse<object>.Ok(new { revoked = ended }));
-        }
-
         // ── Admin-on-behalf contacts ──────────────────────────────────────────
 
         [HttpGet("{id:int}/contacts")]

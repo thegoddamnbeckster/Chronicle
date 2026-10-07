@@ -140,6 +140,11 @@ export default function Layout() {
               Database
             </NavLink>
           )}
+          {user.isAdmin && (
+            <NavLink to="/settings/email" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              Email
+            </NavLink>
+          )}
           <NavLink to="/settings/metadata-assignment" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             Metadata Assignment
           </NavLink>

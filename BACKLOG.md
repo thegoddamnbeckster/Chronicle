@@ -44,7 +44,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Users
 
-- **Password reset** — Email-based reset link, or an admin-issued one-time token for installs without SMTP; single-use, expires (~1h); SMTP configurable under Settings → Email. Only the admin set-password route exists (`UsersController.ResetUserPassword`). No self-service reset, tokens or SMTP settings found. *(unverified)*
+- **Password reset — DONE.** Email link (Settings -> Email), administrator-issued codes (Users -> Reset Code), and the local `--reset-admin-password` command; single-use hashed tokens, throttled, audited, ends sessions. Remaining: per-user "email me a link" from an admin's screen, and optional email notification when a password is changed.
 
 ---
 

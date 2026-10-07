@@ -789,8 +789,9 @@ sudo systemctl restart chronicle
 > restart. A backup checks itself before it is trusted: its checksum, its SQLite integrity, and that it is not
 > from a *newer* Chronicle than the one running.
 >
-> Backups hold the database only. The `keys` folder (Data Protection keys: decrypts saved plugin passwords
-> and API credentials) is NOT inside them - back it up too. PostgreSQL is not backed up by the app; use
+> Backups hold the whole database, including account password hashes, API key hashes and plugin credentials
+> (which Chronicle stores as entered), so keep the files somewhere only administrators can read. The `keys`
+> folder (Data Protection keys, used only to read old encrypted values) is not inside them. PostgreSQL is not backed up by the app; use
 > `pg_dump`. Weekly "quick" and monthly "full rebuild" maintenance run as scheduled tasks too. SQLite's scratch
 > files are kept in a `temp` folder beside the database, never the system temp folder.
 

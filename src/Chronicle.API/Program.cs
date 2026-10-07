@@ -333,6 +333,10 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ICachedAppSettings, CachedAppSettings>();
 builder.Services.AddSingleton<ISessionPolicyProvider, SessionPolicyProvider>();
 builder.Services.AddSingleton<ILoginThrottle, LoginThrottle>();
+builder.Services.AddScoped<IEmailSettingsStore, EmailSettingsStore>();
+builder.Services.AddSingleton<IEmailSender, MailKitEmailSender>();
+builder.Services.AddScoped<IPasswordResetService, PasswordResetService>();
+builder.Services.AddSingleton<ResetMailDispatcher>();
 builder.Services.AddSingleton(_ => AuthAuditLog.CreateDefault());
 builder.Services.AddSingleton<ISessionStore, SessionStore>();
 builder.Services.AddHostedService<SessionSweepService>();
@@ -518,6 +522,11 @@ using (var scope = app.Services.CreateScope())
         db.Database.EnsureCreated();
 }
 
+// Local recovery: print a one-time password-reset code for a user and exit, without starting the web
+// server. Only someone who controls this machine (and so the database file) can run it.
+if (RecoveryCommand.ParseUsername(args) is { } recoveryUser)
+    return await RecoveryCommand.RunAsync(app.Services, recoveryUser, Console.Out);
+
 // ── Middleware pipeline ───────────────────────────────────────────────────────
 
 // Must run before anything reads Request.Scheme/Request.Host (e.g.
@@ -662,6 +671,7 @@ app.MapFallback(async context =>
 });
 
 app.Run();
+return Environment.ExitCode;   // 0 normally; AppRestart sets a distinctive code when it asks to be restarted
 
 // Make Program accessible to integration tests
 public partial class Program { }

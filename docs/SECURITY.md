@@ -127,6 +127,31 @@ accepted by those two read-only routes alone, never counts as activity, and ends
 The icon route fetches the image named in the plugin's manifest through the same filtered fetcher as
 the poster proxy, so a manifest cannot aim the server at its own network.
 
+### Forgotten passwords
+
+Three ways back in, all producing the same kind of credential: a **single-use reset token** (32 random bytes; only its
+SHA-256 hash is stored; expires after `auth.reset_token_minutes`, default 60; a newer token replaces any earlier one).
+
+1. **Email link** - Login page -> *Forgot password?* -> username or email address. Needs Settings -> Email to be set up. The
+   reply is always the same whether or not the account exists or has an address, the email is sent after the reply (so
+   timing does not give it away either), and requests are limited per address and per person (`auth.forgot_per_address_hour`
+   5, `auth.forgot_per_identifier_hour` 3). The link is built from the **public address configured on the Email page**, never
+   from the request's Host header (which a caller controls), and the token travels in the URL fragment so it never reaches
+   a server log or a Referer header.
+2. **Administrator-issued code** - Settings -> Users -> *Reset Code* (browser session, administrators only; an API key
+   cannot). Shown once; the person enters it on *Forgot password* -> *I have a reset code*.
+3. **Local recovery command** - `Chronicle.API --reset-admin-password <username>` prints a code and exits. It needs access
+   to the machine and database file, which is the point: it is the way back when the only administrator is locked out and
+   no email is set up. Docker: `docker compose exec api dotnet Chronicle.API.dll --reset-admin-password NAME`.
+
+Using a token sets the new password, ends **every** session of that account, and does not sign anyone in. Wrong or reused
+codes are all answered identically and counted per address (`auth.reset_misses_per_address_15min`, 10). Every step is in the
+audit log (`AUTH password-reset ...`).
+
+**Mail settings.** Settings -> Email (administrators, browser session). The mail password is stored as entered, like plugin
+credentials, and guarded the other way: it is write-only through the API and `email.*` rows are hidden from the general
+settings listing and cannot be written through it.
+
 ### API Key Authentication
 
 **Scopes.** An API key used to carry its owner's full privileges. Each key now has a scope:

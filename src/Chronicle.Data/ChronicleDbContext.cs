@@ -78,6 +78,7 @@ namespace Chronicle.Data
 
         public DbSet<User> Users => Set<User>();
         public DbSet<UserContact> UserContacts => Set<UserContact>();
+        public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
         public DbSet<MediaType> MediaTypes => Set<MediaType>();
         public DbSet<MediaItem> MediaItems => Set<MediaItem>();
         public DbSet<MediaExternalId> MediaExternalIds => Set<MediaExternalId>();
@@ -142,6 +143,20 @@ namespace Chronicle.Data
 
                 entity.HasOne(e => e.User)
                     .WithMany(u => u.Contacts)
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<PasswordResetToken>(entity =>
+            {
+                entity.ToTable("password_reset_tokens");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => e.TokenHash).IsUnique();
+                entity.HasIndex(e => e.UserId);
+                entity.Property(e => e.TokenHash).IsRequired().HasMaxLength(64);
+                entity.Property(e => e.Delivery).IsRequired().HasMaxLength(20);
+                entity.HasOne(e => e.User)
+                    .WithMany()
                     .HasForeignKey(e => e.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
             });

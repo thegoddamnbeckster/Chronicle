@@ -92,6 +92,26 @@ public sealed class AuthAuditLog
         Log.Information("AUTH sessions revoked: {Count} session(s) of user id {TargetUserId} by user id {ActingUserId} from {RemoteIp}: {Why}",
             count, targetUserId, actingUserId, AuthAudit.Ip(ctx), why);
 
+    public void PasswordResetRequested(HttpContext ctx, string? identifier, int emailsQueued) =>
+        Log.Information("AUTH password-reset requested for {Identifier} from {RemoteIp}: {Queued} email(s) queued, agent {UserAgent}",
+            AuthAudit.Clean(identifier, 80), AuthAudit.Ip(ctx), emailsQueued, AuthAudit.Agent(ctx));
+
+    public void PasswordResetThrottled(HttpContext ctx, string what, TimeSpan retryAfter) =>
+        Log.Warning("AUTH password-reset {What} THROTTLED: from {RemoteIp}, retry in {RetryAfterSeconds}s, agent {UserAgent}",
+            what, AuthAudit.Ip(ctx), (int)Math.Ceiling(retryAfter.TotalSeconds), AuthAudit.Agent(ctx));
+
+    public void PasswordResetIssued(HttpContext? ctx, int? actingUserId, int targetUserId, string delivery) =>
+        Log.Information("AUTH password-reset token issued for user id {TargetUserId} by {ActingUserId} via {Delivery} from {RemoteIp}",
+            targetUserId, actingUserId, delivery, ctx is null ? null : AuthAudit.Ip(ctx));
+
+    public void PasswordResetCompleted(HttpContext ctx, int userId, string username, int sessionsEnded) =>
+        Log.Information("AUTH password reset completed for user {Username} (id {UserId}) from {RemoteIp}: {Ended} session(s) ended, agent {UserAgent}",
+            username, userId, AuthAudit.Ip(ctx), sessionsEnded, AuthAudit.Agent(ctx));
+
+    public void PasswordResetRejected(HttpContext ctx, string reason) =>
+        Log.Warning("AUTH password-reset REJECTED from {RemoteIp}: {Reason}, agent {UserAgent}",
+            AuthAudit.Ip(ctx), reason, AuthAudit.Agent(ctx));
+
     public void ScopeDenied(HttpContext ctx, int? userId, string scope, string method, string? path) =>
         Log.Warning("AUTH api-key scope denied: key with scope {Scope} (user id {UserId}) from {RemoteIp} may not {Method} {Path}, agent {UserAgent}",
             scope, userId, AuthAudit.Ip(ctx), method, AuthAudit.Clean(path, 200), AuthAudit.Agent(ctx));

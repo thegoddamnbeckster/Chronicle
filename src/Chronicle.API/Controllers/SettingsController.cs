@@ -62,7 +62,8 @@ public class SettingsController : ControllerBase
     [HttpGet("app")]
     public async Task<IActionResult> GetAppSettings()
     {
-        var settings = await _db.AppSettings.ToListAsync();
+        // email.* (mail server details, including the password) is managed only through /settings/email by administrators.
+        var settings = await _db.AppSettings.Where(s => !s.Key.StartsWith("email.")).ToListAsync();
         var dict = settings.ToDictionary(s => s.Key, s => s.Value);
         return Ok(dict);
     }
@@ -72,6 +73,9 @@ public class SettingsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> PutAppSetting(string key, [FromBody] AppSettingUpdateRequest body)
     {
+        if (key.StartsWith("email.", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "Mail settings are managed on Settings -> Email." });
+
         var setting = await _db.AppSettings.FindAsync(key);
         if (setting is null)
             _db.AppSettings.Add(new AppSetting { Key = key, Value = body.Value });
