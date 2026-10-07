@@ -135,6 +135,11 @@ export default function Layout() {
           <NavLink to="/settings/background-tasks" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             Background Tasks
           </NavLink>
+          {user.isAdmin && (
+            <NavLink to="/settings/database" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              Database
+            </NavLink>
+          )}
           <NavLink to="/settings/metadata-assignment" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             Metadata Assignment
           </NavLink>

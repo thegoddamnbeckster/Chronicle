@@ -21,6 +21,7 @@ import ServiceSettingsPage from '@/pages/settings/ServiceSettingsPage'
 import ApiKeysPage from '@/pages/settings/ApiKeysPage'
 import LibrarySettingsPage from '@/pages/settings/LibrarySettingsPage'
 import BackgroundTasksPage from '@/pages/settings/BackgroundTasksPage'
+import DatabasePage from '@/pages/settings/DatabasePage'
 import EnrichmentDrillDownPage from '@/pages/settings/EnrichmentDrillDownPage'
 import PluginsPage from '@/pages/plugins/PluginsPage'
 import ListsPage from '@/pages/lists/ListsPage'
@@ -96,6 +97,7 @@ export default function App() {
         <Route path="settings/api-keys" element={<ApiKeysPage />} />
         <Route path="settings/library" element={<LibrarySettingsPage />} />
         <Route path="settings/background-tasks" element={<BackgroundTasksPage />} />
+        <Route path="settings/database" element={<DatabasePage />} />
         <Route path="settings/enrichment/:pluginId" element={<EnrichmentDrillDownPage />} />
         <Route path="settings/metadata-assignment" element={<MetadataAssignmentPage />} />
         <Route path="settings/field-aliases" element={<FieldAliasesPage />} />

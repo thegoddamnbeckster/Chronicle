@@ -780,6 +780,20 @@ sudo systemctl restart chronicle
 
 ## Backup & Restore
 
+> **Built-in database backups (SQLite).** Settings -> Database (administrators) takes consistent zipped
+> backups while Chronicle runs, nightly at 02:00 and on demand, keeps the newest 10 (configurable) in a
+> `backups` folder next to the database file (in Docker, inside the data volume), and can download, upload,
+> validate and restore them. A restore needs you to type `RESTORE`, makes a safety backup of the current data
+> first, then restarts Chronicle to swap the file in (Docker's `restart: unless-stopped` and the Windows
+> service recovery setting bring it back; with the dev script, run it again). Everyone is signed out by the
+> restart. A backup checks itself before it is trusted: its checksum, its SQLite integrity, and that it is not
+> from a *newer* Chronicle than the one running.
+>
+> Backups hold the database only. The `keys` folder (Data Protection keys: decrypts saved plugin passwords
+> and API credentials) is NOT inside them - back it up too. PostgreSQL is not backed up by the app; use
+> `pg_dump`. Weekly "quick" and monthly "full rebuild" maintenance run as scheduled tasks too. SQLite's scratch
+> files are kept in a `temp` folder beside the database, never the system temp folder.
+
 ### Automatic Backups
 
 **Schedule:**

@@ -36,8 +36,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Database
 
-- **Backups** — Keep 10 rolling zip backups; expose them as downloads; accept an uploaded backup, validate it, restore it via the UI, then restart and reload on the new DB. No backup code found. *(unverified)*
-- **Maintenance** — Automatic background maintenance (index rebuilds, statistics, etc.), also runnable manually from a Settings → Database section, with last-run times recorded. No maintenance code found. *(unverified)*
+- **Backups and maintenance — DONE (Settings -> Database).** Nightly + on-demand zipped backups, retention, download/upload/validate/restore (type RESTORE; safety backup; restart swaps the file in), quick/full maintenance as scheduled tasks, size reporting and warning, SQLite scratch files kept beside the database. Remaining: backups are SQLite-only; very large downloads go through the browser's memory (a streamed/signed download link would fix it); the restart relies on Docker / the service manager / the dev script to start Chronicle again.
 - **Size limits / SQLite → Postgres** — Monitor DB size; offer migration to Postgres (a compose file exists: `docker-compose.postgres.yml`) or ways to free space if the user stays on SQLite.
 - **Migration scripts — decided: not building.** EF Core code-first migrations (107 so far, auto-applied at startup) are the upgrade path. Backup/restore is the way back. A full-schema script can be generated from EF if ever needed.
 

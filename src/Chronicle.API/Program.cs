@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Chronicle.API.Authentication;
 using Chronicle.Data;
 using Chronicle.Services;
+using Chronicle.Services.Database;
 using Chronicle.Services.Import;
 using Chronicle.Services.Plugins;
 using Chronicle.Services.Reports;
@@ -132,7 +133,13 @@ builder.Services.AddDbContext<ChronicleDbContext>(options =>
         options.UseSqlite(connectionString);
         // Apply busy_timeout on every new connection so concurrent background tasks
         // wait up to 5 s for the write lock rather than failing immediately.
-        options.AddInterceptors(new SqliteBusyTimeoutInterceptor());
+        // SQLite's scratch files (sorts, index builds, VACUUM) go to a folder beside the database,
+        // never %TEMP% - nothing Chronicle produces may sit in a system temp folder.
+        var sqliteFile = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource;
+        var sqliteTemp = string.IsNullOrWhiteSpace(sqliteFile) || sqliteFile.StartsWith(":", StringComparison.Ordinal)
+            ? null
+            : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sqliteFile))!, "temp");
+        options.AddInterceptors(new SqliteBusyTimeoutInterceptor(sqliteTemp));
     }
 });
 
@@ -297,6 +304,13 @@ builder.Services.AddSingleton<TitleSanitizationService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<TitleSanitizationService>());
 
+// Database backups / restore / maintenance (Settings -> Database) and their scheduled tasks.
+builder.Services.AddSingleton<IDatabaseAdminService, DatabaseAdminService>();
+builder.Services.AddSingleton<IAppRestart, AppRestart>();
+builder.Services.AddSingleton<IScheduledTask, DatabaseBackupTask>();
+builder.Services.AddSingleton<IScheduledTask, DatabaseLightMaintenanceTask>();
+builder.Services.AddSingleton<IScheduledTask, DatabaseHeavyMaintenanceTask>();
+
 builder.Services.AddSingleton<PluginCatalogService>();
 
 builder.Services.AddSingleton<PluginUpdateCheckService>();
@@ -422,6 +436,16 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// A database restore is staged by the Database settings page and completed here, before anything
+// opens the database file (it is locked while the application runs).
+if (!dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
+{
+    var liveDbFile = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource;
+    if (!string.IsNullOrWhiteSpace(liveDbFile) && !liveDbFile.StartsWith(":", StringComparison.Ordinal))
+        Chronicle.Services.Database.PendingRestore.ApplyIfPresent(
+            Path.GetFullPath(liveDbFile), message => app.Logger.LogWarning("DATABASE {Message}", message));
+}
 
 // ── Migrate on startup (skip for InMemory used in tests) ─────────────────────
 using (var scope = app.Services.CreateScope())

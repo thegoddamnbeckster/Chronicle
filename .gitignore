@@ -117,3 +117,10 @@ commit_msg*.txt
 
 # Local database backups (never committed)
 backups/
+
+# Database backups, SQLite scratch files and restore leftovers, next to whichever database is in use
+backups/db/
+src/Chronicle.API/backups/
+src/Chronicle.API/temp/
+*.db.restore-pending
+*.db.replaced-*

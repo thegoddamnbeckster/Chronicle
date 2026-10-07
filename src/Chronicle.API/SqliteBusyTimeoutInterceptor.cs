@@ -26,12 +26,23 @@ namespace Chronicle.API;
 /// </summary>
 internal sealed class SqliteBusyTimeoutInterceptor : DbConnectionInterceptor
 {
-    private const string Pragmas = "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;";
+    private readonly string _pragmas;
+
+    /// <param name="tempDirectory">Where SQLite may put scratch files (created if missing). Null leaves SQLite's default.</param>
+    public SqliteBusyTimeoutInterceptor(string? tempDirectory = null)
+    {
+        _pragmas = "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;";
+        if (tempDirectory is not null)
+        {
+            Directory.CreateDirectory(tempDirectory);
+            _pragmas += $" PRAGMA temp_store_directory='{tempDirectory.Replace("'", "''")}';";
+        }
+    }
 
     public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
     {
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = Pragmas;
+        cmd.CommandText = _pragmas;
         cmd.ExecuteNonQuery();
     }
 
@@ -41,7 +52,7 @@ internal sealed class SqliteBusyTimeoutInterceptor : DbConnectionInterceptor
         CancellationToken cancellationToken = default)
     {
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = Pragmas;
+        cmd.CommandText = _pragmas;
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 }
