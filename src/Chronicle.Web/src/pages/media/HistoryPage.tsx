@@ -18,7 +18,7 @@ export default function HistoryPage() {
 
   return (
     <div className={styles.page}>
-      <h2 className={styles.heading}>Watch History</h2>
+      <h2 className={styles.heading}>History</h2>
 
       {isLoading && <p className={styles.empty}>Loading…</p>}
 

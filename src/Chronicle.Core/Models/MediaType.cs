@@ -41,6 +41,36 @@ namespace Chronicle.Core.Models
         /// </summary>
         public bool IsTrackable { get; set; } = true;
 
+        /// <summary>
+        /// How the file scanner groups this type's files. Null = by hierarchy depth (flat per file, or the folder
+        /// tree for 3+ levels). "audiobook" = each book folder is one entry (parts and covers collapse into it),
+        /// then an Author/Series/Book tree. Set here, in the database, rather than recognised by the type's NAME,
+        /// so a renamed or user-made type behaves the same as the built-in one.
+        /// </summary>
+        public string? ScanStrategy { get; set; }
+
+        /// <summary>
+        /// True once an administrator has edited this type on the Media Types page. Installed plugins declare
+        /// the shape of the types they handle and re-assert it at every start; a type marked as user-modified
+        /// is left exactly as the administrator set it.
+        /// </summary>
+        public bool IsUserModified { get; set; }
+
         public DateTime CreatedAt { get; set; }
+    }
+
+    /// <summary>The values <see cref="MediaType.ScanStrategy"/> may take.</summary>
+    public static class ScanStrategies
+    {
+        public const string Audiobook = "audiobook";
+        public static readonly string[] All = [Audiobook];
+        public static bool IsKnown(string? s) => s is null || All.Contains(s);
+
+        /// <summary>
+        /// Starting value for a type created automatically by a plugin that does not say. This is the only place a
+        /// type NAME is mapped to a strategy, applied once at creation; after that the database is the truth.
+        /// </summary>
+        public static string? DefaultFor(string typeName) =>
+            string.Equals(typeName, "audiobooks", StringComparison.OrdinalIgnoreCase) ? Audiobook : null;
     }
 }

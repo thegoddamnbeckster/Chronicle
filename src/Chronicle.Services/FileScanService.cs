@@ -37,6 +37,12 @@ namespace Chronicle.Services
             _groupingService = groupingService;
         }
 
+
+        /// <summary>Does this type group its files one book folder at a time? A property of the type
+        /// (MediaType.ScanStrategy), not something recognised from its name.</summary>
+        internal static bool IsAudiobookScan(MediaType mediaType) =>
+            string.Equals(mediaType.ScanStrategy, ScanStrategies.Audiobook, StringComparison.Ordinal);
+
         public async Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync()
         {
             var scanners = _registry.GetFileScannerPlugins();
@@ -88,14 +94,14 @@ namespace Chronicle.Services
 
             // Audiobooks: each book folder is one library entry regardless of how many
             // audio files (parts) or support files (covers, extras) it contains.
-            if (string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+            if (IsAudiobookScan(mediaType))
                 scannedFiles = CollapseAudiobooksToFolders(scannedFiles, request.Path);
 
             // Audiobooks with a 3-level hierarchy (Author → Series? → Book):
             // group into author/series tree so the library shows Authors as root items,
             // not individual book titles.
             if (mediaType.HierarchyLevels >= 3 &&
-                string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+                IsAudiobookScan(mediaType))
                 return await ScanAudiobooksHierarchicallyAsync(
                     scannedFiles, mediaType, userId, threshold, ct);
 
@@ -111,7 +117,7 @@ namespace Chronicle.Services
             // must use the exact same path so it doesn't silently misbehave for any type the
             // flat loop was never designed for.
             if (mediaType.HierarchyLevels >= 3 &&
-                !string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+                !IsAudiobookScan(mediaType))
                 return await ScanHierarchicalAsync(request, mediaType, userId, threshold, ct);
 
             var added = 0;
@@ -2633,7 +2639,7 @@ namespace Chronicle.Services
 
             // Audiobooks get a scanner-backed preview: reads tags, filters to audio files only,
             // and groups by book folder so the preview matches what the actual import will produce.
-            if (string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+            if (IsAudiobookScan(mediaType))
                 return await PreviewAudiobooksAsync(request, mediaType, ct);
 
             // Collect all file paths

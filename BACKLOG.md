@@ -50,8 +50,9 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Media Types
 
-- **User-registered media types** — Plugin-driven registration already works (a plugin's `MediaTypeSupport` is upserted into `media_types` at startup). Missing: a Settings → Media Types page so the user can add/edit types with no plugin, a "no plugin handles this type" prompt linking to the catalog, and protecting user edits from the startup upsert. See `docs/plans/2026-10-07-backlog-designs.md` §5.
-- **No hardcoding** — Each remaining case is a bug. Interaction verbs ("Watch"/"Listen"/"Read") come from the media type row, not code: fix Dashboard "Watch Time"/"Total Watch Time" and HistoryPage "Watch History". `FileScanService`'s `"audiobooks"` name check becomes a media-type property.
+- **DONE** — Settings -> Media Types (add / edit / switch off / delete-if-empty / hand back to plugins), per-type action word and level names drive the wording of the item pages, the audiobook scan is a property of the type (not its name), and an administrator's edits are protected from plugin updates. See `docs/MEDIA_TYPES.md`.
+- **Remaining hard-coded wording** — the cast heading on the item page ("Band Members" for music, "Narrators" for audiobooks, "Cast" otherwise) is still chosen by type name; it needs a field on the type. A few backend helpers still pattern-match type names (`FileScanService` provider-family guessing, `AddCollectionPage` looking for "movies").
+- **Plugin catalog by media type** — the catalog cannot yet be filtered to "plugins that handle this type" because catalog entries do not list the types they support (needs `supported_media_types` in each plugin manifest).
 
 ---
 

@@ -421,6 +421,12 @@ export interface MediaTypeOption {
   name: string
   displayName: string
   hierarchyLevels: number
+  /** Past-tense action word for this type ("watched", "listened", "read", ...). Words the interface for it. */
+  interactionVerb?: string
+  /** Names of the hierarchy levels, top first ("Show", "Season", "Episode"). */
+  hierarchyLabels?: string[]
+  /** True for a type whose top level is a bucket of distinct works (a movie collection). */
+  supportsCollections?: boolean
 }
 
 // ── Metadata search ───────────────────────────────────────────────────────────

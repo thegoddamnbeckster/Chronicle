@@ -13,15 +13,16 @@ import {
 } from '@/utils/sortSettings'
 import { clearScannerData, nuclearReset } from '@/api/library'
 import { getAppSettings, putAppSetting } from '@/api/settings'
+import { neutralStatusLabel } from '@/utils/typeWording'
 import styles from './LibrarySettingsPage.module.css'
 
 const STATUS_LABELS: Record<string, string> = {
-  Watching: 'Watching',
-  PlanToWatch: 'Plan to Watch',
-  Completed: 'Completed',
-  Dropped: 'Dropped',
-  OnHold: 'On Hold',
-  Rewatching: 'Rewatching',
+  Watching: neutralStatusLabel('Watching'),
+  PlanToWatch: neutralStatusLabel('PlanToWatch'),
+  Completed: neutralStatusLabel('Completed'),
+  Dropped: neutralStatusLabel('Dropped'),
+  OnHold: neutralStatusLabel('OnHold'),
+  Rewatching: neutralStatusLabel('Rewatching'),
 }
 
 const SORT_LABELS: Record<string, string> = {

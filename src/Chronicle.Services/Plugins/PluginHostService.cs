@@ -134,7 +134,7 @@ public sealed class PluginHostService : IHostedService
     /// Existing rows are updated in-place (preserving their PK / FK references); new rows are
     /// inserted with <c>IsBuiltIn = false</c>, <c>IsActive = true</c>.
     /// </summary>
-    private async Task SyncMediaTypesFromPluginsAsync(ChronicleDbContext db, CancellationToken ct)
+    internal async Task SyncMediaTypesFromPluginsAsync(ChronicleDbContext db, CancellationToken ct)
     {
         // Collect all MediaTypeSupport entries from every loaded plugin.
         var allSupport = _registry.GetMetadataProviders()
@@ -162,6 +162,7 @@ public sealed class PluginHostService : IHostedService
                     // a reference type even if another plugin's entry left IsTrackable at its
                     // (trackable) default.
                     IsTrackable     = g.All(s => s.IsTrackable),
+                    ScanStrategy    = g.Select(s => s.ScanStrategy).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
                 };
             })
             .ToList();
@@ -192,11 +193,20 @@ public sealed class PluginHostService : IHostedService
                     IsBuiltIn       = false,
                     IsActive        = true,
                     IsTrackable     = support.IsTrackable,
+                    ScanStrategy    = Chronicle.Core.Models.ScanStrategies.IsKnown(support.ScanStrategy) && support.ScanStrategy is not null
+                                        ? support.ScanStrategy
+                                        : Chronicle.Core.Models.ScanStrategies.DefaultFor(support.MediaTypeName),
                     CreatedAt       = DateTime.UtcNow,
                 });
                 _log.Information("MediaTypeSync: added new media type '{Name}' ({Display})",
                     support.MediaTypeName, support.DisplayName);
                 synced++;
+            }
+            else if (existing.IsUserModified)
+            {
+                // An administrator edited this type on the Media Types page; the plugin's declaration no
+                // longer overrides what they chose.
+                _log.Debug("MediaTypeSync: '{Name}' was edited by an administrator; leaving it as set", support.MediaTypeName);
             }
             else
             {

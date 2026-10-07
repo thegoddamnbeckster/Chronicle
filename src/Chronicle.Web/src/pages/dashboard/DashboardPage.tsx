@@ -53,11 +53,11 @@ export default function DashboardPage() {
       {stats && (
         <div className={styles.statsGrid}>
           <StatCard label="Tracked" value={stats.totalItemsTracked} />
-          <StatCard label="Watching" value={stats.totalWatching} />
+          <StatCard label="In progress" value={stats.totalWatching} />
           <StatCard label="Completed" value={stats.totalCompleted} />
           <StatCard label="This Week" value={stats.scrobblesThisWeek} />
           <StatCard label="This Month" value={stats.scrobblesThisMonth} />
-          <StatCard label="Watch Time" value={formatMinutes(stats.totalMinutesWatched)} />
+          <StatCard label="Time spent" value={formatMinutes(stats.totalMinutesWatched)} />
         </div>
       )}
 
@@ -110,7 +110,7 @@ export default function DashboardPage() {
 
       <div className={styles.panels}>
         <section className={styles.panel}>
-          <h3 className={styles.panelTitle}>Continue Watching</h3>
+          <h3 className={styles.panelTitle}>Continue</h3>
           {watching && watching.length > 0 ? (
             <ul className={styles.list}>
               {watching.slice(0, 8).map(e => {

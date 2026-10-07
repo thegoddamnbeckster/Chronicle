@@ -52,11 +52,13 @@ namespace Chronicle.API.Controllers
         [HttpGet("types")]
         public async Task<IActionResult> GetMediaTypes()
         {
-            var types = await _context.MediaTypes
+            var rows = await _context.MediaTypes
                 .Where(t => t.IsActive)
                 .OrderBy(t => t.DisplayName)
-                .Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName, t.HierarchyLevels))
+                .Select(t => new { t.Id, t.Name, t.DisplayName, t.HierarchyLevels, t.InteractionVerb, t.HierarchyLabels, t.SupportsCollections })
                 .ToListAsync();
+            var types = rows.Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName, t.HierarchyLevels,
+                t.InteractionVerb, Chronicle.Services.MediaTypeRules.SplitLabels(t.HierarchyLabels), t.SupportsCollections)).ToList();
             return Ok(ApiResponse<List<MediaTypeDto>>.Ok(types));
         }
 

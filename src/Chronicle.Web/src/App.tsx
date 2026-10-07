@@ -23,6 +23,7 @@ import LibrarySettingsPage from '@/pages/settings/LibrarySettingsPage'
 import BackgroundTasksPage from '@/pages/settings/BackgroundTasksPage'
 import DatabasePage from '@/pages/settings/DatabasePage'
 import EmailSettingsPage from '@/pages/settings/EmailSettingsPage'
+import MediaTypesPage from '@/pages/settings/MediaTypesPage'
 import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage'
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 import EnrichmentDrillDownPage from '@/pages/settings/EnrichmentDrillDownPage'
@@ -104,6 +105,7 @@ export default function App() {
         <Route path="settings/background-tasks" element={<BackgroundTasksPage />} />
         <Route path="settings/database" element={<DatabasePage />} />
         <Route path="settings/email" element={<EmailSettingsPage />} />
+        <Route path="settings/media-types" element={<MediaTypesPage />} />
         <Route path="settings/enrichment/:pluginId" element={<EnrichmentDrillDownPage />} />
         <Route path="settings/metadata-assignment" element={<MetadataAssignmentPage />} />
         <Route path="settings/field-aliases" element={<FieldAliasesPage />} />
