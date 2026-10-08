@@ -60,3 +60,21 @@ For audio files without usable tags the scan reads the name: `01 - Title`, `01. 
 `Track 05 - Title` and `Artist - 01 - Title`. A bare number is only a track number when it is zero padded or followed by
 a separator, so `99 Problems` stays whole. A `1-02`-style name only counts as disc and track when other files in the
 same folder are named that way. Embedded tags still take priority.
+
+## Messy folders and download-style names
+
+Tidy libraries (`Show (2008)/Season 1/...`, `Heat (1995)/...`) are read exactly as before. When the structure says
+little, the scanner falls back to the *name* (`ReleaseNameParser`), reading what comes before the first episode code,
+year or quality word:
+
+* `Movie.Name.2019.1080p.BluRay.x264-GRP` (folder or file) becomes **Movie Name (2019)**.
+* A release-named show folder (`Show.Name.S02.1080p.BluRay.x264-GRP`) is cleaned to **Show Name**; the real folder path
+  stays the matching key, so rescans find the same item.
+* Episodes sitting loose in the scan root (`Show.Name.S02E03.Episode.Title.720p.HDTV.x264-GRP.mkv`, `Show Name 1x05`,
+  `[Group] Show Name - 1x05 [1080p]`) are filed under a show and season built from their names; before, they were left
+  ungrouped. If the show also has a real folder, they join it.
+* A name only counts as "a release" when it contains a resolution, source or codec word (1080p, BluRay, x264, ...).
+  Titles that merely contain words like *Cam*, *Web*, *Dual*, *Internal* or *Complete* are left alone.
+* **Everything worked out from a name alone is held below the automatic-import threshold** (movies 70 %, derived shows
+  capped at 70 %): the scan page lists them for review, the nightly scan does not import them by itself.
+* Names that give no show, season and episode stay ungrouped and are not imported.

@@ -28,6 +28,11 @@ namespace Chronicle.Core.Models.Scan
         /// <summary>True if any two signal sources disagreed on the group name.</summary>
         public bool HasConflicts { get; set; }
 
+        /// <summary>Upper limit for <see cref="ConfidenceScore"/> after the roll-up from children. Set on groups whose
+        /// identity was worked out from a download-style file name rather than a real folder, so they show up for review
+        /// but stay below the automatic-import threshold.</summary>
+        public double? ConfidenceCap { get; set; }
+
         public List<ScanGroup> Children { get; set; } = [];
 
         /// <summary>Leaf files that belong directly to this group (flat-grouped types).</summary>

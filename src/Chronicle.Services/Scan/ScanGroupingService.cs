@@ -114,6 +114,13 @@ namespace Chronicle.Services.Scan
                 {
                     var groupName = folderSignal.FolderNames.LastOrDefault()
                         ?? Path.GetFileNameWithoutExtension(path);
+
+                    // A download-style name ("Movie.Name.2019.1080p.BluRay.x264-GRP") becomes "Movie Name (2019)".
+                    // Tidy names such as "Heat (1995)" carry no quality words and are left exactly as they are.
+                    var release = ReleaseNameParser.Parse(groupName);
+                    bool derivedName = release.LooksLikeRelease && release.Title is not null;
+                    if (derivedName)
+                        groupName = release.Year is { } releaseYear ? $"{release.Title} ({releaseYear})" : release.Title!;
                     var key = Normalize(groupName);
 
                     if (!rootGroups.TryGetValue(key, out var group))
@@ -133,7 +140,8 @@ namespace Chronicle.Services.Scan
                             GroupKey        = key,
                             Name            = groupName,
                             HierarchyLevel  = 0,
-                            ConfidenceScore = ComputeFlatConfidence(groupName),
+                            // A name worked out from a release string is less certain than a tidy folder name.
+                            ConfidenceScore = derivedName ? Math.Min(0.7, ComputeFlatConfidence(groupName)) : ComputeFlatConfidence(groupName),
                             SignalSources   = BuildSources(folderSignal, null, 0),
                             FolderPath      = folderPath,
                         };
@@ -150,7 +158,10 @@ namespace Chronicle.Services.Scan
                 // Hierarchical types: build Artist → Album → Track tree from folder depth
                 if (folderSignal.FolderNames.Count == 0)
                 {
-                    // File is directly in the scan root with no folder grouping
+                    // File is directly in the scan root with no folder grouping. A TV-style episode name
+                    // ("Show.Name.S02E03...") still tells us the show, season and episode.
+                    if (!isSidecar && hierarchyLevels >= 3 && TryAddEpisodeFromFileName(rootGroups, result, path, scanRoot, folderSignal, tagSignal))
+                        continue;
                     if (!isSidecar)
                         result.Ungrouped.Add(path);
                     continue;
@@ -360,6 +371,75 @@ namespace Chronicle.Services.Scan
 
         // ── Helpers ──────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// For an episode sitting loose in the scan root: reads the show, season and episode out of its file name and
+        /// files it under a show / season group like any other episode. Returns false when the name does not give all
+        /// three, so the caller leaves the file ungrouped as before. The show group is capped below the automatic-import
+        /// threshold: there is no folder to confirm the name, so a person should look at it first.
+        /// </summary>
+        private static bool TryAddEpisodeFromFileName(
+            Dictionary<string, ScanGroup> rootGroups, ScanGroupResult result, string path, string scanRoot,
+            FolderSignal folderSignal, TagSignal? tagSignal)
+        {
+            var info = ReleaseNameParser.Parse(folderSignal.FileName);
+            if (info.Title is null || info.Season is null || info.Episode is null) return false;
+
+            var showKey = Normalize(info.Title);
+            if (!rootGroups.TryGetValue(showKey, out var show))
+            {
+                show = new ScanGroup
+                {
+                    GroupKey        = showKey,
+                    Name            = info.Title,
+                    Year            = info.Year,
+                    HierarchyLevel  = 0,
+                    ConfidenceScore = 0.6,
+                    ConfidenceCap   = 0.7,
+                    SignalSources   = ["filename"],
+                };
+                rootGroups[showKey] = show;
+                result.Groups.Add(show);
+            }
+            else
+            {
+                // The show also has a real folder: keep it, and take the year if it lacked one.
+                show.Year ??= info.Year;
+            }
+
+            var seasonNum  = info.Season.Value;
+            var seasonName = seasonNum == 0 ? "Specials" : $"Season {seasonNum}";
+            var seasonKey  = Normalize(showKey + "/" + seasonName);
+            var season = show.Children.FirstOrDefault(c => c.GroupKey == seasonKey);
+            if (season is null)
+            {
+                season = new ScanGroup
+                {
+                    GroupKey        = seasonKey,
+                    Name            = seasonName,
+                    Number          = seasonNum,
+                    HierarchyLevel  = 1,
+                    ConfidenceScore = 0.85,
+                    SignalSources   = ["filename"],
+                    // Unique, show-scoped path used only as a matching key (the main loop does the same for a season it invents).
+                    FolderPath      = Path.Combine(scanRoot, info.Title, seasonName),
+                };
+                show.Children.Add(season);
+            }
+
+            var episodeName = info.EpisodeTitle ?? $"Episode {info.Episode}";
+            season.Children.Add(new ScanGroup
+            {
+                GroupKey        = Normalize(seasonKey + "/" + episodeName + "/" + info.Episode),
+                Name            = episodeName,
+                Number          = info.Episode,
+                HierarchyLevel  = 2,
+                ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal),
+                SignalSources   = ["filename"],
+                Files           = [path],
+            });
+            return true;
+        }
+
         /// <summary>"1-02 Title" names mean disc 1, track 2 only when the folder's other tracks are named that way
         /// too. A lone one ("7-11 Store.mp3") goes back to the plain reading: no disc, the file name left as it is.</summary>
         private static void DistrustLoneDiscTrackNames(IReadOnlyList<string> paths, PerFileSignals[] signals)
@@ -390,7 +470,14 @@ namespace Chronicle.Services.Scan
         {
             // Tag: prefer AlbumArtist over Artist for level-0 when music
             if (tag?.AlbumArtist is not null) return tag.AlbumArtist;
-            return folder.FolderNames[0];
+
+            // A release-named top folder ("Show.Name.S02.1080p.BluRay.x264-GRP") is cleaned to the show name; ordinary
+            // folder names are used as they are.
+            var top = folder.FolderNames[0];
+            var release = ReleaseNameParser.Parse(top);
+            if (release.LooksLikeRelease && release.Title is not null)
+                return release.Year is { } y ? $"{release.Title} ({y})" : release.Title;
+            return top;
         }
 
         private static string ResolveLeafName(
@@ -516,6 +603,7 @@ namespace Chronicle.Services.Scan
             if (group.Children.Count == 0) return;
             foreach (var child in group.Children) RollUpConfidence(child);
             group.ConfidenceScore = group.Children.Average(c => c.ConfidenceScore);
+            if (group.ConfidenceCap is { } cap) group.ConfidenceScore = Math.Min(group.ConfidenceScore, cap);
         }
 
         /// <summary>
