@@ -7,12 +7,14 @@ namespace Chronicle.Services
     /// the tests and the page's own hints agree.</summary>
     public sealed record MediaTypeInput(
         string? Name, string DisplayName, string? Description, int HierarchyLevels, IReadOnlyList<string> HierarchyLabels,
-        string InteractionVerb, string ProgressUnit, bool SupportsCollections, bool IsTrackable, string? ScanStrategy, bool IsActive);
+        string InteractionVerb, string ProgressUnit, bool SupportsCollections, bool IsTrackable, string? ScanStrategy, bool IsActive,
+        string? ProviderFamily = null, string? CastHeading = null);
 
     public static class MediaTypeRules
     {
         public const int MaxLevels = 5;
         private static readonly Regex NameRule = new(@"^[a-z0-9][a-z0-9_-]{1,48}$", RegexOptions.Compiled);
+        private static readonly Regex FamilyRule = new(@"^[a-z][a-z0-9_]{1,29}$", RegexOptions.Compiled);
         private static readonly Regex WordRule = new(@"^[a-z]{2,20}$", RegexOptions.Compiled);
 
         /// <summary>The verbs the interface knows how to turn into labels. Anything else is allowed (and gets neutral
@@ -43,6 +45,10 @@ namespace Chronicle.Services
                 return "The action word must be 2-20 lowercase letters, in the past tense (for example 'watched', 'listened', 'read', 'played').";
             if (!WordRule.IsMatch(input.ProgressUnit ?? ""))
                 return "The progress unit must be 2-20 lowercase letters (for example 'minutes', 'pages', 'tracks').";
+            if (input.ProviderFamily is not null && !FamilyRule.IsMatch(input.ProviderFamily))
+                return "The provider family must be 2-30 lowercase letters, digits or underscores (for example tv, movie or music), or blank.";
+            if ((input.CastHeading?.Length ?? 0) > 40 || input.CastHeading?.Any(char.IsControl) == true)
+                return "The credits heading can be at most 40 characters.";
             if (!ScanStrategies.IsKnown(input.ScanStrategy)) return $"Unknown scan style. Use one of: {string.Join(", ", ScanStrategies.All)}, or leave it blank.";
             return null;
         }

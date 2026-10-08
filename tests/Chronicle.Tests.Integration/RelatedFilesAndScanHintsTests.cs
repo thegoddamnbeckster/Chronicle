@@ -149,5 +149,47 @@ namespace Chronicle.Tests.Integration
 
             (await db.MediaItemRelatedFiles.CountAsync(r => r.Path == "C:/m/Gone/a.srt")).Should().Be(0);
         }
+
+        [Fact]
+        public async Task TheMigration_GivesExistingTypesTheFamilyAndHeadingTheirNamesImplied()
+        {
+            using var scope = _factory.Services.CreateScope();
+            var types = await scope.ServiceProvider.GetRequiredService<ChronicleDbContext>().MediaTypes.AsNoTracking().ToListAsync();
+
+            types.Single(t => t.Name == "tv").ProviderFamily.Should().Be("tv");
+            types.Single(t => t.Name == "music").ProviderFamily.Should().Be("music");
+            types.Single(t => t.Name == "movies").ProviderFamily.Should().BeNull();
+            types.Single(t => t.Name == "music").CastHeading.Should().Be("Band Members");
+            types.Single(t => t.Name == "tv").CastHeading.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task FamilyAndHeading_RoundTrip_AreValidated_AndTheTypePickerCarriesTheHeading()
+        {
+            var admin = await AdminAsync();
+            var name = "t" + Guid.NewGuid().ToString("N")[..10];
+            object Body(string? family, string? heading) => new
+            {
+                name, displayName = "Podcasts", description = "", hierarchyLevels = 1, hierarchyLabels = new[] { "Item" },
+                interactionVerb = "listened", progressUnit = "minutes", supportsCollections = false, isTrackable = true,
+                providerFamily = family, castHeading = heading, isActive = true,
+            };
+
+            var bad = await admin.PostAsJsonAsync("/api/v1/media-types", Body("Not A Family", null));
+            bad.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+            var created = await admin.PostAsJsonAsync("/api/v1/media-types", Body("music", "Hosts"));
+            created.StatusCode.Should().Be(HttpStatusCode.OK);
+            var data = (await Json(created)).GetProperty("data");
+            data.GetProperty("providerFamily").GetString().Should().Be("music");
+            data.GetProperty("castHeading").GetString().Should().Be("Hosts");
+
+            var picker = await Json(await admin.GetAsync("/api/v1/media/types"));
+            picker.GetProperty("data").EnumerateArray()
+                .Single(t => t.GetProperty("name").GetString() == name)
+                .GetProperty("castHeading").GetString().Should().Be("Hosts");
+
+            Chronicle.Services.MediaTypeFamilies.Resolve(name).Should().Be("music");   // the snapshot was refreshed by the edit
+        }
     }
 }

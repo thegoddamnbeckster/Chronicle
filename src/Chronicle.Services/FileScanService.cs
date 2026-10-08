@@ -2249,18 +2249,7 @@ namespace Chronicle.Services
         /// (and would do the same for "books" or any future custom type), seeding hundreds of
         /// enrichment rows those plugins can never resolve.
         /// </summary>
-        private static string? ToMediaTypeHint(string mediaTypeName)
-        {
-            var n = mediaTypeName.ToLowerInvariant();
-            // Must be checked before the generic "anime" → tv fallback below — "anime_movies"
-            // contains "anime" as a substring but is flat (like movies), not TV-hierarchical.
-            if (n.Contains("anime") && n.Contains("movie")) return "movie";
-            if (n.Contains("tv") || n.Contains("show") || n.Contains("series")
-                || n.Contains("anime")) return "tv";
-            if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";
-            if (n.Contains("fanedit")) return "movie";
-            return null;
-        }
+        private static string? ToMediaTypeHint(string mediaTypeName) => MediaTypeFamilies.Resolve(mediaTypeName);
 
         // ── Hierarchy grouping ────────────────────────────────────────────────────
 

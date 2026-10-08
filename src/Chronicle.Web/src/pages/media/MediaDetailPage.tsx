@@ -188,14 +188,6 @@ export default function MediaDetailPage() {
     enabled: !isNaN(mediaId),
   })
   const onScreenPeople = peopleInvolved.filter(p => isOnScreenRole(p.roles))
-  // The on-screen group's heading: musicians/vocalists on a record, narrators on an audiobook,
-  // actors everywhere else.
-  const castLabel = (() => {
-    const t = (item?.mediaTypeName ?? '').toLowerCase()
-    if (t === 'music') return 'Band Members'
-    if (t === 'audiobook' || t === 'audiobooks') return 'Narrators'
-    return 'Cast'
-  })()
   const otherPeople = peopleInvolved.filter(p => !isOnScreenRole(p.roles))
 
   // Get the user's library entry for this item (if any)
@@ -457,6 +449,9 @@ export default function MediaDetailPage() {
     queryFn: getMediaTypes,
     staleTime: 5 * 60 * 1000,
   })
+
+  // The on-screen group's heading ("Band Members", "Narrators", ...) comes from the media type's own setting.
+  const castLabel = mediaTypes.find(t => t.id === item?.mediaTypeId)?.castHeading || 'Cast'
 
   const changeTypeMut = useMutation({
     mutationFn: (targetTypeId: number) => changeMediaType(mediaId, targetTypeId),

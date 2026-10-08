@@ -201,6 +201,8 @@ public sealed class PluginHostService : IHostedService
                     ScanStrategy    = Chronicle.Core.Models.ScanStrategies.IsKnown(support.ScanStrategy) && support.ScanStrategy is not null
                                         ? support.ScanStrategy
                                         : Chronicle.Core.Models.ScanStrategies.DefaultFor(support.MediaTypeName),
+                    ProviderFamily  = Chronicle.Core.Models.ProviderFamilies.DefaultFor(support.MediaTypeName),
+                    CastHeading     = Chronicle.Core.Models.ProviderFamilies.DefaultCastHeadingFor(support.MediaTypeName),
                     CreatedAt       = DateTime.UtcNow,
                 });
                 _log.Information("MediaTypeSync: added new media type '{Name}' ({Display})",
@@ -242,6 +244,7 @@ public sealed class PluginHostService : IHostedService
 
         if (synced > 0)
             await db.SaveChangesAsync(ct);
+        await MediaTypeFamilies.RefreshAsync(db, ct);
 
         _log.Debug("MediaTypeSync: verified {Count} media type(s) from plugins ({Synced} changed)",
             allSupport.Count, synced);

@@ -119,6 +119,7 @@ public class PluginCatalogService
         var version = tag.TrimStart('v', 'V');
         var name = seed.PluginId;
         string? author = null, description = null, iconUrl = null;
+        string[]? supportedTypes = null;
         var dllName = $"{GuessAssemblyNameFromRepo(seed.GithubRepo)}.dll";
 
         try
@@ -135,6 +136,8 @@ public class PluginCatalogService
                     author      = manifest.Author;
                     description = manifest.Description;
                     iconUrl     = manifest.IconUrl;
+                    if (manifest.SupportedMediaTypes is { Count: > 0 })
+                        supportedTypes = manifest.SupportedMediaTypes.ToArray();
 
                     // The DLL's assembly name is the entry_type's namespace with its final
                     // (class name) segment dropped -- confirmed against every manifest in
@@ -172,7 +175,8 @@ public class PluginCatalogService
             DllName:     dllName,
             Tags:        seed.Tags,
             Sha256:      null, // no longer pinned -- see this class's own doc
-            Version:     version
+            Version:     version,
+            SupportedMediaTypes: supportedTypes ?? seed.Tags
         );
     }
 

@@ -708,7 +708,7 @@ public class PluginsController : ControllerBase
     /// <summary>Lists all plugins available in the Chronicle plugin catalog.</summary>
     [HttpGet("catalog")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> GetCatalog(CancellationToken ct)
+    public async Task<IActionResult> GetCatalog([FromQuery] string? mediaType, CancellationToken ct)
     {
         var installed = await _pluginService.GetAllPluginsAsync();
         var installedIds = installed.Select(p => p.PluginId).ToHashSet();
@@ -716,6 +716,13 @@ public class PluginsController : ControllerBase
         var entries = (await _catalogService.GetCatalogAsync(ct))
             .Select(e => e with { IsInstalled = installedIds.Contains(e.PluginId) })
             .ToList();
+
+        // ?mediaType=anime keeps only the plugins that handle that type, or the family of providers that also serves it.
+        if (!string.IsNullOrWhiteSpace(mediaType))
+        {
+            var family = MediaTypeFamilies.Resolve(mediaType);
+            entries = entries.Where(e => PluginCatalogFilter.Handles(e, mediaType, family)).ToList();
+        }
 
         return Ok(ApiResponse<List<PluginCatalogEntry>>.Ok(entries));
     }

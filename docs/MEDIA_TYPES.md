@@ -36,3 +36,16 @@ and no items says so and links to the plugin catalogue.
 
 `ScanStrategies.DefaultFor` maps the name `audiobooks` to the `audiobook` strategy, **once**, when a plugin first creates
 that type (and a migration carried the old behaviour over for existing databases). After that the database is the truth.
+
+## Provider family and credits heading
+
+Two more per-type settings, both editable on Settings -> Media Types (and seeded once from the type's name, after which the
+database is the truth):
+
+* **Provider family** (`media_types.ProviderFamily`: `tv`, `movie`, `music` or blank). A metadata plugin that supports a
+  family is also used for every type in it, so a plugin declaring only `tv` serves `anime`. It replaces name-guessing in
+  the scanner and enrichment code. Code that has no database handle reads it through `MediaTypeFamilies`, an in-memory
+  snapshot reloaded at start and whenever a type is created, edited or removed. The Plugins catalog uses it too
+  (`GET /plugins/catalog?mediaType=anime`).
+* **Heading for credited people** (`media_types.CastHeading`): "Band Members" for music, "Narrators" for audiobooks,
+  blank = "Cast".

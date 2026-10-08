@@ -29,6 +29,13 @@ public class PluginManifest
     public string MinChronicleVersion { get; set; } = "1.0.0";
 
     /// <summary>
+    /// Names of the media types this plugin handles (for example "movies", "tv", "music"), so the plugin catalog can be
+    /// filtered to "plugins for this type". Optional; a plugin without it is listed under the tags it was catalogued with.
+    /// </summary>
+    [JsonPropertyName("supported_media_types")]
+    public List<string>? SupportedMediaTypes { get; set; }
+
+    /// <summary>
     /// Fully-qualified type name of the class implementing one of the plugin interfaces.
     /// e.g. "Chronicle.Plugins.TMDB.TMDBMetadataProvider"
     /// </summary>

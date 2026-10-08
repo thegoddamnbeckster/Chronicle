@@ -223,7 +223,8 @@ namespace Chronicle.API.DTOs
     /// <summary>A media type as offered in pickers and used to word the interface for it (the action verb and the
     /// names of its hierarchy levels come from the type, never from its name).</summary>
     public record MediaTypeDto(int Id, string Name, string DisplayName, int HierarchyLevels,
-        string InteractionVerb = "watched", string[]? HierarchyLabels = null, bool SupportsCollections = false);
+        string InteractionVerb = "watched", string[]? HierarchyLabels = null, bool SupportsCollections = false,
+        string? CastHeading = null);
 
     /// <summary>Optional body for POST /api/v1/media/{id}/refresh/{pluginId}.</summary>
     public record PluginRefreshRequestDto(string? Input = null);

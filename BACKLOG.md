@@ -51,8 +51,8 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 ## Media Types
 
 - **DONE** — Settings -> Media Types (add / edit / switch off / delete-if-empty / hand back to plugins), per-type action word and level names drive the wording of the item pages, the audiobook scan is a property of the type (not its name), and an administrator's edits are protected from plugin updates. See `docs/MEDIA_TYPES.md`.
-- **Remaining hard-coded wording** — the cast heading on the item page ("Band Members" for music, "Narrators" for audiobooks, "Cast" otherwise) is still chosen by type name; it needs a field on the type. A few backend helpers still pattern-match type names (`FileScanService` provider-family guessing, `AddCollectionPage` looking for "movies").
-- **Plugin catalog by media type** — the catalog cannot yet be filtered to "plugins that handle this type" because catalog entries do not list the types they support (needs `supported_media_types` in each plugin manifest).
+- **Remaining hard-coded wording - DONE.** The credits heading is a per-type setting, and the provider-family guessing in the scanner and enrichment code (anime -> tv ...) now reads `media_types.ProviderFamily`. `AddCollectionPage` still prefers a type named "movies" only as a default selection (it falls back to the first flat type).
+- **Plugin catalog by media type - DONE.** Manifests may list `supported_media_types`; the catalog falls back to its tags, and `GET /plugins/catalog?mediaType=` plus a filter on the Plugins page narrow it (a type's provider family counts).
 
 ---
 

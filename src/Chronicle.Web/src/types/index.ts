@@ -434,6 +434,8 @@ export interface MediaTypeOption {
   hierarchyLabels?: string[]
   /** True for a type whose top level is a bucket of distinct works (a movie collection). */
   supportsCollections?: boolean
+  /** Heading for the people credited on an item of this type ("Band Members", "Narrators"); blank means "Cast". */
+  castHeading?: string | null
 }
 
 // ── Metadata search ───────────────────────────────────────────────────────────

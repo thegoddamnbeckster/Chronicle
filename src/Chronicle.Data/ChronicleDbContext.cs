@@ -206,6 +206,8 @@ namespace Chronicle.Data
                 entity.Property(e => e.ScanStrategy).HasMaxLength(30);
                 entity.Property(e => e.IsUserModified).HasDefaultValue(false);
                 entity.Property(e => e.ScanHintsJson).HasMaxLength(4000);
+                entity.Property(e => e.ProviderFamily).HasMaxLength(30);
+                entity.Property(e => e.CastHeading).HasMaxLength(40);
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 // Seed: built-in media types

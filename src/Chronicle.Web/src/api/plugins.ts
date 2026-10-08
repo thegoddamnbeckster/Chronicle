@@ -123,10 +123,13 @@ export interface PluginCatalogEntry {
   tags: string[]
   isInstalled: boolean
   version: string
+  /** Media types the plugin handles; absent means unknown. */
+  supportedMediaTypes?: string[] | null
 }
 
-export async function listCatalog(): Promise<PluginCatalogEntry[]> {
-  const res = await client.get<{ data: PluginCatalogEntry[] }>('/plugins/catalog')
+/** The plugin catalog, optionally only the plugins that handle one media type (by its internal name). */
+export async function listCatalog(mediaType?: string): Promise<PluginCatalogEntry[]> {
+  const res = await client.get<{ data: PluginCatalogEntry[] }>('/plugins/catalog', { params: mediaType ? { mediaType } : undefined })
   return res.data.data
 }
 

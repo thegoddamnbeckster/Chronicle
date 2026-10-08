@@ -63,6 +63,17 @@ namespace Chronicle.Core.Models
         /// </summary>
         public string? ScanHintsJson { get; set; }
 
+        /// <summary>
+        /// Which family of metadata providers also serves this type: "tv", "movie" or "music" (free text, lowercase).
+        /// A provider that declares "tv" support is then used for an "anime" item, one declaring "movie" for fan edits.
+        /// Null = only providers naming this exact type. Replaces guessing from the type's NAME.
+        /// </summary>
+        public string? ProviderFamily { get; set; }
+
+        /// <summary>Heading for the people credited on an item of this type ("Cast", "Band Members", "Narrators").
+        /// Null = "Cast".</summary>
+        public string? CastHeading { get; set; }
+
         public DateTime CreatedAt { get; set; }
     }
 
@@ -79,5 +90,31 @@ namespace Chronicle.Core.Models
         /// </summary>
         public static string? DefaultFor(string typeName) =>
             string.Equals(typeName, "audiobooks", StringComparison.OrdinalIgnoreCase) ? Audiobook : null;
+    }
+
+    public static class ProviderFamilies
+    {
+        /// <summary>
+        /// Starting value for a type that does not say (created by a plugin, or present before the column existed).
+        /// This is the only place a type NAME is turned into a family; it is applied once, after which the database
+        /// (editable on the Media Types page) is the truth. Order matters: "anime_movies" is flat like movies, not TV.
+        /// </summary>
+        public static string? DefaultFor(string typeName)
+        {
+            var n = typeName.ToLowerInvariant();
+            if (n.Contains("anime") && n.Contains("movie")) return "movie";
+            if (n.Contains("tv") || n.Contains("show") || n.Contains("series") || n.Contains("anime")) return "tv";
+            if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";
+            if (n.Contains("fanedit")) return "movie";
+            return null;
+        }
+
+        /// <summary>Starting cast heading for a type that does not say.</summary>
+        public static string? DefaultCastHeadingFor(string typeName) => typeName.ToLowerInvariant() switch
+        {
+            "music" => "Band Members",
+            "audiobook" or "audiobooks" => "Narrators",
+            _ => null,
+        };
     }
 }

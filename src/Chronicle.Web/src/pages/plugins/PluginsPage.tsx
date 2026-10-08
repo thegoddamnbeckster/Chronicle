@@ -1,3 +1,4 @@
+import { getMediaTypes } from '@/api/media'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -180,6 +181,8 @@ export default function PluginsPage() {
   const [catalog, setCatalog] = useState<PluginCatalogEntry[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState('')
+  const [catalogType, setCatalogType] = useState('')
+  const [catalogTypes, setCatalogTypes] = useState<{ name: string; displayName: string }[]>([])
   const [installingId, setInstallingId] = useState<string | null>(null)
 
   // Settings panel
@@ -248,11 +251,25 @@ export default function PluginsPage() {
       try {
         const entries = await listCatalog()
         setCatalog(entries)
+        getMediaTypes().then(t => setCatalogTypes(t.map(x => ({ name: x.name, displayName: x.displayName })))).catch(() => { /* the filter just stays hidden */ })
       } catch {
         setCatalogError('Failed to load plugin catalog. Check your connection.')
       } finally {
         setCatalogLoading(false)
       }
+    }
+  }
+
+  async function handleCatalogTypeChange(mediaType: string) {
+    setCatalogType(mediaType)
+    setCatalogLoading(true)
+    setCatalogError('')
+    try {
+      setCatalog(await listCatalog(mediaType || undefined))
+    } catch {
+      setCatalogError('Failed to load plugin catalog. Check your connection.')
+    } finally {
+      setCatalogLoading(false)
     }
   }
 
@@ -450,6 +467,19 @@ export default function PluginsPage() {
       {showBrowse && isAdmin && (
         <div className={styles.browsePanel}>
           <p className={styles.installTitle}>Plugin Catalog</p>
+          {catalogTypes.length > 0 && (
+            <label className={styles.catalogFilter}>
+              Show plugins that handle{' '}
+              <select
+                aria-label="Show plugins that handle"
+                value={catalogType}
+                onChange={e => void handleCatalogTypeChange(e.target.value)}
+              >
+                <option value="">any media type</option>
+                {catalogTypes.map(t => <option key={t.name} value={t.name}>{t.displayName}</option>)}
+              </select>
+            </label>
+          )}
           {catalogLoading && <p className={styles.loading}>Loading catalog…</p>}
           {catalogError && <p className={styles.errorMsg}>{catalogError}</p>}
           {!catalogLoading && !catalogError && (

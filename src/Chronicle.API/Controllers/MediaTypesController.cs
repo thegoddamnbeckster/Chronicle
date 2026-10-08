@@ -16,12 +16,13 @@ public sealed record PluginRefDto(string PluginId, string Name);
 public sealed record MediaTypeAdminDto(
     int Id, string Name, string DisplayName, string? Description, int HierarchyLevels, string[] HierarchyLabels,
     string InteractionVerb, string ProgressUnit, bool IsBuiltIn, bool IsActive, bool SupportsCollections, bool IsTrackable,
-    string? ScanStrategy, bool IsUserModified, int ItemCount, IReadOnlyList<PluginRefDto> Plugins, string? ScanHints = null);
+    string? ScanStrategy, bool IsUserModified, int ItemCount, IReadOnlyList<PluginRefDto> Plugins, string? ScanHints = null,
+    string? ProviderFamily = null, string? CastHeading = null);
 
 public sealed record MediaTypeRequest(
     string? Name, string DisplayName, string? Description, int HierarchyLevels, string[]? HierarchyLabels,
     string InteractionVerb, string ProgressUnit, bool SupportsCollections, bool IsTrackable, string? ScanStrategy, bool IsActive = true,
-    string? ScanHints = null);
+    string? ScanHints = null, string? ProviderFamily = null, string? CastHeading = null);
 
 /// <summary>
 /// Settings -> Media Types. Lists every media type with how many items it holds and which installed plugins handle it,
@@ -68,7 +69,7 @@ public class MediaTypesController : ControllerBase
         new(t.Id, t.Name, t.DisplayName, t.Description, t.HierarchyLevels, MediaTypeRules.SplitLabels(t.HierarchyLabels),
             t.InteractionVerb, t.ProgressUnit, t.IsBuiltIn, t.IsActive, t.SupportsCollections, t.IsTrackable, t.ScanStrategy,
             t.IsUserModified, knownCount ?? await _db.MediaItems.CountAsync(i => i.MediaTypeId == t.Id),
-            plugins.TryGetValue(t.Name, out var list) ? list : [], t.ScanHintsJson);
+            plugins.TryGetValue(t.Name, out var list) ? list : [], t.ScanHintsJson, t.ProviderFamily, t.CastHeading);
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
@@ -84,7 +85,9 @@ public class MediaTypesController : ControllerBase
     private static MediaTypeInput ToInput(MediaTypeRequest r) => new(
         r.Name, r.DisplayName, r.Description, r.HierarchyLevels, r.HierarchyLabels ?? [],
         (r.InteractionVerb ?? "").Trim().ToLowerInvariant(), (r.ProgressUnit ?? "").Trim().ToLowerInvariant(),
-        r.SupportsCollections, r.IsTrackable, string.IsNullOrWhiteSpace(r.ScanStrategy) ? null : r.ScanStrategy.Trim(), r.IsActive);
+        r.SupportsCollections, r.IsTrackable, string.IsNullOrWhiteSpace(r.ScanStrategy) ? null : r.ScanStrategy.Trim(), r.IsActive,
+        string.IsNullOrWhiteSpace(r.ProviderFamily) ? null : r.ProviderFamily.Trim().ToLowerInvariant(),
+        string.IsNullOrWhiteSpace(r.CastHeading) ? null : r.CastHeading.Trim());
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] MediaTypeRequest req, CancellationToken ct)
@@ -107,12 +110,14 @@ public class MediaTypesController : ControllerBase
             InteractionVerb = input.InteractionVerb, ProgressUnit = input.ProgressUnit,
             SupportsCollections = input.SupportsCollections, IsTrackable = input.IsTrackable, ScanStrategy = input.ScanStrategy,
             ScanHintsJson = string.IsNullOrWhiteSpace(req.ScanHints) ? null : req.ScanHints.Trim(),
+            ProviderFamily = input.ProviderFamily, CastHeading = input.CastHeading,
             IsBuiltIn = false, IsActive = true,
             // Made by a person: no plugin's declaration may rewrite it later.
             IsUserModified = true, CreatedAt = DateTime.UtcNow,
         };
         _db.MediaTypes.Add(type);
         await _db.SaveChangesAsync(ct);
+        await MediaTypeFamilies.RefreshAsync(_db, ct);
         _log.LogInformation("MEDIATYPE created '{Name}' by an administrator", name);
         return Ok(ApiResponse<MediaTypeAdminDto>.Ok(await ToDtoAsync(type, PluginsByType(), 0)));
     }
@@ -149,9 +154,12 @@ public class MediaTypesController : ControllerBase
         // Omitted = leave as is; an empty string clears the hints.
         if (req.ScanHints is not null)
             type.ScanHintsJson = string.IsNullOrWhiteSpace(req.ScanHints) ? null : req.ScanHints.Trim();
+        type.ProviderFamily = input.ProviderFamily;
+        type.CastHeading = input.CastHeading;
         type.IsActive = input.IsActive;
         type.IsUserModified = true;
         await _db.SaveChangesAsync(ct);
+        await MediaTypeFamilies.RefreshAsync(_db, ct);
         _log.LogInformation("MEDIATYPE '{Name}' edited by an administrator", type.Name);
         return Ok(ApiResponse<MediaTypeAdminDto>.Ok(await ToDtoAsync(type, PluginsByType(), items)));
     }
@@ -164,6 +172,7 @@ public class MediaTypesController : ControllerBase
         if (type is null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "No such media type."));
         type.IsUserModified = false;
         await _db.SaveChangesAsync(ct);
+        await MediaTypeFamilies.RefreshAsync(_db, ct);
         return Ok(ApiResponse<MediaTypeAdminDto>.Ok(await ToDtoAsync(type, PluginsByType())));
     }
 
@@ -182,6 +191,7 @@ public class MediaTypesController : ControllerBase
 
         _db.MediaTypes.Remove(type);
         await _db.SaveChangesAsync(ct);
+        await MediaTypeFamilies.RefreshAsync(_db, ct);
         _log.LogInformation("MEDIATYPE '{Name}' deleted by an administrator", type.Name);
         return Ok(ApiResponse<object>.Ok(new { deleted = type.Name }));
     }

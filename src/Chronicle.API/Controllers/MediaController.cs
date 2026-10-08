@@ -55,10 +55,10 @@ namespace Chronicle.API.Controllers
             var rows = await _context.MediaTypes
                 .Where(t => t.IsActive)
                 .OrderBy(t => t.DisplayName)
-                .Select(t => new { t.Id, t.Name, t.DisplayName, t.HierarchyLevels, t.InteractionVerb, t.HierarchyLabels, t.SupportsCollections })
+                .Select(t => new { t.Id, t.Name, t.DisplayName, t.HierarchyLevels, t.InteractionVerb, t.HierarchyLabels, t.SupportsCollections, t.CastHeading })
                 .ToListAsync();
             var types = rows.Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName, t.HierarchyLevels,
-                t.InteractionVerb, Chronicle.Services.MediaTypeRules.SplitLabels(t.HierarchyLabels), t.SupportsCollections)).ToList();
+                t.InteractionVerb, Chronicle.Services.MediaTypeRules.SplitLabels(t.HierarchyLabels), t.SupportsCollections, t.CastHeading)).ToList();
             return Ok(ApiResponse<List<MediaTypeDto>>.Ok(types));
         }
 

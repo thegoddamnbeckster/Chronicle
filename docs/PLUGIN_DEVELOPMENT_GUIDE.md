@@ -120,6 +120,7 @@ assemblies into your plugin folder (the host supplies them; a second copy breaks
   "brandColorLight": "#3366CC",
   "brandColorDark":  "#6699FF",
   "fixMatchHint": "Enter an Example ID, for example 1234.",
+  "supported_media_types": ["movies"],
   "background_tasks": [],
   "settings": []
 }
@@ -128,6 +129,8 @@ assemblies into your plugin folder (the host supplies them; a second copy breaks
 * `plugin_id` is permanent; it keys the plugin's settings, enrichment rows and external ids. Use reverse-domain style.
 * `entry_type` is the fully-qualified class name Chronicle instantiates.
 * `version` should be bumped for every release; Chronicle shows it and the update check compares it.
+* `supported_media_types` lists the media types the plugin handles; the Plugins page uses it to filter the catalog to
+  "plugins that handle this type". Optional, but include it.
 * `background_tasks` entries have `task_id`, `display_name`, `description`, `default_cron`, `default_enabled` (see TVMaze).
 
 ## 6. A minimal metadata provider

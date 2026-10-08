@@ -5,6 +5,7 @@ import PluginsPage from './PluginsPage'
 import { renderWithProviders } from '@/test/test-utils'
 import * as pluginsApi from '@/api/plugins'
 import * as importApi from '@/api/import'
+import * as mediaApi from '@/api/media'
 import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/contexts/ThemeContext'
 import type { User } from '@/types'
@@ -18,6 +19,7 @@ vi.mock('@/api/plugins', async importOriginal => {
   }
 })
 vi.mock('@/api/import')
+vi.mock('@/api/media')
 vi.mock('@/hooks/useAuth')
 vi.mock('@/contexts/ThemeContext')
 
@@ -109,5 +111,31 @@ describe('PluginsPage file integrity', () => {
 
     await screen.findByText('IMDb')
     expect(screen.queryByText(/Files changed/)).not.toBeInTheDocument()
+  })
+})
+
+describe('PluginsPage catalog filter', () => {
+  it('narrows the catalog to the plugins that handle the chosen media type', async () => {
+    const user = userEvent.setup()
+    const entry = (id: string, name: string): pluginsApi.PluginCatalogEntry => ({
+      pluginId: id, name, description: '', author: 'a', iconUrl: null, githubRepo: 'o/r', assetName: 'r.zip',
+      dllName: 'r.dll', tags: [], isInstalled: false, version: '1.0.0',
+    })
+    vi.mocked(pluginsApi.listCatalog).mockImplementation(async (type?: string) =>
+      type === 'music' ? [entry('mb', 'MusicBrainz')] : [entry('mb', 'MusicBrainz'), entry('tmdb', 'TMDB')])
+    vi.mocked(mediaApi.getMediaTypes).mockResolvedValue([
+      { id: 1, name: 'music', displayName: 'Music', hierarchyLevels: 3 },
+      { id: 2, name: 'tv', displayName: 'TV', hierarchyLevels: 3 },
+    ])
+    renderWithProviders(<PluginsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /browse/i }))
+    expect(await screen.findByText('TMDB')).toBeInTheDocument()
+
+    await user.selectOptions(await screen.findByLabelText('Show plugins that handle'), 'music')
+
+    await vi.waitFor(() => expect(pluginsApi.listCatalog).toHaveBeenLastCalledWith('music'))
+    await vi.waitFor(() => expect(screen.queryByText('TMDB')).not.toBeInTheDocument())
+    expect(screen.getByText('MusicBrainz')).toBeInTheDocument()
   })
 })

@@ -932,3 +932,5 @@
   font-size: 0.78rem;
   opacity: 0.85;
 }
+
+.catalogFilter { display: block; margin: 0 0 12px; color: var(--text-muted); }

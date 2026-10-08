@@ -8,6 +8,7 @@ import { isKnownVerb } from '@/utils/typeWording'
 import styles from './UsersPage.module.css'
 
 const VERB_SUGGESTIONS = ['watched', 'listened', 'read', 'played']
+const FAMILY_SUGGESTIONS = ['tv', 'movie', 'music']
 
 function message(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback
@@ -25,19 +26,21 @@ interface FormState {
   trackable: boolean
   scan: string
   hints: string
+  family: string
+  castHeading: string
   active: boolean
 }
 
 const BLANK: FormState = {
   name: '', displayName: '', description: '', levels: '1', labels: '', verb: 'watched', unit: 'minutes',
-  collections: false, trackable: true, scan: '', hints: '', active: true,
+  collections: false, trackable: true, scan: '', hints: '', family: '', castHeading: '', active: true,
 }
 
 function fromType(t: MediaTypeAdmin): FormState {
   return {
     name: t.name, displayName: t.displayName, description: t.description ?? '', levels: String(t.hierarchyLevels),
     labels: t.hierarchyLabels.join(', '), verb: t.interactionVerb, unit: t.progressUnit,
-    collections: t.supportsCollections, trackable: t.isTrackable, scan: t.scanStrategy ?? '', hints: t.scanHints ?? '', active: t.isActive,
+    collections: t.supportsCollections, trackable: t.isTrackable, scan: t.scanStrategy ?? '', hints: t.scanHints ?? '', family: t.providerFamily ?? '', castHeading: t.castHeading ?? '', active: t.isActive,
   }
 }
 
@@ -55,6 +58,8 @@ function toInput(f: FormState, creating: boolean): MediaTypeInput {
     scanStrategy: f.scan === '' ? null : f.scan,
     isActive: f.active,
     scanHints: f.hints.trim(),
+    providerFamily: f.family.trim().toLowerCase(),
+    castHeading: f.castHeading.trim(),
   }
 }
 
@@ -226,6 +231,19 @@ export default function MediaTypesPage() {
               <select id="mt-scan" className={styles.textInput} value={form.scan} onChange={e => set('scan', e.target.value)}>
                 {SCAN_STRATEGIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
+            </div>
+          </div>
+          <div className={styles.formRow}>
+            <div className={styles.formGroup}>
+              <label className={styles.label} htmlFor="mt-family">Also served by providers for</label>
+              <input id="mt-family" className={styles.textInput} value={form.family} list="mt-families" onChange={e => set('family', e.target.value)} placeholder="tv, movie, music or blank" />
+              <datalist id="mt-families">{FAMILY_SUGGESTIONS.map(v => <option key={v} value={v} />)}</datalist>
+              <span className={styles.hint}>A metadata plugin that supports this family is also used for this type (anime -&gt; tv). Blank: only plugins that name this type.</span>
+            </div>
+            <div className={styles.formGroup}>
+              <label className={styles.label} htmlFor="mt-cast">Heading for credited people</label>
+              <input id="mt-cast" className={styles.textInput} value={form.castHeading} onChange={e => set('castHeading', e.target.value)} placeholder="Cast" />
+              <span className={styles.hint}>Shown above the people on an item&apos;s page: &quot;Band Members&quot;, &quot;Narrators&quot;. Blank: &quot;Cast&quot;.</span>
             </div>
           </div>
           <div className={styles.formRow}>

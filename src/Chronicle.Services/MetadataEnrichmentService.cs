@@ -3275,13 +3275,7 @@ public class MetadataEnrichmentService(
         // Parent-type hint: anime → tv, fanedits → movie (mirrors FileScanService.ToMediaTypeHint).
         // anime_movies is checked first — it contains "anime" as a substring but is flat (like
         // movies), not TV-hierarchical, so it must not fall through to the anime → tv case.
-        var typeHint = mediaTypeName?.ToLowerInvariant() switch
-        {
-            var n when n is not null && n.Contains("anime") && n.Contains("movie") => "movie",
-            var n when n is not null && n.Contains("anime")    => "tv",
-            var n when n is not null && n.Contains("fanedits") => "movie",
-            _ => null,
-        };
+        var typeHint = MediaTypeFamilies.Resolve(mediaTypeName);
 
         // Track which plugins have already been seeded in this call to prevent duplicate EF
         // Add() calls when multiple cross-ref entries (e.g. tmdb: and imdb:) both match the

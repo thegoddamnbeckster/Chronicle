@@ -22,6 +22,9 @@ export interface MediaTypeAdmin {
   plugins: PluginRef[]
   /** JSON describing what files of this type look like (used to spot a folder scanned as the wrong type). */
   scanHints: string | null
+  /** "tv", "movie", "music"...: providers of this family also serve the type. */
+  providerFamily: string | null
+  castHeading: string | null
 }
 
 export interface MediaTypeInput {
@@ -39,6 +42,8 @@ export interface MediaTypeInput {
   isActive: boolean
   /** Omit to leave unchanged; an empty string clears. */
   scanHints?: string
+  providerFamily?: string
+  castHeading?: string
 }
 
 export const SCAN_STRATEGIES = [
