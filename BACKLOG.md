@@ -37,7 +37,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 ## Database
 
 - **Backups and maintenance — DONE (Settings -> Database).** Nightly + on-demand zipped backups, retention, download/upload/validate/restore (type RESTORE; safety backup; restart swaps the file in), quick/full maintenance as scheduled tasks, size reporting and warning, SQLite scratch files kept beside the database. Remaining: backups are SQLite-only; very large downloads go through the browser's memory (a streamed/signed download link would fix it); the restart relies on Docker / the service manager / the dev script to start Chronicle again.
-- **Size limits / SQLite → Postgres** — Monitor DB size; offer migration to Postgres (a compose file exists: `docker-compose.postgres.yml`) or ways to free space if the user stays on SQLite.
+- **Size limits / SQLite -> Postgres — monitoring DONE, migration not built.** Settings -> Database already shows the size, how much free space inside the file a full rebuild would reclaim, the largest tables, free disk space, and warns (and notifies) past a size you set. Not built: a tool that copies an existing SQLite database into PostgreSQL. It needs a PostgreSQL instance to test against (none on the dev machine) and PostgreSQL support itself creates its schema from the model rather than from migrations, so a copy tool built without testing against a real server would be a guess. If wanted: provide a throwaway PostgreSQL server and it can be built as a read-only-on-the-source command.
 - **Migration scripts — decided: not building.** EF Core code-first migrations (107 so far, auto-applied at startup) are the upgrade path. Backup/restore is the way back. A full-schema script can be generated from EF if ever needed.
 
 ---
