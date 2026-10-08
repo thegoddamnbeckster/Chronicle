@@ -27,6 +27,7 @@ import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import { unmergeItem } from '@/api/duplicates'
 import { PersonCard } from '@/components/people/PersonCard'
 import RelatedFilesBox from '@/components/RelatedFilesBox'
+import MediaFilesList from '@/components/MediaFilesList'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
   'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
@@ -1555,10 +1556,12 @@ export default function MediaDetailPage() {
             <div className={styles.scannerBox}>
               <div className={styles.scannerHeader}>File Scanner</div>
               <div className={styles.tmdbGrid}>
-                {item.fileScannerMeta?.filePath && (
+                {(item.fileScannerMeta?.filePath || item.hasPhysicalFile) && (
                   <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>File</span>
-                    <span className={styles.scannerPath}>{item.fileScannerMeta.filePath}</span>
+                    <span className={styles.tmdbLabel}>Files</span>
+                    <span className={styles.scannerPath}>
+                      <MediaFilesList mediaId={mediaId} fallbackPath={item.fileScannerMeta?.filePath ?? null} />
+                    </span>
                   </div>
                 )}
                 {/* No own path recorded (neither a file nor a folder). This is not a loading

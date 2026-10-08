@@ -36,6 +36,9 @@ export default function RelatedFilesBox({ mediaId }: { mediaId: number }) {
           <ul className={styles.list}>
             {data.filter(f => f.kind === kind).map(f => (
               <li key={f.id} className={f.missingSince ? styles.missing : undefined} title={f.path}>
+                {f.kind === 'artwork' && !f.missingSince && (
+                  <img className={styles.thumb} loading="lazy" alt={fileName(f.path)} src={`/api/v1/media/${mediaId}/related-files/${f.id}/content`} />
+                )}
                 <span>{fileName(f.path)}</span>
                 {f.sizeBytes != null && <span className={styles.size}>{formatSize(f.sizeBytes)}</span>}
                 {f.missingSince && <span className={styles.flag}>not found at last scan</span>}

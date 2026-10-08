@@ -220,5 +220,7 @@ namespace Chronicle.API.DTOs
         string? FolderPath = null,
         List<string>? RelatedFiles = null);
 
+    public record MediaFileDto(string Path, string Type, bool Exists, long? SizeBytes, DateTime? ModifiedUtc);
+
     public record RelatedFileDto(int Id, string Path, string Kind, long? SizeBytes, DateTime DiscoveredAt, DateTime? MissingSince);
 }

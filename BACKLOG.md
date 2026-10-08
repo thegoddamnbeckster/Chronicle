@@ -21,8 +21,8 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 ## Library / Media Detail
 
 - **Live poster updates — DONE.** The shell polls a change feed every 15 s (visible tabs only); item pages refresh immediately and the library grid at most every 30 s. See `docs/NOTIFICATIONS_AND_LIVE_UPDATES.md`. Not covered: bulk statements that bypass change tracking call `MarkAllChanged`; any new one must too.
-- **Local images** — Image thumbnails work for remote art; local images still need the backend to serve them.
-- **All file paths** — Detail page shows the single `fileScannerMeta.filePath`. Still needed: every associated file (internal Chronicle store and original on-disk path), listing all of them for multi-file items (cuts, episodes).
+- **Local images — DONE.** The local poster was already served (`/media/{id}/local-poster`); artwork found beside an item (recorded as a related file) is now served too (`GET /media/{id}/related-files/{fileId}/content`, artwork kind and raster image types only) and shown as thumbnails under "Related files".
+- **All file paths — DONE.** The item page lists every file or folder the scanner recorded (`GET /media/{id}/files`), with size and a "not found on disk" flag. There is no separate internal Chronicle copy of media files to list: Chronicle tracks files where they are.
 
 ---
 

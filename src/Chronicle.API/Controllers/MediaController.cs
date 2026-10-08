@@ -1656,6 +1656,57 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>Every media file the scanner has recorded for this item (a movie in several parts or cuts, an
+        /// album folder, a single episode), with whether each is still on disk. The paths come from the database,
+        /// never from the request.</summary>
+        [HttpGet("{id:int}/files")]
+        public async Task<IActionResult> GetFiles(int id, CancellationToken ct)
+        {
+            var json = await _context.MediaItems.AsNoTracking().Where(m => m.Id == id).Select(m => m.MetadataJson).FirstOrDefaultAsync(ct);
+            if (json is null && !await _context.MediaItems.AnyAsync(m => m.Id == id, ct)) return NotFound();
+
+            var files = Chronicle.Services.Scan.FileIdentityJson.ExtractFilePaths(json)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(200)
+                .Select(path =>
+                {
+                    try
+                    {
+                        if (System.IO.File.Exists(path))
+                        {
+                            var info = new FileInfo(path);
+                            return new MediaFileDto(path, "file", true, info.Length, info.LastWriteTimeUtc);
+                        }
+                        if (Directory.Exists(path)) return new MediaFileDto(path, "folder", true, null, null);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* reported as missing */ }
+                    return new MediaFileDto(path, "file", false, null, null);
+                })
+                .ToList();
+            return Ok(ApiResponse<List<MediaFileDto>>.Ok(files));
+        }
+
+        /// <summary>Serves one recorded artwork file (a related file of kind "artwork") so local images show in the
+        /// interface. The path comes from the database; only recognised raster image types are sent.</summary>
+        [HttpGet("{id:int}/related-files/{fileId:int}/content")]
+        [Authorize(Policy = Authentication.AuthPolicies.ImageRead)] // <img> tag: session header or HttpOnly session cookie
+        public async Task<IActionResult> GetRelatedFileContent(int id, int fileId, CancellationToken ct)
+        {
+            var row = await _context.MediaItemRelatedFiles.AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == fileId && r.MediaItemId == id && r.Kind == Chronicle.Core.Models.RelatedFileKinds.Artwork, ct);
+            if (row is null || !System.IO.File.Exists(row.Path)) return NotFound();
+
+            var contentType = Path.GetExtension(row.Path).ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png"            => "image/png",
+                ".webp"           => "image/webp",
+                ".gif"            => "image/gif",
+                _                 => null,
+            };
+            if (contentType is null) return NotFound();
+            return PhysicalFile(row.Path, contentType);
+        }
+
         /// <summary>Files that live with this item without being it (subtitles, artwork, extras), as recorded by scans
         /// that had related-file bundling on. Files no longer seen carry a MissingSince time.</summary>
         [HttpGet("{id:int}/related-files")]
