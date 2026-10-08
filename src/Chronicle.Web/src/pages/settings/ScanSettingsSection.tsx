@@ -8,6 +8,8 @@ export const SCAN_SETTING_KEYS = {
   mismatch: 'scan.mismatch_action',
   extensions: 'scan.sidecar_extensions',
   folders: 'scan.sidecar_folders',
+  extraVideo: 'scan.extra_video_extensions',
+  extraAudio: 'scan.extra_audio_extensions',
 } as const
 
 const DEFAULT_EXTENSIONS = '.jpg, .jpeg, .png, .webp, .bmp, .tbn, .txt, .xml, .srt, .sub, .idx, .ass, .cue, .log'
@@ -27,10 +29,14 @@ export default function ScanSettingsSection() {
 
   const [extensions, setExtensions] = useState('')
   const [folders, setFolders] = useState('')
+  const [extraVideo, setExtraVideo] = useState('')
+  const [extraAudio, setExtraAudio] = useState('')
   useEffect(() => {
     if (!settings) return
     setExtensions(settings[SCAN_SETTING_KEYS.extensions] ?? '')
     setFolders(settings[SCAN_SETTING_KEYS.folders] ?? '')
+    setExtraVideo(settings[SCAN_SETTING_KEYS.extraVideo] ?? '')
+    setExtraAudio(settings[SCAN_SETTING_KEYS.extraAudio] ?? '')
   }, [settings])
 
   return (
@@ -93,6 +99,22 @@ export default function ScanSettingsSection() {
         <button className={styles.saveBtn} disabled={save.isPending}
           onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.folders, value: folders.trim() })}>Save folder names</button>
         <p className={styles.toggleDesc}>A change takes effect within about a minute.</p>
+      </div>
+
+      <div className={styles.sortCard}>
+        <div className={styles.toggleTitle}>Your own file types</div>
+        <p className={styles.toggleDesc}>
+          Chronicle already knows the common video and audio formats. List any others you keep here (comma separated, for
+          example <code>rmvb, dsf</code>) and the scanner will treat them as media. Anything else it does not recognise is skipped.
+        </p>
+        <label className={styles.toggleTitle} htmlFor="scan-extra-video">Extra video types</label>
+        <input id="scan-extra-video" className={styles.textInput} value={extraVideo} placeholder="rmvb, vob" onChange={e => setExtraVideo(e.target.value)} />
+        <button className={styles.saveBtn} disabled={save.isPending}
+          onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.extraVideo, value: extraVideo.trim() })}>Save video types</button>
+        <label className={styles.toggleTitle} htmlFor="scan-extra-audio">Extra audio types</label>
+        <input id="scan-extra-audio" className={styles.textInput} value={extraAudio} placeholder="dsf, dff" onChange={e => setExtraAudio(e.target.value)} />
+        <button className={styles.saveBtn} disabled={save.isPending}
+          onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.extraAudio, value: extraAudio.trim() })}>Save audio types</button>
       </div>
     </section>
   )

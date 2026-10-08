@@ -47,6 +47,7 @@ namespace Chronicle.Services.Scan
             var result = new ScanGroupResult();
             // Which extensions / folder names count as supplemental: app_settings, falling back to the defaults.
             var rules = SidecarRules.From(_settings?.Snapshot);
+            var mediaRules = MediaFileRules.From(_settings?.Snapshot);   // built-in media extensions plus the administrator's own
             var related = new List<string>();
             // root key → ScanGroup
             var rootGroups = new Dictionary<string, ScanGroup>(StringComparer.OrdinalIgnoreCase);
@@ -65,7 +66,7 @@ namespace Chronicle.Services.Scan
 
                 // Treat any file inside a known supplemental folder as a sidecar,
                 // regardless of its extension (e.g. theme-music/*.mp3, .actors/*.jpg).
-                var folderSignal = _folder.Extract(path, scanRoot);
+                var folderSignal = _folder.Extract(path, scanRoot, mediaRules.Audio);
                 if (!isSidecar && folderSignal.FolderNames.Any(f => rules.Folders.Contains(f)))
                     isSidecar = true;
 
@@ -75,7 +76,7 @@ namespace Chronicle.Services.Scan
                 // to "not a sidecar, so it must be media" (confirmed bug 2026-08-29: a stray
                 // ".metathumb" file sitting next to a real .mp4 got imported as the movie's own
                 // file, and picked ahead of the real file whenever paths were sorted/read back).
-                bool isJunk = !isSidecar && !MediaFileExtensions.Recognized.Contains(ext);
+                bool isJunk = !isSidecar && !mediaRules.Recognized.Contains(ext);
 
                 // Skip expensive tag extraction for files we've already classified as
                 // sidecars or junk.

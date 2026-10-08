@@ -45,7 +45,7 @@ namespace Chronicle.Services.Scan
         private static readonly Regex _discRegex =
             new(@"(?:[Dd]isc|CD)\s*(\d)", RegexOptions.Compiled);
 
-        public FolderSignal Extract(string filePath, string scanRoot)
+        public FolderSignal Extract(string filePath, string scanRoot, IReadOnlySet<string>? audioExtensions = null)
         {
             var signal = new FolderSignal();
 
@@ -97,7 +97,7 @@ namespace Chronicle.Services.Scan
 
             // Music: read disc/track/title out of the file name ("1-02 Title", "Track 05 - Title"). Audio only, so a
             // TV episode called "01 - Pilot" keeps its name.
-            if (TrackFileName.AudioExtensions.Contains(Path.GetExtension(parts[^1])) && signal.DetectedEpisode is null)
+            if ((audioExtensions ?? TrackFileName.AudioExtensions).Contains(Path.GetExtension(parts[^1])) && signal.DetectedEpisode is null)
             {
                 var name = TrackFileName.Parse(signal.FileName);
                 if (name.Track is not null)

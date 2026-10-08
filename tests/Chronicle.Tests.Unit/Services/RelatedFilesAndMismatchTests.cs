@@ -407,3 +407,79 @@ public class RelatedFilePersistenceTests
         (await db.MediaItemRelatedFiles.CountAsync()).Should().Be(1);
     }
 }
+
+public class MediaFileRulesTests
+{
+    private sealed class FakeSettings(IReadOnlyDictionary<string, string> rows) : Chronicle.Services.Security.ICachedAppSettings
+    {
+        public IReadOnlyDictionary<string, string> Snapshot => rows;
+    }
+
+    [Fact]
+    public void WithNothingConfigured_OnlyTheBuiltInTypesCount()
+    {
+        var rules = MediaFileRules.From(null);
+
+        rules.Recognized.Should().Contain(".mkv").And.Contain(".flac").And.NotContain(".rmvb");
+        rules.Audio.Should().Contain(".flac").And.NotContain(".mkv");
+    }
+
+    [Fact]
+    public void ExtraTypes_AreAdded_WithOrWithoutADot_AndAudioOnesAreAudio()
+    {
+        var rules = MediaFileRules.From(new Dictionary<string, string>
+        {
+            [MediaFileRules.ExtraVideoKey] = "rmvb, .Webm2",
+            [MediaFileRules.ExtraAudioKey] = "dsf",
+        });
+
+        rules.Recognized.Should().Contain(".rmvb").And.Contain(".webm2").And.Contain(".dsf");
+        rules.Audio.Should().Contain(".dsf").And.NotContain(".rmvb");
+    }
+
+    [Theory]
+    [InlineData("../evil")]
+    [InlineData("a/b")]
+    [InlineData(".")]
+    [InlineData("toolongextension1")]
+    [InlineData("with space")]
+    public void ThingsThatAreNotPlainExtensions_AreIgnored(string junk)
+    {
+        var rules = MediaFileRules.From(new Dictionary<string, string> { [MediaFileRules.ExtraVideoKey] = junk });
+
+        rules.Recognized.Count.Should().Be(MediaFileRules.Defaults.Recognized.Count);
+    }
+
+    [Fact]
+    public void Grouping_ImportsAFileTypeTheAdministratorAdded_AndStillSkipsUnknownOnes()
+    {
+        var settings = new Dictionary<string, string> { [MediaFileRules.ExtraVideoKey] = ".rmvb" };
+        var svc = new ScanGroupingService(new FolderSignalExtractor(), new TagSignalExtractor(), new FakeSettings(settings));
+        var files = new[] { "C:/Movies/Old Film (1999)/Old Film (1999).rmvb", "C:/Movies/Other (2000)/Other (2000).xyz" };
+
+        var result = svc.Group(files, "C:/Movies", 1);
+
+        result.Groups.Select(g => g.Name).Should().Equal("Old Film (1999)");
+    }
+
+    [Fact]
+    public void Grouping_WithoutTheSetting_SkipsThatFileType()
+    {
+        var svc = new ScanGroupingService(new FolderSignalExtractor(), new TagSignalExtractor());
+
+        var result = svc.Group(["C:/Movies/Old Film (1999)/Old Film (1999).rmvb"], "C:/Movies", 1);
+
+        result.Groups.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AnExtraAudioType_GetsItsTrackNumbersReadFromTheName()
+    {
+        var settings = new Dictionary<string, string> { [MediaFileRules.ExtraAudioKey] = "dsf" };
+        var svc = new ScanGroupingService(new FolderSignalExtractor(), new TagSignalExtractor(), new FakeSettings(settings));
+
+        var result = svc.Group(["C:/Music/Artist/Album/01 - First.dsf", "C:/Music/Artist/Album/02 - Second.dsf"], "C:/Music", 3);
+
+        result.Groups.Single().Children.Single().Children.Select(t => t.Name).Should().Equal("First", "Second");
+    }
+}

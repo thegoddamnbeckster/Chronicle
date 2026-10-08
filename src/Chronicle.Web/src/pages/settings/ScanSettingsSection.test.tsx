@@ -52,4 +52,18 @@ describe('ScanSettingsSection', () => {
 
     await waitFor(() => expect(settings.putAppSetting).toHaveBeenCalledWith('scan.sidecar_extensions', '.ass'))
   })
+
+  it('saves the file types you add, video and audio separately', async () => {
+    renderSection({ 'scan.extra_video_extensions': 'rmvb' })
+    const video = await screen.findByLabelText('Extra video types')
+    await waitFor(() => expect(video).toHaveValue('rmvb'))
+
+    await userEvent.type(video, ', vob')
+    await userEvent.click(screen.getByRole('button', { name: 'Save video types' }))
+    await waitFor(() => expect(settings.putAppSetting).toHaveBeenCalledWith('scan.extra_video_extensions', 'rmvb, vob'))
+
+    await userEvent.type(screen.getByLabelText('Extra audio types'), 'dsf')
+    await userEvent.click(screen.getByRole('button', { name: 'Save audio types' }))
+    await waitFor(() => expect(settings.putAppSetting).toHaveBeenCalledWith('scan.extra_audio_extensions', 'dsf'))
+  })
 })
