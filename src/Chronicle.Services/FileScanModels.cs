@@ -28,7 +28,11 @@ namespace Chronicle.Services
         string Path,
         bool Recursive,
         int MediaTypeId
-    );
+    )
+    {
+        /// <summary><see cref="MediaTypeId"/> value meaning "decide the media type of each file from the file itself".</summary>
+        public const int AutoDetect = 0;
+    }
 
     public record ScannedFileResult(
         string FilePath,
@@ -141,7 +145,8 @@ namespace Chronicle.Services
         List<string> Files,
         string? FolderPath = null,
         int? Number = null,
-        List<string>? RelatedFiles = null)
+        List<string>? RelatedFiles = null,
+        int? MediaTypeId = null)
     {
         /// <summary>Total file count across this group and all descendants.</summary>
         public int TotalFileCount => Files.Count + Children.Sum(c => c.TotalFileCount);

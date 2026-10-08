@@ -403,6 +403,9 @@ export interface ScanGroupDto {
   suggestedMediaTypeId?: number | null
   suggestedMediaTypeName?: string | null
   suggestedMediaTypeReason?: string | null
+  /** For an automatic-detect scan: the media type this group was sorted into. */
+  mediaTypeId?: number | null
+  mediaTypeName?: string | null
 }
 
 export interface ScanGroupResult {
@@ -421,6 +424,8 @@ export interface ImportGroupPayload {
   files: string[]
   folderPath: string | null
   relatedFiles?: string[] | null
+  /** Set by an automatic-detect scan so each group is imported as its own type. */
+  mediaTypeId?: number | null
 }
 
 export interface MediaTypeOption {

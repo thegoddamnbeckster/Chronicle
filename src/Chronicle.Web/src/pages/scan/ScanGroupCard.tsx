@@ -36,6 +36,7 @@ export function groupToPayload(g: ScanGroupDto): ImportGroupPayload {
     files: g.files,
     folderPath: g.folderPath,
     relatedFiles: g.relatedFiles ?? [],
+    mediaTypeId: g.mediaTypeId ?? null,
   }
 }
 
@@ -102,6 +103,9 @@ export default function ScanGroupCard({ group, checked, onToggle, onSwitchType }
           {group.author && <span className={styles.author}>by {group.author}</span>}
           {group.series && <span className={styles.series}>{group.series}</span>}
           <span className={styles.itemCount}>{totalItems} items</span>
+          {group.mediaTypeName && (
+            <span className={styles.itemCount} title="The media type this was sorted into">{group.mediaTypeName}</span>
+          )}
           {related > 0 && (
             <span className={styles.itemCount} title="Subtitles, artwork and extras found with this item">
               +{related} related file{related !== 1 ? 's' : ''}

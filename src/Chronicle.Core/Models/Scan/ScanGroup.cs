@@ -47,6 +47,10 @@ namespace Chronicle.Core.Models.Scan
         /// <summary>Series name from the Grouping tag (iTunes ©grp / ID3 TIT1), populated for audiobooks.</summary>
         public string? Series { get; set; }
 
+        /// <summary>For an automatic-detect scan: the media type this (root) group was sorted into.</summary>
+        public int? MediaTypeId { get; set; }
+        public string? MediaTypeName { get; set; }
+
         /// <summary>Supplemental files (subtitles, artwork, extras, booklets) found with this group. Only
         /// filled in when the caller asks the grouper to collect them; never importable items themselves.</summary>
         public List<string> RelatedFiles { get; set; } = [];

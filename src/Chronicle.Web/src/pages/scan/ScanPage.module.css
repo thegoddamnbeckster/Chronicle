@@ -883,3 +883,5 @@
   border-color: var(--accent, #5b9bd5);
   color: var(--accent, #5b9bd5);
 }
+
+.hint { display: block; margin-top: 4px; font-size: 0.8rem; color: var(--text-muted); }

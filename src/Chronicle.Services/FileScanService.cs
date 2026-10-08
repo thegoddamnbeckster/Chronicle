@@ -255,7 +255,8 @@ namespace Chronicle.Services
             group.Files,
             group.FolderPath,
             group.Number,
-            group.RelatedFiles);
+            group.RelatedFiles,
+            group.MediaTypeId);
 
         // ── Preview ───────────────────────────────────────────────────────────────
 
@@ -2620,6 +2621,9 @@ namespace Chronicle.Services
                     $"Scan path does not exist or is not accessible: {request.Path}.{hint}");
             }
 
+            if (request.MediaTypeId == ScanPreviewRequest.AutoDetect)
+                return await PreviewAutoDetectAsync(request, ct);
+
             var mediaType = await _context.MediaTypes
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
@@ -2632,7 +2636,21 @@ namespace Chronicle.Services
             if (IsAudiobookScan(mediaType))
                 return await PreviewAudiobooksAsync(request, mediaType, ct);
 
-            // Collect all file paths
+            var allPaths = CollectPreviewPaths(request);
+
+            _log.Information("Grouped preview: {Count} files found, grouping with {Levels} hierarchy levels",
+                allPaths.Count, mediaType.HierarchyLevels);
+
+            // Related files are always collected so the review page can show the count; they are only stored when
+            // the import asks for it. The other types are offered as candidates for the wrong-type check.
+            var candidates = await _context.MediaTypes.AsNoTracking().Where(t => t.IsActive && t.ScanHintsJson != null).ToListAsync(ct);
+            return _groupingService.Group(allPaths, request.Path, mediaType.HierarchyLevels,
+                new ScanGroupOptions(CollectRelatedFiles: true, MismatchCandidates: candidates, ScannedType: mediaType));
+        }
+
+        /// <summary>Every file under the scan path (subfolders when asked), except hidden ones, reporting progress as it goes.</summary>
+        private List<string> CollectPreviewPaths(ScanPreviewRequest request, CancellationToken ct = default)
+        {
             var allPaths = new List<string>();
             var dirsToScan = new List<string> { request.Path };
             if (request.Recursive)
@@ -2657,15 +2675,43 @@ namespace Chronicle.Services
                 }
             }
             _progress.Complete();
+            return allPaths;
+        }
 
-            _log.Information("Grouped preview: {Count} files found, grouping with {Levels} hierarchy levels",
-                allPaths.Count, mediaType.HierarchyLevels);
+        /// <summary>
+        /// "Detect automatically": instead of one media type for the whole folder, each file is sorted into the type its
+        /// own name and format say it is (see <see cref="FileTypeClassifier"/>), each type's files are grouped the way
+        /// that type is normally grouped, and every resulting group is tagged with its type. A folder holding movies, TV
+        /// and music comes out as three kinds of group. Types with a special scan style (audiobooks) are not picked
+        /// automatically.
+        /// </summary>
+        private async Task<ScanGroupResult> PreviewAutoDetectAsync(ScanPreviewRequest request, CancellationToken ct)
+        {
+            var types = await _context.MediaTypes.AsNoTracking().Where(t => t.IsActive).ToListAsync(ct);
+            var classifier = new Chronicle.Services.Scan.FileTypeClassifier(types);
+            if (!classifier.HasCandidates)
+                throw new InvalidOperationException(
+                    "No media type has scan hints to recognise files by. Add them under Settings -> Media Types, or choose a type.");
 
-            // Related files are always collected so the review page can show the count; they are only stored when
-            // the import asks for it. The other types are offered as candidates for the wrong-type check.
-            var candidates = await _context.MediaTypes.AsNoTracking().Where(t => t.IsActive && t.ScanHintsJson != null).ToListAsync(ct);
-            return _groupingService.Group(allPaths, request.Path, mediaType.HierarchyLevels,
-                new ScanGroupOptions(CollectRelatedFiles: true, MismatchCandidates: candidates, ScannedType: mediaType));
+            var allPaths = CollectPreviewPaths(request, ct);
+            var buckets = classifier.Partition(allPaths);
+            _log.Information("Auto-detect preview of {Path}: {Count} files sorted into {Types}", request.Path, allPaths.Count,
+                string.Join(", ", buckets.Select(b => $"{b.Key.Name}={b.Value.Count}")));
+
+            var combined = new ScanGroupResult { TotalFiles = allPaths.Count };
+            foreach (var (type, files) in buckets.OrderBy(b => b.Key.Id))
+            {
+                var part = _groupingService.Group(files, request.Path, type.HierarchyLevels,
+                    new ScanGroupOptions(CollectRelatedFiles: true));
+                foreach (var group in part.Groups)
+                {
+                    group.MediaTypeId = type.Id;
+                    group.MediaTypeName = type.DisplayName;
+                    combined.Groups.Add(group);
+                }
+                combined.Ungrouped.AddRange(part.Ungrouped);
+            }
+            return combined;
         }
 
         private async Task<ScanGroupResult> PreviewAudiobooksAsync(

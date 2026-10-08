@@ -198,7 +198,9 @@ namespace Chronicle.API.DTOs
         List<string>? RelatedFiles = null,
         int? SuggestedMediaTypeId = null,
         string? SuggestedMediaTypeName = null,
-        string? SuggestedMediaTypeReason = null);
+        string? SuggestedMediaTypeReason = null,
+        int? MediaTypeId = null,
+        string? MediaTypeName = null);
 
     public record ScanGroupResultDto(
         List<ScanGroupDto> Groups,
@@ -218,7 +220,8 @@ namespace Chronicle.API.DTOs
         List<ImportGroupDto> Children,
         List<string> Files,
         string? FolderPath = null,
-        List<string>? RelatedFiles = null);
+        List<string>? RelatedFiles = null,
+        int? MediaTypeId = null);
 
     public record MediaFileDto(string Path, string Type, bool Exists, long? SizeBytes, DateTime? ModifiedUtc);
 

@@ -388,6 +388,9 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
+/** Media type id meaning "decide the type of each file from the file itself". */
+const AUTO_DETECT = 0
+
 export default function ScanPage() {
   // ── Configuration state ──────────────────────────────────────────────────
   const [path, setPath] = useState('')
@@ -432,7 +435,7 @@ export default function ScanPage() {
     // `typeOverride` is for "Switch to X and rescan", where the state update has not landed yet.
     mutationFn: (typeOverride?: number) => {
       const typeId = typeOverride ?? mediaTypeId
-      if (!typeId) throw new Error('Select a media type.')
+      if (typeId === '') throw new Error('Select a media type.')
       return previewGrouped({ path: path.trim(), recursive, mediaTypeId: Number(typeId) })
     },
     onSuccess: (data) => {
@@ -629,10 +632,17 @@ export default function ScanPage() {
                 onChange={(e) => setMediaTypeId(e.target.value === '' ? '' : Number(e.target.value))}
               >
                 <option value="">— select type —</option>
+                <option value={AUTO_DETECT}>Detect automatically</option>
                 {supportedTypes.map((t) => (
                   <option key={t.id} value={t.id}>{t.displayName}</option>
                 ))}
               </select>
+              {mediaTypeId === AUTO_DETECT && (
+                <span className={styles.hint}>
+                  Each file is sorted into the type its name and format say it is (movies, TV, music...), using the hints on
+                  Settings -&gt; Media Types. Audiobooks are not picked automatically.
+                </span>
+              )}
             </div>
           </div>
 

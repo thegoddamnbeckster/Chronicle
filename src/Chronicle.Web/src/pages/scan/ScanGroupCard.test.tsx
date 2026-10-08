@@ -57,4 +57,13 @@ describe('ScanGroupCard', () => {
     expect(payload.children[0].relatedFiles).toEqual(['b.jpg'])
     expect(groupToPayload(group()).relatedFiles).toEqual([])
   })
+
+  it('names the type an automatic-detect scan sorted the group into, and carries it into the import', () => {
+    const g = group({ mediaTypeId: 3, mediaTypeName: 'Music' })
+    render(<ScanGroupCard group={g} checked onToggle={vi.fn()} />)
+
+    expect(screen.getByText('Music')).toBeInTheDocument()
+    expect(groupToPayload(g).mediaTypeId).toBe(3)
+    expect(groupToPayload(group()).mediaTypeId).toBeNull()
+  })
 })

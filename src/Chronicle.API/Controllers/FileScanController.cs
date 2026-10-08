@@ -398,7 +398,15 @@ public class FileScanController : ControllerBase
         _importProgress.Reset();
 
         var groups = request.Groups.Select(ToGroupImport).ToList();
-        var importRequest = new ImportGroupsRequest(groups, request.MediaTypeId, request.BundleRelatedFiles);
+
+        // An automatic-detect scan produces groups of several media types. Each type is imported on its own (the
+        // import hierarchy depends on the type) but under one progress run. Groups without a type of their own use the
+        // request's. A single-type import is exactly what it always was.
+        var byType = groups
+            .GroupBy(g => g.MediaTypeId ?? request.MediaTypeId)
+            .Select(g => new ImportGroupsRequest(g.ToList(), g.Key, request.BundleRelatedFiles))
+            .ToList();
+        var importRequest = byType.Count == 1 ? byType[0] : null;
 
         // Capture the service provider so the background task can create its own scope
         // (FileScanService is scoped — it cannot be used across requests without a scope).
@@ -413,7 +421,11 @@ public class FileScanController : ControllerBase
             {
                 // Pass the requesting user so they get an eager library row.
                 // Other users get rows auto-created by GetForUserAsync on their next library view.
-                var summary = await svc.ImportGroupsAsync(importRequest, [userId], CancellationToken.None);
+                ImportApprovedSummary summary;
+                if (importRequest is not null)
+                    summary = await svc.ImportGroupsAsync(importRequest, [userId], CancellationToken.None);
+                else
+                    summary = await ImportSeveralTypesAsync(svc, byType, userId);
 
                 // Same "Kodi needs to scan for brand-new files" signal ScheduledScanService
                 // sends after its own auto-import -- a manual review-and-approve import creates
@@ -424,11 +436,12 @@ public class FileScanController : ControllerBase
                     try
                     {
                         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
-                        var mediaType = await db.MediaTypes.FindAsync([request.MediaTypeId], CancellationToken.None);
-                        if (mediaType is not null)
+                        var kodiDevices = scope.ServiceProvider.GetRequiredService<IKodiDeviceService>();
+                        foreach (var typeId in byType.Select(b => b.MediaTypeId).Distinct())
                         {
-                            var kodiDevices = scope.ServiceProvider.GetRequiredService<IKodiDeviceService>();
-                            await kodiDevices.SignalNewContentAsync(mediaType.Name, CancellationToken.None);
+                            var mediaType = await db.MediaTypes.FindAsync([typeId], CancellationToken.None);
+                            if (mediaType is not null)
+                                await kodiDevices.SignalNewContentAsync(mediaType.Name, CancellationToken.None);
                         }
                     }
                     catch (Exception signalEx)
@@ -444,6 +457,35 @@ public class FileScanController : ControllerBase
         });
 
         return Accepted(ApiResponse<object>.Ok(new { started = true }));
+    }
+
+    /// <summary>Imports each media type's groups in turn, reporting one continuous progress run, and adds up the results.</summary>
+    private async Task<ImportApprovedSummary> ImportSeveralTypesAsync(
+        IFileScanService svc, List<ImportGroupsRequest> byType, int userId)
+    {
+        var total = byType.Sum(r => r.Groups.Sum(g => g.TotalFileCount));
+        _importProgress.Start(total);
+        int imported = 0, failed = 0, duplicates = 0, offset = 0;
+        var failures = new List<string>();
+        try
+        {
+            foreach (var part in byType)
+            {
+                var s = await svc.ImportGroupsAsync(part, [userId], CancellationToken.None, progressOffset: offset, manageProgress: false);
+                imported += s.Imported; failed += s.Failed; duplicates += s.Duplicates; failures.AddRange(s.Failures);
+                offset += part.Groups.Sum(g => g.TotalFileCount);
+            }
+        }
+        catch (Exception ex)
+        {
+            _importProgress.Fail(ex.Message);
+            throw;
+        }
+        _importProgress.Complete(new ImportProgressResult
+        {
+            Imported = imported, Failed = failed, Failures = failures, Duplicates = duplicates, TotalFiles = total,
+        });
+        return new ImportApprovedSummary(imported, failed, failures, duplicates);
     }
 
     /// <summary>
@@ -486,12 +528,13 @@ public class FileScanController : ControllerBase
         g.SignalSources, g.HasConflicts,
         g.Children.Select(ToGroupDto).ToList(),
         g.Files, g.FolderPath, g.Author, g.Series,
-        g.RelatedFiles, g.SuggestedMediaTypeId, g.SuggestedMediaTypeName, g.SuggestedMediaTypeReason);
+        g.RelatedFiles, g.SuggestedMediaTypeId, g.SuggestedMediaTypeName, g.SuggestedMediaTypeReason,
+        g.MediaTypeId, g.MediaTypeName);
 
     private static Chronicle.Services.ScanGroupImport ToGroupImport(ImportGroupDto g) =>
         new(g.Name, g.Year, g.PosterPath,
             g.Children.Select(ToGroupImport).ToList(),
-            g.Files, g.FolderPath, g.Number, g.RelatedFiles);
+            g.Files, g.FolderPath, g.Number, g.RelatedFiles, g.MediaTypeId);
 
     /// <summary>
     /// Returns a snapshot of the currently-running preview scan (folder being scanned,

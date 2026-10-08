@@ -110,3 +110,20 @@ already saw it (Sonarr or Radarr importing and renaming it, a manual tidy-up), t
 * Two different items are never merged while their files both exist, however alike they look.
 * Items scanned before this existed have no fingerprint yet; they gain one at their next scan. Episodes and tracks are
   covered immediately by the number rule.
+
+## Detect the media type automatically
+
+On the scan page, **Media type -> Detect automatically** sorts each file into the type its own name and format say it is,
+instead of treating the whole folder as one type. A folder with movies, TV episodes and music comes out as groups of each
+kind, each labelled with its type, and importing creates every group as its own type (one progress bar for the lot).
+
+* **How a file is sorted** (`FileTypeClassifier`) uses the scan hints on Settings -> Media Types, nothing hard-coded:
+  a file that matches a type's *distinctive* patterns (an episode code, a `Season N` folder) belongs to that type;
+  otherwise it goes to the lowest-numbered type that lists its file extension; otherwise it has no type and is not offered.
+  Subtitles, artwork and other extras go with the files around them. A type you create takes part as soon as it has hints.
+* **Not picked automatically:** inactive types, types without hints, and types with a special scan style (audiobooks:
+  choose it explicitly, since a folder of audio files is a music album or an audiobook and only you know which).
+* Each type's files are grouped the way that type is normally grouped (episodes into shows and seasons, tracks into
+  albums), including the download-name and anime-numbering rules above.
+* The wrong-type warning is not shown in this mode (there is no single chosen type to be wrong about).
+* **Not available for saved scan folders / the nightly scan yet**: a saved folder still has one type.
