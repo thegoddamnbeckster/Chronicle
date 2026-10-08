@@ -69,8 +69,8 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 Design and audit: `docs/plans/2026-10-07-session-keys-design.md`.
 
-- **Re-scope existing API keys** — keys created before scopes existed are still `full`. On Settings -> API Keys, change each Kodi / scrobbler key to `device` and the Audiobookshelf bridge key to `bridge`. (Left unchanged automatically so no device could break.)
-- **Set `Security:TrustedProxies`** for the production Docker deployment (see `docker-compose.yml`), so only the reverse proxy can supply a client address.
+- **Re-scope existing API keys - DONE (2026-10-08).** The 18 Kodi/Vision keys are `device`, the Audiobookshelf bridge key is `bridge`.
+- **Set `Security:TrustedProxies`** only if Chronicle is ever put behind a reverse proxy / moved to Docker (not the case today).
 - Done 2026-10-07: login/registration/pairing throttling, API-key scopes, session cookie for image routes, forwarded-header trust option, injectable audit log, plugin icons fetched through the filtered fetcher; earlier: session keys (restart ends all sessions; logout; session list; password change/deactivation end sessions), F-1 diagnostics now authenticated, F-2 poster proxy locked down, F-3 progress endpoints authenticated, auth/connection logging.
 
 ---
