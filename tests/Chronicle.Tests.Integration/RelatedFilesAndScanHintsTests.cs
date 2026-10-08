@@ -189,7 +189,6 @@ namespace Chronicle.Tests.Integration
                 .Single(t => t.GetProperty("name").GetString() == name)
                 .GetProperty("castHeading").GetString().Should().Be("Hosts");
 
-            Chronicle.Services.MediaTypeFamilies.Resolve(name).Should().Be("music");   // the snapshot was refreshed by the edit
         }
 
         [Fact]

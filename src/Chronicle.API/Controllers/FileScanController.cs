@@ -410,15 +410,18 @@ public class FileScanController : ControllerBase
 
         // Capture the service provider so the background task can create its own scope
         // (FileScanService is scoped — it cannot be used across requests without a scope).
-        var sp = HttpContext.RequestServices;
+        // The root scope factory, NOT HttpContext.RequestServices itself: the request's own scope is disposed as soon as
+        // the 202 is sent, and a background task that starts a moment later would fail to create its scope (and, being
+        // outside the try below, leave the import looking "running" forever).
+        var scopeFactory = HttpContext.RequestServices.GetRequiredService<IServiceScopeFactory>();
 
         _ = Task.Run(async () =>
         {
-            // Create a DI scope so EF Core DbContext is not shared across threads.
-            await using var scope = sp.CreateAsyncScope();
-            var svc = scope.ServiceProvider.GetRequiredService<IFileScanService>();
             try
             {
+                // Create a DI scope so EF Core DbContext is not shared across threads.
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var svc = scope.ServiceProvider.GetRequiredService<IFileScanService>();
                 // Pass the requesting user so they get an eager library row.
                 // Other users get rows auto-created by GetForUserAsync on their next library view.
                 ImportApprovedSummary summary;
