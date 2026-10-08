@@ -372,7 +372,7 @@ namespace Chronicle.Services.Scan
             FolderSignal folder, TagSignal? tag)
         {
             if (tag?.Title is not null) return tag.Title;
-            return folder.FileName;
+            return folder.TrackTitle ?? folder.FileName;
         }
 
         /// <summary>

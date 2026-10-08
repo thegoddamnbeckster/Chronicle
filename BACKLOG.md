@@ -14,7 +14,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 - **Notify when background scans find new items — DONE** (the bell; administrators; mutable per person).
 - **Flexible pattern matching** — Handle messy/unorganised folder structures (e.g. `E:\Video Downloads\MCM Download Parser`). Smarter fallback when standard patterns fail.
 - **User-defined file types** — FileScanner plugin: let the user add their own filetypes.
-- **Music filename parsing** — Audio extensions are supported (`FileNameParser.cs`); confirm Artist - Album - Track filename parsing is also covered, or whether it relies only on embedded tags (`EmbeddedTagReader.cs`).
+- **Music filename parsing — DONE (checked, then fixed).** Confirmed gap: for untagged music the grouped scan used the whole file name as the track name ("01 - Enter Sandman") and only read a leading number. Now `TrackFileName` reads "01 - Title", "01. Title", "1-02 Title" (disc-track), "Track 05 - Title" and "Artist - 01 - Title" for audio files only, strips the number from the name and fills track/disc numbers; titles that merely start with a number ("99 Problems") are left alone, and TV episodes are never touched. Embedded tags still win when present. Not changed: the FileScanner plugin's own flat scan (`FileNameParser.ParseAudio`) still uses the raw name plus tags.
 
 ---
 
