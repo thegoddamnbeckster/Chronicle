@@ -70,9 +70,9 @@ public class NotificationProducersTests : IDisposable
         return task;
     }
 
-    private async Task AddTaskRowAsync(string id, string display)
+    private async Task AddTaskRowAsync(string id, string display, string? pluginId = null)
     {
-        _db.BackgroundTasks.Add(new BackgroundTask { TaskId = id, DisplayName = display, Description = "d", CronExpression = "0 2 * * *", IsEnabled = true });
+        _db.BackgroundTasks.Add(new BackgroundTask { TaskId = id, DisplayName = display, Description = "d", CronExpression = "0 2 * * *", IsEnabled = true, PluginId = pluginId });
         await _db.SaveChangesAsync();
     }
 
@@ -92,6 +92,80 @@ public class NotificationProducersTests : IDisposable
         n.Title.Should().Be("Database Backup failed");
         n.Body.Should().Be("Disk is full.");
         n.Link.Should().Be("/settings/background-tasks");
+    }
+
+    private static IPluginTaskRunner PluginRunnerThrowing(Exception ex)
+    {
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(ex);
+        return runner.Object;
+    }
+
+    private static Mock<IScheduledTask> ThrowingTask(string id, string display, Exception ex)
+    {
+        var task = new Mock<IScheduledTask>();
+        task.Setup(t => t.TaskId).Returns(id);
+        task.Setup(t => t.DisplayName).Returns(display);
+        task.Setup(t => t.Description).Returns("d");
+        task.Setup(t => t.DefaultCron).Returns("0 2 * * *");
+        task.Setup(t => t.ExecuteAsync(It.IsAny<CancellationToken>())).ThrowsAsync(ex);
+        return task;
+    }
+
+    [Fact]
+    public async Task AnInternalError_IsKeptOutOfTheBell_ButStillRecordedOnTheTask()
+    {
+        await AddTaskRowAsync("sync", "Delta Sync");
+        var svc = new TaskSchedulerService([ThrowingTask("sync", "Delta Sync", new NullReferenceException("Object reference not set")).Object], Scopes());
+
+        await svc.TriggerNowAsync("sync");
+        await WaitForAsync(() => !svc.IsRunning("sync"));
+
+        Notices(NotificationKinds.TaskFailed).Should().BeEmpty();
+        (await _db.BackgroundTasks.AsNoTracking().SingleAsync(t => t.TaskId == "sync")).LastErrorMessage.Should().Contain("Object reference");
+    }
+
+    [Fact]
+    public async Task APluginThatDoesNotFitThisChronicle_IsKeptOutOfTheBell_WhenThereIsNoUpdateToInstall()
+    {
+        await AddTaskRowAsync("hc:delta", "Delta Sync", pluginId: "hardcover");
+        _db.Plugins.Add(new Plugin { PluginId = "hardcover", Name = "Hardcover", Version = "1.3.3", Author = "a", DllPath = "x", InstalledAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+        var svc = new TaskSchedulerService([], Scopes(sv => sv.AddScoped(_ => PluginRunnerThrowing(new MissingMethodException("Method not found: 'Void X..ctor()'")))));
+
+        await svc.TriggerNowAsync("hc:delta");
+        await WaitForAsync(() => !svc.IsRunning("hc:delta"));
+
+        Notices(NotificationKinds.TaskFailed).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task APluginThatDoesNotFitThisChronicle_SaysToUpdateIt_WhenAnUpdateExists()
+    {
+        await AddTaskRowAsync("hc:delta", "Delta Sync", pluginId: "hardcover");
+        _db.Plugins.Add(new Plugin { PluginId = "hardcover", Name = "Hardcover", Version = "1.3.3", LatestVersionAvailable = "1.4.0", Author = "a", DllPath = "x", InstalledAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+        var svc = new TaskSchedulerService([], Scopes(sv => sv.AddScoped(_ => PluginRunnerThrowing(new MissingMethodException("Method not found")))));
+
+        await svc.TriggerNowAsync("hc:delta");
+        await WaitForAsync(() => Notices(NotificationKinds.TaskFailed).Count > 0);
+
+        var n = Notices(NotificationKinds.TaskFailed).Single();
+        n.Title.Should().Be("Hardcover needs an update");
+        n.Body.Should().Contain("v1.4.0").And.NotContain("Method not found");
+        n.Link.Should().Be("/plugins");
+    }
+
+    [Fact]
+    public async Task ANetworkOrAccountProblem_StillReachesTheBell()
+    {
+        await AddTaskRowAsync("sync", "Delta Sync");
+        var svc = new TaskSchedulerService([ThrowingTask("sync", "Delta Sync", new HttpRequestException("401 Unauthorized")).Object], Scopes());
+
+        await svc.TriggerNowAsync("sync");
+        await WaitForAsync(() => Notices(NotificationKinds.TaskFailed).Count > 0);
+
+        Notices(NotificationKinds.TaskFailed).Single().Body.Should().Be("401 Unauthorized");
     }
 
     [Fact]

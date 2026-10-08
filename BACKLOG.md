@@ -56,12 +56,9 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ---
 
-## Substack Plugin (not started — no repo or code found)
+## Substack Plugin (deferred: not wanted for now)
 
-- Pull subscribed podcasts and episodes.
-- Track listened episodes and progress.
-- Locate a podcast from inside Chronicle.
-- Scrobble source: a podcast played on the Substack site is reported to Chronicle as listened.
+No repo or code exists, and the owner does not want it at the moment (2026-10-08). Kept here only so the idea is not lost: pull subscribed podcasts and episodes, track listened episodes, locate a podcast from inside Chronicle, scrobble Substack plays.
 
 ---
 

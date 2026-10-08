@@ -217,7 +217,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         catch (Exception ex)
         {
             _log.Error(ex, "TaskScheduler: '{TaskId}' failed", row.TaskId);
-            await PersistRunResultAsync(row.TaskId, startedAt, succeeded: false, error: ex.Message);
+            await PersistRunResultAsync(row.TaskId, startedAt, succeeded: false, error: ex.Message, exception: ex);
         }
         finally
         {
@@ -226,7 +226,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
     }
 
     private async Task PersistRunResultAsync(
-        string taskId, DateTime lastRunAt, bool succeeded, string? error)
+        string taskId, DateTime lastRunAt, bool succeeded, string? error, Exception? exception = null)
     {
         try
         {
@@ -242,15 +242,42 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
 
             await db.SaveChangesAsync();
 
-            // Tell the administrators a task broke, so nobody has to open the Background Tasks page to find out.
+            // Tell the administrators a task broke, so nobody has to open the Background Tasks page to find out, but only
+            // when it is something they can act on. A bug, or a plugin built for another version of Chronicle that has no
+            // update to install, is logged and shown on the Background Tasks page, not put in the bell.
             // One unread notice per task: a task failing every few minutes does not bury the bell.
             if (!succeeded)
-                await (scope.ServiceProvider.GetService<Notifications.INotificationService>()?.NotifyAdminsAsync(
-                    Chronicle.Core.Models.NotificationKinds.TaskFailed,
-                    $"{row.DisplayName} failed",
-                    string.IsNullOrWhiteSpace(error) ? "The task stopped with an error." : error,
-                    "/settings/background-tasks",
-                    dedupeKey: $"task:{taskId}") ?? Task.FromResult(0));
+            {
+                var notifier = scope.ServiceProvider.GetService<Notifications.INotificationService>();
+                var kind = Notifications.TaskFailureTriage.Classify(exception);
+                if (kind == Notifications.TaskFailureKind.Fixable)
+                {
+                    await (notifier?.NotifyAdminsAsync(
+                        Chronicle.Core.Models.NotificationKinds.TaskFailed,
+                        $"{row.DisplayName} failed",
+                        string.IsNullOrWhiteSpace(error) ? "The task stopped with an error." : error,
+                        "/settings/background-tasks",
+                        dedupeKey: $"task:{taskId}") ?? Task.FromResult(0));
+                }
+                else if (kind == Notifications.TaskFailureKind.PluginIncompatible)
+                {
+                    var plugin = string.IsNullOrEmpty(row.PluginId) ? null
+                        : await db.Plugins.AsNoTracking().FirstOrDefaultAsync(p => p.PluginId == row.PluginId);
+                    if (plugin?.LatestVersionAvailable is { Length: > 0 } latest)
+                        await (notifier?.NotifyAdminsAsync(
+                            Chronicle.Core.Models.NotificationKinds.TaskFailed,
+                            $"{plugin.Name} needs an update",
+                            $"This version of {plugin.Name} does not work with this version of Chronicle. Update it to v{latest} on the Plugins page.",
+                            "/plugins",
+                            dedupeKey: $"task:{taskId}") ?? Task.FromResult(0));
+                    else
+                        _log.Warning("TaskScheduler: '{TaskId}' failed because its plugin is not compatible with this Chronicle and no update is available; not announced in the notification bell", taskId);
+                }
+                else
+                {
+                    _log.Warning("TaskScheduler: '{TaskId}' failed with an internal error; not announced in the notification bell", taskId);
+                }
+            }
         }
         catch (Exception ex)
         {

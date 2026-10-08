@@ -30,7 +30,7 @@ is about. Notices older than `notifications.retain_days` (default 90) are remove
 | Kind | Raised by | Who |
 |---|---|---|
 | `scan.imported` | the nightly scheduled scan, per folder that imported something | administrators |
-| `task.failed` | any background task that ends with an error (one unread notice per task) | administrators |
+| `task.failed` | a background task that ends with an error an administrator can act on (one unread notice per task) | administrators |
 | `plugin.update` | the plugin update check, once per new version | administrators |
 | `database.size` | the nightly backup, when the database is over its warning size | administrators |
 
@@ -49,3 +49,15 @@ as a plugin version, ever). Links must be in-app paths (`/settings/...`); anythi
 | DELETE | `/api/v1/notifications/{id}`, `/read` | one, or everything already read |
 
 Another person's notification id behaves exactly like a missing one (404).
+
+### What does not reach the bell
+
+The bell is for things the person reading it can do something about. A failed task is sorted by its exception
+(`TaskFailureTriage`):
+
+* **Fixable** (network or service errors, bad or expired credentials, a full disk, a missing setting, unreadable files):
+  announced, with the reason.
+* **Plugin built for another Chronicle version** ("Method not found", a type that will not load): announced as "X needs an
+  update" with a link to the Plugins page, only when an update is available to install; otherwise only logged.
+* **Internal errors** (null reference, bad cast, index out of range and similar bugs): only logged, and shown as the task's
+  last error on the Background Tasks page.

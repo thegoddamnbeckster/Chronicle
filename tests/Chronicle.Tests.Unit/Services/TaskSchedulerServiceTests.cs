@@ -51,6 +51,18 @@ public class TaskSchedulerServiceTests
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 
+    /// <summary>Gives every scope its OWN context over the test's in-memory store, as production does. Registering the one
+    /// test context as a singleton let the scheduler's tick and the background run it launched call SaveChangesAsync on the
+    /// same instance at the same time; the run's write could then be dropped, which showed up as an occasional
+    /// "LastRunSucceeded was null" failure.</summary>
+    private static void AddSharedStore(IServiceCollection services, ChronicleDbContext db)
+    {
+#pragma warning disable EF1001
+        var storeName = db.GetService<IDbContextOptions>().FindExtension<InMemoryOptionsExtension>()!.StoreName;
+#pragma warning restore EF1001
+        services.AddDbContext<ChronicleDbContext>(opts => opts.UseInMemoryDatabase(storeName));
+    }
+
     private static Mock<IScheduledTask> MakeTask(
         string id = "test_task",
         string cron = "0 */4 * * *")
@@ -317,7 +329,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
@@ -352,7 +364,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
@@ -401,7 +413,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask); // completes without throwing -- the graceful "provider unavailable" outcome
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
@@ -438,7 +450,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
@@ -480,7 +492,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
@@ -520,7 +532,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
@@ -560,7 +572,7 @@ public class TaskSchedulerServiceTests
               .ThrowsAsync(new InvalidOperationException("plugin blew up"));
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
