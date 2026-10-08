@@ -383,6 +383,8 @@ namespace Chronicle.Data
                 entity.Property(e => e.Version).IsRequired().HasMaxLength(50);
                 entity.Property(e => e.Author).IsRequired().HasMaxLength(200);
                 entity.Property(e => e.DllPath).IsRequired();
+                entity.Property(e => e.FilesSha256).HasMaxLength(64);
+                entity.Property(e => e.PreviousFilesSha256).HasMaxLength(64);
                 entity.Property(e => e.InstalledAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
                 entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             });

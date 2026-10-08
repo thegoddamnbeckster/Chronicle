@@ -288,6 +288,15 @@ if (-not $WebOnly) {
     # context that has it set (e.g. a tool/CI wrapper capturing plain-text output), it
     # would otherwise silently disable Serilog's AnsiConsoleTheme in the spawned window,
     # even though that window is a normal interactive console perfectly capable of color.
+    # The plugin DLLs were just rebuilt by this script, so tell Chronicle these are the files to trust. (Chronicle
+    # refuses to load a plugin whose files changed without it being told; see docs/SECURITY.md.)
+    Write-Host "Recording the freshly built plugin files as trusted..." -ForegroundColor Cyan
+    Push-Location $ApiDir
+    try {
+        $env:ASPNETCORE_ENVIRONMENT = 'Development'
+        dotnet run -- --accept-plugin-changes
+    } finally { Pop-Location }
+
     Start-Process pwsh -ArgumentList "-NoExit", "-Command",
         "`$env:NO_COLOR=''; `$env:ASPNETCORE_ENVIRONMENT='Development'; cd '$ApiDir'; dotnet run" `
         -WindowStyle Normal

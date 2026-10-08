@@ -52,7 +52,7 @@ public sealed class PluginHostService : IHostedService
 
         // Auto-register any plugin folder that has a manifest.json but is not yet in the DB.
         // This makes bundled plugins (TMDB, FileScanner) available on a fresh install.
-        await AutoRegisterBundledPluginsAsync(db, cancellationToken);
+        await AutoRegisterBundledPluginsAsync(db, cancellationToken, scope.ServiceProvider);
 
         var enabledPlugins = await db.Plugins
             .Where(p => p.IsEnabled)
@@ -72,6 +72,11 @@ public sealed class PluginHostService : IHostedService
 
             try
             {
+                // A plugin whose files changed behind Chronicle's back is not loaded; administrators are told.
+                var integrity = scope.ServiceProvider.GetService<IPluginIntegrity>();
+                if (integrity is not null && await integrity.VerifyAsync(plugin, cancellationToken) == IntegrityOutcome.Blocked)
+                    continue;
+
                 var settings = DeserializeSettings(plugin.SettingsJson);
                 await _registry.LoadPluginAsync(plugin.Id, plugin.DllPath, settings, cancellationToken);
             }
@@ -483,7 +488,7 @@ public sealed class PluginHostService : IHostedService
     /// not already present in the database. This runs before the normal load loop so that
     /// newly discovered plugins are included in the enabled-plugins query.
     /// </summary>
-    private async Task AutoRegisterBundledPluginsAsync(ChronicleDbContext db, CancellationToken ct)
+    private async Task AutoRegisterBundledPluginsAsync(ChronicleDbContext db, CancellationToken ct, IServiceProvider? scopeProvider = null)
     {
         var pluginsDir = Path.Combine(_contentRootPath, "plugins");
         if (!Directory.Exists(pluginsDir))
@@ -574,6 +579,15 @@ public sealed class PluginHostService : IHostedService
                             }
                         }
                     }
+                    continue;
+                }
+
+                // A folder that merely appears under plugins/ is not enough: a new plugin must be in the catalog
+                // (or an administrator must have allowed unlisted plugins).
+                var integrityCheck = scopeProvider?.GetService<IPluginIntegrity>();
+                if (integrityCheck is not null && !await integrityCheck.IsAllowedAsync(manifest.PluginId, ct))
+                {
+                    _log.Warning("Ignoring plugin folder {Dir}: {PluginId} is not in the plugin catalog", dir, manifest.PluginId);
                     continue;
                 }
 

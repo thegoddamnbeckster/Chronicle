@@ -716,6 +716,23 @@ CREATE TABLE user_2fa (
 }
 ```
 
+### Plugin installation and file integrity (built)
+
+* **Allowlist.** A plugin installs only if its id is in the catalog (`PluginCatalogSeeds.cs`), or an administrator has set
+  the app setting `plugins.allow_unlisted` to `true`. The manual `POST /api/v1/plugins` route used to take any DLL path on
+  the server; it now accepts only a DLL inside the `plugins/` folder, with a `manifest.json` naming an allowed id, and the
+  check happens before any plugin code is loaded. A new folder that merely appears under `plugins/` at start is ignored
+  (and logged) unless its id is allowed.
+* **File hash.** One SHA-256 over every DLL under the plugin's folder plus `manifest.json` is recorded at install or
+  catalog update (`plugins.FilesSha256`; the previous value is kept). It is checked before every load (start, enable,
+  reload). A mismatch means the plugin is **not loaded**, `IntegrityBlockedAt` is set, administrators get a
+  `plugin.integrity` notification, and the Plugins page offers "Approve changed files". A plugin from before hashing has
+  its hash recorded on first load. An update through Chronicle records the new hash itself and shows "Files changed".
+* **Developers** run `Chronicle.API --accept-plugin-changes` after rebuilding (RunTestEnvironment.ps1 does).
+* **Not built:** author signing (below) and sandboxing. The hash proves the files are the ones Chronicle installed, not
+  that the original author is trustworthy; that is what the allowlist is for.
+* Writing a plugin: see `docs/PLUGIN_DEVELOPMENT_GUIDE.md`.
+
 ### Plugin Verification
 
 **Code Signing (Future):**

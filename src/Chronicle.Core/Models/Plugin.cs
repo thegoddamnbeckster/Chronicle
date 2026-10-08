@@ -54,4 +54,20 @@ public class Plugin
 
     /// <summary>When the update check last ran for this plugin, regardless of outcome.</summary>
     public DateTime? UpdateCheckedAt { get; set; }
+
+    /// <summary>
+    /// SHA-256 over the plugin's files (every DLL in its folder plus manifest.json), recorded when the plugin
+    /// was installed or last approved. A plugin whose files no longer match is not loaded. Null on a row from
+    /// before hashing existed; the first load records it.
+    /// </summary>
+    public string? FilesSha256 { get; set; }
+
+    /// <summary>The hash before the most recent change, so an administrator can see that an update replaced the files.</summary>
+    public string? PreviousFilesSha256 { get; set; }
+
+    /// <summary>When <see cref="FilesSha256"/> last changed to a different value (an update or an approval).</summary>
+    public DateTime? FilesChangedAt { get; set; }
+
+    /// <summary>Set when a load was refused because the files on disk no longer match the recorded hash.</summary>
+    public DateTime? IntegrityBlockedAt { get; set; }
 }

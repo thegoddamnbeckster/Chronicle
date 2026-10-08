@@ -17,6 +17,7 @@ import {
   listCatalog,
   installFromCatalog,
   updatePluginFromCatalog,
+  acceptPluginFiles,
   getPluginSettings,
   getPluginSettingsSchema,
   updatePluginSettings,
@@ -319,6 +320,19 @@ export default function PluginsPage() {
     }
   }
 
+  async function handleAcceptFiles(pluginId: string, dbId: number, name: string) {
+    if (!confirm(`Approve the files of "${name}" as they are on disk now? Only do this if you put them there yourself.`)) return
+    setBusy(dbId, true)
+    try {
+      const updated = await acceptPluginFiles(pluginId)
+      setPlugins(prev => prev.map(p => p.id === dbId ? updated : p))
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to approve the plugin files.')
+    } finally {
+      setBusy(dbId, false)
+    }
+  }
+
   async function handleHealthCheck(id: number) {
     setHealthStates(prev => ({ ...prev, [id]: 'checking' }))
     try {
@@ -609,6 +623,16 @@ export default function PluginsPage() {
                           Update available: v{plugin.latestVersionAvailable}
                         </span>
                       )}
+                      {plugin.integrityBlockedAt && (
+                        <span className={`${styles.badge} ${styles.disabled}`} title="The plugin's files changed on disk without being installed or updated through Chronicle, so it was not loaded.">
+                          Blocked: files changed
+                        </span>
+                      )}
+                      {!plugin.integrityBlockedAt && plugin.previousFilesHash && plugin.filesChangedAt && (
+                        <span className={styles.badge} title={`Files ${plugin.previousFilesHash} -> ${plugin.filesHash}`}>
+                          Files changed {formatDate(plugin.filesChangedAt)}
+                        </span>
+                      )}
                       <span className={`${styles.badge} ${plugin.isEnabled ? styles.enabled : styles.disabled}`}>
                         {plugin.isEnabled ? 'Enabled' : 'Disabled'}
                       </span>
@@ -666,6 +690,17 @@ export default function PluginsPage() {
                           Enable
                         </button>
                       )
+                    )}
+
+                    {/* Files changed behind Chronicle's back: the plugin is not loaded until approved */}
+                    {isAdmin && plugin.integrityBlockedAt && (
+                      <button
+                        className={`${styles.actionBtn} ${styles.enableBtn}`}
+                        onClick={() => handleAcceptFiles(plugin.pluginId, plugin.id, plugin.name)}
+                        disabled={busy}
+                      >
+                        Approve changed files
+                      </button>
                     )}
 
                     {/* Update available */}

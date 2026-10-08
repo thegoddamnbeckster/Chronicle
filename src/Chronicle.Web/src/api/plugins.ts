@@ -19,6 +19,13 @@ export interface PluginDto {
   /** Newer version found by the last scheduled update check. Null when up to date. */
   latestVersionAvailable: string | null
   updateCheckedAt: string | null
+  /** Short form of the hash of the plugin's files. */
+  filesHash?: string | null
+  /** The hash before the last change, so a replaced file set is visible. */
+  previousFilesHash?: string | null
+  filesChangedAt?: string | null
+  /** Set when the plugin was NOT loaded because its files changed without Chronicle being told. */
+  integrityBlockedAt?: string | null
 }
 
 export async function listPlugins(): Promise<PluginDto[]> {
@@ -125,6 +132,12 @@ export async function listCatalog(): Promise<PluginCatalogEntry[]> {
 
 export async function installFromCatalog(pluginId: string): Promise<PluginDto> {
   const res = await client.post<{ data: PluginDto }>(`/plugins/catalog/${pluginId}/install`)
+  return res.data.data
+}
+
+/** Approves the plugin's files as they are on disk now (and loads the plugin if it was blocked). */
+export async function acceptPluginFiles(pluginId: string): Promise<PluginDto> {
+  const res = await client.post<{ data: PluginDto }>(`/plugins/${pluginId}/accept-files`)
   return res.data.data
 }
 

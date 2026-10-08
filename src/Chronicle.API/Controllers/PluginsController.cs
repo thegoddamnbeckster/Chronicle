@@ -374,6 +374,11 @@ public class PluginsController : ControllerBase
             var plugin = await _pluginService.InstallPluginAsync(request.DllPath);
             return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
         }
+        catch (PluginNotAllowedException ex)
+        {
+            _logger.LogWarning("PLUGIN install refused for {DllPath}: {Reason}", request.DllPath, ex.Message);
+            return StatusCode(403, ApiResponse<PluginDto>.Fail("PLUGIN_NOT_ALLOWED", ex.Message));
+        }
         catch (FileNotFoundException ex)
         {
             return BadRequest(ApiResponse<PluginDto>.Fail("DLL_NOT_FOUND", ex.Message));
@@ -491,9 +496,45 @@ public class PluginsController : ControllerBase
             await _pluginService.ReloadPluginAsync(pluginId, ct);
             return Ok(ApiResponse<object>.Ok(new { pluginId, status = "reloaded" }));
         }
+        catch (PluginNotAllowedException ex)
+        {
+            return StatusCode(409, ApiResponse<object>.Fail("PLUGIN_INTEGRITY", ex.Message));
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResponse<object>.Fail("RELOAD_FAILED", ex.Message));
+        }
+        catch (FileNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail("DLL_NOT_FOUND", ex.Message));
+        }
+    }
+
+    // ── POST /api/v1/plugins/{pluginId}/accept-files ──────────────────────────
+
+    /// <summary>
+    /// Approves the plugin's files as they are on disk now (the administrator made the change, e.g. a hand-copied
+    /// build) and loads the plugin if it was blocked.
+    /// </summary>
+    [HttpPost("{pluginId}/accept-files")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> AcceptFiles(string pluginId, CancellationToken ct)
+    {
+        try
+        {
+            await _pluginService.AcceptCurrentFilesAsync(pluginId, ct);
+            var plugin = (await _pluginService.GetAllPluginsAsync()).First(p => p.PluginId == pluginId);
+            _logger.LogWarning("PLUGIN files of {PluginId} approved by an administrator", pluginId);
+            if (plugin.IsEnabled)
+            {
+                await _pluginService.UnloadFromRegistryAsync(pluginId);
+                await _pluginService.ReloadPluginAsync(pluginId, ct);
+            }
+            return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", ex.Message));
         }
         catch (FileNotFoundException ex)
         {
@@ -699,8 +740,13 @@ public class PluginsController : ControllerBase
 
         try
         {
-            var plugin = await _pluginService.InstallPluginAsync(dllPath!);
+            var plugin = await _pluginService.InstallPluginAsync(dllPath!, ct, catalogPluginId: pluginId);
             return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
+        }
+        catch (PluginNotAllowedException ex)
+        {
+            _logger.LogWarning("PLUGIN catalog install of {PluginId} refused: {Reason}", pluginId, ex.Message);
+            return StatusCode(403, ApiResponse<PluginDto>.Fail("PLUGIN_NOT_ALLOWED", ex.Message));
         }
         catch (FileNotFoundException ex)
         {
@@ -760,6 +806,9 @@ public class PluginsController : ControllerBase
             if (!string.Equals(Path.GetFullPath(dllPath!), Path.GetFullPath(plugin.DllPath), StringComparison.OrdinalIgnoreCase))
                 System.IO.File.Copy(dllPath!, plugin.DllPath, overwrite: true);
 
+            // The files were just downloaded from the catalog by Chronicle itself, so they are the new trusted ones
+            // (the old hash is kept so the change is visible on the Plugins page).
+            await _pluginService.AcceptCurrentFilesAsync(pluginId, ct);
             await _pluginService.ReloadPluginAsync(pluginId, ct);
             var updated = await _pluginService.MarkUpdatedAsync(pluginId, ct);
 
@@ -905,7 +954,8 @@ public class PluginsController : ControllerBase
 
         return new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
             p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint, supportedMediaTypes,
-            p.LatestVersionAvailable, p.UpdateCheckedAt);
+            p.LatestVersionAvailable, p.UpdateCheckedAt,
+            p.FilesSha256?[..12], p.PreviousFilesSha256?[..12], p.FilesChangedAt, p.IntegrityBlockedAt);
     }
 
     /// <summary>

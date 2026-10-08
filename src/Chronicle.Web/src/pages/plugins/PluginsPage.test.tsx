@@ -68,3 +68,46 @@ describe('PluginsPage settings', () => {
     expect(pluginsApi.updatePluginSettings).toHaveBeenCalledWith(28, { include_adult: 'true' })
   })
 })
+
+describe('PluginsPage file integrity', () => {
+  it('flags a plugin that was blocked, and approving its files replaces the card with the loaded one', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(pluginsApi.listPlugins).mockResolvedValue([{ ...IMDB, integrityBlockedAt: '2026-10-08T00:00:00Z', filesHash: 'aaaaaaaaaaaa' }])
+    vi.mocked(pluginsApi.acceptPluginFiles).mockResolvedValue({ ...IMDB, integrityBlockedAt: null })
+    renderWithProviders(<PluginsPage />)
+
+    expect(await screen.findByText('Blocked: files changed')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Approve changed files' }))
+
+    await vi.waitFor(() => expect(pluginsApi.acceptPluginFiles).toHaveBeenCalledWith('chronicle.plugin.imdb'))
+    await vi.waitFor(() => expect(screen.queryByText('Blocked: files changed')).not.toBeInTheDocument())
+  })
+
+  it('does not approve anything when the confirmation is declined', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    vi.mocked(pluginsApi.listPlugins).mockResolvedValue([{ ...IMDB, integrityBlockedAt: '2026-10-08T00:00:00Z' }])
+    renderWithProviders(<PluginsPage />)
+
+    await user.click(await screen.findByRole('button', { name: 'Approve changed files' }))
+
+    expect(pluginsApi.acceptPluginFiles).not.toHaveBeenCalled()
+  })
+
+  it('shows that an update replaced the files, without any alarm', async () => {
+    vi.mocked(pluginsApi.listPlugins).mockResolvedValue([{ ...IMDB, previousFilesHash: 'bbbbbbbbbbbb', filesHash: 'cccccccccccc', filesChangedAt: '2026-10-08T00:00:00Z' }])
+    renderWithProviders(<PluginsPage />)
+
+    expect(await screen.findByText(/Files changed/)).toBeInTheDocument()
+    expect(screen.queryByText('Blocked: files changed')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve changed files' })).not.toBeInTheDocument()
+  })
+
+  it('shows nothing about file changes for a plugin whose files never changed', async () => {
+    renderWithProviders(<PluginsPage />)
+
+    await screen.findByText('IMDb')
+    expect(screen.queryByText(/Files changed/)).not.toBeInTheDocument()
+  })
+})

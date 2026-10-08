@@ -28,7 +28,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ## Plugins
 
-- **Plugin integrity** — Intent: unknown plugins must never get onto the system. Allowlist (installs only from `PluginCatalogSeeds.cs` repos) already exists. Replace the removed SHA-256 pinning (2026-09-04) with: (1) hash the DLL at install and store it; (2) re-verify on every load to catch on-disk tampering; (3) show the admin when a hash changes on update; (4) later, author signing (`docs/FEATURE_PLUGIN_SECURITY.md`). First audit whether the manual DLL install route (`POST /api/v1/plugins`) bypasses the allowlist.
+- **Plugin integrity — DONE (hash + allowlist).** Manual install and folder auto-registration now honour the catalog allowlist (bypass closed); plugin files are hashed at install/update and re-verified on every load; changes are blocked, notified and approvable. See `docs/SECURITY.md`. Not built: author signing (`docs/FEATURE_PLUGIN_SECURITY.md`). Plugin authors: `docs/PLUGIN_DEVELOPMENT_GUIDE.md`.
 - **Bundled plugins** — FileScanner must ship with the Chronicle install (separate repo, DLL included). Chronicle's releases currently ship source/tag only (see CLAUDE.md), so confirm the installer story.
 - **Catalog source** — The old item asked for a `plugins.json` in the repo. What was built instead is `PluginCatalogSeeds.cs`, a hard-coded list of repos, resolved live from each repo's latest GitHub release and manifest. Adding a plugin therefore still needs a code deploy. Decide whether to move the seed list out to a hosted file.
 

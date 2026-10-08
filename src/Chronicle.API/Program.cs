@@ -248,6 +248,7 @@ builder.Services.AddSingleton<IPluginSettingsProtector, PluginSettingsProtector>
 // PluginHostService loads all enabled plugins from the database on startup.
 builder.Services.AddSingleton<IPluginRegistry, PluginRegistry>();
 builder.Services.AddScoped<IPluginService, PluginService>();
+builder.Services.AddScoped<IPluginIntegrity, PluginIntegrity>();
 builder.Services.AddHostedService<PluginHostService>();
 
 // ── Scheduled background tasks ────────────────────────────────────────────────
@@ -534,6 +535,10 @@ using (var scope = app.Services.CreateScope())
 // server. Only someone who controls this machine (and so the database file) can run it.
 if (RecoveryCommand.ParseUsername(args) is { } recoveryUser)
     return await RecoveryCommand.RunAsync(app.Services, recoveryUser, Console.Out);
+
+// Developer/operator command: trust the plugin files currently on disk, then exit.
+if (PluginCommand.IsRequested(args))
+    return await PluginCommand.RunAsync(app.Services, Console.Out);
 
 // ── Middleware pipeline ───────────────────────────────────────────────────────
 

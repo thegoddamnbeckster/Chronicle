@@ -16,6 +16,7 @@ public class PluginService : IPluginService
     private readonly ChronicleDbContext _db;
     private readonly IPluginRegistry   _registry;
     private readonly IPluginSettingsProtector _protector;
+    private readonly IPluginIntegrity? _integrity;
     private readonly ILogger _log = Log.ForContext<PluginService>();
 
     // Per-plugin semaphore: serialises concurrent MergeSettingsAsync calls so that two
@@ -25,11 +26,13 @@ public class PluginService : IPluginService
     private static SemaphoreSlim GetSettingsLock(string pluginId) =>
         _settingsLocks.GetOrAdd(pluginId, _ => new SemaphoreSlim(1, 1));
 
-    public PluginService(ChronicleDbContext db, IPluginRegistry registry, IPluginSettingsProtector protector)
+    public PluginService(ChronicleDbContext db, IPluginRegistry registry, IPluginSettingsProtector protector,
+        IPluginIntegrity? integrity = null)
     {
         _db = db;
         _registry = registry;
         _protector = protector;
+        _integrity = integrity;
     }
 
     public async Task<List<Plugin>> GetAllPluginsAsync() =>
@@ -38,10 +41,64 @@ public class PluginService : IPluginService
     public async Task<Plugin?> GetPluginAsync(int id) =>
         await _db.Plugins.FindAsync(id);
 
-    public async Task<Plugin> InstallPluginAsync(string dllPath, CancellationToken ct = default)
+    /// <summary>Refuses a plugin before any of its code runs: it must sit inside the plugins folder, carry a
+    /// manifest.json naming an allowed plugin id, and (for a catalog install) be the plugin that was asked for.</summary>
+    private async Task<string> GuardInstallAsync(string dllPath, string? catalogPluginId, CancellationToken ct)
+    {
+        if (_integrity is null) return catalogPluginId ?? string.Empty;   // unit tests that build the service without it
+
+        if (!_integrity.IsInsidePluginsDirectory(dllPath))
+            throw new PluginNotAllowedException(
+                $"Plugins can only be installed from the plugins folder ({_integrity.PluginsDirectory}).");
+
+        string? manifestId = null;
+        var manifestPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dllPath))!, "manifest.json");
+        if (File.Exists(manifestPath))
+        {
+            try
+            {
+                await using var stream = File.OpenRead(manifestPath);
+                manifestId = (await JsonSerializer.DeserializeAsync<PluginManifest>(stream, cancellationToken: ct))?.PluginId;
+            }
+            catch (JsonException) { /* treated as missing below */ }
+        }
+        var pluginId = manifestId ?? catalogPluginId;
+        if (string.IsNullOrWhiteSpace(pluginId))
+            throw new PluginNotAllowedException("The plugin has no readable manifest.json naming its plugin id, so it cannot be checked.");
+        if (catalogPluginId is not null && manifestId is not null
+            && !string.Equals(catalogPluginId, manifestId, StringComparison.OrdinalIgnoreCase))
+            throw new PluginNotAllowedException($"The downloaded files declare plugin {manifestId}, not the requested {catalogPluginId}.");
+        if (!await _integrity.IsAllowedAsync(pluginId, ct))
+            throw new PluginNotAllowedException(
+                $"Plugin {pluginId} is not in the plugin catalog. Installing plugins from elsewhere is switched off " +
+                $"(an administrator can allow it with the app setting {PluginIntegrity.AllowUnlistedKey}).");
+        return pluginId;
+    }
+
+    public async Task AcceptCurrentFilesAsync(string pluginId, CancellationToken ct = default)
+    {
+        var plugin = await _db.Plugins.FirstOrDefaultAsync(p => p.PluginId == pluginId, ct)
+            ?? throw new InvalidOperationException($"Plugin {pluginId} not found.");
+        if (_integrity is null) return;
+        await _integrity.AcceptCurrentFilesAsync(plugin, ct);
+    }
+
+    /// <summary>Throws instead of loading a plugin whose files changed without Chronicle having been told.</summary>
+    private async Task VerifyBeforeLoadAsync(Plugin plugin, CancellationToken ct = default)
+    {
+        if (_integrity is null) return;
+        if (await _integrity.VerifyAsync(plugin, ct) == IntegrityOutcome.Blocked)
+            throw new PluginNotAllowedException(
+                $"Plugin {plugin.PluginId} was not loaded: its files on disk changed since they were installed. " +
+                "If you made the change, approve it on the Plugins page.");
+    }
+
+    public async Task<Plugin> InstallPluginAsync(string dllPath, CancellationToken ct = default, string? catalogPluginId = null)
     {
         if (!File.Exists(dllPath))
             throw new FileNotFoundException($"Plugin DLL not found: {dllPath}", dllPath);
+
+        var expectedId = await GuardInstallAsync(dllPath, catalogPluginId, ct);
 
         // Safety: discard any residual temp-id=0 registration left by a previous
         // failed install attempt before we load this plugin under that sentinel ID.
@@ -51,6 +108,13 @@ public class PluginService : IPluginService
         var tempSettings = new Dictionary<string, string>();
         var loaded = await _registry.LoadPluginAsync(0, dllPath, tempSettings, ct);
         var manifest = loaded.Manifest;
+
+        if (_integrity is not null && !string.Equals(manifest.PluginId, expectedId, StringComparison.OrdinalIgnoreCase))
+        {
+            _registry.UnloadPlugin(0);
+            throw new PluginNotAllowedException(
+                $"The plugin code declares id {manifest.PluginId} but its manifest.json says {expectedId}.");
+        }
 
         // Check for duplicate
         var existing = await _db.Plugins.FirstOrDefaultAsync(p => p.PluginId == manifest.PluginId, ct);
@@ -77,6 +141,7 @@ public class PluginService : IPluginService
 
         _db.Plugins.Add(plugin);
         await _db.SaveChangesAsync(ct);
+        if (_integrity is not null) await _integrity.AcceptCurrentFilesAsync(plugin, ct);
 
         // Seed background tasks declared in the manifest
         if (manifest.BackgroundTasks is { Count: > 0 })
@@ -180,6 +245,7 @@ public class PluginService : IPluginService
         plugin.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
+        await VerifyBeforeLoadAsync(plugin);
         var settings = DeserializeSettings(plugin.SettingsJson);
         await _registry.LoadPluginAsync(plugin.Id, plugin.DllPath, settings);
 
@@ -338,6 +404,7 @@ public class PluginService : IPluginService
         if (!File.Exists(plugin.DllPath))
             throw new FileNotFoundException($"Plugin DLL not found at '{plugin.DllPath}'.", plugin.DllPath);
 
+        await VerifyBeforeLoadAsync(plugin, ct);
         var settings = DeserializeSettings(plugin.SettingsJson);
         await _registry.LoadPluginAsync(plugin.Id, plugin.DllPath, settings, ct);
 

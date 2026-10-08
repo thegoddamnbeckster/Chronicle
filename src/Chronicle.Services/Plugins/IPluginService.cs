@@ -15,7 +15,11 @@ public interface IPluginService
     /// Throws <see cref="InvalidOperationException"/> if a plugin with the same PluginId
     /// is already installed.
     /// </summary>
-    Task<Plugin> InstallPluginAsync(string dllPath, CancellationToken ct = default);
+    Task<Plugin> InstallPluginAsync(string dllPath, CancellationToken ct = default, string? catalogPluginId = null);
+
+    /// <summary>Records the plugin's current files as the trusted ones (used after an update through Chronicle and
+    /// when an administrator approves a change made by hand). Also lets a blocked plugin load again.</summary>
+    Task AcceptCurrentFilesAsync(string pluginId, CancellationToken ct = default);
 
     /// <summary>Persists settings for the plugin and reconfigures the loaded instance.</summary>
     Task UpdateSettingsAsync(int id, Dictionary<string, string> settings);
