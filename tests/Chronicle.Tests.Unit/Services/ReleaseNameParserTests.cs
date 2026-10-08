@@ -223,3 +223,149 @@ public class MessyFolderGroupingTests
         group.Name.Should().Be("Complete Unknown (2024)");
     }
 }
+
+public class AnimeNumberingTests
+{
+    [Theory]
+    [InlineData("[SubGroup] Show Name - 112 [1080p][ABCD1234]", "Show Name", 112, null)]
+    [InlineData("[SubGroup] Show Name - 05v2 [720p]", "Show Name", 5, null)]
+    [InlineData("Show Name - 07 - The Episode Title", "Show Name", 7, "The Episode Title")]
+    [InlineData("Show Name - 007 - Title [BD 1080p]", "Show Name", 7, "Title")]
+    [InlineData("Show.Name.-.112.720p.HDTV.x264", "Show Name", 112, null)]
+    [InlineData("Show Name EP112", "Show Name", 112, null)]
+    [InlineData("Show Name E5", "Show Name", 5, null)]
+    [InlineData("Show Name Episode 12", "Show Name", 12, null)]
+    public void ReadsARunningEpisodeNumber(string name, string title, int number, string? episodeTitle)
+    {
+        var r = ReleaseNameParser.Parse(name);
+
+        r.Title.Should().Be(title);
+        r.AbsoluteEpisode.Should().Be(number);
+        r.EpisodeTitle.Should().Be(episodeTitle);
+        r.Season.Should().BeNull();
+        r.HasEpisodeNumbering.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("Movie Name - 2019")]
+    [InlineData("Movie Name - 1999 - Remastered")]
+    [InlineData("Heat (1995)")]
+    [InlineData("The Matrix")]
+    [InlineData("Se7en")]
+    [InlineData("Movie Name 1080p")]
+    [InlineData("Show Name - 1080p")]
+    [InlineData("Movie Name - 720p BluRay")]
+    public void ThingsThatAreNotEpisodeNumbers_AreNotRead(string name) =>
+        ReleaseNameParser.Parse(name).AbsoluteEpisode.Should().BeNull();
+
+    [Theory]
+    [InlineData("Show Name 2019-05-12", "Show Name", 2019, 5, 12)]
+    [InlineData("Show.Name.2019.05.12.720p.HDTV", "Show Name", 2019, 5, 12)]
+    [InlineData("Show_Name_2020_12_31", "Show Name", 2020, 12, 31)]
+    public void ReadsAnAirDate(string name, string title, int y, int m, int d)
+    {
+        var r = ReleaseNameParser.Parse(name);
+
+        r.Title.Should().Be(title);
+        r.AirDate.Should().Be(new DateOnly(y, m, d));
+        r.HasEpisodeNumbering.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("Show Name 2019-13-45")]
+    [InlineData("Show Name 12-05-2019")]
+    public void ImpossibleOrAmbiguousDates_AreNotRead(string name) =>
+        ReleaseNameParser.Parse(name).AirDate.Should().BeNull();
+
+    [Fact]
+    public void ASeasonAndEpisodeCode_WinsOverARunningNumber()
+    {
+        var r = ReleaseNameParser.Parse("Show Name S02E03 - 112");
+
+        r.Season.Should().Be(2);
+        r.Episode.Should().Be(3);
+        r.AbsoluteEpisode.Should().BeNull();
+    }
+}
+
+public class AnimeGroupingTests
+{
+    private readonly ScanGroupingService _svc = new(new FolderSignalExtractor(), new TagSignalExtractor());
+
+    [Fact]
+    public void RunningNumbersInAShowFolder_BecomeEpisodesOfSeasonOne_InsteadOfBeingSkipped()
+    {
+        var files = new[]
+        {
+            "D:/Anime/Show Name/[Group] Show Name - 111 [1080p].mkv",
+            "D:/Anime/Show Name/[Group] Show Name - 112 [1080p].mkv",
+            "D:/Anime/Show Name/[Group] Show Name - 113 [1080p].mkv",
+        };
+
+        var result = _svc.Group(files, "D:/Anime", 3);
+
+        var show = result.Groups.Single();
+        show.Name.Should().Be("Show Name");
+        var season = show.Children.Single();
+        season.Name.Should().Be("Season 1");
+        season.Children.Select(e => e.Number).Should().Equal(111, 112, 113);
+        season.Children.Select(e => e.Name).Should().Equal("Episode 111", "Episode 112", "Episode 113");
+        season.Children.Should().OnlyContain(e => e.SignalSources.Contains("absolute-number"));
+    }
+
+    [Fact]
+    public void RunningNumbersLooseInTheScanRoot_BuildAShow_HeldForReview()
+    {
+        var result = _svc.Group(["D:/Downloads/[Group] Show Name - 05 [720p].mkv", "D:/Downloads/[Group] Show Name - 06 [720p].mkv"], "D:/Downloads", 3);
+
+        result.Ungrouped.Should().BeEmpty();
+        var show = result.Groups.Single();
+        show.Name.Should().Be("Show Name");
+        show.ConfidenceScore.Should().BeLessThan(0.75);
+        show.TotalFileCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void ADailyShowNamedByDate_GetsOneSeasonPerYear_AndTheDateAsTheEpisodeName()
+    {
+        var files = new[]
+        {
+            "D:/TV/Late Show/Late Show 2019-12-31.mkv",
+            "D:/TV/Late Show/Late Show 2020-01-02.mkv",
+            "D:/TV/Late Show/Late Show 2020-01-03.mkv",
+        };
+
+        var show = _svc.Group(files, "D:/TV", 3).Groups.Single();
+
+        show.Children.Select(s => s.Name).Should().BeEquivalentTo("Season 2019", "Season 2020");
+        show.Children.Single(s => s.Number == 2020).Children.Select(e => e.Name).Should().Equal("2020-01-02", "2020-01-03");
+        show.Children.SelectMany(s => s.Children).Should().OnlyContain(e => e.Number == null);
+    }
+
+    [Fact]
+    public void AMovieNamedWithAYear_IsNotMistakenForAnEpisode()
+    {
+        var result = _svc.Group(["D:/Downloads/Movie Name - 2019.mkv"], "D:/Downloads", 3);
+
+        result.Groups.Should().BeEmpty();
+        result.Ungrouped.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void AudioFiles_AreNeverReadAsEpisodes()
+    {
+        var result = _svc.Group(["D:/Music/Artist - 05.mp3", "D:/Music/Artist/Artist - 06.mp3"], "D:/Music", 3);
+
+        result.Groups.SelectMany(g => g.Children).SelectMany(c => c.SignalSources).Should().NotContain("absolute-number");
+    }
+
+    [Fact]
+    public void ANormalSeasonFolderShow_IsUnchanged()
+    {
+        var result = _svc.Group(["D:/TV/Show/Season 1/Show - S01E01.mkv", "D:/TV/Show/Season 1/Show - S01E02.mkv"], "D:/TV", 3);
+
+        var episodes = result.Groups.Single().Children.Single().Children;
+        episodes.Select(e => e.Number).Should().Equal(1, 2);
+        episodes.SelectMany(e => e.SignalSources).Should().NotContain("absolute-number");
+    }
+}

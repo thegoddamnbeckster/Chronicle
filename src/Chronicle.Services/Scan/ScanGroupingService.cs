@@ -160,7 +160,8 @@ namespace Chronicle.Services.Scan
                 {
                     // File is directly in the scan root with no folder grouping. A TV-style episode name
                     // ("Show.Name.S02E03...") still tells us the show, season and episode.
-                    if (!isSidecar && hierarchyLevels >= 3 && TryAddEpisodeFromFileName(rootGroups, result, path, scanRoot, folderSignal, tagSignal))
+                    if (!isSidecar && hierarchyLevels >= 3 && !mediaRules.Audio.Contains(Path.GetExtension(path))
+                        && TryAddEpisodeFromFileName(rootGroups, result, path, scanRoot, folderSignal, tagSignal))
                         continue;
                     if (!isSidecar)
                         result.Ungrouped.Add(path);
@@ -286,6 +287,13 @@ namespace Chronicle.Services.Scan
                                 Files           = [path],
                             });
                         }
+                        else if (hierarchyLevels >= 3 && !mediaRules.Audio.Contains(Path.GetExtension(path))
+                                 && ReleaseNameParser.Parse(folderSignal.FileName) is { HasEpisodeNumbering: true } named)
+                        {
+                            // No S01E02 code, but the name still numbers the episode: a running number ("Show - 112",
+                            // anime style) or an air date. The show is the folder the file sits in.
+                            AttachNamedEpisode(rootGroup, level0Key, folderSignal.FolderNames[0], named, path, scanRoot, folderSignal, tagSignal);
+                        }
                         // else: 3-level type (TV/music), file is directly in the root folder with no
                         // episode/track pattern detected — treat as supplemental and skip.
                         // This prevents theme.mp3, stray images, etc. from becoming spurious Season nodes.
@@ -372,25 +380,25 @@ namespace Chronicle.Services.Scan
         // ── Helpers ──────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// For an episode sitting loose in the scan root: reads the show, season and episode out of its file name and
-        /// files it under a show / season group like any other episode. Returns false when the name does not give all
-        /// three, so the caller leaves the file ungrouped as before. The show group is capped below the automatic-import
-        /// threshold: there is no folder to confirm the name, so a person should look at it first.
+        /// For an episode sitting loose in the scan root: reads the show and the episode out of its file name and files it
+        /// under a show group built from that name. Returns false when the name does not place the file in a series, so the
+        /// caller leaves it ungrouped as before. The show group is capped below the automatic-import threshold: there is
+        /// no folder to confirm the name, so a person should look at it first.
         /// </summary>
         private static bool TryAddEpisodeFromFileName(
             Dictionary<string, ScanGroup> rootGroups, ScanGroupResult result, string path, string scanRoot,
             FolderSignal folderSignal, TagSignal? tagSignal)
         {
             var info = ReleaseNameParser.Parse(folderSignal.FileName);
-            if (info.Title is null || info.Season is null || info.Episode is null) return false;
+            if (!info.HasEpisodeNumbering) return false;
 
-            var showKey = Normalize(info.Title);
+            var showKey = Normalize(info.Title!);
             if (!rootGroups.TryGetValue(showKey, out var show))
             {
                 show = new ScanGroup
                 {
                     GroupKey        = showKey,
-                    Name            = info.Title,
+                    Name            = info.Title!,
                     Year            = info.Year,
                     HierarchyLevel  = 0,
                     ConfidenceScore = 0.6,
@@ -406,7 +414,45 @@ namespace Chronicle.Services.Scan
                 show.Year ??= info.Year;
             }
 
-            var seasonNum  = info.Season.Value;
+            AttachNamedEpisode(show, showKey, info.Title!, info, path, scanRoot, folderSignal, tagSignal);
+            return true;
+        }
+
+        /// <summary>
+        /// Files an episode whose name carries its own numbering (S02E03, a running number, or an air date) under a show
+        /// group, creating the season group it belongs to. Seasons: the number in the name; "season 1" for a running number
+        /// (anime-style numbering that continues across seasons: the number is kept as the episode number); the year for a
+        /// daily show named by date (the date is the episode name).
+        /// </summary>
+        private static void AttachNamedEpisode(
+            ScanGroup show, string showKey, string showFolderName, ReleaseNameInfo info, string path, string scanRoot,
+            FolderSignal folderSignal, TagSignal? tagSignal)
+        {
+            int seasonNum;
+            int? number;
+            string episodeName;
+            string source = "filename";
+            if (info.Season is not null && info.Episode is not null)
+            {
+                seasonNum = info.Season.Value;
+                number = info.Episode;
+                episodeName = info.EpisodeTitle ?? $"Episode {info.Episode}";
+            }
+            else if (info.AbsoluteEpisode is not null)
+            {
+                seasonNum = 1;
+                number = info.AbsoluteEpisode;
+                episodeName = info.EpisodeTitle ?? $"Episode {info.AbsoluteEpisode}";
+                source = "absolute-number";
+            }
+            else
+            {
+                seasonNum = info.AirDate!.Value.Year;
+                number = null;
+                episodeName = info.AirDate!.Value.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                source = "air-date";
+            }
+
             var seasonName = seasonNum == 0 ? "Specials" : $"Season {seasonNum}";
             var seasonKey  = Normalize(showKey + "/" + seasonName);
             var season = show.Children.FirstOrDefault(c => c.GroupKey == seasonKey);
@@ -421,23 +467,21 @@ namespace Chronicle.Services.Scan
                     ConfidenceScore = 0.85,
                     SignalSources   = ["filename"],
                     // Unique, show-scoped path used only as a matching key (the main loop does the same for a season it invents).
-                    FolderPath      = Path.Combine(scanRoot, info.Title, seasonName),
+                    FolderPath      = Path.Combine(scanRoot, showFolderName, seasonName),
                 };
                 show.Children.Add(season);
             }
 
-            var episodeName = info.EpisodeTitle ?? $"Episode {info.Episode}";
             season.Children.Add(new ScanGroup
             {
-                GroupKey        = Normalize(seasonKey + "/" + episodeName + "/" + info.Episode),
+                GroupKey        = Normalize(seasonKey + "/" + episodeName + "/" + (number?.ToString() ?? "")),
                 Name            = episodeName,
-                Number          = info.Episode,
+                Number          = number,
                 HierarchyLevel  = 2,
-                ConfidenceScore = ComputeLeafConfidence(folderSignal, tagSignal),
-                SignalSources   = ["filename"],
+                ConfidenceScore = source == "filename" ? ComputeLeafConfidence(folderSignal, tagSignal) : 0.7,
+                SignalSources   = [source],
                 Files           = [path],
             });
-            return true;
         }
 
         /// <summary>"1-02 Title" names mean disc 1, track 2 only when the folder's other tracks are named that way

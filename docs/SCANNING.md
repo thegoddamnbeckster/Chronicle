@@ -77,7 +77,25 @@ year or quality word:
   Titles that merely contain words like *Cam*, *Web*, *Dual*, *Internal* or *Complete* are left alone.
 * **Everything worked out from a name alone is held below the automatic-import threshold** (movies 70 %, derived shows
   capped at 70 %): the scan page lists them for review, the nightly scan does not import them by itself.
-* Names that give no show, season and episode stay ungrouped and are not imported.
+* Names that give no show and episode numbering stay ungrouped and are not imported.
+
+### Anime and daily-show numbering
+
+Besides `S02E03` / `1x05`, two more numbering styles place a file in a series:
+
+* **Running numbers** that continue across seasons: `[Group] Show Name - 112 [1080p][ABCD1234]`, `Show Name - 07 - Title`,
+  `Show Name EP112`, `Show Name - 05v2`. The episode is filed under **Season 1** with the running number kept as its
+  episode number ("Episode 112", or the title if the name has one). Chronicle does not know the show's real season
+  boundaries, so it does not invent them; metadata providers that understand absolute order (TheTVDB, Simkl) can map the
+  number when the item is enriched. A bare four-digit number that looks like a year is never an episode number
+  (`Movie Name - 2019`), and neither is a resolution (`- 1080p`).
+* **Air dates** for daily shows: `Show Name 2019-05-12`, `Show.Name.2019.05.12`. One season per year (`Season 2019`), the
+  date as the episode name (`2019-05-12`), no episode number. Only year-first dates are read: `12-05-2019` is ambiguous.
+
+Inside a show folder these files used to be skipped (no `S01E02` code); now they are filed under the folder's show. Loose
+in the scan root they build a derived show, held for review as above. Audio files are never read this way. A numbered
+extra inside a show folder (`Show - Behind the Scenes - 2.mkv`) can be read as an episode; put extras in an `Extras`
+folder (see the extras list above) to keep them out.
 
 ## Renamed and moved files
 

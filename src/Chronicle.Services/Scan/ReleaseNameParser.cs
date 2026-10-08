@@ -6,7 +6,15 @@ namespace Chronicle.Services.Scan
     /// <param name="Title">The show or film name with the rest removed, or null when nothing usable is left.</param>
     /// <param name="LooksLikeRelease">True when the name carries quality/codec/source words (1080p, x264, BluRay...), i.e. it is
     /// a release name rather than a tidy "Title (Year)" folder, so cleaning it is safe.</param>
-    public sealed record ReleaseNameInfo(string? Title, int? Year, int? Season, int? Episode, string? EpisodeTitle, bool LooksLikeRelease);
+    /// <param name="AbsoluteEpisode">For anime-style numbering that runs on across seasons ("Show - 112"): the running
+    /// number. Null when the name has a season and episode, or no episode number at all.</param>
+    /// <param name="AirDate">For daily shows named by date ("Show 2019-05-12"): the date.</param>
+    public sealed record ReleaseNameInfo(string? Title, int? Year, int? Season, int? Episode, string? EpisodeTitle, bool LooksLikeRelease,
+        int? AbsoluteEpisode = null, DateOnly? AirDate = null)
+    {
+        /// <summary>True when the name places the file in a series: SxxExx / 1x05, a running number, or an air date.</summary>
+        public bool HasEpisodeNumbering => Title is not null && ((Season is not null && Episode is not null) || AbsoluteEpisode is not null || AirDate is not null);
+    }
 
     /// <summary>
     /// Reads names like <c>Show.Name.S02E03.Episode.Title.720p.HDTV.x264-GRP</c>, <c>Movie.Name.2019.1080p.BluRay.x264</c> and
@@ -26,6 +34,14 @@ namespace Chronicle.Services.Scan
 
         private static readonly Regex GroupPrefix = new(@"^\s*[\[\(][^\]\)]{1,40}[\]\)]\s*", RegexOptions.Compiled);
         private static readonly Regex EpisodeCode = new(@"(?<![A-Za-z0-9])[Ss](\d{1,2})[Ee](\d{1,3})(?:[Ee]\d{1,3})*(?![A-Za-z0-9])|(?<![A-Za-z0-9])(\d{1,2})[xX](\d{2,3})(?![A-Za-z0-9])", RegexOptions.Compiled);
+        // "Show Name - 112", "Show Name - 112v2 - Title", "Show Name EP112", "Show Name E112": a running episode number.
+        private static readonly Regex Absolute = new(
+            @"^(?<title>.+?)\s*(?:-\s*|\s(?:ep|episode|e)\.?\s*)(?<n>\d{1,4})(?:v\d)?(?![\dp])(?:\s*-\s*(?<ep>[^\[\(]+?))?\s*(?:[\[\(].*)?$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        // "Show 2019-05-12", "Show.2019.05.12", "Show 12-05-2019" is deliberately not read (day/month order is ambiguous).
+        private static readonly Regex DateCode = new(@"(?<![\d])((?:19|20)\d{2})[-. _](0[1-9]|1[0-2])[-. _](0[1-9]|[12]\d|3[01])(?![\d])", RegexOptions.Compiled);
+
         private static readonly Regex SeasonPack = new(@"(?<![A-Za-z0-9])(?:[Ss](\d{1,2})|[Ss]eason[ ._-]?(\d{1,2}))(?![A-Za-z0-9])", RegexOptions.Compiled);
         private static readonly Regex YearToken = new(@"(?<![A-Za-z0-9])[\(\[]?((?:19|20)\d{2})[\)\]]?(?![A-Za-z0-9])", RegexOptions.Compiled);
         private static readonly Regex StrongToken = new($@"(?<![A-Za-z0-9]){StrongQuality}(?![A-Za-z0-9])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -65,7 +81,32 @@ namespace Chronicle.Services.Scan
             var yearMatch = YearToken.Matches(s).Cast<Match>().LastOrDefault(m => m.Index > 0 && m.Index < limit);
             if (yearMatch is not null) { cut = yearMatch.Index; year = int.Parse(yearMatch.Groups[1].Value); }
 
-            var title = Clean(s[..cut]);
+            // Running episode number or air date, only when there is no season+episode code to go by.
+            int? absolute = null;
+            DateOnly? airDate = null;
+            string? absoluteTitle = null, absoluteEpisodeTitle = null;
+            if (!ep.Success && !pack.Success)
+            {
+                var dm = DateCode.Match(s);
+                if (dm.Success && DateOnly.TryParse($"{dm.Groups[1].Value}-{dm.Groups[2].Value}-{dm.Groups[3].Value}", out var d))
+                {
+                    airDate = d;
+                    var before = Clean(s[..dm.Index]);
+                    if (before is not null) { absoluteTitle = before; year = null; }
+                }
+                else
+                {
+                    var am = Absolute.Match(q.Success && q.Index > 0 ? s[..q.Index] : s);   // quality words end the name
+                    if (am.Success && int.TryParse(am.Groups["n"].Value, out var n) && n > 0 && !LooksLikeYear(am.Groups["n"].Value))
+                    {
+                        absolute = n;
+                        absoluteTitle = Clean(StripQualityTail(am.Groups["title"].Value));
+                        absoluteEpisodeTitle = am.Groups["ep"].Success ? Clean(StripQualityTail(am.Groups["ep"].Value)) : null;
+                    }
+                }
+            }
+
+            var title = absoluteTitle ?? Clean(s[..cut]);
             // A name that is nothing but a quality word ("1080p") has no title. (A title that merely starts with one,
             // such as "Complete Unknown", is kept: only a quality word that is not first ends the title.)
             if (title is not null && QualityToken.Match(title) is { Success: true } only && only.Length == title.Length) title = null;
@@ -82,7 +123,19 @@ namespace Chronicle.Services.Scan
                 if (episodeTitle is { Length: 0 }) episodeTitle = null;
             }
 
-            return new ReleaseNameInfo(title, year, season, episode, episodeTitle, looksLikeRelease);
+            if (absolute is not null) episodeTitle = absoluteEpisodeTitle;
+            if (title is null) { absolute = null; airDate = null; }
+            return new ReleaseNameInfo(title, year, season, episode, episodeTitle, looksLikeRelease, absolute, airDate);
+        }
+
+        // A four-digit number that is a plausible year is a year, not episode 2019.
+        private static bool LooksLikeYear(string digits) =>
+            digits.Length == 4 && int.TryParse(digits, out var v) && v is >= 1900 and <= 2100;
+
+        private static string StripQualityTail(string text)
+        {
+            var q = QualityToken.Match(text);
+            return q.Success && q.Index > 0 ? text[..q.Index] : text;
         }
 
         private static string? Clean(string text)
