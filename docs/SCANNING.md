@@ -78,3 +78,17 @@ year or quality word:
 * **Everything worked out from a name alone is held below the automatic-import threshold** (movies 70 %, derived shows
   capped at 70 %): the scan page lists them for review, the nightly scan does not import them by itself.
 * Names that give no show, season and episode stay ungrouped and are not imported.
+
+## Renamed and moved files
+
+Chronicle never renames or moves your files; it only records where they are. When a file is renamed or moved after a scan
+already saw it (Sonarr or Radarr importing and renaming it, a manual tidy-up), the next scan follows it:
+
+* Each scan records the file's size and modified time (its "fingerprint"; a rename or move keeps both).
+* A new file is treated as an existing item's file when **every file that item had recorded is gone from disk** and either
+  the fingerprint matches, or (for an episode or track) the item has the same season/episode number under the same parent.
+  The item keeps its identity (metadata, watch history, ratings) and its paths are updated. Exactly one candidate must
+  match; anything ambiguous is treated as a new item, as before.
+* Two different items are never merged while their files both exist, however alike they look.
+* Items scanned before this existed have no fingerprint yet; they gain one at their next scan. Episodes and tracks are
+  covered immediately by the number rule.

@@ -3356,19 +3356,40 @@ namespace Chronicle.Services
                         group.Name, existing.Id, existing.Name);
             }
 
+            // Last resort before creating a new item: the file may be an item's own file under a new name or in a new
+            // place (Sonarr/Radarr renaming it after a scan already saw it, a manual tidy-up). See FindMovedItemAsync.
+            if (existing is null && group.Files.Count > 0)
+            {
+                existing = await FindMovedItemAsync(group, mediaTypeId, parentId, hierarchyLevel, isLeafLevel, ct);
+                if (existing is not null)
+                    _log.Information(
+                        "UpsertGroupItemAsync: '{Name}' ({File}) is the renamed or moved file of existing item {Id} ('{ItemName}') -- following it instead of creating a duplicate",
+                        group.Name, group.Files[0], existing.Id, existing.Name);
+            }
+
+            var fingerprint = FingerprintOf(group.Files);
+
             if (existing is not null)
             {
                 existing.UpdatedAt   = DateTime.UtcNow;
                 if (group.Year.HasValue)   existing.Year   = group.Year;
                 if (group.Number.HasValue) existing.Number = group.Number;
                 // Merge fileScanner data into MetadataJson — preserve any plugin keys
-                // (TMDB, MusicBrainz, etc.) already stored by enrichment.
+                // (TMDB, MusicBrainz, etc.) already stored by enrichment, and any other fileScanner fields
+                // (technical data a contributor reported) the scan does not itself own.
                 var existingNode = System.Text.Json.Nodes.JsonNode.Parse(existing.MetadataJson ?? "{}")
                     as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
-                existingNode["fileScanner"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(
-                    new {
-                        importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath,
-                    }));
+                var scannerNode = existingNode["fileScanner"] as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                scannerNode["importedAt"] = DateTime.UtcNow;
+                scannerNode["filePaths"]  = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(group.Files));
+                scannerNode["folderPath"] = group.FolderPath;
+                if (fingerprint is not null)
+                {
+                    scannerNode["fingerprint"]     = fingerprint.Value.Fingerprint;
+                    scannerNode["fileSizeBytes"]   = fingerprint.Value.SizeBytes;
+                    scannerNode["fileModifiedUtc"] = fingerprint.Value.ModifiedUtc;
+                }
+                existingNode["fileScanner"] = scannerNode;
                 existing.MetadataJson = existingNode.ToJsonString();
                 await SyncKnownFileNamesAsync(existing, group.Files, ct);
 
@@ -3396,6 +3417,9 @@ namespace Chronicle.Services
                 {
                     fileScanner = new {
                         importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath,
+                        fingerprint     = fingerprint?.Fingerprint,
+                        fileSizeBytes   = fingerprint?.SizeBytes,
+                        fileModifiedUtc = fingerprint?.ModifiedUtc,
                     }
                 }),
                 CreatedAt = DateTime.UtcNow,
@@ -3411,6 +3435,67 @@ namespace Chronicle.Services
                 folderPathIndex[FolderPathKey(hierarchyLevel, group.FolderPath)] = item;
 
             return (item, true);
+        }
+
+        /// <summary>Size, modified time and the combined fingerprint of a group's first file, or null when it cannot be read.</summary>
+        private static (string Fingerprint, long SizeBytes, DateTime ModifiedUtc)? FingerprintOf(IReadOnlyList<string> files)
+        {
+            if (files.Count == 0) return null;
+            try
+            {
+                var info = new FileInfo(files[0]);
+                if (!info.Exists) return null;
+                var modified = info.LastWriteTimeUtc;
+                return (Chronicle.Services.Scan.FileIdentityJson.ComputeFingerprint(info.Length, modified), info.Length, modified);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        /// <summary>True when none of the recorded paths exists on disk any more (as a file or a folder).</summary>
+        private static bool AllGone(IReadOnlyList<string> recorded) =>
+            recorded.Count > 0 && recorded.All(p => !System.IO.File.Exists(p) && !Directory.Exists(p));
+
+        /// <summary>
+        /// Finds the existing item whose file this group is, after the file was renamed or moved. Two independent
+        /// signals, each requiring that every file the candidate had recorded is gone from disk (so two different
+        /// items that merely look alike are never merged while both files exist):
+        ///  1. the same size and modified time (the "fingerprint" recorded at the previous scan); a rename or move keeps
+        ///     both, and
+        ///  2. for a leaf (episode/track) with a season/episode number: the same number under the same parent.
+        /// Exactly one candidate must match; anything ambiguous creates a new item as before.
+        /// </summary>
+        private async Task<MediaItem?> FindMovedItemAsync(
+            ScanGroupImport group, int mediaTypeId, int? parentId, int hierarchyLevel, bool isLeafLevel, CancellationToken ct)
+        {
+            bool IsStaleCandidate(MediaItem m)
+            {
+                var recorded = Chronicle.Services.Scan.FileIdentityJson.ExtractFilePaths(m.MetadataJson);
+                return AllGone(recorded) && !recorded.Any(p => group.Files.Contains(p, StringComparer.OrdinalIgnoreCase));
+            }
+
+            var fp = FingerprintOf(group.Files);
+            if (fp is not null)
+            {
+                var needle = $"%\"fingerprint\":\"{fp.Value.Fingerprint}\"%";
+                var byFingerprint = (await _context.MediaItems
+                        .Where(m => m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, needle))
+                        .ToListAsync(ct))
+                    .Where(IsStaleCandidate).ToList();
+                if (byFingerprint.Count == 1) return byFingerprint[0];
+                if (byFingerprint.Count > 1) return null;   // ambiguous: do not guess
+            }
+
+            if (isLeafLevel && hierarchyLevel >= 1 && group.Number.HasValue)
+            {
+                var sameNumber = (await _context.MediaItems
+                        .Where(m => m.MediaTypeId == mediaTypeId && m.ParentId == parentId &&
+                                    m.HierarchyLevel == hierarchyLevel && m.Number == group.Number.Value &&
+                                    m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, "%filePaths%"))
+                        .ToListAsync(ct))
+                    .Where(IsStaleCandidate).ToList();
+                if (sameNumber.Count == 1) return sameNumber[0];
+            }
+            return null;
         }
 
         /// <summary>
