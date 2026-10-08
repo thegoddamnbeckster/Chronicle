@@ -80,6 +80,23 @@ public class PluginService : IPluginService
         var plugin = await _db.Plugins.FirstOrDefaultAsync(p => p.PluginId == pluginId, ct)
             ?? throw new InvalidOperationException($"Plugin {pluginId} not found.");
         if (_integrity is null) return;
+
+        // Files that declare a different plugin are never accepted as this one (a mislabelled release, or an
+        // update/approval pointed at the wrong folder).
+        var manifestPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(plugin.DllPath))!, "manifest.json");
+        if (File.Exists(manifestPath))
+        {
+            string? declared = null;
+            try
+            {
+                await using var stream = File.OpenRead(manifestPath);
+                declared = (await JsonSerializer.DeserializeAsync<PluginManifest>(stream, cancellationToken: ct))?.PluginId;
+            }
+            catch (JsonException) { /* an unreadable manifest is refused below */ }
+            if (!string.Equals(declared, pluginId, StringComparison.OrdinalIgnoreCase))
+                throw new PluginNotAllowedException(
+                    $"The files in the plugin folder declare plugin {declared ?? "(unreadable)"}, not {pluginId}, so they were not accepted.");
+        }
         await _integrity.AcceptCurrentFilesAsync(plugin, ct);
     }
 

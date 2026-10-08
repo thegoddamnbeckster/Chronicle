@@ -191,5 +191,33 @@ namespace Chronicle.Tests.Integration
 
             Chronicle.Services.MediaTypeFamilies.Resolve(name).Should().Be("music");   // the snapshot was refreshed by the edit
         }
+
+        [Fact]
+        public async Task AnEditThatOmitsFamilyAndHeading_LeavesThem_AnEmptyValueClearsThem()
+        {
+            var admin = await AdminAsync();
+            var name = "t" + Guid.NewGuid().ToString("N")[..10];
+            var created = await admin.PostAsJsonAsync("/api/v1/media-types", new
+            {
+                name, displayName = "Shows", description = "", hierarchyLevels = 1, hierarchyLabels = new[] { "Item" },
+                interactionVerb = "watched", progressUnit = "minutes", supportsCollections = false, isTrackable = true,
+                providerFamily = "tv", castHeading = "Hosts", isActive = true,
+            });
+            var id = (await Json(created)).GetProperty("data").GetProperty("id").GetInt32();
+            object Edit(string? family, string? heading) => new
+            {
+                displayName = "Shows", description = "", hierarchyLevels = 1, hierarchyLabels = new[] { "Item" },
+                interactionVerb = "watched", progressUnit = "minutes", supportsCollections = false, isTrackable = true,
+                providerFamily = family, castHeading = heading, isActive = true,
+            };
+
+            var kept = (await Json(await admin.PutAsJsonAsync($"/api/v1/media-types/{id}", Edit(null, null)))).GetProperty("data");
+            kept.GetProperty("providerFamily").GetString().Should().Be("tv");
+            kept.GetProperty("castHeading").GetString().Should().Be("Hosts");
+
+            var cleared = (await Json(await admin.PutAsJsonAsync($"/api/v1/media-types/{id}", Edit("", "")))).GetProperty("data");
+            cleared.GetProperty("providerFamily").ValueKind.Should().Be(JsonValueKind.Null);
+            cleared.GetProperty("castHeading").ValueKind.Should().Be(JsonValueKind.Null);
+        }
     }
 }

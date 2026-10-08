@@ -154,8 +154,9 @@ public class MediaTypesController : ControllerBase
         // Omitted = leave as is; an empty string clears the hints.
         if (req.ScanHints is not null)
             type.ScanHintsJson = string.IsNullOrWhiteSpace(req.ScanHints) ? null : req.ScanHints.Trim();
-        type.ProviderFamily = input.ProviderFamily;
-        type.CastHeading = input.CastHeading;
+        // Omitted = leave as is; an empty string clears (same rule as the scan hints).
+        if (req.ProviderFamily is not null) type.ProviderFamily = input.ProviderFamily;
+        if (req.CastHeading is not null) type.CastHeading = input.CastHeading;
         type.IsActive = input.IsActive;
         type.IsUserModified = true;
         await _db.SaveChangesAsync(ct);

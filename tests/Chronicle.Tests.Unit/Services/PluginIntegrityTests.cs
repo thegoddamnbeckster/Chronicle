@@ -301,6 +301,34 @@ public sealed class PluginIntegrityTests : IDisposable
     }
 
     [Fact]
+    public async Task AcceptingFiles_ThatDeclareADifferentPlugin_IsRefused_AndTheOldHashStays()
+    {
+        var dll = MakePlugin("p", manifest: "{\"plugin_id\":\"chronicle.plugin.tmdb\"}");
+        var plugin = Row(dll);
+        _db.Plugins.Add(plugin); await _db.SaveChangesAsync();
+        await Service().AcceptCurrentFilesAsync(plugin.PluginId);
+        var trusted = plugin.FilesSha256;
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(dll)!, "manifest.json"), "{\"plugin_id\":\"chronicle.plugin.trakt\"}");
+
+        var act = () => Service().AcceptCurrentFilesAsync(plugin.PluginId);
+
+        (await act.Should().ThrowAsync<PluginNotAllowedException>()).Which.Message.Should().Contain("chronicle.plugin.trakt");
+        plugin.FilesSha256.Should().Be(trusted);
+    }
+
+    [Fact]
+    public async Task AcceptingFiles_WhoseManifestMatches_Works()
+    {
+        var dll = MakePlugin("p", manifest: "{\"plugin_id\":\"chronicle.plugin.tmdb\"}");
+        var plugin = Row(dll);
+        _db.Plugins.Add(plugin); await _db.SaveChangesAsync();
+
+        await Service().AcceptCurrentFilesAsync(plugin.PluginId);
+
+        plugin.FilesSha256.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
     public async Task EnablingAPluginWhoseFilesChanged_IsRefused_AndNeverLoaded()
     {
         var dll = MakePlugin("p");
