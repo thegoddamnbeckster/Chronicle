@@ -86,6 +86,8 @@ namespace Chronicle.Services.Scan
                 signals[i] = new PerFileSignals(isJunk, isSidecar, folderSignal, tagSignal);
             });
 
+            DistrustLoneDiscTrackNames(pathList, signals);
+
             // Sequential pass: build the group tree in original file order using the
             // precomputed signals -- identical logic/output to before, just no longer doing
             // the disk I/O itself.
@@ -356,6 +358,28 @@ namespace Chronicle.Services.Scan
         }
 
         // ── Helpers ──────────────────────────────────────────────────────────────
+
+        /// <summary>"1-02 Title" names mean disc 1, track 2 only when the folder's other tracks are named that way
+        /// too. A lone one ("7-11 Store.mp3") goes back to the plain reading: no disc, the file name left as it is.</summary>
+        private static void DistrustLoneDiscTrackNames(IReadOnlyList<string> paths, PerFileSignals[] signals)
+        {
+            var perFolder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < paths.Count; i++)
+            {
+                if (!signals[i].Folder.DiscFromFileName) continue;
+                var dir = Path.GetDirectoryName(paths[i]) ?? "";
+                perFolder[dir] = perFolder.GetValueOrDefault(dir) + 1;
+            }
+            for (int i = 0; i < paths.Count; i++)
+            {
+                var f = signals[i].Folder;
+                if (!f.DiscFromFileName || perFolder[Path.GetDirectoryName(paths[i]) ?? ""] >= 2) continue;
+                f.DetectedDiscNumber = null;
+                f.DiscFromFileName = false;
+                f.DetectedTrackNumber = f.PlainTrackNumber;
+                f.TrackTitle = null;
+            }
+        }
 
         private static string Normalize(string s) =>
             s.Trim().ToLowerInvariant();

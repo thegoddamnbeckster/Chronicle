@@ -119,4 +119,27 @@ public class MusicFolderSignalTests
         tracks.Select(t => t.Name).Should().Equal("Enter Sandman", "Sad But True");
         tracks.Select(t => t.Number).Should().Equal(1, 2);
     }
+
+    [Fact]
+    public void ALoneDiscTrackLookingName_IsNotTrustedAsDiscAndTrack()
+    {
+        var svc = new ScanGroupingService(new FolderSignalExtractor(), new TagSignalExtractor());
+
+        var result = svc.Group(["C:/Music/Artist/Album/7-11 Store.mp3", "C:/Music/Artist/Album/Other Song.mp3"], "C:/Music", 3);
+
+        var tracks = result.Groups.Single().Children.Single().Children;
+        tracks.Select(t => t.Name).Should().Contain("7-11 Store");
+        tracks.Single(t => t.Name == "7-11 Store").Number.Should().Be(7);   // the plain leading-number reading, as before
+    }
+
+    [Fact]
+    public void DiscTrackNamesAcrossAnAlbum_AreTrusted()
+    {
+        var svc = new ScanGroupingService(new FolderSignalExtractor(), new TagSignalExtractor());
+
+        var result = svc.Group(["C:/Music/Artist/Album/1-01 One.mp3", "C:/Music/Artist/Album/1-02 Two.mp3", "C:/Music/Artist/Album/2-01 Three.mp3"], "C:/Music", 3);
+
+        var tracks = result.Groups.Single().Children.Single().Children;
+        tracks.Select(t => t.Name).Should().BeEquivalentTo("One", "Two", "Three");
+    }
 }
