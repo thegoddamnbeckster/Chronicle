@@ -127,3 +127,88 @@ public sealed class RenamedFileFollowTests : IDisposable
         Assert.Equal(2, await db.MediaItems.CountAsync(m => m.HierarchyLevel == 0 && m.MediaTypeId == 2));
     }
 }
+
+/// <summary>Two films with the same title and different years in different folders must stay two items.</summary>
+public sealed class SameTitleDifferentYearTests
+{
+    private static ChronicleDbContext NewContext() =>
+        new(new DbContextOptionsBuilder<ChronicleDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+
+    private static FileScanService Service(ChronicleDbContext db)
+    {
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        return new FileScanService(db, registry.Object, null!, null!, new ImportProgressService(), null!);
+    }
+
+    [Fact]
+    public async Task TheFlatGroupsFromTwoYearFolders_CarryTheirYear()
+    {
+        var svc = new Chronicle.Services.Scan.ScanGroupingService(new Chronicle.Services.Scan.FolderSignalExtractor(), new Chronicle.Services.Scan.TagSignalExtractor());
+
+        var groups = svc.Group(["H:/Movies/The Exorcist (1973)/The Exorcist (1973).mkv", "H:/Movies/The Exorcist (2023)/The Exorcist - Believer (2023).mkv", "H:/Movies/No Year/No Year.mkv"], "H:/Movies", 1).Groups;
+
+        Assert.Equal(1973, groups.Single(g => g.Name == "The Exorcist (1973)").Year);
+        Assert.Equal(2023, groups.Single(g => g.Name == "The Exorcist (2023)").Year);
+        Assert.Null(groups.Single(g => g.Name == "No Year").Year);
+    }
+
+    [Fact]
+    public async Task ScanningTheRemake_DoesNotTakeOverTheOriginalsFile()
+    {
+        await using var db = NewContext();
+        db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var original = new ScanGroupImport("The Exorcist (1973)", 1973, null, [], ["H:/Movies/The Exorcist (1973)/The Exorcist (1973).mkv"], "H:/Movies/The Exorcist (1973)");
+        var remake = new ScanGroupImport("The Exorcist (2023)", 2023, null, [], ["H:/Movies/The Exorcist (2023)/The Exorcist - Believer (2023).mkv"], "H:/Movies/The Exorcist (2023)");
+
+        // Run it twice, in both orders, as nightly scans do.
+        await Service(db).ImportGroupsAsync(new ImportGroupsRequest([original, remake], 2), [1], manageProgress: false);
+        await Service(db).ImportGroupsAsync(new ImportGroupsRequest([remake, original], 2), [1], manageProgress: false);
+
+        var items = await db.MediaItems.Where(m => m.HierarchyLevel == 0 && m.MediaTypeId == 2).ToListAsync();
+        Assert.Equal(2, items.Count);
+        Assert.Contains(items, m => m.Year == 1973 && m.MetadataJson!.Contains("(1973)") && !m.MetadataJson.Contains("(2023)"));
+        Assert.Contains(items, m => m.Year == 2023 && m.MetadataJson!.Contains("(2023)") && !m.MetadataJson.Contains("(1973)"));
+    }
+
+    [Fact]
+    public async Task AnItemWithAWrongFileFromAnEarlierScan_IsHealedByTheNextScan()
+    {
+        await using var db = NewContext();
+        db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+        db.MediaItems.Add(new MediaItem
+        {
+            Id = 10, MediaTypeId = 2, Name = "How to Train Your Dragon", Year = 2010, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"M:/Movies/How to Train Your Dragon (2025)/How to Train Your Dragon (2025).mkv\"],\"folderPath\":\"M:/Movies/How to Train Your Dragon (2025)\"}}",
+        });
+        await db.SaveChangesAsync();
+        var correct = new ScanGroupImport("How to Train Your Dragon (2010)", 2010, null, [], ["H:/Movies/How to Train Your Dragon (2010)/How to Train Your Dragon (2010).mkv"], "H:/Movies/How to Train Your Dragon (2010)");
+        var twentyFive = new ScanGroupImport("How to Train Your Dragon (2025)", 2025, null, [], ["M:/Movies/How to Train Your Dragon (2025)/How to Train Your Dragon (2025).mkv"], "M:/Movies/How to Train Your Dragon (2025)");
+
+        await Service(db).ImportGroupsAsync(new ImportGroupsRequest([correct, twentyFive], 2), [1], manageProgress: false);
+
+        var item2010 = await db.MediaItems.SingleAsync(m => m.Year == 2010 && m.HierarchyLevel == 0);
+        Assert.Contains("(2010)", item2010.MetadataJson!);
+        Assert.DoesNotContain("(2025)", item2010.MetadataJson!);
+        var item2025 = await db.MediaItems.SingleAsync(m => m.Year == 2025 && m.HierarchyLevel == 0);
+        Assert.NotEqual(item2010.Id, item2025.Id);
+    }
+
+    [Theory]
+    [InlineData(2009, 2010)]
+    [InlineData(2011, 2010)]
+    [InlineData(2010, 2010)]
+    public async Task AFolderYearOneOffFromTheItemsYear_IsStillTheSameFilm_NotADuplicate(int folderYear, int itemYear)
+    {
+        await using var db = NewContext();
+        db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+        db.MediaItems.Add(new MediaItem { Id = 10, MediaTypeId = 2, Name = "Some Film", Year = itemYear, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var group = new ScanGroupImport($"Some Film ({folderYear})", folderYear, null, [], [$"H:/Movies/Some Film ({folderYear})/Some Film ({folderYear}).mkv"], $"H:/Movies/Some Film ({folderYear})");
+
+        await Service(db).ImportGroupsAsync(new ImportGroupsRequest([group], 2), [1], manageProgress: false);
+
+        Assert.Equal(1, await db.MediaItems.CountAsync(m => m.HierarchyLevel == 0 && m.MediaTypeId == 2));
+    }
+}

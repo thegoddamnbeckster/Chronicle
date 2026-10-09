@@ -139,6 +139,9 @@ namespace Chronicle.Services.Scan
                         {
                             GroupKey        = key,
                             Name            = groupName,
+                            // The year in "Title (Year)". Without it the importer cannot tell "The Exorcist (1973)" from
+                            // "The Exorcist (2023)" and the second scan overwrites the first one's file path.
+                            Year            = FolderNameYear.Split(groupName).Year,
                             HierarchyLevel  = 0,
                             // A name worked out from a release string is less certain than a tidy folder name.
                             ConfidenceScore = derivedName ? Math.Min(0.7, ComputeFlatConfidence(groupName)) : ComputeFlatConfidence(groupName),

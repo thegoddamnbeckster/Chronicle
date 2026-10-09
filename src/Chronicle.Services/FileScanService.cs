@@ -1060,7 +1060,9 @@ namespace Chronicle.Services
         /// itself. A shared predicate keeps both tiers -- and any future tier that needs the
         /// same check -- from silently drifting apart on what "conflicting year" means.
         /// </summary>
-        private static bool YearsConflict(int? a, int? b) => a.HasValue && b.HasValue && a.Value != b.Value;
+        private static bool YearsConflict(int? a, int? b) => a.HasValue && b.HasValue && Math.Abs(a.Value - b.Value) > 1;
+        // One year of difference is not a conflict: a folder says (2009) where the database, corrected by a metadata
+        // provider, says 2010 (festival premiere vs release). Remakes and reboots with the same title are decades apart.
 
         /// <summary>
         /// Every normalized string worth trying when matching a scanned/parsed title against an
@@ -3236,7 +3238,11 @@ namespace Chronicle.Services
             {
                 foreach (var f in group.Files)
                 {
-                    if (filePathIndex.TryGetValue(f, out var match))
+                    // An exact path match is the strongest signal, but not when the record plainly belongs to another
+                    // film: an item for "The Exorcist" (1973) holding the path of the 2023 film's file is a mistake an
+                    // earlier scan made (it could not tell the years apart), and trusting it again would keep swapping
+                    // the file between the two items. Drop the stale claim and let the name and year decide.
+                    if (filePathIndex.TryGetValue(f, out var match) && !YearsConflict(group.Year, match.Year))
                     {
                         existing = match;
                         break;

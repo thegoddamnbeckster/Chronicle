@@ -130,3 +130,16 @@ kind, each labelled with its type, and importing creates every group as its own 
   type of its own). The nightly scan then sorts its files the same way, holds each group to the confidence threshold of the
   type it landed in, imports one type at a time, and tells Kodi about every type that got new items. A folder with a chosen
   type is scanned exactly as before.
+
+## Same title, different year
+
+"The Exorcist (1973)" and "The Exorcist (2023)" are different films that share a title. A movie folder's year is now read from its name
+and carried into the scan, and an item is only matched to a folder whose year is within one year of its own (a folder saying 2009
+for a film a metadata provider dates 2010 is still that film). Before, the year was lost for movie folders, so the second folder
+scanned took over the first one's file and the two items kept swapping it; an exact file-path record is also no longer trusted when
+it belongs to a film from another year. A wrong record left by an earlier scan is repaired the next time the folder is scanned.
+
+## One file, two episodes
+
+A file like `Show - S01E01-E02 - Pilot.mkv` holds two episodes. Chronicle records it on the first; when Kodi asks the scraper for
+the second (same file name), the second episode's own item answers, as long as the name really covers that episode number.
