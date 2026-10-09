@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation } from '@tanstack/react-query'
 import { mergeItems } from '@/api/duplicates'
+import { errorText } from '@/api/auth'
 import styles from './MergeModal.module.css'
 import { PosterImage } from './PosterImage'
 import { displayExternalIds } from '@/utils/externalId'
@@ -131,7 +132,7 @@ export default function MergeModal({ itemA, itemB, onClose, onMerged }: Props) {
         )}
 
         {merge.isError && (
-          <p className={styles.error}>Merge failed. Please try again.</p>
+          <p className={styles.error}>{errorText(merge.error, 'Merge failed. Please try again.')}</p>
         )}
 
         <div className={styles.footer}>
