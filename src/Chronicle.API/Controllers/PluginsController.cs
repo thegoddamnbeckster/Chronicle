@@ -26,6 +26,7 @@ public class PluginsController : ControllerBase
     private readonly IPluginSettingsProtector      _protector;
     private readonly IHttpClientFactory            _httpClientFactory;
     private readonly PluginCatalogService          _catalogService;
+    private readonly IPluginCatalogSource          _catalogSource;
     private readonly IMemoryCache                  _cache;
     private readonly IWebHostEnvironment           _environment;
     private readonly ILogger<PluginsController>    _logger;
@@ -81,6 +82,7 @@ public class PluginsController : ControllerBase
         IPluginSettingsProtector protector,
         IHttpClientFactory httpClientFactory,
         PluginCatalogService catalogService,
+        IPluginCatalogSource catalogSource,
         IMemoryCache cache,
         IWebHostEnvironment environment,
         ILogger<PluginsController> logger,
@@ -91,6 +93,7 @@ public class PluginsController : ControllerBase
         _protector         = protector;
         _httpClientFactory = httpClientFactory;
         _catalogService    = catalogService;
+        _catalogSource     = catalogSource;
         _cache             = cache;
         _environment       = environment;
         _logger            = logger;
@@ -725,6 +728,27 @@ public class PluginsController : ControllerBase
         }
 
         return Ok(ApiResponse<List<PluginCatalogEntry>>.Ok(entries));
+    }
+
+    // ── GET/POST /api/v1/plugins/catalog/source ───────────────────────────────
+
+    /// <summary>Where the catalog list comes from, and whether the hosted file could be read.</summary>
+    [HttpGet("catalog/source")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetCatalogSource(CancellationToken ct)
+    {
+        var listing = await _catalogSource.GetAsync(ct);
+        return Ok(ApiResponse<CatalogSourceDto>.Ok(new CatalogSourceDto(
+            listing.Source, listing.UsingFallback, listing.FetchedAtUtc, listing.Error, listing.Seeds.Count)));
+    }
+
+    /// <summary>Re-reads the hosted catalog file now instead of waiting for the cache to expire.</summary>
+    [HttpPost("catalog/refresh")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> RefreshCatalogSource(CancellationToken ct)
+    {
+        _catalogSource.Refresh();
+        return await GetCatalogSource(ct);
     }
 
     // ── POST /api/v1/plugins/catalog/{pluginId}/install ───────────────────────

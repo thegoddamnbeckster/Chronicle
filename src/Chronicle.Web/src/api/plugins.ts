@@ -127,6 +127,27 @@ export interface PluginCatalogEntry {
   supportedMediaTypes?: string[] | null
 }
 
+export interface CatalogSource {
+  /** Where the list was read from: an address, "last successful copy of ...", or "built-in". */
+  source: string
+  /** True when the hosted file could not be read and an older copy or the built-in list is in use. */
+  usingFallback: boolean
+  fetchedAtUtc: string
+  error: string | null
+  pluginCount: number
+}
+
+export async function getCatalogSource(): Promise<CatalogSource> {
+  const res = await client.get<{ data: CatalogSource }>('/plugins/catalog/source')
+  return res.data.data
+}
+
+/** Reads the hosted catalog file again now. */
+export async function refreshCatalogSource(): Promise<CatalogSource> {
+  const res = await client.post<{ data: CatalogSource }>('/plugins/catalog/refresh')
+  return res.data.data
+}
+
 /** The plugin catalog, optionally only the plugins that handle one media type (by its internal name). */
 export async function listCatalog(mediaType?: string): Promise<PluginCatalogEntry[]> {
   const res = await client.get<{ data: PluginCatalogEntry[] }>('/plugins/catalog', { params: mediaType ? { mediaType } : undefined })

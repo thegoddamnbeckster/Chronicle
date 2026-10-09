@@ -28,8 +28,9 @@ Chronicle's database (through the settings the plugin declares) rather than in f
 Read this first; it explains most "why won't it install" problems.
 
 * **A plugin must have a `manifest.json` next to its DLL**, and the `plugin_id` in it must match the id the code reports.
-* **Only plugins in Chronicle's catalog install by default.** The catalog is the list in
-  `src/Chronicle.Services/Plugins/PluginCatalogSeeds.cs` (each entry is a GitHub repo). A plugin id that is not on it is
+* **Only plugins in Chronicle's catalog install by default.** The catalog is the hosted file `plugins.json` in Chronicle's
+  repository (each entry is a GitHub repo; Chronicle reads it from the address in the app setting `plugins.catalog_url`, and
+  keeps the last copy it could read, then a built-in list, if that is unreachable). A plugin id that is not on it is
   refused at install and ignored when its folder is found at start, until an administrator sets the app setting
   `plugins.allow_unlisted` to `true` (`PUT /api/v1/settings/app/plugins.allow_unlisted` with `{ "value": "true" }`; there is no page for it on purpose). Use that
   switch for your own private plugins.
@@ -262,12 +263,15 @@ Installing from the catalog works from **GitHub releases**:
 2. Build, then zip the contents of the output folder (the DLL, `manifest.json`, and any dependencies, no `Chronicle.*`
    host assemblies) into **one `.zip`**.
 3. Create a GitHub release whose tag is the version (`v1.0.0`) and attach exactly that one zip.
-4. Add the plugin to `PluginCatalogSeeds.cs` in Chronicle (`new("chronicle.plugin.example", "you/Chronicle.Plugin.Example", ["movies", "metadata"])`)
-   and open a pull request. The catalog entry is resolved live from your latest release and the `manifest.json` at that
-   tag, so you do not re-submit for each release: publish a new release and Chronicle's update check offers it.
+4. Add the plugin to `plugins.json` at the root of Chronicle's repository and open a pull request:
+   `{ "plugin_id": "chronicle.plugin.example", "github_repo": "you/Chronicle.Plugin.Example", "tags": ["movies", "metadata"] }`.
+   No Chronicle release is needed: once the file is merged, every Chronicle picks the plugin up within about fifteen minutes
+   (or at once with **Refresh** in the catalog panel). The catalog entry is resolved live from your latest release and the
+   `manifest.json` at that tag, so you do not re-submit for each release: publish a new release and Chronicle's update check
+   offers it.
 5. Keep the manifest `version` equal to the release tag; the update check compares them.
 
-The catalog list is intentionally in code: it is the allowlist that keeps unknown plugins from being installed.
+The catalog file is the allowlist that keeps unknown plugins from being installed, which is why it is reviewed through a pull request.
 If you only want the plugin for yourself, skip steps 3-5 and use `plugins.allow_unlisted`.
 
 ## 10. Checklist before you call it done

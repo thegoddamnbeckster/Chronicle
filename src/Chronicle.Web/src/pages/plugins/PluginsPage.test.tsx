@@ -39,6 +39,7 @@ beforeEach(() => {
   vi.mocked(useAuth).mockReturnValue({ user: ADMIN, loading: false, logout: vi.fn(), setUser: vi.fn() })
   vi.mocked(useTheme).mockReturnValue({ themes: [], activeKey: '', loading: false, setTheme: vi.fn() })
   vi.mocked(importApi.getImportProviders).mockResolvedValue([])
+  vi.mocked(pluginsApi.getCatalogSource).mockResolvedValue({ source: 'https://example.org/plugins.json', usingFallback: false, fetchedAtUtc: '2026-10-09T00:00:00Z', error: null, pluginCount: 1 })
   vi.mocked(pluginsApi.listPlugins).mockResolvedValue([IMDB])
   vi.mocked(pluginsApi.healthCheckPlugin).mockResolvedValue({ healthy: true } as pluginsApi.PluginHealthResult)
   vi.mocked(pluginsApi.getPluginSettings).mockResolvedValue({})
@@ -137,5 +138,47 @@ describe('PluginsPage catalog filter', () => {
     await vi.waitFor(() => expect(pluginsApi.listCatalog).toHaveBeenLastCalledWith('music'))
     await vi.waitFor(() => expect(screen.queryByText('TMDB')).not.toBeInTheDocument())
     expect(screen.getByText('MusicBrainz')).toBeInTheDocument()
+  })
+})
+
+describe('PluginsPage catalog source', () => {
+  const entry: pluginsApi.PluginCatalogEntry = {
+    pluginId: 'mb', name: 'MusicBrainz', description: '', author: 'a', iconUrl: null, githubRepo: 'o/r', assetName: 'r.zip',
+    dllName: 'r.dll', tags: [], isInstalled: false, version: '1.0.0',
+  }
+
+  it('says where the catalog came from, and warns when the online copy could not be read', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginsApi.listCatalog).mockResolvedValue([entry])
+    vi.mocked(mediaApi.getMediaTypes).mockResolvedValue([])
+    vi.mocked(pluginsApi.getCatalogSource).mockResolvedValue({
+      source: 'built-in', usingFallback: true, fetchedAtUtc: '2026-10-09T00:00:00Z', error: '404', pluginCount: 15,
+    })
+    renderWithProviders(<PluginsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /browse/i }))
+
+    expect(await screen.findByTestId('catalog-source')).toHaveTextContent('could not be reached')
+    expect(screen.getByTestId('catalog-source')).toHaveTextContent('built-in')
+  })
+
+  it('re-reads the hosted catalog when asked', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginsApi.listCatalog).mockResolvedValue([entry])
+    vi.mocked(mediaApi.getMediaTypes).mockResolvedValue([])
+    vi.mocked(pluginsApi.getCatalogSource).mockResolvedValue({
+      source: 'https://example.org/plugins.json', usingFallback: false, fetchedAtUtc: '2026-10-09T00:00:00Z', error: null, pluginCount: 16,
+    })
+    vi.mocked(pluginsApi.refreshCatalogSource).mockResolvedValue({
+      source: 'https://example.org/plugins.json', usingFallback: false, fetchedAtUtc: '2026-10-09T01:00:00Z', error: null, pluginCount: 17,
+    })
+    renderWithProviders(<PluginsPage />)
+    await user.click(await screen.findByRole('button', { name: /browse/i }))
+    expect(await screen.findByTestId('catalog-source')).toHaveTextContent('16 plugins')
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    await vi.waitFor(() => expect(pluginsApi.refreshCatalogSource).toHaveBeenCalled())
+    expect(await screen.findByText(/17 plugins/)).toBeInTheDocument()
   })
 })

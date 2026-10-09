@@ -49,14 +49,17 @@ public sealed class PluginIntegrity : IPluginIntegrity
 
     private readonly ChronicleDbContext _db;
     private readonly INotificationService? _notifications;
+    private readonly IPluginCatalogSource? _catalog;
     private readonly ILogger _log = Log.ForContext<PluginIntegrity>();
 
     public string PluginsDirectory { get; }
 
-    public PluginIntegrity(ChronicleDbContext db, IHostEnvironment env, INotificationService? notifications = null)
+    public PluginIntegrity(ChronicleDbContext db, IHostEnvironment env, INotificationService? notifications = null,
+        IPluginCatalogSource? catalog = null)
     {
         _db = db;
         _notifications = notifications;
+        _catalog = catalog;
         PluginsDirectory = Path.GetFullPath(Path.Combine(env.ContentRootPath, "plugins"));
     }
 
@@ -69,7 +72,9 @@ public sealed class PluginIntegrity : IPluginIntegrity
 
     public async Task<bool> IsAllowedAsync(string pluginId, CancellationToken ct = default)
     {
-        if (PluginCatalogSeeds.Entries.Any(e => string.Equals(e.PluginId, pluginId, StringComparison.OrdinalIgnoreCase)))
+        // "In the catalog" means in the catalog as hosted (or its last good copy, or the built-in list), not a fixed list.
+        var listed = _catalog is null ? PluginCatalogSeeds.Entries : (await _catalog.GetAsync(ct)).Seeds;
+        if (listed.Any(e => string.Equals(e.PluginId, pluginId, StringComparison.OrdinalIgnoreCase)))
             return true;
         var setting = await _db.AppSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == AllowUnlistedKey, ct);
         return string.Equals(setting?.Value, "true", StringComparison.OrdinalIgnoreCase);

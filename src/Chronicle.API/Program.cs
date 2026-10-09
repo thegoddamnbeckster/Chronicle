@@ -320,6 +320,7 @@ builder.Services.AddSingleton<IScheduledTask, DatabaseBackupTask>();
 builder.Services.AddSingleton<IScheduledTask, DatabaseLightMaintenanceTask>();
 builder.Services.AddSingleton<IScheduledTask, DatabaseHeavyMaintenanceTask>();
 
+builder.Services.AddSingleton<IPluginCatalogSource, PluginCatalogSource>();
 builder.Services.AddSingleton<PluginCatalogService>();
 
 builder.Services.AddSingleton<PluginUpdateCheckService>();

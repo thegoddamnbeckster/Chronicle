@@ -934,3 +934,5 @@
 }
 
 .catalogFilter { display: block; margin: 0 0 12px; color: var(--text-muted); }
+
+.catalogSourceLine { margin: 0 0 12px; color: var(--text-muted); font-size: 0.85rem; }

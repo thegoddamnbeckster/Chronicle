@@ -30,7 +30,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 - **Plugin integrity — DONE (hash + allowlist).** Manual install and folder auto-registration now honour the catalog allowlist (bypass closed); plugin files are hashed at install/update and re-verified on every load; changes are blocked, notified and approvable. See `docs/SECURITY.md`. Not built: author signing (`docs/FEATURE_PLUGIN_SECURITY.md`). Plugin authors: `docs/PLUGIN_DEVELOPMENT_GUIDE.md`.
 - **Bundled plugins** — FileScanner must ship with the Chronicle install (separate repo, DLL included). Chronicle's releases currently ship source/tag only (see CLAUDE.md), so confirm the installer story.
-- **Catalog source** — The old item asked for a `plugins.json` in the repo. What was built instead is `PluginCatalogSeeds.cs`, a hard-coded list of repos, resolved live from each repo's latest GitHub release and manifest. Adding a plugin therefore still needs a code deploy. Decide whether to move the seed list out to a hosted file.
+- **Catalog source — DONE (hosted file).** The catalog list is `plugins.json` at the root of Chronicle's repository, read from `plugins.catalog_url` (https only; default the `main` branch of the repo; a different address is honoured only when `plugins.allow_unlisted` is true). The last copy that worked is kept, then a built-in list, so the catalog survives being offline. The install allowlist follows the same list. A plugin is added by a pull request to that file; no Chronicle release. The Plugins page shows where the list came from and has a Refresh button. Note: the default address resolves once this branch is merged to `main`; until then Chronicle uses its built-in list.
 
 ---
 

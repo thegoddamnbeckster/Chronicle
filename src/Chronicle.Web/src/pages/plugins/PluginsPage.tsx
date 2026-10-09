@@ -19,6 +19,9 @@ import {
   installFromCatalog,
   updatePluginFromCatalog,
   acceptPluginFiles,
+  getCatalogSource,
+  refreshCatalogSource,
+  type CatalogSource,
   getPluginSettings,
   getPluginSettingsSchema,
   updatePluginSettings,
@@ -182,6 +185,7 @@ export default function PluginsPage() {
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState('')
   const [catalogType, setCatalogType] = useState('')
+  const [catalogSource, setCatalogSource] = useState<CatalogSource | null>(null)
   const [catalogTypes, setCatalogTypes] = useState<{ name: string; displayName: string }[]>([])
   const [installingId, setInstallingId] = useState<string | null>(null)
 
@@ -251,12 +255,27 @@ export default function PluginsPage() {
       try {
         const entries = await listCatalog()
         setCatalog(entries)
+        getCatalogSource().then(setCatalogSource).catch(() => { /* the line just stays hidden */ })
         getMediaTypes().then(t => setCatalogTypes(t.map(x => ({ name: x.name, displayName: x.displayName })))).catch(() => { /* the filter just stays hidden */ })
       } catch {
         setCatalogError('Failed to load plugin catalog. Check your connection.')
       } finally {
         setCatalogLoading(false)
       }
+    }
+  }
+
+  async function handleRefreshCatalog() {
+    setCatalogLoading(true)
+    setCatalogError('')
+    try {
+      const source = await refreshCatalogSource()
+      setCatalogSource(source)
+      setCatalog(await listCatalog(catalogType || undefined))
+    } catch {
+      setCatalogError('Failed to load plugin catalog. Check your connection.')
+    } finally {
+      setCatalogLoading(false)
     }
   }
 
@@ -467,6 +486,14 @@ export default function PluginsPage() {
       {showBrowse && isAdmin && (
         <div className={styles.browsePanel}>
           <p className={styles.installTitle}>Plugin Catalog</p>
+          {catalogSource && (
+            <p className={styles.catalogSourceLine} data-testid="catalog-source">
+              {catalogSource.usingFallback
+                ? <>The online catalog could not be reached, so this is <strong>{catalogSource.source}</strong> ({catalogSource.pluginCount} plugins).{' '}</>
+                : <>{catalogSource.pluginCount} plugins, read from {catalogSource.source}.{' '}</>}
+              <button className={styles.actionBtn} onClick={() => void handleRefreshCatalog()} disabled={catalogLoading}>Refresh</button>
+            </p>
+          )}
           {catalogTypes.length > 0 && (
             <label className={styles.catalogFilter}>
               Show plugins that handle{' '}

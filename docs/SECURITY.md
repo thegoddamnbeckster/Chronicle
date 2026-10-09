@@ -718,7 +718,7 @@ CREATE TABLE user_2fa (
 
 ### Plugin installation and file integrity (built)
 
-* **Allowlist.** A plugin installs only if its id is in the catalog (`PluginCatalogSeeds.cs`), or an administrator has set
+* **Allowlist.** A plugin installs only if its id is in the catalog (the hosted `plugins.json`, its last good copy, or the built-in list), or an administrator has set
   the app setting `plugins.allow_unlisted` to `true`. The manual `POST /api/v1/plugins` route used to take any DLL path on
   the server; it now accepts only a DLL inside the `plugins/` folder, with a `manifest.json` naming an allowed id, and the
   check happens before any plugin code is loaded. A new folder that merely appears under `plugins/` at start is ignored

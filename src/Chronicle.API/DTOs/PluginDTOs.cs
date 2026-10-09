@@ -59,3 +59,6 @@ public record PluginHealthDto(bool? Healthy, string? FailureReason = null, bool 
 // PluginCatalogEntry moved to Chronicle.Core.Models (2026-09-04) so the Services-layer
 // scheduled update-check task can share the same catalog data as this API's own
 // catalog/install endpoints -- see Chronicle.Services.Plugins.PluginCatalog.
+
+/// <summary>Where the plugin catalog list is read from and whether that worked.</summary>
+public record CatalogSourceDto(string Source, bool UsingFallback, DateTime FetchedAtUtc, string? Error, int PluginCount);
