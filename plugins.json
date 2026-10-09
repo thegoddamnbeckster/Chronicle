@@ -99,6 +99,15 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.anilist",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.AniList",
+      "tags": [
+        "anime",
+        "anime_movies",
+        "metadata"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.simkl",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Simkl",
       "tags": [
