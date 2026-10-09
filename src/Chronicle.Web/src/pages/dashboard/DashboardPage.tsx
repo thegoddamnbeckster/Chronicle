@@ -10,6 +10,8 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { getStats } from '@/api/stats'
+import { listPlugins } from '@/api/plugins'
+import { useAuth } from '@/hooks/useAuth'
 import { getLibrary } from '@/api/library'
 import { ancestorBreadcrumb, buildWeeklyActivity, dedupeHistoryByMediaItem, getHistoryPage } from '@/api/reports'
 import styles from './DashboardPage.module.css'
@@ -43,12 +45,25 @@ export default function DashboardPage() {
     queryFn: () => getLibrary('Watching'),
   })
 
+  // A fresh install has no plugins at all, and nothing can be scanned or looked up until some are added.
+  const { user } = useAuth()
+  const { data: plugins } = useQuery({ queryKey: ['plugins'], queryFn: listPlugins, enabled: !!user?.isAdmin })
+  const needsSetup = !!user?.isAdmin && plugins !== undefined && !plugins.some(p => p.isEnabled)
+
   const weeklyData = history ? buildWeeklyActivity(history) : []
   const recentActivity = history ? dedupeHistoryByMediaItem(history) : []
 
   return (
     <div className={styles.page}>
       <h2 className={styles.heading}>Dashboard</h2>
+
+      {needsSetup && (
+        <div className={styles.setupBanner} role="region" aria-label="Getting started">
+          <strong>Chronicle has no plugins yet.</strong>{' '}
+          Plugins are what read your folders and look up information about your media. We will walk you through choosing them.{' '}
+          <Link to="/getting-started">Start the setup</Link>
+        </div>
+      )}
 
       {stats && (
         <div className={styles.statsGrid}>

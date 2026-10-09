@@ -1169,3 +1169,12 @@ Similar process to Trakt.
 
 **Document Status:** Complete  
 **Implementation Priority:** Phase 1 (Core deployment), Phase 2 (Advanced features)
+
+## First start: no plugins are bundled
+
+A new Chronicle has no plugins; they come from the plugin catalog (the hosted `plugins.json`). The first administrator sees a
+"Chronicle has no plugins yet" banner on the Dashboard that opens **Getting started**: it asks which media you keep, offers a
+file scanner and information sources from the catalog with an Install button each, asks for any API key a plugin needs (and tests
+it), and ends at the Scan page. The server needs internet access to GitHub for this. For an install without internet access, copy a
+plugin's folder (its DLL and `manifest.json`) into the `plugins/` folder and set the app setting `plugins.allow_unlisted` to `true`
+if it is not in the catalog.

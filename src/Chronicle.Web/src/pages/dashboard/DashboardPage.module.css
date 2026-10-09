@@ -147,3 +147,5 @@
   font-size: 13px;
   padding: 16px 0;
 }
+
+.setupBanner { margin: 0 0 1.25rem; padding: 0.9rem 1.1rem; border: 1px solid var(--accent, #5b9bd5); border-radius: var(--radius, 6px); background: rgba(91, 155, 213, 0.1); }

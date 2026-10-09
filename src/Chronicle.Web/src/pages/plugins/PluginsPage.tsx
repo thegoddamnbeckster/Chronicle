@@ -1,5 +1,6 @@
 import { getMediaTypes } from '@/api/media'
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   getImportProviders,
@@ -469,6 +470,7 @@ export default function PluginsPage() {
         <h1 className={styles.title}>Plugins</h1>
         {isAdmin && (
           <div className={styles.headerActions}>
+            <Link className={styles.browseBtn} to="/getting-started">Guided setup</Link>
             <button className={styles.browseBtn} onClick={openBrowse}>
               {showBrowse ? 'Close Catalog' : 'Browse Catalog'}
             </button>

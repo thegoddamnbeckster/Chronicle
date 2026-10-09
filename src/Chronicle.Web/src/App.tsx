@@ -28,6 +28,7 @@ import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage'
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 import EnrichmentDrillDownPage from '@/pages/settings/EnrichmentDrillDownPage'
 import PluginsPage from '@/pages/plugins/PluginsPage'
+import GettingStartedPage from '@/pages/setup/GettingStartedPage'
 import ListsPage from '@/pages/lists/ListsPage'
 import ListDetailPage from '@/pages/lists/ListDetailPage'
 import DeviceAuthPage from '@/pages/device-auth/DeviceAuthPage'
@@ -115,6 +116,7 @@ export default function App() {
         <Route path="settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
         <Route path="settings/profile" element={<ProfilePage />} />
         <Route path="plugins" element={<PluginsPage />} />
+        <Route path="getting-started" element={<RequireAdmin><GettingStartedPage /></RequireAdmin>} />
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListDetailPage />} />
         <Route path="scan" element={<ScanPage />} />
