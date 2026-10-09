@@ -108,3 +108,5 @@ Design and audit: `docs/plans/2026-10-07-session-keys-design.md`.
 - Dashboard, Reports, History, People, Lists (inline rename, click-through), Stats.
 - Dark Teal theme and the Themes plugin.
 - Dev startup script `scripts/RunTestEnvironment.ps1` (API 7979, web 8888, ABS bridge 9877).
+
+- **AniList plugin - BUILT (local repo `Chronicle.Plugin.AniList`, v1.0.0, not yet on GitHub).** Anime Show/Season/Episode and `anime_movies` metadata from AniList's GraphQL API (no key). Seasons are rebuilt from prequel/sequel relations with split cours folded in. Awaiting: GitHub repo + release, then a `plugins.json` catalog entry.

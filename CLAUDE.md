@@ -162,7 +162,7 @@ with `dotnet ef database update`. There is no hand-written SQL migration set and
 .\scripts\RunTestEnvironment.ps1 -ApiOnly       # API only
 ```
 
-It kills stale processes, rebuilds and redeploys all 12 plugin DLLs, then starts everything.
+It kills stale processes, rebuilds and redeploys every plugin DLL, then starts everything.
 Running `dotnet run` by hand starts only the API with stale plugins — and leaves the frontend
 down, which looks exactly like "I can't log in".
 
