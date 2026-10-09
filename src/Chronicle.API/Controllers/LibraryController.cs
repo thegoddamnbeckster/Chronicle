@@ -412,11 +412,7 @@ namespace Chronicle.API.Controllers
         /// Returns true when the given MetadataJson contains a fileScanner entry with at least
         /// one non-null file path.  Mirrors the same helper in MediaController.
         /// </summary>
-        private static bool IsMovieLikeTypeName(string? name) =>
-            name is not null &&
-            (name.Equals("movies",       StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
+        private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeFamilies.IsMovieLike(name);
 
         /// <summary>
         /// Single-item counterpart to GetLibrary's batched fallback-poster lookup, for the

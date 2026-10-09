@@ -50,12 +50,14 @@ describe('Dashboard setup banner', () => {
     expect(screen.queryByRole('region', { name: 'Getting started' })).not.toBeInTheDocument()
   })
 
-  it('treats only disabled plugins as having none', async () => {
+  it('stays away once plugins are installed, even if the administrator switched them all off', async () => {
     vi.mocked(useAuth).mockReturnValue({ user: user(true), loading: false, logout: vi.fn(), setUser: vi.fn() })
     vi.mocked(pluginsApi.listPlugins).mockResolvedValue([{ id: 1, isEnabled: false } as pluginsApi.PluginDto])
     renderWithProviders(<DashboardPage />)
 
-    expect(await screen.findByRole('region', { name: 'Getting started' })).toBeInTheDocument()
+    await vi.waitFor(() => expect(pluginsApi.listPlugins).toHaveBeenCalled())
+    await screen.findByRole('heading', { name: 'Dashboard' })
+    expect(screen.queryByRole('region', { name: 'Getting started' })).not.toBeInTheDocument()
   })
 
   it('never shows an ordinary user a setup they cannot do', async () => {

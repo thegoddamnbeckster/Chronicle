@@ -158,7 +158,7 @@ namespace Chronicle.Tests.Integration
 
             types.Single(t => t.Name == "tv").ProviderFamily.Should().Be("tv");
             types.Single(t => t.Name == "music").ProviderFamily.Should().Be("music");
-            types.Single(t => t.Name == "movies").ProviderFamily.Should().BeNull();
+            types.Single(t => t.Name == "movies").ProviderFamily.Should().Be("movie");
             types.Single(t => t.Name == "music").CastHeading.Should().Be("Band Members");
             types.Single(t => t.Name == "tv").CastHeading.Should().BeNull();
         }

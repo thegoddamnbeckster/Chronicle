@@ -1826,11 +1826,7 @@ public class MovieCollectionService(
     /// HierarchyLevels == 3) is deliberately excluded — standalone anime films live on the flat
     /// anime_movies type instead, so "anime" itself never needs TMDB collection grouping.
     /// </summary>
-    private static bool IsMovieLikeTypeName(string? name) =>
-        name is not null &&
-        (name.Equals("movies",       StringComparison.OrdinalIgnoreCase) ||
-         name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
-         name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
+    private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeFamilies.IsMovieLike(name);
 
     /// <param name="Id">Plugin-specific collection identifier (string for portability).</param>
     /// <param name="Name">Display name of the collection.</param>

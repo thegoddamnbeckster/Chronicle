@@ -1300,20 +1300,18 @@ public class ScraperController : ControllerBase
     private async Task<int> GetMediaTypeIdAsync(string name, CancellationToken ct) =>
         await _context.MediaTypes.Where(t => t.Name == name && t.IsActive).Select(t => t.Id).FirstOrDefaultAsync(ct);
 
-    /// <summary>Flat, single-level types whose items are all "a movie file on disk" as far as
-    /// Kodi is concerned — kept in sync with MovieCollectionService.IsMovieLikeTypeName.</summary>
-    private static readonly string[] MovieLikeTypeNames = ["movies", "fanedits", "anime_movies"];
+    /// <summary>Flat types whose items are all "a movie file on disk" as far as Kodi is concerned: the active types whose
+    /// provider family is "movie" (editable on the Media Types page), not a list of names.</summary>
+    private async Task<List<int>> GetMovieLikeTypeIdsAsync(CancellationToken ct) =>
+        (await ActiveTypeNamesAsync(ct)).Where(t => MediaTypeFamilies.IsMovieLike(t.Name)).Select(t => t.Id).ToList();
 
-    /// <summary>Hierarchical show types scraped through Kodi's TV path.</summary>
-    private static readonly string[] ShowLikeTypeNames = ["tv", "anime"];
+    /// <summary>Hierarchical show types scraped through Kodi's TV path: the active types whose provider family is "tv".</summary>
+    private async Task<List<int>> GetShowLikeTypeIdsAsync(CancellationToken ct) =>
+        (await ActiveTypeNamesAsync(ct)).Where(t => MediaTypeFamilies.IsShowLike(t.Name)).Select(t => t.Id).ToList();
 
-    private Task<List<int>> GetMovieLikeTypeIdsAsync(CancellationToken ct) =>
-        _context.MediaTypes.Where(t => t.IsActive && MovieLikeTypeNames.Contains(t.Name))
-            .Select(t => t.Id).ToListAsync(ct);
-
-    private Task<List<int>> GetShowLikeTypeIdsAsync(CancellationToken ct) =>
-        _context.MediaTypes.Where(t => t.IsActive && ShowLikeTypeNames.Contains(t.Name))
-            .Select(t => t.Id).ToListAsync(ct);
+    private async Task<List<(int Id, string Name)>> ActiveTypeNamesAsync(CancellationToken ct) =>
+        (await _context.MediaTypes.Where(t => t.IsActive).Select(t => new { t.Id, t.Name }).ToListAsync(ct))
+            .Select(t => (t.Id, t.Name)).ToList();
 
     /// <summary>
     /// Matches Kodi's title against candidates ignoring punctuation/case/whitespace, not an

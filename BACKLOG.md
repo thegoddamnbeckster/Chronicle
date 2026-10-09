@@ -52,6 +52,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 - **DONE** — Settings -> Media Types (add / edit / switch off / delete-if-empty / hand back to plugins), per-type action word and level names drive the wording of the item pages, the audiobook scan is a property of the type (not its name), and an administrator's edits are protected from plugin updates. See `docs/MEDIA_TYPES.md`.
 - **Remaining hard-coded wording - DONE.** The credits heading is a per-type setting, and the provider-family guessing in the scanner and enrichment code (anime -> tv ...) now reads `media_types.ProviderFamily`. `AddCollectionPage` still prefers a type named "movies" only as a default selection (it falls back to the first flat type).
+- **Movie-like / show-like types - DONE.** Kodi's movie and TV paths, movie collections and title promotion no longer test a list of type names (`movies`, `fanedits`, `anime_movies` / `tv`, `anime`); they read the type's provider family (`movie` / `tv`, editable on the Media Types page), so a renamed or user-made type behaves like the built-in one. The built-in `movies` type now carries family `movie` (migration `MoviesProviderFamily`). The dashboard setup banner now shows only when no plugin is installed at all, not when an administrator has switched them all off.
 - **Plugin catalog by media type - DONE.** Manifests may list `supported_media_types`; the catalog falls back to its tags, and `GET /plugins/catalog?mediaType=` plus a filter on the Plugins page narrow it (a type's provider family counts).
 
 ---

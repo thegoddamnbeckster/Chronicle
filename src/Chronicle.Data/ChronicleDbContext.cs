@@ -222,6 +222,7 @@ namespace Chronicle.Data
                         HierarchyLabels = "Show,Season,Episode",
                         InteractionVerb = "watched",
                         ProgressUnit = "minutes",
+                        ProviderFamily = "tv",
                         IsBuiltIn = true,
                         IsActive = true,
                         CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -236,6 +237,7 @@ namespace Chronicle.Data
                         HierarchyLabels = "Movie",
                         InteractionVerb = "watched",
                         ProgressUnit = "minutes",
+                        ProviderFamily = "movie",
                         IsBuiltIn = true,
                         IsActive = true,
                         CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -250,6 +252,7 @@ namespace Chronicle.Data
                         HierarchyLabels = "Artist,Album,Track",
                         InteractionVerb = "listened",
                         ProgressUnit = "tracks",
+                        ProviderFamily = "music",
                         IsBuiltIn = true,
                         IsActive = true,
                         CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)

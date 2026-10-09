@@ -1027,6 +1027,7 @@ namespace Chronicle.Data.Postgres.Migrations
                             IsUserModified = false,
                             Name = "tv",
                             ProgressUnit = "minutes",
+                            ProviderFamily = "tv",
                             SupportsCollections = false
                         },
                         new
@@ -1044,6 +1045,7 @@ namespace Chronicle.Data.Postgres.Migrations
                             IsUserModified = false,
                             Name = "movies",
                             ProgressUnit = "minutes",
+                            ProviderFamily = "movie",
                             SupportsCollections = false
                         },
                         new
@@ -1061,6 +1063,7 @@ namespace Chronicle.Data.Postgres.Migrations
                             IsUserModified = false,
                             Name = "music",
                             ProgressUnit = "tracks",
+                            ProviderFamily = "music",
                             SupportsCollections = false
                         });
                 });

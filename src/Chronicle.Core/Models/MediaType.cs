@@ -102,6 +102,7 @@ namespace Chronicle.Core.Models
         public static string? DefaultFor(string typeName)
         {
             var n = typeName.ToLowerInvariant();
+            if (n == "movies") return "movie";
             if (n.Contains("anime") && n.Contains("movie")) return "movie";
             if (n.Contains("tv") || n.Contains("show") || n.Contains("series") || n.Contains("anime")) return "tv";
             if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";

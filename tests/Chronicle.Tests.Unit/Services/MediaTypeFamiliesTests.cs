@@ -18,7 +18,7 @@ public class MediaTypeFamiliesTests : IDisposable
     [InlineData("music", "music")]
     [InlineData("audiobooks", null)]
     [InlineData("books", null)]
-    [InlineData("movies", null)]
+    [InlineData("movies", "movie")]
     public void WithNothingStored_ANewTypeStartsWithTheFamilyItsNameImplied(string name, string? expected) =>
         ProviderFamilies.DefaultFor(name).Should().Be(expected);
 
@@ -62,6 +62,32 @@ public class MediaTypeFamiliesTests : IDisposable
 
         act.Should().NotThrow();
         MediaTypeFamilies.Resolve("tv").Should().Be("tv");
+    }
+
+    [Theory]
+    [InlineData("movies", true, false)]
+    [InlineData("fanedits", true, false)]
+    [InlineData("anime_movies", true, false)]
+    [InlineData("tv", false, true)]
+    [InlineData("anime", false, true)]
+    [InlineData("music", false, false)]
+    [InlineData("books", false, false)]
+    public void MovieLikeAndShowLike_FollowTheFamily_ForTheBuiltInTypes(string name, bool movie, bool show)
+    {
+        MediaTypeFamilies.IsMovieLike(name).Should().Be(movie);
+        MediaTypeFamilies.IsShowLike(name).Should().Be(show);
+        MediaTypeFamilies.IsVideoLibraryType(name).Should().Be(movie || show);
+    }
+
+    [Fact]
+    public void AUserMadeType_IsMovieLike_WhenItsFamilyIsMovie_WhateverItIsCalled()
+    {
+        MediaTypeFamilies.Load([("home_videos", "movie"), ("sitcoms", "tv"), ("movies", null)]);
+
+        MediaTypeFamilies.IsMovieLike("home_videos").Should().BeTrue();
+        MediaTypeFamilies.IsShowLike("sitcoms").Should().BeTrue();
+        MediaTypeFamilies.IsMovieLike("movies").Should().BeFalse("an administrator cleared its family");
+        MediaTypeFamilies.IsMovieLike(null).Should().BeFalse();
     }
 
     [Theory]

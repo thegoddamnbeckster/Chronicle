@@ -1215,11 +1215,7 @@ namespace Chronicle.API.Controllers
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
                 ? v.GetInt32() : null;
 
-        private static bool IsMovieLikeTypeName(string? name) =>
-            name is not null &&
-            (name.Equals("movies",       StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
+        private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeFamilies.IsMovieLike(name);
 
         private static double? TryGetDouble(System.Text.Json.JsonElement el, string key) =>
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number

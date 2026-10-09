@@ -48,7 +48,7 @@ export default function DashboardPage() {
   // A fresh install has no plugins at all, and nothing can be scanned or looked up until some are added.
   const { user } = useAuth()
   const { data: plugins } = useQuery({ queryKey: ['plugins'], queryFn: listPlugins, enabled: !!user?.isAdmin })
-  const needsSetup = !!user?.isAdmin && plugins !== undefined && !plugins.some(p => p.isEnabled)
+  const needsSetup = !!user?.isAdmin && plugins !== undefined && plugins.length === 0
 
   const weeklyData = history ? buildWeeklyActivity(history) : []
   const recentActivity = history ? dedupeHistoryByMediaItem(history) : []

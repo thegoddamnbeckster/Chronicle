@@ -25,6 +25,22 @@ namespace Chronicle.Services
             return _snapshot.TryGetValue(mediaTypeName, out var stored) ? stored : ProviderFamilies.DefaultFor(mediaTypeName);
         }
 
+        public const string Movie = "movie";
+        public const string Tv = "tv";
+
+        /// <summary>A flat type whose items are each one movie-like file on disk (family "movie"): Kodi's movie path, movie
+        /// collections, collection grouping. Decided by the type's provider family, so a renamed or user-made type behaves
+        /// like the built-in one.</summary>
+        public static bool IsMovieLike(string? mediaTypeName) =>
+            string.Equals(Resolve(mediaTypeName), Movie, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>A hierarchical show type (family "tv") scraped through Kodi's TV path.</summary>
+        public static bool IsShowLike(string? mediaTypeName) =>
+            string.Equals(Resolve(mediaTypeName), Tv, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Belongs to Kodi's video library at all (movie- or show-like).</summary>
+        public static bool IsVideoLibraryType(string? mediaTypeName) => IsMovieLike(mediaTypeName) || IsShowLike(mediaTypeName);
+
         /// <summary>Replaces the snapshot (used by <see cref="RefreshAsync"/> and by tests).</summary>
         public static void Load(IEnumerable<(string Name, string? Family)> types) =>
             _snapshot = types.GroupBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
