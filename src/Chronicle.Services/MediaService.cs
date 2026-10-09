@@ -82,6 +82,13 @@ namespace Chronicle.Services
                 .FirstOrDefaultAsync(m => m.Id == id, ct);
         }
 
+        /// <summary>Lower-cases a search term the way the database's own lower() will: every letter on PostgreSQL, only A-Z on SQLite.</summary>
+        internal static string FoldCase(string term, bool unicode) =>
+            unicode ? term.ToLowerInvariant() : string.Create(term.Length, term, (span, t) =>
+            {
+                for (var i = 0; i < t.Length; i++) span[i] = t[i] is >= 'A' and <= 'Z' ? (char)(t[i] + 32) : t[i];
+            });
+
         public async Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20, bool allLevels = false, CancellationToken ct = default)
         {
             var q = _context.MediaItems
@@ -115,32 +122,34 @@ namespace Chronicle.Services
             //   3  anywhere else in the title or an alias
             // then top-level items before seasons/albums before episodes/tracks, then A-Z.
             // LIKE folds ASCII case only (SQLite), so the exact tiers are ASCII-case-insensitive.
-            var term     = query.Trim();
+            // SQLite's LIKE ignores ASCII case by itself; PostgreSQL's does not. Comparing lower(name) to a lowered pattern
+            // gives both the same answer, folding exactly the characters each database's own lower() folds.
+            var term     = FoldCase(query.Trim(), _context.Database.IsNpgsql());
             var exact    = EscapeLike(term);
             var contains = $"%{exact}%";
             var prefix   = $"{exact}%";
             var wordStart = $"% {exact}%";
 
             q = q.Where(m =>
-                EF.Functions.Like(m.Name, contains, LikeEscape) ||
-                m.Aliases.Any(a => EF.Functions.Like(a.Alias, contains, LikeEscape)));
+                EF.Functions.Like(m.Name.ToLower(), contains, LikeEscape) ||
+                m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), contains, LikeEscape)));
 
             // Every exact match is always shown: when there are more of them than a page holds,
             // the first page grows to fit them all (per-user request, 2026-10-02: 11 exact
             // matches with room for 10 shows 11). Later pages continue right after it.
             var exactCount = await q.CountAsync(m =>
-                EF.Functions.Like(m.Name, exact, LikeEscape) ||
-                m.Aliases.Any(a => EF.Functions.Like(a.Alias, exact, LikeEscape)), ct);
+                EF.Functions.Like(m.Name.ToLower(), exact, LikeEscape) ||
+                m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), exact, LikeEscape)), ct);
             var firstPage = Math.Max(perPage, exactCount);
             var skip = page == 1 ? 0 : firstPage + (page - 2) * perPage;
             var take = page == 1 ? firstPage : perPage;
 
             return await q
                 .OrderBy(m =>
-                    EF.Functions.Like(m.Name, exact, LikeEscape) ||
-                    m.Aliases.Any(a => EF.Functions.Like(a.Alias, exact, LikeEscape)) ? 0
-                    : EF.Functions.Like(m.Name, prefix, LikeEscape) ? 1
-                    : EF.Functions.Like(m.Name, wordStart, LikeEscape) ? 2
+                    EF.Functions.Like(m.Name.ToLower(), exact, LikeEscape) ||
+                    m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), exact, LikeEscape)) ? 0
+                    : EF.Functions.Like(m.Name.ToLower(), prefix, LikeEscape) ? 1
+                    : EF.Functions.Like(m.Name.ToLower(), wordStart, LikeEscape) ? 2
                     : 3)
                 .ThenBy(m => m.HierarchyLevel)
                 .ThenBy(m => m.Name.ToLower())

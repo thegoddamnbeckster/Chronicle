@@ -49,8 +49,14 @@ var portConfig = PortManager.LoadConfig(AppContext.BaseDirectory);
 // Skip port conflict check when running under EF design-time tools (migrations, scaffolding)
 // or when running integration tests (WebApplicationFactory sets environment to "Testing").
 
+// The one-shot operator commands (database copy, password recovery, plugin trust) never listen on the port, so they
+// must not fail because Chronicle itself is running there.
+var isOperatorCommand = args.Any(a =>
+    string.Equals(a, DatabaseCopyCommand.Flag, StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(a, RecoveryCommand.Flag, StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(a, PluginCommand.Flag, StringComparison.OrdinalIgnoreCase));
 if (Environment.GetEnvironmentVariable("EF_DESIGN_TIME") != "1" &&
-    !builder.Environment.IsEnvironment("Testing"))
+    !builder.Environment.IsEnvironment("Testing") && !isOperatorCommand)
     PortManager.CheckPort(portConfig.Api);
 builder.WebHost.UseUrls($"http://0.0.0.0:{portConfig.Api}");
 // Injectable so KodiDeviceController can refuse to register a "device" at Chronicle's own
@@ -126,7 +132,8 @@ builder.Services.AddDbContext<ChronicleDbContext>((serviceProvider, options) =>
 {
     if (dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
     {
-        options.UseNpgsql(connectionString);
+        // PostgreSQL has its own migration set (column types differ from SQLite's), in its own assembly.
+        options.UseNpgsql(connectionString, o => o.MigrationsAssembly(Chronicle.Data.Postgres.PostgresDesignTimeFactory.MigrationsAssembly));
     }
     else
     {
@@ -461,6 +468,11 @@ if (!dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
             Path.GetFullPath(liveDbFile), message => app.Logger.LogWarning("DATABASE {Message}", message));
 }
 
+// Operator command: copy the SQLite database into an empty PostgreSQL database, then exit (see DatabaseCopyCommand).
+// Runs BEFORE the startup work below so that nothing writes to the database being copied from.
+if (DatabaseCopyCommand.ParseTarget(args) is { } copyTarget)
+    return await DatabaseCopyCommand.RunAsync(connectionString, copyTarget, DatabaseCopyCommand.WantsReplace(args), Console.Out);
+
 // ── Migrate on startup (skip for InMemory used in tests) ─────────────────────
 using (var scope = app.Services.CreateScope())
 {
@@ -471,8 +483,11 @@ using (var scope = app.Services.CreateScope())
         // multiple background tasks (enrichment, scan, library) can coexist without
         // hitting "database is locked". busy_timeout tells SQLite to retry writes
         // for up to 5 seconds before giving up rather than failing immediately.
-        db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
-        db.Database.ExecuteSqlRaw("PRAGMA busy_timeout=5000;");
+        if (db.Database.IsSqlite())
+        {
+            db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+            db.Database.ExecuteSqlRaw("PRAGMA busy_timeout=5000;");
+        }
         // EF9 acquires an exclusive SQLite lock even when there are no pending
         // migrations, which can hang on Windows. Only call Migrate() when needed.
         if (db.Database.GetPendingMigrations().Any())

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PostgreSQL's own migration set. EF migrations are provider-specific (column types, identity columns), so the SQLite
+    migrations in Chronicle.Data cannot be applied to PostgreSQL; this assembly holds the PostgreSQL equivalents.
+    Every model change needs a migration in BOTH places: run scripts/Add-Migration.ps1 <Name>.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Chronicle.Data\Chronicle.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.*">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.*" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Chronicle.Data.Postgres</AssemblyName>
+    <RootNamespace>Chronicle.Data.Postgres</RootNamespace>
+  </PropertyGroup>
+
+</Project>

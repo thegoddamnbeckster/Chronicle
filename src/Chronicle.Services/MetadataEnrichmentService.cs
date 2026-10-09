@@ -1022,17 +1022,18 @@ public class MetadataEnrichmentService(
 
         if (!string.IsNullOrEmpty(search))
         {
-            var pattern = $"%{search}%";
+            // Folded to lower case on both sides so PostgreSQL (whose LIKE is case-sensitive) behaves like SQLite.
+            var pattern = $"%{MediaService.FoldCase(search, db.Database.IsNpgsql())}%";
             joined = joined.Where(r =>
                 // Title
-                (r.m != null && EF.Functions.Like(r.m.Name, pattern)) ||
+                (r.m != null && EF.Functions.Like(r.m.Name.ToLower(), pattern)) ||
                 // MetadataJson blob — covers author, series, file paths stored by the scanner
                 (r.m != null && r.m.MetadataJson != null &&
-                 EF.Functions.Like(r.m.MetadataJson, pattern)) ||
+                 EF.Functions.Like(r.m.MetadataJson.ToLower(), pattern)) ||
                 // Stored external ID (e.g. "release-group:xxxx")
-                (r.x.ExternalId != null && EF.Functions.Like(r.x.ExternalId, pattern)) ||
+                (r.x.ExternalId != null && EF.Functions.Like(r.x.ExternalId.ToLower(), pattern)) ||
                 // Parent name (artist for music, show for TV)
-                (r.p != null && EF.Functions.Like(r.p.Name, pattern)));
+                (r.p != null && EF.Functions.Like(r.p.Name.ToLower(), pattern)));
         }
 
         // Counted from the plain (unjoined) MediaEnrichments query whenever possible -- `search`

@@ -1178,3 +1178,8 @@ file scanner and information sources from the catalog with an Install button eac
 it), and ends at the Scan page. The server needs internet access to GitHub for this. For an install without internet access, copy a
 plugin's folder (its DLL and `manifest.json`) into the `plugins/` folder and set the app setting `plugins.allow_unlisted` to `true`
 if it is not in the catalog.
+
+## PostgreSQL
+
+SQLite is the default. To move to PostgreSQL (very large libraries, or a server you already run), see `docs/POSTGRESQL.md`: it
+covers the copy command that moves an existing SQLite database across and the two settings that switch Chronicle over.
