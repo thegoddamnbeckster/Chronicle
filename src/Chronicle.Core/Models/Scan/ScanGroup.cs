@@ -50,6 +50,8 @@ namespace Chronicle.Core.Models.Scan
         /// <summary>For an automatic-detect scan: the media type this (root) group was sorted into.</summary>
         public int? MediaTypeId { get; set; }
         public string? MediaTypeName { get; set; }
+        /// <summary>The internal name of <see cref="MediaTypeName"/> (what per-type settings are keyed by).</summary>
+        public string? MediaTypeKey { get; set; }
 
         /// <summary>Supplemental files (subtitles, artwork, extras, booklets) found with this group. Only
         /// filled in when the caller asks the grouper to collect them; never importable items themselves.</summary>

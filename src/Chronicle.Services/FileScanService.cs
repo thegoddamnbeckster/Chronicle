@@ -2707,6 +2707,7 @@ namespace Chronicle.Services
                 {
                     group.MediaTypeId = type.Id;
                     group.MediaTypeName = type.DisplayName;
+                    group.MediaTypeKey = type.Name;
                     combined.Groups.Add(group);
                 }
                 combined.Ungrouped.AddRange(part.Ungrouped);

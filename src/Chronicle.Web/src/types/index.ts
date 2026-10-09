@@ -471,12 +471,15 @@ export interface MetadataSearchResult {
 export interface ScanFolder {
   id: number;
   path: string;
-  mediaTypeId: number;
+  /** Null when the folder sorts each file into its own media type. */
+  mediaTypeId: number | null;
   mediaTypeName: string;
   recursive: boolean;
   isEnabled: boolean;
   createdAt: string;
   lastScannedAt: string | null;
+  /** Null follows the global setting. */
+  bundleRelatedFiles?: boolean | null;
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────

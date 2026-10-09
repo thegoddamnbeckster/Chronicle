@@ -458,6 +458,7 @@ namespace Chronicle.Data
                 e.HasOne(f => f.MediaType)
                  .WithMany()
                  .HasForeignKey(f => f.MediaTypeId)
+                 .IsRequired(false)
                  .OnDelete(DeleteBehavior.Restrict);
             });
 

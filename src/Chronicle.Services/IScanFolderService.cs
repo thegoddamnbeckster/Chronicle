@@ -2,8 +2,10 @@ using Chronicle.Core.Models;
 
 namespace Chronicle.Services;
 
-public record CreateScanFolderRequest(string Path, int MediaTypeId, bool Recursive);
-public record UpdateScanFolderRequest(string Path, int MediaTypeId, bool Recursive, bool IsEnabled);
+/// <param name="MediaTypeId">The folder's media type, or null (or 0) to sort each file into its own type.</param>
+/// <param name="BundleRelatedFiles">Null follows the global setting.</param>
+public record CreateScanFolderRequest(string Path, int? MediaTypeId, bool Recursive, bool? BundleRelatedFiles = null);
+public record UpdateScanFolderRequest(string Path, int? MediaTypeId, bool Recursive, bool IsEnabled, bool? BundleRelatedFiles = null);
 public record PathValidationResult(bool Valid, string? Error);
 
 public interface IScanFolderService

@@ -120,16 +120,28 @@ public sealed class ScheduledScanService : IScheduledTask
 
             _importProgress.UpdateStatus($"Importing: {preview.Folder.Path}");
 
-            var importRequest = new ImportGroupsRequest(preview.PassingGroups, preview.Folder.MediaTypeId, preview.BundleRelatedFiles);
+            // A folder with its own media type is one import; a folder that sorts files automatically is one import per
+            // type its groups landed in. (A group never needs the folder's type when it carries its own.)
+            var requests = ImportGrouping.ByType(preview.PassingGroups, preview.Folder.MediaTypeId ?? 0, preview.BundleRelatedFiles);
 
             using var importScope = _scopeFactory.CreateScope();
             var fileScanSvc = importScope.ServiceProvider.GetRequiredService<IFileScanService>();
             var db          = importScope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-            var summary = await fileScanSvc.ImportGroupsAsync(
-                importRequest, noUserIds, ct,
-                progressOffset: offset,
-                manageProgress: false);
+            int imported = 0, failed = 0, duplicates = 0;
+            var failures = new List<string>();
+            var runningOffset = offset;
+            foreach (var importRequest in requests)
+            {
+                var part = await fileScanSvc.ImportGroupsAsync(
+                    importRequest, noUserIds, ct,
+                    progressOffset: runningOffset,
+                    manageProgress: false);
+                imported += part.Imported; failed += part.Failed; duplicates += part.Duplicates;
+                failures.AddRange(part.Failures);
+                runningOffset += importRequest.Groups.Sum(g => g.TotalFileCount);
+            }
+            var summary = new ImportApprovedSummary(imported, failed, failures, duplicates);
 
             totalImported   += summary.Imported;
             totalFailed     += summary.Failed;
@@ -163,10 +175,15 @@ public sealed class ScheduledScanService : IScheduledTask
             // VideoLibrary.Scan instead. Signals the pull-based flag each device's own poll
             // checks (see IKodiDeviceService.SignalNewContentAsync's own doc); cheap (one
             // upsert), so no need for a background Task.Run the way enrichment below gets.
-            if (summary.Imported > 0 && preview.Folder.MediaType is not null)
+            if (summary.Imported > 0)
             {
                 var kodiDevices = importScope.ServiceProvider.GetRequiredService<IKodiDeviceService>();
-                await kodiDevices.SignalNewContentAsync(preview.Folder.MediaType.Name, ct);
+                foreach (var typeId in requests.Select(r => r.MediaTypeId).Distinct())
+                {
+                    var typeName = await db.MediaTypes.AsNoTracking().Where(t => t.Id == typeId).Select(t => t.Name).FirstOrDefaultAsync(ct);
+                    if (typeName is not null)
+                        await kodiDevices.SignalNewContentAsync(typeName, ct);
+                }
             }
 
             // Fire-and-forget enrichment for newly imported items (non-blocking).
@@ -236,20 +253,29 @@ public sealed class ScheduledScanService : IScheduledTask
             using var scope     = _scopeFactory.CreateScope();
             var fileScanSvc     = scope.ServiceProvider.GetRequiredService<IFileScanService>();
 
+            // A folder with its own type has one threshold; a folder that sorts files automatically has the threshold of
+            // whichever type each group lands in.
+            bool detect = folder.MediaTypeId is null;
             var threshold = await fileScanSvc.GetConfidenceThresholdAsync(folder.MediaType?.Name ?? string.Empty, ct);
 
             _log.Information(
                 "ScheduledScanService: Previewing {Path} ({MediaType}, threshold={Threshold})",
                 folder.Path,
-                folder.MediaType?.DisplayName ?? "unknown type",
-                threshold);
+                detect ? "each file sorted into its own type" : folder.MediaType?.DisplayName ?? "unknown type",
+                detect ? "per type" : threshold);
 
-            var request     = new ScanPreviewRequest(folder.Path, folder.Recursive, folder.MediaTypeId);
+            var request     = new ScanPreviewRequest(folder.Path, folder.Recursive, folder.MediaTypeId ?? ScanPreviewRequest.AutoDetect);
             var scanResult  = await fileScanSvc.PreviewGroupedAsync(request, ct);
 
-            double thresholdFraction = threshold / 100.0;
+            var thresholds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (detect)
+                foreach (var key in scanResult.Groups.Select(g => g.MediaTypeKey).Where(k => k is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+                    thresholds[key!] = await fileScanSvc.GetConfidenceThresholdAsync(key!, ct);
+            double ThresholdFor(ScanGroup g) =>
+                (detect && g.MediaTypeKey is not null && thresholds.TryGetValue(g.MediaTypeKey, out var t) ? t : threshold) / 100.0;
+
             var passing = scanResult.Groups
-                .Where(g => g.ConfidenceScore >= thresholdFraction)
+                .Where(g => g.ConfidenceScore >= ThresholdFor(g))
                 .ToList();
 
             // Settings read once per folder: what to do with files that look like another media type, and
@@ -259,8 +285,9 @@ public sealed class ScheduledScanService : IScheduledTask
                 .Where(a => a.Key == MismatchActionKey || a.Key == BundleRelatedFilesKey)
                 .ToDictionaryAsync(a => a.Key, a => a.Value, ct);
             settings.TryGetValue(MismatchActionKey, out var mismatchAction);
-            bool bundle = settings.TryGetValue(BundleRelatedFilesKey, out var bundleText)
-                          && bool.TryParse(bundleText, out var b) && b;
+            bool bundle = folder.BundleRelatedFiles
+                          ?? (settings.TryGetValue(BundleRelatedFilesKey, out var bundleText)
+                              && bool.TryParse(bundleText, out var b) && b);
 
             var (importable, held) = HoldBackMismatches(passing, mismatchAction);
             passing = importable;
@@ -276,7 +303,7 @@ public sealed class ScheduledScanService : IScheduledTask
                         "/scan", dedupeKey: $"scan.review:{folder.Id}", ct: ct);
             }
             var below = scanResult.Groups
-                .Where(g => g.ConfidenceScore < thresholdFraction)
+                .Where(g => g.ConfidenceScore < ThresholdFor(g))
                 .ToList();
 
             if (below.Count > 0)
@@ -284,7 +311,7 @@ public sealed class ScheduledScanService : IScheduledTask
                 _log.Warning(
                     "ScheduledScanService: {Count} group(s) below threshold ({Threshold}%) in {Path} — " +
                     "these will NOT be auto-imported. Use the File Scan page to review and accept them manually.",
-                    below.Count, threshold, folder.Path);
+                    below.Count, detect ? "per type" : threshold, folder.Path);
 
                 foreach (var g in below.Take(20))
                     _log.Debug("  Skipped (confidence={Score:P0}): {Name}", g.ConfidenceScore, g.Name);

@@ -402,10 +402,7 @@ public class FileScanController : ControllerBase
         // An automatic-detect scan produces groups of several media types. Each type is imported on its own (the
         // import hierarchy depends on the type) but under one progress run. Groups without a type of their own use the
         // request's. A single-type import is exactly what it always was.
-        var byType = groups
-            .GroupBy(g => g.MediaTypeId ?? request.MediaTypeId)
-            .Select(g => new ImportGroupsRequest(g.ToList(), g.Key, request.BundleRelatedFiles))
-            .ToList();
+        var byType = ImportGrouping.ByType(groups, request.MediaTypeId, request.BundleRelatedFiles);
         var importRequest = byType.Count == 1 ? byType[0] : null;
 
         // Capture the service provider so the background task can create its own scope

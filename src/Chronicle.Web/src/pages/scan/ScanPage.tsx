@@ -12,13 +12,33 @@ import PathInput from '@/components/PathInput'
 import ScanGroupCard, { groupToPayload, relatedFileCount } from './ScanGroupCard'
 import styles from './ScanPage.module.css'
 
+/** Media type id meaning "decide the type of each file from the file itself". */
+const AUTO_DETECT = 0
+
 type Step = 'configure' | 'review' | 'done'
 
 // ── Saved Folders Panel ───────────────────────────────────────────────────────
 
+/** How a saved folder treats subtitles, artwork and extras: follow the global setting, or decide for this folder. */
+type BundleChoice = 'global' | 'always' | 'never'
+const bundleToApi = (c: BundleChoice): boolean | null => (c === 'global' ? null : c === 'always')
+const bundleFromApi = (b: boolean | null | undefined): BundleChoice => (b == null ? 'global' : b ? 'always' : 'never')
+
+function BundleSelect({ value, onChange, disabled }: { value: BundleChoice; onChange: (v: BundleChoice) => void; disabled?: boolean }) {
+  return (
+    <select aria-label="Related files" className={styles.select} value={value} disabled={disabled}
+      onChange={e => onChange(e.target.value as BundleChoice)}>
+      <option value="global">Related files: follow the global setting</option>
+      <option value="always">Related files: always remember them</option>
+      <option value="never">Related files: never remember them</option>
+    </select>
+  )
+}
+
 interface AddRowState {
   path: string
   mediaTypeId: number | ''
+  bundle: BundleChoice
   recursive: boolean
   pathError: string | null
   validating: boolean
@@ -27,6 +47,7 @@ interface AddRowState {
 interface EditRowState {
   path: string
   mediaTypeId: number | ''
+  bundle: BundleChoice
   recursive: boolean
   isEnabled: boolean
   pathError: string | null
@@ -34,13 +55,14 @@ interface EditRowState {
 }
 
 function emptyAddRow(): AddRowState {
-  return { path: '', mediaTypeId: '', recursive: true, pathError: null, validating: false }
+  return { path: '', mediaTypeId: '', bundle: 'global', recursive: true, pathError: null, validating: false }
 }
 
 function folderToEditRow(f: ScanFolder): EditRowState {
   return {
     path: f.path,
-    mediaTypeId: f.mediaTypeId,
+    mediaTypeId: f.mediaTypeId ?? AUTO_DETECT,
+    bundle: bundleFromApi(f.bundleRelatedFiles),
     recursive: f.recursive,
     isEnabled: f.isEnabled,
     pathError: null,
@@ -112,6 +134,7 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
       path: addRow.path.trim(),
       mediaTypeId: Number(addRow.mediaTypeId),
       recursive: addRow.recursive,
+      bundleRelatedFiles: bundleToApi(addRow.bundle),
     })
   }
 
@@ -152,6 +175,7 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
         mediaTypeId: Number(editRow.mediaTypeId),
         recursive: editRow.recursive,
         isEnabled: editRow.isEnabled,
+        bundleRelatedFiles: bundleToApi(editRow.bundle),
       },
     })
   }
@@ -163,9 +187,10 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
       id: folder.id,
       payload: {
         path: folder.path,
-        mediaTypeId: folder.mediaTypeId,
+        mediaTypeId: folder.mediaTypeId ?? AUTO_DETECT,
         recursive: folder.recursive,
         isEnabled: !folder.isEnabled,
+        bundleRelatedFiles: folder.bundleRelatedFiles ?? null,
       },
     })
   }
@@ -217,10 +242,13 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
                       disabled={updateMut.isPending}
                     >
                       <option value="">— select type —</option>
+                      <option value={AUTO_DETECT}>Detect automatically</option>
                       {supportedTypes.map(t => (
                         <option key={t.id} value={t.id}>{t.displayName}</option>
                       ))}
                     </select>
+                    <BundleSelect value={editRow.bundle} disabled={updateMut.isPending}
+                      onChange={bundle => setEditRow(prev => prev ? { ...prev, bundle } : prev)} />
                     <label className={styles.checkLabel}>
                       <input
                         type="checkbox"
@@ -338,10 +366,13 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
                   disabled={createMut.isPending}
                 >
                   <option value="">— select type —</option>
+                  <option value={AUTO_DETECT}>Detect automatically</option>
                   {supportedTypes.map(t => (
                     <option key={t.id} value={t.id}>{t.displayName}</option>
                   ))}
                 </select>
+                <BundleSelect value={addRow.bundle} disabled={createMut.isPending}
+                  onChange={bundle => setAddRow(prev => ({ ...prev, bundle }))} />
                 <label className={styles.checkLabel}>
                   <input
                     type="checkbox"
@@ -387,9 +418,6 @@ function SavedFoldersPanel({ open, onToggle, onScanNow, supportedTypes }: SavedF
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-
-/** Media type id meaning "decide the type of each file from the file itself". */
-const AUTO_DETECT = 0
 
 export default function ScanPage() {
   // ── Configuration state ──────────────────────────────────────────────────
@@ -568,7 +596,7 @@ export default function ScanPage() {
   // ── "Scan Now" from saved folder ─────────────────────────────────────────
   function handleScanNow(folder: ScanFolder) {
     setPath(folder.path)
-    setMediaTypeId(folder.mediaTypeId)
+    setMediaTypeId(folder.mediaTypeId ?? AUTO_DETECT)
     setRecursive(folder.recursive)
     // Re-open configure step if in done/review state
     reset()

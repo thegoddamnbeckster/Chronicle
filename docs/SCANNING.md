@@ -14,7 +14,7 @@ grouping step already set them aside; it now also *remembers* them.
   show's poster to the show). A loose file in the scan root is matched to the loose media file with the same name
   (`Heat.en.srt` -> `Heat.mkv`). Anything unmatched is left alone.
 * **Storing them is opt-in.** The scan page shows "+N related files" per group and a checkbox, "Remember subtitles,
-  artwork and extras with each item" (off by default). The nightly scan follows `scan.bundle_related_files`
+  artwork and extras with each item" (off by default). The nightly scan follows the folder's own choice (Related files: follow the global setting / always / never) and, by default, `scan.bundle_related_files`
   (`true`/`false`, default `false`). Stored in `media_item_related_files` (item, path, kind, size, first seen).
 * **Nothing is ever deleted by a scan.** A file that is no longer found gets `MissingSince`; it is cleared if the file
   returns. Deleting an item deletes its rows.
@@ -126,4 +126,7 @@ kind, each labelled with its type, and importing creates every group as its own 
 * Each type's files are grouped the way that type is normally grouped (episodes into shows and seasons, tracks into
   albums), including the download-name and anime-numbering rules above.
 * The wrong-type warning is not shown in this mode (there is no single chosen type to be wrong about).
-* **Not available for saved scan folders / the nightly scan yet**: a saved folder still has one type.
+* **Saved folders and the nightly scan.** A saved folder can also be set to "Detect automatically" (a folder with no media
+  type of its own). The nightly scan then sorts its files the same way, holds each group to the confidence threshold of the
+  type it landed in, imports one type at a time, and tells Kodi about every type that got new items. A folder with a chosen
+  type is scanned exactly as before.

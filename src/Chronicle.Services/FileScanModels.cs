@@ -137,6 +137,19 @@ namespace Chronicle.Services
         int MediaTypeId,
         bool BundleRelatedFiles = false);
 
+    public static class ImportGrouping
+    {
+        /// <summary>
+        /// Splits groups into one import request per media type: a group carries its own type when the scan sorted files
+        /// automatically, otherwise it takes <paramref name="defaultMediaTypeId"/>. A scan of a single type is therefore one
+        /// request, exactly as before.
+        /// </summary>
+        public static List<ImportGroupsRequest> ByType(IEnumerable<ScanGroupImport> groups, int defaultMediaTypeId, bool bundleRelatedFiles) =>
+            groups.GroupBy(g => g.MediaTypeId ?? defaultMediaTypeId)
+                .Select(g => new ImportGroupsRequest(g.ToList(), g.Key, bundleRelatedFiles))
+                .ToList();
+    }
+
     public record ScanGroupImport(
         string Name,
         int? Year,

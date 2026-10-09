@@ -192,8 +192,11 @@ export async function addFromSearch(
 
 export interface CreateScanFolderPayload {
   path: string;
+  /** 0 = sort each file into its own media type. */
   mediaTypeId: number;
   recursive: boolean;
+  /** Null follows the global setting. */
+  bundleRelatedFiles?: boolean | null;
 }
 
 export interface UpdateScanFolderPayload {
@@ -201,6 +204,7 @@ export interface UpdateScanFolderPayload {
   mediaTypeId: number;
   recursive: boolean;
   isEnabled: boolean;
+  bundleRelatedFiles?: boolean | null;
 }
 
 export interface PathValidationResult {
