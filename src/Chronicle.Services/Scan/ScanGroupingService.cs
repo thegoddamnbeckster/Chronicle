@@ -13,41 +13,19 @@ namespace Chronicle.Services.Scan
         private static readonly Regex _yearPresentRe = new(@"\(\d{4}\)",                    RegexOptions.Compiled);
         private static readonly Regex _seasonNumRe   = new(@"(?:Season|S)\s*0*(\d+)",        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        // Extensions that are metadata/sidecar — never become MediaItems themselves
-        private static readonly HashSet<string> _sidecarExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".jpg", ".jpeg", ".png", ".webp", ".bmp",
-            ".tbn", ".txt", ".xml", ".srt", ".sub", ".idx", ".ass",
-            ".cue", ".log",
-        };
-
-        // Folder names whose entire contents are treated as sidecar/supplemental material.
-        // Any file inside one of these folders is excluded from grouping (same as a sidecar file),
-        // regardless of its extension (e.g. theme-music .mp3, .actors images, extras .mkv, etc.).
-        private static readonly HashSet<string> _sidecarFolderNames = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "theme-music", "theme music", ".theme",
-            ".actors",
-            "extrafanart", "extrathumbs",
-            "behind the scenes", "behindthescenes",
-            "deleted scenes", "deletedscenes",
-            "featurettes",
-            "interviews",
-            "scenes",
-            "shorts",
-            "trailers",
-            "extras",
-        };
-
         private readonly FolderSignalExtractor _folder;
         private readonly TagSignalExtractor _tags;
 
+        private readonly Chronicle.Services.Security.ICachedAppSettings? _settings;
+
         public ScanGroupingService(
             FolderSignalExtractor folder,
-            TagSignalExtractor tags)
+            TagSignalExtractor tags,
+            Chronicle.Services.Security.ICachedAppSettings? settings = null)
         {
-            _folder = folder;
-            _tags   = tags;
+            _folder   = folder;
+            _tags     = tags;
+            _settings = settings;
         }
 
         /// <summary>
@@ -64,9 +42,13 @@ namespace Chronicle.Services.Scan
             TagSignal? Tag);
 
         public ScanGroupResult Group(
-            IEnumerable<string> filePaths, string scanRoot, int hierarchyLevels)
+            IEnumerable<string> filePaths, string scanRoot, int hierarchyLevels, ScanGroupOptions? options = null)
         {
             var result = new ScanGroupResult();
+            // Which extensions / folder names count as supplemental: app_settings, falling back to the defaults.
+            var rules = SidecarRules.From(_settings?.Snapshot);
+            var mediaRules = MediaFileRules.From(_settings?.Snapshot);   // built-in media extensions plus the administrator's own
+            var related = new List<string>();
             // root key → ScanGroup
             var rootGroups = new Dictionary<string, ScanGroup>(StringComparer.OrdinalIgnoreCase);
 
@@ -80,12 +62,12 @@ namespace Chronicle.Services.Scan
             {
                 var path = pathList[i];
                 var ext = Path.GetExtension(path);
-                bool isSidecar = _sidecarExtensions.Contains(ext);
+                bool isSidecar = rules.Extensions.Contains(ext);
 
                 // Treat any file inside a known supplemental folder as a sidecar,
                 // regardless of its extension (e.g. theme-music/*.mp3, .actors/*.jpg).
-                var folderSignal = _folder.Extract(path, scanRoot);
-                if (!isSidecar && folderSignal.FolderNames.Any(f => _sidecarFolderNames.Contains(f)))
+                var folderSignal = _folder.Extract(path, scanRoot, mediaRules.Audio);
+                if (!isSidecar && folderSignal.FolderNames.Any(f => rules.Folders.Contains(f)))
                     isSidecar = true;
 
                 // Anything that's neither a recognized sidecar NOR a recognized playable media
@@ -94,7 +76,7 @@ namespace Chronicle.Services.Scan
                 // to "not a sidecar, so it must be media" (confirmed bug 2026-08-29: a stray
                 // ".metathumb" file sitting next to a real .mp4 got imported as the movie's own
                 // file, and picked ahead of the real file whenever paths were sorted/read back).
-                bool isJunk = !isSidecar && !MediaFileExtensions.Recognized.Contains(ext);
+                bool isJunk = !isSidecar && !mediaRules.Recognized.Contains(ext);
 
                 // Skip expensive tag extraction for files we've already classified as
                 // sidecars or junk.
@@ -104,6 +86,8 @@ namespace Chronicle.Services.Scan
 
                 signals[i] = new PerFileSignals(isJunk, isSidecar, folderSignal, tagSignal);
             });
+
+            DistrustLoneDiscTrackNames(pathList, signals);
 
             // Sequential pass: build the group tree in original file order using the
             // precomputed signals -- identical logic/output to before, just no longer doing
@@ -117,6 +101,9 @@ namespace Chronicle.Services.Scan
                 if (sig.IsJunk)
                     continue;
 
+                if (sig.IsSidecar && options?.CollectRelatedFiles == true)
+                    related.Add(path);
+
                 bool isSidecar = sig.IsSidecar;
                 var folderSignal = sig.Folder;
                 var tagSignal = sig.Tag;
@@ -127,6 +114,13 @@ namespace Chronicle.Services.Scan
                 {
                     var groupName = folderSignal.FolderNames.LastOrDefault()
                         ?? Path.GetFileNameWithoutExtension(path);
+
+                    // A download-style name ("Movie.Name.2019.1080p.BluRay.x264-GRP") becomes "Movie Name (2019)".
+                    // Tidy names such as "Heat (1995)" carry no quality words and are left exactly as they are.
+                    var release = ReleaseNameParser.Parse(groupName);
+                    bool derivedName = release.LooksLikeRelease && release.Title is not null;
+                    if (derivedName)
+                        groupName = release.Year is { } releaseYear ? $"{release.Title} ({releaseYear})" : release.Title!;
                     var key = Normalize(groupName);
 
                     if (!rootGroups.TryGetValue(key, out var group))
@@ -145,8 +139,12 @@ namespace Chronicle.Services.Scan
                         {
                             GroupKey        = key,
                             Name            = groupName,
+                            // The year in "Title (Year)". Without it the importer cannot tell "The Exorcist (1973)" from
+                            // "The Exorcist (2023)" and the second scan overwrites the first one's file path.
+                            Year            = FolderNameYear.Split(groupName).Year,
                             HierarchyLevel  = 0,
-                            ConfidenceScore = ComputeFlatConfidence(groupName),
+                            // A name worked out from a release string is less certain than a tidy folder name.
+                            ConfidenceScore = derivedName ? Math.Min(0.7, ComputeFlatConfidence(groupName)) : ComputeFlatConfidence(groupName),
                             SignalSources   = BuildSources(folderSignal, null, 0),
                             FolderPath      = folderPath,
                         };
@@ -163,7 +161,11 @@ namespace Chronicle.Services.Scan
                 // Hierarchical types: build Artist → Album → Track tree from folder depth
                 if (folderSignal.FolderNames.Count == 0)
                 {
-                    // File is directly in the scan root with no folder grouping
+                    // File is directly in the scan root with no folder grouping. A TV-style episode name
+                    // ("Show.Name.S02E03...") still tells us the show, season and episode.
+                    if (!isSidecar && hierarchyLevels >= 3 && !mediaRules.Audio.Contains(Path.GetExtension(path))
+                        && TryAddEpisodeFromFileName(rootGroups, result, path, scanRoot, folderSignal, tagSignal))
+                        continue;
                     if (!isSidecar)
                         result.Ungrouped.Add(path);
                     continue;
@@ -288,6 +290,13 @@ namespace Chronicle.Services.Scan
                                 Files           = [path],
                             });
                         }
+                        else if (hierarchyLevels >= 3 && !mediaRules.Audio.Contains(Path.GetExtension(path))
+                                 && ReleaseNameParser.Parse(folderSignal.FileName) is { HasEpisodeNumbering: true } named)
+                        {
+                            // No S01E02 code, but the name still numbers the episode: a running number ("Show - 112",
+                            // anime style) or an air date. The show is the folder the file sits in.
+                            AttachNamedEpisode(rootGroup, level0Key, folderSignal.FolderNames[0], named, path, scanRoot, folderSignal, tagSignal);
+                        }
                         // else: 3-level type (TV/music), file is directly in the root folder with no
                         // episode/track pattern detected — treat as supplemental and skip.
                         // This prevents theme.mp3, stray images, etc. from becoming spurious Season nodes.
@@ -362,10 +371,143 @@ namespace Chronicle.Services.Scan
             // Remove root groups that ended up with no files at all (sidecar-only folders)
             result.Groups.RemoveAll(g => g.TotalFileCount == 0);
 
+            if (related.Count > 0)
+                RelatedFileAttacher.Attach(result.Groups, related);
+
+            if (options?.ScannedType is { } scanned && options.MismatchCandidates is { Count: > 0 } candidates)
+                MediaTypeMismatchDetector.Annotate(result.Groups, scanned, candidates);
+
             return result;
         }
 
         // ── Helpers ──────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// For an episode sitting loose in the scan root: reads the show and the episode out of its file name and files it
+        /// under a show group built from that name. Returns false when the name does not place the file in a series, so the
+        /// caller leaves it ungrouped as before. The show group is capped below the automatic-import threshold: there is
+        /// no folder to confirm the name, so a person should look at it first.
+        /// </summary>
+        private static bool TryAddEpisodeFromFileName(
+            Dictionary<string, ScanGroup> rootGroups, ScanGroupResult result, string path, string scanRoot,
+            FolderSignal folderSignal, TagSignal? tagSignal)
+        {
+            var info = ReleaseNameParser.Parse(folderSignal.FileName);
+            if (!info.HasEpisodeNumbering) return false;
+
+            var showKey = Normalize(info.Title!);
+            if (!rootGroups.TryGetValue(showKey, out var show))
+            {
+                show = new ScanGroup
+                {
+                    GroupKey        = showKey,
+                    Name            = info.Title!,
+                    Year            = info.Year,
+                    HierarchyLevel  = 0,
+                    ConfidenceScore = 0.6,
+                    ConfidenceCap   = 0.7,
+                    SignalSources   = ["filename"],
+                };
+                rootGroups[showKey] = show;
+                result.Groups.Add(show);
+            }
+            else
+            {
+                // The show also has a real folder: keep it, and take the year if it lacked one.
+                show.Year ??= info.Year;
+            }
+
+            AttachNamedEpisode(show, showKey, info.Title!, info, path, scanRoot, folderSignal, tagSignal);
+            return true;
+        }
+
+        /// <summary>
+        /// Files an episode whose name carries its own numbering (S02E03, a running number, or an air date) under a show
+        /// group, creating the season group it belongs to. Seasons: the number in the name; "season 1" for a running number
+        /// (anime-style numbering that continues across seasons: the number is kept as the episode number); the year for a
+        /// daily show named by date (the date is the episode name).
+        /// </summary>
+        private static void AttachNamedEpisode(
+            ScanGroup show, string showKey, string showFolderName, ReleaseNameInfo info, string path, string scanRoot,
+            FolderSignal folderSignal, TagSignal? tagSignal)
+        {
+            int seasonNum;
+            int? number;
+            string episodeName;
+            string source = "filename";
+            if (info.Season is not null && info.Episode is not null)
+            {
+                seasonNum = info.Season.Value;
+                number = info.Episode;
+                episodeName = info.EpisodeTitle ?? $"Episode {info.Episode}";
+            }
+            else if (info.AbsoluteEpisode is not null)
+            {
+                seasonNum = 1;
+                number = info.AbsoluteEpisode;
+                episodeName = info.EpisodeTitle ?? $"Episode {info.AbsoluteEpisode}";
+                source = "absolute-number";
+            }
+            else
+            {
+                seasonNum = info.AirDate!.Value.Year;
+                number = null;
+                episodeName = info.AirDate!.Value.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                source = "air-date";
+            }
+
+            var seasonName = seasonNum == 0 ? "Specials" : $"Season {seasonNum}";
+            var seasonKey  = Normalize(showKey + "/" + seasonName);
+            var season = show.Children.FirstOrDefault(c => c.GroupKey == seasonKey);
+            if (season is null)
+            {
+                season = new ScanGroup
+                {
+                    GroupKey        = seasonKey,
+                    Name            = seasonName,
+                    Number          = seasonNum,
+                    HierarchyLevel  = 1,
+                    ConfidenceScore = 0.85,
+                    SignalSources   = ["filename"],
+                    // Unique, show-scoped path used only as a matching key (the main loop does the same for a season it invents).
+                    FolderPath      = Path.Combine(scanRoot, showFolderName, seasonName),
+                };
+                show.Children.Add(season);
+            }
+
+            season.Children.Add(new ScanGroup
+            {
+                GroupKey        = Normalize(seasonKey + "/" + episodeName + "/" + (number?.ToString() ?? "")),
+                Name            = episodeName,
+                Number          = number,
+                HierarchyLevel  = 2,
+                ConfidenceScore = source == "filename" ? ComputeLeafConfidence(folderSignal, tagSignal) : 0.7,
+                SignalSources   = [source],
+                Files           = [path],
+            });
+        }
+
+        /// <summary>"1-02 Title" names mean disc 1, track 2 only when the folder's other tracks are named that way
+        /// too. A lone one ("7-11 Store.mp3") goes back to the plain reading: no disc, the file name left as it is.</summary>
+        private static void DistrustLoneDiscTrackNames(IReadOnlyList<string> paths, PerFileSignals[] signals)
+        {
+            var perFolder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < paths.Count; i++)
+            {
+                if (!signals[i].Folder.DiscFromFileName) continue;
+                var dir = Path.GetDirectoryName(paths[i]) ?? "";
+                perFolder[dir] = perFolder.GetValueOrDefault(dir) + 1;
+            }
+            for (int i = 0; i < paths.Count; i++)
+            {
+                var f = signals[i].Folder;
+                if (!f.DiscFromFileName || perFolder[Path.GetDirectoryName(paths[i]) ?? ""] >= 2) continue;
+                f.DetectedDiscNumber = null;
+                f.DiscFromFileName = false;
+                f.DetectedTrackNumber = f.PlainTrackNumber;
+                f.TrackTitle = null;
+            }
+        }
 
         private static string Normalize(string s) =>
             s.Trim().ToLowerInvariant();
@@ -375,14 +517,21 @@ namespace Chronicle.Services.Scan
         {
             // Tag: prefer AlbumArtist over Artist for level-0 when music
             if (tag?.AlbumArtist is not null) return tag.AlbumArtist;
-            return folder.FolderNames[0];
+
+            // A release-named top folder ("Show.Name.S02.1080p.BluRay.x264-GRP") is cleaned to the show name; ordinary
+            // folder names are used as they are.
+            var top = folder.FolderNames[0];
+            var release = ReleaseNameParser.Parse(top);
+            if (release.LooksLikeRelease && release.Title is not null)
+                return release.Year is { } y ? $"{release.Title} ({y})" : release.Title;
+            return top;
         }
 
         private static string ResolveLeafName(
             FolderSignal folder, TagSignal? tag)
         {
             if (tag?.Title is not null) return tag.Title;
-            return folder.FileName;
+            return folder.TrackTitle ?? folder.FileName;
         }
 
         /// <summary>
@@ -501,6 +650,7 @@ namespace Chronicle.Services.Scan
             if (group.Children.Count == 0) return;
             foreach (var child in group.Children) RollUpConfidence(child);
             group.ConfidenceScore = group.Children.Average(c => c.ConfidenceScore);
+            if (group.ConfidenceCap is { } cap) group.ConfidenceScore = Math.Min(group.ConfidenceScore, cap);
         }
 
         /// <summary>

@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "description": "Chronicle's plugin catalog. Each entry names a GitHub repository; its latest release (a .zip) and manifest.json supply everything else. Chronicle reads this file from https://raw.githubusercontent.com/thegoddamnbeckster/Chronicle/main/plugins.json (app setting plugins.catalog_url). Only plugins listed here can be installed. See docs/PLUGIN_DEVELOPMENT_GUIDE.md.",
+  "plugins": [
+    {
+      "plugin_id": "chronicle.plugin.tmdb",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.TMDB",
+      "tags": [
+        "movies",
+        "tv",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.musicbrainz",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.MusicBrainz",
+      "tags": [
+        "music",
+        "audio",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.filescanner",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.FileScanner",
+      "tags": [
+        "movies",
+        "tv",
+        "audio",
+        "filescanner",
+        "local"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.wikipedia",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Wikipedia",
+      "tags": [
+        "movies",
+        "tv",
+        "music",
+        "books",
+        "games",
+        "people",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.moviesremastered",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered",
+      "tags": [
+        "movies",
+        "fanedits",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.trakt",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Trakt",
+      "tags": [
+        "movies",
+        "tv",
+        "scrobbling",
+        "sync"
+      ]
+    },
+    {
+      "plugin_id": "hardcover",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Hardcover",
+      "tags": [
+        "books",
+        "audiobooks",
+        "metadata",
+        "sync"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.thetvdb",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.TheTVDB",
+      "tags": [
+        "tv",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.tvmaze",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.TVMaze",
+      "tags": [
+        "tv",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.fanedit",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.FanEdit",
+      "tags": [
+        "movies",
+        "fanedits",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.anilist",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.AniList",
+      "tags": [
+        "anime",
+        "anime_movies",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.simkl",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Simkl",
+      "tags": [
+        "movies",
+        "tv",
+        "anime",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.imdb",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.IMDb",
+      "tags": [
+        "movies",
+        "tv",
+        "anime",
+        "music_videos",
+        "games",
+        "people",
+        "metadata",
+        "ratings"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.fanarttv",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.FanartTV",
+      "tags": [
+        "movies",
+        "tv",
+        "music",
+        "artwork",
+        "metadata"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.lastfm",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.LastFM",
+      "tags": [
+        "music",
+        "metadata",
+        "sync"
+      ]
+    },
+    {
+      "plugin_id": "chronicle.plugin.themes.default",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Themes.Default",
+      "tags": [
+        "themes",
+        "ui"
+      ]
+    }
+  ]
+}

@@ -14,6 +14,17 @@ namespace Chronicle.Services.Scan
         public int? DetectedEpisode { get; set; }
         public int? DetectedTrackNumber { get; set; }
         public int? DetectedDiscNumber { get; set; }
+        /// <summary>For an audio file named like "01 - Title": the title without the number. Null when the name is
+        /// not of that kind (or the file is not audio), in which case <see cref="FileName"/> is the name.</summary>
+        public string? TrackTitle { get; set; }
+
+        /// <summary>True when the disc number came from a "1-02 Title" style file name rather than a "CD1" folder.
+        /// That reading is only trusted when the folder's other tracks are named the same way (see
+        /// <see cref="ScanGroupingService"/>); otherwise "7-11 Store" would become disc 7, track 11.</summary>
+        public bool DiscFromFileName { get; set; }
+
+        /// <summary>The track number as the plain leading-number rule read it, before any disc-track reading.</summary>
+        public int? PlainTrackNumber { get; set; }
     }
 
     public class FolderSignalExtractor
@@ -34,7 +45,7 @@ namespace Chronicle.Services.Scan
         private static readonly Regex _discRegex =
             new(@"(?:[Dd]isc|CD)\s*(\d)", RegexOptions.Compiled);
 
-        public FolderSignal Extract(string filePath, string scanRoot)
+        public FolderSignal Extract(string filePath, string scanRoot, IReadOnlySet<string>? audioExtensions = null)
         {
             var signal = new FolderSignal();
 
@@ -82,6 +93,25 @@ namespace Chronicle.Services.Scan
             var tm = _trackRegex.Match(signal.FileName);
             if (tm.Success && DigitParsingHelper.TryParseDigits(tm.Groups[1].Value, out var track))
                 signal.DetectedTrackNumber = track;
+            signal.PlainTrackNumber = signal.DetectedTrackNumber;
+
+            // Music: read disc/track/title out of the file name ("1-02 Title", "Track 05 - Title"). Audio only, so a
+            // TV episode called "01 - Pilot" keeps its name.
+            if ((audioExtensions ?? TrackFileName.AudioExtensions).Contains(Path.GetExtension(parts[^1])) && signal.DetectedEpisode is null)
+            {
+                var name = TrackFileName.Parse(signal.FileName);
+                if (name.Track is not null)
+                {
+                    signal.DetectedTrackNumber = name.Track;
+                    if (name.Disc is not null && signal.DetectedDiscNumber is null)
+                    {
+                        signal.DetectedDiscNumber = name.Disc;
+                        signal.DiscFromFileName = true;
+                    }
+                    if (!string.Equals(name.Title, signal.FileName, StringComparison.Ordinal) && name.Title.Length > 0)
+                        signal.TrackTitle = name.Title;
+                }
+            }
 
             return signal;
         }

@@ -6,6 +6,9 @@
 # `CHRONICLE_PORT=9000 docker compose up -d` -- the container always listens on 7979
 # internally (Chronicle's own default port; see PortManager.cs), only the published host port
 # changes. Bare `docker compose up -d` uses 7979 on the host too.
+#
+# Behind a reverse proxy, also set CHRONICLE_TRUSTED_PROXIES in .env (see the comment next to
+# Security__TrustedProxies below). Nothing about your network is baked into this file.
 services:
 
   api:
@@ -21,11 +24,18 @@ services:
       # (which replaces everything else under /app) never touches it.
       ConnectionStrings__DefaultConnection: Data Source=/app/data/chronicle.db
       ASPNETCORE_ENVIRONMENT: Production
+      # Which sources may supply X-Forwarded-For/Proto/Host: your reverse proxy. Comma-separated
+      # addresses or CIDR ranges, taken from CHRONICLE_TRUSTED_PROXIES in .env so this file stays
+      # the same on every install. Empty/unset = ANY client may claim an address, which lets it
+      # fake its IP in the audit log and sidestep per-address login throttling (Chronicle logs a
+      # warning at startup). Find the right value for your setup in docs/DEPLOYMENT.md,
+      # "Telling Chronicle which proxy to trust".
+      Security__TrustedProxies: ${CHRONICLE_TRUSTED_PROXIES:-}
     volumes:
       # /app/keys holds the Data Protection key ring (encrypts every plugin's stored
-      # credentials) AND the auto-generated JWT signing secret (see Program.cs) -- without
-      # this volume, both silently reset on every image rebuild/recreate, logging every user
-      # out and breaking every configured plugin's saved settings at once.
+      # credentials) -- without this volume it silently resets on every image rebuild/recreate,
+      # breaking every configured plugin's saved settings. (Login sessions live in memory only,
+      # so a container restart signs everyone out by design.)
       - chronicle_keys:/app/keys
       - chronicle_data:/app/data
       - chronicle_plugins:/app/plugins

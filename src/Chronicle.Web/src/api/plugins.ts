@@ -1,4 +1,4 @@
-import client from './client'
+import client, { BACKGROUND_REQUEST } from './client'
 
 export interface PluginDto {
   id: number
@@ -19,6 +19,13 @@ export interface PluginDto {
   /** Newer version found by the last scheduled update check. Null when up to date. */
   latestVersionAvailable: string | null
   updateCheckedAt: string | null
+  /** Short form of the hash of the plugin's files. */
+  filesHash?: string | null
+  /** The hash before the last change, so a replaced file set is visible. */
+  previousFilesHash?: string | null
+  filesChangedAt?: string | null
+  /** Set when the plugin was NOT loaded because its files changed without Chronicle being told. */
+  integrityBlockedAt?: string | null
 }
 
 export async function listPlugins(): Promise<PluginDto[]> {
@@ -116,15 +123,45 @@ export interface PluginCatalogEntry {
   tags: string[]
   isInstalled: boolean
   version: string
+  /** Media types the plugin handles; absent means unknown. */
+  supportedMediaTypes?: string[] | null
 }
 
-export async function listCatalog(): Promise<PluginCatalogEntry[]> {
-  const res = await client.get<{ data: PluginCatalogEntry[] }>('/plugins/catalog')
+export interface CatalogSource {
+  /** Where the list was read from: an address, "last successful copy of ...", or "built-in". */
+  source: string
+  /** True when the hosted file could not be read and an older copy or the built-in list is in use. */
+  usingFallback: boolean
+  fetchedAtUtc: string
+  error: string | null
+  pluginCount: number
+}
+
+export async function getCatalogSource(): Promise<CatalogSource> {
+  const res = await client.get<{ data: CatalogSource }>('/plugins/catalog/source')
+  return res.data.data
+}
+
+/** Reads the hosted catalog file again now. */
+export async function refreshCatalogSource(): Promise<CatalogSource> {
+  const res = await client.post<{ data: CatalogSource }>('/plugins/catalog/refresh')
+  return res.data.data
+}
+
+/** The plugin catalog, optionally only the plugins that handle one media type (by its internal name). */
+export async function listCatalog(mediaType?: string): Promise<PluginCatalogEntry[]> {
+  const res = await client.get<{ data: PluginCatalogEntry[] }>('/plugins/catalog', { params: mediaType ? { mediaType } : undefined })
   return res.data.data
 }
 
 export async function installFromCatalog(pluginId: string): Promise<PluginDto> {
   const res = await client.post<{ data: PluginDto }>(`/plugins/catalog/${pluginId}/install`)
+  return res.data.data
+}
+
+/** Approves the plugin's files as they are on disk now (and loads the plugin if it was blocked). */
+export async function acceptPluginFiles(pluginId: string): Promise<PluginDto> {
+  const res = await client.post<{ data: PluginDto }>(`/plugins/${pluginId}/accept-files`)
   return res.data.data
 }
 
@@ -141,7 +178,7 @@ export interface PluginAuthFailure {
 }
 
 export async function getAuthFailures(): Promise<PluginAuthFailure[]> {
-  const res = await client.get<{ data: PluginAuthFailure[] }>('/plugins/auth-failures')
+  const res = await client.get<{ data: PluginAuthFailure[] }>('/plugins/auth-failures', BACKGROUND_REQUEST)
   return res.data.data
 }
 

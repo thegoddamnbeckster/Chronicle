@@ -403,4 +403,84 @@ public class MergeServiceIntegrationTests : IClassFixture<ChronicleApiFactory>
             .Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*different*");
     }
+
+    // Reported live (2026-10-09): "Teenage Mutant Ninja Turtles (Animated) Collection" existed twice -- the real
+    // TMDB collection container (collection:1156855, with two member films) and a childless stub that Simkl and
+    // Wikipedia had matched as if the collection were a movie. Merging them failed with a generic "Merge failed".
+    private (int ContainerId, int StubId, int[] ChildIds) SeedCollectionAndStub()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var movies = db.MediaTypes.First(t => t.Name == "movies");
+        MediaItem Item(string name, int level = 0, int? parent = null, int? year = null) => db.MediaItems.Add(new MediaItem
+        {
+            MediaTypeId = movies.Id, Name = name, NormalizedName = MediaItemNormalizer.NormalizeName(name), HierarchyLevel = level,
+            ParentId = parent, Year = year, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        }).Entity;
+
+        var container = Item("Teenage Mutant Ninja Turtles (Animated) Collection");
+        var stub = Item("Teenage Mutant Ninja Turtles (Animated) Collection", year: 2014);
+        db.SaveChanges();
+        var one = Item("Teenage Mutant Ninja Turtles: Mutant Mayhem", 1, container.Id, 2023);
+        var two = Item("Rise of the Teenage Mutant Ninja Turtles: The Movie", 1, container.Id, 2022);
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = container.Id, Source = "tmdb", ExternalId = "collection:1156855" });
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = stub.Id, Source = "simkl", ExternalId = "simkl:movie:191258" });
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = stub.Id, Source = "wikipedia", ExternalId = "wikipedia:en:Teenage_Mutant_Ninja_Turtles_(1990_film)" });
+        db.SaveChanges();
+        return (container.Id, stub.Id, [one.Id, two.Id]);
+    }
+
+    [Fact]
+    public async Task MergeAsync_CollectionContainerAbsorbsAPlainDuplicateStub_Succeeds_AndStaysAContainer()
+    {
+        var (containerId, stubId, childIds) = SeedCollectionAndStub();
+
+        using (var scope = _factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IMergeService>().MergeAsync(containerId, stubId, null);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            db.MediaItems.Find(stubId).Should().BeNull();
+            db.MediaItems.Where(m => childIds.Contains(m.Id)).Select(m => m.ParentId).ToList().Should().OnlyContain(p => p == containerId);
+            // The container keeps only its own identity: the stub's movie ids are not grafted onto it.
+            db.MediaExternalIds.Where(e => e.MediaItemId == containerId).Select(e => e.Source).ToList().Should().Equal("tmdb");
+            // ...but the merge log keeps them, so the merge can be undone.
+            db.MediaItemMerges.Single(m => m.WinnerId == containerId).LoserExternalIdsJson.Should().Contain("simkl:movie:191258");
+        }
+    }
+
+    [Fact]
+    public async Task UnmergeAsync_OfAContainerThatAbsorbedAStub_RestoresTheStubsIds()
+    {
+        var (containerId, stubId, _) = SeedCollectionAndStub();
+        int mergeId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var svc = scope.ServiceProvider.GetRequiredService<IMergeService>();
+            await svc.MergeAsync(containerId, stubId, null);
+            mergeId = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>().MediaItemMerges.Single(m => m.WinnerId == containerId).Id;
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IMergeService>().UnmergeAsync(mergeId);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var restored = db.MediaItems.Single(m => m.Name == "Teenage Mutant Ninja Turtles (Animated) Collection" && m.Id != containerId);
+            db.MediaExternalIds.Where(e => e.MediaItemId == restored.Id).Select(e => e.Source).ToList().Should().BeEquivalentTo("simkl", "wikipedia");
+            db.MediaExternalIds.Where(e => e.MediaItemId == containerId).Select(e => e.Source).ToList().Should().Equal("tmdb");
+        }
+    }
+
+    [Fact]
+    public async Task MergeAsync_ACollectionAsTheLoserOfAPlainItem_IsRefused_WithAReasonThatSaysWhatToDo()
+    {
+        var (containerId, stubId, _) = SeedCollectionAndStub();
+
+        using var scope = _factory.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<IMergeService>().Invoking(s => s.MergeAsync(stubId, containerId, null))
+            .Should().ThrowAsync<InvalidOperationException>().WithMessage("*Keep the collection as the canonical record*");
+    }
 }

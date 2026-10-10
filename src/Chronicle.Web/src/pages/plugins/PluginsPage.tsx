@@ -1,4 +1,6 @@
+import { getMediaTypes } from '@/api/media'
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   getImportProviders,
@@ -17,6 +19,10 @@ import {
   listCatalog,
   installFromCatalog,
   updatePluginFromCatalog,
+  acceptPluginFiles,
+  getCatalogSource,
+  refreshCatalogSource,
+  type CatalogSource,
   getPluginSettings,
   getPluginSettingsSchema,
   updatePluginSettings,
@@ -179,6 +185,9 @@ export default function PluginsPage() {
   const [catalog, setCatalog] = useState<PluginCatalogEntry[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState('')
+  const [catalogType, setCatalogType] = useState('')
+  const [catalogSource, setCatalogSource] = useState<CatalogSource | null>(null)
+  const [catalogTypes, setCatalogTypes] = useState<{ name: string; displayName: string }[]>([])
   const [installingId, setInstallingId] = useState<string | null>(null)
 
   // Settings panel
@@ -247,11 +256,40 @@ export default function PluginsPage() {
       try {
         const entries = await listCatalog()
         setCatalog(entries)
+        getCatalogSource().then(setCatalogSource).catch(() => { /* the line just stays hidden */ })
+        getMediaTypes().then(t => setCatalogTypes(t.map(x => ({ name: x.name, displayName: x.displayName })))).catch(() => { /* the filter just stays hidden */ })
       } catch {
         setCatalogError('Failed to load plugin catalog. Check your connection.')
       } finally {
         setCatalogLoading(false)
       }
+    }
+  }
+
+  async function handleRefreshCatalog() {
+    setCatalogLoading(true)
+    setCatalogError('')
+    try {
+      const source = await refreshCatalogSource()
+      setCatalogSource(source)
+      setCatalog(await listCatalog(catalogType || undefined))
+    } catch {
+      setCatalogError('Failed to load plugin catalog. Check your connection.')
+    } finally {
+      setCatalogLoading(false)
+    }
+  }
+
+  async function handleCatalogTypeChange(mediaType: string) {
+    setCatalogType(mediaType)
+    setCatalogLoading(true)
+    setCatalogError('')
+    try {
+      setCatalog(await listCatalog(mediaType || undefined))
+    } catch {
+      setCatalogError('Failed to load plugin catalog. Check your connection.')
+    } finally {
+      setCatalogLoading(false)
     }
   }
 
@@ -314,6 +352,19 @@ export default function PluginsPage() {
       setPlugins(prev => prev.map(p => p.id === dbId ? updated : p))
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Failed to update plugin.')
+    } finally {
+      setBusy(dbId, false)
+    }
+  }
+
+  async function handleAcceptFiles(pluginId: string, dbId: number, name: string) {
+    if (!confirm(`Approve the files of "${name}" as they are on disk now? Only do this if you put them there yourself.`)) return
+    setBusy(dbId, true)
+    try {
+      const updated = await acceptPluginFiles(pluginId)
+      setPlugins(prev => prev.map(p => p.id === dbId ? updated : p))
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to approve the plugin files.')
     } finally {
       setBusy(dbId, false)
     }
@@ -419,6 +470,7 @@ export default function PluginsPage() {
         <h1 className={styles.title}>Plugins</h1>
         {isAdmin && (
           <div className={styles.headerActions}>
+            <Link className={styles.browseBtn} to="/getting-started">Guided setup</Link>
             <button className={styles.browseBtn} onClick={openBrowse}>
               {showBrowse ? 'Close Catalog' : 'Browse Catalog'}
             </button>
@@ -436,6 +488,27 @@ export default function PluginsPage() {
       {showBrowse && isAdmin && (
         <div className={styles.browsePanel}>
           <p className={styles.installTitle}>Plugin Catalog</p>
+          {catalogSource && (
+            <p className={styles.catalogSourceLine} data-testid="catalog-source">
+              {catalogSource.usingFallback
+                ? <>The online catalog could not be reached, so this is <strong>{catalogSource.source}</strong> ({catalogSource.pluginCount} plugins).{' '}</>
+                : <>{catalogSource.pluginCount} plugins, read from {catalogSource.source}.{' '}</>}
+              <button className={styles.actionBtn} onClick={() => void handleRefreshCatalog()} disabled={catalogLoading}>Refresh</button>
+            </p>
+          )}
+          {catalogTypes.length > 0 && (
+            <label className={styles.catalogFilter}>
+              Show plugins that handle{' '}
+              <select
+                aria-label="Show plugins that handle"
+                value={catalogType}
+                onChange={e => void handleCatalogTypeChange(e.target.value)}
+              >
+                <option value="">any media type</option>
+                {catalogTypes.map(t => <option key={t.name} value={t.name}>{t.displayName}</option>)}
+              </select>
+            </label>
+          )}
           {catalogLoading && <p className={styles.loading}>Loading catalog…</p>}
           {catalogError && <p className={styles.errorMsg}>{catalogError}</p>}
           {!catalogLoading && !catalogError && (
@@ -609,6 +682,16 @@ export default function PluginsPage() {
                           Update available: v{plugin.latestVersionAvailable}
                         </span>
                       )}
+                      {plugin.integrityBlockedAt && (
+                        <span className={`${styles.badge} ${styles.disabled}`} title="The plugin's files changed on disk without being installed or updated through Chronicle, so it was not loaded.">
+                          Blocked: files changed
+                        </span>
+                      )}
+                      {!plugin.integrityBlockedAt && plugin.previousFilesHash && plugin.filesChangedAt && (
+                        <span className={styles.badge} title={`Files ${plugin.previousFilesHash} -> ${plugin.filesHash}`}>
+                          Files changed {formatDate(plugin.filesChangedAt)}
+                        </span>
+                      )}
                       <span className={`${styles.badge} ${plugin.isEnabled ? styles.enabled : styles.disabled}`}>
                         {plugin.isEnabled ? 'Enabled' : 'Disabled'}
                       </span>
@@ -666,6 +749,17 @@ export default function PluginsPage() {
                           Enable
                         </button>
                       )
+                    )}
+
+                    {/* Files changed behind Chronicle's back: the plugin is not loaded until approved */}
+                    {isAdmin && plugin.integrityBlockedAt && (
+                      <button
+                        className={`${styles.actionBtn} ${styles.enableBtn}`}
+                        onClick={() => handleAcceptFiles(plugin.pluginId, plugin.id, plugin.name)}
+                        disabled={busy}
+                      >
+                        Approve changed files
+                      </button>
                     )}
 
                     {/* Update available */}

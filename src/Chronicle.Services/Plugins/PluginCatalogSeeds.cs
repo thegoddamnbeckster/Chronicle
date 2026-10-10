@@ -17,6 +17,7 @@ public static class PluginCatalogSeeds
         new("chronicle.plugin.thetvdb",            "thegoddamnbeckster/Chronicle.Plugin.TheTVDB",            ["tv", "metadata"]),
         new("chronicle.plugin.tvmaze",             "thegoddamnbeckster/Chronicle.Plugin.TVMaze",             ["tv", "metadata"]),
         new("chronicle.plugin.fanedit",            "thegoddamnbeckster/Chronicle.Plugin.FanEdit",            ["movies", "fanedits", "metadata"]),
+        new("chronicle.plugin.anilist",            "thegoddamnbeckster/Chronicle.Plugin.AniList",            ["anime", "anime_movies", "metadata"]),
         new("chronicle.plugin.simkl",              "thegoddamnbeckster/Chronicle.Plugin.Simkl",              ["movies", "tv", "anime", "metadata"]),
         new("chronicle.plugin.imdb",               "thegoddamnbeckster/Chronicle.Plugin.IMDb",               ["movies", "tv", "anime", "music_videos", "games", "people", "metadata", "ratings"]),
         new("chronicle.plugin.fanarttv",           "thegoddamnbeckster/Chronicle.Plugin.FanartTV",           ["movies", "tv", "music", "artwork", "metadata"]),

@@ -1022,17 +1022,18 @@ public class MetadataEnrichmentService(
 
         if (!string.IsNullOrEmpty(search))
         {
-            var pattern = $"%{search}%";
+            // Folded to lower case on both sides so PostgreSQL (whose LIKE is case-sensitive) behaves like SQLite.
+            var pattern = $"%{MediaService.FoldCase(search, db.Database.IsNpgsql())}%";
             joined = joined.Where(r =>
                 // Title
-                (r.m != null && EF.Functions.Like(r.m.Name, pattern)) ||
+                (r.m != null && EF.Functions.Like(r.m.Name.ToLower(), pattern)) ||
                 // MetadataJson blob — covers author, series, file paths stored by the scanner
                 (r.m != null && r.m.MetadataJson != null &&
-                 EF.Functions.Like(r.m.MetadataJson, pattern)) ||
+                 EF.Functions.Like(r.m.MetadataJson.ToLower(), pattern)) ||
                 // Stored external ID (e.g. "release-group:xxxx")
-                (r.x.ExternalId != null && EF.Functions.Like(r.x.ExternalId, pattern)) ||
+                (r.x.ExternalId != null && EF.Functions.Like(r.x.ExternalId.ToLower(), pattern)) ||
                 // Parent name (artist for music, show for TV)
-                (r.p != null && EF.Functions.Like(r.p.Name, pattern)));
+                (r.p != null && EF.Functions.Like(r.p.Name.ToLower(), pattern)));
         }
 
         // Counted from the plain (unjoined) MediaEnrichments query whenever possible -- `search`
@@ -3275,13 +3276,7 @@ public class MetadataEnrichmentService(
         // Parent-type hint: anime → tv, fanedits → movie (mirrors FileScanService.ToMediaTypeHint).
         // anime_movies is checked first — it contains "anime" as a substring but is flat (like
         // movies), not TV-hierarchical, so it must not fall through to the anime → tv case.
-        var typeHint = mediaTypeName?.ToLowerInvariant() switch
-        {
-            var n when n is not null && n.Contains("anime") && n.Contains("movie") => "movie",
-            var n when n is not null && n.Contains("anime")    => "tv",
-            var n when n is not null && n.Contains("fanedits") => "movie",
-            _ => null,
-        };
+        var typeHint = MediaTypeFamilies.Resolve(mediaTypeName);
 
         // Track which plugins have already been seeded in this call to prevent duplicate EF
         // Add() calls when multiple cross-ref entries (e.g. tmdb: and imdb:) both match the

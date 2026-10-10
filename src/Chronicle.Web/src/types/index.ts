@@ -11,6 +11,17 @@ export interface User {
   showAllCredits: boolean
 }
 
+/** A signed-in browser session. The key itself is never sent back to the client. */
+export interface SessionInfo {
+  id: string
+  createdAt: string
+  lastSeenAt: string
+  expiresAt: string
+  userAgent: string | null
+  remoteIp: string | null
+  isCurrent: boolean
+}
+
 export interface AuthResponse {
   token: string
   user: User
@@ -386,6 +397,15 @@ export interface ScanGroupDto {
   folderPath: string | null
   author: string | null
   series: string | null
+  /** Subtitles, artwork, extras found with this group (not importable items themselves). */
+  relatedFiles?: string[] | null
+  /** Set when the files look like a different media type than the one scanned. */
+  suggestedMediaTypeId?: number | null
+  suggestedMediaTypeName?: string | null
+  suggestedMediaTypeReason?: string | null
+  /** For an automatic-detect scan: the media type this group was sorted into. */
+  mediaTypeId?: number | null
+  mediaTypeName?: string | null
 }
 
 export interface ScanGroupResult {
@@ -403,6 +423,9 @@ export interface ImportGroupPayload {
   children: ImportGroupPayload[]
   files: string[]
   folderPath: string | null
+  relatedFiles?: string[] | null
+  /** Set by an automatic-detect scan so each group is imported as its own type. */
+  mediaTypeId?: number | null
 }
 
 export interface MediaTypeOption {
@@ -410,6 +433,14 @@ export interface MediaTypeOption {
   name: string
   displayName: string
   hierarchyLevels: number
+  /** Past-tense action word for this type ("watched", "listened", "read", ...). Words the interface for it. */
+  interactionVerb?: string
+  /** Names of the hierarchy levels, top first ("Show", "Season", "Episode"). */
+  hierarchyLabels?: string[]
+  /** True for a type whose top level is a bucket of distinct works (a movie collection). */
+  supportsCollections?: boolean
+  /** Heading for the people credited on an item of this type ("Band Members", "Narrators"); blank means "Cast". */
+  castHeading?: string | null
 }
 
 // ── Metadata search ───────────────────────────────────────────────────────────
@@ -440,12 +471,15 @@ export interface MetadataSearchResult {
 export interface ScanFolder {
   id: number;
   path: string;
-  mediaTypeId: number;
+  /** Null when the folder sorts each file into its own media type. */
+  mediaTypeId: number | null;
   mediaTypeName: string;
   recursive: boolean;
   isEnabled: boolean;
   createdAt: string;
   lastScannedAt: string | null;
+  /** Null follows the global setting. */
+  bundleRelatedFiles?: boolean | null;
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────

@@ -29,4 +29,7 @@ public class UserPreferences
     /// (login, device-auth) -- this is the source of truth once a user IS signed in.
     /// </summary>
     public string? Theme { get; set; }
+
+    /// <summary>Notification kinds (see NotificationKinds) this person does not want. Null/empty = receive everything.</summary>
+    public string[]? MutedNotificationKinds { get; set; }
 }

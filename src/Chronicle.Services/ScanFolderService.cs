@@ -18,7 +18,8 @@ public class ScanFolderService : IScanFolderService
         var folder = new ScanFolder
         {
             Path        = request.Path,
-            MediaTypeId = request.MediaTypeId,
+            MediaTypeId = request.MediaTypeId is > 0 ? request.MediaTypeId : null,
+            BundleRelatedFiles = request.BundleRelatedFiles,
             Recursive   = request.Recursive,
             IsEnabled   = true,
             CreatedAt   = DateTime.UtcNow,
@@ -34,7 +35,8 @@ public class ScanFolderService : IScanFolderService
         var folder = await _db.ScanFolders.FindAsync([id], ct)
             ?? throw new InvalidOperationException($"Scan folder {id} not found.");
         folder.Path        = request.Path;
-        folder.MediaTypeId = request.MediaTypeId;
+        folder.MediaTypeId = request.MediaTypeId is > 0 ? request.MediaTypeId : null;
+        folder.BundleRelatedFiles = request.BundleRelatedFiles;
         folder.Recursive   = request.Recursive;
         folder.IsEnabled   = request.IsEnabled;
         await _db.SaveChangesAsync(ct);

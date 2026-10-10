@@ -28,7 +28,7 @@ public class ScanFolderController : ControllerBase
         if (!validation.Valid)
             return BadRequest(ApiResponse<ScanFolderDto>.Fail("INVALID_PATH", validation.Error!));
 
-        var folder = await _svc.CreateAsync(new(dto.Path, dto.MediaTypeId, dto.Recursive), ct);
+        var folder = await _svc.CreateAsync(new(dto.Path, dto.MediaTypeId, dto.Recursive, dto.BundleRelatedFiles), ct);
         return Created($"/api/v1/scan-folders/{folder.Id}", ApiResponse<ScanFolderDto>.Ok(ToDto(folder)));
     }
 
@@ -42,7 +42,7 @@ public class ScanFolderController : ControllerBase
         try
         {
             var folder = await _svc.UpdateAsync(id,
-                new(dto.Path, dto.MediaTypeId, dto.Recursive, dto.IsEnabled), ct);
+                new(dto.Path, dto.MediaTypeId, dto.Recursive, dto.IsEnabled, dto.BundleRelatedFiles), ct);
             return Ok(ApiResponse<ScanFolderDto>.Ok(ToDto(folder)));
         }
         catch (InvalidOperationException ex)
@@ -66,6 +66,6 @@ public class ScanFolderController : ControllerBase
     }
 
     private static ScanFolderDto ToDto(Chronicle.Core.Models.ScanFolder f) =>
-        new(f.Id, f.Path, f.MediaTypeId, f.MediaType?.DisplayName ?? "",
-            f.Recursive, f.IsEnabled, f.CreatedAt, f.LastScannedAt);
+        new(f.Id, f.Path, f.MediaTypeId, f.MediaType?.DisplayName ?? "Detect automatically",
+            f.Recursive, f.IsEnabled, f.CreatedAt, f.LastScannedAt, f.BundleRelatedFiles);
 }

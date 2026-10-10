@@ -201,6 +201,36 @@
   line-height: 1.5;
 }
 
+/* A card of text fields (title, explanation, then one labelled input + Save per field), padded like the toggle cards. */
+.fieldCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fieldInputRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fieldInputRow .textInput {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.fieldInputRow .saveBtn {
+  flex-shrink: 0;
+}
+
 /* Toggle switch */
 .toggle {
   position: relative;

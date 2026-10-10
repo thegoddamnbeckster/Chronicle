@@ -55,6 +55,13 @@ public class MediaTypeSupport
     /// </summary>
     public bool IsTrackable { get; set; } = true;
 
+    /// <summary>
+    /// Optional. How the file scanner should group files of this type ("audiobook"); null lets Chronicle
+    /// decide from the hierarchy. Only used when Chronicle first creates the type - after that the value in the
+    /// Media Types page is what counts.
+    /// </summary>
+    public string? ScanStrategy { get; set; }
+
     /// <summary>Metadata fields this plugin can populate for the root level (level 0) of this type.</summary>
     public List<string> SupportedFields { get; set; } = [];
 

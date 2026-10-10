@@ -118,7 +118,7 @@ External:
 
 ### 1. API Layer
 - RESTful endpoints
-- JWT authentication
+- Session-key authentication (server-side, in-memory) + API keys
 - Swagger documentation at `/swagger`
 - Versioned (`/api/v1/`, `/api/v2/`)
 
@@ -220,7 +220,7 @@ External:
 
 ### Authentication
 - Bcrypt password hashing (cost 12)
-- JWT tokens for web sessions
+- Server-issued session keys for web sessions (memory-only; a restart ends them)
 - API keys for scrobblers
 - Optional 2FA (future)
 

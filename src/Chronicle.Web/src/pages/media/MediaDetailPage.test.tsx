@@ -216,6 +216,44 @@ describe('MediaDetailPage', () => {
     expect(mockedUpdateLibraryEntry).toHaveBeenCalledWith(777, { status: 'Completed', rating: undefined })
   })
 
+  it('words the library buttons from the type action word, not from what the type is called', async () => {
+    const user = userEvent.setup()
+    mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 77, mediaTypeName: 'Podcast Things', mediaTypeInternalName: 'podcast-things' }))
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 77, name: 'podcast-things', displayName: 'Podcast Things', hierarchyLevels: 1, interactionVerb: 'listened', hierarchyLabels: ['Show'] },
+    ])
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    await user.click(await screen.findByRole('button', { name: 'Plan to Listen' }))
+
+    expect(mockedAddToLibrary).toHaveBeenCalledWith(MEDIA_ID, 'PlanToWatch')
+    expect(screen.queryByRole('button', { name: 'Plan to Watch' })).not.toBeInTheDocument()
+  })
+
+  it('uses neutral wording for an action word it has no grammar for', async () => {
+    mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 78, mediaTypeName: 'Tastings', mediaTypeInternalName: 'tastings' }))
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 78, name: 'tastings', displayName: 'Tastings', hierarchyLevels: 1, interactionVerb: 'tasted', hierarchyLabels: ['Wine'] },
+    ])
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    expect(await screen.findByRole('button', { name: 'Planned' })).toBeInTheDocument()
+  })
+
+  it('names the children of an item from the own level names of its type', async () => {
+    mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 79, mediaTypeName: 'Comics', mediaTypeInternalName: 'comics', hierarchyLevel: 0, ancestors: [] }))
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 79, name: 'comics', displayName: 'Comics', hierarchyLevels: 3, interactionVerb: 'read', hierarchyLabels: ['Series', 'Volume', 'Issue'] },
+    ])
+    mockedGetMediaChildren.mockResolvedValue([makeItem({ id: 5, name: 'Volume One', mediaTypeId: 79, hierarchyLevel: 1, parentId: MEDIA_ID })])
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    expect(await screen.findByText(/Volumes/)).toBeInTheDocument()
+  })
+
   it('refreshes metadata and reflects the updated item returned by the API', async () => {
     const user = userEvent.setup()
     mockedRefreshMedia.mockResolvedValue(makeItem({ name: 'Refreshed Title' }))

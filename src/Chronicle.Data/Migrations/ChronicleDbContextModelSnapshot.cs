@@ -42,6 +42,13 @@ namespace Chronicle.Data.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("full");
+
                     b.Property<string>("Token")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -772,6 +779,42 @@ namespace Chronicle.Data.Migrations
                     b.ToTable("media_item_merges", (string)null);
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.MediaItemRelatedFile", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("DiscoveredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MediaItemId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("MissingSince")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId", "Path")
+                        .IsUnique();
+
+                    b.ToTable("media_item_related_files", (string)null);
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.MediaList", b =>
                 {
                     b.Property<int>("Id")
@@ -850,6 +893,10 @@ namespace Chronicle.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("CastHeading")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
@@ -885,6 +932,11 @@ namespace Chronicle.Data.Migrations
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(true);
 
+                    b.Property<bool>("IsUserModified")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -895,6 +947,18 @@ namespace Chronicle.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
                         .HasDefaultValue("minutes");
+
+                    b.Property<string>("ProviderFamily")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScanHintsJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScanStrategy")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("SupportsCollections")
                         .HasColumnType("INTEGER");
@@ -919,8 +983,10 @@ namespace Chronicle.Data.Migrations
                             IsActive = true,
                             IsBuiltIn = true,
                             IsTrackable = true,
+                            IsUserModified = false,
                             Name = "tv",
                             ProgressUnit = "minutes",
+                            ProviderFamily = "tv",
                             SupportsCollections = false
                         },
                         new
@@ -935,8 +1001,10 @@ namespace Chronicle.Data.Migrations
                             IsActive = true,
                             IsBuiltIn = true,
                             IsTrackable = true,
+                            IsUserModified = false,
                             Name = "movies",
                             ProgressUnit = "minutes",
+                            ProviderFamily = "movie",
                             SupportsCollections = false
                         },
                         new
@@ -951,10 +1019,99 @@ namespace Chronicle.Data.Migrations
                             IsActive = true,
                             IsBuiltIn = true,
                             IsTrackable = true,
+                            IsUserModified = false,
                             Name = "music",
                             ProgressUnit = "tracks",
+                            ProviderFamily = "music",
                             SupportsCollections = false
                         });
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.Notification", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Body")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DedupeKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Link")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Kind", "DedupeKey");
+
+                    b.HasIndex("UserId", "ReadAt", "CreatedAt");
+
+                    b.ToTable("notifications", (string)null);
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.PasswordResetToken", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Delivery")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("IssuedByUserId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("password_reset_tokens", (string)null);
                 });
 
             modelBuilder.Entity("Chronicle.Core.Models.PersonHeadshot", b =>
@@ -1083,6 +1240,13 @@ namespace Chronicle.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("FilesChangedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FilesSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("FixMatchHint")
                         .HasColumnType("TEXT");
 
@@ -1093,6 +1257,9 @@ namespace Chronicle.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<DateTime?>("IntegrityBlockedAt")
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("INTEGER");
@@ -1108,6 +1275,10 @@ namespace Chronicle.Data.Migrations
                     b.Property<string>("PluginId")
                         .IsRequired()
                         .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreviousFilesSha256")
+                        .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("SettingsJson")
@@ -1140,6 +1311,9 @@ namespace Chronicle.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool?>("BundleRelatedFiles")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
@@ -1151,7 +1325,7 @@ namespace Chronicle.Data.Migrations
                     b.Property<DateTime?>("LastScannedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("MediaTypeId")
+                    b.Property<int?>("MediaTypeId")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Path")
@@ -1574,6 +1748,17 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("Winner");
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.MediaItemRelatedFile", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.MediaList", b =>
                 {
                     b.HasOne("Chronicle.Core.Models.User", "User")
@@ -1604,6 +1789,28 @@ namespace Chronicle.Data.Migrations
                     b.Navigation("MediaItem");
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.Notification", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.PasswordResetToken", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.PersonHeadshot", b =>
                 {
                     b.HasOne("Chronicle.Core.Models.MediaItem", "PersonMediaItem")
@@ -1631,8 +1838,7 @@ namespace Chronicle.Data.Migrations
                     b.HasOne("Chronicle.Core.Models.MediaType", "MediaType")
                         .WithMany()
                         .HasForeignKey("MediaTypeId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("MediaType");
                 });

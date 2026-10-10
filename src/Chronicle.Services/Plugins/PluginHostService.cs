@@ -52,7 +52,7 @@ public sealed class PluginHostService : IHostedService
 
         // Auto-register any plugin folder that has a manifest.json but is not yet in the DB.
         // This makes bundled plugins (TMDB, FileScanner) available on a fresh install.
-        await AutoRegisterBundledPluginsAsync(db, cancellationToken);
+        await AutoRegisterBundledPluginsAsync(db, cancellationToken, scope.ServiceProvider);
 
         var enabledPlugins = await db.Plugins
             .Where(p => p.IsEnabled)
@@ -72,6 +72,11 @@ public sealed class PluginHostService : IHostedService
 
             try
             {
+                // A plugin whose files changed behind Chronicle's back is not loaded; administrators are told.
+                var integrity = scope.ServiceProvider.GetService<IPluginIntegrity>();
+                if (integrity is not null && await integrity.VerifyAsync(plugin, cancellationToken) == IntegrityOutcome.Blocked)
+                    continue;
+
                 var settings = DeserializeSettings(plugin.SettingsJson);
                 await _registry.LoadPluginAsync(plugin.Id, plugin.DllPath, settings, cancellationToken);
             }
@@ -134,7 +139,7 @@ public sealed class PluginHostService : IHostedService
     /// Existing rows are updated in-place (preserving their PK / FK references); new rows are
     /// inserted with <c>IsBuiltIn = false</c>, <c>IsActive = true</c>.
     /// </summary>
-    private async Task SyncMediaTypesFromPluginsAsync(ChronicleDbContext db, CancellationToken ct)
+    internal async Task SyncMediaTypesFromPluginsAsync(ChronicleDbContext db, CancellationToken ct)
     {
         // Collect all MediaTypeSupport entries from every loaded plugin.
         var allSupport = _registry.GetMetadataProviders()
@@ -162,6 +167,7 @@ public sealed class PluginHostService : IHostedService
                     // a reference type even if another plugin's entry left IsTrackable at its
                     // (trackable) default.
                     IsTrackable     = g.All(s => s.IsTrackable),
+                    ScanStrategy    = g.Select(s => s.ScanStrategy).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
                 };
             })
             .ToList();
@@ -192,11 +198,22 @@ public sealed class PluginHostService : IHostedService
                     IsBuiltIn       = false,
                     IsActive        = true,
                     IsTrackable     = support.IsTrackable,
+                    ScanStrategy    = Chronicle.Core.Models.ScanStrategies.IsKnown(support.ScanStrategy) && support.ScanStrategy is not null
+                                        ? support.ScanStrategy
+                                        : Chronicle.Core.Models.ScanStrategies.DefaultFor(support.MediaTypeName),
+                    ProviderFamily  = Chronicle.Core.Models.ProviderFamilies.DefaultFor(support.MediaTypeName),
+                    CastHeading     = Chronicle.Core.Models.ProviderFamilies.DefaultCastHeadingFor(support.MediaTypeName),
                     CreatedAt       = DateTime.UtcNow,
                 });
                 _log.Information("MediaTypeSync: added new media type '{Name}' ({Display})",
                     support.MediaTypeName, support.DisplayName);
                 synced++;
+            }
+            else if (existing.IsUserModified)
+            {
+                // An administrator edited this type on the Media Types page; the plugin's declaration no
+                // longer overrides what they chose.
+                _log.Debug("MediaTypeSync: '{Name}' was edited by an administrator; leaving it as set", support.MediaTypeName);
             }
             else
             {
@@ -227,6 +244,7 @@ public sealed class PluginHostService : IHostedService
 
         if (synced > 0)
             await db.SaveChangesAsync(ct);
+        await MediaTypeFamilies.RefreshAsync(db, ct);
 
         _log.Debug("MediaTypeSync: verified {Count} media type(s) from plugins ({Synced} changed)",
             allSupport.Count, synced);
@@ -473,7 +491,7 @@ public sealed class PluginHostService : IHostedService
     /// not already present in the database. This runs before the normal load loop so that
     /// newly discovered plugins are included in the enabled-plugins query.
     /// </summary>
-    private async Task AutoRegisterBundledPluginsAsync(ChronicleDbContext db, CancellationToken ct)
+    private async Task AutoRegisterBundledPluginsAsync(ChronicleDbContext db, CancellationToken ct, IServiceProvider? scopeProvider = null)
     {
         var pluginsDir = Path.Combine(_contentRootPath, "plugins");
         if (!Directory.Exists(pluginsDir))
@@ -564,6 +582,15 @@ public sealed class PluginHostService : IHostedService
                             }
                         }
                     }
+                    continue;
+                }
+
+                // A folder that merely appears under plugins/ is not enough: a new plugin must be in the catalog
+                // (or an administrator must have allowed unlisted plugins).
+                var integrityCheck = scopeProvider?.GetService<IPluginIntegrity>();
+                if (integrityCheck is not null && !await integrityCheck.IsAllowedAsync(manifest.PluginId, ct))
+                {
+                    _log.Warning("Ignoring plugin folder {Dir}: {PluginId} is not in the plugin catalog", dir, manifest.PluginId);
                     continue;
                 }
 

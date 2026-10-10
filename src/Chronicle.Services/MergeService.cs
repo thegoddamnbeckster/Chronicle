@@ -70,18 +70,18 @@ public class MergeService(
                    $"{winner.ParentId?.ToString() ?? "root"}, loser parent {loser.ParentId?.ToString() ?? "root"})";
 
         // A collection container carries real children, curated collection artwork, and a
-        // "collection:{id}" identity marker -- none of which a plain movie merge was ever
-        // designed to absorb or be absorbed into. Merging one into the other would either
-        // destroy the container (as the loser, its identity/children scatter onto an unrelated
-        // item) or corrupt an unrelated item into looking like a container (as the winner, it
-        // inherits the loser's own "collection:{id}" ExternalId via the generic ID-migration
-        // below). Two containers merging (the same collection matched under two different
-        // sources) is fine and expected -- only a container/non-container MISMATCH is rejected.
+        // "collection:{id}" identity marker. A container may ABSORB a plain item (the usual duplicate: a
+        // provider matched the collection's name as if it were a movie, leaving a childless stub with the
+        // same name) -- the container stays the container and the stub's ids are not grafted onto it (see
+        // MergeLoadedItemsAsync). The reverse is refused: a container as the LOSER would scatter its identity
+        // and children onto an unrelated item, or make that item look like a container via the generic
+        // ID-migration below. Two containers merging (the same collection matched under two different
+        // sources) is fine and expected.
         var winnerIsCollection = await movieCollectionService.IsCollectionContainerAsync(dbContext, winner.Id, ct);
         var loserIsCollection  = await movieCollectionService.IsCollectionContainerAsync(dbContext, loser.Id, ct);
-        if (winnerIsCollection != loserIsCollection)
-            return $"one item is a collection container and the other is not (winner={winnerIsCollection}, " +
-                   $"loser={loserIsCollection}) -- merging would transplant or destroy collection identity/membership";
+        if (loserIsCollection && !winnerIsCollection)
+            return "the item to absorb is a collection and the one to keep is not -- merging would move the " +
+                   "collection's identity and members onto a plain item. Keep the collection as the canonical record instead.";
 
         return null;
     }
@@ -121,6 +121,23 @@ public class MergeService(
             .Select(e => $"{e.Source}:{e.ExternalId}")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Which of the loser's ids will NOT be grafted onto the winner (and so must be re-created, not moved back, by an
+        // Unmerge). People are exempt from the one-id-per-source rule: two person records for one real person
+        // legitimately carry two ids from one provider.
+        var isPeople = await dbContext.MediaTypes.AnyAsync(t => t.Id == winner.MediaTypeId && t.Name == "people", ct);
+        var winnerSourceIds = winnerExternalIds
+            .GroupBy(e => e.Source, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Select(e => e.ExternalId).ToHashSet(StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+        // A container absorbing a plain item keeps only its own identity: the stub's ids (a movie id some provider
+        // matched by the collection's name) describe a different thing and would make the container look like a film.
+        var containerAbsorbsPlainItem = !isPeople
+            && await movieCollectionService.IsCollectionContainerAsync(dbContext, winnerId, ct)
+            && !await movieCollectionService.IsCollectionContainerAsync(dbContext, loserId, ct);
+        bool WillNotGraft(MediaExternalId e) =>
+            winnerIdSet.Contains($"{e.Source}:{e.ExternalId}") || containerAbsorbsPlainItem
+            || (!isPeople && winnerSourceIds.TryGetValue(e.Source, out var own) && !own.Contains(e.ExternalId));
+
         var mergeLog = new MediaItemMerge
         {
             WinnerId            = winnerId,
@@ -134,7 +151,7 @@ public class MergeService(
             LoserSeriesPosition = loser.SeriesPosition,
             LoserExternalIdsJson = JsonSerializer.Serialize(
                 loserExternalIds.Select(e => new LoserExternalId(
-                    e.Source, e.ExternalId, winnerIdSet.Contains($"{e.Source}:{e.ExternalId}")))),
+                    e.Source, e.ExternalId, WillNotGraft(e)))),
             LoserChildIdsJson   = JsonSerializer.Serialize(loserChildren.Select(c => c.Id)),
             LoserMetadataJson   = loser.MetadataJson,
             MergedAt            = DateTime.UtcNow,
@@ -178,25 +195,16 @@ public class MergeService(
         // it). Such ids are dropped with the loser instead; the merge log above already snapshots
         // them, so an Unmerge still restores them. People are exempt: two person records for one real
         // person legitimately carry two ids from one provider (TMDB duplicate person entries).
-        var isPeople = await dbContext.MediaTypes.AnyAsync(t => t.Id == winner.MediaTypeId && t.Name == "people", ct);
-        var winnerSourceIds = winnerExternalIds
-            .GroupBy(e => e.Source, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Select(e => e.ExternalId).ToHashSet(StringComparer.OrdinalIgnoreCase),
-                StringComparer.OrdinalIgnoreCase);
         var graftedIds = new List<MediaExternalId>();
         foreach (var eid in loserExternalIds)
         {
-            if (winnerIdSet.Contains($"{eid.Source}:{eid.ExternalId}"))
+            if (WillNotGraft(eid))
             {
-                dbContext.MediaExternalIds.Remove(eid);
-            }
-            else if (!isPeople && winnerSourceIds.TryGetValue(eid.Source, out var ownIds) &&
-                     !ownIds.Contains(eid.ExternalId))
-            {
-                logger.LogWarning(
-                    "Merge {LoserId} -> {WinnerId}: not grafting {Source}:{ExternalId} -- the winner already has " +
-                    "a different {Source} id ({OwnIds}), so this id names a different item",
-                    loserId, winnerId, eid.Source, eid.ExternalId, eid.Source, string.Join(", ", ownIds));
+                if (!winnerIdSet.Contains($"{eid.Source}:{eid.ExternalId}") && !containerAbsorbsPlainItem)
+                    logger.LogWarning(
+                        "Merge {LoserId} -> {WinnerId}: not grafting {Source}:{ExternalId} -- the winner already has " +
+                        "a different {Source} id, so this id names a different item",
+                        loserId, winnerId, eid.Source, eid.ExternalId, eid.Source);
                 dbContext.MediaExternalIds.Remove(eid);
             }
             else

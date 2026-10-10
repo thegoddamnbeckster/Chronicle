@@ -1,4 +1,5 @@
 import client from './client'
+import type { ApiResponse } from '@/types'
 
 export interface UserPreferences {
   showDiagnostics?: boolean
@@ -12,6 +13,8 @@ export interface UserPreferences {
   showAllCredits?: boolean
   /** Active theme storage key ("{pluginId}:{themeKey}"), synced across devices. */
   theme?: string
+  /** Notification kinds this person has switched off. */
+  mutedNotificationKinds?: string[]
 }
 
 export async function getMyPreferences(): Promise<UserPreferences> {
@@ -164,4 +167,17 @@ export async function updateUserContact(userId: number, id: number, input: Conta
 
 export async function deleteUserContact(userId: number, id: number): Promise<void> {
   await client.delete(`/users/${userId}/contacts/${id}`)
+}
+
+export interface ResetTokenDto {
+  token: string
+  expiresAt: string
+  resetUrl: string
+  username: string
+}
+
+/** An administrator creates a one-time password-reset code for someone. Shown once. */
+export async function issueResetToken(userId: number): Promise<ResetTokenDto> {
+  const { data } = await client.post<ApiResponse<ResetTokenDto>>(`/users/${userId}/reset-token`)
+  return data.data!
 }

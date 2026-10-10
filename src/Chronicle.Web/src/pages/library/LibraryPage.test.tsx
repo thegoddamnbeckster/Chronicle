@@ -115,7 +115,7 @@ describe('LibraryPage', () => {
     expect(screen.getByText('Completed Movie')).toBeInTheDocument()
 
     const callsBefore = mockedGetLibrary.mock.calls.length
-    await user.click(screen.getByRole('button', { name: 'Watching' }))
+    await user.click(screen.getByRole('button', { name: 'In progress' }))
 
     await waitFor(() => {
       expect(screen.queryByText('Completed Movie')).not.toBeInTheDocument()
@@ -158,7 +158,7 @@ describe('LibraryPage', () => {
     renderWithProviders(<LibraryPage />)
     await screen.findByText('Some Movie')
 
-    await user.click(screen.getByRole('button', { name: 'Watching' }))
+    await user.click(screen.getByRole('button', { name: 'In progress' }))
 
     await waitFor(() => {
       const stored = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}')
@@ -174,7 +174,7 @@ describe('LibraryPage', () => {
     renderWithProviders(<LibraryPage />)
     await screen.findByText('Status Movie')
 
-    const statusSelect = screen.getByDisplayValue('Unwatched')
+    const statusSelect = screen.getByDisplayValue('Not started')
     await user.selectOptions(statusSelect, 'Completed')
 
     await waitFor(() => {

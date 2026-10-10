@@ -1,11 +1,7 @@
 {
-  "// About this file": "appsettings.Production.json ships with sane defaults already (local SQLite, auto-generated JWT secret) -- most installs don't need this file at all. Copy this to appsettings.Production.json only if you want to override those defaults, e.g. to point at an external PostgreSQL server or pin a specific JWT secret across multiple instances.",
+  "// About this file": "appsettings.Production.json ships with sane defaults already (local SQLite, session keys held in memory) -- most installs don't need this file at all. Copy this to appsettings.Production.json only if you want to override those defaults, e.g. to point at an external PostgreSQL server.",
   "ConnectionStrings": {
     "DefaultConnection": "Host=your-postgres-host;Port=5432;Database=chronicle;Username=chronicle;Password=REPLACE_ME"
-  },
-  "Security": {
-    "JwtSecret": "REPLACE_WITH_A_REAL_RANDOM_SECRET_AT_LEAST_64_CHARS_LONG",
-    "JwtExpirationHours": 24
   },
   "Serilog": {
     "RetainedLogDays": 14

@@ -1,0 +1,6 @@
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.list li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.path { word-break: break-all; }
+.meta { color: var(--text-muted); font-size: 0.8rem; }
+.missing .path { opacity: 0.6; }
+.flag { color: var(--warning, #f59e0b); font-size: 0.75rem; }

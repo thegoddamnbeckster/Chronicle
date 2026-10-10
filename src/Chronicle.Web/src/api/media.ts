@@ -223,3 +223,47 @@ export async function refreshMediaForPlugin(
     throw err
   }
 }
+
+/**
+ * Fetches a third-party image through the server-side poster proxy as a Blob. The proxy needs
+ * the session key, which an <img src> can't send, so callers turn the Blob into an object URL.
+ */
+export async function fetchProxiedPoster(url: string): Promise<Blob> {
+  const { data } = await client.get<Blob>('/media/poster-proxy', {
+    params: { url },
+    responseType: 'blob',
+  })
+  return data
+}
+
+export interface RelatedFile {
+  id: number
+  path: string
+  kind: string
+  sizeBytes: number | null
+  discoveredAt: string
+  /** Set when a later scan no longer found the file. */
+  missingSince: string | null
+}
+
+/** Subtitles, artwork and extras recorded for an item by scans that had bundling on. */
+export async function getRelatedFiles(mediaId: number): Promise<RelatedFile[]> {
+  const { data } = await client.get<ApiResponse<RelatedFile[]>>(`/media/${mediaId}/related-files`)
+  return data.data ?? []
+}
+
+export interface MediaFile {
+  path: string
+  /** "file" or "folder" (an album or book folder is recorded as one path). */
+  type: string
+  /** False when the path is no longer on disk. */
+  exists: boolean
+  sizeBytes: number | null
+  modifiedUtc: string | null
+}
+
+/** Every file or folder the scanner recorded for the item, with whether it is still on disk. */
+export async function getMediaFiles(mediaId: number): Promise<MediaFile[]> {
+  const { data } = await client.get<ApiResponse<MediaFile[]>>(`/media/${mediaId}/files`)
+  return data.data ?? []
+}

@@ -78,6 +78,9 @@ namespace Chronicle.Data
 
         public DbSet<User> Users => Set<User>();
         public DbSet<UserContact> UserContacts => Set<UserContact>();
+        public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+        public DbSet<Notification> Notifications => Set<Notification>();
+        public DbSet<MediaItemRelatedFile> MediaItemRelatedFiles => Set<MediaItemRelatedFile>();
         public DbSet<MediaType> MediaTypes => Set<MediaType>();
         public DbSet<MediaItem> MediaItems => Set<MediaItem>();
         public DbSet<MediaExternalId> MediaExternalIds => Set<MediaExternalId>();
@@ -146,6 +149,50 @@ namespace Chronicle.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            modelBuilder.Entity<MediaItemRelatedFile>(entity =>
+            {
+                entity.ToTable("media_item_related_files");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.MediaItemId, e.Path }).IsUnique();
+                entity.Property(e => e.Path).IsRequired().HasMaxLength(1000);
+                entity.Property(e => e.Kind).IsRequired().HasMaxLength(20);
+                entity.HasOne(e => e.MediaItem)
+                    .WithMany()
+                    .HasForeignKey(e => e.MediaItemId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<Notification>(entity =>
+            {
+                entity.ToTable("notifications");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => new { e.UserId, e.ReadAt, e.CreatedAt });
+                entity.HasIndex(e => new { e.UserId, e.Kind, e.DedupeKey });
+                entity.Property(e => e.Kind).IsRequired().HasMaxLength(40);
+                entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.Body).HasMaxLength(1000);
+                entity.Property(e => e.Link).HasMaxLength(300);
+                entity.Property(e => e.DedupeKey).HasMaxLength(200);
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<PasswordResetToken>(entity =>
+            {
+                entity.ToTable("password_reset_tokens");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => e.TokenHash).IsUnique();
+                entity.HasIndex(e => e.UserId);
+                entity.Property(e => e.TokenHash).IsRequired().HasMaxLength(64);
+                entity.Property(e => e.Delivery).IsRequired().HasMaxLength(20);
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
             modelBuilder.Entity<MediaType>(entity =>
             {
                 entity.ToTable("media_types");
@@ -156,6 +203,11 @@ namespace Chronicle.Data
                 entity.Property(e => e.InteractionVerb).HasDefaultValue("watched");
                 entity.Property(e => e.ProgressUnit).HasDefaultValue("minutes");
                 entity.Property(e => e.IsTrackable).HasDefaultValue(true);
+                entity.Property(e => e.ScanStrategy).HasMaxLength(30);
+                entity.Property(e => e.IsUserModified).HasDefaultValue(false);
+                entity.Property(e => e.ScanHintsJson).HasMaxLength(4000);
+                entity.Property(e => e.ProviderFamily).HasMaxLength(30);
+                entity.Property(e => e.CastHeading).HasMaxLength(40);
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 // Seed: built-in media types
@@ -170,6 +222,7 @@ namespace Chronicle.Data
                         HierarchyLabels = "Show,Season,Episode",
                         InteractionVerb = "watched",
                         ProgressUnit = "minutes",
+                        ProviderFamily = "tv",
                         IsBuiltIn = true,
                         IsActive = true,
                         CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -184,6 +237,7 @@ namespace Chronicle.Data
                         HierarchyLabels = "Movie",
                         InteractionVerb = "watched",
                         ProgressUnit = "minutes",
+                        ProviderFamily = "movie",
                         IsBuiltIn = true,
                         IsActive = true,
                         CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -198,6 +252,7 @@ namespace Chronicle.Data
                         HierarchyLabels = "Artist,Album,Track",
                         InteractionVerb = "listened",
                         ProgressUnit = "tracks",
+                        ProviderFamily = "music",
                         IsBuiltIn = true,
                         IsActive = true,
                         CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -314,6 +369,7 @@ namespace Chronicle.Data
                 entity.HasIndex(e => e.UserId);
                 entity.Property(e => e.Token).IsRequired();
                 entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Scope).IsRequired().HasMaxLength(20).HasDefaultValue("full");
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 entity.HasOne(e => e.User)
@@ -332,6 +388,8 @@ namespace Chronicle.Data
                 entity.Property(e => e.Version).IsRequired().HasMaxLength(50);
                 entity.Property(e => e.Author).IsRequired().HasMaxLength(200);
                 entity.Property(e => e.DllPath).IsRequired();
+                entity.Property(e => e.FilesSha256).HasMaxLength(64);
+                entity.Property(e => e.PreviousFilesSha256).HasMaxLength(64);
                 entity.Property(e => e.InstalledAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
                 entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             });
@@ -403,6 +461,7 @@ namespace Chronicle.Data
                 e.HasOne(f => f.MediaType)
                  .WithMany()
                  .HasForeignKey(f => f.MediaTypeId)
+                 .IsRequired(false)
                  .OnDelete(DeleteBehavior.Restrict);
             });
 

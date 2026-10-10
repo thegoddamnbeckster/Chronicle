@@ -26,6 +26,7 @@ public class PluginsController : ControllerBase
     private readonly IPluginSettingsProtector      _protector;
     private readonly IHttpClientFactory            _httpClientFactory;
     private readonly PluginCatalogService          _catalogService;
+    private readonly IPluginCatalogSource          _catalogSource;
     private readonly IMemoryCache                  _cache;
     private readonly IWebHostEnvironment           _environment;
     private readonly ILogger<PluginsController>    _logger;
@@ -34,6 +35,12 @@ public class PluginsController : ControllerBase
 
     /// <summary>Maximum permitted favicon file size (100 KB).</summary>
     private const int MaxIconBytes = 100 * 1024;
+
+    /// <summary>Icon fetch rules: https only, 100 KB, and SVG allowed in addition to the raster set
+    /// (it is rasterised to PNG below, so a browser never receives markup).</summary>
+    private static readonly Helpers.SafeImageFetcher.FetchOptions IconFetchOptions = new(
+        MaxIconBytes, HttpsOnly: true,
+        ExtraContentTypes: ["image/svg+xml", "image/x-icon", "image/vnd.microsoft.icon"]);
 
     /// <summary>Maximum edge length (px) when rasterising an SVG favicon.</summary>
     private const int SvgRenderSize = 64;
@@ -75,6 +82,7 @@ public class PluginsController : ControllerBase
         IPluginSettingsProtector protector,
         IHttpClientFactory httpClientFactory,
         PluginCatalogService catalogService,
+        IPluginCatalogSource catalogSource,
         IMemoryCache cache,
         IWebHostEnvironment environment,
         ILogger<PluginsController> logger,
@@ -85,6 +93,7 @@ public class PluginsController : ControllerBase
         _protector         = protector;
         _httpClientFactory = httpClientFactory;
         _catalogService    = catalogService;
+        _catalogSource     = catalogSource;
         _cache             = cache;
         _environment       = environment;
         _logger            = logger;
@@ -169,7 +178,7 @@ public class PluginsController : ControllerBase
     /// </summary>
     // Favicons are not sensitive — allow unauthenticated access so <img> tags work.
     [HttpGet("{id:int}/icon")]
-    [AllowAnonymous]
+    [Authorize(Policy = Chronicle.API.Authentication.AuthPolicies.ImageRead)] // <img> tag: session header or session cookie
     public async Task<IActionResult> GetPluginIcon(int id, CancellationToken ct)
     {
         // Resolve iconUrl from the in-memory registry (not user-supplied input)
@@ -183,7 +192,7 @@ public class PluginsController : ControllerBase
         if (iconUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
             return ServeDataUri(id, iconUrl);
 
-        // Require HTTPS to prevent loading resources from plain-HTTP sites
+        // https only (the fetcher also enforces this, including across redirects)
         if (!Uri.TryCreate(iconUrl, UriKind.Absolute, out var uri) ||
             !uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
         {
@@ -196,56 +205,27 @@ public class PluginsController : ControllerBase
         if (_cache.TryGetValue(cacheKey, out (byte[] Data, string ContentType) cached))
             return File(cached.Data, cached.ContentType);
 
-        // Fetch from external site using the dedicated named HttpClient
+        // Fetch through the shared filtered fetcher: it refuses private, loopback and cloud-metadata
+        // destinations (also on redirects and after DNS), non-image content and oversize bodies. The
+        // URL comes from a plugin manifest, which is vetted, but a compromised or careless manifest
+        // must not be able to aim the server at its own network.
         byte[] rawBytes;
         string rawContentType;
-        try
+        var fetched = await Helpers.SafeImageFetcher.Default.FetchAsync(iconUrl, ct, IconFetchOptions);
+        switch (fetched.Status)
         {
-            var http = _httpClientFactory.CreateClient("favicon");
-            using var response = await http.GetAsync(iconUrl, ct);
-
-            if (!response.IsSuccessStatusCode)
-                return NotFound();
-
-            rawContentType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant()
-                             ?? string.Empty;
-
-            // Accept SVG and all standard raster formats
-            var isSvg    = rawContentType.StartsWith("image/svg", StringComparison.OrdinalIgnoreCase);
-            var isRaster = RasterContentTypePrefixes.Any(p =>
-                rawContentType.StartsWith(p, StringComparison.OrdinalIgnoreCase));
-
-            if (!isSvg && !isRaster)
-            {
+            case Helpers.SafeImageFetcher.FetchStatus.Ok:
+                rawBytes = fetched.Bytes!;
+                rawContentType = fetched.ContentType!;
+                break;
+            case Helpers.SafeImageFetcher.FetchStatus.UnsupportedType:
                 return StatusCode(415, ApiResponse<object>.Fail(
-                    "INVALID_ICON_TYPE",
-                    $"Remote server returned unsupported content type '{rawContentType}'."));
-            }
-
-            // Read body — limit to MaxIconBytes to prevent oversized payloads
-            using var stream = await response.Content.ReadAsStreamAsync(ct);
-            var buffer    = new byte[MaxIconBytes + 1];
-            var totalRead = 0;
-
-            int read;
-            while ((read = await stream.ReadAsync(buffer.AsMemory(totalRead), ct)) > 0)
-            {
-                totalRead += read;
-                if (totalRead > MaxIconBytes)
-                    return StatusCode(502, ApiResponse<object>.Fail(
-                        "ICON_TOO_LARGE",
-                        $"Plugin icon exceeds the {MaxIconBytes / 1024} KB limit."));
-            }
-
-            rawBytes = buffer[..totalRead];
-        }
-        catch (TaskCanceledException)
-        {
-            return StatusCode(504);
-        }
-        catch (HttpRequestException)
-        {
-            return StatusCode(502);
+                    "INVALID_ICON_TYPE", "Remote server returned an unsupported content type for the plugin icon."));
+            case Helpers.SafeImageFetcher.FetchStatus.TooLarge:
+                return StatusCode(502, ApiResponse<object>.Fail(
+                    "ICON_TOO_LARGE", $"Plugin icon exceeds the {MaxIconBytes / 1024} KB limit."));
+            default:
+                return NotFound();
         }
 
         // If SVG: rasterise to PNG so the browser never receives executable markup.
@@ -397,6 +377,11 @@ public class PluginsController : ControllerBase
             var plugin = await _pluginService.InstallPluginAsync(request.DllPath);
             return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
         }
+        catch (PluginNotAllowedException ex)
+        {
+            _logger.LogWarning("PLUGIN install refused for {DllPath}: {Reason}", request.DllPath, ex.Message);
+            return StatusCode(403, ApiResponse<PluginDto>.Fail("PLUGIN_NOT_ALLOWED", ex.Message));
+        }
         catch (FileNotFoundException ex)
         {
             return BadRequest(ApiResponse<PluginDto>.Fail("DLL_NOT_FOUND", ex.Message));
@@ -514,9 +499,45 @@ public class PluginsController : ControllerBase
             await _pluginService.ReloadPluginAsync(pluginId, ct);
             return Ok(ApiResponse<object>.Ok(new { pluginId, status = "reloaded" }));
         }
+        catch (PluginNotAllowedException ex)
+        {
+            return StatusCode(409, ApiResponse<object>.Fail("PLUGIN_INTEGRITY", ex.Message));
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResponse<object>.Fail("RELOAD_FAILED", ex.Message));
+        }
+        catch (FileNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail("DLL_NOT_FOUND", ex.Message));
+        }
+    }
+
+    // ── POST /api/v1/plugins/{pluginId}/accept-files ──────────────────────────
+
+    /// <summary>
+    /// Approves the plugin's files as they are on disk now (the administrator made the change, e.g. a hand-copied
+    /// build) and loads the plugin if it was blocked.
+    /// </summary>
+    [HttpPost("{pluginId}/accept-files")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> AcceptFiles(string pluginId, CancellationToken ct)
+    {
+        try
+        {
+            await _pluginService.AcceptCurrentFilesAsync(pluginId, ct);
+            var plugin = (await _pluginService.GetAllPluginsAsync()).First(p => p.PluginId == pluginId);
+            _logger.LogWarning("PLUGIN files of {PluginId} approved by an administrator", pluginId);
+            if (plugin.IsEnabled)
+            {
+                await _pluginService.UnloadFromRegistryAsync(pluginId);
+                await _pluginService.ReloadPluginAsync(pluginId, ct);
+            }
+            return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", ex.Message));
         }
         catch (FileNotFoundException ex)
         {
@@ -690,7 +711,7 @@ public class PluginsController : ControllerBase
     /// <summary>Lists all plugins available in the Chronicle plugin catalog.</summary>
     [HttpGet("catalog")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> GetCatalog(CancellationToken ct)
+    public async Task<IActionResult> GetCatalog([FromQuery] string? mediaType, CancellationToken ct)
     {
         var installed = await _pluginService.GetAllPluginsAsync();
         var installedIds = installed.Select(p => p.PluginId).ToHashSet();
@@ -699,7 +720,35 @@ public class PluginsController : ControllerBase
             .Select(e => e with { IsInstalled = installedIds.Contains(e.PluginId) })
             .ToList();
 
+        // ?mediaType=anime keeps only the plugins that handle that type, or the family of providers that also serves it.
+        if (!string.IsNullOrWhiteSpace(mediaType))
+        {
+            var family = MediaTypeFamilies.Resolve(mediaType);
+            entries = entries.Where(e => PluginCatalogFilter.Handles(e, mediaType, family)).ToList();
+        }
+
         return Ok(ApiResponse<List<PluginCatalogEntry>>.Ok(entries));
+    }
+
+    // ── GET/POST /api/v1/plugins/catalog/source ───────────────────────────────
+
+    /// <summary>Where the catalog list comes from, and whether the hosted file could be read.</summary>
+    [HttpGet("catalog/source")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetCatalogSource(CancellationToken ct)
+    {
+        var listing = await _catalogSource.GetAsync(ct);
+        return Ok(ApiResponse<CatalogSourceDto>.Ok(new CatalogSourceDto(
+            listing.Source, listing.UsingFallback, listing.FetchedAtUtc, listing.Error, listing.Seeds.Count)));
+    }
+
+    /// <summary>Re-reads the hosted catalog file now instead of waiting for the cache to expire.</summary>
+    [HttpPost("catalog/refresh")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> RefreshCatalogSource(CancellationToken ct)
+    {
+        _catalogSource.Refresh();
+        return await GetCatalogSource(ct);
     }
 
     // ── POST /api/v1/plugins/catalog/{pluginId}/install ───────────────────────
@@ -722,8 +771,13 @@ public class PluginsController : ControllerBase
 
         try
         {
-            var plugin = await _pluginService.InstallPluginAsync(dllPath!);
+            var plugin = await _pluginService.InstallPluginAsync(dllPath!, ct, catalogPluginId: pluginId);
             return Ok(ApiResponse<PluginDto>.Ok(ToDto(plugin)));
+        }
+        catch (PluginNotAllowedException ex)
+        {
+            _logger.LogWarning("PLUGIN catalog install of {PluginId} refused: {Reason}", pluginId, ex.Message);
+            return StatusCode(403, ApiResponse<PluginDto>.Fail("PLUGIN_NOT_ALLOWED", ex.Message));
         }
         catch (FileNotFoundException ex)
         {
@@ -783,6 +837,9 @@ public class PluginsController : ControllerBase
             if (!string.Equals(Path.GetFullPath(dllPath!), Path.GetFullPath(plugin.DllPath), StringComparison.OrdinalIgnoreCase))
                 System.IO.File.Copy(dllPath!, plugin.DllPath, overwrite: true);
 
+            // The files were just downloaded from the catalog by Chronicle itself, so they are the new trusted ones
+            // (the old hash is kept so the change is visible on the Plugins page).
+            await _pluginService.AcceptCurrentFilesAsync(pluginId, ct);
             await _pluginService.ReloadPluginAsync(pluginId, ct);
             var updated = await _pluginService.MarkUpdatedAsync(pluginId, ct);
 
@@ -928,7 +985,8 @@ public class PluginsController : ControllerBase
 
         return new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
             p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint, supportedMediaTypes,
-            p.LatestVersionAvailable, p.UpdateCheckedAt);
+            p.LatestVersionAvailable, p.UpdateCheckedAt,
+            p.FilesSha256?[..12], p.PreviousFilesSha256?[..12], p.FilesChangedAt, p.IntegrityBlockedAt);
     }
 
     /// <summary>

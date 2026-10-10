@@ -27,24 +27,32 @@ public class PluginCatalogService
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
-    public PluginCatalogService(IHttpClientFactory httpClientFactory, IMemoryCache cache)
+    private readonly IPluginCatalogSource? _source;
+
+    public PluginCatalogService(IHttpClientFactory httpClientFactory, IMemoryCache cache, IPluginCatalogSource? source = null)
     {
         _httpClientFactory = httpClientFactory;
         _cache             = cache;
+        _source            = source;
     }
+
+    /// <summary>The repositories in the catalog: from the hosted catalog file when it can be read, otherwise the last copy
+    /// that worked, otherwise the list compiled into Chronicle.</summary>
+    private async Task<IReadOnlyList<PluginCatalogSeed>> SeedsAsync(CancellationToken ct) =>
+        _source is null ? PluginCatalogSeeds.Entries : (await _source.GetAsync(ct)).Seeds;
 
     /// <summary>Every catalog entry that could actually be resolved right now (skips repos with no usable release).</summary>
     public async Task<List<PluginCatalogEntry>> GetCatalogAsync(CancellationToken ct = default)
     {
-        var results = await Task.WhenAll(PluginCatalogSeeds.Entries.Select(seed => ResolveAsync(seed, ct)));
+        var results = await Task.WhenAll((await SeedsAsync(ct)).Select(seed => ResolveAsync(seed, ct)));
         return results.Where(r => r is not null).Select(r => r!).ToList();
     }
 
     /// <summary>Resolves a single plugin by id -- used by install/update, which need one entry, not the whole catalog.</summary>
-    public Task<PluginCatalogEntry?> ResolveAsync(string pluginId, CancellationToken ct = default)
+    public async Task<PluginCatalogEntry?> ResolveAsync(string pluginId, CancellationToken ct = default)
     {
-        var seed = Array.Find(PluginCatalogSeeds.Entries, e => e.PluginId == pluginId);
-        return seed is null ? Task.FromResult<PluginCatalogEntry?>(null) : ResolveAsync(seed, ct);
+        var seed = (await SeedsAsync(ct)).FirstOrDefault(e => e.PluginId == pluginId);
+        return seed is null ? null : await ResolveAsync(seed, ct);
     }
 
     private async Task<PluginCatalogEntry?> ResolveAsync(PluginCatalogSeed seed, CancellationToken ct)
@@ -119,6 +127,7 @@ public class PluginCatalogService
         var version = tag.TrimStart('v', 'V');
         var name = seed.PluginId;
         string? author = null, description = null, iconUrl = null;
+        string[]? supportedTypes = null;
         var dllName = $"{GuessAssemblyNameFromRepo(seed.GithubRepo)}.dll";
 
         try
@@ -135,6 +144,8 @@ public class PluginCatalogService
                     author      = manifest.Author;
                     description = manifest.Description;
                     iconUrl     = manifest.IconUrl;
+                    if (manifest.SupportedMediaTypes is { Count: > 0 })
+                        supportedTypes = manifest.SupportedMediaTypes.ToArray();
 
                     // The DLL's assembly name is the entry_type's namespace with its final
                     // (class name) segment dropped -- confirmed against every manifest in
@@ -172,7 +183,8 @@ public class PluginCatalogService
             DllName:     dllName,
             Tags:        seed.Tags,
             Sha256:      null, // no longer pinned -- see this class's own doc
-            Version:     version
+            Version:     version,
+            SupportedMediaTypes: supportedTypes ?? seed.Tags
         );
     }
 

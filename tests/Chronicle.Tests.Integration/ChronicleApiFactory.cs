@@ -1,4 +1,5 @@
 using Chronicle.Core.Models;
+using Chronicle.Services.Security;
 using Chronicle.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -19,12 +20,13 @@ namespace Chronicle.Tests.Integration
         {
             builder.UseEnvironment("Testing");
 
-            // Override config before the host builds
-            builder.UseSetting("Security:JwtSecret", "integration-test-secret-must-be-64-characters-long-for-chronicle-integration-tests");
-            builder.UseSetting("Security:JwtExpirationHours", "1");
-
             builder.ConfigureServices(services =>
             {
+                // The in-process test server reports no client address, so every test shares one
+                // "address" and a few hundred registrations/logins would trip the real limits.
+                // Tests of the throttle itself replace this with their own settings.
+                services.AddSingleton<ICachedAppSettings>(TestAuthSettings.Permissive());
+
                 // Remove ALL EF Core DbContext registrations for ChronicleDbContext
                 // (EF Core 9 registers multiple descriptors per provider)
                 var toRemove = services
@@ -40,8 +42,10 @@ namespace Chronicle.Tests.Integration
                 // Suppress TransactionIgnoredWarning — InMemory doesn't support real
                 // transactions but the production code uses them; tests still verify
                 // the logical behaviour correctly.
-                services.AddDbContext<ChronicleDbContext>(opts =>
+                services.AddDbContext<ChronicleDbContext>((sp, opts) =>
                     opts.UseInMemoryDatabase(_dbName)
+                        // The same change-tracking hook the real registration in Program.cs adds.
+                        .AddInterceptors(sp.GetRequiredService<Chronicle.Services.Live.LibraryChangeInterceptor>())
                         .ConfigureWarnings(w =>
                             w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning)));
             });
@@ -66,6 +70,29 @@ namespace Chronicle.Tests.Integration
                 });
                 db.SaveChanges();
             }
+        }
+    }
+}
+
+namespace Chronicle.Tests.Integration
+{
+    /// <summary>Fixed auth settings for tests, standing in for the app_settings-backed cache.</summary>
+    public sealed class TestAuthSettings : ICachedAppSettings
+    {
+        public Dictionary<string, string> Values { get; } = new();
+        public IReadOnlyDictionary<string, string> Snapshot => Values;
+
+        /// <summary>Limits so high that unrelated tests never meet them.</summary>
+        public static TestAuthSettings Permissive()
+        {
+            var s = new TestAuthSettings();
+            s.Values[LoginThrottle.MaxPerAddressAndUserKey] = "100000";
+            s.Values[LoginThrottle.MaxPerAddressKey] = "100000";
+            s.Values[LoginThrottle.MaxPerUserKey] = "100000";
+            s.Values[LoginThrottle.RegisterMaxKey] = "100000";
+            s.Values[Chronicle.API.Controllers.DeviceAuthController.InitiatesPerHourKey] = "100000";
+            s.Values[Chronicle.API.Controllers.DeviceAuthController.MissesPer15MinKey] = "100000";
+            return s;
         }
     }
 }

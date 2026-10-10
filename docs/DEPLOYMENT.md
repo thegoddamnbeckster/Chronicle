@@ -402,13 +402,17 @@ server {
     
     # Proxy Settings
     location / {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://localhost:7979;   # or http://<chronicle-container-name>:7979 on a shared Docker network
         proxy_http_version 1.1;
         
-        # Headers
+        # Headers. This nginx is the edge (nothing in front of it), so it OVERWRITES
+        # X-Forwarded-For with the address that really connected to it. Do not use
+        # $proxy_add_x_forwarded_for here: that appends to whatever the client sent, and a client
+        # could prepend a fake address. If another proxy sits in front of this one, trust that one
+        # instead (see "Telling Chronicle which proxy to trust").
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Port $server_port;
@@ -446,6 +450,50 @@ sudo certbot --nginx -d chronicle.example.com
 # Auto-renewal
 sudo certbot renew --dry-run
 ```
+
+### Telling Chronicle which proxy to trust
+
+Chronicle writes the caller's address to its security log (`AUTH ...` lines) and uses it to
+rate-limit failed logins. Behind a proxy that address comes from `X-Forwarded-For`, and by default
+Chronicle believes that header from ANY sender - so a client could fake its address. Setting
+`Security:TrustedProxies` makes Chronicle believe the header only when it arrives from your proxy.
+
+The value is whatever address (or network) your proxy connects to Chronicle FROM. That depends on
+your setup, so it is never hard-coded: discover it, then put it in `.env`.
+
+1. **Fix the proxy headers first** (the nginx block above) and confirm the log shows real client
+   addresses: make one failed login, then `docker compose logs api | grep "AUTH login FAILED"`.
+   At this point the address is correct only because every sender is still trusted.
+2. **Find the proxy's address.**
+   - Proxy and Chronicle in Docker on a shared network - use that network's range, which survives
+     the proxy container being recreated with a new address:
+     `docker network ls`, then
+     `docker network inspect <shared-network> --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'`.
+     Use the user-defined network both containers are on, not the default `bridge`.
+   - Proxy on the host or another machine - use the address Chronicle sees it connect from: make a
+     request through it and read `connection from ...` in the `AUTH` log line (shown whenever a
+     forwarded address was applied).
+   Prefer the narrowest value that still covers the proxy: a single address if it never changes,
+   otherwise the shared network's subnet.
+3. **Set it** in `.env` next to `docker-compose.yml` (no edits to the compose file needed):
+   `CHRONICLE_TRUSTED_PROXIES=<address-or-cidr>` (several values may be separated by commas), then
+   `docker compose up -d`.
+4. **Prove it.** Two checks.
+   - *The setting is honoured.* Temporarily set `CHRONICLE_TRUSTED_PROXIES=192.0.2.1` (an address
+     reserved for documentation, so nothing real matches it) and run `docker compose up -d`. Then
+     send a request with a fake header:
+     `curl -s -o /dev/null -H "X-Forwarded-For: 6.6.6.6" -H "Content-Type: application/json" -d '{"username":"probe","password":"xxxxxxxx"}' http://localhost:7979/api/v1/auth/login`
+     and look at `docker compose logs api | grep "login FAILED" | tail -1`. It must NOT show
+     `6.6.6.6`. (Do not use this curl as the final test with your real value set: a request from
+     the Docker host can arrive from the proxy network's gateway address, which may be inside the
+     trusted range, so the fake header would then be believed - correctly, as far as Chronicle can tell.)
+   - *Real addresses come through.* Put your real value back, `docker compose up -d`, make a failed
+     login through the proxy from a normal browser, and confirm the log line shows your own address.
+
+Mistakes to avoid: a range that is too wide (any container in it can then claim an address); a
+range that does NOT include the proxy (every user then appears to come from the proxy's own
+address and one person's failed logins throttle everyone); and trusting the default `bridge`
+network by habit.
 
 ### Caddy (Simpler Alternative)
 
@@ -731,6 +779,21 @@ sudo systemctl restart chronicle
 ---
 
 ## Backup & Restore
+
+> **Built-in database backups (SQLite).** Settings -> Database (administrators) takes consistent zipped
+> backups while Chronicle runs, nightly at 02:00 and on demand, keeps the newest 10 (configurable) in a
+> `backups` folder next to the database file (in Docker, inside the data volume), and can download, upload,
+> validate and restore them. A restore needs you to type `RESTORE`, makes a safety backup of the current data
+> first, then restarts Chronicle to swap the file in (Docker's `restart: unless-stopped` and the Windows
+> service recovery setting bring it back; with the dev script, run it again). Everyone is signed out by the
+> restart. A backup checks itself before it is trusted: its checksum, its SQLite integrity, and that it is not
+> from a *newer* Chronicle than the one running.
+>
+> Backups hold the whole database, including account password hashes, API key hashes and plugin credentials
+> (which Chronicle stores as entered), so keep the files somewhere only administrators can read. The `keys`
+> folder (Data Protection keys, used only to read old encrypted values) is not inside them. PostgreSQL is not backed up by the app; use
+> `pg_dump`. Weekly "quick" and monthly "full rebuild" maintenance run as scheduled tasks too. SQLite's scratch
+> files are kept in a `temp` folder beside the database, never the system temp folder.
 
 ### Automatic Backups
 
@@ -1106,3 +1169,17 @@ Similar process to Trakt.
 
 **Document Status:** Complete  
 **Implementation Priority:** Phase 1 (Core deployment), Phase 2 (Advanced features)
+
+## First start: no plugins are bundled
+
+A new Chronicle has no plugins; they come from the plugin catalog (the hosted `plugins.json`). The first administrator sees a
+"Chronicle has no plugins yet" banner on the Dashboard that opens **Getting started**: it asks which media you keep, offers a
+file scanner and information sources from the catalog with an Install button each, asks for any API key a plugin needs (and tests
+it), and ends at the Scan page. The server needs internet access to GitHub for this. For an install without internet access, copy a
+plugin's folder (its DLL and `manifest.json`) into the `plugins/` folder and set the app setting `plugins.allow_unlisted` to `true`
+if it is not in the catalog.
+
+## PostgreSQL
+
+SQLite is the default. To move to PostgreSQL (very large libraries, or a server you already run), see `docs/POSTGRESQL.md`: it
+covers the copy command that moves an existing SQLite database across and the two settings that switch Chronicle over.

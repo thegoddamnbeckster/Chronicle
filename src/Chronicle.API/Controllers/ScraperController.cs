@@ -1091,6 +1091,25 @@ public class ScraperController : ControllerBase
         var exactMatches = candidates.Where(c =>
             string.Equals(TryGetScannedFileName(c.MetadataJson), fileName, StringComparison.OrdinalIgnoreCase)).ToList();
 
+        // One file holding two episodes ("Show - S01E01-E02 - Pilot.mkv"): Chronicle records the file on the first, but Kodi
+        // lists the second as its own episode pointing at the same file and asks for that one. When the name really covers
+        // the caller's episode, answer with that episode's own item instead of calling the file unknown.
+        if (exactMatches.Count == 1 && episode.HasValue && exactMatches[0].Number.HasValue &&
+            exactMatches[0].Number!.Value != episode.Value && exactMatches[0].ParentId.HasValue &&
+            EpisodeRange.Covers(fileName, episode.Value))
+        {
+            var sibling = await _context.MediaItems.FirstOrDefaultAsync(m =>
+                m.ParentId == exactMatches[0].ParentId && m.HierarchyLevel == 2 && m.Number == episode.Value, ct);
+            if (sibling is not null)
+            {
+                _logger.LogInformation(
+                    "scraper/tv/episode-details-by-file: fileName={FileName} covers more than one episode -- answering episode {Episode} with its own item {ItemId}",
+                    fileName, episode, sibling.Id);
+                exactMatches = [sibling];
+                season = null;   // the sibling shares the first episode's season by construction
+            }
+        }
+
         if (exactMatches.Count == 1 && episode.HasValue && exactMatches[0].Number.HasValue &&
             exactMatches[0].Number!.Value != episode.Value)
         {
@@ -1281,20 +1300,18 @@ public class ScraperController : ControllerBase
     private async Task<int> GetMediaTypeIdAsync(string name, CancellationToken ct) =>
         await _context.MediaTypes.Where(t => t.Name == name && t.IsActive).Select(t => t.Id).FirstOrDefaultAsync(ct);
 
-    /// <summary>Flat, single-level types whose items are all "a movie file on disk" as far as
-    /// Kodi is concerned — kept in sync with MovieCollectionService.IsMovieLikeTypeName.</summary>
-    private static readonly string[] MovieLikeTypeNames = ["movies", "fanedits", "anime_movies"];
+    /// <summary>Flat types whose items are all "a movie file on disk" as far as Kodi is concerned: the active types whose
+    /// provider family is "movie" (editable on the Media Types page), not a list of names.</summary>
+    private async Task<List<int>> GetMovieLikeTypeIdsAsync(CancellationToken ct) =>
+        (await ActiveTypeNamesAsync(ct)).Where(t => MediaTypeFamilies.IsMovieLike(t.Name)).Select(t => t.Id).ToList();
 
-    /// <summary>Hierarchical show types scraped through Kodi's TV path.</summary>
-    private static readonly string[] ShowLikeTypeNames = ["tv", "anime"];
+    /// <summary>Hierarchical show types scraped through Kodi's TV path: the active types whose provider family is "tv".</summary>
+    private async Task<List<int>> GetShowLikeTypeIdsAsync(CancellationToken ct) =>
+        (await ActiveTypeNamesAsync(ct)).Where(t => MediaTypeFamilies.IsShowLike(t.Name)).Select(t => t.Id).ToList();
 
-    private Task<List<int>> GetMovieLikeTypeIdsAsync(CancellationToken ct) =>
-        _context.MediaTypes.Where(t => t.IsActive && MovieLikeTypeNames.Contains(t.Name))
-            .Select(t => t.Id).ToListAsync(ct);
-
-    private Task<List<int>> GetShowLikeTypeIdsAsync(CancellationToken ct) =>
-        _context.MediaTypes.Where(t => t.IsActive && ShowLikeTypeNames.Contains(t.Name))
-            .Select(t => t.Id).ToListAsync(ct);
+    private async Task<List<(int Id, string Name)>> ActiveTypeNamesAsync(CancellationToken ct) =>
+        (await _context.MediaTypes.Where(t => t.IsActive).Select(t => new { t.Id, t.Name }).ToListAsync(ct))
+            .Select(t => (t.Id, t.Name)).ToList();
 
     /// <summary>
     /// Matches Kodi's title against candidates ignoring punctuation/case/whitespace, not an

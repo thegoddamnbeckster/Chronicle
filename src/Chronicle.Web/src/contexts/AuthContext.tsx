@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { User } from '@/types'
-import { getMe } from '@/api/auth'
+import { getMe, logoutRequest } from '@/api/auth'
 
 interface AuthContextValue {
   user: User | null
@@ -28,9 +28,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(() => {
-    localStorage.removeItem('chronicle_token')
-    setUser(null)
-    window.location.href = '/login'
+    // Tell the server first so the key is dead everywhere, not just forgotten here. Failure
+    // (server down, key already invalid) must not trap the user signed-in-looking: clear
+    // local state and leave either way.
+    void logoutRequest()
+      .catch(() => { /* best-effort */ })
+      .finally(() => {
+        localStorage.removeItem('chronicle_token')
+        setUser(null)
+        window.location.href = '/login'
+      })
   }, [])
 
   return (

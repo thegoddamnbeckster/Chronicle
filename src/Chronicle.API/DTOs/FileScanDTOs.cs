@@ -194,7 +194,13 @@ namespace Chronicle.API.DTOs
         List<string> Files,
         string? FolderPath = null,
         string? Author = null,
-        string? Series = null);
+        string? Series = null,
+        List<string>? RelatedFiles = null,
+        int? SuggestedMediaTypeId = null,
+        string? SuggestedMediaTypeName = null,
+        string? SuggestedMediaTypeReason = null,
+        int? MediaTypeId = null,
+        string? MediaTypeName = null);
 
     public record ScanGroupResultDto(
         List<ScanGroupDto> Groups,
@@ -203,7 +209,8 @@ namespace Chronicle.API.DTOs
 
     public record ImportGroupsRequestDto(
         List<ImportGroupDto> Groups,
-        int MediaTypeId);
+        int MediaTypeId,
+        bool BundleRelatedFiles = false);
 
     public record ImportGroupDto(
         string Name,
@@ -212,5 +219,11 @@ namespace Chronicle.API.DTOs
         string? PosterPath,
         List<ImportGroupDto> Children,
         List<string> Files,
-        string? FolderPath = null);
+        string? FolderPath = null,
+        List<string>? RelatedFiles = null,
+        int? MediaTypeId = null);
+
+    public record MediaFileDto(string Path, string Type, bool Exists, long? SizeBytes, DateTime? ModifiedUtc);
+
+    public record RelatedFileDto(int Id, string Path, string Kind, long? SizeBytes, DateTime DiscoveredAt, DateTime? MissingSince);
 }

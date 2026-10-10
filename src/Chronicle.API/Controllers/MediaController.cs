@@ -52,11 +52,13 @@ namespace Chronicle.API.Controllers
         [HttpGet("types")]
         public async Task<IActionResult> GetMediaTypes()
         {
-            var types = await _context.MediaTypes
+            var rows = await _context.MediaTypes
                 .Where(t => t.IsActive)
                 .OrderBy(t => t.DisplayName)
-                .Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName, t.HierarchyLevels))
+                .Select(t => new { t.Id, t.Name, t.DisplayName, t.HierarchyLevels, t.InteractionVerb, t.HierarchyLabels, t.SupportsCollections, t.CastHeading })
                 .ToListAsync();
+            var types = rows.Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName, t.HierarchyLevels,
+                t.InteractionVerb, Chronicle.Services.MediaTypeRules.SplitLabels(t.HierarchyLabels), t.SupportsCollections, t.CastHeading)).ToList();
             return Ok(ApiResponse<List<MediaTypeDto>>.Ok(types));
         }
 
@@ -121,7 +123,7 @@ namespace Chronicle.API.Controllers
         /// is validated to exist on disk before the bytes are sent.
         /// </summary>
         [HttpGet("{id:int}/local-poster")]
-        [AllowAnonymous] // Poster images are not sensitive
+        [Authorize(Policy = Authentication.AuthPolicies.ImageRead)] // <img> tag: session header or HttpOnly session cookie
         public async Task<IActionResult> GetLocalPoster(int id, CancellationToken ct)
         {
             var item = await _context.MediaItems.FindAsync([id], ct);
@@ -703,7 +705,6 @@ namespace Chronicle.API.Controllers
 
         /// <summary>Polls the state of the current (or most recent) bulk override reset job.</summary>
         [HttpGet("overrides/reset-progress")]
-        [AllowAnonymous]
         public IActionResult GetOverrideResetProgress()
         {
             var s = _overrideResetProgress.GetSnapshot();
@@ -1214,11 +1215,7 @@ namespace Chronicle.API.Controllers
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
                 ? v.GetInt32() : null;
 
-        private static bool IsMovieLikeTypeName(string? name) =>
-            name is not null &&
-            (name.Equals("movies",       StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
+        private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeFamilies.IsMovieLike(name);
 
         private static double? TryGetDouble(System.Text.Json.JsonElement el, string key) =>
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
@@ -1655,6 +1652,70 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>Every media file the scanner has recorded for this item (a movie in several parts or cuts, an
+        /// album folder, a single episode), with whether each is still on disk. The paths come from the database,
+        /// never from the request.</summary>
+        [HttpGet("{id:int}/files")]
+        public async Task<IActionResult> GetFiles(int id, CancellationToken ct)
+        {
+            var json = await _context.MediaItems.AsNoTracking().Where(m => m.Id == id).Select(m => m.MetadataJson).FirstOrDefaultAsync(ct);
+            if (json is null && !await _context.MediaItems.AnyAsync(m => m.Id == id, ct)) return NotFound();
+
+            var files = Chronicle.Services.Scan.FileIdentityJson.ExtractFilePaths(json)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(200)
+                .Select(path =>
+                {
+                    try
+                    {
+                        if (System.IO.File.Exists(path))
+                        {
+                            var info = new FileInfo(path);
+                            return new MediaFileDto(path, "file", true, info.Length, info.LastWriteTimeUtc);
+                        }
+                        if (Directory.Exists(path)) return new MediaFileDto(path, "folder", true, null, null);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* reported as missing */ }
+                    return new MediaFileDto(path, "file", false, null, null);
+                })
+                .ToList();
+            return Ok(ApiResponse<List<MediaFileDto>>.Ok(files));
+        }
+
+        /// <summary>Serves one recorded artwork file (a related file of kind "artwork") so local images show in the
+        /// interface. The path comes from the database; only recognised raster image types are sent.</summary>
+        [HttpGet("{id:int}/related-files/{fileId:int}/content")]
+        [Authorize(Policy = Authentication.AuthPolicies.ImageRead)] // <img> tag: session header or HttpOnly session cookie
+        public async Task<IActionResult> GetRelatedFileContent(int id, int fileId, CancellationToken ct)
+        {
+            var row = await _context.MediaItemRelatedFiles.AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == fileId && r.MediaItemId == id && r.Kind == Chronicle.Core.Models.RelatedFileKinds.Artwork, ct);
+            if (row is null || !System.IO.File.Exists(row.Path)) return NotFound();
+
+            var contentType = Path.GetExtension(row.Path).ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png"            => "image/png",
+                ".webp"           => "image/webp",
+                ".gif"            => "image/gif",
+                _                 => null,
+            };
+            if (contentType is null) return NotFound();
+            return PhysicalFile(row.Path, contentType);
+        }
+
+        /// <summary>Files that live with this item without being it (subtitles, artwork, extras), as recorded by scans
+        /// that had related-file bundling on. Files no longer seen carry a MissingSince time.</summary>
+        [HttpGet("{id:int}/related-files")]
+        public async Task<IActionResult> GetRelatedFiles(int id, CancellationToken ct)
+        {
+            var rows = await _context.MediaItemRelatedFiles.AsNoTracking()
+                .Where(r => r.MediaItemId == id)
+                .OrderBy(r => r.Kind).ThenBy(r => r.Path)
+                .Select(r => new RelatedFileDto(r.Id, r.Path, r.Kind, r.SizeBytes, r.DiscoveredAt, r.MissingSince))
+                .ToListAsync(ct);
+            return Ok(ApiResponse<List<RelatedFileDto>>.Ok(rows));
+        }
+
         /// <summary>Returns merge history for this item (as winner).</summary>
         [HttpGet("{id:int}/merges")]
         public async Task<IActionResult> GetMerges(int id, CancellationToken ct)
@@ -1910,31 +1971,30 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
-        /// Server-side image proxy — fetches an external image URL and streams it back,
-        /// bypassing browser CORS restrictions on third-party CDNs (Trakt, Fanart.tv, etc.).
+        /// Server-side image proxy -- fetches an external image URL and relays it, bypassing
+        /// browser CORS restrictions on third-party CDNs (Trakt, Fanart.tv, etc.). Requires a
+        /// session (the web client fetches it with its token and shows a blob URL), and the
+        /// fetch itself refuses private/loopback/link-local destinations, non-image content,
+        /// and anything over 10 MB -- see <see cref="Helpers.SafeImageFetcher"/>.
         /// </summary>
         [HttpGet("poster-proxy")]
-        [AllowAnonymous]
         public async Task<IActionResult> PosterProxy([FromQuery] string url, CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                || (uri.Scheme != "https" && uri.Scheme != "http"))
-                return BadRequest("Invalid URL.");
-
-            using var http = new System.Net.Http.HttpClient();
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("Chronicle/1.0");
-            http.Timeout = TimeSpan.FromSeconds(10);
-            try
+            var result = await Helpers.SafeImageFetcher.Default.FetchAsync(url, ct);
+            switch (result.Status)
             {
-                var resp = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
-                if (!resp.IsSuccessStatusCode) return NotFound();
-                var contentType = resp.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
-                var stream = await resp.Content.ReadAsStreamAsync(ct);
-                return File(stream, contentType);
-            }
-            catch
-            {
-                return NotFound();
+                case Helpers.SafeImageFetcher.FetchStatus.Ok:
+                    Response.Headers["X-Content-Type-Options"] = "nosniff";
+                    Response.Headers["Cache-Control"] = "private, max-age=3600";
+                    return File(result.Bytes!, result.ContentType!);
+                case Helpers.SafeImageFetcher.FetchStatus.BadRequest:
+                    return BadRequest("Invalid URL.");
+                case Helpers.SafeImageFetcher.FetchStatus.TooLarge:
+                    return StatusCode(StatusCodes.Status413PayloadTooLarge);
+                case Helpers.SafeImageFetcher.FetchStatus.UnsupportedType:
+                    return StatusCode(StatusCodes.Status415UnsupportedMediaType);
+                default:
+                    return NotFound();
             }
         }
     }

@@ -1,3 +1,4 @@
+using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -69,6 +70,20 @@ public sealed class PluginUpdateCheckService : IScheduledTask
         await db.SaveChangesAsync(ct);
         _log.Information("PluginUpdateCheckService: checked {Checked} plugin(s), {Found} update(s) available",
             checkedCount, updatesFound);
+
+        await AnnounceUpdatesAsync(scope.ServiceProvider.GetService<Notifications.INotificationService>(), installed, ct);
+    }
+
+    /// <summary>Tells the administrators about each plugin with a newer version - once per version, not every night until it is installed.</summary>
+    internal static async Task AnnounceUpdatesAsync(Notifications.INotificationService? notifier, IEnumerable<Plugin> installed, CancellationToken ct)
+    {
+        if (notifier is null) return;
+        foreach (var plugin in installed.Where(p => !string.IsNullOrEmpty(p.LatestVersionAvailable)))
+            await notifier.NotifyAdminsAsync(
+                Chronicle.Core.Models.NotificationKinds.PluginUpdate,
+                $"{plugin.Name} {plugin.LatestVersionAvailable} is available",
+                $"You have version {plugin.Version}.", "/plugins",
+                dedupeKey: $"{plugin.PluginId}:{plugin.LatestVersionAvailable}", once: true, ct: ct);
     }
 
     /// <summary>

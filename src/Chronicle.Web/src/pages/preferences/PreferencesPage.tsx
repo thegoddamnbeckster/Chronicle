@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
-import { updateMyPreferences } from '@/api/users'
+import { useEffect } from 'react'
+import { getMyPreferences, updateMyPreferences } from '@/api/users'
+import { listNotificationKinds, type NotificationKindInfo } from '@/api/notifications'
 import styles from './PreferencesPage.module.css'
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -15,6 +17,28 @@ export default function PreferencesPage() {
   const [nowPlayingSaving, setNowPlayingSaving] = useState(false)
   const [allCreditsEnabled, setAllCreditsEnabled] = useState(user?.showAllCredits ?? false)
   const [allCreditsSaving, setAllCreditsSaving] = useState(false)
+
+  const [kinds, setKinds] = useState<NotificationKindInfo[]>([])
+  const [muted, setMuted] = useState<string[]>([])
+
+  useEffect(() => {
+    let alive = true
+    Promise.all([listNotificationKinds(), getMyPreferences()])
+      .then(([k, prefs]) => { if (alive) { setKinds(k); setMuted(prefs.mutedNotificationKinds ?? []) } })
+      .catch(() => { /* the section just stays empty */ })
+    return () => { alive = false }
+  }, [])
+
+  async function handleKindToggle(kind: string, wanted: boolean) {
+    const next = wanted ? muted.filter(k => k !== kind) : [...muted, kind]
+    const before = muted
+    setMuted(next)
+    try {
+      await updateMyPreferences({ mutedNotificationKinds: next })
+    } catch {
+      setMuted(before) // revert on error
+    }
+  }
 
   async function handleAllCreditsToggle(value: boolean) {
     setAllCreditsEnabled(value)
@@ -92,6 +116,23 @@ export default function PreferencesPage() {
           })}
         </div>
       </section>
+
+      {kinds.length > 0 && (
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Notifications</h2>
+          <p className={styles.sectionDesc}>Choose what shows up under the bell.</p>
+          {kinds.map(k => (
+            <div key={k.kind} className={styles.settingRow}>
+              <label>
+                <input type="checkbox" checked={!muted.includes(k.kind)}
+                       onChange={e => void handleKindToggle(k.kind, e.target.checked)} />
+                {' '}{k.label}
+              </label>
+              <span className={styles.sectionDesc}>{k.description}</span>
+            </div>
+          ))}
+        </section>
+      )}
 
       <section className={styles.section}>
         <h2 className={styles.sectionTitle}>Now Playing</h2>

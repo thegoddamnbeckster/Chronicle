@@ -51,6 +51,18 @@ public class TaskSchedulerServiceTests
         return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 
+    /// <summary>Gives every scope its OWN context over the test's in-memory store, as production does. Registering the one
+    /// test context as a singleton let the scheduler's tick and the background run it launched call SaveChangesAsync on the
+    /// same instance at the same time; the run's write could then be dropped, which showed up as an occasional
+    /// "LastRunSucceeded was null" failure.</summary>
+    private static void AddSharedStore(IServiceCollection services, ChronicleDbContext db)
+    {
+#pragma warning disable EF1001
+        var storeName = db.GetService<IDbContextOptions>().FindExtension<InMemoryOptionsExtension>()!.StoreName;
+#pragma warning restore EF1001
+        services.AddDbContext<ChronicleDbContext>(opts => opts.UseInMemoryDatabase(storeName));
+    }
+
     private static Mock<IScheduledTask> MakeTask(
         string id = "test_task",
         string cron = "0 */4 * * *")
@@ -130,6 +142,72 @@ public class TaskSchedulerServiceTests
     }
 
     // ── Tick / run-due ────────────────────────────────────────────────────────
+
+    // ── Restart ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AfterARestart_ATaskThatWasDueWhileDown_IsNotRunUntilItsNextCronTime()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId = "test_task", DisplayName = "T", Description = "d",
+            CronExpression = "0 3 * * *", IsEnabled = true,
+            NextRunAt = DateTime.UtcNow.AddHours(-5),
+        });
+        await db.SaveChangesAsync();
+        var task = MakeTask("test_task");
+        var svc = new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db));
+
+        await svc.SkipMissedRunsAsync(CancellationToken.None);
+        await svc.TickAsync(CancellationToken.None);
+        await Task.Delay(100);
+
+        task.Verify(t => t.ExecuteAsync(It.IsAny<CancellationToken>()), Times.Never);
+        var row = await db.BackgroundTasks.AsNoTracking().SingleAsync(t => t.TaskId == "test_task");
+        row.NextRunAt.Should().BeAfter(DateTime.UtcNow);
+    }
+
+    [Fact]
+    public async Task AfterARestart_ATaskNotYetDue_KeepsItsScheduledTime_AndADisabledOneStaysAsItWas()
+    {
+        var db = MakeDb();
+        var later = DateTime.UtcNow.AddHours(3);
+        var longAgo = DateTime.UtcNow.AddDays(-2);
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "later", DisplayName = "T", Description = "d", CronExpression = "0 3 * * *", IsEnabled = true, NextRunAt = later });
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "off", DisplayName = "T", Description = "d", CronExpression = "0 3 * * *", IsEnabled = false, NextRunAt = longAgo });
+        await db.SaveChangesAsync();
+        var svc = new TaskSchedulerService(new[] { MakeTask("later").Object }, MakeScopeFactory(db));
+
+        await svc.SkipMissedRunsAsync(CancellationToken.None);
+
+        (await db.BackgroundTasks.AsNoTracking().SingleAsync(t => t.TaskId == "later")).NextRunAt.Should().Be(later);
+        (await db.BackgroundTasks.AsNoTracking().SingleAsync(t => t.TaskId == "off")).NextRunAt.Should().Be(longAgo);
+    }
+
+    [Fact]
+    public async Task AfterARestart_ATaskStillRunsWhenItsCronTimeComes()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId = "test_task", DisplayName = "T", Description = "d",
+            CronExpression = "* * * * *", IsEnabled = true, NextRunAt = DateTime.UtcNow.AddHours(-1),
+        });
+        await db.SaveChangesAsync();
+        var task = MakeTask("test_task");
+        var svc = new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db));
+        await svc.SkipMissedRunsAsync(CancellationToken.None);
+
+        // The next minute arrives.
+        var row = await db.BackgroundTasks.SingleAsync(t => t.TaskId == "test_task");
+        row.NextRunAt = DateTime.UtcNow.AddSeconds(-1);
+        await db.SaveChangesAsync();
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("test_task"));
+
+        task.Verify(t => t.ExecuteAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
 
     [Fact]
     public async Task TickAsync_FiresDueTask()
@@ -317,7 +395,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
@@ -352,7 +430,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
@@ -401,7 +479,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask); // completes without throwing -- the graceful "provider unavailable" outcome
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
@@ -426,7 +504,7 @@ public class TaskSchedulerServiceTests
             PluginId       = "chronicle.plugin.tmdb",
             DisplayName    = "Fetch Missing Metadata",
             Description    = "Looks up metadata for new items.",
-            CronExpression = "0 4 * * *",
+            CronExpression = "0 4 1 1 *",
             IsEnabled      = true,
             NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
         });
@@ -438,7 +516,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
@@ -480,7 +558,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
@@ -520,7 +598,7 @@ public class TaskSchedulerServiceTests
               .Returns(Task.CompletedTask);
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);
@@ -545,7 +623,7 @@ public class TaskSchedulerServiceTests
             PluginId       = "chronicle.plugin.tmdb",
             DisplayName    = "Fetch Missing Metadata",
             Description    = "Looks up metadata for new items.",
-            CronExpression = "0 4 * * *",
+            CronExpression = "0 4 1 1 *",
             IsEnabled      = true,
             NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
         });
@@ -560,7 +638,7 @@ public class TaskSchedulerServiceTests
               .ThrowsAsync(new InvalidOperationException("plugin blew up"));
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        AddSharedStore(services, db);
         services.AddSingleton<IPluginTaskRunner>(runner.Object);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), scopeFactory);

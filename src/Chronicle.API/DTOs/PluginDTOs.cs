@@ -32,7 +32,13 @@ public record PluginDto(
     /// or null when none is available. Drives the "Update available" badge.
     /// </summary>
     string? LatestVersionAvailable = null,
-    DateTime? UpdateCheckedAt = null
+    DateTime? UpdateCheckedAt = null,
+    /// <summary>First 12 characters of the hash of the plugin's files (what Chronicle will accept on load).</summary>
+    string? FilesHash = null,
+    string? PreviousFilesHash = null,
+    DateTime? FilesChangedAt = null,
+    /// <summary>Set when the plugin was not loaded because its files changed without Chronicle being told.</summary>
+    DateTime? IntegrityBlockedAt = null
 );
 
 public record InstallPluginRequest(
@@ -53,3 +59,6 @@ public record PluginHealthDto(bool? Healthy, string? FailureReason = null, bool 
 // PluginCatalogEntry moved to Chronicle.Core.Models (2026-09-04) so the Services-layer
 // scheduled update-check task can share the same catalog data as this API's own
 // catalog/install endpoints -- see Chronicle.Services.Plugins.PluginCatalog.
+
+/// <summary>Where the plugin catalog list is read from and whether that worked.</summary>
+public record CatalogSourceDto(string Source, bool UsingFallback, DateTime FetchedAtUtc, string? Error, int PluginCount);

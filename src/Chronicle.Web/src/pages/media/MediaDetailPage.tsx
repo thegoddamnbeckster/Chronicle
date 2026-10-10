@@ -4,6 +4,7 @@ import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, unparentFromSeries, reparentToSeries, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
+import { childrenLabel as childrenLabelFor, statusLabel } from '@/utils/typeWording'
 import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, addToLibrary, updateLibraryEntry, resetWatchProgress } from '@/api/library'
 import { posterProgressPercent } from '@/utils/posterProgress'
 import { listPlugins } from '@/api/plugins'
@@ -25,6 +26,8 @@ import { ArtTypeTag } from '@/components/ArtTypeTag'
 import MergeModal, { type MergeItem } from '@/components/MergeModal'
 import { unmergeItem } from '@/api/duplicates'
 import { PersonCard } from '@/components/people/PersonCard'
+import RelatedFilesBox from '@/components/RelatedFilesBox'
+import MediaFilesList from '@/components/MediaFilesList'
 
 const STATUS_OPTIONS: LibraryStatus[] = [
   'Unwatched', 'PlanToWatch', 'Watching', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
@@ -37,46 +40,6 @@ const STATUS_OPTIONS: LibraryStatus[] = [
 const ON_SCREEN_ROLES = new Set(['actor', 'narrator', 'musician', 'vocals', 'playback singer'])
 const isOnScreenRole = (roles: string[]) => roles.some(r => ON_SCREEN_ROLES.has(r.toLowerCase()))
 
-/** Returns a display label for a LibraryStatus value that is appropriate for the given media type. */
-function getStatusLabel(status: LibraryStatus, mediaTypeName: string): string {
-  const t = mediaTypeName.toLowerCase()
-  const isMusic = t === 'music' || t === 'podcast' || t === 'podcasts' || t === 'audiobook' || t === 'audiobooks'
-  const isBook = t === 'book' || t === 'books'
-  const isGame = t === 'game' || t === 'games'
-
-  switch (status) {
-    case 'PlanToWatch':
-      if (isMusic) return 'Plan to Listen'
-      if (isBook) return 'Plan to Read'
-      if (isGame) return 'Plan to Play'
-      return 'Plan to Watch'
-    case 'Watching':
-      if (isMusic) return 'Listening'
-      if (isBook) return 'Reading'
-      if (isGame) return 'Playing'
-      return 'Watching'
-    case 'Rewatching':
-      if (isMusic) return 'Re-listening'
-      if (isBook) return 'Re-reading'
-      if (isGame) return 'Replaying'
-      return 'Rewatching'
-    case 'Unwatched':
-      if (isMusic) return 'Unlistened'
-      if (isBook) return 'Unread'
-      if (isGame) return 'Unplayed'
-      return 'Unwatched'
-    case 'Completed': return 'Completed'
-    case 'Dropped': return 'Dropped'
-    case 'OnHold': return 'On Hold'
-    default: return status
-  }
-}
-
-/** Returns the label for the "Plan to Watch / Listen / Read / Play" quick-add button. */
-function getPlanToLabel(mediaTypeName: string): string {
-  return getStatusLabel('PlanToWatch', mediaTypeName)
-}
-
 /**
  * Formats a child's series position for display, preferring the precise (possibly fractional)
  * seriesPosition over the floored `number` -- see MediaItem.seriesPosition's own doc for why
@@ -87,30 +50,6 @@ function getPlanToLabel(mediaTypeName: string): string {
 function formatChildPosition(number: number | null, seriesPosition: number | null | undefined): string | null {
   const value = seriesPosition ?? number
   return value == null ? null : String(value)
-}
-
-/**
- * Returns the plural label for children of an item based on the parent's
- * media type and how deep in the hierarchy the parent is.
- *   TV  level 0 → "Seasons",  level 1 → "Episodes"
- *   music level 0 → "Albums", level 1 → "Tracks"
- *   anything else → "Items"
- */
-function getChildrenLabel(parentMediaType: string, ancestorCount: number): string {
-  const t = parentMediaType.toLowerCase()
-  const childLevel = ancestorCount + 1
-  if (t === 'tv' || t === 'tv shows') {
-    if (childLevel === 1) return 'Seasons'
-    if (childLevel === 2) return 'Episodes'
-  }
-  if (t === 'music') {
-    if (childLevel === 1) return 'Albums'
-    if (childLevel === 2) return 'Tracks'
-  }
-  if (t === 'movies') {
-    if (childLevel === 1) return 'Movies'
-  }
-  return 'Items'
 }
 
 const LIGHTBOX_SKIP = new Set(['title', 'externalid', 'source', 'totalresults', 'total_results'])
@@ -249,14 +188,6 @@ export default function MediaDetailPage() {
     enabled: !isNaN(mediaId),
   })
   const onScreenPeople = peopleInvolved.filter(p => isOnScreenRole(p.roles))
-  // The on-screen group's heading: musicians/vocalists on a record, narrators on an audiobook,
-  // actors everywhere else.
-  const castLabel = (() => {
-    const t = (item?.mediaTypeName ?? '').toLowerCase()
-    if (t === 'music') return 'Band Members'
-    if (t === 'audiobook' || t === 'audiobooks') return 'Narrators'
-    return 'Cast'
-  })()
   const otherPeople = peopleInvolved.filter(p => !isOnScreenRole(p.roles))
 
   // Get the user's library entry for this item (if any)
@@ -518,6 +449,9 @@ export default function MediaDetailPage() {
     queryFn: getMediaTypes,
     staleTime: 5 * 60 * 1000,
   })
+
+  // The on-screen group's heading ("Band Members", "Narrators", ...) comes from the media type's own setting.
+  const castLabel = mediaTypes.find(t => t.id === item?.mediaTypeId)?.castHeading || 'Cast'
 
   const changeTypeMut = useMutation({
     mutationFn: (targetTypeId: number) => changeMediaType(mediaId, targetTypeId),
@@ -1357,7 +1291,7 @@ export default function MediaDetailPage() {
                     onChange={e => updateMut.mutate({ status: e.target.value as LibraryStatus })}
                   >
                     {STATUS_OPTIONS.map(st => (
-                      <option key={st} value={st}>{getStatusLabel(st, item.mediaTypeName)}</option>
+                      <option key={st} value={st}>{statusLabel(st, currentMediaType?.interactionVerb)}</option>
                     ))}
                   </select>
                   <label className={styles.stripLabel}>Rating</label>
@@ -1394,7 +1328,7 @@ export default function MediaDetailPage() {
                     + Add to Library
                   </button>
                   <button className={styles.secondaryBtn} onClick={() => addMut.mutate('PlanToWatch')} disabled={addMut.isPending}>
-                    {getPlanToLabel(item.mediaTypeName)}
+                    {statusLabel('PlanToWatch', currentMediaType?.interactionVerb)}
                   </button>
                 </div>
               )
@@ -1457,7 +1391,7 @@ export default function MediaDetailPage() {
           // Neither has a number → natural sort on name (handles "E01" < "E02" < "E10")
           return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
         })
-        const childrenLabel = getChildrenLabel(item.mediaTypeName, item.ancestors?.length ?? 0)
+        const childrenLabel = childrenLabelFor(currentMediaType, item.ancestors?.length ?? 0)
         const childIds = sortedChildren.map(c => c.id)
         return (
         <PluginFold
@@ -1590,6 +1524,8 @@ export default function MediaDetailPage() {
             </PluginFold>
           )}
 
+          <RelatedFilesBox mediaId={mediaId} />
+
           {/* Additional Images — every image available across all plugins for this item,
               grouped by the artwork type its source plugin reported. Browse-only: clicking a
               thumbnail opens it full size, which is the only place artwork can be assigned. */}
@@ -1615,10 +1551,12 @@ export default function MediaDetailPage() {
             <div className={styles.scannerBox}>
               <div className={styles.scannerHeader}>File Scanner</div>
               <div className={styles.tmdbGrid}>
-                {item.fileScannerMeta?.filePath && (
+                {(item.fileScannerMeta?.filePath || item.hasPhysicalFile) && (
                   <div className={styles.tmdbRow}>
-                    <span className={styles.tmdbLabel}>File</span>
-                    <span className={styles.scannerPath}>{item.fileScannerMeta.filePath}</span>
+                    <span className={styles.tmdbLabel}>Files</span>
+                    <span className={styles.scannerPath}>
+                      <MediaFilesList mediaId={mediaId} fallbackPath={item.fileScannerMeta?.filePath ?? null} />
+                    </span>
                   </div>
                 )}
                 {/* No own path recorded (neither a file nor a folder). This is not a loading

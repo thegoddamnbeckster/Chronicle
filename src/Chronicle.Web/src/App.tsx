@@ -21,8 +21,14 @@ import ServiceSettingsPage from '@/pages/settings/ServiceSettingsPage'
 import ApiKeysPage from '@/pages/settings/ApiKeysPage'
 import LibrarySettingsPage from '@/pages/settings/LibrarySettingsPage'
 import BackgroundTasksPage from '@/pages/settings/BackgroundTasksPage'
+import DatabasePage from '@/pages/settings/DatabasePage'
+import EmailSettingsPage from '@/pages/settings/EmailSettingsPage'
+import MediaTypesPage from '@/pages/settings/MediaTypesPage'
+import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage'
+import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 import EnrichmentDrillDownPage from '@/pages/settings/EnrichmentDrillDownPage'
 import PluginsPage from '@/pages/plugins/PluginsPage'
+import GettingStartedPage from '@/pages/setup/GettingStartedPage'
 import ListsPage from '@/pages/lists/ListsPage'
 import ListDetailPage from '@/pages/lists/ListDetailPage'
 import DeviceAuthPage from '@/pages/device-auth/DeviceAuthPage'
@@ -60,6 +66,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       {/* Device-auth approval page — accessible without being logged in (page handles auth check).
           Short path on purpose: the code itself is now the whole point of brevity (a LAN
           pairing code someone might type by hand), so the route around it stays minimal too. */}
@@ -96,6 +104,9 @@ export default function App() {
         <Route path="settings/api-keys" element={<ApiKeysPage />} />
         <Route path="settings/library" element={<LibrarySettingsPage />} />
         <Route path="settings/background-tasks" element={<BackgroundTasksPage />} />
+        <Route path="settings/database" element={<DatabasePage />} />
+        <Route path="settings/email" element={<EmailSettingsPage />} />
+        <Route path="settings/media-types" element={<MediaTypesPage />} />
         <Route path="settings/enrichment/:pluginId" element={<EnrichmentDrillDownPage />} />
         <Route path="settings/metadata-assignment" element={<MetadataAssignmentPage />} />
         <Route path="settings/field-aliases" element={<FieldAliasesPage />} />
@@ -105,6 +116,7 @@ export default function App() {
         <Route path="settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
         <Route path="settings/profile" element={<ProfilePage />} />
         <Route path="plugins" element={<PluginsPage />} />
+        <Route path="getting-started" element={<RequireAdmin><GettingStartedPage /></RequireAdmin>} />
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListDetailPage />} />
         <Route path="scan" element={<ScanPage />} />

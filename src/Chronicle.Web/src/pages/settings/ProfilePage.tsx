@@ -9,6 +9,8 @@ import {
   type UserAccountDto,
 } from '@/api/users'
 import ContactsEditor from '@/components/settings/ContactsEditor'
+import SessionsList from '@/components/settings/SessionsList'
+import { listMySessions, endMySession, logoutEverywhere } from '@/api/auth'
 import styles from './UsersPage.module.css'
 
 export default function ProfilePage() {
@@ -197,6 +199,27 @@ export default function ProfilePage() {
           {pwError && <p className={styles.error}>{pwError}</p>}
           {pwMessage && <p className={styles.success}>{pwMessage}</p>}
         </form>
+      </div>
+
+      <div className={styles.card}>
+        <h2 className={styles.cardTitle}>Active Sessions</h2>
+        <p className={styles.hint}>
+          Every browser or device currently signed in to your account. Sessions also end when
+          Chronicle restarts, when you change your password, or after a period of inactivity.
+        </p>
+        <SessionsList
+          load={listMySessions}
+          onEnd={endMySession}
+          onEndAll={{
+            label: 'Sign out everywhere',
+            confirm: 'Sign out of every session, including this one?',
+            run: async () => {
+              await logoutEverywhere()
+              localStorage.removeItem('chronicle_token')
+              window.location.href = '/login'
+            },
+          }}
+        />
       </div>
     </div>
   )

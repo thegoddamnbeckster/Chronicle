@@ -10,6 +10,8 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { getStats } from '@/api/stats'
+import { listPlugins } from '@/api/plugins'
+import { useAuth } from '@/hooks/useAuth'
 import { getLibrary } from '@/api/library'
 import { ancestorBreadcrumb, buildWeeklyActivity, dedupeHistoryByMediaItem, getHistoryPage } from '@/api/reports'
 import styles from './DashboardPage.module.css'
@@ -43,6 +45,11 @@ export default function DashboardPage() {
     queryFn: () => getLibrary('Watching'),
   })
 
+  // A fresh install has no plugins at all, and nothing can be scanned or looked up until some are added.
+  const { user } = useAuth()
+  const { data: plugins } = useQuery({ queryKey: ['plugins'], queryFn: listPlugins, enabled: !!user?.isAdmin })
+  const needsSetup = !!user?.isAdmin && plugins !== undefined && plugins.length === 0
+
   const weeklyData = history ? buildWeeklyActivity(history) : []
   const recentActivity = history ? dedupeHistoryByMediaItem(history) : []
 
@@ -50,14 +57,22 @@ export default function DashboardPage() {
     <div className={styles.page}>
       <h2 className={styles.heading}>Dashboard</h2>
 
+      {needsSetup && (
+        <div className={styles.setupBanner} role="region" aria-label="Getting started">
+          <strong>Chronicle has no plugins yet.</strong>{' '}
+          Plugins are what read your folders and look up information about your media. We will walk you through choosing them.{' '}
+          <Link to="/getting-started">Start the setup</Link>
+        </div>
+      )}
+
       {stats && (
         <div className={styles.statsGrid}>
           <StatCard label="Tracked" value={stats.totalItemsTracked} />
-          <StatCard label="Watching" value={stats.totalWatching} />
+          <StatCard label="In progress" value={stats.totalWatching} />
           <StatCard label="Completed" value={stats.totalCompleted} />
           <StatCard label="This Week" value={stats.scrobblesThisWeek} />
           <StatCard label="This Month" value={stats.scrobblesThisMonth} />
-          <StatCard label="Watch Time" value={formatMinutes(stats.totalMinutesWatched)} />
+          <StatCard label="Time spent" value={formatMinutes(stats.totalMinutesWatched)} />
         </div>
       )}
 
@@ -110,7 +125,7 @@ export default function DashboardPage() {
 
       <div className={styles.panels}>
         <section className={styles.panel}>
-          <h3 className={styles.panelTitle}>Continue Watching</h3>
+          <h3 className={styles.panelTitle}>Continue</h3>
           {watching && watching.length > 0 ? (
             <ul className={styles.list}>
               {watching.slice(0, 8).map(e => {

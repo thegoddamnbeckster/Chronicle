@@ -5,7 +5,7 @@
 .DESCRIPTION
     Builds the plugin project, calls POST /api/v1/plugins/{id}/unload to release the
     file lock, copies the new DLL, then calls POST /api/v1/plugins/{id}/reload.
-    The API stays up throughout. Requires a valid JWT (pass via -Token or set
+    The API stays up throughout. Requires a valid session key or API key (pass via -Token or set
     $env:CHRONICLE_TOKEN).
 
 .PARAMETER PluginId
@@ -15,7 +15,7 @@
     API base URL. Defaults to http://localhost:7979
 
 .PARAMETER Token
-    JWT bearer token. Falls back to $env:CHRONICLE_TOKEN.
+    Session key or API key, sent as a bearer token. Falls back to $env:CHRONICLE_TOKEN.
 
 .PARAMETER Release
     Build in Release configuration (default: Debug).

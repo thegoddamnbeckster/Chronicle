@@ -20,7 +20,14 @@ function emitAuthFailure(pluginId: string, pluginName: string) {
   authFailureListeners.forEach(fn => fn(pluginId, pluginName))
 }
 
-// Attach JWT token from localStorage on every request
+/**
+ * Marks a request as automatic polling rather than something the user did. The server still
+ * authenticates it, but it does not restart the session's idle timer -- otherwise a tab left
+ * open and abandoned would keep its session alive forever just by polling.
+ */
+export const BACKGROUND_REQUEST = { headers: { 'X-Chronicle-Background': '1' } } as const
+
+// Attach the session key from localStorage on every request
 client.interceptors.request.use((config) => {
   const token = localStorage.getItem('chronicle_token')
   if (token) {
@@ -45,7 +52,12 @@ export class ApiError extends Error {
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    // 401 = the server no longer recognises this session key (logged out, expired, ended by
+    // an admin, or the API restarted). Not for the sign-in calls themselves: a wrong password
+    // is also a 401 and must stay on the form showing its error, not reload the page.
+    const requestUrl: string = err.config?.url ?? ''
+    const isSignInCall = requestUrl.endsWith('/auth/login') || requestUrl.endsWith('/auth/register')
+    if (err.response?.status === 401 && !isSignInCall) {
       localStorage.removeItem('chronicle_token')
       window.location.href = '/login'
     }

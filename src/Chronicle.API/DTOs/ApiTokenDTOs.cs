@@ -8,13 +8,21 @@ public record ApiTokenDto(
     string Name,
     DateTime CreatedAt,
     DateTime? LastUsedAt,
-    DateTime? ExpiresAt
+    DateTime? ExpiresAt,
+    string Scope
 );
+
+/// <summary>One scope a key can be given, with a plain-language description for the UI.</summary>
+public record ApiKeyScopeDto(string Scope, string Description);
+
+public record SetApiTokenScopeRequest([Required] string Scope);
 
 /// <summary>Request body for creating a new API token.</summary>
 public record CreateApiTokenRequest(
     [Required, MinLength(1), MaxLength(100)] string Name,
-    DateTime? ExpiresAt
+    DateTime? ExpiresAt,
+    /// <summary>Optional; defaults to "full" so existing clients of this endpoint keep working.</summary>
+    string? Scope = null
 );
 
 /// <summary>
@@ -26,5 +34,6 @@ public record CreateApiTokenResponse(
     /// <summary>The raw <c>chr_live_…</c> key — show once, never stored.</summary>
     string Token,
     DateTime CreatedAt,
-    DateTime? ExpiresAt
+    DateTime? ExpiresAt,
+    string Scope
 );

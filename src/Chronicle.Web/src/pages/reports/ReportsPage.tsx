@@ -131,7 +131,7 @@ export default function ReportsPage() {
           </div>
           <div className={styles.kpi}>
             <div className={styles.kpiValue}>{formatMinutes(stats.totalMinutesWatched)}</div>
-            <div className={styles.kpiLabel}>Total Watch Time</div>
+            <div className={styles.kpiLabel}>Total time spent</div>
           </div>
           <div className={styles.kpi}>
             <div className={styles.kpiValue}>{stats.scrobblesThisWeek}</div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import {
   listUsers,
@@ -14,6 +14,9 @@ import {
   type UserAccountDto,
 } from '@/api/users'
 import ContactsEditor from '@/components/settings/ContactsEditor'
+import SessionsList from '@/components/settings/SessionsList'
+import { listUserSessions, endUserSessions } from '@/api/auth'
+import { issueResetToken, type ResetTokenDto } from '@/api/users'
 import styles from './UsersPage.module.css'
 
 function formatDate(iso: string | null): string {
@@ -110,6 +113,17 @@ export default function UsersPage() {
     void run(u.id, () => deleteUser(u.id), 'Could not delete that user.')
   }
 
+  const [issued, setIssued] = useState<ResetTokenDto | null>(null)
+
+  async function handleResetCode(u: UserAccountDto) {
+    setError('')
+    try {
+      setIssued(await issueResetToken(u.id))
+    } catch (err) {
+      setError(apiMessage(err, 'Could not create a reset code.'))
+    }
+  }
+
   async function handleResetPassword(u: UserAccountDto) {
     const pw = prompt(`Set a new password for ${u.username} (at least 8 characters):`)
     if (pw === null) return
@@ -124,6 +138,19 @@ export default function UsersPage() {
       <h1 className={styles.title}>Users</h1>
 
       {error && <p className={styles.error}>{error}</p>}
+
+      {issued && (
+        <div className={styles.card} role="dialog" aria-label="Reset code">
+          <h2 className={styles.cardTitle}>Reset code for {issued.username}</h2>
+          <p className={styles.hint}>
+            Give this to {issued.username}. It works once and expires {new Date(issued.expiresAt).toLocaleString()}. It will not be shown again.
+          </p>
+          <p><code data-testid="reset-code">{issued.token}</code></p>
+          <p className={styles.hint}>They enter it on the sign-in page under Forgot password -&gt; I have a reset code, or you can send them this link:</p>
+          <p><code>{issued.resetUrl}</code></p>
+          <button className={styles.smallBtn} onClick={() => setIssued(null)}>Done</button>
+        </div>
+      )}
 
       <div className={styles.card}>
         <div className={styles.cardHeader}>
@@ -227,6 +254,11 @@ export default function UsersPage() {
                             onClick={() => handleResetPassword(u)}>
                       Reset Password
                     </button>
+                    <button className={styles.smallBtn} disabled={busy || !u.isActive}
+                            title="Create a one-time code to give this person, so they choose their own password"
+                            onClick={() => void handleResetCode(u)}>
+                      Reset Code
+                    </button>
                     <button className={styles.dangerBtn} disabled={busy || isMe}
                             title={isMe ? 'You cannot delete your own account' : undefined}
                             onClick={() => handleDelete(u)}>
@@ -255,6 +287,8 @@ function UserDetail({ user, onChanged }: { user: UserAccountDto; onChanged: () =
   const [email, setEmail] = useState(user.email ?? '')
   const [saving, setSaving] = useState(false)
   const [detailError, setDetailError] = useState('')
+  // Stable identity: SessionsList reloads whenever `load` changes, so an inline arrow would loop.
+  const loadSessions = useCallback(() => listUserSessions(user.id), [user.id])
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -313,6 +347,17 @@ function UserDetail({ user, onChanged }: { user: UserAccountDto; onChanged: () =
         </div>
         {detailError && <p className={styles.error}>{detailError}</p>}
       </form>
+
+      <h3 className={styles.detailHeading}>Signed-in sessions</h3>
+      <SessionsList
+        load={loadSessions}
+        emptyText="Not signed in anywhere."
+        onEndAll={{
+          label: 'End all sessions',
+          confirm: `End every session for ${user.username}? They will have to sign in again.`,
+          run: () => endUserSessions(user.id),
+        }}
+      />
 
       <h3 className={styles.detailHeading}>Contact Methods</h3>
       <ContactsEditor

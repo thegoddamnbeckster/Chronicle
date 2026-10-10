@@ -11,6 +11,7 @@ namespace Chronicle.Services;
 
 public class DeviceAuthService : IDeviceAuthService
 {
+    private const int MaxPendingCodes = 200;
     private const int ExpirySeconds = 900;   // 15-minute window, matching SIMKL's own device-auth codes
 
     private readonly ChronicleDbContext _db;
@@ -36,6 +37,12 @@ public class DeviceAuthService : IDeviceAuthService
         // one and only identifier, used everywhere: URL, QR payload, and DB lookup.
         _log.LogInformation("DeviceAuthService.InitiateAsync: starting — DeviceName={DeviceName} BaseUrl={BaseUrl}",
             deviceName, baseUrl);
+
+        // Bounds the table an anonymous caller can grow. Real use is a handful of boxes at a time.
+        var pending = await _db.DeviceAuthCodes.CountAsync(c =>
+            c.Status == DeviceAuthStatus.Pending && c.ExpiresAt > DateTime.UtcNow);
+        if (pending >= MaxPendingCodes)
+            throw new TooManyPendingDeviceCodesException();
 
         var code = await GenerateUniqueCodeAsync();
 
@@ -130,7 +137,7 @@ public class DeviceAuthService : IDeviceAuthService
             : $"{record.DeviceName} (QR Auth)";
 
         var (apiToken, rawKey) = await _apiTokenService
-            .CreateTokenAsync(userId, tokenName, expiresAt: null);
+            .CreateTokenAsync(userId, tokenName, expiresAt: null, scope: ApiKeyScopes.Device);
 
         record.Status      = DeviceAuthStatus.Approved;
         record.UserId      = userId;
@@ -158,7 +165,7 @@ public class DeviceAuthService : IDeviceAuthService
             .FirstOrDefaultAsync(c => c.Code == code);
 
         if (record is null)
-            return new PollDeviceAuthResult("expired", null);
+            return new PollDeviceAuthResult("expired", null, Found: false);
 
         // Lazily expire
         if (record.Status == DeviceAuthStatus.Pending && record.ExpiresAt < DateTime.UtcNow)

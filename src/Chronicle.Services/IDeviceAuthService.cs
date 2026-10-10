@@ -14,8 +14,17 @@ public record PollDeviceAuthResult(
     /// <summary>"pending" | "approved" | "denied" | "expired"</summary>
     string Status,
     /// <summary>Raw API key — only present on the FIRST approved poll.</summary>
-    string? ApiKey
+    string? ApiKey,
+    /// <summary>False when no such code exists at all (as opposed to one that expired). Lets the
+    /// API count guesses without penalising a device still polling a real, expired code.</summary>
+    bool Found = true
 );
+
+/// <summary>Too many unexpired pairing codes are waiting; the caller should back off.</summary>
+public class TooManyPendingDeviceCodesException : Exception
+{
+    public TooManyPendingDeviceCodesException() : base("Too many pairing codes are waiting. Try again in a few minutes.") { }
+}
 
 public record DeviceAuthInfoResult(
     string DisplayCode,

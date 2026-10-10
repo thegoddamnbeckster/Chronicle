@@ -1,3 +1,4 @@
+import { neutralStatusLabel } from '@/utils/typeWording'
 import { useState, useMemo, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -18,14 +19,15 @@ const STATUS_OPTIONS: LibraryStatus[] = [
   'Unwatched', 'Watching', 'PlanToWatch', 'Completed', 'Dropped', 'OnHold', 'Rewatching',
 ]
 
+// The library mixes every media type, so its statuses carry no action word ("Watching" would be wrong for music).
 const STATUS_LABELS: Record<LibraryStatus, string> = {
-  Unwatched: 'Unwatched',
-  Watching: 'Watching',
-  PlanToWatch: 'Plan to Watch',
-  Completed: 'Completed',
-  Dropped: 'Dropped',
-  OnHold: 'On Hold',
-  Rewatching: 'Rewatching',
+  Unwatched: neutralStatusLabel('Unwatched'),
+  Watching: neutralStatusLabel('Watching'),
+  PlanToWatch: neutralStatusLabel('PlanToWatch'),
+  Completed: neutralStatusLabel('Completed'),
+  Dropped: neutralStatusLabel('Dropped'),
+  OnHold: neutralStatusLabel('OnHold'),
+  Rewatching: neutralStatusLabel('Rewatching'),
 }
 
 const PAGE_SIZES = { minimal: 6, medium: 24, maximal: 100, all: Infinity } as const

@@ -28,7 +28,11 @@ namespace Chronicle.Services
         string Path,
         bool Recursive,
         int MediaTypeId
-    );
+    )
+    {
+        /// <summary><see cref="MediaTypeId"/> value meaning "decide the media type of each file from the file itself".</summary>
+        public const int AutoDetect = 0;
+    }
 
     public record ScannedFileResult(
         string FilePath,
@@ -130,7 +134,21 @@ namespace Chronicle.Services
 
     public record ImportGroupsRequest(
         List<ScanGroupImport> Groups,
-        int MediaTypeId);
+        int MediaTypeId,
+        bool BundleRelatedFiles = false);
+
+    public static class ImportGrouping
+    {
+        /// <summary>
+        /// Splits groups into one import request per media type: a group carries its own type when the scan sorted files
+        /// automatically, otherwise it takes <paramref name="defaultMediaTypeId"/>. A scan of a single type is therefore one
+        /// request, exactly as before.
+        /// </summary>
+        public static List<ImportGroupsRequest> ByType(IEnumerable<ScanGroupImport> groups, int defaultMediaTypeId, bool bundleRelatedFiles) =>
+            groups.GroupBy(g => g.MediaTypeId ?? defaultMediaTypeId)
+                .Select(g => new ImportGroupsRequest(g.ToList(), g.Key, bundleRelatedFiles))
+                .ToList();
+    }
 
     public record ScanGroupImport(
         string Name,
@@ -139,7 +157,9 @@ namespace Chronicle.Services
         List<ScanGroupImport> Children,
         List<string> Files,
         string? FolderPath = null,
-        int? Number = null)
+        int? Number = null,
+        List<string>? RelatedFiles = null,
+        int? MediaTypeId = null)
     {
         /// <summary>Total file count across this group and all descendants.</summary>
         public int TotalFileCount => Files.Count + Children.Sum(c => c.TotalFileCount);

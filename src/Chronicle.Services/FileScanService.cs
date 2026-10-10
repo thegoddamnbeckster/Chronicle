@@ -37,6 +37,12 @@ namespace Chronicle.Services
             _groupingService = groupingService;
         }
 
+
+        /// <summary>Does this type group its files one book folder at a time? A property of the type
+        /// (MediaType.ScanStrategy), not something recognised from its name.</summary>
+        internal static bool IsAudiobookScan(MediaType mediaType) =>
+            string.Equals(mediaType.ScanStrategy, ScanStrategies.Audiobook, StringComparison.Ordinal);
+
         public async Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync()
         {
             var scanners = _registry.GetFileScannerPlugins();
@@ -88,14 +94,14 @@ namespace Chronicle.Services
 
             // Audiobooks: each book folder is one library entry regardless of how many
             // audio files (parts) or support files (covers, extras) it contains.
-            if (string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+            if (IsAudiobookScan(mediaType))
                 scannedFiles = CollapseAudiobooksToFolders(scannedFiles, request.Path);
 
             // Audiobooks with a 3-level hierarchy (Author → Series? → Book):
             // group into author/series tree so the library shows Authors as root items,
             // not individual book titles.
             if (mediaType.HierarchyLevels >= 3 &&
-                string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+                IsAudiobookScan(mediaType))
                 return await ScanAudiobooksHierarchicallyAsync(
                     scannedFiles, mediaType, userId, threshold, ct);
 
@@ -111,7 +117,7 @@ namespace Chronicle.Services
             // must use the exact same path so it doesn't silently misbehave for any type the
             // flat loop was never designed for.
             if (mediaType.HierarchyLevels >= 3 &&
-                !string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+                !IsAudiobookScan(mediaType))
                 return await ScanHierarchicalAsync(request, mediaType, userId, threshold, ct);
 
             var added = 0;
@@ -248,7 +254,9 @@ namespace Chronicle.Services
             group.Children.Select(ToScanGroupImport).ToList(),
             group.Files,
             group.FolderPath,
-            group.Number);
+            group.Number,
+            group.RelatedFiles,
+            group.MediaTypeId);
 
         // ── Preview ───────────────────────────────────────────────────────────────
 
@@ -1052,7 +1060,9 @@ namespace Chronicle.Services
         /// itself. A shared predicate keeps both tiers -- and any future tier that needs the
         /// same check -- from silently drifting apart on what "conflicting year" means.
         /// </summary>
-        private static bool YearsConflict(int? a, int? b) => a.HasValue && b.HasValue && a.Value != b.Value;
+        private static bool YearsConflict(int? a, int? b) => a.HasValue && b.HasValue && Math.Abs(a.Value - b.Value) > 1;
+        // One year of difference is not a conflict: a folder says (2009) where the database, corrected by a metadata
+        // provider, says 2010 (festival premiere vs release). Remakes and reboots with the same title are decades apart.
 
         /// <summary>
         /// Every normalized string worth trying when matching a scanned/parsed title against an
@@ -2242,18 +2252,7 @@ namespace Chronicle.Services
         /// (and would do the same for "books" or any future custom type), seeding hundreds of
         /// enrichment rows those plugins can never resolve.
         /// </summary>
-        private static string? ToMediaTypeHint(string mediaTypeName)
-        {
-            var n = mediaTypeName.ToLowerInvariant();
-            // Must be checked before the generic "anime" → tv fallback below — "anime_movies"
-            // contains "anime" as a substring but is flat (like movies), not TV-hierarchical.
-            if (n.Contains("anime") && n.Contains("movie")) return "movie";
-            if (n.Contains("tv") || n.Contains("show") || n.Contains("series")
-                || n.Contains("anime")) return "tv";
-            if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";
-            if (n.Contains("fanedit")) return "movie";
-            return null;
-        }
+        private static string? ToMediaTypeHint(string mediaTypeName) => MediaTypeFamilies.Resolve(mediaTypeName);
 
         // ── Hierarchy grouping ────────────────────────────────────────────────────
 
@@ -2624,6 +2623,9 @@ namespace Chronicle.Services
                     $"Scan path does not exist or is not accessible: {request.Path}.{hint}");
             }
 
+            if (request.MediaTypeId == ScanPreviewRequest.AutoDetect)
+                return await PreviewAutoDetectAsync(request, ct);
+
             var mediaType = await _context.MediaTypes
                 .FirstOrDefaultAsync(t => t.Id == request.MediaTypeId, ct)
                 ?? throw new InvalidOperationException($"Media type {request.MediaTypeId} not found.");
@@ -2633,10 +2635,24 @@ namespace Chronicle.Services
 
             // Audiobooks get a scanner-backed preview: reads tags, filters to audio files only,
             // and groups by book folder so the preview matches what the actual import will produce.
-            if (string.Equals(mediaType.Name, "audiobooks", StringComparison.OrdinalIgnoreCase))
+            if (IsAudiobookScan(mediaType))
                 return await PreviewAudiobooksAsync(request, mediaType, ct);
 
-            // Collect all file paths
+            var allPaths = CollectPreviewPaths(request);
+
+            _log.Information("Grouped preview: {Count} files found, grouping with {Levels} hierarchy levels",
+                allPaths.Count, mediaType.HierarchyLevels);
+
+            // Related files are always collected so the review page can show the count; they are only stored when
+            // the import asks for it. The other types are offered as candidates for the wrong-type check.
+            var candidates = await _context.MediaTypes.AsNoTracking().Where(t => t.IsActive && t.ScanHintsJson != null).ToListAsync(ct);
+            return _groupingService.Group(allPaths, request.Path, mediaType.HierarchyLevels,
+                new ScanGroupOptions(CollectRelatedFiles: true, MismatchCandidates: candidates, ScannedType: mediaType));
+        }
+
+        /// <summary>Every file under the scan path (subfolders when asked), except hidden ones, reporting progress as it goes.</summary>
+        private List<string> CollectPreviewPaths(ScanPreviewRequest request, CancellationToken ct = default)
+        {
             var allPaths = new List<string>();
             var dirsToScan = new List<string> { request.Path };
             if (request.Recursive)
@@ -2661,11 +2677,44 @@ namespace Chronicle.Services
                 }
             }
             _progress.Complete();
+            return allPaths;
+        }
 
-            _log.Information("Grouped preview: {Count} files found, grouping with {Levels} hierarchy levels",
-                allPaths.Count, mediaType.HierarchyLevels);
+        /// <summary>
+        /// "Detect automatically": instead of one media type for the whole folder, each file is sorted into the type its
+        /// own name and format say it is (see <see cref="FileTypeClassifier"/>), each type's files are grouped the way
+        /// that type is normally grouped, and every resulting group is tagged with its type. A folder holding movies, TV
+        /// and music comes out as three kinds of group. Types with a special scan style (audiobooks) are not picked
+        /// automatically.
+        /// </summary>
+        private async Task<ScanGroupResult> PreviewAutoDetectAsync(ScanPreviewRequest request, CancellationToken ct)
+        {
+            var types = await _context.MediaTypes.AsNoTracking().Where(t => t.IsActive).ToListAsync(ct);
+            var classifier = new Chronicle.Services.Scan.FileTypeClassifier(types);
+            if (!classifier.HasCandidates)
+                throw new InvalidOperationException(
+                    "No media type has scan hints to recognise files by. Add them under Settings -> Media Types, or choose a type.");
 
-            return _groupingService.Group(allPaths, request.Path, mediaType.HierarchyLevels);
+            var allPaths = CollectPreviewPaths(request, ct);
+            var buckets = classifier.Partition(allPaths);
+            _log.Information("Auto-detect preview of {Path}: {Count} files sorted into {Types}", request.Path, allPaths.Count,
+                string.Join(", ", buckets.Select(b => $"{b.Key.Name}={b.Value.Count}")));
+
+            var combined = new ScanGroupResult { TotalFiles = allPaths.Count };
+            foreach (var (type, files) in buckets.OrderBy(b => b.Key.Id))
+            {
+                var part = _groupingService.Group(files, request.Path, type.HierarchyLevels,
+                    new ScanGroupOptions(CollectRelatedFiles: true));
+                foreach (var group in part.Groups)
+                {
+                    group.MediaTypeId = type.Id;
+                    group.MediaTypeName = type.DisplayName;
+                    group.MediaTypeKey = type.Name;
+                    combined.Groups.Add(group);
+                }
+                combined.Ungrouped.AddRange(part.Ungrouped);
+            }
+            return combined;
         }
 
         private async Task<ScanGroupResult> PreviewAudiobooksAsync(
@@ -2790,6 +2839,8 @@ namespace Chronicle.Services
 
                     if (rootIsNew)
                         createdItemIds.Add(rootItem.Id);
+                    if (request.BundleRelatedFiles)
+                        await SyncRelatedFilesAsync(rootItem, rootGroup.RelatedFiles, rootGroup.FolderPath, ct);
 
                     // Library entry only at root level — create for every user so all
                     // accounts can see file-scanned content regardless of who triggered the import.
@@ -2824,7 +2875,7 @@ namespace Chronicle.Services
                     // Persist children recursively — no library entries
                     await PersistChildGroupsAsync(rootGroup.Children, request.MediaTypeId,
                         rootItem.Id, hierarchyLevel: 1, mediaType.HierarchyLevels, createdItemIds,
-                        filePathIndex, folderPathIndex, ct);
+                        filePathIndex, folderPathIndex, request.BundleRelatedFiles, ct);
 
                     pendingInBatch++;
 
@@ -2892,6 +2943,7 @@ namespace Chronicle.Services
             int parentId, int hierarchyLevel, int totalHierarchyLevels, List<int> createdItemIds,
             Dictionary<string, MediaItem> filePathIndex,
             Dictionary<string, MediaItem> folderPathIndex,
+            bool bundleRelatedFiles,
             CancellationToken ct)
         {
             foreach (var child in children)
@@ -2901,11 +2953,58 @@ namespace Chronicle.Services
                     filePathIndex, folderPathIndex, ct);
                 if (isNew)
                     createdItemIds.Add(item.Id);
+                if (bundleRelatedFiles)
+                    await SyncRelatedFilesAsync(item, child.RelatedFiles, child.FolderPath, ct);
                 if (child.Children.Count > 0)
                     await PersistChildGroupsAsync(child.Children, mediaTypeId,
                         item.Id, hierarchyLevel + 1, totalHierarchyLevels, createdItemIds,
-                        filePathIndex, folderPathIndex, ct);
+                        filePathIndex, folderPathIndex, bundleRelatedFiles, ct);
             }
+        }
+
+        /// <summary>Brings an item's recorded related files in line with what the scan just saw: new files are added,
+        /// known ones keep their row (and lose any "missing" mark), and files no longer seen are marked missing rather
+        /// than deleted, so nothing is silently forgotten.</summary>
+        internal async Task SyncRelatedFilesAsync(MediaItem item, IReadOnlyList<string>? seen, string? folderPath, CancellationToken ct)
+        {
+            seen ??= [];
+            var rules = SidecarRules.Defaults;
+            var existing = item.Id == 0
+                ? new List<MediaItemRelatedFile>()
+                : await _context.MediaItemRelatedFiles.Where(r => r.MediaItemId == item.Id).ToListAsync(ct);
+            var byPath = existing.ToDictionary(r => r.Path, StringComparer.OrdinalIgnoreCase);
+            var now = DateTime.UtcNow;
+            var seenSet = new HashSet<string>(seen, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var path in seenSet)
+            {
+                long? size = null;
+                try { size = new FileInfo(path).Length; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+
+                if (byPath.TryGetValue(path, out var row))
+                {
+                    row.MissingSince = null;
+                    row.SizeBytes = size ?? row.SizeBytes;
+                    continue;
+                }
+                var folders = (Path.GetDirectoryName(path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+                _context.MediaItemRelatedFiles.Add(new MediaItemRelatedFile
+                {
+                    MediaItem = item.Id == 0 ? item : null,
+                    MediaItemId = item.Id,
+                    Path = path,
+                    Kind = rules.Classify(path, folders),
+                    SizeBytes = size,
+                    DiscoveredAt = now,
+                });
+            }
+            // Only files from the folder this group covers can be judged missing: a second group that resolves to
+            // the same item (another folder) must not mark the first group's files as gone.
+            if (string.IsNullOrEmpty(folderPath)) return;
+            var prefix = folderPath.Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            foreach (var row in existing.Where(r => !seenSet.Contains(r.Path) && r.MissingSince is null
+                && r.Path.Replace('/', Path.DirectorySeparatorChar).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                row.MissingSince = now;
         }
 
         public async Task BackfillFolderPathsAsync(CancellationToken ct = default)
@@ -3139,7 +3238,11 @@ namespace Chronicle.Services
             {
                 foreach (var f in group.Files)
                 {
-                    if (filePathIndex.TryGetValue(f, out var match))
+                    // An exact path match is the strongest signal, but not when the record plainly belongs to another
+                    // film: an item for "The Exorcist" (1973) holding the path of the 2023 film's file is a mistake an
+                    // earlier scan made (it could not tell the years apart), and trusting it again would keep swapping
+                    // the file between the two items. Drop the stale claim and let the name and year decide.
+                    if (filePathIndex.TryGetValue(f, out var match) && !YearsConflict(group.Year, match.Year))
                     {
                         existing = match;
                         break;
@@ -3306,19 +3409,40 @@ namespace Chronicle.Services
                         group.Name, existing.Id, existing.Name);
             }
 
+            // Last resort before creating a new item: the file may be an item's own file under a new name or in a new
+            // place (Sonarr/Radarr renaming it after a scan already saw it, a manual tidy-up). See FindMovedItemAsync.
+            if (existing is null && group.Files.Count > 0)
+            {
+                existing = await FindMovedItemAsync(group, mediaTypeId, parentId, hierarchyLevel, isLeafLevel, ct);
+                if (existing is not null)
+                    _log.Information(
+                        "UpsertGroupItemAsync: '{Name}' ({File}) is the renamed or moved file of existing item {Id} ('{ItemName}') -- following it instead of creating a duplicate",
+                        group.Name, group.Files[0], existing.Id, existing.Name);
+            }
+
+            var fingerprint = FingerprintOf(group.Files);
+
             if (existing is not null)
             {
                 existing.UpdatedAt   = DateTime.UtcNow;
                 if (group.Year.HasValue)   existing.Year   = group.Year;
                 if (group.Number.HasValue) existing.Number = group.Number;
                 // Merge fileScanner data into MetadataJson — preserve any plugin keys
-                // (TMDB, MusicBrainz, etc.) already stored by enrichment.
+                // (TMDB, MusicBrainz, etc.) already stored by enrichment, and any other fileScanner fields
+                // (technical data a contributor reported) the scan does not itself own.
                 var existingNode = System.Text.Json.Nodes.JsonNode.Parse(existing.MetadataJson ?? "{}")
                     as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
-                existingNode["fileScanner"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(
-                    new {
-                        importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath,
-                    }));
+                var scannerNode = existingNode["fileScanner"] as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+                scannerNode["importedAt"] = DateTime.UtcNow;
+                scannerNode["filePaths"]  = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(group.Files));
+                scannerNode["folderPath"] = group.FolderPath;
+                if (fingerprint is not null)
+                {
+                    scannerNode["fingerprint"]     = fingerprint.Value.Fingerprint;
+                    scannerNode["fileSizeBytes"]   = fingerprint.Value.SizeBytes;
+                    scannerNode["fileModifiedUtc"] = fingerprint.Value.ModifiedUtc;
+                }
+                existingNode["fileScanner"] = scannerNode;
                 existing.MetadataJson = existingNode.ToJsonString();
                 await SyncKnownFileNamesAsync(existing, group.Files, ct);
 
@@ -3346,6 +3470,9 @@ namespace Chronicle.Services
                 {
                     fileScanner = new {
                         importedAt = DateTime.UtcNow, filePaths = group.Files, folderPath = group.FolderPath,
+                        fingerprint     = fingerprint?.Fingerprint,
+                        fileSizeBytes   = fingerprint?.SizeBytes,
+                        fileModifiedUtc = fingerprint?.ModifiedUtc,
                     }
                 }),
                 CreatedAt = DateTime.UtcNow,
@@ -3361,6 +3488,67 @@ namespace Chronicle.Services
                 folderPathIndex[FolderPathKey(hierarchyLevel, group.FolderPath)] = item;
 
             return (item, true);
+        }
+
+        /// <summary>Size, modified time and the combined fingerprint of a group's first file, or null when it cannot be read.</summary>
+        private static (string Fingerprint, long SizeBytes, DateTime ModifiedUtc)? FingerprintOf(IReadOnlyList<string> files)
+        {
+            if (files.Count == 0) return null;
+            try
+            {
+                var info = new FileInfo(files[0]);
+                if (!info.Exists) return null;
+                var modified = info.LastWriteTimeUtc;
+                return (Chronicle.Services.Scan.FileIdentityJson.ComputeFingerprint(info.Length, modified), info.Length, modified);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        /// <summary>True when none of the recorded paths exists on disk any more (as a file or a folder).</summary>
+        private static bool AllGone(IReadOnlyList<string> recorded) =>
+            recorded.Count > 0 && recorded.All(p => !System.IO.File.Exists(p) && !Directory.Exists(p));
+
+        /// <summary>
+        /// Finds the existing item whose file this group is, after the file was renamed or moved. Two independent
+        /// signals, each requiring that every file the candidate had recorded is gone from disk (so two different
+        /// items that merely look alike are never merged while both files exist):
+        ///  1. the same size and modified time (the "fingerprint" recorded at the previous scan); a rename or move keeps
+        ///     both, and
+        ///  2. for a leaf (episode/track) with a season/episode number: the same number under the same parent.
+        /// Exactly one candidate must match; anything ambiguous creates a new item as before.
+        /// </summary>
+        private async Task<MediaItem?> FindMovedItemAsync(
+            ScanGroupImport group, int mediaTypeId, int? parentId, int hierarchyLevel, bool isLeafLevel, CancellationToken ct)
+        {
+            bool IsStaleCandidate(MediaItem m)
+            {
+                var recorded = Chronicle.Services.Scan.FileIdentityJson.ExtractFilePaths(m.MetadataJson);
+                return AllGone(recorded) && !recorded.Any(p => group.Files.Contains(p, StringComparer.OrdinalIgnoreCase));
+            }
+
+            var fp = FingerprintOf(group.Files);
+            if (fp is not null)
+            {
+                var needle = $"%\"fingerprint\":\"{fp.Value.Fingerprint}\"%";
+                var byFingerprint = (await _context.MediaItems
+                        .Where(m => m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, needle))
+                        .ToListAsync(ct))
+                    .Where(IsStaleCandidate).ToList();
+                if (byFingerprint.Count == 1) return byFingerprint[0];
+                if (byFingerprint.Count > 1) return null;   // ambiguous: do not guess
+            }
+
+            if (isLeafLevel && hierarchyLevel >= 1 && group.Number.HasValue)
+            {
+                var sameNumber = (await _context.MediaItems
+                        .Where(m => m.MediaTypeId == mediaTypeId && m.ParentId == parentId &&
+                                    m.HierarchyLevel == hierarchyLevel && m.Number == group.Number.Value &&
+                                    m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, "%filePaths%"))
+                        .ToListAsync(ct))
+                    .Where(IsStaleCandidate).ToList();
+                if (sameNumber.Count == 1) return sameNumber[0];
+            }
+            return null;
         }
 
         /// <summary>

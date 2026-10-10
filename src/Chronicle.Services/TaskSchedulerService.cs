@@ -44,6 +44,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
     {
         _log.Information("TaskSchedulerService starting with {Count} system task(s)", _tasks.Count);
         await SeedTasksAsync(stoppingToken);
+        await SkipMissedRunsAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -128,6 +129,32 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         }
 
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Restarting Chronicle must not start work. A task whose next run time passed while the app was down (or while it
+    /// was restarting) is moved on to its next cron time instead of firing the moment the scheduler starts; tasks run
+    /// only when their cron says so, or when someone presses Run Now. Before this, every restart began a full library
+    /// scan, duplicate cleanup and every plugin's sync at once, which left the server unresponsive for minutes.
+    /// </summary>
+    internal async Task SkipMissedRunsAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db  = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var now = DateTime.UtcNow;
+
+        var missed = await db.BackgroundTasks
+            .Where(t => t.IsEnabled && t.NextRunAt != null && t.NextRunAt <= now)
+            .ToListAsync(ct);
+        foreach (var row in missed)
+        {
+            var next = GetNextOccurrence(row.CronExpression);
+            if (next is null) continue;   // an unreadable cron stays as it was; nothing to schedule
+            _log.Information("TaskScheduler: '{TaskId}' was due at {Due:u} while Chronicle was not running; skipping to {Next:u}",
+                row.TaskId, row.NextRunAt, next);
+            row.NextRunAt = next;
+        }
+        if (missed.Count > 0) await db.SaveChangesAsync(ct);
     }
 
     internal async Task TickAsync(CancellationToken ct)
@@ -217,7 +244,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         catch (Exception ex)
         {
             _log.Error(ex, "TaskScheduler: '{TaskId}' failed", row.TaskId);
-            await PersistRunResultAsync(row.TaskId, startedAt, succeeded: false, error: ex.Message);
+            await PersistRunResultAsync(row.TaskId, startedAt, succeeded: false, error: ex.Message, exception: ex);
         }
         finally
         {
@@ -226,7 +253,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
     }
 
     private async Task PersistRunResultAsync(
-        string taskId, DateTime lastRunAt, bool succeeded, string? error)
+        string taskId, DateTime lastRunAt, bool succeeded, string? error, Exception? exception = null)
     {
         try
         {
@@ -241,6 +268,43 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
             row.NextRunAt        = await ComputeNextRunAtAsync(db, row, succeeded);
 
             await db.SaveChangesAsync();
+
+            // Tell the administrators a task broke, so nobody has to open the Background Tasks page to find out, but only
+            // when it is something they can act on. A bug, or a plugin built for another version of Chronicle that has no
+            // update to install, is logged and shown on the Background Tasks page, not put in the bell.
+            // One unread notice per task: a task failing every few minutes does not bury the bell.
+            if (!succeeded)
+            {
+                var notifier = scope.ServiceProvider.GetService<Notifications.INotificationService>();
+                var kind = Notifications.TaskFailureTriage.Classify(exception);
+                if (kind == Notifications.TaskFailureKind.Fixable)
+                {
+                    await (notifier?.NotifyAdminsAsync(
+                        Chronicle.Core.Models.NotificationKinds.TaskFailed,
+                        $"{row.DisplayName} failed",
+                        string.IsNullOrWhiteSpace(error) ? "The task stopped with an error." : error,
+                        "/settings/background-tasks",
+                        dedupeKey: $"task:{taskId}") ?? Task.FromResult(0));
+                }
+                else if (kind == Notifications.TaskFailureKind.PluginIncompatible)
+                {
+                    var plugin = string.IsNullOrEmpty(row.PluginId) ? null
+                        : await db.Plugins.AsNoTracking().FirstOrDefaultAsync(p => p.PluginId == row.PluginId);
+                    if (plugin?.LatestVersionAvailable is { Length: > 0 } latest)
+                        await (notifier?.NotifyAdminsAsync(
+                            Chronicle.Core.Models.NotificationKinds.TaskFailed,
+                            $"{plugin.Name} needs an update",
+                            $"This version of {plugin.Name} does not work with this version of Chronicle. Update it to v{latest} on the Plugins page.",
+                            "/plugins",
+                            dedupeKey: $"task:{taskId}") ?? Task.FromResult(0));
+                    else
+                        _log.Warning("TaskScheduler: '{TaskId}' failed because its plugin is not compatible with this Chronicle and no update is available; not announced in the notification bell", taskId);
+                }
+                else
+                {
+                    _log.Warning("TaskScheduler: '{TaskId}' failed with an internal error; not announced in the notification bell", taskId);
+                }
+            }
         }
         catch (Exception ex)
         {

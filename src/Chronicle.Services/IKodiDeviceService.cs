@@ -19,7 +19,7 @@ public interface IKodiDeviceService
 
     /// <summary>Records that Chronicle imported at least one new movie/TV item, so any Kodi
     /// device that hasn't scanned since is due for one -- see IsScanNeededAsync's own doc for
-    /// the pull side of this. mediaTypeName is checked against VideoLibraryTypeHelper.IsVideoLibraryType
+    /// the pull side of this. mediaTypeName is checked against MediaTypeFamilies.IsVideoLibraryType
     /// (a music/book/etc. import has nothing for Kodi's video library to discover); a
     /// non-video-library name is a silent no-op. Global, not per-device or per-media-type: one
     /// app_settings timestamp, since a full local VideoLibrary.Scan (the only thing achievable

@@ -1,4 +1,4 @@
-import client from './client'
+import client, { BACKGROUND_REQUEST } from './client'
 import type { ApiResponse, ActiveSession, HistoryItem } from '@/types'
 
 export async function scrobble(payload: {
@@ -18,6 +18,6 @@ export async function getHistory(page = 1): Promise<HistoryItem[]> {
 }
 
 export async function getActiveSessions(): Promise<ActiveSession[]> {
-  const { data } = await client.get<ApiResponse<ActiveSession[]>>('/scrobble/active')
+  const { data } = await client.get<ApiResponse<ActiveSession[]>>('/scrobble/active', BACKGROUND_REQUEST)
   return data.data ?? []
 }

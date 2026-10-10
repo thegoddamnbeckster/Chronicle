@@ -214,8 +214,8 @@ public class MetadataResolutionService(
         // existing, intentional level-0-only behavior; see
         // ResolveAsync_TitleAndYearNotPromotedAboveLevelZero for a level-1 type this must NOT
         // affect.
-        var isEpisode          = VideoLibraryTypeHelper.ShowLikeTypeNames.Contains(mediaTypeName)  && item.HierarchyLevel == 2;
-        var isCollectionMember = VideoLibraryTypeHelper.MovieLikeTypeNames.Contains(mediaTypeName) && item.HierarchyLevel == 1;
+        var isEpisode          = MediaTypeFamilies.IsShowLike(mediaTypeName)  && item.HierarchyLevel == 2;
+        var isCollectionMember = MediaTypeFamilies.IsMovieLike(mediaTypeName) && item.HierarchyLevel == 1;
         if (item.HierarchyLevel == 0 || isEpisode || isCollectionMember)
         {
             if (resolved.TryGetValue("title", out var title) && HasValue(title))

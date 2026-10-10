@@ -6,6 +6,8 @@ interface Props {
   group: ScanGroupDto
   checked: boolean
   onToggle: (groupKey: string) => void
+  /** When given, a group that looks like another media type offers a one-click switch and rescan. */
+  onSwitchType?: (mediaTypeId: number) => void
 }
 
 interface ChildProps {
@@ -33,7 +35,14 @@ export function groupToPayload(g: ScanGroupDto): ImportGroupPayload {
     children: g.children.map(groupToPayload),
     files: g.files,
     folderPath: g.folderPath,
+    relatedFiles: g.relatedFiles ?? [],
+    mediaTypeId: g.mediaTypeId ?? null,
   }
+}
+
+/** Total related files under a group and everything below it. */
+export function relatedFileCount(g: ScanGroupDto): number {
+  return (g.relatedFiles?.length ?? 0) + g.children.reduce((sum, c) => sum + relatedFileCount(c), 0)
 }
 
 /** Recursive child row — renders seasons, albums, episodes, tracks etc. */
@@ -73,10 +82,11 @@ function ScanGroupChild({ group, depth = 0 }: ChildProps) {
   )
 }
 
-export default function ScanGroupCard({ group, checked, onToggle }: Props) {
+export default function ScanGroupCard({ group, checked, onToggle, onSwitchType }: Props) {
   const [expanded, setExpanded] = useState(false)
   const cc = confidenceClass(group.confidenceScore)
   const totalItems = childCount(group)
+  const related = relatedFileCount(group)
 
   return (
     <div className={`${styles.card} ${!checked ? styles.cardUnchecked : ''}`}>
@@ -93,6 +103,28 @@ export default function ScanGroupCard({ group, checked, onToggle }: Props) {
           {group.author && <span className={styles.author}>by {group.author}</span>}
           {group.series && <span className={styles.series}>{group.series}</span>}
           <span className={styles.itemCount}>{totalItems} items</span>
+          {group.mediaTypeName && (
+            <span className={styles.itemCount} title="The media type this was sorted into">{group.mediaTypeName}</span>
+          )}
+          {related > 0 && (
+            <span className={styles.itemCount} title="Subtitles, artwork and extras found with this item">
+              +{related} related file{related !== 1 ? 's' : ''}
+            </span>
+          )}
+          {group.suggestedMediaTypeId != null && (
+            <span className={styles.mismatchBadge} title={group.suggestedMediaTypeReason ?? undefined}>
+              ⚠ looks like {group.suggestedMediaTypeName}
+              {onSwitchType && (
+                <button
+                  type="button"
+                  className={styles.mismatchBtn}
+                  onClick={() => onSwitchType(group.suggestedMediaTypeId as number)}
+                >
+                  Switch to {group.suggestedMediaTypeName} and rescan
+                </button>
+              )}
+            </span>
+          )}
           {group.hasConflicts && (
             <span className={styles.conflictBadge} title="Signal sources disagree on this group">
               ⚠ conflict

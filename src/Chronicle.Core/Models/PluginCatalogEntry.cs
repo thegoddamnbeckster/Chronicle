@@ -24,5 +24,7 @@ public record PluginCatalogEntry(
     /// </summary>
     string? Sha256 = null,
     /// <summary>Version string from the plugin's manifest (e.g. "1.2.0").</summary>
-    string Version = ""
+    string Version = "",
+    /// <summary>Media types the plugin handles, from its manifest's supported_media_types (or, failing that, the catalog tags that name a type).</summary>
+    string[]? SupportedMediaTypes = null
 );

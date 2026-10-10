@@ -28,9 +28,12 @@ namespace Chronicle.API.Controllers
             new(@"^S\d{1,3}E\d{1,4}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase
                 | System.Text.RegularExpressions.RegexOptions.Compiled);
 
+        private readonly Chronicle.Services.Live.LibraryChangeFeed _changeFeed;
+
         public LibraryController(ILibraryService libraryService, ChronicleDbContext context, IUserService userService,
-            IMovieCollectionService movieCollectionService)
+            IMovieCollectionService movieCollectionService, Chronicle.Services.Live.LibraryChangeFeed changeFeed)
         {
+            _changeFeed = changeFeed;
             _libraryService = libraryService;
             _context = context;
             _userService = userService;
@@ -384,6 +387,7 @@ namespace Chronicle.API.Controllers
             try
             {
                 var count = await _libraryService.NuclearResetAsync(request.ConfirmationToken, ct);
+                _changeFeed.MarkAllChanged();   // bulk deletes bypass change tracking
                 return Ok(ApiResponse<object>.Ok(new { deleted = count }));
             }
             catch (ArgumentException ex)
@@ -397,6 +401,7 @@ namespace Chronicle.API.Controllers
         public async Task<IActionResult> ClearScannerData(CancellationToken ct)
         {
             var count = await _libraryService.ClearScannerDataAsync(ct);
+            _changeFeed.MarkAllChanged();   // bulk deletes bypass change tracking
             return Ok(ApiResponse<object>.Ok(new { deleted = count }));
         }
 
@@ -407,11 +412,7 @@ namespace Chronicle.API.Controllers
         /// Returns true when the given MetadataJson contains a fileScanner entry with at least
         /// one non-null file path.  Mirrors the same helper in MediaController.
         /// </summary>
-        private static bool IsMovieLikeTypeName(string? name) =>
-            name is not null &&
-            (name.Equals("movies",       StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("fanedits",     StringComparison.OrdinalIgnoreCase) ||
-             name.Equals("anime_movies", StringComparison.OrdinalIgnoreCase));
+        private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeFamilies.IsMovieLike(name);
 
         /// <summary>
         /// Single-item counterpart to GetLibrary's batched fallback-poster lookup, for the
