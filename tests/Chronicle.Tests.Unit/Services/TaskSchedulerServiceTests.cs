@@ -143,6 +143,72 @@ public class TaskSchedulerServiceTests
 
     // ── Tick / run-due ────────────────────────────────────────────────────────
 
+    // ── Restart ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AfterARestart_ATaskThatWasDueWhileDown_IsNotRunUntilItsNextCronTime()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId = "test_task", DisplayName = "T", Description = "d",
+            CronExpression = "0 3 * * *", IsEnabled = true,
+            NextRunAt = DateTime.UtcNow.AddHours(-5),
+        });
+        await db.SaveChangesAsync();
+        var task = MakeTask("test_task");
+        var svc = new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db));
+
+        await svc.SkipMissedRunsAsync(CancellationToken.None);
+        await svc.TickAsync(CancellationToken.None);
+        await Task.Delay(100);
+
+        task.Verify(t => t.ExecuteAsync(It.IsAny<CancellationToken>()), Times.Never);
+        var row = await db.BackgroundTasks.AsNoTracking().SingleAsync(t => t.TaskId == "test_task");
+        row.NextRunAt.Should().BeAfter(DateTime.UtcNow);
+    }
+
+    [Fact]
+    public async Task AfterARestart_ATaskNotYetDue_KeepsItsScheduledTime_AndADisabledOneStaysAsItWas()
+    {
+        var db = MakeDb();
+        var later = DateTime.UtcNow.AddHours(3);
+        var longAgo = DateTime.UtcNow.AddDays(-2);
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "later", DisplayName = "T", Description = "d", CronExpression = "0 3 * * *", IsEnabled = true, NextRunAt = later });
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "off", DisplayName = "T", Description = "d", CronExpression = "0 3 * * *", IsEnabled = false, NextRunAt = longAgo });
+        await db.SaveChangesAsync();
+        var svc = new TaskSchedulerService(new[] { MakeTask("later").Object }, MakeScopeFactory(db));
+
+        await svc.SkipMissedRunsAsync(CancellationToken.None);
+
+        (await db.BackgroundTasks.AsNoTracking().SingleAsync(t => t.TaskId == "later")).NextRunAt.Should().Be(later);
+        (await db.BackgroundTasks.AsNoTracking().SingleAsync(t => t.TaskId == "off")).NextRunAt.Should().Be(longAgo);
+    }
+
+    [Fact]
+    public async Task AfterARestart_ATaskStillRunsWhenItsCronTimeComes()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId = "test_task", DisplayName = "T", Description = "d",
+            CronExpression = "* * * * *", IsEnabled = true, NextRunAt = DateTime.UtcNow.AddHours(-1),
+        });
+        await db.SaveChangesAsync();
+        var task = MakeTask("test_task");
+        var svc = new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db));
+        await svc.SkipMissedRunsAsync(CancellationToken.None);
+
+        // The next minute arrives.
+        var row = await db.BackgroundTasks.SingleAsync(t => t.TaskId == "test_task");
+        row.NextRunAt = DateTime.UtcNow.AddSeconds(-1);
+        await db.SaveChangesAsync();
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("test_task"));
+
+        task.Verify(t => t.ExecuteAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task TickAsync_FiresDueTask()
     {
@@ -438,7 +504,7 @@ public class TaskSchedulerServiceTests
             PluginId       = "chronicle.plugin.tmdb",
             DisplayName    = "Fetch Missing Metadata",
             Description    = "Looks up metadata for new items.",
-            CronExpression = "0 4 * * *",
+            CronExpression = "0 4 1 1 *",
             IsEnabled      = true,
             NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
         });
@@ -557,7 +623,7 @@ public class TaskSchedulerServiceTests
             PluginId       = "chronicle.plugin.tmdb",
             DisplayName    = "Fetch Missing Metadata",
             Description    = "Looks up metadata for new items.",
-            CronExpression = "0 4 * * *",
+            CronExpression = "0 4 1 1 *",
             IsEnabled      = true,
             NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
         });

@@ -44,6 +44,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
     {
         _log.Information("TaskSchedulerService starting with {Count} system task(s)", _tasks.Count);
         await SeedTasksAsync(stoppingToken);
+        await SkipMissedRunsAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -128,6 +129,32 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         }
 
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Restarting Chronicle must not start work. A task whose next run time passed while the app was down (or while it
+    /// was restarting) is moved on to its next cron time instead of firing the moment the scheduler starts; tasks run
+    /// only when their cron says so, or when someone presses Run Now. Before this, every restart began a full library
+    /// scan, duplicate cleanup and every plugin's sync at once, which left the server unresponsive for minutes.
+    /// </summary>
+    internal async Task SkipMissedRunsAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db  = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var now = DateTime.UtcNow;
+
+        var missed = await db.BackgroundTasks
+            .Where(t => t.IsEnabled && t.NextRunAt != null && t.NextRunAt <= now)
+            .ToListAsync(ct);
+        foreach (var row in missed)
+        {
+            var next = GetNextOccurrence(row.CronExpression);
+            if (next is null) continue;   // an unreadable cron stays as it was; nothing to schedule
+            _log.Information("TaskScheduler: '{TaskId}' was due at {Due:u} while Chronicle was not running; skipping to {Next:u}",
+                row.TaskId, row.NextRunAt, next);
+            row.NextRunAt = next;
+        }
+        if (missed.Count > 0) await db.SaveChangesAsync(ct);
     }
 
     internal async Task TickAsync(CancellationToken ct)
