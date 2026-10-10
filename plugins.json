@@ -108,6 +108,15 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.openlibrary",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.OpenLibrary",
+      "tags": [
+        "books",
+        "audiobooks",
+        "metadata"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.simkl",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Simkl",
       "tags": [

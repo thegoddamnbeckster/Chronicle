@@ -1,6 +1,6 @@
 # Open Library plugin: design
 
-Status: **proposed, not implemented.** Repo: `Chronicle.Plugin.OpenLibrary` (public, currently a stale scaffold written against an
+Status: **implemented and released as v1.0.0 (2026-10-10).** Decisions taken: optional contact email setting, series not looked up, native 0-5 rating, priority 20, BISAC genres, audiobooks included, preferred language setting (English by default). Changes made while building it: a different volume or issue number is a different book; the library's own wording of a matched title or author is offered as an alias; the novelist John Green case showed work count alone is not enough, so up to three close authors are checked against the library's titles. Repo: `Chronicle.Plugin.OpenLibrary` (public, currently a stale scaffold written against an
 old interface; it is replaced, not extended). Plugin id `chronicle.plugin.openlibrary`, source name `openlibrary`.
 
 ## 1. Purpose and scope

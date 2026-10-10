@@ -191,6 +191,11 @@ $PluginProjects = @(
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.anilist"
     },
     @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.OpenLibrary\Chronicle.Plugin.OpenLibrary.csproj"
+        DllName    = "Chronicle.Plugin.OpenLibrary.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.openlibrary"
+    },
+    @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Wikipedia\Chronicle.Plugin.Wikipedia.csproj"
         DllName    = "Chronicle.Plugin.Wikipedia.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.wikipedia"

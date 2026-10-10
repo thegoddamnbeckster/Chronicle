@@ -110,3 +110,5 @@ Design and audit: `docs/plans/2026-10-07-session-keys-design.md`.
 - Dev startup script `scripts/RunTestEnvironment.ps1` (API 7979, web 8888, ABS bridge 9877).
 
 - **AniList plugin - BUILT (local repo `Chronicle.Plugin.AniList`, v1.0.0, not yet on GitHub).** Anime Show/Season/Episode and `anime_movies` metadata from AniList's GraphQL API (no key). Seasons are rebuilt from prequel/sequel relations with split cours folded in. Awaiting: GitHub repo + release, then a `plugins.json` catalog entry.
+
+- **Open Library plugin - BUILT and released (v1.0.0, `Chronicle.Plugin.OpenLibrary`).** Books, audiobooks and authors from Open Library as a second source beside Hardcover; no key. Design in `docs/plans/2026-10-10-openlibrary-plugin-design.md`; 318 tests, 100% line coverage of the plugin, live tests behind `OPENLIBRARY_LIVE=1`. Series are deliberately not looked up (Open Library's series data is too sparse).
