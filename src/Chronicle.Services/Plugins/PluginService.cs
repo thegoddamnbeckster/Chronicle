@@ -685,6 +685,8 @@ public class PluginService : IPluginService
                     Description            = task.Description ?? string.Empty,
                     CronExpression         = task.DefaultCron ?? string.Empty,
                     IsEnabled              = task.DefaultEnabled,
+                    // Without a next run time a scheduled task never starts (the scheduler only fires tasks that are due).
+                    NextRunAt              = TaskSchedulerService.GetNextOccurrence(task.DefaultCron ?? string.Empty),
                     Schedulable            = task.Schedulable,
                     RunConfirmationTitle   = task.RunConfirmationTitle,
                     RunConfirmationMessage = task.RunConfirmationMessage,

@@ -176,6 +176,30 @@ public class PluginServiceTests
     }
 
     [Fact]
+    public async Task SeedPluginTasksAsync_GivesAScheduledTaskItsNextRunTime_SoItStartsWithoutBeingRunByHandFirst()
+    {
+        await using var db = MakeDb();
+        var tasks = new List<PluginTaskManifest>
+        {
+            new() { TaskId = "fetch-missing-metadata", DisplayName = "Fetch", DefaultCron = "30 5 * * *", DefaultEnabled = true },
+            new() { TaskId = "resync-all-metadata", DisplayName = "Resync", DefaultCron = "40 3 * * 0", DefaultEnabled = false },
+            new() { TaskId = "import-all", DisplayName = "Import", DefaultCron = "", DefaultEnabled = false },
+            new() { TaskId = "odd", DisplayName = "Odd", DefaultCron = "not a cron", DefaultEnabled = true },
+        };
+
+        await Chronicle.Services.Plugins.PluginService.SeedPluginTasksAsync(db, "chronicle.plugin.openlibrary", tasks);
+
+        var fetch = await db.BackgroundTasks.FindAsync("chronicle.plugin.openlibrary:fetch-missing-metadata");
+        Assert.NotNull(fetch!.NextRunAt);
+        Assert.True(fetch.NextRunAt > DateTime.UtcNow);
+        Assert.Equal(5, fetch.NextRunAt!.Value.Hour);
+        Assert.Equal(30, fetch.NextRunAt!.Value.Minute);
+        Assert.NotNull((await db.BackgroundTasks.FindAsync("chronicle.plugin.openlibrary:resync-all-metadata"))!.NextRunAt);
+        Assert.Null((await db.BackgroundTasks.FindAsync("chronicle.plugin.openlibrary:import-all"))!.NextRunAt);   // no schedule: only run by hand
+        Assert.Null((await db.BackgroundTasks.FindAsync("chronicle.plugin.openlibrary:odd"))!.NextRunAt);          // unreadable: nothing to schedule
+    }
+
+    [Fact]
     public async Task SeedPluginTasksAsync_SetsSchedulable_False_WhenManifestSpecifies()
     {
         await using var db = MakeDb();

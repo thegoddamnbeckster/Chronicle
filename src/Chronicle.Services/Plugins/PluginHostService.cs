@@ -563,6 +563,7 @@ public sealed class PluginHostService : IHostedService
                                     Description            = tm.Description ?? string.Empty,
                                     CronExpression         = tm.DefaultCron ?? string.Empty,
                                     IsEnabled              = tm.DefaultEnabled,
+                                    NextRunAt              = TaskSchedulerService.GetNextOccurrence(tm.DefaultCron ?? string.Empty),
                                     Schedulable            = tm.Schedulable,
                                     RunConfirmationTitle   = tm.RunConfirmationTitle,
                                     RunConfirmationMessage = tm.RunConfirmationMessage,

@@ -186,6 +186,55 @@ public class TaskSchedulerServiceTests
     }
 
     [Fact]
+    public async Task AtStartup_AnEnabledTaskWithAScheduleButNoNextRunTime_IsScheduled_AndOthersAreLeftAlone()
+    {
+        var db = MakeDb();
+        BackgroundTask Row(string id, string cron, bool enabled) => new()
+            { TaskId = id, DisplayName = "T", Description = "d", CronExpression = cron, IsEnabled = enabled, NextRunAt = null };
+        db.BackgroundTasks.Add(Row("plugin:fetch", "30 5 * * *", true));
+        db.BackgroundTasks.Add(Row("plugin:disabled", "30 5 * * *", false));
+        db.BackgroundTasks.Add(Row("plugin:by-hand", "", true));
+        db.BackgroundTasks.Add(Row("plugin:odd", "not a cron", true));
+        await db.SaveChangesAsync();
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), MakeScopeFactory(db));
+
+        await svc.SkipMissedRunsAsync(CancellationToken.None);
+
+        var rows = await db.BackgroundTasks.AsNoTracking().ToDictionaryAsync(t => t.TaskId);
+        Assert.NotNull(rows["plugin:fetch"].NextRunAt);
+        Assert.True(rows["plugin:fetch"].NextRunAt > DateTime.UtcNow);
+        Assert.Null(rows["plugin:disabled"].NextRunAt);
+        Assert.Null(rows["plugin:by-hand"].NextRunAt);
+        Assert.Null(rows["plugin:odd"].NextRunAt);
+    }
+
+    [Fact]
+    public async Task AScheduledPluginTask_ThatWasNeverRun_StartsWhenItsCronTimeComes()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId = "chronicle.plugin.x:fetch-missing-metadata", PluginId = "chronicle.plugin.x", DisplayName = "T", Description = "d",
+            CronExpression = "* * * * *", IsEnabled = true, NextRunAt = null,
+        });
+        await db.SaveChangesAsync();
+        var runner = new Mock<IPluginTaskRunner>();
+        var services = new ServiceCollection();
+        AddSharedStore(services, db);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
+        await svc.SkipMissedRunsAsync(CancellationToken.None);
+
+        var row = await db.BackgroundTasks.SingleAsync();
+        row.NextRunAt = DateTime.UtcNow.AddSeconds(-1);   // the scheduled minute arrives
+        await db.SaveChangesAsync();
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.x:fetch-missing-metadata"));
+
+        runner.Verify(r => r.RunAsync("chronicle.plugin.x", "fetch-missing-metadata", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task AfterARestart_ATaskStillRunsWhenItsCronTimeComes()
     {
         var db = MakeDb();

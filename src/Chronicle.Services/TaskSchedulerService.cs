@@ -143,6 +143,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         var db  = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
         var now = DateTime.UtcNow;
 
+        var changed = false;
         var missed = await db.BackgroundTasks
             .Where(t => t.IsEnabled && t.NextRunAt != null && t.NextRunAt <= now)
             .ToListAsync(ct);
@@ -153,8 +154,23 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
             _log.Information("TaskScheduler: '{TaskId}' was due at {Due:u} while Chronicle was not running; skipping to {Next:u}",
                 row.TaskId, row.NextRunAt, next);
             row.NextRunAt = next;
+            changed = true;
         }
-        if (missed.Count > 0) await db.SaveChangesAsync(ct);
+
+        // A task that has a schedule but was never given a next run time would never start: plugin tasks used to be added
+        // without one, so a daily "fetch missing" did nothing until someone ran it by hand once. Give each its next cron time.
+        var unscheduled = await db.BackgroundTasks
+            .Where(t => t.IsEnabled && t.NextRunAt == null && t.CronExpression != "")
+            .ToListAsync(ct);
+        foreach (var row in unscheduled)
+        {
+            if (GetNextOccurrence(row.CronExpression) is not { } next) continue;
+            _log.Information("TaskScheduler: '{TaskId}' had no next run time; scheduled for {Next:u} (cron {Cron})", row.TaskId, next, row.CronExpression);
+            row.NextRunAt = next;
+            changed = true;
+        }
+
+        if (changed) await db.SaveChangesAsync(ct);
     }
 
     internal async Task TickAsync(CancellationToken ct)
@@ -358,7 +374,8 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         return normalNext is { } n && n < soonRetry ? n : soonRetry;
     }
 
-    private static DateTime? GetNextOccurrence(string cronExpression)
+    /// <summary>The next time a cron expression fires, in UTC; null for an empty or unreadable expression.</summary>
+    internal static DateTime? GetNextOccurrence(string cronExpression)
     {
         try
         {
