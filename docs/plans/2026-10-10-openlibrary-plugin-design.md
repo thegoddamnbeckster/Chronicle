@@ -152,7 +152,7 @@ User-Agent: `Chronicle-OpenLibrary/<version> (<email>)` with an email, `Chronicl
 * Never scrape HTML; never download covers in bulk (URLs only; the app fetches an image only when asked).
 
 Budget for the first full pass over this library: roughly 750 authors x 2.3 + 3,900 books x 2.3, about 10,700 requests,
-**about 3 hours at 1/s, about 1 hour at 3/s**. Series cost nothing. The weekly re-sync task is off by default.
+**about 4 hours at 1/s (measured: about 20 items a minute), about a third of that at 3/s**. Series cost nothing. The weekly re-sync task is off by default.
 
 ## 9. Background tasks
 
