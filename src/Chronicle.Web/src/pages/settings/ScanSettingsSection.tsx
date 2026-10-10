@@ -84,37 +84,56 @@ export default function ScanSettingsSection() {
         </label>
       </div>
 
-      <div className={styles.sortCard}>
-        <div className={styles.toggleTitle}>Extra-file types</div>
-        <p className={styles.toggleDesc}>
-          Files with these extensions, and anything inside these folders, are treated as extras rather than media. Comma separated.
-          Leave empty to use the built-in list.
-        </p>
-        <label className={styles.toggleTitle} htmlFor="scan-ext">Extensions</label>
-        <input id="scan-ext" className={styles.textInput} value={extensions} placeholder={DEFAULT_EXTENSIONS} onChange={e => setExtensions(e.target.value)} />
-        <button className={styles.saveBtn} disabled={save.isPending}
-          onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.extensions, value: extensions.trim() })}>Save extensions</button>
-        <label className={styles.toggleTitle} htmlFor="scan-folders">Folder names</label>
-        <input id="scan-folders" className={styles.textInput} value={folders} placeholder={DEFAULT_FOLDERS} onChange={e => setFolders(e.target.value)} />
-        <button className={styles.saveBtn} disabled={save.isPending}
-          onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.folders, value: folders.trim() })}>Save folder names</button>
-        <p className={styles.toggleDesc}>A change takes effect within about a minute.</p>
+      <div className={`${styles.sortCard} ${styles.fieldCard}`}>
+        <div className={styles.toggleLabel}>
+          <div className={styles.toggleTitle}>Extra-file types</div>
+          <p className={styles.toggleDesc}>
+            Files with these extensions, and anything inside these folders, are treated as extras rather than media. Comma separated.
+            Leave empty to use the built-in list. A change takes effect within about a minute.
+          </p>
+        </div>
+        <div className={styles.fieldGroup}>
+          <label className={styles.toggleTitle} htmlFor="scan-ext">Extensions</label>
+          <div className={styles.fieldInputRow}>
+            <input id="scan-ext" className={styles.textInput} value={extensions} placeholder={DEFAULT_EXTENSIONS} onChange={e => setExtensions(e.target.value)} />
+            <button className={styles.saveBtn} disabled={save.isPending}
+              onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.extensions, value: extensions.trim() })}>Save extensions</button>
+          </div>
+        </div>
+        <div className={styles.fieldGroup}>
+          <label className={styles.toggleTitle} htmlFor="scan-folders">Folder names</label>
+          <div className={styles.fieldInputRow}>
+            <input id="scan-folders" className={styles.textInput} value={folders} placeholder={DEFAULT_FOLDERS} onChange={e => setFolders(e.target.value)} />
+            <button className={styles.saveBtn} disabled={save.isPending}
+              onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.folders, value: folders.trim() })}>Save folder names</button>
+          </div>
+        </div>
       </div>
 
-      <div className={styles.sortCard}>
-        <div className={styles.toggleTitle}>Your own file types</div>
-        <p className={styles.toggleDesc}>
-          Chronicle already knows the common video and audio formats. List any others you keep here (comma separated, for
-          example <code>rmvb, dsf</code>) and the scanner will treat them as media. Anything else it does not recognise is skipped.
-        </p>
-        <label className={styles.toggleTitle} htmlFor="scan-extra-video">Extra video types</label>
-        <input id="scan-extra-video" className={styles.textInput} value={extraVideo} placeholder="rmvb, vob" onChange={e => setExtraVideo(e.target.value)} />
-        <button className={styles.saveBtn} disabled={save.isPending}
-          onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.extraVideo, value: extraVideo.trim() })}>Save video types</button>
-        <label className={styles.toggleTitle} htmlFor="scan-extra-audio">Extra audio types</label>
-        <input id="scan-extra-audio" className={styles.textInput} value={extraAudio} placeholder="dsf, dff" onChange={e => setExtraAudio(e.target.value)} />
-        <button className={styles.saveBtn} disabled={save.isPending}
-          onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.extraAudio, value: extraAudio.trim() })}>Save audio types</button>
+      <div className={`${styles.sortCard} ${styles.fieldCard}`}>
+        <div className={styles.toggleLabel}>
+          <div className={styles.toggleTitle}>Your own file types</div>
+          <p className={styles.toggleDesc}>
+            Chronicle already knows the common video and audio formats. List any others you keep here (comma separated, for
+            example <code>rmvb, dsf</code>) and the scanner will treat them as media. Anything else it does not recognise is skipped.
+          </p>
+        </div>
+        <div className={styles.fieldGroup}>
+          <label className={styles.toggleTitle} htmlFor="scan-extra-video">Extra video types</label>
+          <div className={styles.fieldInputRow}>
+            <input id="scan-extra-video" className={styles.textInput} value={extraVideo} placeholder="rmvb, vob" onChange={e => setExtraVideo(e.target.value)} />
+            <button className={styles.saveBtn} disabled={save.isPending}
+              onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.extraVideo, value: extraVideo.trim() })}>Save video types</button>
+          </div>
+        </div>
+        <div className={styles.fieldGroup}>
+          <label className={styles.toggleTitle} htmlFor="scan-extra-audio">Extra audio types</label>
+          <div className={styles.fieldInputRow}>
+            <input id="scan-extra-audio" className={styles.textInput} value={extraAudio} placeholder="dsf, dff" onChange={e => setExtraAudio(e.target.value)} />
+            <button className={styles.saveBtn} disabled={save.isPending}
+              onClick={() => save.mutate({ key: SCAN_SETTING_KEYS.extraAudio, value: extraAudio.trim() })}>Save audio types</button>
+          </div>
+        </div>
       </div>
     </section>
   )
