@@ -399,6 +399,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddSingleton<IAuthorizationHandler, ApiKeyScopeHandler>();
 
 // ── Controllers + Swagger ─────────────────────────────────────────────────────
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddControllers()
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new UtcDateTimeConverter()));
 builder.Services.AddEndpointsApiExplorer();
@@ -457,6 +458,7 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+ClientTimeZone.Accessor = app.Services.GetRequiredService<IHttpContextAccessor>();
 
 // A database restore is staged by the Database settings page and completed here, before anything
 // opens the database file (it is locked while the application runs).
@@ -621,6 +623,7 @@ app.UseForwardedHeaders(forwardedHeadersOptions);
 // log line keeps it visible without the alarming stack trace.
 app.Use(async (ctx, next) =>
 {
+    ClientTimeZone.Capture(ctx);   // the caller's declared time zone, read by UtcDateTimeConverter both ways
     try
     {
         await next(ctx);
