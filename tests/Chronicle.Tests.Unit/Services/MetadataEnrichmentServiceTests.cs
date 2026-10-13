@@ -893,6 +893,24 @@ public class MetadataEnrichmentServiceTests : IDisposable
     };
 
     [Fact]
+    public async Task GetStatsAsync_ListsThePluginsAlphabetically_NotInInstallOrder()
+    {
+        // Installed (and so stored) in this order: Zeta, deezer, Alpha, Open Library.
+        var entries = new List<(string, IMetadataProvider, string?)>();
+        foreach (var (id, name) in new[] { ("chronicle.plugin.zeta", "Zeta"), ("chronicle.plugin.deezer", "deezer"), ("chronicle.plugin.alpha", "Alpha"), ("chronicle.plugin.openlibrary", "Open Library") })
+        {
+            _db.Plugins.Add(PluginRow(id, name, null));
+            entries.Add((id, new Mock<IMetadataProvider>().Object, null));
+        }
+        await _db.SaveChangesAsync();
+        _registry.Setup(r => r.GetMetadataProviderEntries()).Returns(entries);
+
+        var stats = await _svc.GetStatsAsync();
+
+        stats.Select(s => s.PluginName).Should().Equal("Alpha", "deezer", "Open Library", "Zeta");   // case-insensitive
+    }
+
+    [Fact]
     public async Task GetStatsAsync_ListsABlockedPluginWithItsReason_InsteadOfLettingItVanish()
     {
         // Blocked for unapproved file changes: not loaded, so not a registered provider -- but it has enrichment history.

@@ -964,8 +964,12 @@ public class MetadataEnrichmentService(
 
         var rowLookup = rows.ToDictionary(r => r.PluginId, StringComparer.OrdinalIgnoreCase);
 
+        // Alphabetical by name, so the table reads the same however the database happens to hand the rows back (it used to be
+        // install order on SQLite, which nothing guaranteed on PostgreSQL).
         var metadataPlugins = candidatePlugins
             .Where(p => metadataPluginIds.Contains(p.PluginId) || rowLookup.ContainsKey(p.PluginId))
+            .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(p => p.PluginId, StringComparer.Ordinal)
             .ToList();
 
         // Return one entry per installed metadata plugin, defaulting to zeros
