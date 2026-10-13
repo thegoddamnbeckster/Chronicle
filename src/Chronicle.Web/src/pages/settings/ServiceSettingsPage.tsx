@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getServiceStatus, getChangeAccountCommand, ServiceStatus } from '@/api/settings'
 import AdvancedToggle from '@/components/ui/AdvancedToggle'
+import { copyText } from '@/utils/clipboard'
 import styles from './ServiceSettingsPage.module.css'
 
 type AccountType = 'LocalService' | 'NetworkService' | 'LocalSystem' | 'Custom'
@@ -55,7 +56,8 @@ export default function ServiceSettingsPage() {
 
   function handleCopy() {
     if (!generatedCommand) return
-    navigator.clipboard.writeText(generatedCommand).then(() => {
+    void copyText(generatedCommand).then(ok => {
+      if (!ok) return
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })

@@ -9,6 +9,7 @@ import {
   type ApiTokenDto,
   type CreateTokenResponse,
 } from '@/api/apiTokens'
+import { copyText } from '@/utils/clipboard'
 import styles from './ApiKeysPage.module.css'
 
 function formatDate(iso: string | null): string {
@@ -94,7 +95,10 @@ export default function ApiKeysPage() {
 
   async function handleCopy() {
     if (!newToken) return
-    await navigator.clipboard.writeText(newToken.token)
+    if (!(await copyText(newToken.token))) {
+      alert('Could not copy automatically -- select the key and copy it by hand.')
+      return
+    }
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
