@@ -25,6 +25,8 @@ export interface BackgroundTask {
   // is still runnable.
   isRunnable: boolean
   runConfirmation: { title: string; message: string } | null
+  /** Set when the owning plugin's files changed without approval and it was not loaded. */
+  pluginIntegrityBlockedAt?: string | null
 }
 
 export async function getBackgroundTasks(): Promise<BackgroundTask[]> {

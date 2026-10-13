@@ -9,6 +9,8 @@ export interface EnrichmentStats {
   exhausted: number
   notFound: number
   skipped: number
+  /** Set when the plugin's files changed without approval and it was not loaded. */
+  integrityBlockedAt?: string | null
 }
 
 export const getEnrichmentStats = async (): Promise<EnrichmentStats[]> => {

@@ -242,7 +242,20 @@ return (
                   </td>
                 </tr>
               )}
-              {stats.map(s => (
+              {stats.map(s => s.integrityBlockedAt ? (
+                // Not loaded: the plugin's files changed without approval. Said in place of the counts and buttons,
+                // as the Plugins page does, so it cannot be mistaken for a plugin with nothing to do.
+                <tr key={s.pluginId} className={styles.enrichRow}>
+                  <td className={styles.enrichTd}>{s.pluginName}</td>
+                  <td colSpan={7} className={styles.enrichTd} style={{ color: 'var(--error, #f87171)', fontWeight: 600 }}>
+                    Blocked due to unapproved file changes
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                      {' '}— it will not run until an administrator approves them on the{' '}
+                      <Link to="/plugins" style={{ color: 'var(--accent)' }}>Plugins page</Link>.
+                    </span>
+                  </td>
+                </tr>
+              ) : (
                 <tr key={s.pluginId} className={styles.enrichRow}>
                   <td className={styles.enrichTd}>{s.pluginName}</td>
                   {(
@@ -637,10 +650,12 @@ interface PluginTaskGroupProps {
   foldKey: string
   pluginName: string
   iconUrl: string | null | undefined
+  /** The plugin's files changed without approval, so it was not loaded. */
+  blocked?: boolean
   children: React.ReactNode
 }
 
-function PluginTaskGroup({ foldKey, pluginName, iconUrl, children }: PluginTaskGroupProps) {
+function PluginTaskGroup({ foldKey, pluginName, iconUrl, blocked, children }: PluginTaskGroupProps) {
   const storageKey = `chronicle_fold_${foldKey}`
   const [isOpen, setIsOpen] = useState<boolean>(() => {
     // Default: closed. Persist in localStorage.
@@ -659,6 +674,11 @@ function PluginTaskGroup({ foldKey, pluginName, iconUrl, children }: PluginTaskG
       <button className={styles.pluginGroupHeader} onClick={toggle} aria-expanded={isOpen}>
         {iconUrl && <img src={iconUrl} alt="" className={styles.pluginGroupIcon} onError={e => { e.currentTarget.style.display = 'none' }} />}
         <span className={styles.pluginGroupName}>{pluginName}</span>
+        {blocked && (
+          <span style={{ color: 'var(--error, #f87171)', fontWeight: 600, fontSize: '0.8rem', marginLeft: '0.75rem' }}>
+            Blocked due to unapproved file changes
+          </span>
+        )}
         <span className={`${styles.pluginGroupChevron} ${isOpen ? styles.pluginGroupChevronOpen : ''}`}>›</span>
       </button>
       {isOpen && <div className={styles.pluginGroupBody}>{children}</div>}
@@ -914,6 +934,7 @@ export default function BackgroundTasksPage() {
                     foldKey={foldKey}
                     pluginName={pluginName}
                     iconUrl={iconUrl}
+                    blocked={groupTasks.some(t => !!t.pluginIntegrityBlockedAt)}
                   >
                     {groupTasks.map(task => (
                       <TaskCard

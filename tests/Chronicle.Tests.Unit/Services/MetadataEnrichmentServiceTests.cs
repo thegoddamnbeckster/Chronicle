@@ -886,6 +886,65 @@ public class MetadataEnrichmentServiceTests : IDisposable
         stats[0].Completed.Should().Be(1);
     }
 
+    private static Chronicle.Core.Models.Plugin PluginRow(string id, string name, DateTime? blockedAt) => new()
+    {
+        PluginId = id, Name = name, Author = "Test", Version = "1.0.0", DllPath = "/fake/path.dll",
+        IsEnabled = true, InstalledAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow, IntegrityBlockedAt = blockedAt,
+    };
+
+    [Fact]
+    public async Task GetStatsAsync_ListsABlockedPluginWithItsReason_InsteadOfLettingItVanish()
+    {
+        // Blocked for unapproved file changes: not loaded, so not a registered provider -- but it has enrichment history.
+        var blockedAt = DateTime.UtcNow;
+        _db.Plugins.Add(PluginRow("chronicle.plugin.musicbrainz", "MusicBrainz", blockedAt));
+        await _db.SaveChangesAsync();
+        _registry.Setup(r => r.GetMetadataProviderEntries()).Returns(new List<(string, IMetadataProvider, string?)>());
+        await SeedItemWithStatus(null, EnrichmentStatus.Completed);
+
+        var stats = await _svc.GetStatsAsync();
+
+        stats.Should().ContainSingle();
+        stats[0].PluginId.Should().Be("chronicle.plugin.musicbrainz");
+        stats[0].Completed.Should().Be(1);
+        stats[0].IntegrityBlockedAt.Should().Be(blockedAt);
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_DoesNotListABlockedPluginThatNeverEnrichedAnything()
+    {
+        // A blocked file scanner (or any non-metadata plugin) has no enrichment rows: not a row in this table.
+        _db.Plugins.Add(PluginRow("chronicle.plugin.filescanner", "File Scanner", DateTime.UtcNow));
+        await _db.SaveChangesAsync();
+        _registry.Setup(r => r.GetMetadataProviderEntries()).Returns(new List<(string, IMetadataProvider, string?)>());
+
+        (await _svc.GetStatsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_DoesNotListAnUnloadedPluginThatIsNotBlocked()
+    {
+        _db.Plugins.Add(PluginRow("chronicle.plugin.musicbrainz", "MusicBrainz", null));
+        await _db.SaveChangesAsync();
+        _registry.Setup(r => r.GetMetadataProviderEntries()).Returns(new List<(string, IMetadataProvider, string?)>());
+        await SeedItemWithStatus(null, EnrichmentStatus.Completed);
+
+        (await _svc.GetStatsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_ALoadedPluginIsNotMarkedBlocked()
+    {
+        _db.Plugins.Add(PluginRow("chronicle.plugin.musicbrainz", "MusicBrainz", null));
+        await _db.SaveChangesAsync();
+        _registry.Setup(r => r.GetMetadataProviderEntries()).Returns(new List<(string, IMetadataProvider, string?)>
+        {
+            ("chronicle.plugin.musicbrainz", new Mock<IMetadataProvider>().Object, null)
+        });
+
+        (await _svc.GetStatsAsync()).Single().IntegrityBlockedAt.Should().BeNull();
+    }
+
     [Fact]
     public async Task EnrichPendingAsync_SetsNotFoundWhenResultHasNoExternalId()
     {

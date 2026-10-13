@@ -93,5 +93,8 @@ public record EnrichmentStats(
     int Exhausted,
     int NotFound,
     int Skipped,
-    int AuthFailed = 0
+    int AuthFailed = 0,
+    // Set when the plugin's files changed on disk without approval, so it was not loaded and cannot enrich anything
+    // until an administrator approves them (Plugins page). The counts above are then only what it did earlier.
+    DateTime? IntegrityBlockedAt = null
 );

@@ -939,8 +939,11 @@ public class MetadataEnrichmentService(
             .Select(e => e.PluginId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var metadataPlugins = await db.Plugins
-            .Where(p => p.IsEnabled && metadataPluginIds.Contains(p.PluginId))
+        // A plugin blocked for unapproved file changes is not loaded, so it is not a registered provider -- and used to
+        // vanish from this table without a word. It is listed (with its reason) when it has enrichment history, which is
+        // what tells a metadata plugin apart from one that never enriched anything (the file scanner).
+        var candidatePlugins = await db.Plugins
+            .Where(p => p.IsEnabled && (metadataPluginIds.Contains(p.PluginId) || p.IntegrityBlockedAt != null))
             .ToListAsync(ct);
 
         // Enrichment counts grouped by plugin ID
@@ -961,6 +964,10 @@ public class MetadataEnrichmentService(
 
         var rowLookup = rows.ToDictionary(r => r.PluginId, StringComparer.OrdinalIgnoreCase);
 
+        var metadataPlugins = candidatePlugins
+            .Where(p => metadataPluginIds.Contains(p.PluginId) || rowLookup.ContainsKey(p.PluginId))
+            .ToList();
+
         // Return one entry per installed metadata plugin, defaulting to zeros
         return metadataPlugins
             .Select(p =>
@@ -975,7 +982,8 @@ public class MetadataEnrichmentService(
                     r?.Exhausted  ?? 0,
                     r?.NotFound   ?? 0,
                     r?.Skipped    ?? 0,
-                    r?.AuthFailed ?? 0);
+                    r?.AuthFailed ?? 0,
+                    p.IntegrityBlockedAt);
             })
             .ToList();
     }

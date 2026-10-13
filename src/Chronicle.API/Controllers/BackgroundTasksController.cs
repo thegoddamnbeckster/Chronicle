@@ -95,7 +95,8 @@ public class BackgroundTasksController : ControllerBase
                                   : _registeredTaskIds.Contains(r.TaskId),
             RunConfirmation:  r.RunConfirmationTitle is not null
                 ? new BackgroundTaskRunConfirmationDto(r.RunConfirmationTitle, r.RunConfirmationMessage ?? string.Empty)
-                : null
+                : null,
+            PluginIntegrityBlockedAt: r.Plugin?.IntegrityBlockedAt
         ));
 
         return Ok(new { success = true, data = dtos });
@@ -219,7 +220,9 @@ public record BackgroundTaskDto(
     string?   BrandColorDark,
     bool      Schedulable,
     bool      IsRunnable,
-    BackgroundTaskRunConfirmationDto? RunConfirmation
+    BackgroundTaskRunConfirmationDto? RunConfirmation,
+    // Set when the owning plugin's files changed without approval and it was not loaded: its tasks cannot run.
+    DateTime? PluginIntegrityBlockedAt = null
 );
 
 public record BackgroundTaskRunConfirmationDto(string Title, string Message);
