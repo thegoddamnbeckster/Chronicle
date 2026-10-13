@@ -116,6 +116,16 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.omdb",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.OMDb",
+      "tags": [
+        "movies",
+        "tv",
+        "anime",
+        "metadata"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.openlibrary",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.OpenLibrary",
       "tags": [
