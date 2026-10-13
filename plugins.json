@@ -108,6 +108,14 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.deezer",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Deezer",
+      "tags": [
+        "music",
+        "metadata"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.openlibrary",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.OpenLibrary",
       "tags": [

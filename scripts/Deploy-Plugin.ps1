@@ -83,6 +83,16 @@ $PluginMap = @{
         DllName = "Chronicle.Plugin.FanartTV.dll"
         OutDir  = Join-Path $PluginsDir "chronicle.plugin.fanarttv"
     }
+    "chronicle.plugin.openlibrary" = @{
+        Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.OpenLibrary\Chronicle.Plugin.OpenLibrary.csproj"
+        DllName = "Chronicle.Plugin.OpenLibrary.dll"
+        OutDir  = Join-Path $PluginsDir "chronicle.plugin.openlibrary"
+    }
+    "chronicle.plugin.deezer"      = @{
+        Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Deezer\Chronicle.Plugin.Deezer.csproj"
+        DllName = "Chronicle.Plugin.Deezer.dll"
+        OutDir  = Join-Path $PluginsDir "chronicle.plugin.deezer"
+    }
 }
 
 if (-not $PluginMap.ContainsKey($PluginId)) {

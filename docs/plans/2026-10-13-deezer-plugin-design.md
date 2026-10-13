@@ -1,6 +1,6 @@
 # Deezer plugin: design
 
-Status: **design, awaiting decisions (section 13).** Repo: `Chronicle.Plugin.Deezer` (public, currently an unusable scaffold: every method throws `NotImplementedException` and the README links to an `example.com` placeholder; it is replaced, not extended). Plugin id `chronicle.plugin.deezer`, source name `deezer`.
+Status: **implemented as v1.0.0 (2026-10-13).** Decisions taken: priority 30, all three levels, a track carries its album's genres, the largest cover Deezer serves (1900x1900, a setting), editable junk list, "discography" and similar words stripped from artist names only. Changes made while building it are in section 15. Repo: `Chronicle.Plugin.Deezer` (public, currently an unusable scaffold: every method throws `NotImplementedException` and the README links to an `example.com` placeholder; it is replaced, not extended). Plugin id `chronicle.plugin.deezer`, source name `deezer`.
 
 ## 1. Purpose and scope
 
@@ -175,3 +175,20 @@ README in the standard plugin format (badge, Plugin ID / Version / Auth block, s
 * **Junk that is not in the list.** New kinds of bulk-uploaded cover releases appear; the artist cap catches the common case and `junk_terms` is editable without a release.
 * **Wrong edition.** Mitigated by child count and names; where the library holds neither, the more popular edition wins, and Fix match corrects it.
 * **First pass is long** (about 3 hours), by design and in the background.
+
+## 15. What building it changed (measured on 330 real library items against the live service)
+
+Result of the final run (140 albums, 150 tracks, 40 artists drawn at random from this library): **artists 40 of 40 matched, albums 98 of 140 (70%; 51 of 70 that MusicBrainz could not find), tracks 123 of 150 (82%)**. The rejections were checked by eye: nearly all are releases Deezer does not carry, or another artist's version of the title (correctly refused).
+
+Changes from the design above:
+
+* **Durations settle the album edition, not the track.** The enrichment context carries the lengths of an item's children (an album's tracks), not an item's own length, so a track cannot be checked by duration. `duration_tolerance_seconds` applies when an album's tracks are compared with Deezer's.
+* **A track costs one request to fetch in full, not zero.** Finding it costs nothing (it is in its album's list), but the list carries no ISRC, contributors or BPM, and the host fetches the chosen id afterwards. Estimate corrected to about 75,000 requests (about 6 hours); the new setting `fetch_track_details` (default on) turns the per-track fetch off (about 2.5 hours).
+* **Deezer error code 300 is "invalid token", not "not found".** The codes handled: 4 quota, 700 busy, 800 no data, 600 bad query; anything else propagates.
+* **Caps cannot be lifted by the edition bonus.** The first version let what an album's track list said raise a score past the cap set by a recording mismatch ("Jumper (Radio Edit) / Graduate (Remix)" reached 80 for a plain "Jumper"). Scores are now kept as a raw value and a cap, and the bonus applies to the raw value only.
+* **A title that runs on in the same breath is another release.** "Get Born Live" is not "Get Born (Expanded Edition)". A title may continue the library's only after a separator ("Jumper" / "Jumper / Graduate"); trailing edition words without brackets ("Volcano Girls EP", "Heligoland Deluxe") are editions.
+* **Usual cuts are the same song.** "TKO" and "TKO (Radio Edit)", "(Single Version)", "(Album Version)", "(Original Mix)" are one recording; a remix, live take or demo is not.
+* **Live albums.** A track of a live album is the live recording, not the studio track of the same name, whether or not its own title says "(Live)".
+* **Broken characters are left out of the query**, not replaced by a space, because the search needs every word to match.
+* **Artist folder words are a second editable setting** (`artist_folder_words`), with the junk list.
+
