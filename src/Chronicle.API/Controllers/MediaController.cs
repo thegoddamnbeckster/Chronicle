@@ -391,8 +391,22 @@ namespace Chronicle.API.Controllers
             item.MetadataJson = Chronicle.Core.Helpers.PluginIdHelper.RemoveProviderBlob(
                 item.MetadataJson, source, out var blobRemoved);
 
+            // The provider's own enrichment row remembers the id it matched, and re-uses it on the next run
+            // (GetByIdAsync) instead of searching -- so clearing the match here but leaving that id behind brought the
+            // very same wrong book straight back (2026-10-13: 15 Open Library matches cleared, reset and re-run came
+            // back identical). Forget it. Done before the "already absent" return below on purpose: a clear that was
+            // half-done earlier (the id row gone, the enrichment row's copy still there) is completed by repeating it.
+            var enrichmentRows = await _context.MediaEnrichments
+                .Where(e => e.MediaItemId == id && e.ExternalId != null
+                            && (e.PluginId == source || e.PluginId.EndsWith("." + shortSource)))
+                .ToListAsync(ct);
+            foreach (var row in enrichmentRows) row.ExternalId = null;
+
             if (toRemove.Count == 0 && !blobRemoved)
+            {
+                if (enrichmentRows.Count > 0) await _context.SaveChangesAsync(ct);
                 return NoContent(); // already fully absent — idempotent
+            }
 
             _context.MediaExternalIds.RemoveRange(toRemove);
 
