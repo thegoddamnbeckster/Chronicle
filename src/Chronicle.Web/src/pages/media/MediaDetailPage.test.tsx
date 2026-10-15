@@ -35,6 +35,7 @@ const mockedUnparentFromCollection = vi.mocked(mediaApi.unparentFromCollection)
 const mockedReparentToSeries = vi.mocked(mediaApi.reparentToSeries)
 const mockedUnparentFromSeries = vi.mocked(mediaApi.unparentFromSeries)
 const mockedSetMediaOverride = vi.mocked(mediaApi.setMediaOverride)
+const mockedDeleteMedia = vi.mocked(mediaApi.deleteMedia)
 
 const mockedGetLibraryEntryForMedia = vi.mocked(libraryApi.getLibraryEntryForMedia)
 const mockedGetLibraryEntriesForMediaIds = vi.mocked(libraryApi.getLibraryEntriesForMediaIds)
@@ -128,6 +129,7 @@ function renderMediaDetailPage(mediaId = MEDIA_ID) {
   return renderWithProviders(
     <Routes>
       <Route path="/media/:id" element={<MediaDetailPage />} />
+      <Route path="/library" element={<div>Library landing</div>} />
     </Routes>,
     { initialEntries: [`/media/${mediaId}`] },
   )
@@ -178,6 +180,38 @@ async function openFold(label: string) {
 }
 
 describe('MediaDetailPage', () => {
+  it('after deleting a top-level item, lands on the Library', async () => {
+    const user = userEvent.setup()
+    mockedDeleteMedia.mockResolvedValue(undefined)
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    await user.click(screen.getAllByRole('button', { name: 'Delete' }).pop()!)
+
+    expect(await screen.findByText('Library landing')).toBeInTheDocument()
+    expect(mockedDeleteMedia).toHaveBeenCalledWith(MEDIA_ID)
+  })
+
+  it('after deleting a child item, goes up one level to its parent, not the Library', async () => {
+    const user = userEvent.setup()
+    mockedDeleteMedia.mockResolvedValue(undefined)
+    mockedGetMedia.mockImplementation(async id => id === 7
+      ? makeItem({ id: 7, name: 'The Parent' })
+      : makeItem({ parentId: 7, hierarchyLevel: 1, ancestors: [{ id: 7, name: 'The Parent' }] }))
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    await user.click(screen.getAllByRole('button', { name: 'Delete' }).pop()!)
+
+    expect(await screen.findByRole('heading', { name: 'The Parent' })).toBeInTheDocument()
+    expect(screen.queryByText('Library landing')).not.toBeInTheDocument()
+    // The parent's page must not inherit the open "Delete? / Cancel" strip.
+    expect(screen.queryByText(/This cannot be undone/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
+  })
+
   it('renders the loaded item\'s core info', async () => {
     renderMediaDetailPage()
 

@@ -267,7 +267,19 @@ export default function MediaDetailPage() {
     mutationFn: () => deleteMedia(mediaId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['library'] })
-      navigate('/library')
+      // The parent's page reuses this component instance, so the confirm strip would otherwise
+      // still be open there.
+      setDeleteConfirm(false)
+      // Go up one level -- the parent (season -> show, track -> album) -- and only land on the
+      // Library when the deleted item was itself a top-level one. replace: the deleted item's own
+      // page must not stay in history for Back to return to.
+      const parentId = item?.parentId ?? null
+      if (parentId != null) {
+        qc.invalidateQueries({ queryKey: ['media', parentId] })
+        navigate(`/media/${parentId}`, { replace: true })
+      } else {
+        navigate('/library', { replace: true })
+      }
     },
   })
 
