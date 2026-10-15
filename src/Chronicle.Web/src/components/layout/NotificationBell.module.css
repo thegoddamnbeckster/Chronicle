@@ -47,6 +47,20 @@
   box-shadow: var(--shadow);
 }
 
+/* On a phone the bell sits mid-header, so a panel anchored to its right edge runs off the left of
+   the screen. Pin it to the viewport instead, just under the (two-row) mobile header. Same breakpoint
+   and --header-height as Layout.module.css. */
+@media (max-width: 768px) {
+  .panel {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    top: calc(var(--header-height, 96px) + 6px);
+    width: auto;
+    max-height: calc(100vh - var(--header-height, 96px) - 24px);
+  }
+}
+
 .panelHeader, .panelFooter {
   display: flex;
   align-items: center;
