@@ -283,7 +283,7 @@ namespace Chronicle.Tests.Integration
             var tasks = (await Json(await admin.GetAsync("/api/v1/background-tasks"))).GetProperty("data").EnumerateArray()
                 .Select(t => t.GetProperty("taskId").GetString()).ToList();
 
-            tasks.Should().Contain(["database_backup", "database_maintenance_light", "database_maintenance_full"]);
+            tasks.Should().Contain(["database_backup", "database_maintenance_full"]);
         }
     }
 

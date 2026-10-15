@@ -6,6 +6,7 @@ WORKDIR /source
 # can cache the restore layer efficiently.
 COPY src/Chronicle.Core/Chronicle.Core.csproj              src/Chronicle.Core/
 COPY src/Chronicle.Data/Chronicle.Data.csproj              src/Chronicle.Data/
+COPY src/Chronicle.Data.Postgres/Chronicle.Data.Postgres.csproj src/Chronicle.Data.Postgres/
 COPY src/Chronicle.Services/Chronicle.Services.csproj      src/Chronicle.Services/
 COPY src/Chronicle.API/Chronicle.API.csproj                src/Chronicle.API/
 COPY src/Chronicle.Plugins/Chronicle.Plugins.csproj         src/Chronicle.Plugins/
