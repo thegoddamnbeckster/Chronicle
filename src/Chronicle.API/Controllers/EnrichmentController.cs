@@ -19,7 +19,7 @@ public class EnrichmentController(
     {
         var stats = await enrichmentSvc.GetStatsAsync(ct);
         var dtos = stats.Select(s => new EnrichmentStatsDto(
-            s.PluginId, s.PluginName, s.Pending, s.Completed, s.Failed, s.Exhausted, s.NotFound, s.Skipped, s.AuthFailed, s.IntegrityBlockedAt));
+            s.PluginId, s.PluginName, s.Pending, s.Completed, s.Failed, s.Exhausted, s.NotFound, s.Skipped, s.AuthFailed, s.IntegrityBlockedAt, s.IsRunning));
         return Ok(new { success = true, data = dtos });
     }
 

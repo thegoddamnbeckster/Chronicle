@@ -1542,14 +1542,14 @@ public class MovieCollectionServiceTests
     /// with a real season child was wrongly flagged, breaking MergeService's own container
     /// guard for the completely ordinary case of merging two duplicate TV shows. These pin
     /// that "has children" is only trusted for a FLAT media type (HierarchyLevels==1, e.g.
-    /// real production "movies"/"fanedits"/"anime_movies"/"people"), matching this project's
+    /// real production "movies"/"fanedits"/"anime_movies") that can hold collections, matching this project's
     /// own documented "collection is a structural exception under a flat type" design.
     /// </summary>
     [Fact]
     public async Task IsCollectionContainerAsync_FlatTypeWithChildren_ReturnsTrue()
     {
         await using var db = CreateInMemoryDb();
-        var mt = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        var mt = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, SupportsCollections = true, CreatedAt = DateTime.UtcNow };
         db.MediaTypes.Add(mt);
         var container = new MediaItem { Id = 1, Name = "John Wick Collection", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         var member = new MediaItem { Id = 2, Name = "John Wick", MediaTypeId = mt.Id, ParentId = 1, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
@@ -1558,6 +1558,41 @@ public class MovieCollectionServiceTests
 
         var svc = CreateService();
         (await svc.IsCollectionContainerAsync(db, container.Id)).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Root-caused live (2026-10-15): "people" is a one-level type, so a People record with items parented
+    /// under it ("Iain M. Banks" with five audiobooks) counted as a collection container and could not be
+    /// merged into the right author. A type that cannot hold collections never yields a container by "has children".
+    /// </summary>
+    [Fact]
+    public async Task IsCollectionContainerAsync_PeopleItemWithChildren_IsNotACollection()
+    {
+        await using var db = CreateInMemoryDb();
+        var mt = new MediaType { Id = 1, Name = "people", DisplayName = "People", HierarchyLevels = 1, SupportsCollections = false, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        var person = new MediaItem { Id = 1, Name = "Iain M. Banks", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var child = new MediaItem { Id = 2, Name = "Transition", MediaTypeId = mt.Id, ParentId = 1, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.AddRange(person, child);
+        await db.SaveChangesAsync();
+
+        var svc = CreateService();
+        (await svc.IsCollectionContainerAsync(db, person.Id)).Should().BeFalse();
+        (await svc.GetCollectionContainerIdsAsync(db, new[] { person.Id })).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task IsCollectionContainerAsync_ExplicitCollectionIdOnAPersonStillCounts()
+    {
+        await using var db = CreateInMemoryDb();
+        var mt = new MediaType { Id = 1, Name = "people", DisplayName = "People", HierarchyLevels = 1, SupportsCollections = false, CreatedAt = DateTime.UtcNow };
+        db.MediaTypes.Add(mt);
+        var item = new MediaItem { Id = 1, Name = "Odd", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(item);
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = 1, Source = "tmdb", ExternalId = "collection:123" });
+        await db.SaveChangesAsync();
+
+        (await CreateService().IsCollectionContainerAsync(db, item.Id)).Should().BeTrue();
     }
 
     [Fact]
@@ -1604,7 +1639,7 @@ public class MovieCollectionServiceTests
     public async Task GetCollectionContainerIdsAsync_HierarchicalTypeWithChildren_ExcludesIt()
     {
         await using var db = CreateInMemoryDb();
-        var movies = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        var movies = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, SupportsCollections = true, CreatedAt = DateTime.UtcNow };
         var tv = new MediaType { Id = 2, Name = "tv", DisplayName = "TV", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow };
         db.MediaTypes.AddRange(movies, tv);
         var collection = new MediaItem { Id = 1, Name = "John Wick Collection", MediaTypeId = movies.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };

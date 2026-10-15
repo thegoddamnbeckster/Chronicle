@@ -29,6 +29,8 @@ namespace Chronicle.Services;
 ///                                 year) folds into the real "Base" series.
 ///   10. Audiobook Series Number Repair -- a series book with no Number gets its position from its folder
 ///                                 name, so the series lists in reading order.
+///   10b. Series Slot Twin Repair -- a provider's placeholder book and the user's own book at the same
+///                                 position in a series (no id or title ever matched them) become one item.
 ///   11. Album Name Year Repair -- an album named after its folder ("(2000) Title") gets the plain name and
 ///                                 the year in its Year field.
 ///   12. Missing Source Reconciliation -- an item whose scanned file/folder is gone from disk loses the stale
@@ -50,6 +52,7 @@ public sealed class LibraryIntegrityRepairService(
     BookTitleFragmentRepairService bookTitleFragments,
     SeriesNameFragmentRepairService seriesNameFragments,
     AudiobookSeriesNumberRepairService seriesNumbers,
+    SeriesSlotTwinRepairService seriesSlotTwins,
     AlbumNameYearRepairService albumNameYear,
     MissingSourceReconciliationService missingSources,
     TitleSanitizationService titleSanitization,
@@ -75,6 +78,7 @@ public sealed class LibraryIntegrityRepairService(
         await passes.RunAsync("book title fragment repair", bookTitleFragments.ExecuteAsync, ct);
         await passes.RunAsync("series name fragment repair", seriesNameFragments.ExecuteAsync, ct);
         await passes.RunAsync("audiobook series number repair", seriesNumbers.ExecuteAsync, ct);
+        await passes.RunAsync("series slot twin repair", seriesSlotTwins.ExecuteAsync, ct);
         await passes.RunAsync("album name year repair", albumNameYear.ExecuteAsync, ct);
         await passes.RunAsync("missing source reconciliation", missingSources.ExecuteAsync, ct);
         await passes.RunAsync("title sanitization", titleSanitization.ExecuteAsync, ct);

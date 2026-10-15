@@ -71,3 +71,27 @@ describe('BackgroundTasksPage -- a plugin blocked for unapproved file changes', 
     expect(screen.queryByText(/Blocked due to unapproved file changes/)).not.toBeInTheDocument()
   })
 })
+
+describe('BackgroundTasksPage -- enrichment started outside the scheduled task', () => {
+  const FETCH_TASK = { lastRunSucceeded: true, lastRunAt: '2026-10-15T05:30:00Z' }
+
+  it('shows Running when the server reports a pass in flight, even though the task last succeeded', async () => {
+    vi.mocked(enrichmentApi.getEnrichmentStats).mockResolvedValue([{ ...STATS, isRunning: true }])
+    vi.mocked(tasksApi.getBackgroundTasks).mockResolvedValue([task(FETCH_TASK)])
+    renderPage()
+
+    await screen.findByText('4,420')
+    expect(screen.getAllByText('Running').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Success')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Running…' })).toBeDisabled()
+  })
+
+  it('shows the last run result of the task when nothing is running', async () => {
+    vi.mocked(enrichmentApi.getEnrichmentStats).mockResolvedValue([{ ...STATS, isRunning: false }])
+    vi.mocked(tasksApi.getBackgroundTasks).mockResolvedValue([task(FETCH_TASK)])
+    renderPage()
+
+    await screen.findByText('4,420')
+    expect(screen.getAllByText('Success').length).toBeGreaterThan(0)
+  })
+})

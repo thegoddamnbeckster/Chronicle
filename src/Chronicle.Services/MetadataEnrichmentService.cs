@@ -131,6 +131,10 @@ public class MetadataEnrichmentService(
             .ToList();
     }
 
+    /// <summary>True while EnrichPendingAsync holds this plugin's lock, whichever caller started the pass.</summary>
+    private bool IsEnrichmentRunning(string pluginId) =>
+        _pluginLocks.TryGetValue(pluginId, out var sem) && sem.CurrentCount == 0;
+
     // ── Background / batch operations ─────────────────────────────────────────
     public async Task EnrichPendingAsync(string pluginId, CancellationToken ct = default)
     {
@@ -1003,7 +1007,8 @@ public class MetadataEnrichmentService(
                     r?.NotFound   ?? 0,
                     r?.Skipped    ?? 0,
                     r?.AuthFailed ?? 0,
-                    p.IntegrityBlockedAt);
+                    p.IntegrityBlockedAt,
+                    IsEnrichmentRunning(p.PluginId));
             })
             .ToList();
     }

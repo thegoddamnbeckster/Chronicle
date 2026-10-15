@@ -176,7 +176,12 @@ namespace Chronicle.API.DTOs
         /// MediaItem.SeriesPosition's own doc. Null for every item other than a book placed in a
         /// series with a known Hardcover position.
         /// </summary>
-        double? SeriesPosition = null
+        double? SeriesPosition = null,
+        /// <summary>
+        /// How many items sit directly under this one. Set only when listing an item's children, so the
+        /// page can tell a series that holds books from a standalone book in the same list.
+        /// </summary>
+        int? ChildCount = null
     );
 
     /// <summary>One manually-pinned field override on a media item. See MediaItemDto.Overrides.</summary>

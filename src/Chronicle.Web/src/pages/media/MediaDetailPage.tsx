@@ -1404,6 +1404,12 @@ export default function MediaDetailPage() {
           return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
         })
         const childrenLabel = childrenLabelFor(currentMediaType, item.ancestors?.length ?? 0)
+        // A list that mixes items holding children with items that don't (an author's series beside their
+        // standalone books) gets a badge on the ones that hold some, named after this level ("Series"), the way
+        // a movie collection says "Collection". Where every item holds children (a show's seasons) it says nothing.
+        const holdsChildren = children.filter(c => (c.childCount ?? 0) > 0).length
+        const levelName = currentMediaType?.hierarchyLabels?.[(item.ancestors?.length ?? 0) + 1]
+        const containerBadge = holdsChildren > 0 && holdsChildren < children.length ? levelName ?? null : null
         const childIds = sortedChildren.map(c => c.id)
         return (
         <PluginFold
@@ -1427,15 +1433,20 @@ export default function MediaDetailPage() {
                   const childPosition = formatChildPosition(child.number, child.seriesPosition)
                   return (
                     <>
-                      <PosterImage
-                        posterUrl={child.posterUrl}
-                        name={child.name}
-                        imgClassName={styles.childPoster}
-                        placeholderContent={enriched
-                          ? <span className={styles.childNoArt}>No art</span>
-                          : (childPosition ?? child.name.charAt(0))}
-                        progressPercent={childProgress}
-                      />
+                      <div className={styles.childPosterWrap}>
+                        <PosterImage
+                          posterUrl={child.posterUrl}
+                          name={child.name}
+                          imgClassName={styles.childPoster}
+                          placeholderContent={enriched
+                            ? <span className={styles.childNoArt}>No art</span>
+                            : (childPosition ?? child.name.charAt(0))}
+                          progressPercent={childProgress}
+                        />
+                        {containerBadge && (child.childCount ?? 0) > 0 && (
+                          <div className={styles.childBadge}>{containerBadge}</div>
+                        )}
+                      </div>
                       <div className={styles.childName}>{child.name}</div>
                       {(childPosition != null || child.year) && (
                         <div className={styles.childYear}>

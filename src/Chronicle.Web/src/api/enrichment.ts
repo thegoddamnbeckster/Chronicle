@@ -11,6 +11,8 @@ export interface EnrichmentStats {
   skipped: number
   /** Set when the plugin's files changed without approval and it was not loaded. */
   integrityBlockedAt?: string | null
+  /** True while an enrichment pass for this plugin is in flight, whoever started it. */
+  isRunning?: boolean
 }
 
 export const getEnrichmentStats = async (): Promise<EnrichmentStats[]> => {

@@ -96,5 +96,8 @@ public record EnrichmentStats(
     int AuthFailed = 0,
     // Set when the plugin's files changed on disk without approval, so it was not loaded and cannot enrich anything
     // until an administrator approves them (Plugins page). The counts above are then only what it did earlier.
-    DateTime? IntegrityBlockedAt = null
+    DateTime? IntegrityBlockedAt = null,
+    // True while an enrichment pass for this plugin is in flight, whoever started it (its scheduled task, the
+    // end of a scan or sync, the Run button). The scheduled task reports only the passes it started itself.
+    bool IsRunning = false
 );

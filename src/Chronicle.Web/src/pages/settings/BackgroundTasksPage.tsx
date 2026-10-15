@@ -816,6 +816,14 @@ export default function BackgroundTasksPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => { getEnrichmentStats().then(setEnrichmentStats).catch(() => {}) }, [])
 
+  // While any plugin is enriching, keep its counts and Running badge current.
+  const anyEnrichmentRunning = enrichmentStats.some(s => s.isRunning)
+  useEffect(() => {
+    if (!anyEnrichmentRunning) return
+    const id = setInterval(() => { getEnrichmentStats().then(setEnrichmentStats).catch(() => {}) }, 5000)
+    return () => clearInterval(id)
+  }, [anyEnrichmentRunning])
+
   // Poll every 3s while any task is running
   useEffect(() => {
     const anyRunning = tasks.some(t => t.isRunning || runningIds.has(t.taskId))
@@ -883,6 +891,12 @@ export default function BackgroundTasksPage() {
   const runningPluginIds = new Set(runningEnrichmentIds)
   for (const [pluginId, t] of pluginFetchTasks) {
     if (t.isRunning || runningIds.has(t.taskId)) runningPluginIds.add(pluginId)
+  }
+  // ...or a pass the server itself reports in flight. Passes also start at the end of a scan or a sync, and from
+  // the enrichment loop's own retries; none of those go through the scheduled task, so its badge alone said
+  // "Success" while a queue of tens of thousands was visibly draining.
+  for (const s of enrichmentStats) {
+    if (s.isRunning) runningPluginIds.add(s.pluginId)
   }
 
   // Run Now goes through the task scheduler whenever the plugin has a fetch task, so it behaves

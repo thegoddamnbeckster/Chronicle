@@ -356,6 +356,43 @@ describe('MediaDetailPage', () => {
     expect(mockedReparentToCollection).toHaveBeenCalledWith(200, MEDIA_ID)
   })
 
+  it('labels the children that hold items "Series" on an author page, and leaves standalone books alone', async () => {
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 1, name: 'audiobooks', displayName: 'Audiobooks', hierarchyLevels: 3, hierarchyLabels: ['Author', 'Series', 'Book'] },
+    ])
+    mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 1, mediaTypeName: 'Audiobooks', hierarchyLevel: 0, name: 'J.N. Chaney' }))
+    mockedGetMediaChildren.mockResolvedValue([
+      makeItem({ id: 11, name: 'Backyard Starship', mediaTypeId: 1, hierarchyLevel: 1, parentId: MEDIA_ID, childCount: 4 }),
+      makeItem({ id: 12, name: 'Affliction', mediaTypeId: 1, hierarchyLevel: 1, parentId: MEDIA_ID, childCount: 0 }),
+    ])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'J.N. Chaney' })
+    await openFold('Series (2)')
+
+    const withBooks = screen.getByText('Backyard Starship').closest('a')!
+    const standalone = screen.getByText('Affliction').closest('a')!
+    expect(within(withBooks as HTMLElement).getByText('Series')).toBeInTheDocument()
+    expect(within(standalone as HTMLElement).queryByText('Series')).not.toBeInTheDocument()
+  })
+
+  it('does not badge anything when every child holds items, as with the seasons of a show', async () => {
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 1, name: 'tv', displayName: 'TV Shows', hierarchyLevels: 3, hierarchyLabels: ['Show', 'Season', 'Episode'] },
+    ])
+    mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 1, mediaTypeName: 'TV Shows', hierarchyLevel: 0, name: 'A Show' }))
+    mockedGetMediaChildren.mockResolvedValue([
+      makeItem({ id: 21, name: 'Season 1', mediaTypeId: 1, hierarchyLevel: 1, parentId: MEDIA_ID, childCount: 8 }),
+      makeItem({ id: 22, name: 'Season 2', mediaTypeId: 1, hierarchyLevel: 1, parentId: MEDIA_ID, childCount: 10 }),
+    ])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'A Show' })
+    await openFold('Seasons (2)')
+
+    expect(screen.queryByText('Season', { selector: 'div' })).not.toBeInTheDocument()
+  })
+
   // --- Author -> Series -> Book membership: mirrors the two collection tests above exactly,
   // scoped to a 3-level type instead of a flat one. ---
 

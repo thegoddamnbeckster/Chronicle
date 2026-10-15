@@ -1725,9 +1725,16 @@ public class MovieCollectionService(
     /// reintroduced this fix's own false-positive-container bug for that edge case, and
     /// disagreed with GetCollectionContainerIdsAsync's own always-conservative handling of the
     /// same case. An unknown type is never assumed eligible to be a collection container.
+    ///
+    /// Flat AND collection-capable (SupportsCollections): a one-level type that cannot hold collections is
+    /// not a type whose items can be one. Root-caused live (2026-10-15): "people" is one level, so a People
+    /// record that had five audiobooks parented under it ("Iain M. Banks") counted as a collection container,
+    /// and merging it into the correct author ("Iain Banks") was refused as "the item to absorb is a
+    /// collection". Movies, fan edits and anime movies carry SupportsCollections; people, music videos and
+    /// games do not.
     /// </summary>
     private static async Task<HashSet<int>> GetFlatMediaTypeIdsAsync(ChronicleDbContext db, CancellationToken ct) =>
-        (await db.MediaTypes.Where(t => t.HierarchyLevels == 1).Select(t => t.Id).ToListAsync(ct)).ToHashSet();
+        (await db.MediaTypes.Where(t => t.HierarchyLevels == 1 && t.SupportsCollections).Select(t => t.Id).ToListAsync(ct)).ToHashSet();
 
     private static async Task<bool> IsFlatMediaTypeAsync(ChronicleDbContext db, int mediaTypeId, CancellationToken ct) =>
         (await GetFlatMediaTypeIdsAsync(db, ct)).Contains(mediaTypeId);

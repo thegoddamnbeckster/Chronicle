@@ -23,6 +23,22 @@ internal static class SeriesPositionHelper
     }
 
     /// <summary>
+    /// A book's position when its title is exactly the series name plus a number ("Mark of the Fool 5" in the
+    /// series "Mark of the Fool"), else null. Deliberately strict -- a title that merely ends in digits
+    /// ("Fahrenheit 451") or carries a subtitle is never read as a position.
+    /// </summary>
+    internal static double? InferFromTitle(string? title, string? seriesName)
+    {
+        if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(seriesName)) return null;
+        var m = System.Text.RegularExpressions.Regex.Match(
+            title.Trim(),
+            @"^" + System.Text.RegularExpressions.Regex.Escape(seriesName.Trim()) + @"\s+(\d+(?:\.\d+)?)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var position) ? position : null;
+    }
+
+    /// <summary>
     /// Fills an EMPTY Number (never overwriting one a provider or the user set), together with the
     /// matching SeriesPosition. A precise SeriesPosition the book already carries wins over
     /// <paramref name="position"/> -- it is the more trusted value, and Number is simply derived from it.

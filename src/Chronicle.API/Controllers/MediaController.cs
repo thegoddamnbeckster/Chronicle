@@ -173,10 +173,17 @@ namespace Chronicle.API.Controllers
                     g => g.Key,
                     g => g.ToDictionary(e => e.PluginId, e => e.Status));
 
+            var childCounts = await _context.MediaItems
+                .Where(c => c.ParentId != null && childIds.Contains(c.ParentId.Value))
+                .GroupBy(c => c.ParentId!.Value)
+                .Select(g => new { ParentId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(g => g.ParentId, g => g.Count, ct);
+
             var dtos = children.Select(m =>
             {
                 enrichmentByChild.TryGetValue(m.Id, out var statuses);
-                return ToDto(m, enrichmentStatuses: statuses?.Count > 0 ? statuses : null);
+                return ToDto(m, enrichmentStatuses: statuses?.Count > 0 ? statuses : null)
+                    with { ChildCount = childCounts.GetValueOrDefault(m.Id) };
             }).ToList();
 
             return Ok(ApiResponse<List<MediaItemDto>>.Ok(dtos));

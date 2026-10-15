@@ -25,7 +25,7 @@ public class BookSeriesService(
     /// ReparentIntoSeriesAsync, not inferred from a provider's book list. See
     /// EnsureSeriesStubsAsync, which skips any book carrying this marker entirely.
     /// </summary>
-    private const string ManualSeriesMemberMarker = "manual-series-member";
+    internal const string ManualSeriesMemberMarker = "manual-series-member";
 
     public async Task<bool> EnsureSeriesStubsAsync(
         ChronicleDbContext db,
@@ -165,6 +165,29 @@ public class BookSeriesService(
                 .ThenBy(m => m.Id)
                 .ToList();
             var existing = idMatches.FirstOrDefault() ?? FindByNormalizedTitleYear(subtree, part);
+
+            // Neither an id nor the title found the user's own book -- or only a placeholder did -- but a real
+            // item of theirs sits at exactly this position in this series: it is the same book (see
+            // SeriesSlotTwins). The placeholder's ids move onto it and the placeholder goes, instead of the
+            // series showing a book with a file and no metadata beside a book with metadata and no file.
+            if (position.HasValue && (existing is null || existing.IsStub) &&
+                (existing is null || (existing.ParentId == series.Id && !manuallyPlacedIds.Contains(existing.Id))))
+            {
+                var twin = SeriesSlotTwins.FindTwin(subtree, series.Id, position.Value, results, providerSource, manuallyPlacedIds);
+                if (twin is not null)
+                {
+                    var placeholders = idMatches.Where(m => m.IsStub && m.ParentId == series.Id).ToList();
+                    var extraIds = existing is null
+                        ? AllIdsFor(part).Select(id => (providerSource, id)).ToList()
+                        : [];
+                    if (await SeriesSlotTwins.AdoptAsync(db, twin, placeholders, extraIds, logger, ct))
+                    {
+                        foreach (var gone in placeholders) subtree.Remove(gone);
+                        idMatches.Clear();
+                        existing = twin;
+                    }
+                }
+            }
 
             // Several stubs for one slot (per-edition duplicates from before the collapse fix, or a
             // stub beside a real item matched by an alternate edition id): keep exactly one -- the
@@ -320,6 +343,11 @@ public class BookSeriesService(
         book.HierarchyLevel = 2;
         book.UpdatedAt      = DateTime.UtcNow;
 
+        // A hand-placed book has no provider list to take its position from (and the provider may be out of
+        // quota), so without this it sorts after every positioned book. Read it from the title when the title
+        // is "<series> N"; never overwrites a position the book already has.
+        SeriesPositionHelper.FillIfEmpty(book, SeriesPositionHelper.InferFromTitle(book.Name, series.Name));
+
         var alreadyMarked = await db.MediaExternalIds.AnyAsync(
             e => e.MediaItemId == book.Id && e.ExternalId == ManualSeriesMemberMarker, ct);
         if (!alreadyMarked)
@@ -372,7 +400,7 @@ public class BookSeriesService(
             await RemoveOrphanedSeriesAsync(db, series.Id, book.MediaTypeId, ct);
     }
 
-    private static async Task ResetEnrichmentAsync(ChronicleDbContext db, int itemId, CancellationToken ct)
+    internal static async Task ResetEnrichmentAsync(ChronicleDbContext db, int itemId, CancellationToken ct)
     {
         var rows = await db.MediaEnrichments.Where(e => e.MediaItemId == itemId).ToListAsync(ct);
         foreach (var row in rows)
@@ -404,7 +432,7 @@ public class BookSeriesService(
 
     /// <summary>Ids among <paramref name="ids"/> that have a library entry, play history or a list
     /// entry -- deleting such an item would cascade-delete the user's own data.</summary>
-    private static async Task<HashSet<int>> StubIdsWithUserDataAsync(
+    internal static async Task<HashSet<int>> StubIdsWithUserDataAsync(
         ChronicleDbContext db, IEnumerable<int> ids, CancellationToken ct)
     {
         var idList = ids.ToList();
@@ -435,6 +463,8 @@ public class BookSeriesService(
         var candidates = part.Year.HasValue ? subtree.Where(m => m.Year == part.Year) : subtree;
         return candidates.FirstOrDefault(m => MediaItemNormalizer.NormalizeName(m.Name) == normalized);
     }
+
+    internal static double? PositionOf(MediaMetadata part) => TryGetSeriesPosition(part.ExtendedData);
 
     private static double? TryGetSeriesPosition(JsonElement? extendedData)
     {

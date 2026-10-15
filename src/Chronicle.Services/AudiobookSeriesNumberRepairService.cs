@@ -46,6 +46,20 @@ public sealed class AudiobookSeriesNumberRepairService(
             fixedCount++;
         }
 
+        // Books with no folder to read (added by hand, or placed in a series after the fact) but whose title is
+        // "<series> N". The folder pass above has first claim; this only fills what is still empty.
+        var untitledPosition = await db.MediaItems
+            .Include(m => m.Parent)
+            .Where(m => m.HierarchyLevel == 2 && m.Number == null && m.SeriesPosition == null &&
+                        m.MediaType!.HierarchyLevels > 2 && m.Parent != null)
+            .ToListAsync(ct);
+        foreach (var book in untitledPosition)
+        {
+            if (!SeriesPositionHelper.FillIfEmpty(book, SeriesPositionHelper.InferFromTitle(book.Name, book.Parent!.Name))) continue;
+            book.UpdatedAt = DateTime.UtcNow;
+            fixedCount++;
+        }
+
         await db.SaveChangesAsync(ct);
         logger.LogInformation("Audiobook series number repair: set the series position on {Count} book(s)", fixedCount);
     }

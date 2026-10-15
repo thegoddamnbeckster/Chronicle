@@ -1168,6 +1168,26 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   overflow: hidden;
 }
 
+/* Wraps the poster so a badge can sit on its bottom-left corner, the way a movie collection's does. */
+.childPosterWrap {
+  position: relative;
+}
+
+.childBadge {
+  position: absolute;
+  bottom: 12px;
+  left: 6px;
+  background: color-mix(in srgb, var(--accent) 85%, transparent);
+  color: var(--accent-fg, #fff);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
 .childNoArt {
   font-size: 11px;
   color: var(--text-muted);
