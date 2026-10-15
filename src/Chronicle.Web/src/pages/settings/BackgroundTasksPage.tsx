@@ -959,10 +959,12 @@ export default function BackgroundTasksPage() {
               }
 
               // Sort: system (null) first, then alphabetically by plugin name
-              const sortedEntries = Array.from(groups.entries()).sort(([a], [b]) => {
+              // By the name shown, not the id: Hardcover's id ("hardcover") has no "chronicle.plugin." prefix and sorted last.
+              const nameOf = (id: string, list: typeof tasks) => list[0].pluginName ?? id
+              const sortedEntries = Array.from(groups.entries()).sort(([a, ta], [b, tb]) => {
                 if (a === null) return -1
                 if (b === null) return 1
-                return (a ?? '').localeCompare(b ?? '')
+                return nameOf(a, ta).localeCompare(nameOf(b, tb), undefined, { sensitivity: 'base' })
               })
 
               return sortedEntries.map(([pluginId, groupTasks]) => {
