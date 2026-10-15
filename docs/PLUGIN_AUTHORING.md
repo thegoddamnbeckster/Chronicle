@@ -215,8 +215,53 @@ no frontend code changes needed when a new plugin is installed. Your plugin's `i
 The `ExternalId` you return is stored in the enrichment row and used on subsequent runs to
 call `GetByIdAsync` directly rather than re-searching.
 
-The `PosterUrl` from your result is promoted to `media_items.poster_url` if the item has no
-poster yet.
+The poster, title and other first-class fields shown for an item are resolved from every plugin's
+blob by **Metadata Assignment** (see the next section); your `PosterUrl` is not promoted on its own.
+
+### Making your data show (read this before you build the plugin)
+
+Storing your data is not the same as showing it. Three things decide whether what your plugin fetches reaches the user, and
+each has been missed before (Last.fm and Deezer were on no Music assignment list; Open Library's covers were not listed under
+Additional Images; a book's cover Open Library held never showed). Do all of them, and say so in the plugin's README.
+
+**1. Declare the fields you fill, with the host's exact names.** `MediaTypeSupport.SupportedFields` (level 0) and
+`LevelFields[level]` (levels above) are what put your plugin on the **Metadata Assignment** page for a field. The names must be
+the canonical ones in `MetadataResolutionService.FieldMap` (`title, overview, year, poster_url, backdrop_url, logo_url,
+banner_url, thumb_url, clearart_url, disc_url, character_art_url, runtime_minutes, rating, genres, cast, crew, tags, label, mood,
+bpm, isrc, ...`); a misspelt name makes the field invisible, and a plugin that lists a field it never fills puts rows in a queue
+that can only fail. An empty list for a level (`LevelFields[2] = []`) means "nothing at this level": the host removes those
+rows from the queue and does not seed them. Add a test that every declared field is one of the host's names.
+
+**2. Assignment lists decide what is displayed, and installing a plugin does not add it to them.** For a field that has a saved
+list, only the plugins on it are consulted, in order. As of 2026-10-14 a plugin that is on no list is used as a **last resort**
+(when nothing on the list has a value), and the Assignment page appends it to each list it supports so an administrator can
+drag it into place. That fallback guarantees an item shows a poster, bio or rating if any plugin has one; it does not give your
+plugin priority. So: set a sensible `DefaultPriority` (lower wins), and tell the administrator in the README to add the plugin to
+the lists (at the end to fill gaps, higher to prefer it). A plugin that must win a field has to be put there by the user.
+
+**3. Return every image, typed.** The item page's **Additional Images** card lists every image from every plugin, grouped by
+slot. A top-level `PosterUrl`, `BackdropUrl`, `LogoUrl`, `BannerUrl`, `ThumbUrl`, `ClearartUrl`, `DiscUrl`, `CharacterArtUrl`
+goes to its slot; everything else goes in `AdditionalImages` with a `Type`. A `Type` the frontend does not know (see
+`TYPE_TO_SLOT` in `imageExtractor.ts`) is still shown, under Posters, and can be re-pinned to any slot, so nothing is lost; add
+your Type strings there if they belong in a more specific slot. The host checks every image URL with a request before storing it,
+so return the images that matter, not every size of each. Always fill `PosterUrl` when you have any picture at all: part of the
+point of having several providers is that an item always ends up with one.
+
+Other host behaviour that has surprised plugin authors:
+
+* **Interactive search gives a provider 4 seconds, enrichment 25.** A plugin that paces itself slowly (a rate-limited free tier)
+  cannot answer Add Media and file-scan searches in 4 seconds: declare the type `EnrichOnly = true` so it is left out of them.
+* **One external id belongs to one item.** A match whose id another item already holds is refused ("likely a duplicate"), except
+  between types that hold the same work in different formats (`books` and `audiobooks`, configurable in the
+  `enrichment.same_work_media_types` setting). A plugin that finds the same id on two items of one type has found a duplicate.
+* **Do not publish ids another plugin will misread.** `ExtendedData.ids` seeds *other* plugins' enrichment rows with
+  `{source}:{id}`. Put an id there only if you know a plugin accepts that form for that kind of item; MusicBrainz release-group
+  and recording ids, for example, belong under `external_ids`.
+* **Read other sources' ids defensively and only if you can do without them.** `KnownExternalIds` may be null or empty, and an item
+  can hold an id of the wrong kind for its level (an album holding an `artist:` id). Check the kind; fall back to a name search;
+  never require another plugin. A plugin must work for a user who has installed nothing else, and must have a test that proves it.
+* **The free-tier trap: one result per search.** If the provider cannot return a ranking, verify the one record you are given
+  (name, parent, year) and refuse it when it does not fit; never accept a similar name.
 
 ### Cross-reference seeding
 

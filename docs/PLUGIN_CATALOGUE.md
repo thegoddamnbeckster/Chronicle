@@ -89,7 +89,7 @@ The rest of this document indexes planned future plugins.
 | Plugin | Directory | Scope | Auth | Status |
 |--------|-----------|-------|------|--------|
 | [Discogs](plugins/PLUGIN_DISCOGS.md) | `Chronicle.Plugin.Discogs` | 🎵 | OAuth / token | Scaffolded |
-| [TheAudioDB](plugins/PLUGIN_THEAUDIODB.md) | `Chronicle.Plugin.TheAudioDB` | 🎵 | API key (free tier) | Scaffolded |
+| [TheAudioDB](plugins/PLUGIN_THEAUDIODB.md) | `Chronicle.Plugin.TheAudioDB` | 🎵 | API key (free key 123) | Implemented (1.0.0) |
 | [Soundcharts](plugins/PLUGIN_SOUNDCHARTS.md) | `Chronicle.Plugin.Soundcharts` | 🎵 | API key + secret | Scaffolded |
 | [Jaxsta](plugins/PLUGIN_JAXSTA.md) | `Chronicle.Plugin.Jaxsta` | 🎵 | API key | Scaffolded |
 | [OneMusicAPI](plugins/PLUGIN_ONEMUSICAPI.md) | `Chronicle.Plugin.OneMusicAPI` | 🎵 | API key | Scaffolded |

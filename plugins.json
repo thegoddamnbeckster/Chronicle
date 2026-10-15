@@ -116,6 +116,14 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.theaudiodb",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.TheAudioDB",
+      "tags": [
+        "music",
+        "metadata"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.omdb",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.OMDb",
       "tags": [

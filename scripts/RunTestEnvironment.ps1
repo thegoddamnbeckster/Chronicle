@@ -196,6 +196,11 @@ $PluginProjects = @(
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.deezer"
     },
     @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.TheAudioDB\Chronicle.Plugin.TheAudioDB.csproj"
+        DllName    = "Chronicle.Plugin.TheAudioDB.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.theaudiodb"
+    },
+    @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.OMDb\Chronicle.Plugin.OMDb.csproj"
         DllName    = "Chronicle.Plugin.OMDb.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.omdb"

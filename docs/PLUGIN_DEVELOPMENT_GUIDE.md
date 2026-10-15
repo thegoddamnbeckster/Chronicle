@@ -284,3 +284,9 @@ If you only want the plugin for yourself, skip steps 3-5 and use `plugins.allow_
 - [ ] Rate limits respected; `CancellationToken` honoured
 - [ ] Tested with `--accept-plugin-changes` after the last rebuild, then loaded, configured and health-checked in the UI
 - [ ] README says what it does, what it needs (account/API key), and how to install it
+- [ ] Every declared field (`SupportedFields`, `LevelFields`) is one of the host's canonical names, and a test proves it (see PLUGIN_AUTHORING.md, "Making your data show")
+- [ ] Every image is returned, typed (`AdditionalImage.Type`), and `PosterUrl` is filled whenever any picture exists
+- [ ] The README tells the administrator to add the plugin to the Metadata Assignment lists, and says where it sits by default
+- [ ] A rate-limited or slow plugin is `EnrichOnly`, the interactive search gets 4 seconds
+- [ ] Works with no other plugin installed: ids from other sources are optional, kind-checked, and a test runs with none
+- [ ] Nothing placed under `ExtendedData.ids` unless a plugin accepts that exact form for that kind of item
