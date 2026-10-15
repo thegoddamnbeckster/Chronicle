@@ -3425,6 +3425,10 @@ namespace Chronicle.Services
             if (existing is not null)
             {
                 existing.UpdatedAt   = DateTime.UtcNow;
+                // A file is now attached, so this is something the user owns, not a provider's placeholder for
+                // it. Left set, the flag made cleanups treat the item as disposable (a book with a file was
+                // deleted as a "stub", 2026-10-15) and hid owned movies when collection stubs are turned off.
+                existing.IsStub = false;
                 if (group.Year.HasValue)   existing.Year   = group.Year;
                 if (group.Number.HasValue) existing.Number = group.Number;
                 // Merge fileScanner data into MetadataJson — preserve any plugin keys

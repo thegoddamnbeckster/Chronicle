@@ -10,6 +10,10 @@ namespace Chronicle.Services;
 ///                                 credit-backed provider data becomes its own person record.
 ///   1b. Year Overview Article Split -- a movie/show welded onto Wikipedia's own "YYYY in film"/
 ///                                 "YYYY in television" year-overview page splits it onto its own record.
+///   1c. User Merge Restore     -- a person merge the user made that an earlier identity split took apart is
+///                                 re-applied (the split now leaves a user's merge alone).
+///   1d. Stub Flag Repair       -- an item that holds a file is not a provider's placeholder; its stub flag is
+///                                 cleared (cleanups treat a stub as disposable).
 ///   2. Movie External ID Repair -- ids no provider returned for a movie (a remake's or original's)
 ///                                 are detached.
 ///   3. Movie File Year Repair  -- a video file whose name year contradicts a provider-confirmed movie
@@ -42,6 +46,8 @@ namespace Chronicle.Services;
 public sealed class LibraryIntegrityRepairService(
     PersonIdentitySplitService personSplit,
     YearOverviewArticleSplitService yearOverviewSplit,
+    UserMergeRestoreService userMergeRestore,
+    StubFlagRepairService stubFlags,
     MovieExternalIdRepairService movieExternalIds,
     MovieFileYearRepairService movieFileYear,
     ImplausibleYearRepairService implausibleYear,
@@ -68,6 +74,8 @@ public sealed class LibraryIntegrityRepairService(
         var passes = new PassFailures(logger, "Library integrity repair");
         await passes.RunAsync("person identity split", personSplit.ExecuteAsync, ct);
         await passes.RunAsync("year overview article split", yearOverviewSplit.ExecuteAsync, ct);
+        await passes.RunAsync("stub flag repair", stubFlags.ExecuteAsync, ct);
+        await passes.RunAsync("user merge restore", userMergeRestore.ExecuteAsync, ct);
         await passes.RunAsync("movie external id repair", movieExternalIds.ExecuteAsync, ct);
         await passes.RunAsync("movie file year repair", movieFileYear.ExecuteAsync, ct);
         await passes.RunAsync("implausible year repair", implausibleYear.ExecuteAsync, ct);

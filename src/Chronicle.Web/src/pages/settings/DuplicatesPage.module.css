@@ -232,6 +232,10 @@
   margin-top: 24px;
 }
 
+.paginationTop {
+  margin: 0 0 16px;
+}
+
 .pagination button {
   padding: 6px 12px;
   background: var(--bg-card);

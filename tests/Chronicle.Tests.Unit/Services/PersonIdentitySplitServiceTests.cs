@@ -157,4 +157,60 @@ public class PersonIdentitySplitServiceTests
         Assert.DoesNotContain(await db.MediaExternalIds.ToListAsync(), e => e.MediaItemId == person.Id && e.Source == "wikipedia");
         Assert.Equal(EnrichmentStatus.Skipped, (await db.MediaEnrichments.SingleAsync(e => e.MediaItemId == person.Id)).Status);
     }
+
+    // ── a merge the user made is never undone ─────────────────────────────────
+
+    private static async Task AddMergeAsync(ChronicleDbContext db, int winnerId, string articleId, int? byUser)
+    {
+        db.MediaItemMerges.Add(new MediaItemMerge
+        {
+            WinnerId = winnerId, LoserOriginalId = 900000 + winnerId, LoserName = "Chris Evans", LoserMediaTypeId = 1,
+            LoserExternalIdsJson = """[{"Source":"wikipedia","ExternalId":"__ID__","WasDuplicate":false}]""".Replace("__ID__", articleId),
+            MergedByUserId = byUser, MergedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task UserMergedArticle_TrueWhenTheUserMergedARecordCarryingThatArticle()
+    {
+        var (db, _, _, _) = Setup();
+        await using var _ = db;
+        var person = await SeedPersonAsync(db, Json("1981-06-13", "1966 births"));
+        await AddMergeAsync(db, person.Id, "wikipedia:en:Chris_Evans_(presenter)", byUser: 1);
+
+        Assert.True(await PersonIdentitySplitService.UserMergedArticleAsync(db, person.Id, default));
+    }
+
+    [Fact]
+    public async Task UserMergedArticle_FalseForAnAutomaticMerge_ADifferentArticle_OrNoMerge()
+    {
+        var (db, _, _, _) = Setup();
+        await using var _ = db;
+        var person = await SeedPersonAsync(db, Json("1981-06-13", "1966 births"));
+        Assert.False(await PersonIdentitySplitService.UserMergedArticleAsync(db, person.Id, default));
+
+        await AddMergeAsync(db, person.Id, "wikipedia:en:Chris_Evans_(presenter)", byUser: null);   // an automatic resolver
+        Assert.False(await PersonIdentitySplitService.UserMergedArticleAsync(db, person.Id, default));
+
+        await AddMergeAsync(db, person.Id, "wikipedia:en:Someone_Else", byUser: 1);                 // another article
+        Assert.False(await PersonIdentitySplitService.UserMergedArticleAsync(db, person.Id, default));
+    }
+
+    [Fact]
+    public async Task RealTimeCheck_LeavesAUserMergedPersonAlone_ButStillSplitsOtherwise()
+    {
+        var (db, svc, res, _) = Setup();
+        await using var _ = db;
+        var merged = await SeedPersonAsync(db, Json("1981-06-13", "1966 births"));
+        await AddMergeAsync(db, merged.Id, "wikipedia:en:Chris_Evans_(presenter)", byUser: 1);
+
+        Assert.False(await svc.CheckAndSplitAsync(db, res.Object, merged, default));
+        Assert.Contains(await db.MediaExternalIds.Where(e => e.MediaItemId == merged.Id).ToListAsync(),
+            e => e.Source == "wikipedia");   // the article is still on the person
+        Assert.Single(await db.MediaItems.ToListAsync());
+
+        var other = await SeedPersonAsync(db, Json("1981-06-13", "1966 births"));
+        Assert.True(await svc.CheckAndSplitAsync(db, res.Object, other, default));
+    }
 }

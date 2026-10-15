@@ -14,12 +14,22 @@ namespace Chronicle.Services;
 /// book with a file and no metadata next to a book with metadata and no file.
 ///
 /// The position settles it, but only when it is unambiguous: exactly one placeholder and exactly one real item
-/// at that position, and the real item carries no id from the provider (one that did is matched to a different
-/// book). The placeholder's ids move to the real item, whose enrichment is queued again, and the placeholder is
-/// deleted -- never one the user has data on.
+/// at that position. A real item with no id from the provider simply takes the placeholder's. One that already
+/// carries a provider id (a different edition of the same book: "Dungeon Crawler Carl: A LitRPG/Gamelit
+/// Adventure" against Hardcover's "Dungeon Crawler Carl", both #1) keeps it and is only joined when the two
+/// titles are related -- one contains the other, or the book's own folder name contains the placeholder's title --
+/// since otherwise it may be matched to a genuinely different book. When only the folder name connects them (the
+/// book's title and id came from a wrong match: the file "Dungeon Crawler Carl - 5 - (2022) - The Butcher's
+/// Masquerade" that carried the id of "The Dungeon Anarchist's Cookbook, Book 3"), the wrong id is replaced by the
+/// placeholder's. The placeholder is deleted, never one the user has data on.
 /// </summary>
 internal static class SeriesSlotTwins
 {
+    /// <summary>A provider's placeholder: flagged as one AND holding no file. The flag alone is not enough --
+    /// it was left set when the scanner attached a file, so a flagged item can be the user's own book.</summary>
+    internal static bool IsPlaceholder(MediaItem m) =>
+        m.IsStub && !Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(m.MetadataJson);
+
     /// <summary>
     /// The one real item in <paramref name="series"/> at <paramref name="position"/> that the provider's list
     /// has not claimed, or null. Null too when the provider lists more than one book at that position.
@@ -27,20 +37,43 @@ internal static class SeriesSlotTwins
     internal static MediaItem? FindTwin(
         IEnumerable<MediaItem> subtree, int seriesId, double position,
         IReadOnlyList<Chronicle.Plugins.Models.MediaMetadata> providerBooks, string providerSource,
-        IReadOnlySet<int> manuallyPlacedIds)
+        IReadOnlySet<int> manuallyPlacedIds, ISet<string> listedIds, string providerTitle)
     {
         var listedAtPosition = providerBooks.Count(p =>
             BookSeriesService.PositionOf(p) is { } pp && Math.Abs(pp - position) < 1e-9);
         if (listedAtPosition != 1) return null;
 
         var twins = subtree.Where(m =>
-                m.ParentId == seriesId && m.HierarchyLevel == 2 && !m.IsStub &&
+                m.ParentId == seriesId && m.HierarchyLevel == 2 && !IsPlaceholder(m) &&
                 !manuallyPlacedIds.Contains(m.Id) &&
                 SeriesPositionHelper.Effective(m) is { } effective && Math.Abs(effective - position) < 1e-9 &&
-                !m.ExternalIds.Any(e => string.Equals(e.Source, providerSource, StringComparison.OrdinalIgnoreCase)))
+                // never one the provider's list already claims for another book
+                !m.ExternalIds.Any(e => listedIds.Contains(e.ExternalId)) &&
+                // one that already has a provider id of its own must also read as the same book
+                (!m.ExternalIds.Any(e => string.Equals(e.Source, providerSource, StringComparison.OrdinalIgnoreCase)) ||
+                 NamesRelated(m.Name, providerTitle) || FolderRelated(m, providerTitle)))
             .Take(2)
             .ToList();
         return twins.Count == 1 ? twins[0] : null;
+    }
+
+    /// <summary>The name of the folder the scanner found the book in contains the provider's title (normalised).</summary>
+    internal static bool FolderRelated(MediaItem m, string? providerTitle)
+    {
+        var path = MisparentedChildRepairService.FolderOf(m.MetadataJson);
+        var folder = path is null ? null : Path.GetFileName(path.Replace('/', Path.DirectorySeparatorChar).Replace((char)92, Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar));
+        var nf = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(folder ?? "");
+        var nt = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(providerTitle ?? "");
+        return nt.Length >= 3 && nf.Length >= 3 && nf.Contains(nt, StringComparison.Ordinal);
+    }
+
+    /// <summary>One title contains the other once both are normalised ("Dungeon Crawler Carl" in "Dungeon Crawler Carl: A LitRPG ...").</summary>
+    internal static bool NamesRelated(string? a, string? b)
+    {
+        var na = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(a ?? "");
+        var nb = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(b ?? "");
+        if (na.Length < 3 || nb.Length < 3) return false;
+        return na.Contains(nb, StringComparison.Ordinal) || nb.Contains(na, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -50,7 +83,8 @@ internal static class SeriesSlotTwins
     /// </summary>
     internal static async Task<bool> AdoptAsync(
         ChronicleDbContext db, MediaItem twin, IReadOnlyCollection<MediaItem> placeholders,
-        IEnumerable<(string Source, string ExternalId)> extraIds, ILogger logger, CancellationToken ct)
+        IEnumerable<(string Source, string ExternalId)> extraIds, ILogger logger, CancellationToken ct,
+        string? providerTitle = null)
     {
         var protectedIds = await BookSeriesService.StubIdsWithUserDataAsync(db, placeholders.Select(p => p.Id), ct);
         if (placeholders.Any(p => protectedIds.Contains(p.Id))) return false;
@@ -70,14 +104,31 @@ internal static class SeriesSlotTwins
         }
         await db.SaveChangesAsync(ct);
 
+        // Only the folder name ties them (the title does not): the id the book carries came from a wrong match.
+        var title = providerTitle ?? placeholders.FirstOrDefault()?.Name;
+        var replaceOwnIds = !NamesRelated(twin.Name, title) && FolderRelated(twin, title);
+
+        var added = false;
         foreach (var (source, externalId) in ids)
         {
+            var own = twin.ExternalIds.Where(e => string.Equals(e.Source, source, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (own.Count > 0 && replaceOwnIds && !own.Any(e => e.ExternalId == externalId))
+            {
+                db.MediaExternalIds.RemoveRange(own);
+                foreach (var gone in own) twin.ExternalIds.Remove(gone);
+                await db.SaveChangesAsync(ct);
+                own.Clear();
+            }
+            // one id per source: a twin that already has one of its own keeps it
+            if (own.Count > 0) continue;
             var heldElsewhere = await db.MediaExternalIds.AnyAsync(
                 e => e.Source == source && e.ExternalId == externalId && e.MediaItemId != twin.Id, ct);
             if (heldElsewhere || twin.ExternalIds.Any(e => e.Source == source && e.ExternalId == externalId)) continue;
             db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = twin.Id, Source = source, ExternalId = externalId });
+            added = true;
         }
-        await BookSeriesService.ResetEnrichmentAsync(db, twin.Id, ct);
+        // Only when it gained an id: providers need to look again. Otherwise what it already has stands.
+        if (added) await BookSeriesService.ResetEnrichmentAsync(db, twin.Id, ct);
         twin.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
 
@@ -118,8 +169,8 @@ public sealed class SeriesSlotTwinRepairService(
             foreach (var slot in seriesBooks.Where(b => SeriesPositionHelper.Effective(b).HasValue)
                          .GroupBy(b => SeriesPositionHelper.Effective(b)!.Value))
             {
-                var placeholders = slot.Where(b => b.IsStub && !manual.Contains(b.Id)).ToList();
-                var real = slot.Where(b => !b.IsStub).ToList();
+                var placeholders = slot.Where(b => SeriesSlotTwins.IsPlaceholder(b) && !manual.Contains(b.Id)).ToList();
+                var real = slot.Where(b => !SeriesSlotTwins.IsPlaceholder(b)).ToList();
                 if (placeholders.Count != 1 || real.Count != 1) continue;
 
                 var placeholder = placeholders[0];
@@ -130,8 +181,11 @@ public sealed class SeriesSlotTwinRepairService(
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 // A placeholder with no provider id is not a provider's book; a twin that already has an id
                 // from one of the same providers is matched to a different book.
-                if (sources.Count == 0 || manual.Contains(twin.Id) ||
-                    twin.ExternalIds.Any(e => sources.Contains(e.Source))) continue;
+                if (sources.Count == 0 || manual.Contains(twin.Id)) continue;
+                // A twin with an id of the same provider of its own is only joined when the titles are related.
+                if (twin.ExternalIds.Any(e => sources.Contains(e.Source)) &&
+                    !SeriesSlotTwins.NamesRelated(twin.Name, placeholder.Name) &&
+                    !SeriesSlotTwins.FolderRelated(twin, placeholder.Name)) continue;
 
                 if (await SeriesSlotTwins.AdoptAsync(db, twin, [placeholder], [], logger, ct)) joined++;
             }

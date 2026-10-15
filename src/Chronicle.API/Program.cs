@@ -276,6 +276,8 @@ builder.Services.AddSingleton<NestedMovieRepairService>();
 builder.Services.AddSingleton<MisparentedChildRepairService>();
 builder.Services.AddSingleton<AudiobookSeriesNumberRepairService>();
 builder.Services.AddSingleton<SeriesSlotTwinRepairService>();
+builder.Services.AddSingleton<UserMergeRestoreService>();
+builder.Services.AddSingleton<StubFlagRepairService>();
 builder.Services.AddSingleton<AlbumNameYearRepairService>();
 builder.Services.AddSingleton<SeriesFragmentRepairService>();
 builder.Services.AddSingleton<UnknownSeriesRepairService>();

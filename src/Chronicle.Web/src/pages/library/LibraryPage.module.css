@@ -366,9 +366,10 @@
 .name {
   font-size: 12px;
   font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  /* The whole title, on as many lines as it needs. */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .metaRow { display: flex; align-items: center; gap: 6px; }

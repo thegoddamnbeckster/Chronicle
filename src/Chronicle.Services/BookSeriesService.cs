@@ -170,17 +170,17 @@ public class BookSeriesService(
             // item of theirs sits at exactly this position in this series: it is the same book (see
             // SeriesSlotTwins). The placeholder's ids move onto it and the placeholder goes, instead of the
             // series showing a book with a file and no metadata beside a book with metadata and no file.
-            if (position.HasValue && (existing is null || existing.IsStub) &&
+            if (position.HasValue && (existing is null || SeriesSlotTwins.IsPlaceholder(existing)) &&
                 (existing is null || (existing.ParentId == series.Id && !manuallyPlacedIds.Contains(existing.Id))))
             {
-                var twin = SeriesSlotTwins.FindTwin(subtree, series.Id, position.Value, results, providerSource, manuallyPlacedIds);
+                var twin = SeriesSlotTwins.FindTwin(subtree, series.Id, position.Value, results, providerSource, manuallyPlacedIds, authoritative, part.Title);
                 if (twin is not null)
                 {
-                    var placeholders = idMatches.Where(m => m.IsStub && m.ParentId == series.Id).ToList();
+                    var placeholders = idMatches.Where(m => SeriesSlotTwins.IsPlaceholder(m) && m.ParentId == series.Id).ToList();
                     var extraIds = existing is null
                         ? AllIdsFor(part).Select(id => (providerSource, id)).ToList()
                         : [];
-                    if (await SeriesSlotTwins.AdoptAsync(db, twin, placeholders, extraIds, logger, ct))
+                    if (await SeriesSlotTwins.AdoptAsync(db, twin, placeholders, extraIds, logger, ct, part.Title))
                     {
                         foreach (var gone in placeholders) subtree.Remove(gone);
                         idMatches.Clear();
@@ -431,13 +431,17 @@ public class BookSeriesService(
     }
 
     /// <summary>Ids among <paramref name="ids"/> that have a library entry, play history or a list
-    /// entry -- deleting such an item would cascade-delete the user's own data.</summary>
+    /// entry -- deleting such an item would cascade-delete the user's own data -- or a file the scanner
+    /// attached (the IsStub flag is not cleared reliably, so a "stub" can be the item that owns the file).</summary>
     internal static async Task<HashSet<int>> StubIdsWithUserDataAsync(
         ChronicleDbContext db, IEnumerable<int> ids, CancellationToken ct)
     {
         var idList = ids.ToList();
         if (idList.Count == 0) return [];
         var result = new HashSet<int>();
+        var blobs = await db.MediaItems.Where(m => idList.Contains(m.Id))
+            .Select(m => new { m.Id, m.MetadataJson }).ToListAsync(ct);
+        result.UnionWith(blobs.Where(b => Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(b.MetadataJson)).Select(b => b.Id));
         result.UnionWith(await db.UserLibraries.Where(u => idList.Contains(u.MediaItemId)).Select(u => u.MediaItemId).ToListAsync(ct));
         result.UnionWith(await db.InteractionEvents.Where(e => idList.Contains(e.MediaItemId)).Select(e => e.MediaItemId).ToListAsync(ct));
         result.UnionWith(await db.MediaListItems.Where(l => idList.Contains(l.MediaItemId)).Select(l => l.MediaItemId).ToListAsync(ct));

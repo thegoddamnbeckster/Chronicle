@@ -62,6 +62,19 @@ export default function DuplicatesPage() {
   const perPage = data?.pagination?.perPage ?? 20
   const totalPages = Math.max(1, Math.ceil(total / perPage))
 
+  // Shown above the list as well as below it, so there is no scrolling to the bottom of a long page to move on.
+  const pager = (extraClass: string) => totalPages > 1 && (
+    <div className={`${styles.pagination} ${extraClass}`}>
+      <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>
+        Previous
+      </button>
+      <span>Page {page} of {totalPages}</span>
+      <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+        Next
+      </button>
+    </div>
+  )
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -75,6 +88,8 @@ export default function DuplicatesPage() {
       {!isLoading && (!data?.data || data.data.length === 0) && (
         <p className={styles.empty}>No duplicate candidates found. Run a scan to populate this list.</p>
       )}
+
+      {pager(styles.paginationTop)}
 
       <div className={styles.list}>
         {data?.data?.map(candidate => (
@@ -100,17 +115,7 @@ export default function DuplicatesPage() {
         ))}
       </div>
 
-      {totalPages > 1 && (
-        <div className={styles.pagination}>
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>
-            Previous
-          </button>
-          <span>Page {page} of {totalPages}</span>
-          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-            Next
-          </button>
-        </div>
-      )}
+      {pager('')}
 
       {mergeTarget && (
         <MergeModal

@@ -32,6 +32,11 @@ namespace Chronicle.Services;
 /// category must exist and differ by at least <see cref="MinYearGap"/> (a one-year gap is routine
 /// timezone/estimate noise between sources, not a different person).
 ///
+/// A merge the USER made is never undone by this: when the user merges two person records they have
+/// decided those are one person, and splitting the article back off the next night (as happened to David
+/// Fletcher, Christopher Denham and Eric Leach, merged on 2026-10-10 and re-created at 02:45 the next night)
+/// only hands them the same duplicate to merge again. See <see cref="UserMergedArticleAsync"/>.
+///
 /// Repeatable by design: runs on a schedule, so a fresh wrong attachment is caught the next night
 /// rather than needing anyone to notice it. If a later enrichment re-attaches the very article
 /// that was split off, a second stub is NOT created -- the duplicate attachment is just detached
@@ -105,6 +110,40 @@ public sealed class PersonIdentitySplitService(
         }
     }
 
+    /// <summary>
+    /// True when a user (not an automatic resolver) merged a record carrying one of this person's
+    /// Wikipedia articles into this person -- the article is there because they said so, whatever the
+    /// birth years say. Unmerging puts the article back on the loser, so it stops counting.
+    /// </summary>
+    internal static async Task<bool> UserMergedArticleAsync(ChronicleDbContext db, int personId, CancellationToken ct)
+    {
+        var articleIds = await db.MediaExternalIds
+            .Where(e => e.MediaItemId == personId && e.Source == WikipediaSource)
+            .Select(e => e.ExternalId).ToListAsync(ct);
+        if (articleIds.Count == 0) return false;
+
+        var mergedIds = await db.MediaItemMerges
+            .Where(m => m.WinnerId == personId && m.MergedByUserId != null)
+            .Select(m => m.LoserExternalIdsJson).ToListAsync(ct);
+        foreach (var json in mergedIds)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) continue;
+                foreach (var entry in doc.RootElement.EnumerateArray())
+                {
+                    if (entry.ValueKind == JsonValueKind.Object &&
+                        entry.TryGetProperty("ExternalId", out var id) && id.ValueKind == JsonValueKind.String &&
+                        articleIds.Contains(id.GetString() ?? "", StringComparer.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            catch (JsonException) { /* an unreadable log entry proves nothing */ }
+        }
+        return false;
+    }
+
     public async Task ExecuteAsync(CancellationToken ct)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -119,7 +158,7 @@ public sealed class PersonIdentitySplitService(
             return;
         }
 
-        int scanned = 0, split = 0, detached = 0, lastId = 0;
+        int scanned = 0, split = 0, detached = 0, keptMerged = 0, lastId = 0;
         while (true)
         {
             ct.ThrowIfCancellationRequested();
@@ -140,6 +179,7 @@ public sealed class PersonIdentitySplitService(
 
                 try
                 {
+                    if (await UserMergedArticleAsync(db, row.Id, ct)) { keptMerged++; continue; }
                     var created = await SplitAsync(db, resolution, row.Id, trusted, wiki, ct);
                     if (created) split++; else detached++;
                 }
@@ -153,8 +193,8 @@ public sealed class PersonIdentitySplitService(
         }
 
         logger.LogInformation(
-            "Person identity split: scanned {Scanned} people with a Wikipedia partition -- split {Split} onto new records, detached {Detached} duplicate attachments",
-            scanned, split, detached);
+            "Person identity split: scanned {Scanned} people with a Wikipedia partition -- split {Split} onto new records, detached {Detached} duplicate attachments, left {Kept} the user had merged",
+            scanned, split, detached, keptMerged);
     }
 
     /// <summary>Real-time entry point (see MetadataEnrichmentService): splits this person now if the
@@ -164,6 +204,7 @@ public sealed class PersonIdentitySplitService(
         ChronicleDbContext db, IMetadataResolutionService resolution, MediaItem person, CancellationToken ct)
     {
         if (!TryDetectConflict(person.MetadataJson, out var trusted, out var wiki)) return false;
+        if (await UserMergedArticleAsync(db, person.Id, ct)) return false;
         await SplitAsync(db, resolution, person.Id, trusted, wiki, ct);
         return true;
     }

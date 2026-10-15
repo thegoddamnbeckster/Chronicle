@@ -115,4 +115,39 @@ describe('DuplicatesPage', () => {
     resolveFirstDelete()
     await waitFor(() => expect(mockedDeleteMedia).toHaveBeenCalledWith(101))
   })
+
+  it('puts Previous and Next above the list as well as below it, and both work', async () => {
+    const user = userEvent.setup()
+    mockedGetDuplicateCandidates.mockResolvedValue({
+      data: [makeCandidate(1, makeItem({ id: 1, name: 'First A' }), makeItem({ id: 2, name: 'First B' }))],
+      pagination: { page: 1, perPage: 20, total: 60 },
+    })
+
+    renderWithProviders(<DuplicatesPage />)
+    await screen.findByText('First A')
+
+    const nextButtons = screen.getAllByRole('button', { name: 'Next' })
+    expect(nextButtons).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Previous' })).toHaveLength(2)
+    expect(screen.getAllByText('Page 1 of 3')).toHaveLength(2)
+
+    // the first control on the page is the top one
+    const list = screen.getByText('First A').closest('div[class*="row"]')!
+    expect(nextButtons[0].compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    await user.click(nextButtons[0])
+    await waitFor(() => expect(mockedGetDuplicateCandidates).toHaveBeenLastCalledWith(2))
+  })
+
+  it('shows no paging controls when everything fits on one page', async () => {
+    mockedGetDuplicateCandidates.mockResolvedValue({
+      data: [makeCandidate(1, makeItem({ id: 1, name: 'Only A' }), makeItem({ id: 2, name: 'Only B' }))],
+      pagination: { page: 1, perPage: 20, total: 1 },
+    })
+
+    renderWithProviders(<DuplicatesPage />)
+    await screen.findByText('Only A')
+
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
+  })
 })
