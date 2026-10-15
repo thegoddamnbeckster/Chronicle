@@ -118,9 +118,11 @@ interface EnrichmentSectionProps {
   onRunPlugin: (pluginId: string) => void
   /** Set of plugin IDs whose enrichment task is currently running (optimistic). */
   runningPluginIds: Set<string>
+  /** Each plugin's scheduled fetch-missing-metadata task, for the same status badge the task cards show. */
+  pluginFetchTasks: Map<string, BackgroundTask>
 }
 
-function EnrichmentSection({ enrichmentRunning, scanTask, scanIsRunning, scanProgress, onRunScan, onRunPlugin, runningPluginIds }: EnrichmentSectionProps) {
+function EnrichmentSection({ enrichmentRunning, scanTask, scanIsRunning, scanProgress, onRunScan, onRunPlugin, runningPluginIds, pluginFetchTasks }: EnrichmentSectionProps) {
   const [stats, setStats] = useState<EnrichmentStats[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -232,10 +234,23 @@ return (
                       : null}
                   </td>
                   <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
+                    {(() => {
+                      const { cls, label } = scanIsRunning ? { cls: styles.running, label: 'Running' } : statusBadge(scanTask)
+                      const failed = !scanIsRunning && scanTask.lastRunSucceeded === false
+                      return (
+                        <span
+                          className={`${styles.badge} ${cls}`}
+                          title={failed && scanTask.lastErrorMessage ? scanTask.lastErrorMessage : scanTask.lastRunAt ? `Last run ${fmtLocal(scanTask.lastRunAt)}` : undefined}
+                        >
+                          {label}
+                        </span>
+                      )
+                    })()}
                     <button
                       className={styles.runBtn}
                       onClick={onRunScan}
                       disabled={scanIsRunning}
+                      title={`Runs the scheduled task: ${scanTask.displayName}`}
                     >
                       {scanIsRunning ? 'Running…' : 'Run Now'}
                     </button>
@@ -285,10 +300,28 @@ return (
                     )
                   })}
                   <td className={`${styles.enrichTd} ${styles.enrichActions}`}>
+                    {(() => {
+                      const t = pluginFetchTasks.get(s.pluginId)
+                      if (!t) return null
+                      const running = runningPluginIds.has(s.pluginId)
+                      const { cls, label } = running ? { cls: styles.running, label: 'Running' } : statusBadge(t)
+                      const failed = !running && t.lastRunSucceeded === false
+                      return (
+                        <span
+                          className={`${styles.badge} ${cls}`}
+                          title={failed && t.lastErrorMessage ? t.lastErrorMessage : t.lastRunAt ? `Last run ${fmtLocal(t.lastRunAt)}` : undefined}
+                        >
+                          {label}
+                        </span>
+                      )
+                    })()}
                     <button
                       className={styles.runBtn}
                       onClick={() => onRunPlugin(s.pluginId)}
                       disabled={runningPluginIds.has(s.pluginId)}
+                      title={pluginFetchTasks.get(s.pluginId)
+                        ? `Runs the scheduled task: ${pluginFetchTasks.get(s.pluginId)!.displayName}`
+                        : 'Runs enrichment for this plugin'}
                     >
                       {runningPluginIds.has(s.pluginId) ? 'Running…' : 'Run Now'}
                     </button>
@@ -839,8 +872,26 @@ export default function BackgroundTasksPage() {
     runningEnrichmentIds.size > 0 ||
     tasks.some(t => t.taskId.endsWith('fetch-missing-metadata') && (t.isRunning || runningIds.has(t.taskId)))
 
-  // Plugin IDs whose enrichment is actively running (optimistic via direct API calls).
-  const runningPluginIds = runningEnrichmentIds
+  // Each plugin's own scheduled fetch-missing-metadata task, keyed by plugin id.
+  const pluginFetchTasks = new Map<string, BackgroundTask>()
+  for (const t of tasks) {
+    if (t.pluginId && t.taskId.endsWith(':fetch-missing-metadata')) pluginFetchTasks.set(t.pluginId, t)
+  }
+
+  // Plugin IDs whose enrichment is actively running: the scheduled task's real state
+  // (backend flag or optimistic click), or a direct enrichment call for plugins with no such task.
+  const runningPluginIds = new Set(runningEnrichmentIds)
+  for (const [pluginId, t] of pluginFetchTasks) {
+    if (t.isRunning || runningIds.has(t.taskId)) runningPluginIds.add(pluginId)
+  }
+
+  // Run Now goes through the task scheduler whenever the plugin has a fetch task, so it behaves
+  // exactly like that task's own Run Now (running state until finished, failure surfaced).
+  function handleRunPlugin(pluginId: string) {
+    const t = pluginFetchTasks.get(pluginId)
+    if (t) void handleRunNow(t.taskId)
+    else void handleRunEnrichment(pluginId)
+  }
 
   // Poll scan import progress every second while a scan is running.
   // Cleared when the scan stops so counts reset to — rather than showing stale data.
@@ -875,8 +926,9 @@ export default function BackgroundTasksPage() {
         scanIsRunning={scanIsRunning}
         scanProgress={scanProgress}
         onRunScan={() => handleRunNow('scheduled_scan')}
-        onRunPlugin={handleRunEnrichment}
+        onRunPlugin={handleRunPlugin}
         runningPluginIds={runningPluginIds}
+        pluginFetchTasks={pluginFetchTasks}
       />
 
       {/* ── Scan progress banner — shown while a scan is running ─────── */}

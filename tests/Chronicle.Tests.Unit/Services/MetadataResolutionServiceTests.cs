@@ -450,6 +450,30 @@ public class MetadataResolutionServiceTests
             "an item outside the subtree must keep its pin");
     }
 
+    [Fact]
+    public async Task ResolveAsync_PluginNotOnTheSavedList_IsUsedWhenNothingOnTheListHasAValue()
+    {
+        // A saved list holds only the plugins installed when it was saved. Open Library had the only cover of an
+        // Andy Weir book, was on no list, and the item showed no poster.
+        var item = BuildItem("audiobooks", 1,
+            """{"hardcover":{"title":"Lacero"},"chronicle.plugin.openlibrary":{"posterUrl":"https://covers.openlibrary.org/b/id/1-L.jpg"}}""");
+
+        await ResolveWithConfig(item, "audiobooks", 1, new() { ["poster_url"] = ["hardcover"] });
+
+        GetResolved(item)["posterUrl"].GetString().Should().Be("https://covers.openlibrary.org/b/id/1-L.jpg");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PluginNotOnTheSavedList_NeverBeatsOneThatIsOnIt()
+    {
+        var item = BuildItem("audiobooks", 1,
+            """{"chronicle.plugin.openlibrary":{"posterUrl":"https://ol/cover.jpg"},"hardcover":{"posterUrl":"https://hardcover/cover.jpg"}}""");
+
+        await ResolveWithConfig(item, "audiobooks", 1, new() { ["poster_url"] = ["hardcover"] });
+
+        GetResolved(item)["posterUrl"].GetString().Should().Be("https://hardcover/cover.jpg");
+    }
+
     // ── ResolveAsync — people poster_url (accumulated headshots, not the normal priority walk) ──
 
     [Fact]

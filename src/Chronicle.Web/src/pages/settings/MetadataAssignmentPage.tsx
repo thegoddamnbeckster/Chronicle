@@ -437,8 +437,14 @@ export default function MetadataAssignmentPage() {
                       ? plugins.filter(p => supportedIds.includes(p.pluginId))
                       : plugins
                     const defaultPluginOrder = fieldPluginList.map(p => p.pluginId)
-                    const currentOrder = (assignments[mediaType]?.[field] ?? defaultPluginOrder)
-                      .filter(id => fieldPluginList.some(p => p.pluginId === id))
+                    // The saved order first, then any plugin that supports the field but was installed after it was
+                    // saved. Without the second part a new plugin never appeared here (so it could not even be
+                    // dragged into place), and the server only uses it as a last-resort fallback.
+                    const savedOrder = assignments[mediaType]?.[field]
+                    const currentOrder = (savedOrder
+                      ? [...savedOrder, ...defaultPluginOrder.filter(id => !savedOrder.includes(id))]
+                      : defaultPluginOrder
+                    ).filter(id => fieldPluginList.some(p => p.pluginId === id))
 
                     return (
                       <div key={field} className={styles.row}>

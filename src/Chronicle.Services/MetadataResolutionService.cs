@@ -120,6 +120,7 @@ public class MetadataResolutionService(
             if (priorityMap.TryGetValue(assignmentField, out var plugins) && plugins.Count > 0)
             {
                 // Use the configured priority order for this field.
+                var found = false;
                 foreach (var pluginId in plugins)
                 {
                     if (!blobs.TryGetValue(pluginId, out var blob)) continue;
@@ -127,7 +128,25 @@ public class MetadataResolutionService(
                     if (!TryGetBlobPropertyAny(blob, jsonKeys, out var val)) continue;
                     if (!HasValue(val)) continue;
                     resolved[canonicalKey] = val;
+                    found = true;
                     break;
+                }
+
+                // Nothing on the list had a value: fall back to a plugin that is NOT on it. A saved list only holds
+                // the plugins that were installed when it was saved (installing a plugin never adds it), so without
+                // this a newly installed plugin's data was stored and never shown, and an item could have no poster
+                // while one sat in a plugin's own data. The saved order still wins whenever it has a value.
+                if (!found)
+                {
+                    foreach (var (pluginId, blob) in blobs)
+                    {
+                        if (pluginId.StartsWith('_') || plugins.Contains(pluginId, StringComparer.OrdinalIgnoreCase)) continue;
+                        if (blob.ValueKind != JsonValueKind.Object) continue;
+                        if (!TryGetBlobPropertyAny(blob, jsonKeys, out var val)) continue;
+                        if (!HasValue(val)) continue;
+                        resolved[canonicalKey] = val;
+                        break;
+                    }
                 }
             }
             else

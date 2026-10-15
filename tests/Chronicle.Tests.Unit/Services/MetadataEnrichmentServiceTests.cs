@@ -50,6 +50,234 @@ public class MetadataEnrichmentServiceTests : IDisposable
         updated.LastCompletedAt.Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task EnrichPendingAsync_APendingRowWhoseItemWasDeleted_IsRemoved_AndTheRunEnds()
+    {
+        // Three such rows kept IMDb "Running" for over a day: Pending forever, never eligible, so the pass loop
+        // retried without end.
+        _db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = 987654, PluginId = "chronicle.plugin.imdb", Status = EnrichmentStatus.Pending, MaxRetries = 3,
+        });
+        await _db.SaveChangesAsync();
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.imdb");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "movies" }]);
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.imdb")).Returns(provider.Object);
+
+        var run = _svc.EnrichPendingAsync("chronicle.plugin.imdb");
+        (await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20)))).Should().BeSameAs(run, "the run must end, not retry forever");
+        await run;
+
+        (await _db.MediaEnrichments.AnyAsync(e => e.PluginId == "chronicle.plugin.imdb")).Should().BeFalse();
+    }
+
+    private async Task<(MediaItem Track, MediaItem Other, MediaItemEnrichment Row)> TwoTracksOfOneRecordingAsync(string trackName, string otherName, string pluginId, string recordingId)
+    {
+        var music = await EnsureMediaTypeAsync("music");
+        var artist = new MediaItem { Name = "Artist", MediaTypeId = music.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(artist);
+        await _db.SaveChangesAsync();
+        var album = new MediaItem { Name = "Album", MediaTypeId = music.Id, HierarchyLevel = 1, ParentId = artist.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var hits = new MediaItem { Name = "Greatest Hits", MediaTypeId = music.Id, HierarchyLevel = 1, ParentId = artist.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.AddRange(album, hits);
+        await _db.SaveChangesAsync();
+        var track = new MediaItem { Name = trackName, MediaTypeId = music.Id, HierarchyLevel = 2, ParentId = album.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var other = new MediaItem { Name = otherName, MediaTypeId = music.Id, HierarchyLevel = 2, ParentId = hits.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.AddRange(track, other);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = other.Id, Source = Chronicle.Core.Helpers.PluginIdHelper.ToSource(pluginId), ExternalId = recordingId });
+        var row = new MediaItemEnrichment { MediaItemId = track.Id, PluginId = pluginId, ExternalId = recordingId, Status = EnrichmentStatus.Pending, MaxRetries = 3 };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+        return (track, other, row);
+    }
+
+    private void MusicProvider(string pluginId, string recordingId)
+    {
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns(pluginId);
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "music", HierarchyLevels = 3 }]);
+        provider.Setup(p => p.GetByIdAsync(recordingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Kryptonite", ExternalId = recordingId });
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ScoredCandidate> { new(new MediaMetadata { Title = "Kryptonite", ExternalId = recordingId }, 95, "test") });
+        _registry.Setup(r => r.GetMetadataProvider(pluginId)).Returns(provider.Object);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_TheSameRecordingOnTwoAlbums_IsMatchedOnBoth_NotRefusedAsADuplicate()
+    {
+        // One track item per release, all of them the same recording: it is what a greatest hits is.
+        var (_, _, row) = await TwoTracksOfOneRecordingAsync("Kryptonite", "Kryptonite", "chronicle.plugin.musicbrainz", "recording:r1");
+        MusicProvider("chronicle.plugin.musicbrainz", "recording:r1");
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var saved = await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id);
+        Assert.True(saved.Status == EnrichmentStatus.Completed, saved.DiagnosticsJson);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_TheSameRecordingIdOnATrackWithADifferentName_IsStillRefused()
+    {
+        // "Kryptonite" is not "Kryptonite (live)": sharing an id between differently named tracks is a wrong match, not a release.
+        var (_, _, row) = await TwoTracksOfOneRecordingAsync("Kryptonite", "Kryptonite (live)", "chronicle.plugin.musicbrainz", "recording:r2");
+        MusicProvider("chronicle.plugin.musicbrainz", "recording:r2");
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var saved = await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id);
+        Assert.Equal(EnrichmentStatus.NotFound, saved.Status);
+        Assert.Contains("already belongs", saved.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ATrackRefusedOnlyBecauseTheSameRecordingIsOnAnotherAlbum_IsPutBackInTheQueue()
+    {
+        var (track, other, row) = await TwoTracksOfOneRecordingAsync("Kryptonite", "Kryptonite", "chronicle.plugin.musicbrainz", "recording:r3");
+        row.Status = EnrichmentStatus.NotFound;
+        row.ErrorMessage = $"Matched external id recording:r3 already belongs to a different item ({other.Id}, \"Kryptonite\") -- likely a duplicate. Not merged.";
+        await _db.SaveChangesAsync();
+        MusicProvider("chronicle.plugin.musicbrainz", "recording:r3");
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        // put back in the queue, searched again, and matched now that the same recording on another album is not a duplicate
+        Assert.Equal(EnrichmentStatus.Completed, (await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id)).Status);
+        Assert.NotNull(track);
+    }
+
+    [Fact]
+    public void IsSharedIdPair_NeedsTheSameTypeLevelNameAndArtist()
+    {
+        var scopes = new List<MetadataEnrichmentService.SharedIdScope> { new("music", 2, true, true) };
+        MediaItem Track(string name, string artist = "Artist", int level = 2, string type = "music")
+        {
+            var top = new MediaItem { Name = artist, NormalizedName = artist.ToLower(), NormalizedNameLoose = artist.ToLower().Replace(" ", ""), HierarchyLevel = 0 };
+            var album = new MediaItem { Name = "Album", NormalizedNameLoose = "album", HierarchyLevel = 1, Parent = top };
+            return new() { Name = name, NormalizedName = name.ToLower(), NormalizedNameLoose = name.ToLower().Replace(" ", ""), HierarchyLevel = level, Parent = album, MediaType = new MediaType { Name = type } };
+        }
+        Assert.True(MetadataEnrichmentService.IsSharedIdPair(scopes, Track("It's Not Me"), Track("it's not me")));
+        Assert.False(MetadataEnrichmentService.IsSharedIdPair(scopes, Track("Kryptonite"), Track("Kryptonite (live)")));
+        Assert.False(MetadataEnrichmentService.IsSharedIdPair(scopes, Track("Angel", "Aerosmith"), Track("Angel", "Massive Attack")));   // two songs of one title
+        Assert.True(MetadataEnrichmentService.IsSharedIdPair(scopes, Track("Angel", "Various Artists"), Track("Angel", "Aerosmith")));   // a compilation
+        Assert.False(MetadataEnrichmentService.IsSharedIdPair(scopes, Track("A", level: 1), Track("A", level: 1)));          // albums are not in scope
+        Assert.False(MetadataEnrichmentService.IsSharedIdPair(scopes, Track("A"), Track("A", type: "audiobooks")));
+        Assert.True(MetadataEnrichmentService.IsSharedIdPair([new("music", 1, false, false)], Track("A", level: 1), Track("B", level: 1)));
+    }
+
+    [Fact]
+    public async Task AManualFixMatch_IsRecordedInTheRowsDiagnostics_AsOne()
+    {
+        // A person correcting a match is the best evidence of what the automatic search missed, so it is kept.
+        var (item, row) = await SeedItemWithStatus(null, EnrichmentStatus.NotFound);
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        provider.Setup(p => p.GetByIdAsync("artist:abc-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Radiohead", ExternalId = "artist:abc-123" });
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz")).Returns(provider.Object);
+        _registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+
+        await _svc.EnrichItemAsync(item.Id, "chronicle.plugin.musicbrainz",
+            new EnrichmentOptions(EnrichmentMode.Force, IdOverride: "artist:abc-123", Cascade: false));
+
+        var saved = await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id);
+        Assert.Equal(EnrichmentStatus.Completed, saved.Status);
+        using var diag = System.Text.Json.JsonDocument.Parse(saved.DiagnosticsJson!);
+        Assert.Equal("Matched by a manual Fix Match.", diag.RootElement.GetProperty("failureReason").GetString());
+        var manual = diag.RootElement.GetProperty("manualFix");
+        Assert.Equal("artist:abc-123", manual.GetProperty("input").GetString());
+        Assert.Equal(item.Name, manual.GetProperty("libraryName").GetString());
+    }
+
+    [Fact]
+    public async Task AnAutomaticMatch_HasNoManualFixInItsDiagnostics()
+    {
+        var (item, status) = await SeedItemWithStatus("artist:abc-123", EnrichmentStatus.Pending);
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        provider.Setup(p => p.GetByIdAsync("artist:abc-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Radiohead", ExternalId = "artist:abc-123" });
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz")).Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var saved = await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == status.Id);
+        using var diag = System.Text.Json.JsonDocument.Parse(saved.DiagnosticsJson!);
+        Assert.False(diag.RootElement.TryGetProperty("manualFix", out var m) && m.ValueKind != System.Text.Json.JsonValueKind.Null);
+        Assert.Equal("Matched successfully.", diag.RootElement.GetProperty("failureReason").GetString());
+    }
+
+    [Fact]
+    public void IsSameWorkTypePair_BooksAndAudiobooks_AreOne_ButTheSameTypeOrAStrangerIsNot()
+    {
+        var groups = new List<string[]> { new[] { "books", "audiobooks" } };
+        MetadataEnrichmentService.IsSameWorkTypePair(groups, "books", "Audiobooks").Should().BeTrue();
+        MetadataEnrichmentService.IsSameWorkTypePair(groups, "books", "books").Should().BeFalse("a duplicate within one type is still a duplicate");
+        MetadataEnrichmentService.IsSameWorkTypePair(groups, "movies", "fanedits").Should().BeFalse();
+        MetadataEnrichmentService.IsSameWorkTypePair(groups, "books", null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ABookWhoseIdBelongsToItsAudiobook_IsMatched_NotRefusedAsADuplicate()
+    {
+        // Open Library's id for "The Martian" sat on the audiobook, so the book was marked not found for good.
+        var books = await EnsureMediaTypeAsync("books");
+        var audio = await EnsureMediaTypeAsync("audiobooks");
+        var audiobook = new MediaItem { Name = "The Martian", MediaTypeId = audio.Id, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var book      = new MediaItem { Name = "The Martian", MediaTypeId = books.Id, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.AddRange(audiobook, book);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = audiobook.Id, Source = "openlibrary", ExternalId = "OL17091839W" });
+        var row = new MediaItemEnrichment { MediaItemId = book.Id, PluginId = "chronicle.plugin.openlibrary", ExternalId = "OL17091839W", Status = EnrichmentStatus.Pending, MaxRetries = 3 };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.openlibrary");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "books", HierarchyLevels = 3 }]);
+        provider.Setup(p => p.GetByIdAsync("OL17091839W", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "The Martian", ExternalId = "OL17091839W", PosterUrl = "https://covers.openlibrary.org/b/id/1-L.jpg" });
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.openlibrary")).Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.openlibrary");
+
+        (await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id)).Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ABookRefusedOnlyBecauseOfItsAudiobook_IsPutBackInTheQueue()
+    {
+        var books = await EnsureMediaTypeAsync("books");
+        var audio = await EnsureMediaTypeAsync("audiobooks");
+        var audiobook = new MediaItem { Name = "Artemis", MediaTypeId = audio.Id, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var book      = new MediaItem { Name = "Artemis", MediaTypeId = books.Id, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var dup       = new MediaItem { Name = "Artemis", MediaTypeId = books.Id, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.AddRange(audiobook, book, dup);
+        await _db.SaveChangesAsync();
+        var refused = new MediaItemEnrichment { MediaItemId = book.Id, PluginId = "chronicle.plugin.openlibrary", Status = EnrichmentStatus.NotFound, MaxRetries = 3,
+            ErrorMessage = $"Matched external id OL1W already belongs to a different item ({audiobook.Id}, \"Artemis\") -- likely a duplicate. Not merged." };
+        var genuine = new MediaItemEnrichment { MediaItemId = dup.Id, PluginId = "chronicle.plugin.openlibrary", Status = EnrichmentStatus.NotFound, MaxRetries = 3,
+            ErrorMessage = $"Matched external id OL1W already belongs to a different item ({book.Id}, \"Artemis\") -- likely a duplicate. Not merged." };
+        _db.MediaEnrichments.AddRange(refused, genuine);
+        await _db.SaveChangesAsync();
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.openlibrary");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "books", HierarchyLevels = 3 }]);
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<ScoredCandidate>());
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.openlibrary")).Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.openlibrary");
+
+        // The twin was searched again (the provider found nothing, so it is NotFound for that reason now), the genuine
+        // duplicate was left alone with its original message.
+        ((await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == refused.Id)).ErrorMessage ?? "").Should().NotContain("already belongs");
+        (await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == genuine.Id)).ErrorMessage.Should().Contain("already belongs");
+    }
+
     /// <summary>A scanner-created artist "C+C Music Factory" against a provider candidate with a different name.</summary>
     private async Task<MediaItemEnrichment> EnrichScannerArtistAgainst(ScoredCandidate candidate)
     {

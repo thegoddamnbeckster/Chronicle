@@ -285,6 +285,10 @@ namespace Chronicle.API.Controllers
         {
             try
             {
+                if (!string.IsNullOrWhiteSpace(dto?.Input))
+                    Serilog.Log.ForContext<MediaController>().Information(
+                        "MANUAL FIX MATCH requested by {User}: item {ItemId}, plugin {PluginId}, input \"{Input}\"",
+                        User.Identity?.Name ?? "(unknown)", id, pluginId, dto!.Input.Trim());
                 var opts = new EnrichmentOptions(
                     EnrichmentMode.Force,
                     IdOverride: string.IsNullOrWhiteSpace(dto?.Input) ? null : dto.Input.Trim(),

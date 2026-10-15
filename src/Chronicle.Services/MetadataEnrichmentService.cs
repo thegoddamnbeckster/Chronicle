@@ -188,6 +188,8 @@ public class MetadataEnrichmentService(
         await MarkUnsupportedPendingAsSkippedAsync(db, pluginId, supportedRawTypes, ct);
         await RemoveCollectionContainersPendingAsync(db, pluginId, ct);
         await RemoveHierarchyUnsupportedPendingAsync(db, pluginId, provider, ct);
+        await RemoveOrphanedRowsAsync(db, pluginId, ct);
+        await RequeueSameWorkConflictsAsync(db, pluginId, ct);
 
         // Episodes this plugin enriched before it kept the air date go back into the same queue, so
         // this one pass refreshes them along with everything else that is missing.
@@ -204,6 +206,7 @@ public class MetadataEnrichmentService(
         // The blocked-parent set is re-fetched on every pass so newly-completed parents unblock
         // their children in the next pass without waiting for a separate ID-list query per row.
         int passNumber = 0;
+        int idleRetries = 0;
         while (true)
         {
             ct.ThrowIfCancellationRequested();
@@ -295,6 +298,18 @@ public class MetadataEnrichmentService(
                     .AnyAsync(x => x.PluginId == pluginId &&
                                    x.Status == EnrichmentStatus.Pending, ct);
                 if (!anyRemainingPending) break; // Truly done.
+
+                // Pending rows exist yet nothing is eligible. A concurrent insert settles within a pass or two; if it
+                // does not, these rows can never be picked up by this loop (root-caused live 2026-10-14: three Pending
+                // rows whose media items had been deleted kept IMDb "Running" for over a day, one pass after another,
+                // doing nothing). Stop and let the next run look again rather than spin.
+                if (++idleRetries > 3)
+                {
+                    logger.LogWarning(
+                        "EnrichPendingAsync: stopping for plugin {PluginId} -- Pending rows remain but none is eligible to run",
+                        pluginId);
+                    break;
+                }
                 // else: there are Pending rows — at least one more pass is warranted.
                 // Increment passNumber so log output shows we're re-entering.
                 passNumber++;
@@ -306,6 +321,7 @@ public class MetadataEnrichmentService(
             }
 
             passNumber++;
+            idleRetries = 0;
             logger.LogInformation(
                 "EnrichPendingAsync pass {Pass}: enriching {Count} items for plugin {PluginId} " +
                 "(concurrency {Concurrency})",
@@ -1200,6 +1216,7 @@ public class MetadataEnrichmentService(
     {
         var item = row.MediaItem!;
         MediaMetadata? completedMeta = null;
+        var manualFixPreviousId = row.ExternalId;   // what the row held before a manual Fix Match changes it
 
         // FillGaps skip — background/batch behaviour. Single-item callers pass Force to
         // always re-fetch (Refresh button); Fix Match always supplies an IdOverride, which
@@ -1242,6 +1259,15 @@ public class MetadataEnrichmentService(
             if (options.IdOverride is not null)
             {
                 resolvedId = options.IdOverride.Trim();
+
+                // A person fixing a match by hand is the best evidence there is of what the automatic matching got wrong, so
+                // it is recorded: in the log (grep MANUAL FIX MATCH) with everything needed to see why the search missed, and
+                // in the row's diagnostics (manualFix) until the next automatic enrichment of the row rewrites them (the log line is the permanent record).
+                logger.LogInformation(
+                    "MANUAL FIX MATCH: item {ItemId} \"{Name}\" (type {Type}, level {Level}, year {Year}, parent \"{Parent}\", grandparent \"{Grandparent}\") " +
+                    "plugin {PluginId} {PreviousId} -> {NewId} (the automatic search had status {PreviousStatus})",
+                    item.Id, item.Name, item.MediaType?.Name, item.HierarchyLevel, item.Year, item.Parent?.Name, item.Parent?.Parent?.Name,
+                    row.PluginId, row.ExternalId ?? "(none)", resolvedId, row.Status);
 
                 if (item.ParentId is not null
                     && resolvedId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase)
@@ -2259,6 +2285,7 @@ public class MetadataEnrichmentService(
                 EnrichmentStatus.NotFound  => "No results returned by the provider for this search query.",
                 EnrichmentStatus.Failed    => row.ErrorMessage ?? "Provider call threw an exception.",
                 EnrichmentStatus.Exhausted => "Maximum retries reached with no successful match.",
+                EnrichmentStatus.Completed when options.IdOverride is not null => "Matched by a manual Fix Match.",
                 EnrichmentStatus.Completed => "Matched successfully.",
                 _ => string.Empty
             };
@@ -2269,7 +2296,10 @@ public class MetadataEnrichmentService(
                 DefaultConfidenceThreshold,
                 failureReason,
                 candidates,
-                ReadScannerSignals(row.MediaItem));
+                ReadScannerSignals(row.MediaItem),
+                options.IdOverride is null ? null : new ManualFixInfo(
+                    DateTime.UtcNow, options.IdOverride.Trim(), manualFixPreviousId, row.MediaItem?.Name, row.MediaItem?.Year,
+                    row.MediaItem?.Parent?.Name, row.MediaItem?.Parent?.Parent?.Name, row.MediaItem?.MediaType?.Name, row.MediaItem?.HierarchyLevel));
 
             row.DiagnosticsJson = JsonSerializer.Serialize(diag,
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
@@ -2429,6 +2459,98 @@ public class MetadataEnrichmentService(
     /// keep the batch loop's "Pending rows remain, do another pass" guard spinning forever —
     /// see the call site before that loop for why this must run first, not just after).
     /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex ConflictOwnerRe =
+        new(@"already belongs to a different item \((\d+),", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Plugins whose refused rows have all been looked at and none qualified: nothing new can qualify until the next start,
+    /// because the same rule no longer refuses such rows.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _requeueScanDone = new();
+
+    /// <summary>
+    /// Puts back in the queue the rows that were refused because another item held the same provider id, when that
+    /// other item turns out to be the same work in another format (a book and its audiobook, see
+    /// <see cref="IsSameWorkTypePair"/>) or the same recording on another album (see <see cref="SharedIdScope"/>). They were marked
+    /// not found for good under the old rule; a genuine duplicate is left refused, so nothing is re-searched on every run.
+    /// </summary>
+    private async Task RequeueSameWorkConflictsAsync(ChronicleDbContext db, string pluginId, CancellationToken ct)
+    {
+        if (_requeueScanDone.ContainsKey(pluginId)) return;
+        var groups = await LoadSameWorkTypeGroupsAsync(db, ct);
+        var scopes = await LoadSharedIdScopesAsync(db, ct);
+        var names = groups.SelectMany(g => g).Concat(scopes.Select(sc => sc.MediaType)).Select(n => n.ToLower()).Distinct().ToList();
+        if (names.Count == 0) { _requeueScanDone[pluginId] = true; return; }
+
+        // A bounded number per run: a large library can hold tens of thousands of these (every track that also sits on a
+        // greatest hits), and each run takes the next batch. Rows that do not qualify (a genuine duplicate) are skipped by
+        // paging on the id, so they never starve the ones behind them.
+        const int PerRun = 2000;
+        var requeued = 0;
+        var lastId = 0;
+        var exhausted = false;
+
+        while (requeued < PerRun)
+        {
+            var rows = await db.MediaEnrichments
+                .Include(e => e.MediaItem).ThenInclude(m => m!.MediaType)
+                .Include(e => e.MediaItem).ThenInclude(m => m!.Parent).ThenInclude(p => p!.Parent)
+                .Where(e => e.Id > lastId && e.PluginId == pluginId && e.Status == EnrichmentStatus.NotFound &&
+                            e.ErrorMessage != null && e.ErrorMessage.Contains("already belongs to a different item") &&
+                            e.MediaItem != null && e.MediaItem.MediaType != null &&
+                            names.Contains(e.MediaItem.MediaType.Name.ToLower()))
+                .OrderBy(e => e.Id)
+                .Take(2000)
+                .ToListAsync(ct);
+            if (rows.Count == 0) { exhausted = true; break; }
+            lastId = rows[^1].Id;
+
+            var ownerIds = rows
+                .Select(r => ConflictOwnerRe.Match(r.ErrorMessage!))
+                .Where(m => m.Success).Select(m => int.Parse(m.Groups[1].Value)).Distinct().ToList();
+            var owners = (await db.MediaItems.AsNoTracking().Include(m => m.MediaType)
+                .Include(m => m.Parent).ThenInclude(p => p!.Parent)
+                .Where(m => ownerIds.Contains(m.Id)).ToListAsync(ct)).ToDictionary(o => o.Id);
+
+            foreach (var row in rows)
+            {
+                var m = ConflictOwnerRe.Match(row.ErrorMessage!);
+                if (!m.Success || !owners.TryGetValue(int.Parse(m.Groups[1].Value), out var owner)) continue;
+                var item = row.MediaItem!;
+                if (!(IsSameWorkTypePair(groups, item.MediaType!.Name, owner.MediaType?.Name) || IsSharedIdPair(scopes, item, owner))) continue;
+                row.Status = EnrichmentStatus.Pending;
+                row.ErrorMessage = null;
+                row.RetryCount = 0;
+                requeued++;
+            }
+            await db.SaveChangesAsync(ct);
+            // Detach what was just looked at so a large pass does not hold every row in memory.
+            db.ChangeTracker.Clear();
+        }
+
+        if (requeued > 0)
+            logger.LogInformation(
+                "EnrichPendingAsync: re-queued {Count} row(s) for plugin {PluginId} that were refused only because the same work or recording is on another item",
+                requeued, pluginId);
+        if (exhausted && requeued == 0) _requeueScanDone[pluginId] = true;
+    }
+
+    /// <summary>
+    /// Deletes this plugin's enrichment rows whose media item no longer exists, whatever their status. The table's
+    /// foreign key cascades on delete, but a row can still outlive its item (SQLite enforces foreign keys per
+    /// connection, and some delete paths run without it). A Pending orphan is never eligible -- it has no item to
+    /// enrich -- and kept the batch loop retrying forever; the others are only noise in the plugin's counts.
+    /// </summary>
+    private async Task RemoveOrphanedRowsAsync(ChronicleDbContext db, string pluginId, CancellationToken ct)
+    {
+        var orphans = await db.MediaEnrichments
+            .Where(e => e.PluginId == pluginId && !db.MediaItems.Any(m => m.Id == e.MediaItemId))
+            .ToListAsync(ct);
+        if (orphans.Count == 0) return;
+
+        db.MediaEnrichments.RemoveRange(orphans);
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("EnrichPendingAsync: removed {Count} enrichment row(s) for plugin {PluginId} whose media item no longer exists", orphans.Count, pluginId);
+    }
+
     /// <summary>
     /// REMOVES (not merely marks Skipped) every row -- ANY status, not just Pending -- for a
     /// KNOWN COLLECTION CONTAINER (see GetCollectionContainerIdsForExclusionAsync for the two
@@ -2978,7 +3100,20 @@ public class MetadataEnrichmentService(
         int Threshold,
         string FailureReason,
         List<EnrichCandidate> TopCandidates,
-        EnrichScannerSignals? ScannerSignals);
+        EnrichScannerSignals? ScannerSignals,
+        ManualFixInfo? ManualFix = null);
+
+    /// <summary>What a person's manual Fix Match was, kept in the row's diagnostics so the cases the automatic search missed can be studied.</summary>
+    private sealed record ManualFixInfo(
+        DateTime At,
+        string Input,
+        string? PreviousExternalId,
+        string? LibraryName,
+        int? LibraryYear,
+        string? ParentName,
+        string? GrandparentName,
+        string? MediaType,
+        int? Level);
 
     private sealed record EnrichCandidate(
         string? Title,
@@ -3431,11 +3566,102 @@ public class MetadataEnrichmentService(
         // needs to know the owner's media TYPE (see that check's own doc for why), which a bare
         // Select(e => e.MediaItem) never materializes; Include must run before Select changes
         // the query's shape away from MediaExternalId, not after.
-        return await db.MediaExternalIds
+        var owners = await db.MediaExternalIds
             .Include(e => e.MediaItem!).ThenInclude(m => m.MediaType)
+            .Include(e => e.MediaItem!).ThenInclude(m => m.Parent).ThenInclude(p => p!.Parent)
             .Where(e => e.Source == source && e.ExternalId == extId && e.MediaItemId != mediaItemId)
             .Select(e => e.MediaItem)
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
+        if (owners.Count == 0) return null;
+
+        // Two things legitimately share a provider id (see SharedIdScope and IsSameWorkTypePair): a book and its audiobook
+        // (the same work in two formats, two media types), and the same recording on several albums (one music track
+        // item per release, all of them that recording). Treating either as a duplicate left the second item "not found"
+        // for that provider for good.
+        var item = await db.MediaItems.AsNoTracking().Include(m => m.MediaType)
+            .Include(m => m.Parent).ThenInclude(p => p!.Parent).FirstOrDefaultAsync(m => m.Id == mediaItemId, ct);
+        if (item?.MediaType is null) return owners[0];
+        var sameWork = await LoadSameWorkTypeGroupsAsync(db, ct);
+        var scopes = await LoadSharedIdScopesAsync(db, ct);
+        return owners.FirstOrDefault(o => o is null ||
+            !(IsSameWorkTypePair(sameWork, item.MediaType.Name, o.MediaType?.Name) || IsSharedIdPair(scopes, item, o)));
+    }
+
+    /// <summary>app_settings key: JSON array of arrays of media type names that hold the same work in different
+    /// formats. Defaults to books and audiobooks when unset.</summary>
+    internal const string SameWorkTypesSettingKey = "enrichment.same_work_media_types";
+
+    private static async Task<List<string[]>> LoadSameWorkTypeGroupsAsync(ChronicleDbContext db, CancellationToken ct)
+    {
+        var raw = await db.AppSettings.AsNoTracking().Where(a => a.Key == SameWorkTypesSettingKey)
+            .Select(a => a.Value).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(raw)) return [["books", "audiobooks"]];
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<string[]>>(raw) ?? []; }
+        catch (System.Text.Json.JsonException) { return [["books", "audiobooks"]]; }
+    }
+
+    internal static bool IsSameWorkTypePair(IEnumerable<string[]> groups, string? a, string? b) =>
+        a is not null && b is not null && !string.Equals(a, b, StringComparison.OrdinalIgnoreCase) &&
+        groups.Any(g => g.Contains(a, StringComparer.OrdinalIgnoreCase) && g.Contains(b, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>app_settings key: JSON array of {"mediaType","level","requireSameName","requireSameArtist"}. Items of that media type
+    /// at that level may share a provider id with another such item (and so each be matched), when -- if requireSameName -- they have
+    /// the same name and -- if requireSameArtist -- the same artist (the top of their hierarchy; "Various Artists" matches any, a
+    /// compilation's tracks being the real artists' recordings). Without the artist check two unrelated songs of one title would be
+    /// given one name-matched article. Defaults to music tracks: a recording is one thing that appears on many releases, and the library holds one track
+    /// item per release (the same song on its album, a greatest hits, a single).</summary>
+    internal const string SharedIdScopesSettingKey = "enrichment.shared_id_scopes";
+
+    internal sealed record SharedIdScope(string MediaType, int Level, bool RequireSameName = true, bool RequireSameArtist = true);
+
+    private static readonly SharedIdScope[] DefaultSharedIdScopes = [new("music", 2, true, true)];
+
+    private static async Task<List<SharedIdScope>> LoadSharedIdScopesAsync(ChronicleDbContext db, CancellationToken ct)
+    {
+        var raw = await db.AppSettings.AsNoTracking().Where(a => a.Key == SharedIdScopesSettingKey)
+            .Select(a => a.Value).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(raw)) return [.. DefaultSharedIdScopes];
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<SharedIdScope>>(raw,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+        }
+        catch (System.Text.Json.JsonException) { return [.. DefaultSharedIdScopes]; }
+    }
+
+    internal static bool IsSharedIdPair(IEnumerable<SharedIdScope> scopes, MediaItem a, MediaItem b)
+    {
+        var type = a.MediaType?.Name;
+        if (type is null || !string.Equals(type, b.MediaType?.Name, StringComparison.OrdinalIgnoreCase)) return false;
+        if (a.HierarchyLevel != b.HierarchyLevel) return false;
+        foreach (var scope in scopes)
+        {
+            if (!string.Equals(scope.MediaType, type, StringComparison.OrdinalIgnoreCase) || scope.Level != a.HierarchyLevel) continue;
+            if (scope.RequireSameName)
+            {
+                var na = a.NormalizedNameLoose ?? a.NormalizedName;
+                var nb = b.NormalizedNameLoose ?? b.NormalizedName;
+                if (string.IsNullOrEmpty(na) || na != nb) continue;
+            }
+            if (scope.RequireSameArtist && !SameArtist(a, b)) continue;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>The top of each item's hierarchy (loaded with the item) has the same name, or either is "Various Artists". Unknown is not the same.</summary>
+    private static bool SameArtist(MediaItem a, MediaItem b)
+    {
+        static string? Root(MediaItem m)
+        {
+            var top = m;
+            while (top.Parent is not null) top = top.Parent;
+            return ReferenceEquals(top, m) ? null : top.NormalizedNameLoose ?? top.NormalizedName;
+        }
+        var ra = Root(a);
+        var rb = Root(b);
+        if (string.IsNullOrEmpty(ra) || string.IsNullOrEmpty(rb)) return false;
+        return ra == rb || ra == "variousartists" || rb == "variousartists";
     }
 
     /// <summary>

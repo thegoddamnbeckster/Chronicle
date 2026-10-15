@@ -168,10 +168,11 @@ export function buildSlotLookup(
 }
 
 /** Maps a raw AdditionalImage.Type (from Fanart.tv/MusicBrainz/FanEdit/etc.) or a top-level
- *  scalar field name to a canonical slot. Types absent here have no first-class slot and are
- *  excluded from the promote-eligible pool — they still render in the existing raw per-plugin
- *  "Images" row via extractImages(), unaffected. New artwork-supplying plugins need their
- *  Type strings added here to become promotable. */
+ *  scalar field name to a canonical slot. A type that is not listed here still shows: every
+ *  image from every plugin must appear in Additional Images (a missing book cover is how
+ *  "Open Library's images are not shown" happened), so it falls into DEFAULT_SLOT and can be
+ *  re-pinned from the viewer like any other. Add a plugin's Type strings here to put them in a
+ *  more specific slot than that. */
 const TYPE_TO_SLOT: Record<string, CanonicalSlot> = {
   poster: 'poster_url', posterurl: 'poster_url', front: 'poster_url',
   fanart: 'backdrop_url', backdrop: 'backdrop_url', backdropurl: 'backdrop_url',
@@ -179,8 +180,12 @@ const TYPE_TO_SLOT: Record<string, CanonicalSlot> = {
   banner: 'banner_url', bannerurl: 'banner_url',
   thumb: 'thumb_url', thumburl: 'thumb_url', thumbnail: 'thumb_url', thumbnailurl: 'thumb_url',
   clearart: 'clearart_url', cleararturl: 'clearart_url',
-  discart: 'disc_url', disc: 'disc_url', discurl: 'disc_url',
+  discart: 'disc_url', disc: 'disc_url', discurl: 'disc_url', cdart: 'disc_url', cd: 'disc_url',
+  widethumb: 'thumb_url',
   characterart: 'character_art_url', character: 'character_art_url', characterarturl: 'character_art_url',
+  cutout: 'character_art_url',
+  // Book and album covers (Open Library "cover", Hardcover "hardcover", MusicBrainz/Deezer "front")
+  cover: 'poster_url', hardcover: 'poster_url',
   // Wikipedia's own generic image type -- an article's photos/logos/icons carry no real
   // poster-vs-backdrop-vs-logo semantics of their own (unlike Fanart.tv/TMDB, which tag by
   // actual art category). Per-user request (2026-08-29): treat them the same as every other
@@ -190,11 +195,14 @@ const TYPE_TO_SLOT: Record<string, CanonicalSlot> = {
   article: 'poster_url',
 }
 
+/** Where an image whose Type has no entry in TYPE_TO_SLOT (or has no Type) is listed. */
+export const DEFAULT_SLOT: CanonicalSlot = 'poster_url'
+
 /**
- * Extracts every promote-eligible image from one plugin's raw metadata blob, tagged with its
- * canonical slot. Walks both the top-level scalar art fields (posterUrl, backdropUrl, ...)
- * and any additionalImages/images array (using each entry's own `type`). Entries whose type
- * has no canonical slot mapping are dropped.
+ * Extracts every image from one plugin's raw metadata blob, tagged with its canonical slot.
+ * Walks both the top-level scalar art fields (posterUrl, backdropUrl, ...) and any
+ * additionalImages/images array (using each entry's own `type`). Nothing is dropped: an
+ * entry whose type has no slot mapping goes to DEFAULT_SLOT.
  */
 export function extractSlottedImages(
   pluginId: string,
@@ -210,8 +218,7 @@ export function extractSlottedImages(
         const url = (img.url ?? img.thumbnailUrl ?? '') as string
         if (!url) continue
         const type = typeof img.type === 'string' ? img.type.toLowerCase() : ''
-        const slot = TYPE_TO_SLOT[type]
-        if (!slot) continue
+        const slot = TYPE_TO_SLOT[type] ?? DEFAULT_SLOT
         out.push({ url, label: (img.type as string) ?? key, slot, pluginId })
       }
       continue
