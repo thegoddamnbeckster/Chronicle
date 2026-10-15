@@ -826,7 +826,6 @@ namespace Chronicle.Tests.Unit.Services
             var admin = new DatabaseAdminService(services.GetRequiredService<IServiceScopeFactory>());
 
             await new DatabaseBackupTask(admin).ExecuteAsync(CancellationToken.None);
-            await new DatabaseLightMaintenanceTask(admin).ExecuteAsync(CancellationToken.None);
             await new DatabaseHeavyMaintenanceTask(admin).ExecuteAsync(CancellationToken.None);
         }
 
@@ -841,9 +840,9 @@ namespace Chronicle.Tests.Unit.Services
         [Fact]
         public void TheTasksHaveDistinctIdsAndValidCronExpressions()
         {
-            IScheduledTask[] tasks = [new DatabaseBackupTask(_admin), new DatabaseLightMaintenanceTask(_admin), new DatabaseHeavyMaintenanceTask(_admin)];
+            IScheduledTask[] tasks = [new DatabaseBackupTask(_admin), new DatabaseHeavyMaintenanceTask(_admin)];
 
-            tasks.Select(t => t.TaskId).Distinct().Should().HaveCount(3);
+            tasks.Select(t => t.TaskId).Distinct().Should().HaveCount(2);
             foreach (var t in tasks)
                 Cronos.CronExpression.Parse(t.DefaultCron).Should().NotBeNull(t.TaskId);
         }

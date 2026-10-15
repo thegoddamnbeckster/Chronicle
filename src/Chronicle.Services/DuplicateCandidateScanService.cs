@@ -34,12 +34,8 @@ namespace Chronicle.Services;
 /// </summary>
 public sealed class DuplicateCandidateScanService(
     IServiceScopeFactory scopeFactory,
-    ILogger<DuplicateCandidateScanService> logger) : IScheduledTask
+    ILogger<DuplicateCandidateScanService> logger)
 {
-    public string TaskId      => "duplicate_candidate_scan";
-    public string DisplayName => "Duplicate Candidate Scan";
-    public string Description => "Scans for probable duplicate media items by normalised name and caches the results for the Duplicates page.";
-    public string DefaultCron => "0 2 * * *"; // 2 AM nightly
 
     public async Task ExecuteAsync(CancellationToken ct)
     {

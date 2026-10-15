@@ -20,6 +20,13 @@ public interface IScheduledTask
     string DefaultCron { get; }
 
     /// <summary>
+    /// Ids of retired tasks this one took over. A newly seeded task starts disabled when every retired row that exists was
+    /// disabled (so merging tasks never switches back on something an administrator had turned off), and takes the
+    /// schedule of the first such row. Empty for a task that replaces nothing.
+    /// </summary>
+    IReadOnlyList<string> ReplacesTaskIds => [];
+
+    /// <summary>
     /// Execute one run of this task.
     /// Called by TaskSchedulerService on schedule and on manual trigger.
     /// </summary>

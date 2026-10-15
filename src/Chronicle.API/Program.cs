@@ -263,17 +263,11 @@ builder.Services.AddHostedService<PluginHostService>();
 // instance is shared between IScheduledTask (consumed by TaskSchedulerService) and
 // any additional service interfaces.
 
+// The three duplicate passes are plain singletons; ONE scheduled task runs them all in order.
 builder.Services.AddSingleton<DuplicateCleanupService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<DuplicateCleanupService>());
-
 builder.Services.AddSingleton<DuplicateCandidateScanService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<DuplicateCandidateScanService>());
-
 builder.Services.AddSingleton<DuplicatePersonAutoResolveService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<DuplicatePersonAutoResolveService>());
+builder.Services.AddSingleton<IScheduledTask, DuplicateMaintenanceTask>();
 
 // The three repair passes are plain singletons; ONE scheduled task runs them all in order.
 builder.Services.AddSingleton<MovieFileYearRepairService>();
@@ -307,13 +301,9 @@ builder.Services.AddSingleton<TagMismatchRematchTask>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<TagMismatchRematchTask>());
 
+// Passes of the library integrity repair task, not tasks of their own.
 builder.Services.AddSingleton<MissingSourceReconciliationService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<MissingSourceReconciliationService>());
-
 builder.Services.AddSingleton<TitleSanitizationService>();
-builder.Services.AddSingleton<IScheduledTask>(
-    sp => sp.GetRequiredService<TitleSanitizationService>());
 
 // Database backups / restore / maintenance (Settings -> Database) and their scheduled tasks.
 builder.Services.AddSingleton<IDatabaseAdminService, DatabaseAdminService>();
@@ -321,10 +311,8 @@ builder.Services.AddSingleton<IDatabaseAdminService, DatabaseAdminService>();
 builder.Services.AddSingleton<Chronicle.Services.Live.LibraryChangeFeed>();
 builder.Services.AddSingleton<Chronicle.Services.Live.LibraryChangeInterceptor>();
 builder.Services.AddScoped<Chronicle.Services.Notifications.INotificationService, Chronicle.Services.Notifications.NotificationService>();
-builder.Services.AddSingleton<IScheduledTask, Chronicle.Services.Notifications.NotificationCleanupTask>();
 builder.Services.AddSingleton<IAppRestart, AppRestart>();
 builder.Services.AddSingleton<IScheduledTask, DatabaseBackupTask>();
-builder.Services.AddSingleton<IScheduledTask, DatabaseLightMaintenanceTask>();
 builder.Services.AddSingleton<IScheduledTask, DatabaseHeavyMaintenanceTask>();
 
 builder.Services.AddSingleton<IPluginCatalogSource, PluginCatalogSource>();

@@ -33,12 +33,8 @@ namespace Chronicle.Services;
 /// </summary>
 public sealed class MissingSourceReconciliationService(
     IServiceScopeFactory scopeFactory,
-    ILogger<MissingSourceReconciliationService> logger) : IScheduledTask
+    ILogger<MissingSourceReconciliationService> logger)
 {
-    public string TaskId      => "missing_source_reconciliation";
-    public string DisplayName => "Missing Source Reconciliation";
-    public string Description => "Detects media items whose scanned file or folder no longer exists on disk and clears the stale File Scanner link, keeping everything else about the item (ratings, enrichment, external IDs) untouched.";
-    public string DefaultCron => "0 4 * * *"; // 4 AM nightly, after the 2-3 AM duplicate scans
 
     public async Task ExecuteAsync(CancellationToken ct)
     {

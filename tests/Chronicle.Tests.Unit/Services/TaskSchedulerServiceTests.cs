@@ -141,6 +141,80 @@ public class TaskSchedulerServiceTests
         row!.CronExpression.Should().Be("0 2 * * *");
     }
 
+    [Fact]
+    public async Task SeedTasks_RefreshesNameAndDescription_ButKeepsTheUsersSchedule()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId = "metadata_refresh", DisplayName = "Old name", Description = "old",
+            CronExpression = "0 2 * * *", IsEnabled = false, NextRunAt = DateTime.UtcNow.AddHours(2)
+        });
+        await db.SaveChangesAsync();
+
+        var task = MakeTask("metadata_refresh", "0 */4 * * *");
+        await new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db)).SeedTasksAsync(CancellationToken.None);
+
+        db.ChangeTracker.Clear(); // the scheduler wrote through its own context
+        var row = await db.BackgroundTasks.FindAsync("metadata_refresh");
+        row!.DisplayName.Should().Be(task.Object.DisplayName);
+        row.Description.Should().Be(task.Object.Description);
+        row.CronExpression.Should().Be("0 2 * * *");
+        row.IsEnabled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SeedTasks_RemovesARetiredSystemRow_ButNotAPluginRow()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "retired_system", DisplayName = "Gone", Description = "d", CronExpression = "0 2 * * *" });
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "p:fetch-missing-metadata", DisplayName = "Plugin", Description = "d", CronExpression = "0 2 * * *", PluginId = "p" });
+        await db.SaveChangesAsync();
+
+        var task = MakeTask("metadata_refresh", "0 */4 * * *");
+        await new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db)).SeedTasksAsync(CancellationToken.None);
+
+        db.ChangeTracker.Clear(); // the scheduler wrote through its own context
+        (await db.BackgroundTasks.FindAsync("retired_system")).Should().BeNull();
+        (await db.BackgroundTasks.FindAsync("p:fetch-missing-metadata")).Should().NotBeNull();
+        (await db.BackgroundTasks.FindAsync("metadata_refresh")).Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task SeedTasks_ATaskThatReplacesDisabledOnes_StartsDisabled_WithTheirSchedule()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "old_a", DisplayName = "A", Description = "d", CronExpression = "15 1 * * *", IsEnabled = false });
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "old_b", DisplayName = "B", Description = "d", CronExpression = "0 3 * * *", IsEnabled = false });
+        await db.SaveChangesAsync();
+
+        var task = MakeTask("merged", "0 2 * * *");
+        task.Setup(t => t.ReplacesTaskIds).Returns(["old_a", "old_b"]);
+        await new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db)).SeedTasksAsync(CancellationToken.None);
+
+        db.ChangeTracker.Clear();
+        var row = await db.BackgroundTasks.FindAsync("merged");
+        row!.IsEnabled.Should().BeFalse("the administrator had switched every one of them off");
+        row.CronExpression.Should().Be("15 1 * * *");
+        (await db.BackgroundTasks.FindAsync("old_a")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SeedTasks_ATaskThatReplacesAMixOfStates_StartsEnabled()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "old_a", DisplayName = "A", Description = "d", CronExpression = "15 1 * * *", IsEnabled = false });
+        db.BackgroundTasks.Add(new BackgroundTask { TaskId = "old_b", DisplayName = "B", Description = "d", CronExpression = "0 3 * * *", IsEnabled = true });
+        await db.SaveChangesAsync();
+
+        var task = MakeTask("merged", "0 2 * * *");
+        task.Setup(t => t.ReplacesTaskIds).Returns(["old_a", "old_b"]);
+        await new TaskSchedulerService(new[] { task.Object }, MakeScopeFactory(db)).SeedTasksAsync(CancellationToken.None);
+
+        db.ChangeTracker.Clear();
+        (await db.BackgroundTasks.FindAsync("merged"))!.IsEnabled.Should().BeTrue();
+    }
+
     // ── Tick / run-due ────────────────────────────────────────────────────────
 
     // ── Restart ───────────────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ namespace Chronicle.Services;
 /// Before a duplicate is removed its <see cref="UserLibrary"/> and <see cref="InteractionEvent"/>
 /// rows are reassigned to the surviving item so no user data is lost.
 /// </summary>
-public sealed class DuplicateCleanupService : IScheduledTask
+public sealed class DuplicateCleanupService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger _log = Log.ForContext<DuplicateCleanupService>();
@@ -32,13 +32,8 @@ public sealed class DuplicateCleanupService : IScheduledTask
         _scopeFactory = scopeFactory;
     }
 
-    // ── IScheduledTask ────────────────────────────────────────────────────────────
-    public string TaskId      => "duplicate_cleanup";
-    public string DisplayName => "Duplicate Cleanup";
-    public string Description => "Scans for duplicate media items sharing the same file path and removes all but the best-quality copy.";
-    public string DefaultCron => "0 3 * * *";
 
-    async Task IScheduledTask.ExecuteAsync(CancellationToken ct)
+    public async Task ExecuteAsync(CancellationToken ct)
     {
         var removed = await RunAsync(ct);
         if (removed > 0)

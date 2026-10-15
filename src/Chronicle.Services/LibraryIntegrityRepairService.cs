@@ -31,7 +31,11 @@ namespace Chronicle.Services;
 ///                                 name, so the series lists in reading order.
 ///   11. Album Name Year Repair -- an album named after its folder ("(2000) Title") gets the plain name and
 ///                                 the year in its Year field.
-/// A failing pass is logged and never stops the ones after it.
+///   12. Missing Source Reconciliation -- an item whose scanned file/folder is gone from disk loses the stale
+///                                 File Scanner link (everything else about it is kept).
+///   13. Title Sanitization     -- a stray trailing parenthetical ("(film)") left in a plugin's stored title is
+///                                 stripped and the item's resolved metadata recomputed.
+/// A failing pass is logged and never stops the ones after it; the task still fails at the end (see PassFailures).
 /// </summary>
 public sealed class LibraryIntegrityRepairService(
     PersonIdentitySplitService personSplit,
@@ -47,39 +51,33 @@ public sealed class LibraryIntegrityRepairService(
     SeriesNameFragmentRepairService seriesNameFragments,
     AudiobookSeriesNumberRepairService seriesNumbers,
     AlbumNameYearRepairService albumNameYear,
+    MissingSourceReconciliationService missingSources,
+    TitleSanitizationService titleSanitization,
     ILogger<LibraryIntegrityRepairService> logger) : IScheduledTask
 {
     public string TaskId      => "library_integrity_repair";
     public string DisplayName => "Library Integrity Repair";
-    public string Description => "Fixes data attached to the wrong thing: people mixed with a same-named person, movies carrying another film's ids, and files attached to a movie of a different year.";
+    public string Description => "Nightly data repair: fixes data attached to the wrong thing (people mixed with a same-named person, movies carrying another film's ids, misfiled books and series, bad years), clears File Scanner links to files that no longer exist, and strips stray \"(film)\"-style suffixes from stored titles.";
     public string DefaultCron => "45 2 * * *";
 
     public async Task ExecuteAsync(CancellationToken ct)
     {
-        await RunPassAsync("person identity split", personSplit.ExecuteAsync, ct);
-        await RunPassAsync("year overview article split", yearOverviewSplit.ExecuteAsync, ct);
-        await RunPassAsync("movie external id repair", movieExternalIds.ExecuteAsync, ct);
-        await RunPassAsync("movie file year repair", movieFileYear.ExecuteAsync, ct);
-        await RunPassAsync("implausible year repair", implausibleYear.ExecuteAsync, ct);
-        await RunPassAsync("nested movie repair", nestedMovies.ExecuteAsync, ct);
-        await RunPassAsync("misparented child repair", misparentedChildren.ExecuteAsync, ct);
-        await RunPassAsync("unknown series repair", unknownSeries.ExecuteAsync, ct);
-        await RunPassAsync("series fragment repair", seriesFragments.ExecuteAsync, ct);
-        await RunPassAsync("book title fragment repair", bookTitleFragments.ExecuteAsync, ct);
-        await RunPassAsync("series name fragment repair", seriesNameFragments.ExecuteAsync, ct);
-        await RunPassAsync("audiobook series number repair", seriesNumbers.ExecuteAsync, ct);
-        await RunPassAsync("album name year repair", albumNameYear.ExecuteAsync, ct);
-    }
-
-    private async Task RunPassAsync(string name, Func<CancellationToken, Task> pass, CancellationToken ct)
-    {
-        try
-        {
-            await pass(ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogError(ex, "Library integrity repair: the {Pass} pass failed; continuing with the next", name);
-        }
+        var passes = new PassFailures(logger, "Library integrity repair");
+        await passes.RunAsync("person identity split", personSplit.ExecuteAsync, ct);
+        await passes.RunAsync("year overview article split", yearOverviewSplit.ExecuteAsync, ct);
+        await passes.RunAsync("movie external id repair", movieExternalIds.ExecuteAsync, ct);
+        await passes.RunAsync("movie file year repair", movieFileYear.ExecuteAsync, ct);
+        await passes.RunAsync("implausible year repair", implausibleYear.ExecuteAsync, ct);
+        await passes.RunAsync("nested movie repair", nestedMovies.ExecuteAsync, ct);
+        await passes.RunAsync("misparented child repair", misparentedChildren.ExecuteAsync, ct);
+        await passes.RunAsync("unknown series repair", unknownSeries.ExecuteAsync, ct);
+        await passes.RunAsync("series fragment repair", seriesFragments.ExecuteAsync, ct);
+        await passes.RunAsync("book title fragment repair", bookTitleFragments.ExecuteAsync, ct);
+        await passes.RunAsync("series name fragment repair", seriesNameFragments.ExecuteAsync, ct);
+        await passes.RunAsync("audiobook series number repair", seriesNumbers.ExecuteAsync, ct);
+        await passes.RunAsync("album name year repair", albumNameYear.ExecuteAsync, ct);
+        await passes.RunAsync("missing source reconciliation", missingSources.ExecuteAsync, ct);
+        await passes.RunAsync("title sanitization", titleSanitization.ExecuteAsync, ct);
+        passes.ThrowIfAny();
     }
 }

@@ -56,14 +56,10 @@ namespace Chronicle.Services;
 /// </summary>
 public sealed class DuplicatePersonAutoResolveService(
     IServiceScopeFactory scopeFactory,
-    ILogger<DuplicatePersonAutoResolveService> logger) : IScheduledTask
+    ILogger<DuplicatePersonAutoResolveService> logger)
 {
-    public string TaskId      => "duplicate_person_auto_resolve";
-    public string DisplayName => "Duplicate Person Auto-Resolve";
-    public string Description => "Automatically merges or dismisses duplicate \"people\" candidates that carry strong corroborating evidence (a shared external id, photo, or birthdate -- or a conflicting one); everything else is left in the Duplicates page for manual review.";
-    // 30 minutes after Duplicate Candidate Scan's own 2 AM run, so there's always a freshly
-    // populated candidate table to work from.
-    public string DefaultCron => "30 2 * * *";
+    // Runs right after Duplicate Candidate Scan inside DuplicateMaintenanceTask, so there's always
+    // a freshly populated candidate table to work from.
 
     private static readonly Regex TrailingDigits = new(@"(\d+)$", RegexOptions.Compiled);
 

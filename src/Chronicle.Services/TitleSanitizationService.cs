@@ -33,12 +33,8 @@ namespace Chronicle.Services;
 /// </summary>
 public sealed class TitleSanitizationService(
     IServiceScopeFactory scopeFactory,
-    ILogger<TitleSanitizationService> logger) : IScheduledTask
+    ILogger<TitleSanitizationService> logger)
 {
-    public string TaskId      => "title_sanitization";
-    public string DisplayName => "Title Sanitization";
-    public string Description => "Strips a stray trailing parenthetical (e.g. a Wikipedia disambiguator like \"(film)\" or \"(actor)\") left behind in a plugin's stored title, and recomputes affected items' resolved metadata. Configurable via app_settings key title_sanitization.config.";
-    public string DefaultCron => "30 4 * * *"; // 4:30 AM, just after MissingSourceReconciliationService's 4 AM run
 
     private const string ConfigKey = "title_sanitization.config";
 

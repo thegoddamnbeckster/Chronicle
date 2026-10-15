@@ -111,22 +111,48 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         {
             var existing = await db.BackgroundTasks
                 .FirstOrDefaultAsync(t => t.TaskId == task.TaskId, ct);
-            if (existing is not null) continue;
+            if (existing is not null)
+            {
+                // Name and description come from code, so a reworded or merged task shows its current text
+                // rather than whatever it was first seeded with. Schedule and enabled state are the user's.
+                existing.DisplayName = task.DisplayName;
+                existing.Description = task.Description;
+                continue;
+            }
 
-            var nextRun = GetNextOccurrence(task.DefaultCron);
+            // A task that took over retired ones inherits their state: disabled when every one that exists was, and the
+            // schedule of the first. Seeded before the retired rows are removed below.
+            var replacesIds = task.ReplacesTaskIds?.ToList() ?? [];   // a mocked task returns null for a default member
+            var replaced = replacesIds.Count == 0 ? []
+                : await db.BackgroundTasks.Where(t => t.PluginId == null && replacesIds.Contains(t.TaskId)).ToListAsync(ct);
+            var enabled = replaced.Count == 0 || replaced.Any(r => r.IsEnabled);
+            var cron    = replaced.Count > 0 && !string.IsNullOrWhiteSpace(replaced[0].CronExpression) ? replaced[0].CronExpression : task.DefaultCron;
+
+            var nextRun = GetNextOccurrence(cron);
             db.BackgroundTasks.Add(new BackgroundTask
             {
                 TaskId         = task.TaskId,
                 DisplayName    = task.DisplayName,
                 Description    = task.Description,
-                CronExpression = task.DefaultCron,
-                IsEnabled      = true,
+                CronExpression = cron,
+                IsEnabled      = enabled,
                 NextRunAt      = nextRun
             });
 
             _log.Information("TaskScheduler: seeded task '{TaskId}' with cron '{Cron}'",
                 task.TaskId, task.DefaultCron);
         }
+
+        // A system row with no registered task is a retired one (renamed, or merged into another task). Nothing can
+        // run it and nothing will ever update it, so it would sit on the page forever with its last stale status.
+        // Plugin rows are left alone: they are owned by the plugin, not by this list.
+        var registered = _tasks.Select(t => t.TaskId).ToHashSet();
+        var retired = await db.BackgroundTasks
+            .Where(t => t.PluginId == null && !registered.Contains(t.TaskId))
+            .ToListAsync(ct);
+        foreach (var row in retired)
+            _log.Information("TaskScheduler: removing retired system task '{TaskId}' ({Name})", row.TaskId, row.DisplayName);
+        db.BackgroundTasks.RemoveRange(retired);
 
         await db.SaveChangesAsync(ct);
     }
