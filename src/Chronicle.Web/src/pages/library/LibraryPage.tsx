@@ -1,11 +1,14 @@
 import { neutralStatusLabel } from '@/utils/typeWording'
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getLibrary, updateLibraryEntry, removeFromLibrary } from '@/api/library'
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  getLibrarySections, getLibrarySectionPage, getLibraryEntryForMedia,
+  updateLibraryEntry, removeFromLibrary,
+} from '@/api/library'
 import { deleteMedia } from '@/api/media'
 import type { LibraryEntry, LibraryStatus } from '@/types'
-import { loadSortSettings, stripLeadingArticle, getIndexLetter } from '@/utils/sortSettings'
+import { loadSortSettings, getIndexLetter } from '@/utils/sortSettings'
 import { loadPrefs, savePrefs, DEFAULT_PREFS, type LibraryPrefs } from '@/utils/libraryPrefs'
 import { posterProgressPercent } from '@/utils/posterProgress'
 import styles from './LibraryPage.module.css'
@@ -75,40 +78,6 @@ export function savePresets(presets: LibraryPreset[]) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function sortEntries(entries: LibraryEntry[], sortBy: SortField, sortDir: SortDir): LibraryEntry[] {
-  const sortSettings = loadSortSettings()
-  return [...entries].sort((a, b) => {
-    let cmp = 0
-    switch (sortBy) {
-      case 'name': {
-        const nameA = sortSettings.ignoreArticles
-          ? stripLeadingArticle(a.mediaItem.name, sortSettings.ignoredArticles)
-          : a.mediaItem.name
-        const nameB = sortSettings.ignoreArticles
-          ? stripLeadingArticle(b.mediaItem.name, sortSettings.ignoredArticles)
-          : b.mediaItem.name
-        cmp = nameA.localeCompare(nameB)
-        break
-      }
-      case 'year':      cmp = (a.mediaItem.year ?? 0) - (b.mediaItem.year ?? 0); break
-      case 'dateAdded': cmp = new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime(); break
-      case 'rating':    cmp = (a.userRating ?? 0) - (b.userRating ?? 0); break
-      case 'status':    cmp = a.status.localeCompare(b.status); break
-    }
-    return sortDir === 'asc' ? cmp : -cmp
-  })
-}
-
-function groupByType(entries: LibraryEntry[]): Map<string, LibraryEntry[]> {
-  const map = new Map<string, LibraryEntry[]>()
-  for (const e of entries) {
-    const key = e.mediaItem.mediaTypeName
-    if (!map.has(key)) map.set(key, [])
-    map.get(key)!.push(e)
-  }
-  return map
-}
 
 function prefsAreDefault(p: LibraryPrefs): boolean {
   return (
@@ -203,7 +172,8 @@ export default function LibraryPage() {
   }
 
   function selectAll() {
-    setSelectedIds(new Set(sorted.map(e => e.mediaItem.id)))
+    // Only what has been loaded: sections fetch just their visible page, so "all" means all on screen.
+    setSelectedIds(new Set(Array.from(grouped.values()).flat().map(e => e.mediaItem.id)))
   }
 
   async function confirmDelete() {
@@ -234,12 +204,13 @@ export default function LibraryPage() {
     setPresetName('')
   }
 
-  const { data: allEntries = [], isLoading, isFetching } = useQuery({
-    queryKey: ['library', 'all', {
-      rootOnly: true,
-      includeMoviesInCollections: !prefs.groupMoviesIntoCollections,
-    }],
-    queryFn: () => getLibrary(undefined, 1, 0, true, !prefs.groupMoviesIntoCollections),
+  // The page asks the server for the section headers (media type + count) first, then for one
+  // page of each open section -- never the whole catalog. Sorting and the status filter are applied
+  // by the server so a page is a true slice of the sorted list.
+  const includeMoviesInCollections = !prefs.groupMoviesIntoCollections
+  const { data: sections = [], isLoading, isFetching } = useQuery({
+    queryKey: ['library', 'sections', { status: prefs.statusFilter ?? null, includeMoviesInCollections }],
+    queryFn: () => getLibrarySections(prefs.statusFilter, includeMoviesInCollections),
     staleTime: 5 * 60 * 1000,          // cached data considered fresh for 5 min
     placeholderData: (prev) => prev,    // keep showing previous data while revalidating
   })
@@ -255,32 +226,67 @@ export default function LibraryPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
   })
 
-  const filtered = useMemo(() => {
-    if (!prefs.statusFilter) return allEntries
-    return allEntries.filter(e => e.status === prefs.statusFilter)
-  }, [allEntries, prefs.statusFilter])
-
-  const sorted = useMemo(
-    () => sortEntries(filtered, prefs.sortBy, prefs.sortDir),
-    [filtered, prefs.sortBy, prefs.sortDir],
-  )
-
   const sortSettings = useMemo(() => loadSortSettings(), [])
-  const grouped = useMemo(() => groupByType(sorted), [sorted])
-  const mediaTypeNames = useMemo(() => Array.from(grouped.keys()).sort(), [grouped])
   const pageSize = PAGE_SIZES[prefs.pageSizePreset]
   const isDefault = prefsAreDefault(prefs)
 
+  const orderedSections = useMemo(
+    () => [...sections].sort((a, b) => a.name.localeCompare(b.name)),
+    [sections],
+  )
+  const mediaTypeNames = useMemo(() => orderedSections.map(sec => sec.name), [orderedSections])
+  const sectionByName = useMemo(() => new Map(orderedSections.map(sec => [sec.name, sec])), [orderedSections])
+
+  // One query per open section. A collapsed section loads nothing until it is opened.
+  const sectionResults = useQueries({
+    queries: orderedSections.map(sec => {
+      const wholeSection = pageSize === Infinity || (expanded[sec.name] ?? false)
+      const page = wholeSection ? 1 : (sectionPage[sec.name] ?? 0) + 1
+      const perPage = wholeSection ? 0 : pageSize
+      return {
+        queryKey: ['library', 'section', {
+          mediaTypeId: sec.mediaTypeId, status: prefs.statusFilter ?? null, includeMoviesInCollections,
+          page, perPage, sortBy: prefs.sortBy, sortDir: prefs.sortDir,
+          articles: sortSettings.ignoreArticles ? sortSettings.ignoredArticles : null,
+        }],
+        queryFn: () => getLibrarySectionPage({
+          mediaTypeId: sec.mediaTypeId,
+          status: prefs.statusFilter,
+          includeMoviesInCollections,
+          page,
+          perPage,
+          sortBy: prefs.sortBy,
+          sortDir: prefs.sortDir,
+          ignoreArticles: sortSettings.ignoreArticles ? sortSettings.ignoredArticles : undefined,
+        }),
+        enabled: !(collapsedSections[sec.name] ?? false),
+        staleTime: 5 * 60 * 1000,
+        placeholderData: (prev: LibraryEntry[] | undefined) => prev,
+      }
+    }),
+  })
+
+  // Entries currently loaded for each section (its visible page, or the whole section when expanded).
+  const grouped = useMemo(() => {
+    const map = new Map<string, LibraryEntry[]>()
+    orderedSections.forEach((sec, i) => map.set(sec.name, sectionResults[i]?.data ?? []))
+    return map
+  }, [orderedSections, sectionResults.map(r => r.dataUpdatedAt).join(',')])
+  const sectionsLoading = sectionResults.some(r => r.isLoading)
+
   const location = useLocation()
 
+  // Coming back from a detail page ("#media-42"): find the item's card and scroll to it. If its
+  // section hasn't loaded that card (collapsed, or on another page), look up which section it
+  // belongs to and open that section whole so the card exists to scroll to.
+  const locatedFor = useRef<number | null>(null)
   useEffect(() => {
-    if (isLoading) return
+    if (isLoading || sectionsLoading) return
     const hash = location.hash  // e.g. "#media-42"
     if (!hash.startsWith('#media-')) return
     const targetId = parseInt(hash.slice('#media-'.length), 10)
     if (isNaN(targetId)) return
 
-    // Find which section this item belongs to
     let targetTypeName: string | undefined
     for (const [typeName, entries] of grouped) {
       if (entries.some(e => e.mediaItem.id === targetId)) {
@@ -288,10 +294,26 @@ export default function LibraryPage() {
         break
       }
     }
-    if (!targetTypeName) return
-    const resolvedTypeName = targetTypeName   // narrow from string | undefined to string
 
-    // Un-collapse the section if it is collapsed
+    if (!targetTypeName) {
+      if (locatedFor.current === targetId) return
+      locatedFor.current = targetId
+      let cancelled = false
+      void getLibraryEntryForMedia(targetId).then(entry => {
+        const name = entry?.mediaItem.mediaTypeName
+        if (cancelled || !name) return
+        setCollapsedSections(prev => {
+          if (!prev[name]) return prev
+          const next = { ...prev, [name]: false }
+          localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
+          return next
+        })
+        setExpanded(prev => ({ ...prev, [name]: true }))
+      }).catch(() => { /* not in this library view; nothing to scroll to */ })
+      return () => { cancelled = true }
+    }
+    const resolvedTypeName = targetTypeName
+
     setCollapsedSections(prev => {
       if (!prev[resolvedTypeName]) return prev
       const next = { ...prev, [resolvedTypeName]: false }
@@ -299,14 +321,7 @@ export default function LibraryPage() {
       return next
     })
 
-    // Expand the section if the item is beyond the current page size
-    const typeEntries = grouped.get(resolvedTypeName)!
-    const itemIndex = typeEntries.findIndex(e => e.mediaItem.id === targetId)
-    if (pageSize !== Infinity && itemIndex >= pageSize) {
-      setExpanded(prev => ({ ...prev, [resolvedTypeName]: true }))
-    }
-
-    // Scroll after images have had time to load — instant behavior avoids
+    // Scroll after images have had time to load -- instant behavior avoids
     // mid-animation layout shifts from lazy-loaded posters above the target.
     const timer = setTimeout(() => {
       document.getElementById(`media-${targetId}`)?.scrollIntoView({
@@ -315,7 +330,7 @@ export default function LibraryPage() {
       })
     }, 500)
     return () => clearTimeout(timer)
-  }, [isLoading, location.hash, grouped, pageSize])
+  }, [isLoading, sectionsLoading, location.hash, grouped])
 
   return (
     <div className={styles.page}>
@@ -483,26 +498,23 @@ export default function LibraryPage() {
         <div className={styles.refreshBar} aria-label="Refreshing library…" />
       )}
 
-      {!isLoading && allEntries.length === 0 && (
+      {!isLoading && sections.length === 0 && !prefs.statusFilter && (
         <p className={styles.empty}>No items in your library yet.</p>
       )}
 
-      {!isLoading && allEntries.length > 0 && sorted.length === 0 && (
+      {!isLoading && sections.length === 0 && prefs.statusFilter && (
         <p className={styles.empty}>No items match the current filter.</p>
       )}
 
       {mediaTypeNames.map(typeName => {
-        const typeEntries = grouped.get(typeName)!
+        const typeCount = sectionByName.get(typeName)!.count
+        const sectionLoading = sectionResults[mediaTypeNames.indexOf(typeName)]?.isLoading ?? false
         const isExpanded = expanded[typeName] ?? false
         const isCollapsed = collapsedSections[typeName] ?? false
         const currentPage = sectionPage[typeName] ?? 0
-        const totalPages = pageSize === Infinity ? 1 : Math.ceil(typeEntries.length / pageSize)
-        const visible = pageSize === Infinity
-          ? typeEntries
-          : isExpanded
-            ? typeEntries
-            : typeEntries.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
-        const hasMore = pageSize !== Infinity && typeEntries.length > pageSize
+        const totalPages = pageSize === Infinity ? 1 : Math.ceil(typeCount / pageSize)
+        const visible = grouped.get(typeName) ?? []
+        const hasMore = pageSize !== Infinity && typeCount > pageSize
         const sectionNavState = {
           listIds: visible.map(e => e.mediaItem.id),
           listLabel: typeName,
@@ -523,11 +535,15 @@ export default function LibraryPage() {
               }}
             >
               <h3 className={styles.sectionTitle}>{typeName}</h3>
-              <span className={styles.sectionCount}>{typeEntries.length}</span>
+              <span className={styles.sectionCount}>{typeCount}</span>
               <span className={`${styles.chevron} ${isCollapsed ? styles.chevronCollapsed : ''}`}>
                 ▾
               </span>
             </div>
+
+            {!isCollapsed && sectionLoading && visible.length === 0 && (
+              <p className={styles.empty}>Loading…</p>
+            )}
 
             {!isCollapsed && <div className={styles.grid}>
               {visible.map(entry => (
@@ -679,7 +695,7 @@ export default function LibraryPage() {
                     if (!isExpanded) setSectionPage(prev => ({ ...prev, [typeName]: 0 }))
                   }}
                 >
-                  {isExpanded ? `Show fewer` : `Show all ${typeEntries.length} items`}
+                  {isExpanded ? `Show fewer` : `Show all ${typeCount} items`}
                 </button>
               </div>
             )}

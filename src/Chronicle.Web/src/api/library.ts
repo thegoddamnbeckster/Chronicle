@@ -15,6 +15,56 @@ export async function getLibrary(
   return data.data ?? []
 }
 
+export interface LibrarySection {
+  mediaTypeId: number
+  name: string
+  count: number
+}
+
+/** Which media types have library items and how many -- enough to draw every section header
+ * without fetching any item. */
+export async function getLibrarySections(
+  status: LibraryStatus | undefined,
+  includeMoviesInCollections: boolean,
+): Promise<LibrarySection[]> {
+  const params: Record<string, string | boolean> = { rootOnly: true }
+  if (status) params.status = status
+  if (includeMoviesInCollections) params.includeMoviesInCollections = true
+  const { data } = await client.get<ApiResponse<LibrarySection[]>>('/library/sections', { params })
+  return data.data ?? []
+}
+
+export interface LibrarySectionPageParams {
+  mediaTypeId: number
+  status?: LibraryStatus
+  includeMoviesInCollections: boolean
+  /** 1-based. perPage 0 = the whole section. */
+  page: number
+  perPage: number
+  sortBy: 'name' | 'year' | 'dateAdded' | 'rating' | 'status'
+  sortDir: 'asc' | 'desc'
+  /** Leading articles to ignore when sorting by name; empty/undefined = sort the name as written. */
+  ignoreArticles?: string[]
+}
+
+/** One page of one section, already sorted by the server -- the Library page only ever asks for
+ * the slice it is about to show. */
+export async function getLibrarySectionPage(p: LibrarySectionPageParams): Promise<LibraryEntry[]> {
+  const params: Record<string, string | number | boolean> = {
+    rootOnly: true,
+    mediaTypeId: p.mediaTypeId,
+    page: p.page,
+    perPage: p.perPage,
+    sortBy: p.sortBy,
+    sortDir: p.sortDir,
+  }
+  if (p.status) params.status = p.status
+  if (p.includeMoviesInCollections) params.includeMoviesInCollections = true
+  if (p.ignoreArticles?.length) params.ignoreArticles = p.ignoreArticles.join(',')
+  const { data } = await client.get<ApiResponse<LibraryEntry[]>>('/library', { params })
+  return data.data ?? []
+}
+
 // Single-item counterpart to getLibrary() -- for a page that only needs one item's own entry
 // (e.g. the media detail page), not the whole catalog. Root-caused live (2026-09-08): the
 // detail page used to call getLibrary() with no args, which fetches literally every trackable

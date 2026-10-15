@@ -5,10 +5,21 @@ namespace Chronicle.Services
     public record AddToLibraryRequest(int MediaItemId, LibraryStatus Status = LibraryStatus.PlanToWatch);
     public record UpdateLibraryRequest(LibraryStatus? Status, int? UserRating, string? Notes);
 
+    public enum LibrarySortField { Name, Year, DateAdded, Rating, Status }
+
+    /// <summary>Database-side ordering for a library page. IgnoredArticles are stripped from the front of the name when sorting by name.</summary>
+    public record LibrarySort(LibrarySortField Field, bool Descending, IReadOnlyList<string>? IgnoredArticles = null);
+
+    public record LibrarySection(int MediaTypeId, string Name, int Count);
+
     public interface ILibraryService
     {
         Task<UserLibrary> AddAsync(int userId, AddToLibraryRequest request, CancellationToken ct = default);
-        Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, bool includeStubs = true, CancellationToken ct = default);
+        Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, bool includeStubs = true, CancellationToken ct = default, int? mediaTypeId = null, LibrarySort? sort = null);
+
+        /// <summary>One entry per media type that has library items, with how many (for the Library page's section headers).</summary>
+        Task<IReadOnlyList<LibrarySection>> GetSectionsAsync(int userId, LibraryStatus? status, bool rootOnly, bool includeMoviesInCollections, bool includeStubs, CancellationToken ct = default);
+
         Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId);
 
         /// <summary>

@@ -59,6 +59,31 @@ namespace Chronicle.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Which media types have library items and how many each -- all the Library page needs
+        /// to draw its section headers before it asks for any one section's first page.
+        /// </summary>
+        [HttpGet("sections")]
+        public async Task<IActionResult> GetSections(
+            [FromQuery] string? status,
+            [FromQuery] bool rootOnly = true,
+            [FromQuery] bool includeMoviesInCollections = false,
+            CancellationToken ct = default)
+        {
+            LibraryStatus? parsedStatus = null;
+            if (!string.IsNullOrEmpty(status))
+            {
+                if (!Enum.TryParse<LibraryStatus>(status, out var s))
+                    return BadRequest(ApiResponse<List<LibrarySection>>.Fail("INVALID_STATUS", $"Unknown status '{status}'."));
+                parsedStatus = s;
+            }
+
+            var prefs = await _userService.GetPreferencesAsync(GetUserId());
+            var sections = await _libraryService.GetSectionsAsync(
+                GetUserId(), parsedStatus, rootOnly, includeMoviesInCollections, prefs.CreateCollectionStubs ?? true, ct);
+            return Ok(ApiResponse<List<LibrarySection>>.Ok(sections.ToList()));
+        }
+
         [HttpGet]
         public async Task<IActionResult> GetLibrary(
             [FromQuery] string? status,
@@ -66,10 +91,25 @@ namespace Chronicle.API.Controllers
             [FromQuery] int perPage = 20,
             [FromQuery] bool rootOnly = false,
             [FromQuery] bool includeMoviesInCollections = false,
+            [FromQuery] int? mediaTypeId = null,
+            [FromQuery] string? sortBy = null,
+            [FromQuery] string? sortDir = null,
+            [FromQuery] string? ignoreArticles = null,
             CancellationToken ct = default)
         {
             var userId = GetUserId();
             LibraryStatus? parsedStatus = null;
+            LibrarySort? sort = null;
+
+            if (!string.IsNullOrEmpty(sortBy))
+            {
+                if (!Enum.TryParse<LibrarySortField>(sortBy, ignoreCase: true, out var field))
+                    return BadRequest(ApiResponse<List<LibraryEntryDto>>.Fail("INVALID_SORT", $"Unknown sort '{sortBy}'."));
+                var articles = string.IsNullOrWhiteSpace(ignoreArticles)
+                    ? null
+                    : ignoreArticles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                sort = new LibrarySort(field, string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase), articles);
+            }
 
             if (!string.IsNullOrEmpty(status))
             {
@@ -81,7 +121,7 @@ namespace Chronicle.API.Controllers
             var prefs = await _userService.GetPreferencesAsync(userId);
             var includeStubs = prefs.CreateCollectionStubs ?? true;
 
-            var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, includeMoviesInCollections, includeStubs, ct);
+            var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, includeMoviesInCollections, includeStubs, ct, mediaTypeId, sort);
 
             // Batch-fetch descendant MetadataJson for all root items in two queries
             // (direct children + grandchildren) to avoid N+1 when computing physical-file flags.

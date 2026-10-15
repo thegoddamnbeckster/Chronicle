@@ -8,6 +8,7 @@ using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Chronicle.API.Controllers
 {
@@ -26,11 +27,13 @@ namespace Chronicle.API.Controllers
         private readonly ChronicleDbContext _context;
         private readonly IPersonResolutionService _personResolutionService;
         private readonly PersonFullCreditsService _fullCredits;
+        private readonly IMemoryCache _cache;
 
         public PeopleController(
             ChronicleDbContext context, IPersonResolutionService personResolutionService,
-            PersonFullCreditsService fullCredits)
+            PersonFullCreditsService fullCredits, IMemoryCache cache)
         {
+            _cache = cache;
             _context = context;
             _personResolutionService = personResolutionService;
             _fullCredits = fullCredits;
@@ -48,6 +51,31 @@ namespace Chronicle.API.Controllers
         /// for this pass (cheap even for a large catalog); callers fetch full rows for just
         /// their page separately.</summary>
         private async Task<List<(int Id, string Key)>> GetOrderedPeopleAsync(
+            int peopleTypeId, string? role, bool? deceased, CancellationToken ct)
+        {
+            // Every page of the infinite scroll, and every jump, used to re-read all ~200K names and
+            // re-sort them in memory just to cut out 40 rows. The ordered list is now kept for a
+            // minute per filter combination and re-validated against a cheap stamp (head count and
+            // newest edit among the people, plus the credit count when filtering by role), so a
+            // newly added or renamed person shows up on the next request rather than after the TTL.
+            var stamp = await _context.MediaItems
+                .Where(m => m.MediaTypeId == peopleTypeId)
+                .GroupBy(_ => 1)
+                .Select(g => new { Count = g.Count(), Newest = g.Max(m => m.UpdatedAt) })
+                .FirstOrDefaultAsync(ct);
+            var creditCount = string.IsNullOrWhiteSpace(role) ? 0 : await _context.MediaCredits.CountAsync(ct);
+            var version = $"{stamp?.Count}|{stamp?.Newest.Ticks}|{creditCount}";
+            var cacheKey = $"people-order|{role}|{deceased}";
+
+            if (_cache.TryGetValue(cacheKey, out (string Version, List<(int Id, string Key)> Rows) hit) && hit.Version == version)
+                return hit.Rows;
+
+            var rows = await BuildOrderedPeopleAsync(peopleTypeId, role, deceased, ct);
+            _cache.Set(cacheKey, (version, rows), TimeSpan.FromMinutes(1));
+            return rows;
+        }
+
+        private async Task<List<(int Id, string Key)>> BuildOrderedPeopleAsync(
             int peopleTypeId, string? role, bool? deceased, CancellationToken ct)
         {
             var query = _context.MediaItems.Where(m => m.MediaTypeId == peopleTypeId);

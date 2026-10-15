@@ -10,7 +10,9 @@ import * as mediaApi from '@/api/media'
 vi.mock('@/api/library')
 vi.mock('@/api/media')
 
-const mockedGetLibrary = vi.mocked(libraryApi.getLibrary)
+const mockedGetSections = vi.mocked(libraryApi.getLibrarySections)
+const mockedGetSectionPage = vi.mocked(libraryApi.getLibrarySectionPage)
+const mockedGetEntryForMedia = vi.mocked(libraryApi.getLibraryEntryForMedia)
 const mockedUpdateLibraryEntry = vi.mocked(libraryApi.updateLibraryEntry)
 const mockedRemoveFromLibrary = vi.mocked(libraryApi.removeFromLibrary)
 const mockedDeleteMedia = vi.mocked(mediaApi.deleteMedia)
@@ -60,13 +62,28 @@ function makeEntry(overrides: Partial<LibraryEntry> = {}, mediaOverrides: Partia
   }
 }
 
-/** Serves getLibrary like the real endpoint: entries filtered by status if given.
- * LibraryPage always requests status=undefined (filtering happens client-side against the
- * full, unfiltered set) so this mainly just returns whatever fixture list is installed. */
-function installGetLibraryHandler(entries: LibraryEntry[]) {
-  mockedGetLibrary.mockImplementation(async (status?: LibraryStatus) => {
-    if (!status) return entries
-    return entries.filter(e => e.status === status)
+/** Serves the library the way the real endpoints do: section headers with counts, then one
+ * sorted, status-filtered page of one section at a time. */
+function installLibraryHandlers(entries: LibraryEntry[]) {
+  const typeNames = [...new Set(entries.map(e => e.mediaItem.mediaTypeName))]
+  const typeId = (name: string) => typeNames.indexOf(name) + 1
+  const matching = (status?: LibraryStatus) => entries.filter(e => !status || e.status === status)
+
+  mockedGetSections.mockImplementation(async (status?: LibraryStatus) =>
+    typeNames
+      .map(name => ({
+        mediaTypeId: typeId(name),
+        name,
+        count: matching(status).filter(e => e.mediaItem.mediaTypeName === name).length,
+      }))
+      .filter(sec => sec.count > 0))
+
+  mockedGetSectionPage.mockImplementation(async p => {
+    const rows = matching(p.status)
+      .filter(e => typeId(e.mediaItem.mediaTypeName) === p.mediaTypeId)
+      .sort((a, b) => a.mediaItem.name.localeCompare(b.mediaItem.name))
+    if (p.sortDir === 'desc') rows.reverse()
+    return p.perPage > 0 ? rows.slice((p.page - 1) * p.perPage, p.page * p.perPage) : rows
   })
 }
 
@@ -86,7 +103,7 @@ afterEach(() => {
 
 describe('LibraryPage', () => {
   it('loads the library on a plain visit and renders items grouped by media type', async () => {
-    installGetLibraryHandler([
+    installLibraryHandlers([
       makeEntry({ status: 'Watching' }, { name: 'Alpha Movie', mediaTypeName: 'Movies' }),
       makeEntry({ status: 'Completed' }, { name: 'Beta Show', mediaTypeName: 'TV Shows' }),
     ])
@@ -98,14 +115,59 @@ describe('LibraryPage', () => {
     expect(screen.getByText('Movies')).toBeInTheDocument()
     expect(screen.getByText('TV Shows')).toBeInTheDocument()
 
-    // rootOnly=true and, since groupMoviesIntoCollections defaults to true,
-    // includeMoviesInCollections must be false.
-    expect(mockedGetLibrary).toHaveBeenCalledWith(undefined, 1, 0, true, false)
+    // Since groupMoviesIntoCollections defaults to true, includeMoviesInCollections must be false.
+    expect(mockedGetSections).toHaveBeenCalledWith(undefined, false)
+    expect(mockedGetSectionPage).toHaveBeenCalledWith(expect.objectContaining({
+      includeMoviesInCollections: false, page: 1, perPage: 24, sortBy: 'name', sortDir: 'asc',
+    }))
   })
 
-  it('filters visible entries by status without changing the underlying fetch', async () => {
+  it('fetches only the first page of a section, not the whole catalog', async () => {
+    installLibraryHandlers(Array.from({ length: 60 }, (_, i) =>
+      makeEntry({}, { name: `Film ${String(i).padStart(2, '0')}` })))
+
+    renderWithProviders(<LibraryPage />)
+    await screen.findByText('Film 00')
+
+    expect(screen.getByText('Film 23')).toBeInTheDocument()
+    expect(screen.queryByText('Film 24')).not.toBeInTheDocument()
+    // The header still shows the real total, from the sections call.
+    expect(screen.getByText('60')).toBeInTheDocument()
+    expect(mockedGetSectionPage).toHaveBeenCalledTimes(1)
+    expect(mockedGetSectionPage).toHaveBeenCalledWith(expect.objectContaining({ page: 1, perPage: 24 }))
+  })
+
+  it('asks for the next page from the server when paging forward', async () => {
     const user = userEvent.setup()
-    installGetLibraryHandler([
+    installLibraryHandlers(Array.from({ length: 60 }, (_, i) =>
+      makeEntry({}, { name: `Film ${String(i).padStart(2, '0')}` })))
+
+    renderWithProviders(<LibraryPage />)
+    await screen.findByText('Film 00')
+    await user.click(screen.getByRole('button', { name: /Next/ }))
+
+    expect(await screen.findByText('Film 24')).toBeInTheDocument()
+    expect(mockedGetSectionPage).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, perPage: 24 }))
+  })
+
+  it('does not fetch a collapsed section until it is opened', async () => {
+    localStorage.setItem('chronicle.library.collapsed', JSON.stringify({ 'TV Shows': true }))
+    installLibraryHandlers([
+      makeEntry({}, { name: 'Alpha Movie', mediaTypeName: 'Movies' }),
+      makeEntry({}, { name: 'Beta Show', mediaTypeName: 'TV Shows' }),
+    ])
+
+    renderWithProviders(<LibraryPage />)
+    await screen.findByText('Alpha Movie')
+
+    expect(screen.queryByText('Beta Show')).not.toBeInTheDocument()
+    expect(mockedGetSectionPage).toHaveBeenCalledTimes(1)
+    expect(mockedGetSectionPage).toHaveBeenCalledWith(expect.objectContaining({ mediaTypeId: 1 }))
+  })
+
+  it('filters by status on the server', async () => {
+    const user = userEvent.setup()
+    installLibraryHandlers([
       makeEntry({ status: 'Watching' }, { name: 'Watching Movie' }),
       makeEntry({ status: 'Completed' }, { name: 'Completed Movie' }),
     ])
@@ -114,7 +176,6 @@ describe('LibraryPage', () => {
     await screen.findByText('Watching Movie')
     expect(screen.getByText('Completed Movie')).toBeInTheDocument()
 
-    const callsBefore = mockedGetLibrary.mock.calls.length
     await user.click(screen.getByRole('button', { name: 'In progress' }))
 
     await waitFor(() => {
@@ -122,16 +183,14 @@ describe('LibraryPage', () => {
     })
     expect(screen.getByText('Watching Movie')).toBeInTheDocument()
 
-    // The status filter is applied client-side against the already-fetched full list --
-    // getLibrary is always called with status=undefined, so filtering must NOT trigger
-    // another network round-trip.
-    expect(mockedGetLibrary.mock.calls.length).toBe(callsBefore)
-    expect(mockedGetLibrary).toHaveBeenLastCalledWith(undefined, 1, 0, true, false)
+    // The filter is part of the request, so counts and pages both reflect it.
+    expect(mockedGetSections).toHaveBeenLastCalledWith('Watching', false)
+    expect(mockedGetSectionPage).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'Watching' }))
   })
 
-  it('re-sorts the visible list when the sort order changes', async () => {
+  it('asks the server to re-sort when the sort order changes', async () => {
     const user = userEvent.setup()
-    installGetLibraryHandler([
+    installLibraryHandlers([
       makeEntry({}, { name: 'Zebra' }),
       makeEntry({}, { name: 'Apple' }),
     ])
@@ -149,11 +208,12 @@ describe('LibraryPage', () => {
       names = screen.getAllByText(/^(Apple|Zebra)$/).map(el => el.textContent)
       expect(names).toEqual(['Zebra', 'Apple'])
     })
+    expect(mockedGetSectionPage).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: 'name', sortDir: 'desc' }))
   })
 
   it('persists preference changes to localStorage', async () => {
     const user = userEvent.setup()
-    installGetLibraryHandler([makeEntry({ status: 'Watching' }, { name: 'Some Movie' })])
+    installLibraryHandlers([makeEntry({ status: 'Watching' }, { name: 'Some Movie' })])
 
     renderWithProviders(<LibraryPage />)
     await screen.findByText('Some Movie')
@@ -169,7 +229,7 @@ describe('LibraryPage', () => {
   it('updates an entry status via the per-item select and calls the API with the right id/status', async () => {
     const user = userEvent.setup()
     const entry = makeEntry({ status: 'Unwatched' }, { name: 'Status Movie' })
-    installGetLibraryHandler([entry])
+    installLibraryHandlers([entry])
 
     renderWithProviders(<LibraryPage />)
     await screen.findByText('Status Movie')
@@ -185,7 +245,7 @@ describe('LibraryPage', () => {
   it('removes an entry only after the user confirms the browser dialog', async () => {
     const user = userEvent.setup()
     const entry = makeEntry({}, { name: 'Removable Movie' })
-    installGetLibraryHandler([entry])
+    installLibraryHandlers([entry])
 
     renderWithProviders(<LibraryPage />)
     await screen.findByText('Removable Movie')
@@ -207,7 +267,7 @@ describe('LibraryPage', () => {
     const user = userEvent.setup()
     const entry1 = makeEntry({}, { name: 'Bulk One' })
     const entry2 = makeEntry({}, { name: 'Bulk Two' })
-    installGetLibraryHandler([entry1, entry2])
+    installLibraryHandlers([entry1, entry2])
 
     renderWithProviders(<LibraryPage />)
     await screen.findByText('Bulk One')
@@ -238,7 +298,7 @@ describe('LibraryPage', () => {
   it('shows the "Missing" badge based on hasMetadataOnly, not isStub', async () => {
     const stubOnly = makeEntry({}, { name: 'Stub Not Missing', isStub: true, hasMetadataOnly: false })
     const trulyMissing = makeEntry({}, { name: 'Truly Missing', isStub: false, hasMetadataOnly: true })
-    installGetLibraryHandler([stubOnly, trulyMissing])
+    installLibraryHandlers([stubOnly, trulyMissing])
 
     renderWithProviders(<LibraryPage />)
     await screen.findByText('Stub Not Missing')
@@ -252,7 +312,7 @@ describe('LibraryPage', () => {
   })
 
   it('prefixes an episode/season entry with its show name via ancestors[0]', async () => {
-    installGetLibraryHandler([
+    installLibraryHandlers([
       makeEntry({}, {
         name: 'S01E01',
         mediaTypeName: 'Episodes',
@@ -266,8 +326,23 @@ describe('LibraryPage', () => {
   })
 
   it('shows an empty-library message when there are no entries', async () => {
-    installGetLibraryHandler([])
+    installLibraryHandlers([])
     renderWithProviders(<LibraryPage />)
     expect(await screen.findByText('No items in your library yet.')).toBeInTheDocument()
+  })
+
+  it('opens the section of a #media-<id> target that is not on the loaded page', async () => {
+    const entries = Array.from({ length: 40 }, (_, i) =>
+      makeEntry({}, { name: `Film ${String(i).padStart(2, '0')}` }))
+    installLibraryHandlers(entries)
+    const target = entries[35]
+    mockedGetEntryForMedia.mockResolvedValue(target)
+
+    renderWithProviders(<LibraryPage />, { initialEntries: [`/library#media-${target.mediaItem.id}`] })
+
+    // Not on the first page of 24, so the page looks the item up and loads the section whole.
+    expect(await screen.findByText('Film 35')).toBeInTheDocument()
+    expect(mockedGetEntryForMedia).toHaveBeenCalledWith(target.mediaItem.id)
+    expect(mockedGetSectionPage).toHaveBeenLastCalledWith(expect.objectContaining({ perPage: 0 }))
   })
 })

@@ -52,26 +52,13 @@ namespace Chronicle.Services
             return entry;
         }
 
-        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, bool includeStubs = true, CancellationToken ct = default)
+        /// <summary>
+        /// The structural half of the library query (trackable, root-only, stubs), shared by the
+        /// paged listing and the per-section counts so both always agree on what is "in" the library.
+        /// </summary>
+        private async Task<IQueryable<MediaItem>> BuildItemsQueryAsync(
+            bool rootOnly, bool includeMoviesInCollections, bool includeStubs, CancellationToken ct)
         {
-            // The library is a shared catalog — every user sees ALL media items.
-            // user_libraries rows carry per-user tracking data (status, rating, notes).
-            // We auto-create a row (Unwatched) for any item the user hasn't tracked yet
-            // so that PATCH/DELETE by UserLibrary.Id continue to work normally.
-            //
-            // Root-caused live (2026-09-07) as the actual cause of "loading is still
-            // comparatively slow": this used to load EVERY trackable MediaItem in the whole
-            // catalog (with MediaType/ExternalIds eagerly included), auto-create tracking rows
-            // for all of them, and only THEN sort/filter/page in application memory -- 13.8s on
-            // its own for ~88K items, on every single page load, for a page that only shows 20.
-            // Filtering, sorting (by UpdatedAt, via a LEFT JOIN so an untracked item's absent
-            // row doesn't need to exist yet to compare against), and paging now all happen at
-            // the database level; only the current page's items are ever fully materialized or
-            // auto-created. Confirmed live: ~13.8s -> well under 100ms at the same catalog size.
-
-            // 1. Structural filters (trackable, rootOnly, stubs) -- IQueryable only, no
-            // .Include()/.ToListAsync() yet, so nothing here materializes more than the ids the
-            // WHERE/ORDER BY/LIMIT below actually need.
             var itemsQuery = _context.MediaItems
                 .Where(m => m.MediaType!.IsTrackable)
                 .AsQueryable();
@@ -111,6 +98,149 @@ namespace Chronicle.Services
                 }
             }
 
+            return itemsQuery;
+        }
+
+        private sealed class LibraryRow
+        {
+            public MediaItem MediaItem { get; set; } = null!;
+            public UserLibrary? Lib { get; set; }
+        }
+
+        private static readonly LibraryStatus[] StatusesAlphabetical =
+            Enum.GetValues<LibraryStatus>().OrderBy(v => v.ToString(), StringComparer.Ordinal).ToArray();
+
+        /// <summary>
+        /// Orders the rows in the database so a page can be cut with Skip/Take. Without a sort the
+        /// historic order (most recently touched first) is kept. Id is always the final tiebreaker
+        /// so two requests for adjacent pages never overlap or skip a row.
+        /// </summary>
+        private static IQueryable<LibraryRow> ApplySort(IQueryable<LibraryRow> rows, LibrarySort? sort)
+        {
+            if (sort is null)
+                return rows.OrderByDescending(x => x.Lib != null ? x.Lib.UpdatedAt : x.MediaItem.CreatedAt);
+
+            var desc = sort.Descending;
+            IOrderedQueryable<LibraryRow> ordered;
+            switch (sort.Field)
+            {
+                case LibrarySortField.Year:
+                    ordered = desc ? rows.OrderByDescending(x => x.MediaItem.Year ?? 0) : rows.OrderBy(x => x.MediaItem.Year ?? 0);
+                    break;
+                case LibrarySortField.DateAdded:
+                    ordered = desc
+                        ? rows.OrderByDescending(x => x.Lib != null ? x.Lib.AddedAt : x.MediaItem.CreatedAt)
+                        : rows.OrderBy(x => x.Lib != null ? x.Lib.AddedAt : x.MediaItem.CreatedAt);
+                    break;
+                case LibrarySortField.Rating:
+                    ordered = desc ? rows.OrderByDescending(x => x.Lib!.UserRating ?? 0) : rows.OrderBy(x => x.Lib!.UserRating ?? 0);
+                    break;
+                case LibrarySortField.Status:
+                    // Status is stored as text; alphabetical by name, same as the page used to sort it.
+                    var rank = StatusRankExpression();
+                    ordered = desc ? rows.OrderByDescending(rank) : rows.OrderBy(rank);
+                    break;
+                default:
+                    var key = NameKeyExpression(sort.IgnoredArticles);
+                    ordered = desc ? rows.OrderByDescending(key) : rows.OrderBy(key);
+                    break;
+            }
+            return desc ? ordered.ThenByDescending(x => x.MediaItem.Id) : ordered.ThenBy(x => x.MediaItem.Id);
+        }
+
+        private static System.Linq.Expressions.Expression<Func<LibraryRow, int>> StatusRankExpression()
+        {
+            var row = System.Linq.Expressions.Expression.Parameter(typeof(LibraryRow), "x");
+            var lib = System.Linq.Expressions.Expression.Property(row, nameof(LibraryRow.Lib));
+            var status = System.Linq.Expressions.Expression.Condition(
+                System.Linq.Expressions.Expression.NotEqual(lib, System.Linq.Expressions.Expression.Constant(null, typeof(UserLibrary))),
+                System.Linq.Expressions.Expression.Property(lib, nameof(UserLibrary.Status)),
+                System.Linq.Expressions.Expression.Constant(LibraryStatus.Unwatched));
+            System.Linq.Expressions.Expression body = System.Linq.Expressions.Expression.Constant(StatusesAlphabetical.Length);
+            for (var i = StatusesAlphabetical.Length - 1; i >= 0; i--)
+                body = System.Linq.Expressions.Expression.Condition(
+                    System.Linq.Expressions.Expression.Equal(status, System.Linq.Expressions.Expression.Constant(StatusesAlphabetical[i])),
+                    System.Linq.Expressions.Expression.Constant(i),
+                    body);
+            return System.Linq.Expressions.Expression.Lambda<Func<LibraryRow, int>>(body, row);
+        }
+
+        /// <summary>
+        /// Lower-cased name with an optional leading article removed ("The Dark Knight" sorts under D).
+        /// Built as an expression tree so it translates to a CASE in SQL and the sort stays in the database.
+        /// </summary>
+        private static System.Linq.Expressions.Expression<Func<LibraryRow, string>> NameKeyExpression(IReadOnlyList<string>? articles)
+        {
+            var ex = typeof(System.Linq.Expressions.Expression);
+            var row = System.Linq.Expressions.Expression.Parameter(typeof(LibraryRow), "x");
+            var item = System.Linq.Expressions.Expression.Property(row, nameof(LibraryRow.MediaItem));
+            var name = System.Linq.Expressions.Expression.Property(item, nameof(MediaItem.Name));
+            var lower = System.Linq.Expressions.Expression.Call(name, typeof(string).GetMethod(nameof(string.ToLower), Type.EmptyTypes)!);
+            System.Linq.Expressions.Expression body = lower;
+            var startsWith = typeof(string).GetMethod(nameof(string.StartsWith), new[] { typeof(string) })!;
+            var substring = typeof(string).GetMethod(nameof(string.Substring), new[] { typeof(int) })!;
+            foreach (var article in (articles ?? Array.Empty<string>()).Select(a => a.Trim().ToLowerInvariant()).Where(a => a.Length > 0).Distinct().Reverse())
+            {
+                var prefix = article + " ";
+                body = System.Linq.Expressions.Expression.Condition(
+                    System.Linq.Expressions.Expression.Call(lower, startsWith, System.Linq.Expressions.Expression.Constant(prefix)),
+                    System.Linq.Expressions.Expression.Call(lower, substring, System.Linq.Expressions.Expression.Constant(prefix.Length)),
+                    body);
+            }
+            return System.Linq.Expressions.Expression.Lambda<Func<LibraryRow, string>>(body, row);
+        }
+
+        public async Task<IReadOnlyList<LibrarySection>> GetSectionsAsync(
+            int userId, LibraryStatus? status, bool rootOnly, bool includeMoviesInCollections, bool includeStubs,
+            CancellationToken ct = default)
+        {
+            var itemsQuery = await BuildItemsQueryAsync(rootOnly, includeMoviesInCollections, includeStubs, ct);
+
+            var joined =
+                from m in itemsQuery
+                join l in _context.UserLibraries.Where(ul => ul.UserId == userId)
+                    on m.Id equals l.MediaItemId into libGroup
+                from lib in libGroup.DefaultIfEmpty()
+                select new LibraryRow { MediaItem = m, Lib = lib };
+
+            if (status.HasValue)
+                joined = joined.Where(x => (x.Lib != null ? x.Lib.Status : LibraryStatus.Unwatched) == status.Value);
+
+            var rows = await joined
+                .GroupBy(x => new { x.MediaItem.MediaTypeId, x.MediaItem.MediaType!.DisplayName })
+                .Select(g => new { g.Key.MediaTypeId, g.Key.DisplayName, Count = g.Count() })
+                .ToListAsync(ct);
+
+            return rows
+                .OrderBy(r => r.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .Select(r => new LibrarySection(r.MediaTypeId, r.DisplayName, r.Count))
+                .ToList();
+        }
+
+        public async Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, bool includeStubs = true, CancellationToken ct = default, int? mediaTypeId = null, LibrarySort? sort = null)
+        {
+            // The library is a shared catalog — every user sees ALL media items.
+            // user_libraries rows carry per-user tracking data (status, rating, notes).
+            // We auto-create a row (Unwatched) for any item the user hasn't tracked yet
+            // so that PATCH/DELETE by UserLibrary.Id continue to work normally.
+            //
+            // Root-caused live (2026-09-07) as the actual cause of "loading is still
+            // comparatively slow": this used to load EVERY trackable MediaItem in the whole
+            // catalog (with MediaType/ExternalIds eagerly included), auto-create tracking rows
+            // for all of them, and only THEN sort/filter/page in application memory -- 13.8s on
+            // its own for ~88K items, on every single page load, for a page that only shows 20.
+            // Filtering, sorting (by UpdatedAt, via a LEFT JOIN so an untracked item's absent
+            // row doesn't need to exist yet to compare against), and paging now all happen at
+            // the database level; only the current page's items are ever fully materialized or
+            // auto-created. Confirmed live: ~13.8s -> well under 100ms at the same catalog size.
+
+            // 1. Structural filters (trackable, rootOnly, stubs) -- IQueryable only, no
+            // .Include()/.ToListAsync() yet, so nothing here materializes more than the ids the
+            // WHERE/ORDER BY/LIMIT below actually need.
+            var itemsQuery = await BuildItemsQueryAsync(rootOnly, includeMoviesInCollections, includeStubs, ct);
+            if (mediaTypeId.HasValue)
+                itemsQuery = itemsQuery.Where(m => m.MediaTypeId == mediaTypeId.Value);
+
             // 2. LEFT JOIN against this user's own UserLibrary rows -- an item with no row yet
             // is treated as Unwatched (matching what auto-create below would give it) with its
             // MediaItem.CreatedAt standing in for UpdatedAt so it sorts by how long it's been in
@@ -123,12 +253,12 @@ namespace Chronicle.Services
                 join l in _context.UserLibraries.Where(ul => ul.UserId == userId)
                     on m.Id equals l.MediaItemId into libGroup
                 from lib in libGroup.DefaultIfEmpty()
-                select new { MediaItem = m, Lib = lib };
+                select new LibraryRow { MediaItem = m, Lib = lib };
 
             if (status.HasValue)
                 joined = joined.Where(x => (x.Lib != null ? x.Lib.Status : LibraryStatus.Unwatched) == status.Value);
 
-            var ordered = joined.OrderByDescending(x => x.Lib != null ? x.Lib.UpdatedAt : x.MediaItem.CreatedAt);
+            var ordered = ApplySort(joined, sort);
 
             if (page < 1) page = 1;
 
