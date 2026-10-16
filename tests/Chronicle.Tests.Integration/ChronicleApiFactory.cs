@@ -32,10 +32,6 @@ namespace Chronicle.Tests.Integration
 
             builder.ConfigureServices(services =>
             {
-                // A test can give its own flow of execution its own media-type view (MediaTypeRegistry.IsolateForCurrentContext);
-                // the server only sees it if the client's execution context reaches the request.
-                services.Configure<Microsoft.AspNetCore.TestHost.TestServerOptions>(o => o.PreserveExecutionContext = true);
-
                 // The in-process test server reports no client address, so every test shares one
                 // "address" and a few hundred registrations/logins would trip the real limits.
                 // Tests of the throttle itself replace this with their own settings.
@@ -86,9 +82,9 @@ namespace Chronicle.Tests.Integration
                 db.SaveChanges();
             }
 
-            // The application reads media types from a snapshot loaded at start, which (here) was taken before this seed. Give the
-            // calling test its own view of what is in this database, so it never depends on which other host loaded the process-wide one.
-            Chronicle.Services.MediaTypeRegistry.IsolateForCurrentContext();
+            // The application reads media types from a process-wide snapshot loaded at start, which (here) was taken before this
+            // seed. Load it from this database so a test never depends on which other host happened to load it last. (The
+            // integration tests run one at a time for exactly this reason: hosts share that snapshot.)
             Chronicle.Services.MediaTypeRegistry.RefreshAsync(db).GetAwaiter().GetResult();
         }
     }

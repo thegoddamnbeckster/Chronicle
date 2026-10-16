@@ -56,10 +56,6 @@ namespace Chronicle.Services
         /// <summary>Replaces the snapshot for the current flow of execution only (tests run in parallel; each keeps its own types).</summary>
         public static void LoadForCurrentContext(IEnumerable<MediaTypeInfo> types) => _scoped.Value = new Holder { View = Build(types) };
 
-        /// <summary>Gives the current flow of execution its own copy of what is loaded now, so other hosts starting or reloading in
-        /// the same process (parallel integration tests) cannot change what this flow sees.</summary>
-        public static void IsolateForCurrentContext() => _scoped.Value = new Holder { View = _snapshot };
-
         public static async Task RefreshAsync(ChronicleDbContext db, CancellationToken ct = default) =>
             Load((await db.MediaTypes.AsNoTracking().ToListAsync(ct)).Select(ToInfo));
 
