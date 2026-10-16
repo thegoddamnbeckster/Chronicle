@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 namespace Chronicle.API;
 
 /// <summary>
-/// Sets PRAGMA busy_timeout and PRAGMA foreign_keys on every SQLite connection opened by
+/// Sets PRAGMA busy_timeout, foreign_keys and synchronous on every SQLite connection opened by
 /// EF Core.
 ///
 /// busy_timeout: lets concurrent background tasks (enrichment, scheduled scan, library) wait
@@ -33,7 +33,10 @@ internal sealed class SqliteBusyTimeoutInterceptor : DbConnectionInterceptor
     /// <param name="tempDirectory">Where SQLite may put scratch files (created if missing). Null leaves SQLite's default.</param>
     public SqliteBusyTimeoutInterceptor(string? tempDirectory = null)
     {
-        _pragmas = $"PRAGMA busy_timeout={BusyTimeoutMs}; PRAGMA foreign_keys=ON;";
+        // synchronous=NORMAL: with the write-ahead log (set at startup) SQLite then waits for the disk once per checkpoint instead of once
+        // per commit. A power cut can lose the last few moments of writes but never corrupts the file; for a media tracker whose busiest
+        // writers are scrobbles and enrichment, the shorter write lock is worth far more than the last second of durability.
+        _pragmas = $"PRAGMA busy_timeout={BusyTimeoutMs}; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;";
         if (tempDirectory is not null)
         {
             Directory.CreateDirectory(tempDirectory);
