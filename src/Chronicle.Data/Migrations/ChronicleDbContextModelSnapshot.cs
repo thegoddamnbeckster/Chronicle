@@ -518,6 +518,8 @@ namespace Chronicle.Data.Migrations
 
                     b.HasIndex("ParentId");
 
+                    b.HasIndex("HierarchyLevel", "Name");
+
                     b.HasIndex("NormalizedName", "MediaTypeId")
                         .HasDatabaseName("idx_media_items_normalized_name_mediatypeid");
 
