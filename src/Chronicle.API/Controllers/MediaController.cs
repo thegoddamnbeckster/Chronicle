@@ -799,6 +799,12 @@ namespace Chronicle.API.Controllers
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id)
         {
+            // The library is shared, so one person's delete removes the item for everyone; an administrator can reserve it (Settings > Users).
+            if (!User.IsInRole("Admin")
+                && await HttpContext.RequestServices.GetRequiredService<Chronicle.Services.Security.IMediaRightsPolicy>().IsDeleteAdminOnlyAsync(HttpContext.RequestAborted))
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(
+                    "MEDIA_DELETE_RESTRICTED", "Only an administrator may delete media. Ask one to remove it."));
+
             try
             {
                 await _mediaService.DeleteAsync(id, HttpContext.RequestAborted);

@@ -6,9 +6,12 @@ import { renderWithProviders } from '@/test/test-utils'
 import type { LibraryEntry, LibraryStatus, MediaItem } from '@/types'
 import * as libraryApi from '@/api/library'
 import * as mediaApi from '@/api/media'
+import * as rightsApi from '@/api/mediaRights'
+import { makeUser } from '@/test/users'
 
 vi.mock('@/api/library')
 vi.mock('@/api/media')
+vi.mock('@/api/mediaRights')
 
 const mockedGetSections = vi.mocked(libraryApi.getLibrarySections)
 const mockedGetSectionPage = vi.mocked(libraryApi.getLibrarySectionPage)
@@ -261,6 +264,20 @@ describe('LibraryPage', () => {
     await waitFor(() => {
       expect(mockedRemoveFromLibrary).toHaveBeenCalledWith(entry.id)
     })
+  })
+
+  it('shows an ordinary user no bulk Delete once an administrator has reserved deletion', async () => {
+    const user = userEvent.setup()
+    vi.mocked(rightsApi.getMediaRights).mockResolvedValue({ deleteAdminOnly: true })
+    const entry1 = makeEntry({}, { name: 'Bulk One' })
+    installLibraryHandlers([entry1])
+
+    renderWithProviders(<LibraryPage />, { user: makeUser(false) })
+    await screen.findByText('Bulk One')
+    await user.click(screen.getByRole('button', { name: 'Select' }))
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Delete \(/ })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Select All' })).toBeInTheDocument()
   })
 
   it('deletes selected items in bulk through select mode and the confirmation modal', async () => {

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import UsersPage from './UsersPage'
 import * as users from '@/api/users'
 import * as auth from '@/api/auth'
+import * as rights from '@/api/mediaRights'
 import { useAuth } from '@/hooks/useAuth'
 
 vi.mock('@/api/users', async importOriginal => {
@@ -14,6 +15,7 @@ vi.mock('@/api/auth', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/auth')>()
   return { ...actual, getRegistrationLocked: vi.fn(), setRegistrationLocked: vi.fn() }
 })
+vi.mock('@/api/mediaRights')
 vi.mock('@/hooks/useAuth')
 
 const account = (over: Partial<users.UserAccountDto>): users.UserAccountDto => ({
@@ -22,6 +24,7 @@ const account = (over: Partial<users.UserAccountDto>): users.UserAccountDto => (
 })
 
 beforeEach(() => {
+  vi.mocked(rights.getMediaRights).mockResolvedValue({ deleteAdminOnly: false })
   vi.mocked(auth.getRegistrationLocked).mockResolvedValue(false)
   vi.mocked(useAuth).mockReturnValue({
     user: { id: 1, username: 'admin', email: null, displayName: null, isAdmin: true, showDiagnostics: false, showNowPlayingBanner: true, showAllCredits: false },
@@ -87,5 +90,27 @@ describe('UsersPage sign-up lock', () => {
     expect(await screen.findByLabelText(/allow people to create/i)).not.toBeChecked()
     await userEvent.click(box)
     expect(auth.setRegistrationLocked).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('UsersPage delete rights', () => {
+  it('reserves deletion for administrators and opens it again', async () => {
+    vi.mocked(rights.setMediaRights).mockImplementation(async adminOnly => ({ deleteAdminOnly: adminOnly }))
+    render(<UsersPage />)
+    const box = await screen.findByLabelText(/allow every user to delete media/i)
+    expect(box).toBeChecked()
+
+    await userEvent.click(box)
+    expect(rights.setMediaRights).toHaveBeenLastCalledWith(true)
+    expect(await screen.findByLabelText(/allow every user to delete media/i)).not.toBeChecked()
+
+    await userEvent.click(box)
+    expect(rights.setMediaRights).toHaveBeenLastCalledWith(false)
+  })
+
+  it('shows the setting as it is stored', async () => {
+    vi.mocked(rights.getMediaRights).mockResolvedValue({ deleteAdminOnly: true })
+    render(<UsersPage />)
+    expect(await screen.findByLabelText(/allow every user to delete media/i)).not.toBeChecked()
   })
 })

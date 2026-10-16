@@ -16,6 +16,7 @@ import {
 import ContactsEditor from '@/components/settings/ContactsEditor'
 import SessionsList from '@/components/settings/SessionsList'
 import { listUserSessions, endUserSessions, getRegistrationLocked, setRegistrationLocked } from '@/api/auth'
+import { getMediaRights, setMediaRights } from '@/api/mediaRights'
 import { issueResetToken, type ResetTokenDto } from '@/api/users'
 import styles from './UsersPage.module.css'
 
@@ -58,6 +59,25 @@ export default function UsersPage() {
   useEffect(() => {
     getRegistrationLocked().then(setSignUpLocked).catch(() => { /* leave unlocked; the toggle reports failures */ })
   }, [])
+
+  const [deleteAdminOnly, setDeleteAdminOnly] = useState(false)
+  const [rightsBusy, setRightsBusy] = useState(false)
+
+  useEffect(() => {
+    getMediaRights().then(r => setDeleteAdminOnly(r.deleteAdminOnly)).catch(() => { /* leave open; the toggle reports failures */ })
+  }, [])
+
+  async function toggleDeleteRights(adminOnly: boolean) {
+    setRightsBusy(true)
+    setError('')
+    try {
+      setDeleteAdminOnly((await setMediaRights(adminOnly)).deleteAdminOnly)
+    } catch (err) {
+      setError(apiMessage(err, 'Could not change who may delete media.'))
+    } finally {
+      setRightsBusy(false)
+    }
+  }
 
   async function toggleSignUp(allow: boolean) {
     setLockBusy(true)
@@ -178,6 +198,14 @@ export default function UsersPage() {
         </label>
         <p className={styles.label}>
           When off, only an administrator can add users. If you are locked out, run <code>Chronicle.API --unlock-registration</code> on the server.
+        </p>
+        <label>
+          <input type="checkbox" checked={!deleteAdminOnly} disabled={rightsBusy}
+                 onChange={e => void toggleDeleteRights(!e.target.checked)} />{' '}
+          Allow every user to delete media
+        </label>
+        <p className={styles.label}>
+          The library is shared, so a delete removes the item for everyone. When off, only administrators see and may use Delete.
         </p>
       </div>
 

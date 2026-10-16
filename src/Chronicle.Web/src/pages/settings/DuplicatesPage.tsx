@@ -9,6 +9,7 @@ import {
   type DuplicateCandidateItem,
 } from '@/api/duplicates'
 import { deleteMedia } from '@/api/media'
+import { useCanDeleteMedia } from '@/hooks/useCanDeleteMedia'
 import MergeModal from '@/components/MergeModal'
 import styles from './DuplicatesPage.module.css'
 import { PosterImage } from '@/components/PosterImage'
@@ -143,6 +144,7 @@ function ItemCard({
   // format ids differently, so one film's cards could look like they disagreed.
   const displayIds = displayExternalIds(item.externalIds)
 
+  const canDelete = useCanDeleteMedia()
   const handleDelete = () => {
     if (window.confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) onDelete()
   }
@@ -179,9 +181,11 @@ function ItemCard({
             📁 {item.filePath}
           </p>
         )}
-        <button className={styles.deleteBtn} onClick={handleDelete} disabled={deleting}>
-          {deleting ? 'Deleting…' : 'Delete this one from Chronicle'}
-        </button>
+        {canDelete && (
+          <button className={styles.deleteBtn} onClick={handleDelete} disabled={deleting}>
+            {deleting ? 'Deleting…' : 'Delete this one from Chronicle'}
+          </button>
+        )}
       </div>
     </div>
   )

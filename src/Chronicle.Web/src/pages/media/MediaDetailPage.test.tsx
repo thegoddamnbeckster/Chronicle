@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Routes, Route } from 'react-router-dom'
 import MediaDetailPage from './MediaDetailPage'
 import { renderWithProviders } from '@/test/test-utils'
 import type { MediaItem, LibraryEntry, User, PersonListItem } from '@/types'
 import * as mediaApi from '@/api/media'
+import * as rightsApi from '@/api/mediaRights'
+import { makeUser } from '@/test/users'
 import * as libraryApi from '@/api/library'
 import * as pluginsApi from '@/api/plugins'
 import * as settingsApi from '@/api/settings'
@@ -15,6 +17,7 @@ import * as duplicatesApi from '@/api/duplicates'
 import { useAuth } from '@/hooks/useAuth'
 
 vi.mock('@/api/media')
+vi.mock('@/api/mediaRights')
 vi.mock('@/api/library')
 vi.mock('@/api/plugins')
 vi.mock('@/api/settings')
@@ -222,6 +225,17 @@ describe('MediaDetailPage', () => {
     expect(await screen.findByText(/2 \/ 3/)).toBeInTheDocument()   // Alpha, Middle, Zed
     expect(screen.getByRole('link', { name: /Prev/ })).toHaveAttribute('href', '/media/101')
     expect(screen.getByRole('link', { name: /Next/ })).toHaveAttribute('href', '/media/303')
+  })
+
+  it('offers no Delete to an ordinary user once an administrator has reserved deletion', async () => {
+    vi.mocked(rightsApi.getMediaRights).mockResolvedValue({ deleteAdminOnly: true })
+    renderWithProviders(
+      <Routes><Route path="/media/:id" element={<MediaDetailPage />} /></Routes>,
+      { initialEntries: [`/media/${MEDIA_ID}`], user: makeUser(false) },
+    )
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument())
   })
 
   it('after deleting a top-level item, lands on the Library', async () => {

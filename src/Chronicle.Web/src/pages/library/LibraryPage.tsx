@@ -7,6 +7,7 @@ import {
   updateLibraryEntry, removeFromLibrary,
 } from '@/api/library'
 import { deleteMedia } from '@/api/media'
+import { useCanDeleteMedia } from '@/hooks/useCanDeleteMedia'
 import type { LibraryEntry, LibraryStatus } from '@/types'
 import { loadSortSettings, getIndexLetter } from '@/utils/sortSettings'
 import { loadPrefs, savePrefs, DEFAULT_PREFS, type LibraryPrefs } from '@/utils/libraryPrefs'
@@ -118,6 +119,7 @@ export default function LibraryPage() {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const canDelete = useCanDeleteMedia()
   const [isDeleting, setIsDeleting] = useState(false)
 
   const qc = useQueryClient()
@@ -349,13 +351,15 @@ export default function LibraryPage() {
             ) : (
               <>
                 <button className={styles.actionBtn} onClick={selectAll}>Select All</button>
-                <button
-                  className={styles.deleteModeBtn}
-                  disabled={selectedIds.size === 0 || isDeleting}
-                  onClick={() => setDeleteConfirm(true)}
-                >
-                  Delete ({selectedIds.size})
-                </button>
+                {canDelete && (
+                  <button
+                    className={styles.deleteModeBtn}
+                    disabled={selectedIds.size === 0 || isDeleting}
+                    onClick={() => setDeleteConfirm(true)}
+                  >
+                    Delete ({selectedIds.size})
+                  </button>
+                )}
                 <button className={styles.cancelBtn} onClick={exitSelectMode}>✕ Cancel</button>
               </>
             )}

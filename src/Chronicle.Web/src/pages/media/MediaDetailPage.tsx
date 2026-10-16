@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCanDeleteMedia } from '@/hooks/useCanDeleteMedia'
 import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, unparentFromSeries, reparentToSeries, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { childrenLabel as childrenLabelFor, statusLabel } from '@/utils/typeWording'
@@ -260,6 +261,7 @@ export default function MediaDetailPage() {
   })
 
   const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const canDelete = useCanDeleteMedia()
 
   const deleteMut = useMutation({
     mutationFn: () => deleteMedia(mediaId),
@@ -965,7 +967,7 @@ export default function MediaDetailPage() {
                 </button>
               </div>
             )}
-            {!deleteConfirm ? (
+            {!canDelete ? null : !deleteConfirm ? (
               <button className={styles.deleteBtn} onClick={() => setDeleteConfirm(true)}>
                 Delete
               </button>

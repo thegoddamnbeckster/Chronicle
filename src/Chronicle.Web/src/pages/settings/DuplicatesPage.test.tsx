@@ -5,10 +5,13 @@ import DuplicatesPage from './DuplicatesPage'
 import { renderWithProviders } from '@/test/test-utils'
 import * as duplicatesApi from '@/api/duplicates'
 import * as mediaApi from '@/api/media'
+import * as rightsApi from '@/api/mediaRights'
+import { makeUser } from '@/test/users'
 import type { DuplicateCandidate, DuplicateCandidateItem } from '@/api/duplicates'
 
 vi.mock('@/api/duplicates')
 vi.mock('@/api/media')
+vi.mock('@/api/mediaRights')
 
 const mockedGetDuplicateCandidates = vi.mocked(duplicatesApi.getDuplicateCandidates)
 const mockedDismissDuplicate = vi.mocked(duplicatesApi.dismissDuplicate)
@@ -44,6 +47,32 @@ beforeEach(() => {
  * respected (declining does nothing) and that the right item id is deleted, since a future
  * refactor of the mutation/confirm flow has nothing else to catch a regression here. */
 describe('DuplicatesPage', () => {
+  it('offers no delete button to an ordinary user once an administrator has reserved deletion', async () => {
+    vi.mocked(rightsApi.getMediaRights).mockResolvedValue({ deleteAdminOnly: true })
+    mockedGetDuplicateCandidates.mockResolvedValue({
+      data: [makeCandidate(1, makeItem({ id: 101, name: 'Real Episode' }), makeItem({ id: 102, name: 'Phantom Episode' }))],
+      pagination: { page: 1, perPage: 20, total: 1 },
+    })
+
+    renderWithProviders(<DuplicatesPage />, { user: makeUser(false) })
+    await screen.findByText('Real Episode')
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete this one from Chronicle' })).not.toBeInTheDocument())
+  })
+
+  it('still offers it to an administrator', async () => {
+    vi.mocked(rightsApi.getMediaRights).mockResolvedValue({ deleteAdminOnly: true })
+    mockedGetDuplicateCandidates.mockResolvedValue({
+      data: [makeCandidate(1, makeItem({ id: 101, name: 'Real Episode' }), makeItem({ id: 102, name: 'Phantom Episode' }))],
+      pagination: { page: 1, perPage: 20, total: 1 },
+    })
+
+    renderWithProviders(<DuplicatesPage />, { user: makeUser(true) })
+    await screen.findByText('Real Episode')
+
+    expect(await screen.findAllByRole('button', { name: 'Delete this one from Chronicle' })).toHaveLength(2)
+  })
+
   it('deletes the confirmed item and leaves the other one alone', async () => {
     const user = userEvent.setup()
     const itemA = makeItem({ id: 101, name: 'Real Episode' })

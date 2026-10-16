@@ -167,6 +167,7 @@ builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<IApiTokenService, ApiTokenService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IRegistrationPolicy, RegistrationPolicy>();
+builder.Services.AddScoped<IMediaRightsPolicy, MediaRightsPolicy>();
 // Singleton so the scoped UserService (writer) and the JWT validation event (reader) share
 // one view of which accounts are cut off. Seeded from the database at startup.
 builder.Services.AddSingleton<IDeactivatedUserCache, DeactivatedUserCache>();
