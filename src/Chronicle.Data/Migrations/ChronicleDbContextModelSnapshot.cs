@@ -230,8 +230,6 @@ namespace Chronicle.Data.Migrations
 
                     b.HasIndex("Timestamp");
 
-                    b.HasIndex("UserId");
-
                     b.HasIndex("UserId", "Timestamp");
 
                     b.HasIndex("UserId", "MediaItemId", "Timestamp")
@@ -517,12 +515,6 @@ namespace Chronicle.Data.Migrations
                     b.HasIndex("MediaTypeId");
 
                     b.HasIndex("Name");
-
-                    b.HasIndex("NormalizedName")
-                        .HasDatabaseName("idx_media_items_normalized_name");
-
-                    b.HasIndex("NormalizedNameLoose")
-                        .HasDatabaseName("idx_media_items_normalized_name_loose");
 
                     b.HasIndex("ParentId");
 
@@ -880,8 +872,6 @@ namespace Chronicle.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ListId");
-
                     b.HasIndex("MediaItemId");
 
                     b.HasIndex("ListId", "MediaItemId")
@@ -1147,9 +1137,6 @@ namespace Chronicle.Data.Migrations
                         .HasColumnName("url");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("PersonMediaItemId")
-                        .HasDatabaseName("idx_person_headshots_person");
 
                     b.HasIndex("PersonMediaItemId", "Url")
                         .IsUnique()
