@@ -697,12 +697,10 @@ public class MetadataEnrichmentService(
                          .ToHashSet(StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
 
-        // Load all existing enrichment rows (for deduplication)
-        var enrichmentSet = (await db.MediaEnrichments
-            .Select(me => new { me.MediaItemId, PluginId = me.PluginId.ToLower() })
-            .ToListAsync(ct))
-            .Select(e => (e.MediaItemId, e.PluginId))
-            .ToHashSet();
+        // Every existing (item, plugin) pair, for deduplication -- as compact numeric keys, streamed. This used to materialise all
+        // 1.5M rows into a list of anonymous objects and then a hash set of (int, lower-cased string) tuples: ~150 MB and a
+        // string per row, on every startup.
+        var enrichmentSet = await LoadEnrichmentKeysAsync(db, ct);
 
         // Candidates: external IDs mapped to canonical plugin IDs, deduplicated.
         // Filter to known plugin sources in SQL to avoid loading the entire table.
@@ -717,7 +715,7 @@ public class MetadataEnrichmentService(
             // not an identifier for a media item to enrich. Enriching containers as movies
             // causes wrong title matches and bad re-parenting of real movies into unrelated containers.
             .Where(c => !c.ExternalId.StartsWith("collection:", StringComparison.OrdinalIgnoreCase))
-            .Where(c => !enrichmentSet.Contains((c.MediaItemId, c.PluginId.ToLower())))
+            .Where(c => !enrichmentSet.Contains(c.MediaItemId, c.PluginId))
             .GroupBy(c => (c.MediaItemId, c.PluginId))   // dedup same item+plugin
             .Select(g => g.First())
             .ToList();
@@ -729,17 +727,19 @@ public class MetadataEnrichmentService(
         var itemIds = candidates.Select(c => c.MediaItemId).Distinct().ToList();
         var metadataByItem  = new Dictionary<int, string?>(itemIds.Count);
         var mediaTypeByItem = new Dictionary<int, string>(itemIds.Count);
+        var levelByItem     = new Dictionary<int, int>(itemIds.Count);
         foreach (var chunk in itemIds.Chunk(500))
         {
             var chunkData = await db.MediaItems
                 .Include(mi => mi.MediaType)
                 .Where(mi => chunk.Contains(mi.Id))
-                .Select(mi => new { mi.Id, mi.MetadataJson, TypeName = mi.MediaType!.Name })
+                .Select(mi => new { mi.Id, mi.MetadataJson, TypeName = mi.MediaType!.Name, mi.HierarchyLevel })
                 .ToListAsync(ct);
             foreach (var row in chunkData)
             {
                 metadataByItem[row.Id]  = row.MetadataJson;
                 mediaTypeByItem[row.Id] = row.TypeName;
+                levelByItem[row.Id]     = row.HierarchyLevel;
             }
         }
 
@@ -747,6 +747,13 @@ public class MetadataEnrichmentService(
         // Pending if data is absent (wiped by re-scan) so it re-enriches automatically.
         // Skip candidates whose item type is not supported by the plugin — this prevents
         // stale ExternalIds (e.g. a tmdb source on a music item) from creating useless rows.
+        // The same exclusions Phase 3b prunes by (and Phase 3 honours): a collection container, or a hierarchy level the plugin
+        // declares empty, never has a queued row. Phase 1 did not know them, so every restart it created ~11,000 Pending rows
+        // that Phase 3b deleted again a minute later -- 22,000 writes into a 1.5M-row table, with the write lock held.
+        var collectionContainerIdsForSeed = await GetCollectionContainerIdsForExclusionAsync(db, ct);
+        var emptyLevelsByPlugin = pluginRegistry.GetMetadataProviderEntries()
+            .ToDictionary(e => e.PluginId, e => BuildEmptyLevelsByRawType(e.Provider), StringComparer.OrdinalIgnoreCase);
+
         int completedCount = 0, pendingCount = 0;
         var toAdd = new List<MediaItemEnrichment>(candidates.Count);
         foreach (var (mediaItemId, pluginId, externalId) in candidates)
@@ -771,6 +778,17 @@ public class MetadataEnrichmentService(
             var status = HasPluginDataInJson(json, pluginId)
                 ? EnrichmentStatus.Completed
                 : EnrichmentStatus.Pending;
+
+            // Only a would-be Pending row is subject to the exclusions (Phase 3b prunes only Pending ones).
+            if (status == EnrichmentStatus.Pending)
+            {
+                if (collectionContainerIdsForSeed.Contains(mediaItemId)) continue;
+                if (emptyLevelsByPlugin.TryGetValue(pluginId, out var emptyLevels)
+                    && emptyLevels.TryGetValue(itemType, out var emptyAtLevels)
+                    && levelByItem.TryGetValue(mediaItemId, out var level)
+                    && emptyAtLevels.Contains(level))
+                    continue;
+            }
 
             if (status == EnrichmentStatus.Completed) completedCount++;
             else                                       pendingCount++;
@@ -806,25 +824,43 @@ public class MetadataEnrichmentService(
         // NotFound rows here would create an infinite loop — the provider would
         // return NotFound again, the startup reset would fire again, ad infinitum.
         // Users can manually reset NotFound rows from the Enrichment drill-down page.
-        var stuckRows = await db.MediaEnrichments
-            .Include(me => me.MediaItem)
-            .Where(me => me.Status == EnrichmentStatus.Completed ||
-                         me.Status == EnrichmentStatus.Exhausted)
-            .ToListAsync(ct);
+        // Paged and projected: this used to load EVERY Completed/Exhausted row (686,000) together with its media item and the
+        // item's whole MetadataJson (avg 10 KB, ~4 GB of text, doubled as UTF-16) into the change tracker at once, on every
+        // startup. A page at a time, only the id, plugin and JSON, nothing tracked; only the ids to reset are kept.
+        var resetIds = new List<int>();
+        var lastEnrichmentId = 0;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var page = await db.MediaEnrichments.AsNoTracking()
+                .Where(me => me.Id > lastEnrichmentId &&
+                             (me.Status == EnrichmentStatus.Completed || me.Status == EnrichmentStatus.Exhausted))
+                .OrderBy(me => me.Id)
+                .Take(1000)
+                .Select(me => new { me.Id, me.PluginId, Json = me.MediaItem != null ? me.MediaItem.MetadataJson : null })
+                .ToListAsync(ct);
+            if (page.Count == 0) break;
+            lastEnrichmentId = page[^1].Id;
+            resetIds.AddRange(page.Where(r => !HasPluginDataInJson(r.Json, r.PluginId)).Select(r => r.Id));
+        }
 
         int resetCount = 0;
-        foreach (var row in stuckRows)
+        foreach (var chunk in resetIds.Chunk(500))
         {
-            if (HasPluginDataInJson(row.MediaItem?.MetadataJson, row.PluginId)) continue;
-            row.Status     = EnrichmentStatus.Pending;
-            row.RetryCount = 0;
-            row.ErrorMessage = null;
-            resetCount++;
+            var rows = await db.MediaEnrichments.Where(me => chunk.Contains(me.Id)).ToListAsync(ct);
+            foreach (var row in rows)
+            {
+                row.Status       = EnrichmentStatus.Pending;
+                row.RetryCount   = 0;
+                row.ErrorMessage = null;
+                resetCount++;
+            }
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear();
         }
 
         if (resetCount > 0)
         {
-            await db.SaveChangesAsync(ct);
             logger.LogInformation(
                 "SeedEnrichmentRows: reset {Count} Completed/Exhausted rows with no plugin data to Pending",
                 resetCount);
@@ -862,7 +898,7 @@ public class MetadataEnrichmentService(
             // -- needed here too because this method runs on every API startup (PluginHostService),
             // and used to recreate exactly the rows those two methods had just removed, undoing
             // that fix every single restart instead of once.
-            var collectionContainerIds = await GetCollectionContainerIdsForExclusionAsync(db, ct);
+            var collectionContainerIds = collectionContainerIdsForSeed;
 
             // ── Phase 3b: prune Pending rows for unsupported type/plugin pairs ─────
             // Pending rows for types a plugin doesn't support will always be Skipped
@@ -913,11 +949,7 @@ public class MetadataEnrichmentService(
             }
 
             // Existing enrichment rows (as a set for O(1) lookup) — re-read after pruning
-            var existingRows = (await db.MediaEnrichments
-                .Select(me => new { me.MediaItemId, me.PluginId })
-                .ToListAsync(ct))
-                .Select(r => (r.MediaItemId, r.PluginId.ToLower()))
-                .ToHashSet();
+            var existingRows = await LoadEnrichmentKeysAsync(db, ct);
 
             var phase3ToAdd = new List<MediaItemEnrichment>();
             foreach (var (pluginId, provider, _) in pluginEntries)
@@ -927,16 +959,21 @@ public class MetadataEnrichmentService(
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var emptyLevelsByRawType = BuildEmptyLevelsByRawType(provider);
 
+                // Whether the plugin supports a type is decided once per type, not once per item (this loop is plugins x items:
+                // ~20 x 800,000 iterations, each used to normalise the type name and lower-case the plugin id into new strings).
+                var supportsType = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                 foreach (var item in allItems)
                 {
-                    if (!supportedTypes.Contains(NormalizeMediaTypeName(item.TypeName)))
+                    if (!supportsType.TryGetValue(item.TypeName, out var supported))
+                        supportsType[item.TypeName] = supported = supportedTypes.Contains(NormalizeMediaTypeName(item.TypeName));
+                    if (!supported)
                         continue;
                     if (collectionContainerIds.Contains(item.Id))
                         continue;
                     if (emptyLevelsByRawType.TryGetValue(item.TypeName, out var emptyLevels)
                         && emptyLevels.Contains(item.HierarchyLevel))
                         continue;
-                    if (existingRows.Contains((item.Id, pluginId.ToLower())))
+                    if (existingRows.Contains(item.Id, pluginId))
                         continue;
 
                     phase3ToAdd.Add(new MediaItemEnrichment
@@ -946,7 +983,7 @@ public class MetadataEnrichmentService(
                         Status      = EnrichmentStatus.Pending,
                         MaxRetries  = 3,
                     });
-                    existingRows.Add((item.Id, pluginId.ToLower())); // prevent dups within this pass
+                    existingRows.Add(item.Id, pluginId); // prevent dups within this pass
                 }
             }
 
@@ -966,20 +1003,61 @@ public class MetadataEnrichmentService(
     /// Checks both the full plugin ID (e.g. "chronicle.plugin.musicbrainz") and the short suffix
     /// ("musicbrainz") to handle data written by older code versions.
     /// </summary>
-    private static bool HasPluginDataInJson(string? json, string pluginId)
+    internal static bool HasPluginDataInJson(string? json, string pluginId)
     {
         if (string.IsNullOrEmpty(json)) return false;
+        // Also the short-form key written by older code (e.g. "musicbrainz").
+        var shortId = pluginId.Contains('.') ? PluginIdHelper.ToSource(pluginId) : null;
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (root.TryGetProperty(pluginId, out _)) return true;
-            // Also check short-form key written by older code (e.g. "musicbrainz")
-            var shortId = pluginId.Contains('.') ? PluginIdHelper.ToSource(pluginId) : null;
-            if (shortId is not null && root.TryGetProperty(shortId, out _)) return true;
-            return false;
+            // Reads the top-level property names only and skips every value unread, instead of building a JsonDocument of the
+            // whole blob (avg 10 KB, up to 480 KB) just to ask whether one key exists: this runs for ~686,000 rows at startup.
+            var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(json));
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return false;
+            var found = false;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                if (reader.ValueTextEquals(pluginId) || (shortId is not null && reader.ValueTextEquals(shortId))) found = true;
+                reader.Read();          // to the value
+                reader.Skip();          // past it, whole
+            }
+            // The whole document must be valid, as when it was parsed in full: a truncated or garbled blob has no usable
+            // plugin data whatever keys it happens to start with. Nothing may follow the closing brace either.
+            return found && reader.TokenType == JsonTokenType.EndObject && !reader.Read();
         }
-        catch { return false; }
+        catch (JsonException) { return false; }
+    }
+
+    /// <summary>
+    /// Every (item, plugin) pair that already has an enrichment row, as one 64-bit number each (the item id and a small index
+    /// for the plugin id, compared case-insensitively) streamed from the database. A 1.5M-row table becomes ~12 MB of keys
+    /// instead of 1.5M tuples each holding its own lower-cased copy of the plugin id.
+    /// </summary>
+    internal sealed class EnrichmentKeySet
+    {
+        private readonly Dictionary<string, int> _plugins = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<long> _keys = [];
+
+        private long KeyOf(int mediaItemId, string pluginId)
+        {
+            if (!_plugins.TryGetValue(pluginId, out var index))
+                _plugins[pluginId] = index = _plugins.Count;
+            return ((long)mediaItemId << 16) | (uint)index;
+        }
+
+        public bool Add(int mediaItemId, string pluginId) => _keys.Add(KeyOf(mediaItemId, pluginId));
+        public bool Contains(int mediaItemId, string pluginId) => _keys.Contains(KeyOf(mediaItemId, pluginId));
+        public int Count => _keys.Count;
+    }
+
+    private static async Task<EnrichmentKeySet> LoadEnrichmentKeysAsync(ChronicleDbContext db, CancellationToken ct)
+    {
+        var keys = new EnrichmentKeySet();
+        await foreach (var row in db.MediaEnrichments.AsNoTracking()
+                           .Select(me => new { me.MediaItemId, me.PluginId })
+                           .AsAsyncEnumerable().WithCancellation(ct))
+            keys.Add(row.MediaItemId, row.PluginId);
+        return keys;
     }
 
     public async Task ResetAsync(string pluginId, ResetScope scope, int? mediaItemId = null, CancellationToken ct = default)

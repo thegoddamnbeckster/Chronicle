@@ -105,6 +105,9 @@ Newest first. One entry per working session: what was reviewed, what was found, 
 
 ### 2026-10-15 (session 1)
 - Plan written. Starting Phase 0.
+- Phase 0/1/2 partial. Fixed: missing `media_enrichment (PluginId, Status, MediaItemId)` index (full scans, 214 s waiting in 40 min); API-key `LastUsedAt` write no longer blocks auth; vulnerable `System.Security.Cryptography.Pkcs` pinned; startup seeding churn (Phase 1 inserted + Phase 3b deleted ~11k rows per restart; Phase 2 loaded ~4 GB JSON; compact key set; streaming JSON key check).
+- Filed, not yet fixed: open registration has no off switch (AuthController.Register / UserService.RegisterAsync); culture-sensitive string ops (CA1304/1305/1310/1311; worst: MetadataEnrichmentService, MediaService, FileScanService, PasswordResetService, SyncOrchestrationService); CA2016 (LibraryController:52, FileScanService:2641, ScheduledScanService:192, TaskSchedulerService:85); CA1001 undisposed locks (AssignmentConfigCache, DatabaseAdminService, FieldAliasCache, PluginCatalogSource); CA1869 x5; BookSeriesService unused `scopeFactory`; EF1002 in DatabaseAdminService:228 / DatabaseCopier:295; unfiltered loads at PeopleController:524, DuplicateCandidateScanService:70, ScrobbleService:831, MisparentedChildRepairService:35; slow endpoints: plugins/auth-failures, enrichment/stats polling, media/search (3.3 s), scraper tv/episodes (1.2 s).
+- Needs owner consent: ~17 GB of old `chronicle-dev.db.bak/before-*` copies in src/Chronicle.API.
 
 ## Findings register
 

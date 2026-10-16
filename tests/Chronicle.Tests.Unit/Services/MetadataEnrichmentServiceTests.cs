@@ -1017,6 +1017,137 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SeedEnrichmentRowsFromExternalIdsAsync_NeverCreatesTheRowsPhase3bWouldPruneAgain()
+    {
+        // Every restart created ~11,000 Pending rows from external ids (a collection container's "tmdb" id, an episode level
+        // the plugin declares empty) and Phase 3b deleted the very same rows a minute later: ~22,000 writes into a
+        // 1.5M-row table per restart, with the write lock held. Phase 1 now applies the same exclusions, so such rows are
+        // never inserted at all -- asserted by watching the inserts, since the end state is the same either way.
+        var movie = await EnsureMediaTypeAsync("movie");
+        var tv = await EnsureMediaTypeAsync("tv");
+        _db.Plugins.Add(new Chronicle.Core.Models.Plugin
+        {
+            PluginId = "chronicle.plugin.simkl", Name = "SIMKL", Author = "Test", Version = "1.0.0",
+            DllPath = "/fake/path.dll", IsEnabled = true, InstalledAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        MediaItem Item(string name, MediaType type, int level) => new()
+        {
+            Name = name, MediaTypeId = type.Id, HierarchyLevel = level, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var container = Item("Toy Story Collection", movie, 0);
+        var realMovie = Item("Real Movie", movie, 0);
+        var season = Item("Season 1", tv, 1);
+        var episode = Item("Episode 1", tv, 2);
+        _db.MediaItems.AddRange(container, realMovie, season, episode);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = container.Id, Source = "simkl", ExternalId = "collection:9485" },
+            new MediaExternalId { MediaItemId = realMovie.Id, Source = "simkl", ExternalId = "simkl:movie:1" },
+            new MediaExternalId { MediaItemId = season.Id, Source = "simkl", ExternalId = "simkl:tv:2:1" },
+            new MediaExternalId { MediaItemId = episode.Id, Source = "simkl", ExternalId = "simkl:tv:2:1:1" });
+        await _db.SaveChangesAsync();
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.simkl");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns(
+        [
+            new MediaTypeSupport { MediaTypeName = "movie" },
+            new MediaTypeSupport { MediaTypeName = "tv", LevelFields = new() { [1] = [] } },   // seasons: nothing to fetch
+        ]);
+        _registry.Setup(r => r.GetMetadataProviderEntries())
+            .Returns(new List<(string, IMetadataProvider, string?)> { ("chronicle.plugin.simkl", provider.Object, null) });
+
+        var inserted = new List<int>();
+        _db.SavingChanges += (_, _) => inserted.AddRange(
+            _db.ChangeTracker.Entries<MediaItemEnrichment>().Where(e => e.State == EntityState.Added).Select(e => e.Entity.MediaItemId));
+
+        await _svc.SeedEnrichmentRowsFromExternalIdsAsync();
+
+        inserted.Should().Contain(realMovie.Id).And.Contain(episode.Id);          // what should be queued is
+        inserted.Should().NotContain(container.Id, "a collection container never has a queued row");
+        inserted.Should().NotContain(season.Id, "a level the plugin declares empty never has a queued row");
+    }
+
+    [Theory]
+    [InlineData("""{"chronicle.plugin.tmdb":{"title":"x"}}""", "chronicle.plugin.tmdb", true)]
+    [InlineData("""{"other":1,"tmdb":{"title":"x"}}""", "chronicle.plugin.tmdb", true)]              // short-form key written by older code
+    [InlineData("""{"a":{"chronicle.plugin.tmdb":1}}""", "chronicle.plugin.tmdb", false)]            // nested is not top level
+    [InlineData("""{"a":[1,2,{"tmdb":3}],"b":"tmdb"}""", "chronicle.plugin.tmdb", false)]
+    [InlineData("""{"b":{"deep":{"deeper":[1,{"x":2}]}},"chronicle.plugin.tmdb":null}""", "chronicle.plugin.tmdb", true)]   // skips whole values
+    [InlineData("{}", "chronicle.plugin.tmdb", false)]
+    [InlineData("[]", "chronicle.plugin.tmdb", false)]
+    [InlineData("not json", "chronicle.plugin.tmdb", false)]
+    [InlineData("""{"chronicle.plugin.tmdb":""", "chronicle.plugin.tmdb", false)]                    // truncated
+    [InlineData("""{"chronicle.plugin.tmdb":{}} trailing""", "chronicle.plugin.tmdb", false)]        // garbage after the object
+    [InlineData("""{"chronicle.plugin.tmdb":{},"b":""", "chronicle.plugin.tmdb", false)]              // key first, damage later
+    [InlineData("", "chronicle.plugin.tmdb", false)]
+    [InlineData(null, "chronicle.plugin.tmdb", false)]
+    [InlineData("""{"hardcover":{}}""", "hardcover", true)]                                           // a plugin id with no dot
+    public void HasPluginDataInJson_LooksOnlyAtTheTopLevelKeys(string? json, string pluginId, bool expected) =>
+        MetadataEnrichmentService.HasPluginDataInJson(json, pluginId).Should().Be(expected);
+
+    [Fact]
+    public void TheEnrichmentKeySet_ComparesPluginIdsCaseInsensitively_AndKeepsItemsApart()
+    {
+        var set = new MetadataEnrichmentService.EnrichmentKeySet();
+        set.Add(7, "Chronicle.Plugin.TMDB").Should().BeTrue();
+
+        set.Add(7, "chronicle.plugin.tmdb").Should().BeFalse();               // the same pair
+        set.Contains(7, "CHRONICLE.PLUGIN.TMDB").Should().BeTrue();
+        set.Contains(8, "chronicle.plugin.tmdb").Should().BeFalse();          // another item
+        set.Contains(7, "chronicle.plugin.simkl").Should().BeFalse();         // another plugin
+        set.Add(int.MaxValue, "x").Should().BeTrue();
+        set.Contains(int.MaxValue, "x").Should().BeTrue();
+        set.Count.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task SeedEnrichmentRowsFromExternalIdsAsync_ResetsCompletedRowsWithNoPluginData_AcrossPages()
+    {
+        // The "stuck rows" repair now reads a thousand rows at a time instead of every row at once; rows on both sides of
+        // a page boundary (and several pages in) must still be found.
+        var type = await EnsureMediaTypeAsync("movie");
+        _db.Plugins.Add(new Chronicle.Core.Models.Plugin
+        {
+            PluginId = "chronicle.plugin.tmdb", Name = "TMDB", Author = "Test", Version = "1.0.0",
+            DllPath = "/fake/path.dll", IsEnabled = true, InstalledAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        });
+        var withData = new List<MediaItemEnrichment>();
+        var wiped = new List<MediaItemEnrichment>();
+        for (var i = 0; i < 2300; i++)
+        {
+            var has = i % 7 != 0;
+            var item = new MediaItem
+            {
+                Name = "M" + i, MediaTypeId = type.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                MetadataJson = has ? """{"chronicle.plugin.tmdb":{"title":"x"}}""" : """{"fileScanner":{}}""",
+            };
+            _db.MediaItems.Add(item);
+            var row = new MediaItemEnrichment { MediaItem = item, PluginId = "chronicle.plugin.tmdb", Status = EnrichmentStatus.Completed, MaxRetries = 3 };
+            _db.MediaEnrichments.Add(row);
+            (has ? withData : wiped).Add(row);
+        }
+        // one new external id so Phase 1 does not return before the repair pass
+        var extra = new MediaItem { Name = "Extra", MediaTypeId = type.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(extra);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = extra.Id, Source = "tmdb", ExternalId = "tmdb:movie:1" });
+        await _db.SaveChangesAsync();
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.tmdb");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "movie" }]);
+        _registry.Setup(r => r.GetMetadataProviderEntries())
+            .Returns(new List<(string, IMetadataProvider, string?)> { ("chronicle.plugin.tmdb", provider.Object, null) });
+
+        await _svc.SeedEnrichmentRowsFromExternalIdsAsync();
+
+        _db.ChangeTracker.Clear();
+        var statuses = await _db.MediaEnrichments.AsNoTracking().ToDictionaryAsync(r => r.Id, r => r.Status);
+        wiped.Should().OnlyContain(r => statuses[r.Id] == EnrichmentStatus.Pending);          // every wiped row, on every page
+        withData.Should().OnlyContain(r => statuses[r.Id] == EnrichmentStatus.Completed);     // none of the others
+    }
+
+    [Fact]
     public async Task EnrichPendingAsync_DoesNotTreatAThreeLevelAuthorAsACollectionContainer()
     {
         // Root-caused live (2026-09-28): "audiobooks" carries SupportsCollections=true (for its
