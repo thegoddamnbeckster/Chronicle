@@ -753,8 +753,10 @@ public class MetadataEnrichmentService(
         // declares empty, never has a queued row. Phase 1 did not know them, so every restart it created ~11,000 Pending rows
         // that Phase 3b deleted again a minute later -- 22,000 writes into a 1.5M-row table, with the write lock held.
         var collectionContainerIdsForSeed = await GetCollectionContainerIdsForExclusionAsync(db, ct);
-        var emptyLevelsByPlugin = pluginRegistry.GetMetadataProviderEntries()
-            .ToDictionary(e => e.PluginId, e => BuildEmptyLevelsByRawType(e.Provider), StringComparer.OrdinalIgnoreCase);
+        // TryAdd, not ToDictionary: a plugin may carry more than one provider under its one id, and a duplicate key must not stop startup.
+        var emptyLevelsByPlugin = new Dictionary<string, Dictionary<string, HashSet<int>>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in pluginRegistry.GetMetadataProviderEntries())
+            emptyLevelsByPlugin.TryAdd(entry.PluginId, BuildEmptyLevelsByRawType(entry.Provider));
 
         int completedCount = 0, pendingCount = 0;
         var toAdd = new List<MediaItemEnrichment>(candidates.Count);
