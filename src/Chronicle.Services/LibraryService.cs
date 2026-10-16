@@ -59,8 +59,12 @@ namespace Chronicle.Services
         private async Task<IQueryable<MediaItem>> BuildItemsQueryAsync(
             bool rootOnly, bool includeMoviesInCollections, bool includeStubs, CancellationToken ct)
         {
+            // The trackable type ids are looked up first and passed as plain values. Joining to media_types made SQLite start from the
+            // item side and read every root-level row (329,000 of them are people, which are roots too) one by one: ~0.3 s per count,
+            // against a few milliseconds for a seek per type on the (MediaTypeId, ParentId, IsStub) index.
+            var trackableTypeIds = await _context.MediaTypes.Where(t => t.IsTrackable).Select(t => t.Id).ToListAsync(ct);
             var itemsQuery = _context.MediaItems
-                .Where(m => m.MediaType!.IsTrackable)
+                .Where(m => trackableTypeIds.Contains(m.MediaTypeId))
                 .AsQueryable();
 
             if (!includeStubs)
