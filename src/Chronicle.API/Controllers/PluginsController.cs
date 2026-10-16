@@ -873,6 +873,12 @@ public class PluginsController : ControllerBase
     private async Task<(string? DllPath, IActionResult? Error)> DownloadAndExtractCatalogAssetAsync(
         PluginCatalogEntry entry, CancellationToken ct)
     {
+        if (CatalogEntryGuard.Check(entry) is { } problem)
+        {
+            _logger.LogWarning("Refusing catalog entry {PluginId}: {Problem}", entry.PluginId, problem);
+            return (null, StatusCode(400, ApiResponse<object>.Fail("INVALID_CATALOG_ENTRY", $"The catalog entry is not usable: {problem}.")));
+        }
+
         // Resolve download URL from the latest GitHub release
         string downloadUrl;
         try
@@ -904,6 +910,9 @@ public class PluginsController : ControllerBase
             if (string.IsNullOrEmpty(downloadUrl))
                 return (null, StatusCode(502, ApiResponse<object>.Fail("ASSET_NOT_FOUND",
                     $"Asset '{entry.AssetName}' not found in the latest release.")));
+            if (!CatalogEntryGuard.IsGitHubApiUrl(downloadUrl))
+                return (null, StatusCode(502, ApiResponse<object>.Fail("ASSET_URL_REJECTED",
+                    "The release lists a download address outside api.github.com; refusing to fetch it.")));
         }
         catch (OperationCanceledException) { return (null, StatusCode(504)); }
         catch (HttpRequestException)
@@ -925,7 +934,13 @@ public class PluginsController : ControllerBase
             if (!resp.IsSuccessStatusCode)
                 return (null, StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_FAILED",
                     $"Failed to download the plugin archive (HTTP {(int)resp.StatusCode}).")));
+            if (resp.Content.Headers.ContentLength > CatalogEntryGuard.MaxArchiveBytes)
+                return (null, StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_TOO_LARGE",
+                    "The plugin archive is larger than Chronicle will download.")));
             zipBytes = await resp.Content.ReadAsByteArrayAsync(ct);
+            if (zipBytes.LongLength > CatalogEntryGuard.MaxArchiveBytes)
+                return (null, StatusCode(502, ApiResponse<object>.Fail("DOWNLOAD_TOO_LARGE",
+                    "The plugin archive is larger than Chronicle will download.")));
         }
         catch (OperationCanceledException) { return (null, StatusCode(504)); }
         catch (HttpRequestException)

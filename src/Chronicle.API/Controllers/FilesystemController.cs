@@ -6,7 +6,7 @@ namespace Chronicle.API.Controllers;
 
 [ApiController]
 [Route("api/v1/filesystem")]
-[Authorize]
+[Authorize(Roles = "Admin")] // lists directories anywhere on the server's disks: only the people who configure scan folders may
 public class FilesystemController : ControllerBase
 {
     /// <summary>

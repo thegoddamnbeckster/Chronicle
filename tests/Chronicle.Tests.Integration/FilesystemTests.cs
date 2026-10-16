@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.Tests.Integration
 {
@@ -18,7 +20,7 @@ namespace Chronicle.Tests.Integration
 
         // ── Helpers ───────────────────────────────────────────────────────────────
 
-        private async Task<HttpClient> AuthClientAsync()
+        private async Task<HttpClient> AuthClientAsync(bool admin = true)
         {
             var client = _factory.CreateClient();
             var username = $"fs_{Guid.NewGuid():N}";
@@ -28,6 +30,14 @@ namespace Chronicle.Tests.Integration
 
             var token = JsonDocument.Parse(await reg.Content.ReadAsStringAsync())
                 .RootElement.GetProperty("data").GetProperty("token").GetString()!;
+
+            if (admin)
+            {
+                using var scope = _factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
+                (await db.Users.FirstAsync(u => u.Username == username)).IsAdmin = true;
+                await db.SaveChangesAsync();
+            }
 
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", token);
@@ -43,6 +53,13 @@ namespace Chronicle.Tests.Integration
             var client = _factory.CreateClient();
             var resp = await client.GetAsync("/api/v1/filesystem");
             resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        [Fact]
+        public async Task GetFilesystem_OrdinaryUser_IsForbidden()
+        {
+            var client = await AuthClientAsync(admin: false);
+            (await client.GetAsync("/api/v1/filesystem")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
         }
 
         [Fact]
