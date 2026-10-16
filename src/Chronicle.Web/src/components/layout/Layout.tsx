@@ -1,4 +1,4 @@
-import { createContext, useEffect, useRef, useState, type RefObject } from 'react'
+import { createContext, useEffect, useRef, useState, type RefObject, Suspense } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/useAuth'
@@ -204,7 +204,9 @@ export default function Layout() {
       <MainScrollContext.Provider value={mainRef}>
         <main ref={mainRef} className={styles.content}>
           <NowPlayingBanner />
-          <Outlet />
+          <Suspense fallback={null}>
+            <Outlet />
+          </Suspense>
         </main>
       </MainScrollContext.Provider>
 
