@@ -103,6 +103,22 @@ done reorder this list.
 
 Newest first. One entry per working session: what was reviewed, what was found, what was fixed (commit), what was deferred.
 
+### 2026-10-16 (session 2, owner asleep)
+- Owner's instructions: sign-up lock, culture handling, disposable locks, slow endpoints, remaining phases, code review of the fixes; delete the old
+  database copies (17 GB, done) and superseded add-on zips in C:/temp and I:/videos (done, newest of each kept).
+- Fixed this session (all with tests, pushed): F1-F28 in the register below. Highlights: admin-controlled sign-up lock (default open;
+  `Chronicle.API --unlock-registration` reopens it with no login), invariant culture pinned, four undisposed locks, enrichment stats cached 5 s,
+  Kodi episode lists re-check the provider hourly not per request, plugin auth-failures by index seek, six redundant indexes dropped, route-level
+  code splitting (entry bundle 473 kB -> 116 kB), folder browsing and scanning now admin-only, plugin catalog entries validated, image URL
+  validator no longer drops images on timeouts/429 and no longer fires 60 requests at one CDN, startup folder-path backfill runs once,
+  duplicate cleanup logs one line instead of 11,000, Deezer error 500.
+- Evidence sources: the request log (per-endpoint totals), the slow-command log, a warning/error histogram of three days of logs, EXPLAIN on a
+  read-only copy of the live database, and the analyzers dump.
+- Phases touched: 0 (baseline done: build, tests, lint, tsc, bundle), 1 (controllers audit done; auth/files/SSRF/secrets reviewed), 2 (indexes,
+  N+1 sweep, whole-table loads), 6 (bundle, polling inventory), 8 (plugin-wide grep for HttpClient/blocking/async-void: clean), 9 (log volume).
+- Not yet reviewed in depth: the line-by-line read of MetadataEnrichmentService, FileScanService, ScrobbleService, SyncOrchestrationService; the
+  Kodi add-ons (Python); individual plugins beyond the grep sweep; accessibility pass; test-quality pass.
+
 ### 2026-10-15 (session 1)
 - Plan written. Starting Phase 0.
 - Phase 0/1/2 partial. Fixed: missing `media_enrichment (PluginId, Status, MediaItemId)` index (full scans, 214 s waiting in 40 min); API-key `LastUsedAt` write no longer blocks auth; vulnerable `System.Security.Cryptography.Pkcs` pinned; startup seeding churn (Phase 1 inserted + Phase 3b deleted ~11k rows per restart; Phase 2 loaded ~4 GB JSON; compact key set; streaming JSON key check).
@@ -113,7 +129,45 @@ Newest first. One entry per working session: what was reviewed, what was found, 
 
 | # | Phase | Finding | Evidence | Status | Commit |
 |---|---|---|---|---|---|
+| F1 | 2 | `media_enrichment` had no index for "rows of plugin X in status Y" | slow-command log: 214 s waiting in 40 min; stats endpoint 1.4 s x 2,535 | fixed | e4c14e4 |
+| F2 | 1 | API-key `LastUsedAt` write inside the auth handler blocked Kodi polls for 34 s | request log | fixed | 75a0de0 |
+| F3 | 0 | `System.Security.Cryptography.Pkcs` 10.0.0 advisory GHSA-846f-f764-76mx | `dotnet list package --vulnerable` | fixed (pinned 10.0.13) | e4c14e4 |
+| F4 | 2 | Startup seeding created then deleted ~11,000 enrichment rows, loaded ~4 GB of JSON and ~16M strings every restart | log + code | fixed | 90645f9 |
+| F5 | 2 | Duplicate scan loaded all 720k external ids | code | fixed | eed87a2 |
+| F6 | 1 | Open registration, no off switch; two sign-ups on an empty install could both become admin | code | fixed (setting + CLI unlock + serialized) | 3255931 |
+| F7 | 9 | Server behaviour depended on the host locale (Turkish dotless i, comma decimals) | analyzers: 113 sites | fixed (invariant culture pinned) | 3255931 |
+| F8 | 2 | Four singleton `SemaphoreSlim`s never disposed (CA1001) | analyzers | fixed | 3255931 |
+| F9 | 2 | Enrichment stats recounted 1.5M rows on every poll | request log | fixed (5 s shared cache, invalidated on reset/skip) | (perf commit) |
+| F10 | 2 | `plugins/auth-failures` walked the whole enrichment index | request log 0.55 s x 77 | fixed (per-plugin seek) | (perf commit) |
+| F11 | 2 | Kodi `tv/episodes` hit the metadata provider for every season on every request (0.8-8 s) | request log | fixed (hourly per show) | (perf commit) |
+| F12 | 2 | Six redundant indexes on hot tables | sqlite_master prefix analysis | fixed (SQLite + PostgreSQL migrations) | (index commits) |
+| F13 | 1 | Any signed-in user could list directories anywhere on the server (`/filesystem`) | controller audit | fixed (Admin) | (security commit) |
+| F14 | 1 | Any signed-in user could preview/import arbitrary paths and create scan folders | controller audit | fixed (Admin) | (security commit) |
+| F15 | 1 | Plugin catalog entry fields reached a file path and a URL unchecked; download unbounded | code | fixed (CatalogEntryGuard, 200 MB cap, api.github.com only) | (security commit) |
+| F16 | 6 | One 473 kB entry bundle for every page | build output | fixed (116 kB) | (web commit) |
+| F17 | 9 | Image URL validator: 2 requests per URL, 60 at once per album, and a timeout or 429 deleted a valid image | code + log (134 drops) | fixed | (maintenance commit) |
+| F18 | 2 | `BackfillFolderPaths` LIKE-scanned all item metadata at every start | startup log | fixed (once) | (maintenance commit) |
+| F19 | 9 | Duplicate cleanup logged one warning per unmergeable pair (11,726 on one night) | log histogram | fixed (one summary) | (maintenance commit) |
+| F20 | 3 | Duplicate merge blocked when one provider's artist id met another record's album id | data: ~8k track pairs | fixed (kind-aware conflict) | (maintenance commit) |
+| F21 | 8 | Deezer error 500 ("wrong/empty parameter") failed items every pass | log histogram | fixed in plugin repo | 43b1eb1 (Deezer repo) |
+| F22 | 9 | Health checks logged 6,000 lines a day | log histogram | fixed | c9e9f3f |
+| F23 | 2 | Paged queries without `OrderBy` (EF warning x95) | log | fixed | (maintenance commit) |
+| F24 | 0 | Time-of-day dependent scheduler test (failed 03:45-04:00 UTC) | test run | fixed | 3255931 |
+| F25 | 0 | CA1869 repeated `JsonSerializerOptions` (5), CS9113 unused parameter, CA2016 (2) | analyzers | fixed | (chore commit) |
+| F26 | 1 | Raw SQL with interpolation (EF1002) in backup/copy code | analyzers | verified safe: values are generated, quoted | n/a |
+| F27 | 1 | Zip extraction | code | verified: .NET 9 `ExtractToDirectory` rejects path escapes; restore validates entry names | n/a |
+| F28 | 1 | Secrets in logs / URLs | grep + log sample | verified: none | n/a |
+
+## Open items, decisions for the owner
+
+| # | Item | Why it is open |
+|---|---|---|
+| O1 | Any signed-in user can edit or delete shared media (`DELETE /media/{id}`, metadata overrides, merge) | Shared library is by design, but "ordinary users cannot delete everyone's media" is a product decision. Gating deletes to Admin is one attribute plus tests. |
+| O2 | Downstairs Shield (10.0.0.203) sends an invalid/expired API key about every 3 minutes (1,353 rejections in 3 days) | Needs a new key on that device (Settings > API Keys); nothing to fix server-side. |
+| O3 | Duplicated album subtrees (e.g. "The Doobie Brothers" albums 414426 / 806909) created when a library folder was renamed and rescanned | The scanner created new track items instead of matching the moved files. Needs the FileScanService review (Phase 3). |
+| O4 | `ResetAsync` loads every matching enrichment row into memory (up to a plugin's whole queue) | Kept because the in-memory test provider cannot run `ExecuteUpdate`; fix with a provider check. |
+| O5 | `tag_mismatch_rematch` runs every minute and writes a run record each time | Cheap, but a queue-driven trigger would remove ~1,400 writes a day. |
 
 ## Deferred (with reason)
 
-_None yet._
+_Nothing deferred without an entry above._
