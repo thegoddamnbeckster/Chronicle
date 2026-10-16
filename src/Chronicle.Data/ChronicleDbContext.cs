@@ -342,7 +342,7 @@ namespace Chronicle.Data
             {
                 entity.ToTable("interaction_events");
                 entity.HasKey(e => e.Id);
-                entity.HasIndex(e => e.UserId);
+                // (UserId alone is the leading column of both composites below; a separate index only slowed every insert.)
                 entity.HasIndex(e => e.MediaItemId);
                 entity.HasIndex(e => e.Timestamp);
                 entity.HasIndex(e => new { e.UserId, e.Timestamp });
@@ -414,7 +414,6 @@ namespace Chronicle.Data
                 entity.ToTable("media_list_items");
                 entity.HasKey(e => e.Id);
                 entity.HasIndex(e => new { e.ListId, e.MediaItemId }).IsUnique();
-                entity.HasIndex(e => e.ListId);
                 entity.Property(e => e.AddedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 entity.HasOne(e => e.List)
@@ -566,7 +565,6 @@ namespace Chronicle.Data
                 // re-enrichment a no-op instead of a duplicate row.
                 e.HasIndex(h => new { h.PersonMediaItemId, h.Url }).IsUnique()
                  .HasDatabaseName("idx_person_headshots_unique");
-                e.HasIndex(h => h.PersonMediaItemId).HasDatabaseName("idx_person_headshots_person");
             });
 
             modelBuilder.Entity<PersonProviderCredit>(e =>
@@ -598,9 +596,8 @@ namespace Chronicle.Data
             modelBuilder.Entity<MediaItem>(e =>
             {
                 e.Property(x => x.NormalizedName).HasColumnName("normalized_name");
-                e.HasIndex(x => x.NormalizedName).HasDatabaseName("idx_media_items_normalized_name");
+                // (The name-only indexes are the leading column of the composites below, which serve the same lookups.)
                 e.Property(x => x.NormalizedNameLoose).HasColumnName("normalized_name_loose");
-                e.HasIndex(x => x.NormalizedNameLoose).HasDatabaseName("idx_media_items_normalized_name_loose");
 
                 // Confirmed live (2026-09-18): ScraperController.ResolveCastThumbnailsAsync's
                 // WHERE MediaTypeId == peopleTypeId && normalizedNames.Contains(NormalizedName)
