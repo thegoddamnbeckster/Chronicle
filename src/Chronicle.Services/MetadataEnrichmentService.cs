@@ -138,6 +138,10 @@ public class MetadataEnrichmentService(
         _pluginLocks.TryGetValue(pluginId, out var sem) && sem.CurrentCount == 0;
 
     /// <summary>True when the exception (or one inside it) is SQLite saying the database is locked or busy.</summary>
+    /// <summary>True when the media item no longer exists (checked after a failed save, on a fresh query).</summary>
+    private static async Task<bool> ItemVanishedAsync(ChronicleDbContext db, int mediaItemId, CancellationToken ct) =>
+        !await db.MediaItems.AsNoTracking().AnyAsync(m => m.Id == mediaItemId, ct);
+
     internal static bool IsDatabaseBusy(Exception ex)
     {
         for (var e = ex; e is not null; e = e.InnerException!)
@@ -421,6 +425,17 @@ public class MetadataEnrichmentService(
                         // burning through them one doomed call at a time.
                         providerUnavailable = true;
                         break;
+                    }
+                    catch (DbUpdateException ex) when (!IsDatabaseBusy(ex))
+                    {
+                        // The item may have been merged into another or deleted while this run held it in memory (the duplicate cleanup runs
+                        // ahead of the plugin tasks, and this one paused behind it): then there is nothing to save for it, and on to the next.
+                        // This used to fail the plugin's whole run -- MusicBrainz, after 87 minutes. Any other failed save still ends the run.
+                        DiscardPendingChanges(db);
+                        if (!await ItemVanishedAsync(db, row.MediaItemId, ct)) throw;
+                        logger.LogInformation(
+                            "EnrichPendingAsync: item {ItemId} no longer exists (merged or deleted meanwhile); skipped for plugin {PluginId}",
+                            row.MediaItemId, pluginId);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException && IsDatabaseBusy(ex))
                     {
