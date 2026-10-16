@@ -538,7 +538,8 @@ public class ScraperController : ControllerBase
         _logger.LogInformation(
             "scraper/movies/details: item {ItemId} \"{Title}\" -> artwork[{ArtworkSummary}] collection={Collection}",
             id, dto.Title, artworkSummary, collection is null ? "(none)" : $"\"{collection.Name}\" poster={(string.IsNullOrEmpty(collection.PosterUrl) ? "(none)" : "set")}");
-        _logger.LogInformation(
+        // The timing line answered "why is a scrape slow?" (3 ms on average now); it is shown for the odd slow one, and for debugging.
+        _logger.Log(totalSw.ElapsedMilliseconds > 500 ? LogLevel.Warning : LogLevel.Debug,
             "scraper/movies/details: item {ItemId} timing -- item load: {ItemMs}ms, collection: {CollectionMs}ms, " +
             "library entry: {LibMs}ms, cast thumbnails: {CastMs}ms, total: {TotalMs}ms",
             id, itemLoadMs, collectionMs, libMs, castMs, totalSw.ElapsedMilliseconds);

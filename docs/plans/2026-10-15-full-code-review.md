@@ -154,6 +154,18 @@ Newest first. One entry per working session: what was reviewed, what was found, 
 | F23 | 2 | Paged queries without `OrderBy` (EF warning x95) | log | fixed | (maintenance commit) |
 | F24 | 0 | Time-of-day dependent scheduler test (failed 03:45-04:00 UTC) | test run | fixed | 3255931 |
 | F25 | 0 | CA1869 repeated `JsonSerializerOptions` (5), CS9113 unused parameter, CA2016 (2) | analyzers | fixed | (chore commit) |
+| F29 | 3 | A root scan group matched ANY level of the type by name: the band "Genesis" matched a track called "Genesis", and 94 albums were filed under it (also Ghost, Rush, NIRVANA) | live data: 94 level-1 items under level-2 parents | fixed (roots match roots) + repair pass; 84 items moved, 4 artists created, enrichment seeded | (library commit) |
+| F30 | 3 | `MediaItemMatcher.FindByTitleYearAsync` (scrobble/import/sync) searched every level, so a show title matched an episode and its season was created under the episode | data: 10 stray "Season N" under episodes | fixed (+ sync stub twin lookup) + repair pass (move up / remove empty copies) | (matching commit) |
+| F31 | 3 | Merge overwrote the loser's media type before logging it, so an Unmerge brought the audiobook author "Iain M. Banks" back as a person with 5 series under him; cross-type merges could hang children under a wrong-type parent | merge log + data | fixed (+ refusal rule) + repair retypes the stub | (library commit) |
+| F32 | 2 | The scan's name tier loaded every item of the type (with blobs) for every group, even already matched ones | code | fixed | (scan commit) |
+| F33 | 2 | `SeedEnrichmentRowsForNewItems` read every row of each plugin (~90k ids x 17) per batch | code | fixed (chunked) | (library commit) |
+| F34 | 2 | `ResetAsync` loaded a plugin's whole queue into the change tracker | code | fixed (one UPDATE) | (enrichment commit) |
+| F35 | 2 | SQLite `synchronous=FULL` under WAL: one disk wait per commit on the busiest writers | design | fixed (NORMAL) | (sqlite commit) |
+| F36 | 9 | Permanent INFO line per Kodi details request (4,825/day, avg 3 ms) | log histogram | fixed (Debug unless > 500 ms) | (chore commit) |
+| F37 | 7 | Test quality sweep: 8 of ~2,500 tests have no assertion (all "does not throw") | script | accepted | n/a |
+| F38 | 6 | `exhaustive-deps` is off; the 11 sites it would flag are load-once patterns | eslint one-off | accepted | n/a |
+| F39 | 8 | Plugin repos: no `new HttpClient()` misuse, blocking calls or async void; suites for Hardcover, MusicBrainz, TMDB, OpenLibrary, TheAudioDB, Wikipedia, IMDb, Deezer, FanartTV pass | grep + test runs | verified | n/a |
+| F40 | 8 | Kodi add-ons: pyflakes clean; the movie and TV scraper add-ons carry copies of the same client/sync modules (5 have already drifted) | diff | deferred (needs a shared module vendored by build.ps1) | n/a |
 | F26 | 1 | Raw SQL with interpolation (EF1002) in backup/copy code | analyzers | verified safe: values are generated, quoted | n/a |
 | F27 | 1 | Zip extraction | code | verified: .NET 9 `ExtractToDirectory` rejects path escapes; restore validates entry names | n/a |
 | F28 | 1 | Secrets in logs / URLs | grep + log sample | verified: none | n/a |
@@ -164,8 +176,8 @@ Newest first. One entry per working session: what was reviewed, what was found, 
 |---|---|---|
 | O1 | Any signed-in user can edit or delete shared media (`DELETE /media/{id}`, metadata overrides, merge) | Shared library is by design, but "ordinary users cannot delete everyone's media" is a product decision. Gating deletes to Admin is one attribute plus tests. |
 | O2 | Downstairs Shield (10.0.0.203) sends an invalid/expired API key about every 3 minutes (1,353 rejections in 3 days) | Needs a new key on that device (Settings > API Keys); nothing to fix server-side. |
-| O3 | Duplicated album subtrees (e.g. "The Doobie Brothers" albums 414426 / 806909) created when a library folder was renamed and rescanned | The scanner created new track items instead of matching the moved files. Needs the FileScanService review (Phase 3). |
-| O4 | `ResetAsync` loads every matching enrichment row into memory (up to a plugin's whole queue) | Kept because the in-memory test provider cannot run `ExecuteUpdate`; fix with a provider check. |
+| O3 | Some duplicated album subtrees (e.g. "The Doobie Brothers" albums 414426 / 806909) created when a library folder was renamed and rescanned | The scanner created new track items instead of matching the moved files. Needs the FileScanService review (Phase 3). |
+| O6 | 9 harmless orphan rows (5 external ids, 4 library rows of deleted items) from before foreign keys were enforced | Not worth a pass; they cannot be reached. |
 | O5 | `tag_mismatch_rematch` runs every minute and writes a run record each time | Cheap, but a queue-driven trigger would remove ~1,400 writes a day. |
 
 ## Deferred (with reason)
