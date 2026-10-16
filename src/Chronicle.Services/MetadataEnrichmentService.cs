@@ -3290,16 +3290,11 @@ public class MetadataEnrichmentService(
 
         // NOTE: PosterUrl is NOT set directly here — ResolveAsync() is called immediately
         // after MergeMetadata and promotes it according to the priority assignment config.
-        // The one exception: child items (level > 0) that previously had a TMDB-hosted poster
-        // from a wrong match must have it cleared when the new enrichment returns no poster,
-        // otherwise the stale image persists. ResolveAsync won't clear it because the blob
-        // will simply have no posterUrl.
-        if (string.IsNullOrEmpty(result.PosterUrl)
-            && item.HierarchyLevel > 0
-            && item.PosterUrl?.StartsWith("https://image.tmdb.org/", StringComparison.OrdinalIgnoreCase) == true)
-        {
+        // The one exception: child items (level > 0) that previously had a poster from a wrong match must have it cleared when
+        // the new enrichment returns no poster, otherwise the stale image persists. ResolveAsync won't clear it because the
+        // blob will simply have no posterUrl; it re-promotes a poster from whatever other provider data (or pin) remains.
+        if (string.IsNullOrEmpty(result.PosterUrl) && item.HierarchyLevel > 0)
             item.PosterUrl = null;
-        }
 
         item.UpdatedAt = DateTime.UtcNow;
     }
@@ -3515,19 +3510,6 @@ public class MetadataEnrichmentService(
     }
 
     /// <summary>
-    /// Parses a Chronicle external-ID string into (source, externalId).
-    /// "movie:550"      → ("tmdb", "movie:550")
-    /// "tv:1396"        → ("tmdb", "tv:1396")
-    /// "imdb:tt0137523" → ("imdb", "tt0137523")
-    /// </summary>
-    private static (string Source, string ExternalId) ParseExternalId(string rawId)
-    {
-        if (rawId.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
-            return ("imdb", rawId[5..]);
-        return ("tmdb", rawId);
-    }
-
-    /// <summary>
     /// Seeds enrichment rows for any installed plugin that declares it accepts a cross-ref
     /// ID present in <paramref name="result"/>.ExtendedData. Called after every successful
     /// enrichment so that, e.g., a TMDB result automatically seeds SIMKL and Trakt rows
@@ -3620,60 +3602,14 @@ public class MetadataEnrichmentService(
     /// disagree about what a given raw id normalizes to (which would silently defeat the
     /// conflict check one of them is there to enforce).
     /// </summary>
-    private (string Source, string ExtId) DeriveExternalIdSourceAndId(string rawExternalId, string? excludePluginId)
+    private static (string Source, string ExtId) DeriveExternalIdSourceAndId(string rawExternalId, string pluginId)
     {
-        // Derive the source from the calling plugin's short ID so each plugin writes to
-        // its own row in media_external_ids. The old ParseExternalId fallback mapped every
-        // non-IMDB format to "tmdb", which caused MusicBrainz, Hardcover, SIMKL, etc. to
-        // all share one "tmdb" row per item. When plugin B later processed the same item
-        // and stored a different ExternalId, it would find plugin A's value in that shared
-        // row, detect a change (idChanged = true), and cascade-reset all sibling enrichment
-        // rows — including plugin A's Completed row — back to Pending spuriously.
-        string source;
-        string extId;
-
-        if (rawExternalId.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
-        {
-            // IMDB IDs from any plugin are stored in a shared "imdb" source row.
-            source = "imdb";
-            extId  = rawExternalId[5..];
-
-            // A person's IMDb id keeps its prefix ("imdb:nm0000206"): that's the form
-            // PersonResolutionService records from every credit's ExternalPersonId, so a person
-            // matched directly by the IMDb plugin and the same person credited on a title must
-            // land on the identical (source, externalId) pair. Same reason, and same bug class,
-            // as TMDB's "person:N" -> "tmdb:N" rewrite below (39,000+ duplicate people).
-            if (extId.StartsWith("nm", StringComparison.OrdinalIgnoreCase))
-                extId = "imdb:" + extId;
-        }
-        else if (excludePluginId is not null)
-        {
-            // Normal path: source = last segment of the calling plugin's full ID.
-            //   "chronicle.plugin.tmdb"        → "tmdb"
-            //   "chronicle.plugin.musicbrainz" → "musicbrainz"
-            //   "hardcover"                    → "hardcover"
-            source = PluginIdHelper.ToSource(excludePluginId);
-            extId = rawExternalId;
-
-            // TMDB's own "person:N" entity-type prefix (used to dispatch GetByIdAsync the same
-            // way "movie:"/"tv:"/"collection:" are) is NOT the convention this Source="tmdb" row
-            // is supposed to hold for a person -- every CastMember/CrewMember.ExternalPersonId
-            // this same plugin writes elsewhere uses "tmdb:N" (see TmdbMetadataProvider's
-            // ExtractPersonTmdbId doc comment). Writing "person:N" here meant a person enriched
-            // via direct TMDB lookup got a DIFFERENT (source, externalId) pair than the same real
-            // person credited on a movie/show, so the "is this id already owned by another item"
-            // check just below could never catch it -- confirmed live: 39,000+ duplicate Person
-            // records, one half of each pair carrying "person:N" and the other "tmdb:N" for the
-            // identical TMDB numeric id (Tim Allen, Alan Alda, etc.).
-            if (source == "tmdb" && extId.StartsWith("person:", StringComparison.OrdinalIgnoreCase))
-                extId = "tmdb:" + extId["person:".Length..];
-        }
-        else
-        {
-            // Fallback for callers that don't identify themselves (legacy/test paths).
-            (source, extId) = ParseExternalId(rawExternalId);
-        }
-
+        // Each plugin writes to its own row in media_external_ids: the source is the last segment of the calling plugin's
+        // id. A provider can declare (ExternalIdPolicy) that its ids are shared across plugins under a prefix (one row per
+        // item however many plugins report it) and that some of its entity prefixes are stored in another form; both are
+        // persisted-data conventions that must match what every other code path writes, so they are declared once, by the
+        // provider, and applied here and in the conflict check alike -- the two can never disagree about what an id is.
+        var (source, extId) = ExternalIdPolicies.Normalize(rawExternalId, PluginIdHelper.ToSource(pluginId))!.Value;
         return (source, extId);
     }
 
@@ -3693,7 +3629,7 @@ public class MetadataEnrichmentService(
     /// </summary>
     private async Task<MediaItem?> FindExternalIdOwnerConflictAsync(
         ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct,
-        string? excludePluginId)
+        string excludePluginId)
     {
         var (source, extId) = DeriveExternalIdSourceAndId(rawExternalId, excludePluginId);
         // .Include(...).ThenInclude(MediaType) -- the caller's IsStub bypass below now also
@@ -3816,18 +3752,17 @@ public class MetadataEnrichmentService(
     /// </param>
     private async Task UpsertExternalIdForEnrichmentAsync(
         ChronicleDbContext db, int mediaItemId, string rawExternalId, CancellationToken ct,
-        string? excludePluginId = null, bool skipConflictCheck = false)
+        string excludePluginId, bool skipConflictCheck = false)
     {
         var (source, extId) = DeriveExternalIdSourceAndId(rawExternalId, excludePluginId);
 
-        // An untyped "simkl:NNN" id is unusable (the plugin can't parse it) and duplicates the
-        // typed form -- see SimklIdHelper. Never store one; the canonical id is written by the
-        // plugin itself.
-        if (string.Equals(source, "simkl", StringComparison.OrdinalIgnoreCase) && SimklIdHelper.IsUntyped(extId))
+        // An id the provider declared unusable (ExternalIdPolicy.RefusedIdPattern: ids it cannot parse, or that duplicate its
+        // canonical form) is never stored; the canonical id is written by the plugin itself.
+        if (ExternalIdPolicies.IsRefused(source, extId))
         {
             logger.LogWarning(
-                "Refused to store untyped simkl id {ExternalId} on media item {MediaItemId}; expected simkl:{{movie|tv|anime}}:id",
-                extId, mediaItemId);
+                "Refused to store unusable {Source} id {ExternalId} on media item {MediaItemId}",
+                source, extId, mediaItemId);
             // Still flush -- the caller may have staged unrelated changes on this same context
             // and relies on this method's SaveChangesAsync as the commit point (see the
             // already-owned branch below).
@@ -3888,8 +3823,7 @@ public class MetadataEnrichmentService(
         if (idChanged)
         {
             var query = db.MediaEnrichments.Where(e => e.MediaItemId == mediaItemId);
-            if (excludePluginId is not null)
-                query = query.Where(e => e.PluginId != excludePluginId);
+            query = query.Where(e => e.PluginId != excludePluginId);
 
             var rows = await query.ToListAsync(ct);
             foreach (var row in rows)

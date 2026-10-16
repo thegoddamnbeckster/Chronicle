@@ -49,8 +49,9 @@ public sealed class PersonIdentitySplitService(
     /// <summary>Minimum birth-year difference treated as two different people.</summary>
     internal const int MinYearGap = 2;
 
-    internal const string WikipediaPluginId = "chronicle.plugin.wikipedia";
-    private const string WikipediaSource = "wikipedia";
+    // The provider whose ids come from an item's name (declared by the plugin, see ExternalIdPolicy.NameDerived).
+    internal static string NameDerivedPluginId => ExternalIdPolicies.NameDerivedPluginId();
+    private static string NameDerivedSource => ExternalIdPolicies.NameDerivedSource();
     private const int PageSize = 500;
 
     private static readonly Regex BirthsTag = new(@"^\s*(\d{4})\s+births\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -73,7 +74,7 @@ public sealed class PersonIdentitySplitService(
         using (doc)
         {
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
-            if (!doc.RootElement.TryGetProperty(WikipediaPluginId, out var wiki) ||
+            if (!doc.RootElement.TryGetProperty(NameDerivedPluginId, out var wiki) ||
                 wiki.ValueKind != JsonValueKind.Object)
                 return false;
 
@@ -92,7 +93,7 @@ public sealed class PersonIdentitySplitService(
             var trustedYears = new HashSet<int>();
             foreach (var p in doc.RootElement.EnumerateObject())
             {
-                if (p.Name.StartsWith('_') || p.Name == WikipediaPluginId) continue;
+                if (p.Name.StartsWith('_') || p.Name == NameDerivedPluginId) continue;
                 if (p.Value.ValueKind != JsonValueKind.Object) continue;
                 if (MetadataResolutionService.TryGetBlobProperty(p.Value, "birthDate", out var bd) &&
                     bd.ValueKind == JsonValueKind.String &&
@@ -118,7 +119,7 @@ public sealed class PersonIdentitySplitService(
     internal static async Task<bool> UserMergedArticleAsync(ChronicleDbContext db, int personId, CancellationToken ct)
     {
         var articleIds = await db.MediaExternalIds
-            .Where(e => e.MediaItemId == personId && e.Source == WikipediaSource)
+            .Where(e => e.MediaItemId == personId && e.Source == NameDerivedSource)
             .Select(e => e.ExternalId).ToListAsync(ct);
         if (articleIds.Count == 0) return false;
 
@@ -146,6 +147,7 @@ public sealed class PersonIdentitySplitService(
 
     public async Task ExecuteAsync(CancellationToken ct)
     {
+        if (NameDerivedSource.Length == 0) return;   // no installed provider derives ids from names: nothing to repair
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
         var resolution = scope.ServiceProvider.GetRequiredService<IMetadataResolutionService>();
@@ -164,7 +166,7 @@ public sealed class PersonIdentitySplitService(
             ct.ThrowIfCancellationRequested();
             var page = await db.MediaItems.AsNoTracking()
                 .Where(m => m.MediaTypeId == peopleTypeId && m.Id > lastId &&
-                            m.MetadataJson != null && m.MetadataJson.Contains(WikipediaPluginId) &&
+                            m.MetadataJson != null && m.MetadataJson.Contains(NameDerivedPluginId) &&
                             m.MetadataJson.Contains(" births"))
                 .OrderBy(m => m.Id).Take(PageSize)
                 .Select(m => new { m.Id, m.MetadataJson })
@@ -223,21 +225,21 @@ public sealed class PersonIdentitySplitService(
         var person = await db.MediaItems.FirstAsync(m => m.Id == personId, ct);
         var root = JsonNode.Parse(person.MetadataJson ?? "{}") as JsonObject
             ?? throw new InvalidOperationException("MetadataJson is not an object");
-        if (root[WikipediaPluginId] is not JsonObject wikiPartition)
+        if (root[NameDerivedPluginId] is not JsonObject wikiPartition)
             return false; // detector said it existed; concurrent change -- nothing to do
 
         var wikiExtIds = await db.MediaExternalIds
-            .Where(e => e.MediaItemId == personId && e.Source == WikipediaSource).ToListAsync(ct);
+            .Where(e => e.MediaItemId == personId && e.Source == NameDerivedSource).ToListAsync(ct);
         var wikiHeadshots = await db.PersonHeadshots
-            .Where(h => h.PersonMediaItemId == personId && h.Source == WikipediaSource).ToListAsync(ct);
+            .Where(h => h.PersonMediaItemId == personId && h.Source == NameDerivedSource).ToListAsync(ct);
         var wikiEnrichment = await db.MediaEnrichments
-            .FirstOrDefaultAsync(e => e.MediaItemId == personId && e.PluginId == WikipediaPluginId, ct);
+            .FirstOrDefaultAsync(e => e.MediaItemId == personId && e.PluginId == NameDerivedPluginId, ct);
 
         // Already split once before? Then the article has a home of its own -- don't spawn a
         // second stub for it, just detach it from this record again.
         var articleIds = wikiExtIds.Select(e => e.ExternalId).ToList();
         var existingOwner = articleIds.Count == 0 ? null : await db.MediaExternalIds
-            .Where(e => e.Source == WikipediaSource && articleIds.Contains(e.ExternalId) && e.MediaItemId != personId)
+            .Where(e => e.Source == NameDerivedSource && articleIds.Contains(e.ExternalId) && e.MediaItemId != personId)
             .Select(e => (int?)e.MediaItemId).FirstOrDefaultAsync(ct);
 
         MediaItem? stub = null;
@@ -259,7 +261,7 @@ public sealed class PersonIdentitySplitService(
                 CreatedAt      = DateTime.UtcNow,
                 UpdatedAt      = DateTime.UtcNow,
             };
-            var stubRoot = new JsonObject { [WikipediaPluginId] = wikiPartition.DeepClone() };
+            var stubRoot = new JsonObject { [NameDerivedPluginId] = wikiPartition.DeepClone() };
 
             // A poster/image pin the user made onto one of the moving photos goes with the photo.
             if (root["_overrides"] is JsonObject overrides)
@@ -295,7 +297,7 @@ public sealed class PersonIdentitySplitService(
             if (overrides.Count == 0) root.Remove("_overrides");
         }
 
-        root.Remove(WikipediaPluginId);
+        root.Remove(NameDerivedPluginId);
         person.MetadataJson = root.ToJsonString();
         person.UpdatedAt    = DateTime.UtcNow;
 
@@ -316,7 +318,7 @@ public sealed class PersonIdentitySplitService(
             // Fresh Pending row: search again, this time with the trusted birth year as a hard hint.
             db.MediaEnrichments.Add(new MediaItemEnrichment
             {
-                MediaItemId = personId, PluginId = WikipediaPluginId,
+                MediaItemId = personId, PluginId = NameDerivedPluginId,
                 Status = EnrichmentStatus.Pending, MaxRetries = 3,
             });
         }

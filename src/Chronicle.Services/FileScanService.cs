@@ -1842,18 +1842,14 @@ namespace Chronicle.Services
             return null;
         }
 
-        // The (source, stored id) pair written to media_external_ids for an id from a KNOWN source.
-        // Ids are stored exactly as the plugin issued them, except IMDb's, which is stored bare
-        // ("tt0137523"): every plugin that reports an IMDb id shares one "imdb" row per item. That one
-        // storage rule is the only source-specific thing left here; it is persisted-data format, mirrored
-        // by MetadataEnrichmentService's own "imdb:" handling, and is NOT changed without migrating the
-        // existing rows.
+        // The (source, stored id) pair written to media_external_ids for an id from a KNOWN source: what the provider declared
+        // (ExternalIdPolicy: a prefix shared by every plugin that reports the id, stored bare) or, with no policy, the id
+        // exactly as the plugin issued it. Same rule as MetadataEnrichmentService, so the two can never file one id two ways.
         internal static (string source, string externalId) ParseSuggestedExternalId(string suggested, string source)
         {
-            if (string.Equals(source, "imdb", StringComparison.OrdinalIgnoreCase)
-                && suggested.StartsWith("imdb:", StringComparison.OrdinalIgnoreCase))
-                return (source, suggested[5..]);
-            return (source, suggested);
+            var normalized = ExternalIdPolicies.Normalize(suggested, source);
+            return normalized is { } n && string.Equals(n.Source, source, StringComparison.OrdinalIgnoreCase)
+                ? (n.Source, n.Id) : (source, suggested);
         }
 
         // Produces a normalised "title|year" deduplication key, or null if title is missing.

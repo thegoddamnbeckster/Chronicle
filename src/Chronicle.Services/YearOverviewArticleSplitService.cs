@@ -37,8 +37,9 @@ public sealed class YearOverviewArticleSplitService(
     IServiceScopeFactory scopeFactory,
     ILogger<YearOverviewArticleSplitService> logger)
 {
-    internal const string WikipediaPluginId = "chronicle.plugin.wikipedia";
-    private const string WikipediaSource = "wikipedia";
+    // The provider whose ids come from an item's name (declared by the plugin, see ExternalIdPolicy.NameDerived).
+    internal static string NameDerivedPluginId => ExternalIdPolicies.NameDerivedPluginId();
+    private static string NameDerivedSource => ExternalIdPolicies.NameDerivedSource();
     private const int PageSize = 500;
 
     internal static readonly Regex YearOverviewTitle =
@@ -58,7 +59,7 @@ public sealed class YearOverviewArticleSplitService(
         using (doc)
         {
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
-            if (!doc.RootElement.TryGetProperty(WikipediaPluginId, out var wiki) ||
+            if (!doc.RootElement.TryGetProperty(NameDerivedPluginId, out var wiki) ||
                 wiki.ValueKind != JsonValueKind.Object)
                 return false;
             if (!MetadataResolutionService.TryGetBlobProperty(wiki, "title", out var wikiTitleEl) ||
@@ -69,7 +70,7 @@ public sealed class YearOverviewArticleSplitService(
 
             foreach (var p in doc.RootElement.EnumerateObject())
             {
-                if (p.Name.StartsWith('_') || p.Name == WikipediaPluginId) continue;
+                if (p.Name.StartsWith('_') || p.Name == NameDerivedPluginId) continue;
                 if (p.Value.ValueKind != JsonValueKind.Object) continue;
                 if (MetadataResolutionService.TryGetBlobProperty(p.Value, "title", out var otherTitle) &&
                     otherTitle.ValueKind == JsonValueKind.String &&
@@ -86,6 +87,7 @@ public sealed class YearOverviewArticleSplitService(
 
     public async Task ExecuteAsync(CancellationToken ct)
     {
+        if (NameDerivedSource.Length == 0) return;   // no installed provider derives ids from names: nothing to repair
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
         var resolution = scope.ServiceProvider.GetRequiredService<IMetadataResolutionService>();
@@ -96,7 +98,7 @@ public sealed class YearOverviewArticleSplitService(
             ct.ThrowIfCancellationRequested();
             var page = await db.MediaItems.AsNoTracking()
                 .Where(m => m.Id > lastId && m.HierarchyLevel == 0 &&
-                            m.MetadataJson != null && m.MetadataJson.Contains(WikipediaPluginId) &&
+                            m.MetadataJson != null && m.MetadataJson.Contains(NameDerivedPluginId) &&
                             (m.MetadataJson.Contains(" in film") || m.MetadataJson.Contains(" in television")))
                 .OrderBy(m => m.Id).Take(PageSize)
                 .Select(m => new { m.Id, m.MetadataJson })
@@ -137,18 +139,18 @@ public sealed class YearOverviewArticleSplitService(
         var item = await db.MediaItems.FirstAsync(m => m.Id == itemId, ct);
         var root = JsonNode.Parse(item.MetadataJson ?? "{}") as JsonObject
             ?? throw new InvalidOperationException("MetadataJson is not an object");
-        if (root[WikipediaPluginId] is not JsonObject wikiPartition)
+        if (root[NameDerivedPluginId] is not JsonObject wikiPartition)
             return false; // detector said it existed; concurrent change -- nothing to do
 
         var wikiExtIds = await db.MediaExternalIds
-            .Where(e => e.MediaItemId == itemId && e.Source == WikipediaSource).ToListAsync(ct);
+            .Where(e => e.MediaItemId == itemId && e.Source == NameDerivedSource).ToListAsync(ct);
         var wikiEnrichment = await db.MediaEnrichments
-            .FirstOrDefaultAsync(e => e.MediaItemId == itemId && e.PluginId == WikipediaPluginId, ct);
+            .FirstOrDefaultAsync(e => e.MediaItemId == itemId && e.PluginId == NameDerivedPluginId, ct);
 
         // Already split off this exact article once before? Don't spawn a second stub for it.
         var articleIds = wikiExtIds.Select(e => e.ExternalId).ToList();
         var existingOwner = articleIds.Count == 0 ? null : await db.MediaExternalIds
-            .Where(e => e.Source == WikipediaSource && articleIds.Contains(e.ExternalId) && e.MediaItemId != itemId)
+            .Where(e => e.Source == NameDerivedSource && articleIds.Contains(e.ExternalId) && e.MediaItemId != itemId)
             .Select(e => (int?)e.MediaItemId).FirstOrDefaultAsync(ct);
 
         MediaItem? stub = null;
@@ -163,14 +165,14 @@ public sealed class YearOverviewArticleSplitService(
                 IsStub         = true,
                 CreatedAt      = DateTime.UtcNow,
                 UpdatedAt      = DateTime.UtcNow,
-                MetadataJson   = new JsonObject { [WikipediaPluginId] = wikiPartition.DeepClone() }.ToJsonString(),
+                MetadataJson   = new JsonObject { [NameDerivedPluginId] = wikiPartition.DeepClone() }.ToJsonString(),
             };
             db.MediaItems.Add(stub);
             // No save here: the stub, the re-pointed rows and the original's edit land in ONE
             // SaveChanges, or a failure in between strands an orphan stub.
         }
 
-        root.Remove(WikipediaPluginId);
+        root.Remove(NameDerivedPluginId);
         item.MetadataJson = root.ToJsonString();
         item.UpdatedAt    = DateTime.UtcNow;
 
@@ -188,7 +190,7 @@ public sealed class YearOverviewArticleSplitService(
         {
             db.MediaEnrichments.Add(new MediaItemEnrichment
             {
-                MediaItemId = itemId, PluginId = WikipediaPluginId,
+                MediaItemId = itemId, PluginId = NameDerivedPluginId,
                 Status = EnrichmentStatus.Pending, MaxRetries = 3,
             });
         }

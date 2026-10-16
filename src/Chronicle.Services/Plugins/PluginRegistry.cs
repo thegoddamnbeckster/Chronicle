@@ -269,6 +269,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             _plugins.TryGetValue(dbId, out evicted);
             _plugins[dbId] = loaded;
         }
+        RefreshExternalIdPolicies();
         // Dispose outside the lock: Unload() doesn't need synchronization and
         // holding _lock would block all registry reads during teardown.
         if (evicted is not null)
@@ -305,7 +306,30 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         // Dispose outside the lock: Unload() doesn't need synchronization and
         // holding _lock would block all registry reads during teardown.
         plugin.Dispose();
+        RefreshExternalIdPolicies();
         _log.Information("Plugin unloaded (db id {DbId})", dbId);
+    }
+
+    /// <summary>Rebuilds the external-id policies Chronicle consults from what the loaded providers declare.</summary>
+    private void RefreshExternalIdPolicies()
+    {
+        List<(string PluginId, IMetadataProvider Provider)> providers;
+        lock (_lock)
+            providers = _plugins.Values
+                .SelectMany(p => p.MetadataProviders.Select(m => (PluginId: p.Manifest.PluginId, Provider: m))).ToList();
+
+        var policies = new List<ExternalIdPolicy>();
+        foreach (var (pluginId, provider) in providers.Where(x => x.Provider is IExternalIdPolicyProvider))
+        {
+            try
+            {
+                var policy = ((IExternalIdPolicyProvider)provider).GetExternalIdPolicy();
+                policy.PluginId = pluginId;
+                policies.Add(policy);
+            }
+            catch (Exception ex) { _log.Warning(ex, "A plugin's external id policy could not be read; it is ignored"); }
+        }
+        ExternalIdPolicies.Load(policies);
     }
 
     public void Dispose()

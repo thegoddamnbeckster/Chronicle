@@ -1,4 +1,5 @@
 using Chronicle.Core.Helpers;
+using Chronicle.Services;
 using Chronicle.Core.Models;
 using FluentAssertions;
 using Xunit;

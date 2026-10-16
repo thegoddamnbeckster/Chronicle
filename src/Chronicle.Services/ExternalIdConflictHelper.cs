@@ -1,6 +1,6 @@
 using Chronicle.Core.Models;
 
-namespace Chronicle.Core.Helpers;
+namespace Chronicle.Services;
 
 /// <summary>
 /// Decides whether two items' external ids prove they are DIFFERENT real-world things.
@@ -35,7 +35,7 @@ public static class ExternalIdConflictHelper
 
     private static IEnumerable<MediaExternalId> Identity(IEnumerable<MediaExternalId> ids) =>
         ids.Where(e =>
-            !string.Equals(e.Source, "fanarttv", StringComparison.OrdinalIgnoreCase) &&
+            !ExternalIdPolicies.IgnoredForConflicts(e.Source) &&
             !e.ExternalId.EndsWith("__suppress__", StringComparison.OrdinalIgnoreCase) &&
             !e.ExternalId.EndsWith("manual-collection-member", StringComparison.OrdinalIgnoreCase));
 }

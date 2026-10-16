@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Chronicle.Core.Helpers;
 using Chronicle.Plugins.Models;
 
 namespace Chronicle.Services;
@@ -23,19 +24,19 @@ internal static class CrossRefHelper
         if (!ext.TryGetProperty("ids", out var ids)) return result;
         if (ids.ValueKind != JsonValueKind.Object) return result;
 
-        bool isMovie = meta.ExternalId?.Contains(":movie:", StringComparison.OrdinalIgnoreCase) == true
+        // Which kind of item the ids describe: the media type's own family decides whether it is movie-like; an id shaped like a
+        // movie id ("movie:550") says so when the type is not known. The type's name is passed on so a provider that
+        // writes ids differently for a type it distinguishes (it declares that in its ExternalIdPolicy) can.
+        bool isMovie = MediaTypeRegistry.IsMovieLike(mediaTypeName)
+                    || meta.ExternalId?.Contains(":movie:", StringComparison.OrdinalIgnoreCase) == true
                     || meta.ExternalId?.StartsWith("movie:", StringComparison.OrdinalIgnoreCase) == true;
-        // isAnime is derived from Chronicle's media type name, not SIMKL's own classification.
-        // Items stored under Chronicle's "tv" type that SIMKL classifies as anime will still
-        // receive simkl:tv:{id} here. Only items with an explicit "anime" media type benefit.
-        bool isAnime = string.Equals(mediaTypeName, "anime", StringComparison.OrdinalIgnoreCase);
 
         foreach (var prop in ids.EnumerateObject())
         {
             var key = prop.Name.ToLowerInvariant();
             if (key == fromSource) continue;
 
-            var formatted = FormatCrossRefId(key, prop.Value, isMovie, isAnime);
+            var formatted = FormatCrossRefId(key, prop.Value, isMovie, mediaTypeName);
             if (formatted is not null)
                 result.Add((key, formatted));
         }
@@ -44,45 +45,22 @@ internal static class CrossRefHelper
     }
 
     /// <summary>
-    /// Formats a raw ID value into the external-ID string expected by the target plugin.
-    /// Returns null when the value type is wrong or the source is unrecognised.
+    /// Formats a raw ID value into the external-ID string expected by the target plugin, as that plugin's own
+    /// <see cref="Chronicle.Core.Models.ExternalIdPolicy"/> says (plainly "source:value" when it declared none).
+    /// Returns null when the value is not an id.
     /// </summary>
-    internal static string? FormatCrossRefId(string source, JsonElement value, bool isMovie, bool isAnime = false)
+    internal static string? FormatCrossRefId(string source, JsonElement value, bool isMovie, string? mediaTypeName = null)
     {
-        switch (source)
+        string? text;
+        bool isNumber;
+        switch (value.ValueKind)
         {
-            case "tmdb":
-                if (value.ValueKind == JsonValueKind.Number)
-                    return $"{(isMovie ? "movie" : "tv")}:{value.GetInt64()}";
-                break;
-
-            case "imdb":
-                if (value.ValueKind == JsonValueKind.String &&
-                    value.GetString() is { Length: > 0 } imdb)
-                    return $"imdb:{imdb}";
-                break;
-
-            case "trakt":
-                if (value.ValueKind == JsonValueKind.Number)
-                    return $"trakt:{(isMovie ? "movie" : "show")}:{value.GetInt64()}";
-                break;
-
-            case "simkl":
-                if (value.ValueKind == JsonValueKind.Number)
-                {
-                    var simklType = isMovie ? "movie" : (isAnime ? "anime" : "tv");
-                    return $"simkl:{simklType}:{value.GetInt64()}";
-                }
-                break;
-
-            default:
-                if (value.ValueKind == JsonValueKind.Number)
-                    return $"{source}:{value.GetInt64()}";
-                if (value.ValueKind == JsonValueKind.String &&
-                    value.GetString() is { Length: > 0 } s)
-                    return $"{source}:{s}";
-                break;
+            case JsonValueKind.Number: text = value.GetInt64().ToString(System.Globalization.CultureInfo.InvariantCulture); isNumber = true; break;
+            case JsonValueKind.String: text = value.GetString(); isNumber = false; break;
+            default: return null;
         }
-        return null;
+        return text is { Length: > 0 }
+            ? ExternalIdPolicies.FormatCrossRef(source, text, isNumber, [isMovie ? "movie" : null, mediaTypeName?.ToLowerInvariant()])
+            : null;
     }
 }

@@ -16,7 +16,7 @@ namespace Chronicle.Tests.Unit.Services;
 /// </summary>
 public class PersonIdentitySplitServiceTests
 {
-    private const string Wiki = PersonIdentitySplitService.WikipediaPluginId;
+    private const string Wiki = ExternalIdFixtures.WikipediaPluginId;
 
     private static string Json(string tmdbBirth, string? wikiTag, string wikiPoster = "https://w/x.jpg")
     {

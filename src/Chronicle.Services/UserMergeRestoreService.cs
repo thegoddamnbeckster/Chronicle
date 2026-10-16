@@ -1,3 +1,4 @@
+using Chronicle.Core.Helpers;
 using System.Text.Json;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
@@ -24,16 +25,17 @@ public sealed class UserMergeRestoreService(
     IServiceScopeFactory scopeFactory,
     ILogger<UserMergeRestoreService> logger)
 {
-    private const string WikipediaSource = "wikipedia";
+    private static string NameDerivedSource => ExternalIdPolicies.NameDerivedSource();
 
     public async Task ExecuteAsync(CancellationToken ct)
     {
+        if (NameDerivedSource.Length == 0) return;   // no installed provider derives ids from names: nothing to repair
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
         var merge = scope.ServiceProvider.GetRequiredService<IMergeService>();
 
         var userMerges = await db.MediaItemMerges
-            .Where(m => m.MergedByUserId != null && m.LoserExternalIdsJson.Contains(WikipediaSource))
+            .Where(m => m.MergedByUserId != null && m.LoserExternalIdsJson.Contains(NameDerivedSource))
             .Select(m => new { m.WinnerId, m.MergedAt, m.MergedByUserId, m.LoserExternalIdsJson })
             .ToListAsync(ct);
 
@@ -76,7 +78,7 @@ public sealed class UserMergeRestoreService(
         if (winnerType is null || !winnerType.IsPerson) return null;
 
         var holders = await db.MediaExternalIds
-            .Where(e => e.Source == WikipediaSource && e.ExternalId == articleId)
+            .Where(e => e.Source == NameDerivedSource && e.ExternalId == articleId)
             .Select(e => e.MediaItemId).ToListAsync(ct);
         if (holders.Count != 1 || holders[0] == winnerId) return null;   // still on the winner, or not on exactly one record
 
@@ -88,7 +90,7 @@ public sealed class UserMergeRestoreService(
 
         // A split leaves only the article behind. Anything else (a TMDB id, credits, children) means it has become
         // a record in its own right, which is not ours to fold away.
-        var hasOtherIds = await db.MediaExternalIds.AnyAsync(e => e.MediaItemId == candidate.Id && e.Source != WikipediaSource, ct);
+        var hasOtherIds = await db.MediaExternalIds.AnyAsync(e => e.MediaItemId == candidate.Id && e.Source != NameDerivedSource, ct);
         var hasCredits = await db.MediaCredits.AnyAsync(c => c.PersonMediaItemId == candidate.Id, ct);
         var hasChildren = await db.MediaItems.AnyAsync(m => m.ParentId == candidate.Id, ct);
         return hasOtherIds || hasCredits || hasChildren ? null : candidate.Id;
@@ -105,7 +107,7 @@ public sealed class UserMergeRestoreService(
             foreach (var e in doc.RootElement.EnumerateArray())
                 if (e.ValueKind == JsonValueKind.Object &&
                     e.TryGetProperty("Source", out var src) && src.ValueKind == JsonValueKind.String &&
-                    string.Equals(src.GetString(), WikipediaSource, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(src.GetString(), NameDerivedSource, StringComparison.OrdinalIgnoreCase) &&
                     e.TryGetProperty("ExternalId", out var id) && id.ValueKind == JsonValueKind.String &&
                     !string.IsNullOrEmpty(id.GetString()))
                     yield return id.GetString()!;

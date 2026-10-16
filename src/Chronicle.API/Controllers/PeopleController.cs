@@ -395,17 +395,6 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<object>.Ok(new { itemsProcessed, pairsReprocessed, creditsResolved }));
         }
 
-        private static readonly Regex TmdbPersonExternalIdRe = new(@"^(?:person|tmdb):(\d+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-        // Matches a wikipedia external id built from a disambiguated page title -- e.g.
-        // "wikipedia:en:Michael_Lerner_(actor)" -- regardless of when it was recorded. Records
-        // enriched since chronicle.plugin.wikipedia v1.0.8 also carry an explicit
-        // pluginMetadata.chronicle.plugin.wikipedia.extendedData.disambiguator field for the
-        // same signal, but this regex is what still works for everything enriched before that
-        // (see GetWikipediaCollisionCandidates's own doc for why this signal matters).
-        private static readonly Regex DisambiguatedWikipediaExternalIdRe =
-            new(@"_\([^)]*\)$", RegexOptions.Compiled);
-
         /// <summary>
         /// One-time historical backfill for a real production bug (fixed in
         /// MediaItemNormalizer.NormalizeName, 2026-09-03): the stored NormalizedName column
@@ -451,62 +440,6 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<object>.Ok(new { updated }));
         }
 
-        // Mirrors WikipediaScoring.StripDisambiguationSuffix's own regex exactly (that plugin
-        // project isn't referenced here) -- see the backfill endpoint just below for why this
-        // needs a one-time pass over already-written rows, not just the plugin-side fix.
-        private static readonly System.Text.RegularExpressions.Regex DisambiguationSuffixRe =
-            new(@"\s*\([^)]*\)\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
-
-        /// <summary>
-        /// One-time cleanup for person names still carrying a Wikipedia disambiguation
-        /// parenthetical -- "Aaron Douglas (actor)" instead of "Aaron Douglas". The plugin-side
-        /// fix (chronicle.plugin.wikipedia v1.0.4, 2026-09-02: WikipediaScoring.
-        /// StripDisambiguationSuffix) already stops this for every enrichment from here on, but
-        /// it doesn't retroactively fix a person whose Name was already overwritten by an
-        /// enrichment pass that ran BEFORE that fix landed -- confirmed live (2026-09-03):
-        /// "Aaron Douglas (actor)"'s own UpdatedAt (2026-08-31) predates the fix (2026-09-02).
-        /// Scoped to people with a recorded wikipedia external id, since that parenthetical is a
-        /// Wikipedia-specific convention -- a non-Wikipedia-sourced name that happens to contain
-        /// parentheses for some other legitimate reason must never be touched.
-        /// </summary>
-        [HttpPost("strip-wikipedia-disambiguation-suffix")]
-        [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> StripWikipediaDisambiguationSuffix(CancellationToken ct)
-        {
-            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
-            if (peopleTypeId is null)
-                return Ok(ApiResponse<object>.Ok(new { updated = 0 }));
-
-            var wikipediaPersonIds = await _context.MediaExternalIds
-                .Where(x => x.Source == "wikipedia")
-                .Select(x => x.MediaItemId)
-                .Distinct()
-                .ToListAsync(ct);
-
-            var people = await _context.MediaItems
-                .Where(m => m.MediaTypeId == peopleTypeId.Value && wikipediaPersonIds.Contains(m.Id))
-                .Select(m => new { m.Id, m.Name })
-                .ToListAsync(ct);
-
-            int updated = 0;
-            foreach (var p in people)
-            {
-                ct.ThrowIfCancellationRequested();
-                var stripped = DisambiguationSuffixRe.Replace(p.Name, string.Empty);
-                if (stripped == p.Name || stripped.Length == 0) continue;
-
-                await _context.MediaItems
-                    .Where(m => m.Id == p.Id)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(m => m.Name, stripped)
-                        .SetProperty(m => m.NormalizedName, MediaItemNormalizer.NormalizeName(stripped))
-                        .SetProperty(m => m.NormalizedNameLoose, MediaItemNormalizer.NormalizeNameLoose(stripped)), ct);
-                updated++;
-            }
-
-            return Ok(ApiResponse<object>.Ok(new { updated }));
-        }
-
         /// <summary>
         /// One-time backfill for MediaItem.NormalizedNameLoose (added 2026-09-03 alongside
         /// PersonResolutionService's Step 2b loose-name fallback -- see the doc comment there).
@@ -541,251 +474,6 @@ namespace Chronicle.API.Controllers
             return Ok(ApiResponse<object>.Ok(new { updated }));
         }
 
-        /// <summary>
-        /// Companion to dedupe-tmdb-duplicates below, and must run BEFORE it (or before any
-        /// fresh credit reprocessing): rewrites every remaining "person:N"-format MediaExternalId
-        /// (Source="tmdb") on a "people" item to the "tmdb:N" format every other code path
-        /// already expects for that column. Discovered live (2026-09-03) running
-        /// reprocess-orphaned-credits AFTER dedupe-tmdb-duplicates: PersonResolutionService's own
-        /// same-name-match safety check (added for the Brian Johnson conflation fix) sees
-        /// "person:1851642" vs a fresh credit's "tmdb:1851642" as a same-source CONFLICT --
-        /// exactly the signature it's designed to catch for two different real people sharing a
-        /// name -- and creates a brand-new duplicate stub rather than reusing the existing
-        /// record. Every surviving "person:N" row is a live landmine for this: the very fix that
-        /// stops blind merges was, via this formatting mismatch, actively manufacturing fresh
-        /// duplicates (confirmed: Sheila Atim and others) every time credits got reprocessed.
-        /// When an item already carries both formats (harmless leftover from before either fix),
-        /// the redundant "person:N" row is deleted rather than renamed onto a collision.
-        /// </summary>
-        [HttpPost("normalize-tmdb-person-ids")]
-        [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> NormalizeTmdbPersonIds(CancellationToken ct)
-        {
-            var (renamed, deletedRedundant) = await NormalizeTmdbPersonIdsCoreAsync(ct);
-            return Ok(ApiResponse<object>.Ok(new { renamed, deletedRedundant }));
-        }
-
-        /// <summary>Core of NormalizeTmdbPersonIds, factored out so DedupeTmdbDuplicates can run
-        /// it as an unconditional first step (found in code review 2026-09-03: the two
-        /// endpoints' "must run BEFORE it" ordering was documentation-only, nothing enforced it,
-        /// and NormalizeTmdbPersonIds is cheap/idempotent -- a no-op ExecuteUpdate/ExecuteDelete
-        /// pair when there's nothing left to normalize -- so there's no reason to leave a caller
-        /// able to get the order wrong).</summary>
-        private async Task<(int Renamed, int DeletedRedundant)> NormalizeTmdbPersonIdsCoreAsync(CancellationToken ct)
-        {
-            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
-            if (peopleTypeId is null)
-                return (0, 0);
-
-            // Pure SQL-side bulk operations (ExecuteDelete/ExecuteUpdate), not tracked-entity
-            // mutation -- a first version of this endpoint loaded every "person:"-format row
-            // into the change tracker up front, then mutated each one in a loop that called
-            // ChangeTracker.Clear() every 500 rows for throughput. That's exactly wrong for
-            // direct property mutation (unlike Remove(), which re-attaches on demand): once an
-            // entity is detached by Clear(), setting a property on it does nothing EF will ever
-            // persist. Confirmed live (2026-09-03): the endpoint reported 75,145 "renamed" but
-            // only the first batch actually reached the database -- Sheila Atim's own record
-            // was silently left as "person:1851642", which is exactly what let a fresh
-            // duplicate get created for her moments later. ExecuteUpdate/ExecuteDelete compile
-            // to plain SQL statements and have no such tracking-lifetime pitfall.
-            var deletedRedundant = await _context.MediaExternalIds
-                .Where(e => e.Source == "tmdb"
-                         && e.ExternalId.StartsWith("person:")
-                         && _context.MediaItems.Any(m => m.Id == e.MediaItemId && m.MediaTypeId == peopleTypeId.Value)
-                         && _context.MediaExternalIds.Any(o => o.MediaItemId == e.MediaItemId
-                                                             && o.Source == "tmdb"
-                                                             && o.ExternalId.StartsWith("tmdb:")))
-                .ExecuteDeleteAsync(ct);
-
-            var renamed = await _context.MediaExternalIds
-                .Where(e => e.Source == "tmdb"
-                         && e.ExternalId.StartsWith("person:")
-                         && _context.MediaItems.Any(m => m.Id == e.MediaItemId && m.MediaTypeId == peopleTypeId.Value))
-                .ExecuteUpdateAsync(s => s.SetProperty(e => e.ExternalId, e => "tmdb:" + e.ExternalId.Substring(7)), ct);
-
-            return (renamed, deletedRedundant);
-        }
-
-        /// <summary>
-        /// One-time historical cleanup for a real production bug (fixed in
-        /// MetadataEnrichmentService.UpsertExternalIdForEnrichmentAsync, 2026-09-03): TMDB
-        /// person ids were written under two different (Source="tmdb", ExternalId=...) shapes
-        /// -- "person:N" from direct TMDB enrichment vs "tmdb:N" from credit-derived stub
-        /// creation -- which defeated the "is this id already owned by another item" duplicate
-        /// check and let a second Person stub get created for essentially every person touched
-        /// by both paths. Confirmed live: 39,000+ duplicate groups across the catalog.
-        ///
-        /// Groups every "people" item by its underlying TMDB numeric person id (regardless of
-        /// which prefix it's stored under) and, for any group spanning more than one MediaItem,
-        /// keeps exactly one and deletes the rest -- per [[feedback_chronicle_dedup_delete_not_merge]],
-        /// delete rather than merge. Winner priority: a pinned artwork override beats
-        /// everything (never discard a user's own customization); then a Wikipedia link (the
-        /// richer record); then more resolved credits; then the lowest id as a stable
-        /// tiebreak. Deleting a loser unlinks (not destroys) its MediaCredit rows via the
-        /// existing DeleteBehavior.SetNull FK -- run reprocess-orphaned-credits afterward to
-        /// re-resolve them onto the surviving record. Admin only: maintenance operation, not
-        /// something a regular user triggers.
-        /// </summary>
-        [HttpPost("dedupe-tmdb-duplicates")]
-        [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> DedupeTmdbDuplicates(CancellationToken ct)
-        {
-            // Unconditional first step, not just documentation -- see NormalizeTmdbPersonIdsCoreAsync's
-            // own doc for why a caller getting this ordering wrong manufactures fresh duplicates.
-            await NormalizeTmdbPersonIdsCoreAsync(ct);
-
-            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
-            if (peopleTypeId is null)
-                return Ok(ApiResponse<object>.Ok(new { groupsProcessed = 0, deleted = 0 }));
-
-            // Load everything needed to make every group's winner decision up front, in bulk --
-            // 39,000+ per-group queries would make this endpoint take hours instead of minutes.
-            var peopleIds = await _context.MediaItems
-                .Where(m => m.MediaTypeId == peopleTypeId.Value)
-                .Select(m => m.Id)
-                .ToListAsync(ct);
-            var peopleIdSet = peopleIds.ToHashSet();
-
-            var tmdbExtIds = await _context.MediaExternalIds
-                .Where(e => e.Source == "tmdb")
-                .Select(e => new { e.MediaItemId, e.ExternalId })
-                .ToListAsync(ct);
-
-            var byNumericId = new Dictionary<string, HashSet<int>>();
-            foreach (var e in tmdbExtIds)
-            {
-                if (!peopleIdSet.Contains(e.MediaItemId)) continue;
-                var m = TmdbPersonExternalIdRe.Match(e.ExternalId);
-                if (!m.Success) continue;
-                var numId = m.Groups[1].Value;
-                if (!byNumericId.TryGetValue(numId, out var set)) byNumericId[numId] = set = [];
-                set.Add(e.MediaItemId);
-            }
-
-            var dupeGroups = byNumericId.Values.Where(set => set.Count > 1).ToList();
-            if (dupeGroups.Count == 0)
-                return Ok(ApiResponse<object>.Ok(new { groupsProcessed = 0, deleted = 0 }));
-
-            var allDupeItemIds = dupeGroups.SelectMany(s => s).Distinct().ToHashSet();
-
-            var itemsWithOverride = (await _context.MediaItems
-                .Where(m => allDupeItemIds.Contains(m.Id) && m.MetadataJson != null && m.MetadataJson.Contains("\"_overrides\""))
-                .Select(m => m.Id)
-                .ToListAsync(ct)).ToHashSet();
-
-            var itemsWithWikipedia = (await _context.MediaExternalIds
-                .Where(e => e.Source == "wikipedia" && allDupeItemIds.Contains(e.MediaItemId))
-                .Select(e => e.MediaItemId)
-                .ToListAsync(ct)).ToHashSet();
-
-            var creditCounts = (await _context.MediaCredits
-                .Where(c => c.PersonMediaItemId != null && allDupeItemIds.Contains(c.PersonMediaItemId.Value))
-                .GroupBy(c => c.PersonMediaItemId!.Value)
-                .Select(g => new { Id = g.Key, Count = g.Count() })
-                .ToListAsync(ct)).ToDictionary(x => x.Id, x => x.Count);
-
-            int groupsProcessed = 0, deleted = 0;
-
-            foreach (var group in dupeGroups)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                var ordered = group
-                    .OrderByDescending(id => itemsWithOverride.Contains(id))
-                    .ThenByDescending(id => itemsWithWikipedia.Contains(id))
-                    .ThenByDescending(id => creditCounts.GetValueOrDefault(id, 0))
-                    .ThenBy(id => id)
-                    .ToList();
-
-                var loserIds = ordered.Skip(1).ToList();
-                var losers = await _context.MediaItems.Where(m => loserIds.Contains(m.Id)).ToListAsync(ct);
-                _context.MediaItems.RemoveRange(losers);
-                deleted += losers.Count;
-                groupsProcessed++;
-
-                if (groupsProcessed % 200 == 0)
-                {
-                    await _context.SaveChangesAsync(ct);
-                    // Same reason ReprocessOrphanedCredits and PluginHostService's own backfill
-                    // clear periodically: an EF change tracker that never resets across 39,000+
-                    // groups in one request keeps accumulating every entity it's ever seen,
-                    // making each subsequent SaveChangesAsync progressively slower.
-                    _context.ChangeTracker.Clear();
-                }
-            }
-
-            await _context.SaveChangesAsync(ct);
-            return Ok(ApiResponse<object>.Ok(new { groupsProcessed, deleted }));
-        }
-
-        /// <summary>
-        /// Read-only scan for the Michael Lerner failure shape (confirmed live 2026-09-03):
-        /// two DIFFERENT real people happen to share a name (one a stuntman credited only via
-        /// TMDB, the other a famous actor with his own Wikipedia page), and the STUB WITHOUT a
-        /// real Wikipedia page of its own got matched onto the OTHER person's disambiguated
-        /// article anyway -- WikipediaScoring's name/type-keyword scoring has no way to know
-        /// two same-named Chronicle items are actually different people. Wikipedia only
-        /// disambiguates a title when some OTHER article shares the bare name, so a
-        /// disambiguated match landing on a person who shares a normalized name with ANOTHER
-        /// Chronicle person is exactly the at-risk shape -- not proof of a wrong match (most
-        /// disambiguated matches are entirely correct), just the narrow candidate set worth a
-        /// human/AI look, the same way this one was actually found. Makes no changes; every
-        /// candidate here needs the same manual bio-vs-credits comparison this endpoint's own
-        /// doc comment describes, not an automated verdict.
-        /// </summary>
-        [HttpGet("wikipedia-collision-candidates")]
-        [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> GetWikipediaCollisionCandidates(CancellationToken ct)
-        {
-            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
-            if (peopleTypeId is null)
-                return Ok(ApiResponse<object>.Ok(new { count = 0, candidates = Array.Empty<object>() }));
-
-            var wikipediaExtIds = await _context.MediaExternalIds
-                .Where(e => e.Source == "wikipedia")
-                .Select(e => new { e.MediaItemId, e.ExternalId })
-                .ToListAsync(ct);
-            var disambiguatedPersonIds = wikipediaExtIds
-                .Where(e => DisambiguatedWikipediaExternalIdRe.IsMatch(e.ExternalId))
-                .Select(e => e.MediaItemId)
-                .ToHashSet();
-
-            if (disambiguatedPersonIds.Count == 0)
-                return Ok(ApiResponse<object>.Ok(new { count = 0, candidates = Array.Empty<object>() }));
-
-            var people = await _context.MediaItems
-                .Where(m => m.MediaTypeId == peopleTypeId.Value)
-                .Select(m => new { m.Id, m.Name })
-                .ToListAsync(ct);
-
-            // Computed in-memory from Name, not read from the NormalizedNameLoose column --
-            // found in code review (2026-09-03) that trusting the column silently under-reports
-            // every candidate on a catalog where BackfillNormalizedNameLoose hasn't run yet (the
-            // column would be null for every row, so the `!string.IsNullOrEmpty` filter drops
-            // everyone before grouping even starts), with no error and no hint in the response
-            // that anything was skipped. Same normalizer the column itself is kept in sync with
-            // (ChronicleDbContext.SyncNormalizedNames), just computed fresh instead of assuming
-            // the persisted value is current.
-            var candidates = people
-                .Select(p => new { p.Id, p.Name, NormalizedNameLoose = MediaItemNormalizer.NormalizeNameLoose(p.Name) })
-                .Where(p => !string.IsNullOrEmpty(p.NormalizedNameLoose))
-                .GroupBy(p => p.NormalizedNameLoose)
-                .Where(g => g.Count() > 1 && g.Any(p => disambiguatedPersonIds.Contains(p.Id)))
-                .Select(g => new
-                {
-                    normalizedName = g.Key,
-                    people = g.Select(p => new
-                    {
-                        p.Id,
-                        p.Name,
-                        hasDisambiguatedWikipediaMatch = disambiguatedPersonIds.Contains(p.Id),
-                    }).ToList(),
-                })
-                .ToList();
-
-            return Ok(ApiResponse<object>.Ok(new { count = candidates.Count, candidates }));
-        }
-
         // Matches a quoted nickname, straight or curly double quotes -- same shape as
         // MediaItemNormalizer's own private _quotedNickname regex (not shared: that one lives
         // in Chronicle.Core and is intentionally an implementation detail of NormalizeName/
@@ -806,9 +494,7 @@ namespace Chronicle.API.Controllers
         /// re-run so the stored column reflects it), but does nothing for stubs already split
         /// before the fix landed.
         ///
-        /// Deliberately read-only, same caution as GetWikipediaCollisionCandidates just above:
-        /// a shared normalized name is NOT proof of the same real person on its own (see that
-        /// endpoint's own doc for the Brian Johnson/Jesse James/Jonathan Lee cases), so this
+        /// Deliberately read-only, a shared normalized name is NOT proof of the same real person on its own, so this
         /// only surfaces candidates -- at least one member of the group must actually carry a
         /// quoted nickname in its raw Name, narrowing this to the specific failure shape rather
         /// than any two people who happen to share a name. Corroborating signals (external ids,
@@ -831,7 +517,7 @@ namespace Chronicle.API.Controllers
                 .ToListAsync(ct);
 
             // Computed fresh from Name rather than trusting the stored NormalizedName column,
-            // same reasoning as GetWikipediaCollisionCandidates: a catalog that hasn't run
+            // so a catalog that has not run
             // backfill-normalized-names yet would otherwise silently under-report every
             // candidate here.
             var grouped = people

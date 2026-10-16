@@ -79,8 +79,6 @@ public sealed class DuplicatePersonAutoResolveService(
     /// a shared headshot or matching birthdate, and still gets attached to items normally --
     /// only its use as auto-merge proof is restricted.
     /// </summary>
-    private static readonly HashSet<string> NameSearchDerivedSources =
-        new(StringComparer.OrdinalIgnoreCase) { "wikipedia" };
 
     public async Task ExecuteAsync(CancellationToken ct)
     {
@@ -204,7 +202,7 @@ public sealed class DuplicatePersonAutoResolveService(
         // sources where the ids actually overlap; conflictingSourceId (used below, only after
         // every corroboration check has had its say) looks for one where they don't.
         var commonAuthoritativeSources = bareA.Keys
-            .Where(src => !NameSearchDerivedSources.Contains(src) && bareB.ContainsKey(src))
+            .Where(src => !ExternalIdPolicies.IsNameDerived(src) && bareB.ContainsKey(src))
             .ToList();
         var agreeingSource = commonAuthoritativeSources.Any(src => bareA[src].Overlaps(bareB[src]));
         var conflictingSourceId = commonAuthoritativeSources.Any(src => !bareA[src].Overlaps(bareB[src]));
@@ -223,8 +221,8 @@ public sealed class DuplicatePersonAutoResolveService(
         var rawHeadsB = await db.PersonHeadshots
             .Where(h => h.PersonMediaItemId == idB)
             .Select(h => new { h.Url, h.Source }).ToListAsync(ct);
-        var headsA = rawHeadsA.Where(h => !NameSearchDerivedSources.Contains(h.Source)).Select(h => h.Url);
-        var headsB = rawHeadsB.Where(h => !NameSearchDerivedSources.Contains(h.Source)).Select(h => h.Url);
+        var headsA = rawHeadsA.Where(h => !ExternalIdPolicies.IsNameDerived(h.Source)).Select(h => h.Url);
+        var headsB = rawHeadsB.Where(h => !ExternalIdPolicies.IsNameDerived(h.Source)).Select(h => h.Url);
         var sharedHeadshot = headsA.Intersect(headsB, StringComparer.OrdinalIgnoreCase).Any();
 
         var datesA = await db.MediaItems.Where(m => m.Id == idA)
