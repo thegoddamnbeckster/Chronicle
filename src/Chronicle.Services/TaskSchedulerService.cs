@@ -49,6 +49,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         await SeedTasksAsync(stoppingToken);
         await StaggerSchedulesAsync(stoppingToken);
         await SkipMissedRunsAsync(stoppingToken);
+        await ResumeInterruptedAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -159,6 +160,88 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         db.BackgroundTasks.RemoveRange(retired);
 
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>app_settings key: JSON array of the long-running plugin tasks that are running right now. Whatever is still in it when
+    /// Chronicle starts was cut off by a restart or a crash.</summary>
+    internal const string RunningTasksSettingKey = "scheduler.running_tasks";
+
+    /// <summary>The plugin tasks worth picking up again after a restart: a fetch or a sync that was cut off part-way.</summary>
+    internal static bool IsResumable(string taskId, string? pluginId)
+    {
+        if (pluginId is null || !taskId.Contains(':')) return false;
+        var bare = taskId[(taskId.IndexOf(':') + 1)..];
+        return bare is "fetch-missing-metadata" or "delta-sync";
+    }
+
+    /// <summary>Records that a resumable task started or finished, so a restart can tell which were cut off. Never throws: a busy
+    /// database must not stop the task itself.</summary>
+    internal async Task RecordRunningAsync(string taskId, bool running)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var row = await db.AppSettings.FirstOrDefaultAsync(a => a.Key == RunningTasksSettingKey);
+            var set = ReadSet(row?.Value);
+            if (running ? !set.Add(taskId) : !set.Remove(taskId)) return;
+            var json = System.Text.Json.JsonSerializer.Serialize(set.OrderBy(x => x, StringComparer.Ordinal));
+            if (row is null) db.AppSettings.Add(new Chronicle.Core.Models.AppSetting { Key = RunningTasksSettingKey, Value = json });
+            else row.Value = json;
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "TaskScheduler: could not record that '{TaskId}' {State}", taskId, running ? "started" : "finished");
+        }
+    }
+
+    private static HashSet<string> ReadSet(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try { return System.Text.Json.JsonSerializer.Deserialize<HashSet<string>>(json) ?? []; }
+        catch (System.Text.Json.JsonException) { return []; }
+    }
+
+    /// <summary>
+    /// A restart (or a crash) cuts off whatever plugin fetches and syncs were running, and the skip-missed-runs step then moves
+    /// each to its next cron time -- a daily task such as TheAudioDB's would not run again for up to a day, with tens of thousands
+    /// of items still pending. The ones that were running are started again a little after startup, a few seconds apart.
+    /// Heavy jobs (backup, scan, repairs) are not resumed: restarting must not start heavy work.
+    /// </summary>
+    internal async Task<IReadOnlyList<string>> InterruptedTasksAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var row = await db.AppSettings.FirstOrDefaultAsync(a => a.Key == RunningTasksSettingKey, ct);
+        var ids = ReadSet(row?.Value);
+        if (ids.Count == 0) return [];
+
+        var rows = await db.BackgroundTasks.Where(t => ids.Contains(t.TaskId) && t.IsEnabled).ToListAsync(ct);
+        var resumable = rows.Where(r => IsResumable(r.TaskId, r.PluginId)).Select(r => r.TaskId).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        row!.Value = "[]";                                  // each one records itself again when it starts
+        await db.SaveChangesAsync(ct);
+        return resumable;
+    }
+
+    private async Task ResumeInterruptedAsync(CancellationToken ct)
+    {
+        var interrupted = await InterruptedTasksAsync(ct);
+        if (interrupted.Count == 0) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                foreach (var id in interrupted)
+                {
+                    _log.Information("TaskScheduler: resuming '{TaskId}', which was running when Chronicle last stopped", id);
+                    await TriggerNowAsync(id, ct);
+                    await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                }
+            }
+            catch (OperationCanceledException) { /* shutting down again */ }
+        }, ct);
     }
 
     /// <summary>app_settings key set once the shared start times have been spread out (see <see cref="StaggerSchedulesAsync"/>).</summary>
@@ -290,6 +373,8 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         _log.Information("TaskScheduler: starting '{TaskId}' at {At:HH:mm:ss} UTC", row.TaskId, DateTime.UtcNow);
         var startedAt = DateTime.UtcNow;
         TaskTicket? ticket = null;
+        var resumable = IsResumable(row.TaskId, row.PluginId);
+        if (resumable) await RecordRunningAsync(row.TaskId, running: true);
 
         try
         {
@@ -357,6 +442,8 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         {
             TaskGate.Use(null);
             ticket?.Dispose();
+            // Finished (done, failed or cancelled for a reason of its own): no longer "cut off". A shutdown leaves it listed.
+            if (resumable && !ct.IsCancellationRequested) await RecordRunningAsync(row.TaskId, running: false);
             _running.TryRemove(row.TaskId, out _);
         }
     }
