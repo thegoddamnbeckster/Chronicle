@@ -16,6 +16,16 @@ namespace Chronicle.Tests.Integration
     {
         private readonly string _dbName = Guid.NewGuid().ToString();
 
+        /// <summary>Makes an account an administrator. The first account on an empty database is one automatically, so tests that need a
+        /// definite role set it explicitly either way.</summary>
+        public async Task SetAdminAsync(string username, bool admin = true)
+        {
+            using var scope = Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            (await db.Users.FirstAsync(u => u.Username == username)).IsAdmin = admin;
+            await db.SaveChangesAsync();
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");

@@ -22,8 +22,10 @@ namespace Chronicle.Tests.Integration
 
         private async Task<HttpClient> SignInAsync()
         {
-            var reg = await _factory.CreateClient().PostAsJsonAsync("/api/v1/auth/register", new { username = $"ad_{Guid.NewGuid():N}", password = Password });
+            var username = $"ad_{Guid.NewGuid():N}";
+            var reg = await _factory.CreateClient().PostAsJsonAsync("/api/v1/auth/register", new { username, password = Password });
             var data = (await Json(reg)).GetProperty("data");
+            await _factory.SetAdminAsync(username);   // importing from a path is administrator-only
             var c = _factory.CreateClient();
             c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", data.GetProperty("token").GetString()!);
             return c;

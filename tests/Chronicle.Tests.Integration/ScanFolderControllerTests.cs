@@ -27,11 +27,34 @@ namespace Chronicle.Tests.Integration
 
             var token = JsonDocument.Parse(await reg.Content.ReadAsStringAsync())
                 .RootElement.GetProperty("data").GetProperty("token").GetString()!;
+            await _factory.SetAdminAsync(username);   // scan folders are administrator-only
 
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", token);
 
             return client;
+        }
+
+        [Theory]
+        [InlineData("GET", "/api/v1/scan-folders")]
+        [InlineData("POST", "/api/v1/scan/validate-path")]
+        [InlineData("POST", "/api/v1/scan/preview")]
+        [InlineData("POST", "/api/v1/scan/preview-grouped")]
+        [InlineData("POST", "/api/v1/scan/import-groups")]
+        public async Task PathReadingEndpoints_AreForbiddenToOrdinaryUsers(string method, string url)
+        {
+            var client = _factory.CreateClient();
+            var username = $"plain_{Guid.NewGuid():N}";
+            var reg = await client.PostAsJsonAsync("/api/v1/auth/register", new { username, password = "Password123!" });
+            var token = JsonDocument.Parse(await reg.Content.ReadAsStringAsync()).RootElement.GetProperty("data").GetProperty("token").GetString()!;
+            await _factory.SetAdminAsync(username, admin: false);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var response = method == "GET"
+                ? await client.GetAsync(url)
+                : await client.PostAsJsonAsync(url, new { path = "C:\\" });
+
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         }
 
         [Fact]

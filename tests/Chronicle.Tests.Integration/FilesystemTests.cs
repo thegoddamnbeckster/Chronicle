@@ -3,8 +3,6 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.Tests.Integration
 {
@@ -32,12 +30,7 @@ namespace Chronicle.Tests.Integration
                 .RootElement.GetProperty("data").GetProperty("token").GetString()!;
 
             // The first account ever created is promoted to administrator automatically, so set the role explicitly either way.
-            using (var scope = _factory.Services.CreateScope())
-            {
-                var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
-                (await db.Users.FirstAsync(u => u.Username == username)).IsAdmin = admin;
-                await db.SaveChangesAsync();
-            }
+            await _factory.SetAdminAsync(username, admin);
 
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", token);
