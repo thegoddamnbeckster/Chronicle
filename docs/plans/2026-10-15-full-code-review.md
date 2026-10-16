@@ -116,6 +116,7 @@ Newest first. One entry per working session: what was reviewed, what was found, 
   read-only copy of the live database, and the analyzers dump.
 - Phases touched: 0 (baseline done: build, tests, lint, tsc, bundle), 1 (controllers audit done; auth/files/SSRF/secrets reviewed), 2 (indexes,
   N+1 sweep, whole-table loads), 6 (bundle, polling inventory), 8 (plugin-wide grep for HttpClient/blocking/async-void: clean), 9 (log volume).
+- Later the same night: log-driven fixes (F29-F36), the library/search planner work (F41-F42) and live repairs run through the nightly repair task (84 albums moved under real artists, 4 artists created, 1 person retyped, stray seasons cleaned). The API was restarted four times; running plugin tasks resumed each time.
 - Not yet reviewed in depth: the line-by-line read of MetadataEnrichmentService, FileScanService, ScrobbleService, SyncOrchestrationService; the
   Kodi add-ons (Python); individual plugins beyond the grep sweep; accessibility pass; test-quality pass.
 
@@ -162,6 +163,9 @@ Newest first. One entry per working session: what was reviewed, what was found, 
 | F34 | 2 | `ResetAsync` loaded a plugin's whole queue into the change tracker | code | fixed (one UPDATE) | (enrichment commit) |
 | F35 | 2 | SQLite `synchronous=FULL` under WAL: one disk wait per commit on the busiest writers | design | fixed (NORMAL) | (sqlite commit) |
 | F36 | 9 | Permanent INFO line per Kodi details request (4,825/day, avg 3 ms) | log histogram | fixed (Debug unless > 500 ms) | (chore commit) |
+| F41 | 2 | Library counts joined to `media_types`; SQLite then read every root-level row (329k are people) one by one; `ParentId IS NULL` is always estimated as ~40 rows because the statistics hold only averages | EXPLAIN on a live-database copy, 0.3 s | fixed (type ids as values + `(MediaTypeId, ParentId, IsStub)` index + `PRAGMA optimize` at startup); 0.3 s -> ~0 s measured | (library commit) |
+| F42 | 2 | Title search sorted whole records (a common word matched 6,500 x 5 KB) and scanned wide rows for the name | EXPLAIN + stand-in benchmark | fixed (sort on ids, load the page; covering `(HierarchyLevel, Name)` index): scan 0.09 s -> 0.012 s on the stand-in | (search commit) |
+| F43 | 1 | A plugin with two providers under one id would have stopped startup seeding (`ToDictionary` on the id) | review of my own change | fixed | (enrichment commit) |
 | F37 | 7 | Test quality sweep: 8 of ~2,500 tests have no assertion (all "does not throw") | script | accepted | n/a |
 | F38 | 6 | `exhaustive-deps` is off; the 11 sites it would flag are load-once patterns | eslint one-off | accepted | n/a |
 | F39 | 8 | Plugin repos: no `new HttpClient()` misuse, blocking calls or async void; suites for Hardcover, MusicBrainz, TMDB, OpenLibrary, TheAudioDB, Wikipedia, IMDb, Deezer, FanartTV pass | grep + test runs | verified | n/a |
