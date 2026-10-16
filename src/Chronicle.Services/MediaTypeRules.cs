@@ -8,13 +8,16 @@ namespace Chronicle.Services
     public sealed record MediaTypeInput(
         string? Name, string DisplayName, string? Description, int HierarchyLevels, IReadOnlyList<string> HierarchyLabels,
         string InteractionVerb, string ProgressUnit, bool SupportsCollections, bool IsTrackable, string? ScanStrategy, bool IsActive,
-        string? ProviderFamily = null, string? CastHeading = null);
+        string? ProviderFamily = null, string? CastHeading = null,
+        bool IsPersonType = false, bool IsDefaultType = false, bool IsFamilyDefault = false, bool CastAreActors = false,
+        string? Aliases = null, string? ImportShape = null);
 
     public static class MediaTypeRules
     {
         public const int MaxLevels = 5;
         private static readonly Regex NameRule = new(@"^[a-z0-9][a-z0-9_-]{1,48}$", RegexOptions.Compiled);
         private static readonly Regex FamilyRule = new(@"^[a-z][a-z0-9_]{1,29}$", RegexOptions.Compiled);
+        private static readonly Regex AliasRule = new(@"^[a-z0-9][a-z0-9_-]{1,48}$", RegexOptions.Compiled);
         private static readonly Regex WordRule = new(@"^[a-z]{2,20}$", RegexOptions.Compiled);
 
         /// <summary>The verbs the interface knows how to turn into labels. Anything else is allowed (and gets neutral
@@ -49,6 +52,12 @@ namespace Chronicle.Services
                 return "The provider family must be 2-30 lowercase letters, digits or underscores (for example tv, movie or music), or blank.";
             if ((input.CastHeading?.Length ?? 0) > 40 || input.CastHeading?.Any(char.IsControl) == true)
                 return "The credits heading can be at most 40 characters.";
+            if (!ImportShapes.IsKnown(input.ImportShape)) return $"Unknown import shape. Use one of: {string.Join(", ", ImportShapes.All)}, or leave it blank.";
+            foreach (var alias in MediaTypeRegistry.SplitAliases(input.Aliases))
+                if (!AliasRule.IsMatch(alias))
+                    return $"'{alias}' is not a valid alias. An alias is 2-49 lowercase letters, digits, dashes or underscores; separate several with commas.";
+            if (input.IsFamilyDefault && string.IsNullOrWhiteSpace(input.ProviderFamily))
+                return "A type can only be the default for a provider family if it has a provider family.";
             if (!ScanStrategies.IsKnown(input.ScanStrategy)) return $"Unknown scan style. Use one of: {string.Join(", ", ScanStrategies.All)}, or leave it blank.";
             return null;
         }

@@ -13,6 +13,7 @@ namespace Chronicle.Tests.Unit.Services
 
         public KodiDeviceServiceTests()
         {
+            RegistryFixtures.LoadBuiltIns();
             var options = new DbContextOptionsBuilder<ChronicleDbContext>()
                 .UseInMemoryDatabase(Guid.NewGuid().ToString())
                 .Options;

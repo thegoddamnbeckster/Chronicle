@@ -81,6 +81,8 @@ export interface MediaItem {
    *  Used for plugin compatibility checks. mediaTypeName is the user-facing display
    *  name (e.g. "TV Shows") and should be used for display only. */
   mediaTypeInternalName?: string | null
+  /** How the file scanner groups the item's type ("audiobook" = one book per folder); screens read this, never the type's name. */
+  mediaTypeScanStrategy?: string | null
   /** True when this item or any descendant has a tracked physical file on disk. */
   hasPhysicalFile?: boolean | null
   /** True when this item or any leaf descendant lacks a tracked physical file.
@@ -443,6 +445,11 @@ export interface MediaTypeOption {
   supportsCollections?: boolean
   /** Heading for the people credited on an item of this type ("Band Members", "Narrators"); blank means "Cast". */
   castHeading?: string | null
+  /** The type used when a client does not say what kind of item it means. */
+  isDefaultType?: boolean
+  /** The type that holds the people credited on other media. */
+  isPersonType?: boolean
+  scanStrategy?: string | null
 }
 
 // ── Metadata search ───────────────────────────────────────────────────────────

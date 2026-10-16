@@ -260,7 +260,7 @@ public class LibraryServiceTests
         var db = MakeDb();
 
         var trackable = new MediaType { Name = "movies", HierarchyLevels = 1, IsTrackable = true, CreatedAt = DateTime.UtcNow };
-        var people    = new MediaType { Name = "people", HierarchyLevels = 1, IsTrackable = false, CreatedAt = DateTime.UtcNow };
+        var people    = new MediaType { Name = "people", IsPersonType = true, HierarchyLevels = 1, IsTrackable = false, CreatedAt = DateTime.UtcNow };
         db.MediaTypes.AddRange(trackable, people);
         await db.SaveChangesAsync();
 
@@ -355,7 +355,7 @@ public class LibraryServiceTests
     {
         var db = MakeDb();
 
-        var people = new MediaType { Name = "people", HierarchyLevels = 1, IsTrackable = false, CreatedAt = DateTime.UtcNow };
+        var people = new MediaType { Name = "people", IsPersonType = true, HierarchyLevels = 1, IsTrackable = false, CreatedAt = DateTime.UtcNow };
         db.MediaTypes.Add(people);
         await db.SaveChangesAsync();
 

@@ -26,6 +26,7 @@ public class SyncMusicMatchingTests : IDisposable
 
     public SyncMusicMatchingTests()
     {
+        RegistryFixtures.LoadBuiltIns();
         _db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
 

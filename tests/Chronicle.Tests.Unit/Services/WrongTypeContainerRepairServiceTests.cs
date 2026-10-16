@@ -24,7 +24,7 @@ public class WrongTypeContainerRepairServiceTests
         public Rig()
         {
             Db.MediaTypes.AddRange(
-                new MediaType { Id = PeopleType, Name = "people", DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow },
+                new MediaType { Id = PeopleType, Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow },
                 new MediaType { Id = AudiobookType, Name = "audiobooks", DisplayName = "Audiobooks", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow },
                 new MediaType { Id = MusicType, Name = "music", DisplayName = "Music", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow });
             Db.SaveChanges();

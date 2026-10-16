@@ -66,7 +66,7 @@ public class PersonIdentitySplitServiceTests
     {
         var db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
-        var type = new MediaType { Id = 1, Name = "people", DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
+        var type = new MediaType { Id = 1, Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
         db.MediaTypes.Add(type);
         db.SaveChanges();
         var svc = new PersonIdentitySplitService(null!, NullLogger<PersonIdentitySplitService>.Instance);

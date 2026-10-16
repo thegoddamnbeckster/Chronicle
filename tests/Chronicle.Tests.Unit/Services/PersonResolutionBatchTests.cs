@@ -20,6 +20,8 @@ namespace Chronicle.Tests.Unit.Services;
 /// </summary>
 public sealed class PersonResolutionBatchTests : IDisposable
 {
+    public PersonResolutionBatchTests() => RegistryFixtures.LoadBuiltIns();
+
     private readonly List<IDisposable> _disposables = [];
 
     public void Dispose()
@@ -37,7 +39,7 @@ public sealed class PersonResolutionBatchTests : IDisposable
         _disposables.Add(conn);
 
         if (!db.MediaTypes.Any(t => t.Name == "people"))
-            db.MediaTypes.Add(new MediaType { Name = "people", DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+            db.MediaTypes.Add(new MediaType { Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
         db.SaveChanges();
         var movies = db.MediaTypes.Single(t => t.Name == "movies");
         var title = new MediaItem { Name = "Title", MediaTypeId = movies.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };

@@ -888,6 +888,15 @@ namespace Chronicle.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Aliases")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("CastAreActors")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
                     b.Property<string>("CastHeading")
                         .HasMaxLength(40)
                         .HasColumnType("TEXT");
@@ -910,6 +919,10 @@ namespace Chronicle.Data.Migrations
                     b.Property<int>("HierarchyLevels")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ImportShape")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("InteractionVerb")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -921,6 +934,21 @@ namespace Chronicle.Data.Migrations
 
                     b.Property<bool>("IsBuiltIn")
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDefaultType")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("IsFamilyDefault")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("IsPersonType")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
 
                     b.Property<bool>("IsTrackable")
                         .ValueGeneratedOnAdd()
@@ -969,14 +997,20 @@ namespace Chronicle.Data.Migrations
                         new
                         {
                             Id = 1,
+                            Aliases = "tv_show,tv_episode,show,episode",
+                            CastAreActors = true,
                             CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Television series, seasons, and episodes",
                             DisplayName = "TV Shows",
                             HierarchyLabels = "Show,Season,Episode",
                             HierarchyLevels = 3,
+                            ImportShape = "episodic",
                             InteractionVerb = "watched",
                             IsActive = true,
                             IsBuiltIn = true,
+                            IsDefaultType = false,
+                            IsFamilyDefault = true,
+                            IsPersonType = false,
                             IsTrackable = true,
                             IsUserModified = false,
                             Name = "tv",
@@ -987,6 +1021,8 @@ namespace Chronicle.Data.Migrations
                         new
                         {
                             Id = 2,
+                            Aliases = "movie,film",
+                            CastAreActors = true,
                             CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Feature films and short films",
                             DisplayName = "Movies",
@@ -995,6 +1031,9 @@ namespace Chronicle.Data.Migrations
                             InteractionVerb = "watched",
                             IsActive = true,
                             IsBuiltIn = true,
+                            IsDefaultType = true,
+                            IsFamilyDefault = true,
+                            IsPersonType = false,
                             IsTrackable = true,
                             IsUserModified = false,
                             Name = "movies",
@@ -1005,14 +1044,21 @@ namespace Chronicle.Data.Migrations
                         new
                         {
                             Id = 3,
+                            Aliases = "track,song",
+                            CastAreActors = false,
+                            CastHeading = "Band Members",
                             CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Artists, albums, and tracks",
                             DisplayName = "Music",
                             HierarchyLabels = "Artist,Album,Track",
                             HierarchyLevels = 3,
+                            ImportShape = "artist-album-track",
                             InteractionVerb = "listened",
                             IsActive = true,
                             IsBuiltIn = true,
+                            IsDefaultType = false,
+                            IsFamilyDefault = true,
+                            IsPersonType = false,
                             IsTrackable = true,
                             IsUserModified = false,
                             Name = "music",

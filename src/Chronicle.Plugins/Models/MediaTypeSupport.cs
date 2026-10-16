@@ -62,6 +62,37 @@ public class MediaTypeSupport
     /// </summary>
     public string? ScanStrategy { get; set; }
 
+    /// <summary>
+    /// Optional. The family of providers that also serves this type ("tv", "movie", "music"): a plugin declaring a family is
+    /// used for every type of that family, so "anime" can say "tv" and "fanedits" can say "movie". Only used when Chronicle
+    /// first creates the type; null means only plugins naming this exact type serve it.
+    /// </summary>
+    public string? ProviderFamily { get; set; }
+
+    /// <summary>Optional. Heading for the people credited on items of this type ("Cast", "Narrators"). Only used when the type is created.</summary>
+    public string? CastHeading { get; set; }
+
+    /// <summary>
+    /// Optional. True when a cast entry for this type is an actor playing a named character (movies, TV); false when the
+    /// entry's role is itself the contribution (an author, a narrator). Only used when the type is created.
+    /// </summary>
+    public bool CastAreActors { get; set; }
+
+    /// <summary>Optional. Other names this plugin's clients use for the type ("film" for movies). Only used when the type is created.</summary>
+    public string[]? Aliases { get; set; }
+
+    /// <summary>
+    /// Optional. True for the reference type whose items are the people credited on other media. Only used when the type is
+    /// created; Chronicle then finds the type by this flag, not by its name.
+    /// </summary>
+    public bool IsPersonType { get; set; }
+
+    /// <summary>
+    /// Optional. How plays imported from other services are filed under this type: "episodic" (show/season/episode),
+    /// "author-series-work" (author/series/book) or "artist-album-track". Null = single flat items. Only used when the type is created.
+    /// </summary>
+    public string? ImportShape { get; set; }
+
     /// <summary>Metadata fields this plugin can populate for the root level (level 0) of this type.</summary>
     public List<string> SupportedFields { get; set; } = [];
 

@@ -30,13 +30,13 @@ public class ScraperDuplicateTests : IClassFixture<ChronicleApiFactory>
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        int Ensure(string name, string display, int levels)
+        int Ensure(string name, string display, int levels, string? family)
         {
             var existing = db.MediaTypes.FirstOrDefault(t => t.Name == name);
             if (existing is not null) return existing.Id;
             var mt = new MediaType
             {
-                Name = name, DisplayName = display, HierarchyLevels = levels,
+                Name = name, DisplayName = display, HierarchyLevels = levels, ProviderFamily = family,
                 InteractionVerb = "watched", ProgressUnit = "minutes",
                 IsBuiltIn = false, IsActive = true, CreatedAt = DateTime.UtcNow,
             };
@@ -45,12 +45,15 @@ public class ScraperDuplicateTests : IClassFixture<ChronicleApiFactory>
             return mt.Id;
         }
 
-        return (
-            Ensure("movies", "Movies", 1),
-            Ensure("fanedits", "Fan Edits", 1),
-            Ensure("anime_movies", "Anime Movies", 1),
-            Ensure("tv", "TV Shows", 3),
-            Ensure("anime", "Anime", 3));
+        var ids = (
+            Ensure("movies", "Movies", 1, "movie"),
+            Ensure("fanedits", "Fan Edits", 1, "movie"),
+            Ensure("anime_movies", "Anime Movies", 1, "movie"),
+            Ensure("tv", "TV Shows", 3, "tv"),
+            Ensure("anime", "Anime", 3, "tv"));
+        // The application reads a type's family from the table, held in a snapshot that is reloaded when a type changes.
+        Chronicle.Services.MediaTypeRegistry.RefreshAsync(db).GetAwaiter().GetResult();
+        return ids;
     }
 
     private int SeedItem(int mediaTypeId, string name, int? year, int hierarchyLevel = 0)

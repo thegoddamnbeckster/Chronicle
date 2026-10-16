@@ -89,7 +89,7 @@ public sealed class DuplicatePersonAutoResolveService(
         var mergeService = scope.ServiceProvider.GetRequiredService<IMergeService>();
 
         var peopleTypeId = await db.MediaTypes
-            .Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
+            .Where(t => t.IsPersonType).Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
         if (peopleTypeId is null)
         {
             logger.LogInformation("Duplicate person auto-resolve: no 'people' media type exists yet, nothing to do");

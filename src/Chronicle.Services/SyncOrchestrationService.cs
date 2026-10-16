@@ -210,18 +210,18 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         string pluginId,
         CancellationToken ct)
     {
-        // Route TV/anime episodes to the hierarchy builder when season/episode numbers are present.
-        if ((evt.MediaType == "tv_episode" || evt.MediaType == "anime_episode")
+        // Which hierarchy builder a play goes to is a property of the media type it belongs to (MediaType.ImportShape), not of
+        // the type's name: episodic types build show/season/episode, author types author/series/book, artist types
+        // artist/album/track.
+        var mappedType = MediaItemMatcher.NormalizeMediaTypeName(evt.MediaType);
+        if (MediaTypeRegistry.HasImportShape(mappedType, ImportShapes.Episodic)
             && evt.SeasonNumber.HasValue && evt.EpisodeNumber.HasValue)
             return await MatchOrCreateEpisodeAsync(db, evt, pluginId, ct);
 
-        // Route books/audiobooks to the Author→Series→Book hierarchy builder.
-        var mappedType = MediaItemMatcher.NormalizeMediaTypeName(evt.MediaType);
-        if ((mappedType == "books" || mappedType == "audiobooks") && evt.AuthorName is not null)
+        if (MediaTypeRegistry.HasImportShape(mappedType, ImportShapes.AuthorSeriesWork) && evt.AuthorName is not null)
             return await MatchOrCreateBookAsync(db, evt, pluginId, ct);
 
-        // Route music plays to the Artist→Album→Track hierarchy builder.
-        if (mappedType == "music" && !string.IsNullOrWhiteSpace(evt.ArtistName))
+        if (MediaTypeRegistry.HasImportShape(mappedType, ImportShapes.ArtistAlbumTrack) && !string.IsNullOrWhiteSpace(evt.ArtistName))
             return await MatchOrCreateMusicAsync(db, evt, pluginId, ct);
 
         // 1. Own provider ExternalId match
@@ -450,7 +450,8 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         var showEvt = evt with
         {
             ExternalId    = evt.ShowExternalId ?? evt.ExternalId,
-            MediaType     = evt.MediaType == "anime_episode" ? "anime" : "tv",
+            // The show is filed under the type the episode's own type stands for (tv_episode -> tv, anime_episode -> anime).
+            MediaType     = MediaItemMatcher.NormalizeMediaTypeName(evt.MediaType),
             Title         = evt.ShowTitle ?? evt.Title,
             SeasonNumber  = null,
             EpisodeNumber = null,
@@ -716,8 +717,9 @@ public class SyncOrchestrationService : ISyncOrchestrationService
     private async Task<(MediaItem item, bool isNew)> MatchOrCreateMusicAsync(
         ChronicleDbContext db, ImportedWatchEvent evt, string pluginId, CancellationToken ct)
     {
-        var mediaType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "music", ct)
-            ?? throw new InvalidOperationException("Media type 'music' not found in database.");
+        var musicTypeName = MediaItemMatcher.NormalizeMediaTypeName(evt.MediaType);
+        var mediaType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == musicTypeName, ct)
+            ?? throw new InvalidOperationException($"Media type '{musicTypeName}' not found in database.");
         var source = SourceFromPluginId(pluginId);
 
         // Track shortcuts: an id match needs no artist/album at all.
@@ -793,10 +795,11 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         db.MediaItems.Add(item);
         await db.SaveChangesAsync(ct);
 
-        // Pending enrichment rows for every metadata plugin that handles music.
+        // Pending enrichment rows for every metadata plugin that handles this type.
+        var typeName = MediaTypeRegistry.FindById(mediaTypeId)?.Name ?? string.Empty;
         foreach (var (mpPluginId, mp, _) in _registry.GetMetadataProviderEntries())
         {
-            if (!mp.GetSupportedMediaTypes().Any(t => string.Equals(t.MediaTypeName, "music", StringComparison.OrdinalIgnoreCase)))
+            if (!mp.GetSupportedMediaTypes().Any(t => MediaTypeRegistry.ProviderDeclaresType(t.MediaTypeName, typeName)))
                 continue;
             db.MediaEnrichments.Add(new MediaItemEnrichment
             {
@@ -868,7 +871,8 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         var entry = await db.UserLibraries
             .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
 
-        var newStatus = (evt.MediaType == "tv_episode" || evt.MediaType == "anime_episode")
+        // An episode of a show is something you are partway through; anything else is done when played.
+        var newStatus = MediaTypeRegistry.HasImportShape(MediaItemMatcher.NormalizeMediaTypeName(evt.MediaType), ImportShapes.Episodic)
             ? LibraryStatus.Watching
             : LibraryStatus.Completed;
 

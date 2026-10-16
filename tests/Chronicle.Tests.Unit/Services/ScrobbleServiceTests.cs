@@ -14,6 +14,7 @@ namespace Chronicle.Tests.Unit.Services
 
         public ScrobbleServiceTests()
         {
+            RegistryFixtures.LoadBuiltIns();
             var options = new DbContextOptionsBuilder<ChronicleDbContext>()
                 .UseInMemoryDatabase(Guid.NewGuid().ToString())
                 .Options;
@@ -29,7 +30,7 @@ namespace Chronicle.Tests.Unit.Services
             });
             _context.MediaTypes.Add(new MediaType
             {
-                Id = 1, Name = "tv", DisplayName = "TV Shows",
+                Id = 1, Name = "tv", DisplayName = "TV Shows", Aliases = "tv_show,tv_episode,show,episode",
                 CreatedAt = DateTime.UtcNow
             });
             _context.MediaItems.Add(new MediaItem
@@ -354,7 +355,7 @@ namespace Chronicle.Tests.Unit.Services
             // cross media types just because the names happen to collide.
             _context.MediaTypes.Add(new MediaType
             {
-                Id = 2, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow
+                Id = 2, Name = "movies", DisplayName = "Movies", Aliases = "movie,film", CreatedAt = DateTime.UtcNow
             });
             _context.MediaItems.Add(new MediaItem
             {

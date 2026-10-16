@@ -714,7 +714,7 @@ public class PluginsController : ControllerBase
         // ?mediaType=anime keeps only the plugins that handle that type, or the family of providers that also serves it.
         if (!string.IsNullOrWhiteSpace(mediaType))
         {
-            var family = MediaTypeFamilies.Resolve(mediaType);
+            var family = MediaTypeRegistry.Family(mediaType);
             entries = entries.Where(e => PluginCatalogFilter.Handles(e, mediaType, family)).ToList();
         }
 

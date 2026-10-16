@@ -54,12 +54,6 @@ export async function createMedia(payload: {
   return data.data
 }
 
-export async function updateMedia(id: number, payload: Partial<MediaItem>): Promise<MediaItem> {
-  const { data } = await client.patch<ApiResponse<MediaItem>>(`/media/${id}`, payload)
-  if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to update media')
-  return data.data
-}
-
 export async function deleteMedia(id: number): Promise<void> {
   await client.delete(`/media/${id}`)
 }

@@ -27,6 +27,11 @@ public record PersonFullCreditsResult(List<PersonFullCredit> Credits, bool Incom
 /// </summary>
 public sealed class PersonFullCreditsService(IPluginRegistry registry, ILogger<PersonFullCreditsService> logger)
 {
+    /// <summary>The library type a provider's credit kind ("tv", "movie") is filed under: the default type of that provider family.</summary>
+    private static string LibraryTypeFor(string providerKind) =>
+        MediaTypeRegistry.FamilyDefault(string.Equals(providerKind, ProviderFamilies.Tv, StringComparison.OrdinalIgnoreCase)
+            ? ProviderFamilies.Tv : ProviderFamilies.Movie)?.Name ?? string.Empty;
+
     public static readonly TimeSpan MaxAge = TimeSpan.FromDays(7);
 
     public async Task<PersonFullCreditsResult> GetAsync(ChronicleDbContext db, int personId, CancellationToken ct)
@@ -68,7 +73,7 @@ public sealed class PersonFullCreditsService(IPluginRegistry registry, ILogger<P
             else
             {
                 result.Add(new PersonFullCredit(
-                    null, c.Title, c.PosterUrl, c.Year, c.MediaType == "tv" ? "tv" : "movies", c.CharacterName, c.Role));
+                    null, c.Title, c.PosterUrl, c.Year, LibraryTypeFor(c.MediaType), c.CharacterName, c.Role));
             }
         }
 

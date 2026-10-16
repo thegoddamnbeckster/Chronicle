@@ -27,6 +27,7 @@ public class PluginHostServiceTests : IDisposable
 
     public PluginHostServiceTests()
     {
+        RegistryFixtures.LoadBuiltIns();
         var opts = new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
         _db = new ChronicleDbContext(opts);
@@ -37,7 +38,7 @@ public class PluginHostServiceTests : IDisposable
         _personResolutionService = new PersonResolutionService(
             registry.Object, Mock.Of<IMetadataResolutionService>(), Mock.Of<ILogger<PersonResolutionService>>());
 
-        _db.MediaTypes.Add(new MediaType { Id = 1, Name = "people", DisplayName = "People", IsTrackable = false, CreatedAt = DateTime.UtcNow });
+        _db.MediaTypes.Add(new MediaType { Id = 1, Name = "people", IsPersonType = true, DisplayName = "People", IsTrackable = false, CreatedAt = DateTime.UtcNow });
         _db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow });
         _db.MediaTypes.Add(new MediaType { Id = 3, Name = "book", DisplayName = "Books", CreatedAt = DateTime.UtcNow });
         _db.SaveChanges();

@@ -81,11 +81,6 @@ export async function deleteBackup(fileName: string): Promise<void> {
   await client.delete(`/database/backups/${encodeURIComponent(fileName)}`)
 }
 
-export async function validateBackup(fileName: string): Promise<BackupValidation> {
-  const { data } = await client.post<ApiResponse<BackupValidation>>(`/database/backups/${encodeURIComponent(fileName)}/validate`, null, { timeout: 0 })
-  return data.data!
-}
-
 /**
  * Uploads a backup zip as the raw request body (the server refuses multipart on purpose - see
  * DatabaseController.Upload) and reports progress as a 0-100 percentage.

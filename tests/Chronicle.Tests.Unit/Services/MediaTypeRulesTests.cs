@@ -115,14 +115,4 @@ public class MediaTypeRulesTests
         MediaTypeRules.SplitLabels(null).Should().BeEmpty();
         MediaTypeRules.SplitLabels("  ").Should().BeEmpty();
     }
-
-    [Theory]
-    [InlineData("audiobooks", "audiobook")]
-    [InlineData("Audiobooks", "audiobook")]
-    [InlineData("movies", null)]
-    [InlineData("comics", null)]
-    public void ScanStrategyDefault_IsAppliedOnlyForAKnownName_AndOnlyAsAStartingValue(string name, string? expected)
-    {
-        ScanStrategies.DefaultFor(name).Should().Be(expected);
-    }
 }

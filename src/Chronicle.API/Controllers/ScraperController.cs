@@ -102,9 +102,9 @@ public class ScraperController : ControllerBase
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var stepSw = System.Diagnostics.Stopwatch.StartNew();
 
-        var movieTypeId = await GetMediaTypeIdAsync("movies", ct);
+        var movieTypeId = await GetFamilyDefaultTypeIdAsync(ProviderFamilies.Movie, ct);
         if (movieTypeId == 0)
-            return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active 'movies' media type is configured."));
+            return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active media type is marked as the default for movies."));
 
         // Search every movie-like type, not just "movies". A fan edit or anime movie is still
         // a movie file on disk, so Kodi scrapes it through this same endpoint — and if we only
@@ -562,9 +562,9 @@ public class ScraperController : ControllerBase
         if (string.IsNullOrWhiteSpace(title))
             return BadRequest(ApiResponse<object>.Fail("TITLE_REQUIRED", "title is required."));
 
-        var tvTypeId = await GetMediaTypeIdAsync("tv", ct);
+        var tvTypeId = await GetFamilyDefaultTypeIdAsync(ProviderFamilies.Tv, ct);
         if (tvTypeId == 0)
-            return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active 'tv' media type is configured."));
+            return NotFound(ApiResponse<object>.Fail("MEDIA_TYPE_NOT_FOUND", "No active media type is marked as the default for TV shows."));
 
         // Same widening as movies/search above: an anime series is scraped through Kodi's TV
         // path, so restricting the lookup to MediaTypeId == tv would create a duplicate "tv"
@@ -1306,17 +1306,18 @@ public class ScraperController : ControllerBase
 
     /// <summary>Any member movie's own poster, resolved metadata first, for use only when the
     /// collection itself has none. Returns the first one found, not necessarily the "best".</summary>
-    private async Task<int> GetMediaTypeIdAsync(string name, CancellationToken ct) =>
-        await _context.MediaTypes.Where(t => t.Name == name && t.IsActive).Select(t => t.Id).FirstOrDefaultAsync(ct);
+    private async Task<int> GetFamilyDefaultTypeIdAsync(string family, CancellationToken ct) =>
+        await _context.MediaTypes.Where(t => t.IsActive && t.IsFamilyDefault && t.ProviderFamily == family)
+            .OrderBy(t => t.Id).Select(t => t.Id).FirstOrDefaultAsync(ct);
 
     /// <summary>Flat types whose items are all "a movie file on disk" as far as Kodi is concerned: the active types whose
     /// provider family is "movie" (editable on the Media Types page), not a list of names.</summary>
     private async Task<List<int>> GetMovieLikeTypeIdsAsync(CancellationToken ct) =>
-        (await ActiveTypeNamesAsync(ct)).Where(t => MediaTypeFamilies.IsMovieLike(t.Name)).Select(t => t.Id).ToList();
+        (await ActiveTypeNamesAsync(ct)).Where(t => MediaTypeRegistry.IsMovieLike(t.Name)).Select(t => t.Id).ToList();
 
     /// <summary>Hierarchical show types scraped through Kodi's TV path: the active types whose provider family is "tv".</summary>
     private async Task<List<int>> GetShowLikeTypeIdsAsync(CancellationToken ct) =>
-        (await ActiveTypeNamesAsync(ct)).Where(t => MediaTypeFamilies.IsShowLike(t.Name)).Select(t => t.Id).ToList();
+        (await ActiveTypeNamesAsync(ct)).Where(t => MediaTypeRegistry.IsShowLike(t.Name)).Select(t => t.Id).ToList();
 
     private async Task<List<(int Id, string Name)>> ActiveTypeNamesAsync(CancellationToken ct) =>
         (await _context.MediaTypes.Where(t => t.IsActive).Select(t => new { t.Id, t.Name }).ToListAsync(ct))
@@ -1906,7 +1907,7 @@ public class ScraperController : ControllerBase
         if (normalizedNames.Count == 0) return cast;
 
         var peopleTypeId = await _context.MediaTypes
-            .Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
+            .Where(t => t.IsPersonType).Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
         if (peopleTypeId is null) return cast;
 
         // GroupBy + pick one, not ToDictionaryAsync directly -- the "people" catalog can

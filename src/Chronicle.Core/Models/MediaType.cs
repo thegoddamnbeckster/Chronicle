@@ -74,7 +74,58 @@ namespace Chronicle.Core.Models
         /// Null = "Cast".</summary>
         public string? CastHeading { get; set; }
 
+        /// <summary>
+        /// True for the reference type whose items are people credited on other media. Chronicle finds that type by this flag,
+        /// never by its name, so it can be renamed. At most one type should carry it.
+        /// </summary>
+        public bool IsPersonType { get; set; }
+
+        /// <summary>
+        /// True for the one type used when a client (an import, a scrobbler, a scan) does not say what kind of item it is
+        /// talking about. At most one type should carry it.
+        /// </summary>
+        public bool IsDefaultType { get; set; }
+
+        /// <summary>
+        /// True when this is the type new items are created under when only a <see cref="ProviderFamily"/> is known (for
+        /// example Kodi's movie scraper adding a film). At most one type per family should carry it. The type's name in the
+        /// provider vocabulary is then the family itself ("movie"), which is how a plugin declaring "movie" reaches "movies".
+        /// </summary>
+        public bool IsFamilyDefault { get; set; }
+
+        /// <summary>
+        /// True when a cast entry for this type is an actor playing a named character (the credit role is "Actor" and the
+        /// character name is kept), false when the entry's own role IS the contribution (an author, a narrator, a band member).
+        /// </summary>
+        public bool CastAreActors { get; set; }
+
+        /// <summary>
+        /// Other names clients and plugins use for this type, comma-separated and lowercase ("movie,film" for movies,
+        /// "tv_show,tv_episode,show,episode" for TV). A name that is itself a type's name always wins over an alias.
+        /// </summary>
+        public string? Aliases { get; set; }
+
+        /// <summary>
+        /// How plays imported from other services (and scrobbles) are filed under this type: see <see cref="ImportShapes"/>.
+        /// Null = each play is a single flat item. Set here, in the database, rather than recognised by the type's name.
+        /// </summary>
+        public string? ImportShape { get; set; }
+
         public DateTime CreatedAt { get; set; }
+    }
+
+    /// <summary>The values <see cref="MediaType.ImportShape"/> may take: each names a hierarchy the importer knows how to build.</summary>
+    public static class ImportShapes
+    {
+        /// <summary>Show, season, episode: a play with season and episode numbers lands on the episode under its show.</summary>
+        public const string Episodic = "episodic";
+        /// <summary>Author, series, book: a play with an author lands on the book under its author (and series).</summary>
+        public const string AuthorSeriesWork = "author-series-work";
+        /// <summary>Artist, album, track: a play with an artist lands on the track under its album and artist.</summary>
+        public const string ArtistAlbumTrack = "artist-album-track";
+
+        public static readonly string[] All = [Episodic, AuthorSeriesWork, ArtistAlbumTrack];
+        public static bool IsKnown(string? s) => s is null || All.Contains(s);
     }
 
     /// <summary>The values <see cref="MediaType.ScanStrategy"/> may take.</summary>
@@ -83,39 +134,20 @@ namespace Chronicle.Core.Models
         public const string Audiobook = "audiobook";
         public static readonly string[] All = [Audiobook];
         public static bool IsKnown(string? s) => s is null || All.Contains(s);
-
-        /// <summary>
-        /// Starting value for a type created automatically by a plugin that does not say. This is the only place a
-        /// type NAME is mapped to a strategy, applied once at creation; after that the database is the truth.
-        /// </summary>
-        public static string? DefaultFor(string typeName) =>
-            string.Equals(typeName, "audiobooks", StringComparison.OrdinalIgnoreCase) ? Audiobook : null;
     }
+}
 
+namespace Chronicle.Core.Models
+{
+    /// <summary>
+    /// The provider-family vocabulary shared with metadata providers and Kodi: a plugin that declares "movie" or "tv" support,
+    /// and Kodi's own movie and TV scrapers, speak in these. Which media type belongs to which family is data
+    /// (<see cref="MediaType.ProviderFamily"/>), never decided from a type's name.
+    /// </summary>
     public static class ProviderFamilies
     {
-        /// <summary>
-        /// Starting value for a type that does not say (created by a plugin, or present before the column existed).
-        /// This is the only place a type NAME is turned into a family; it is applied once, after which the database
-        /// (editable on the Media Types page) is the truth. Order matters: "anime_movies" is flat like movies, not TV.
-        /// </summary>
-        public static string? DefaultFor(string typeName)
-        {
-            var n = typeName.ToLowerInvariant();
-            if (n == "movies") return "movie";
-            if (n.Contains("anime") && n.Contains("movie")) return "movie";
-            if (n.Contains("tv") || n.Contains("show") || n.Contains("series") || n.Contains("anime")) return "tv";
-            if (n.Contains("music") || n.Contains("album") || n.Contains("track")) return "music";
-            if (n.Contains("fanedit")) return "movie";
-            return null;
-        }
-
-        /// <summary>Starting cast heading for a type that does not say.</summary>
-        public static string? DefaultCastHeadingFor(string typeName) => typeName.ToLowerInvariant() switch
-        {
-            "music" => "Band Members",
-            "audiobook" or "audiobooks" => "Narrators",
-            _ => null,
-        };
+        public const string Movie = "movie";
+        public const string Tv = "tv";
+        public const string Music = "music";
     }
 }

@@ -17,7 +17,7 @@ namespace Chronicle.Data.Postgres.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.21")
+                .HasAnnotation("ProductVersion", "9.0.20")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -929,6 +929,15 @@ namespace Chronicle.Data.Postgres.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("Aliases")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<bool>("CastAreActors")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<string>("CastHeading")
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
@@ -951,6 +960,10 @@ namespace Chronicle.Data.Postgres.Migrations
                     b.Property<int>("HierarchyLevels")
                         .HasColumnType("integer");
 
+                    b.Property<string>("ImportShape")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
                     b.Property<string>("InteractionVerb")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -962,6 +975,21 @@ namespace Chronicle.Data.Postgres.Migrations
 
                     b.Property<bool>("IsBuiltIn")
                         .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDefaultType")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("IsFamilyDefault")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("IsPersonType")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<bool>("IsTrackable")
                         .ValueGeneratedOnAdd()
@@ -1010,14 +1038,20 @@ namespace Chronicle.Data.Postgres.Migrations
                         new
                         {
                             Id = 1,
+                            Aliases = "tv_show,tv_episode,show,episode",
+                            CastAreActors = true,
                             CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Television series, seasons, and episodes",
                             DisplayName = "TV Shows",
                             HierarchyLabels = "Show,Season,Episode",
                             HierarchyLevels = 3,
+                            ImportShape = "episodic",
                             InteractionVerb = "watched",
                             IsActive = true,
                             IsBuiltIn = true,
+                            IsDefaultType = false,
+                            IsFamilyDefault = true,
+                            IsPersonType = false,
                             IsTrackable = true,
                             IsUserModified = false,
                             Name = "tv",
@@ -1028,6 +1062,8 @@ namespace Chronicle.Data.Postgres.Migrations
                         new
                         {
                             Id = 2,
+                            Aliases = "movie,film",
+                            CastAreActors = true,
                             CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Feature films and short films",
                             DisplayName = "Movies",
@@ -1036,6 +1072,9 @@ namespace Chronicle.Data.Postgres.Migrations
                             InteractionVerb = "watched",
                             IsActive = true,
                             IsBuiltIn = true,
+                            IsDefaultType = true,
+                            IsFamilyDefault = true,
+                            IsPersonType = false,
                             IsTrackable = true,
                             IsUserModified = false,
                             Name = "movies",
@@ -1046,14 +1085,21 @@ namespace Chronicle.Data.Postgres.Migrations
                         new
                         {
                             Id = 3,
+                            Aliases = "track,song",
+                            CastAreActors = false,
+                            CastHeading = "Band Members",
                             CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Artists, albums, and tracks",
                             DisplayName = "Music",
                             HierarchyLabels = "Artist,Album,Track",
                             HierarchyLevels = 3,
+                            ImportShape = "artist-album-track",
                             InteractionVerb = "listened",
                             IsActive = true,
                             IsBuiltIn = true,
+                            IsDefaultType = false,
+                            IsFamilyDefault = true,
+                            IsPersonType = false,
                             IsTrackable = true,
                             IsUserModified = false,
                             Name = "music",

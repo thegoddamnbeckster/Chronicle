@@ -80,14 +80,14 @@ public class MetadataEnrichmentService(
         var allProviders = registry.GetMetadataProviderEntries()
             .Select(e => (e.PluginId, (IMetadataProvider)e.Provider))
             .ToList();
-        var mediaTypeName = NormalizeMediaTypeName(item.MediaType?.Name ?? string.Empty);
+        var mediaTypeName = MediaTypeRegistry.ProviderName(item.MediaType?.Name ?? string.Empty);
 
         foreach (var (pluginId, provider, _) in registry.GetMetadataProviderEntries())
         {
             ct.ThrowIfCancellationRequested();
             var supported = provider.GetSupportedMediaTypes()
                 .Any(t => string.Equals(
-                    NormalizeMediaTypeName(t.MediaTypeName), mediaTypeName,
+                    MediaTypeRegistry.ProviderName(t.MediaTypeName), mediaTypeName,
                     StringComparison.OrdinalIgnoreCase));
             if (!supported) continue;
 
@@ -237,7 +237,7 @@ public class MetadataEnrichmentService(
         // we invert that here so that a plugin declaring "movie" also matches the DB value
         // "movies" (and vice versa) without loading rows into memory to filter them.
         var supportedRawTypes = provider.GetSupportedMediaTypes()
-            .SelectMany(t => ExpandMediaTypeName(t.MediaTypeName))
+            .SelectMany(t => MediaTypeRegistry.DatabaseNamesFor(t.MediaTypeName))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Mark any Pending items whose media type this plugin doesn't support as Skipped
@@ -598,7 +598,7 @@ public class MetadataEnrichmentService(
         var registry = registryScope.ServiceProvider.GetRequiredService<IPluginRegistry>();
         var provider = registry.GetMetadataProvider(pluginId);
         var supportedTypes = provider?.GetSupportedMediaTypes()
-            .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+            .Select(t => MediaTypeRegistry.ProviderName(t.MediaTypeName))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var libraryItemIds = await db.UserLibraries
@@ -613,7 +613,7 @@ public class MetadataEnrichmentService(
 
         var rootIds = supportedTypes is { Count: > 0 }
             ? rootItems
-                .Where(m => supportedTypes.Contains(NormalizeMediaTypeName(m.MediaType?.Name ?? string.Empty)))
+                .Where(m => supportedTypes.Contains(MediaTypeRegistry.ProviderName(m.MediaType?.Name ?? string.Empty)))
                 .Select(m => m.Id)
                 .ToList()
             : rootItems.Select(m => m.Id).ToList();
@@ -710,7 +710,7 @@ public class MetadataEnrichmentService(
             .ToDictionary(
                 e => e.PluginId,
                 e => e.Provider.GetSupportedMediaTypes()
-                         .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+                         .Select(t => MediaTypeRegistry.ProviderName(t.MediaTypeName))
                          .ToHashSet(StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
 
@@ -790,7 +790,7 @@ public class MetadataEnrichmentService(
                 continue;
             if (!mediaTypeByItem.TryGetValue(mediaItemId, out var itemType))
                 continue;
-            if (!supportedForPlugin.Contains(NormalizeMediaTypeName(itemType)))
+            if (!supportedForPlugin.Contains(MediaTypeRegistry.ProviderName(itemType)))
                 continue;   // plugin doesn't support this item's type — skip
 
             var json   = metadataByItem.GetValueOrDefault(mediaItemId);
@@ -932,7 +932,7 @@ public class MetadataEnrichmentService(
             foreach (var (pluginId, provider, _) in pluginEntries)
             {
                 var supportedTypes = provider.GetSupportedMediaTypes()
-                    .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+                    .Select(t => MediaTypeRegistry.ProviderName(t.MediaTypeName))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var emptyLevelsByRawType = BuildEmptyLevelsByRawType(provider);
 
@@ -944,7 +944,7 @@ public class MetadataEnrichmentService(
                     .Where(me =>
                     {
                         if (!itemTypeMap.TryGetValue(me.MediaItemId, out var typeName)) return false;
-                        if (!supportedTypes.Contains(NormalizeMediaTypeName(typeName))) return true;
+                        if (!supportedTypes.Contains(MediaTypeRegistry.ProviderName(typeName))) return true;
                         if (collectionContainerIds.Contains(me.MediaItemId)) return true;
                         return emptyLevelsByRawType.TryGetValue(typeName, out var emptyLevels)
                                && itemLevelMap.TryGetValue(me.MediaItemId, out var level)
@@ -974,7 +974,7 @@ public class MetadataEnrichmentService(
             foreach (var (pluginId, provider, _) in pluginEntries)
             {
                 var supportedTypes = provider.GetSupportedMediaTypes()
-                    .Select(t => NormalizeMediaTypeName(t.MediaTypeName))
+                    .Select(t => MediaTypeRegistry.ProviderName(t.MediaTypeName))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var emptyLevelsByRawType = BuildEmptyLevelsByRawType(provider);
 
@@ -984,7 +984,7 @@ public class MetadataEnrichmentService(
                 foreach (var item in allItems)
                 {
                     if (!supportsType.TryGetValue(item.TypeName, out var supported))
-                        supportsType[item.TypeName] = supported = supportedTypes.Contains(NormalizeMediaTypeName(item.TypeName));
+                        supportsType[item.TypeName] = supported = supportedTypes.Contains(MediaTypeRegistry.ProviderName(item.TypeName));
                     if (!supported)
                         continue;
                     if (collectionContainerIds.Contains(item.Id))
@@ -1528,7 +1528,7 @@ public class MetadataEnrichmentService(
             // never gets a chance to run and discard it (it only inspects row.ExternalId, which
             // this block would otherwise have already cleared).
             var forceRefreshOriginalIdTypeValid = row.MediaItem?.ParentId is not null || IsRootLevelIdTypeValid(
-                forceRefreshOriginalId, NormalizeMediaTypeName(row.MediaItem?.MediaType?.Name ?? string.Empty));
+                forceRefreshOriginalId, MediaTypeRegistry.ProviderName(row.MediaItem?.MediaType?.Name ?? string.Empty));
             var forceRefreshHadMatch = options.Mode == EnrichmentMode.Force
                 && options.IdOverride is null
                 && row.Status == EnrichmentStatus.Completed
@@ -1575,7 +1575,7 @@ public class MetadataEnrichmentService(
                         // reusing it, since level-only validation had no way to catch the
                         // media-type mismatch. See IsRootLevelIdTypeValid.
                         idIsValid = IsRootLevelIdTypeValid(
-                            row.ExternalId, NormalizeMediaTypeName(row.MediaItem.MediaType?.Name ?? string.Empty));
+                            row.ExternalId, MediaTypeRegistry.ProviderName(row.MediaItem.MediaType?.Name ?? string.Empty));
                     }
                     else if (isTmdbOrMusicBrainzFormat)
                     {
@@ -1803,7 +1803,7 @@ public class MetadataEnrichmentService(
                     .FirstOrDefaultAsync(ct);
 
                 var typeIsSupported = mediaTypeName is not null &&
-                    supportedTypes.Any(t => NormalizeMediaTypeName(t) == NormalizeMediaTypeName(mediaTypeName));
+                    supportedTypes.Any(t => MediaTypeRegistry.ProviderName(t) == MediaTypeRegistry.ProviderName(mediaTypeName));
 
                 // Unconditional, not Debug — this is the exact decision that determines whether
                 // SearchAsync gets called for this (item, plugin) pair. Logged every time so
@@ -1836,52 +1836,7 @@ public class MetadataEnrichmentService(
 
                 if (typeIsSupported)
                 {
-                    // For music items all hierarchy levels share the same media type name.
-                    // We determine what MusicBrainz entity to search for from ParentId depth
-                    // and build a Lucene-style query with parent/grandparent context so that
-                    // album and track searches are precise rather than bare-name lookups.
-                    //   no parent  → artist search: artist:"Metallica"
-                    //   parent is root → album search: album:"Load" AND artist:"Metallica"
-                    //   has grandparent → track search: track:"Until It Sleeps" AND artist:"Metallica" AND release:"Load"
                     searchQuery = row.MediaItem.Name;
-                    if (mediaTypeName is "music" or "album" or "artist")
-                    {
-                        if (row.MediaItem.ParentId == null)
-                        {
-                            searchQuery = $"artist:{MbQuote(row.MediaItem.Name)}";
-                        }
-                        else
-                        {
-                            var parent = await db.MediaItems
-                                .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId, ct);
-
-                            if (parent?.ParentId == null)
-                            {
-                                // Album level — add artist context for precision.
-                                // Strip leading "(YYYY) " from the album name before searching
-                                // because file scanners prepend the year for sort order but
-                                // MusicBrainz stores the canonical title without it.
-                                var artistClause = !string.IsNullOrWhiteSpace(parent?.Name)
-                                    ? $" AND artist:{MbQuote(parent.Name)}"
-                                    : string.Empty;
-                                searchQuery = $"album:{MbQuote(StripYearPrefix(row.MediaItem.Name))}{artistClause}";
-                            }
-                            else
-                            {
-                                // Track level — add artist and album context for precision.
-                                // Strip "(YYYY) " prefix from the album (release) name.
-                                var grandparent = await db.MediaItems
-                                    .FirstOrDefaultAsync(m => m.Id == parent.ParentId, ct);
-                                var artistClause = !string.IsNullOrWhiteSpace(grandparent?.Name)
-                                    ? $" AND artist:{MbQuote(grandparent.Name)}"
-                                    : string.Empty;
-                                var releaseClause = !string.IsNullOrWhiteSpace(parent.Name)
-                                    ? $" AND release:{MbQuote(StripYearPrefix(parent.Name))}"
-                                    : string.Empty;
-                                searchQuery = $"track:{MbQuote(row.MediaItem.Name)}{artistClause}{releaseClause}";
-                            }
-                        }
-                    }
 
                     // For leaf-level items (tracks, episodes), include sibling names so
                     // plugins can use multi-track fingerprinting to pin down the exact release.
@@ -1944,7 +1899,7 @@ public class MetadataEnrichmentService(
                                 if (fs.TryGetProperty("author", out var authorEl))
                                     parentNameOverride = authorEl.GetString();
 
-                                if (string.Equals(mediaTypeName, "audiobooks", StringComparison.OrdinalIgnoreCase)
+                                if (MediaTypeRegistry.UsesScanStrategy(mediaTypeName, ScanStrategies.Audiobook)
                                     && fs.TryGetProperty("filePath", out var fpEl))
                                 {
                                     var bookFolder = fpEl.GetString();
@@ -2025,13 +1980,13 @@ public class MetadataEnrichmentService(
                             SubItemMetadata:  subItemMetadata,
                             MediaTypeName:    mediaTypeName,
                             KnownExternalIds: knownExternalIds.Count > 0 ? knownExternalIds : null,
-                            KnownBirthYear:   mediaTypeName == "people"
+                            KnownBirthYear:   MediaTypeRegistry.IsPersonType(mediaTypeName)
                                                   ? ExtractKnownBirthYear(row.MediaItem.MetadataJson)
                                                   : null,
-                            KnownCreditTitles: mediaTypeName == "people"
+                            KnownCreditTitles: MediaTypeRegistry.IsPersonType(mediaTypeName)
                                                   ? await LoadCreditedTitlesAsync(db, row.MediaItemId, ct)
                                                   : null,
-                            KnownCreditExternalIds: mediaTypeName == "people"
+                            KnownCreditExternalIds: MediaTypeRegistry.IsPersonType(mediaTypeName)
                                                   ? await LoadCreditedExternalIdsAsync(
                                                         db, row.MediaItemId, PluginIdHelper.ToSource(provider.PluginId), ct)
                                                   : null,
@@ -2039,6 +1994,8 @@ public class MetadataEnrichmentService(
                             // ChildNames above are all read directly off a real MediaItem row --
                             // see MediaSearchContext.IsRealHierarchyPosition's own doc.
                             IsRealHierarchyPosition: true);
+
+                    searchQuery = DescribeSearch(searchCtx);
 
                     logger.LogDebug(
                         "Searching {Plugin} for item {ItemId} \"{Name}\" " +
@@ -2227,7 +2184,7 @@ public class MetadataEnrichmentService(
             // never provider-supplied corroborating evidence for ANOTHER person the way a
             // collection's parts-list stub is for a movie, so it must still count as a conflict.
             if (conflictOwner is { IsStub: true } &&
-                !string.Equals(conflictOwner.MediaType?.Name, "people", StringComparison.OrdinalIgnoreCase))
+                conflictOwner.MediaType?.IsPersonType != true)
                 conflictOwner = null;
 
             if (conflictOwner is not null)
@@ -2266,7 +2223,7 @@ public class MetadataEnrichmentService(
                 MergeMetadata(row.MediaItem!, row.PluginId, result);
                 await resolutionService.ResolveAsync(row.MediaItem!, db, ct);
                 await ResolveCreditsAsync(db, row.MediaItem!, row.PluginId, result, ct);
-                if (string.Equals(row.MediaItem!.MediaType?.Name, "people", StringComparison.OrdinalIgnoreCase))
+                if (row.MediaItem!.MediaType?.IsPersonType == true)
                 {
                     // Both the single "current" pick (PosterUrl) and every "poster"-tagged
                     // alternate in the provider's own gallery (TMDB's AdditionalImages) count as
@@ -2600,15 +2557,6 @@ public class MetadataEnrichmentService(
     }
 
     /// <summary>
-    /// Normalises a DB media-type name to the canonical form used by plugin
-    /// <c>GetSupportedMediaTypes()</c> declarations.  The DB stores "movies" (plural)
-    /// while many standalone plugins (e.g. TMDB) declare "movie" (singular).
-    /// Both map to the same concept; treat them as equivalent for matching purposes.
-    /// </summary>
-    private static string NormalizeMediaTypeName(string name) =>
-        name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
-
-    /// <summary>
     /// For a ROOT-level TMDB/MusicBrainz-format id ("movie:N", "tv:N", "artist:N", ...),
     /// checks that the entity type actually matches what <paramref name="normalizedMediaTypeName"/>
     /// (already run through <see cref="NormalizeMediaTypeName"/>) is. Returns true for anything
@@ -2637,24 +2585,6 @@ public class MetadataEnrichmentService(
             "tv"     => normalizedMediaTypeName is "tv",
             _        => false, // release-group/season/album/recording/episode are never root-level
         };
-    }
-
-    /// <summary>
-    /// Returns all raw DB name variants that <see cref="NormalizeMediaTypeName"/> would map to
-    /// the same canonical form as <paramref name="name"/>. Used to build a SQL-translatable set
-    /// for <see cref="EnrichPendingAsync"/> so the media-type filter runs in SQL rather than
-    /// in memory after the rows are fetched.
-    /// </summary>
-    private static IEnumerable<string> ExpandMediaTypeName(string name)
-    {
-        var lower = name.ToLowerInvariant();
-        // "movie" and "movies" normalize to the same canonical form — include both variants.
-        // Always return lowercase so EF-generated SQL IN ('movie','movies') matches the DB's
-        // lowercase values. StringComparer.OrdinalIgnoreCase on the HashSet only helps C#
-        // lookups; SQL IN literals are compared case-sensitively in SQLite.
-        if (lower == "movie" || lower == "movies")
-            return ["movie", "movies"];
-        return [lower];
     }
 
     /// <summary>
@@ -2948,7 +2878,7 @@ public class MetadataEnrichmentService(
                 .Select(kv => kv.Key)
                 .ToHashSet();
             if (emptyLevels.Count == 0) continue;
-            foreach (var rawType in ExpandMediaTypeName(type.MediaTypeName))
+            foreach (var rawType in MediaTypeRegistry.DatabaseNamesFor(type.MediaTypeName))
                 unsupportedLevelsByRawType[rawType] = emptyLevels;
         }
         return unsupportedLevelsByRawType;
@@ -2987,15 +2917,13 @@ public class MetadataEnrichmentService(
         db.ChangeTracker.Clear();
     }
 
-    /// <summary>
-    /// Strips Lucene range/special operators then wraps in double quotes for exact phrase matching.
-    /// Operators like &lt;&gt;{}[]^~ break MusicBrainz SOLR if left unescaped in the query string.
-    /// </summary>
-    private static string MbQuote(string term)
+    /// <summary>What the search was for, as shown in the enrichment diagnostics and log: the item's name with the
+    /// names above it ("Load" / parent "Metallica"), which is all the providers are given to work from.</summary>
+    private static string DescribeSearch(MediaSearchContext ctx)
     {
-        // Remove Lucene range and boost operators that cannot be safely escaped inside phrases
-        term = System.Text.RegularExpressions.Regex.Replace(term, @"[<>{}[\]^~]", "").Trim();
-        return $"\"{term.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
+        var path = new[] { ctx.GrandparentName, ctx.ParentName }.Where(n => !string.IsNullOrWhiteSpace(n));
+        var above = string.Join(" / ", path);
+        return above.Length == 0 ? ctx.Name : $"{ctx.Name} (under {above})";
     }
 
     /// <summary>
@@ -3396,7 +3324,7 @@ public class MetadataEnrichmentService(
     {
         if (result.Cast.Count == 0 && result.Crew.Count == 0)
             return;
-        if (string.Equals(item.MediaType?.Name, "people", StringComparison.OrdinalIgnoreCase))
+        if (item.MediaType?.IsPersonType == true)
             return;
 
         var source = PluginIdHelper.ToSource(pluginId);
@@ -3409,7 +3337,7 @@ public class MetadataEnrichmentService(
         // literally named "Author"). Every other type's CastMember.Role IS the real
         // contribution (Hardcover: "Author"/"Illustrator"/...) and belongs directly in
         // MediaCredit.Role with no character name at all -- same shape as a Crew entry's Job.
-        var castIsActing = CreditRoleHelper.CastEntryIsActingCredit(item.MediaType?.Name);
+        var castIsActing = MediaTypeRegistry.CastAreActors(item.MediaType?.Name);
         var billingOrder = 0;
         var credits = new List<CreditToRecord>(result.Cast.Count + result.Crew.Count);
         foreach (var cast in result.Cast)
@@ -3625,11 +3553,11 @@ public class MetadataEnrichmentService(
         if (crossRefs.Count == 0) return;
 
         // Only seed plugins that actually support this item's media type (or its parent hint).
-        var normalizedType = mediaTypeName is not null ? NormalizeMediaTypeName(mediaTypeName) : null;
+        var normalizedType = mediaTypeName is not null ? MediaTypeRegistry.ProviderName(mediaTypeName) : null;
         // Parent-type hint: anime → tv, fanedits → movie (mirrors FileScanService.ToMediaTypeHint).
         // anime_movies is checked first — it contains "anime" as a substring but is flat (like
         // movies), not TV-hierarchical, so it must not fall through to the anime → tv case.
-        var typeHint = MediaTypeFamilies.Resolve(mediaTypeName);
+        var typeHint = MediaTypeRegistry.Family(mediaTypeName);
 
         // Track which plugins have already been seeded in this call to prevent duplicate EF
         // Add() calls when multiple cross-ref entries (e.g. tmdb: and imdb:) both match the
@@ -3649,7 +3577,7 @@ public class MetadataEnrichmentService(
                     var supported = candidateProvider.GetSupportedMediaTypes()
                         .Any(t =>
                         {
-                            var n = NormalizeMediaTypeName(t.MediaTypeName);
+                            var n = MediaTypeRegistry.ProviderName(t.MediaTypeName);
                             return n == normalizedType || n == typeHint;
                         });
                     if (!supported) continue;

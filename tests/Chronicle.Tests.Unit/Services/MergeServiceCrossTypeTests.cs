@@ -20,7 +20,7 @@ public class MergeServiceCrossTypeTests
         var db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)).Options);
-        db.MediaTypes.Add(new MediaType { Id = PeopleType, Name = "people", DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+        db.MediaTypes.Add(new MediaType { Id = PeopleType, Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
         db.MediaTypes.Add(new MediaType { Id = AudiobookType, Name = "audiobooks", DisplayName = "Audiobooks", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow });
         db.SaveChanges();
         var svc = new MergeService(db, Mock.Of<IMetadataResolutionService>(), Mock.Of<IMovieCollectionService>(),

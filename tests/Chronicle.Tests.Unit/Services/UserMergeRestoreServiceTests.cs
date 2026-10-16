@@ -24,7 +24,7 @@ public class UserMergeRestoreServiceTests
     {
         var db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
-        db.MediaTypes.Add(new MediaType { Id = 1, Name = "people", DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+        db.MediaTypes.Add(new MediaType { Id = 1, Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         var winner = Person("David Fletcher", MergedAt.AddMonths(-1));
         db.MediaItems.Add(winner);

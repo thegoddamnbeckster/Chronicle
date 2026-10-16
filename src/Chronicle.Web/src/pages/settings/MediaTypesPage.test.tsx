@@ -14,11 +14,13 @@ const TV: api.MediaTypeAdmin = {
   id: 1, name: 'tv', displayName: 'TV Shows', description: null, hierarchyLevels: 3, hierarchyLabels: ['Show', 'Season', 'Episode'],
   interactionVerb: 'watched', progressUnit: 'minutes', isBuiltIn: true, isActive: true, supportsCollections: false, isTrackable: true,
   scanStrategy: null, isUserModified: false, itemCount: 120, plugins: [{ pluginId: 'p.tmdb', name: 'TMDB' }], scanHints: null, providerFamily: 'tv', castHeading: null,
+  isPersonType: false, isDefaultType: false, isFamilyDefault: false, castAreActors: false, aliases: null, importShape: null,
 }
 const COMICS: api.MediaTypeAdmin = {
   id: 9, name: 'comics', displayName: 'Comics', description: 'Comic books', hierarchyLevels: 3, hierarchyLabels: ['Series', 'Volume', 'Issue'],
   interactionVerb: 'read', progressUnit: 'pages', isBuiltIn: false, isActive: true, supportsCollections: false, isTrackable: true,
   scanStrategy: null, isUserModified: true, itemCount: 0, plugins: [], scanHints: '{"extensions":[".cbz"]}', providerFamily: null, castHeading: null,
+  isPersonType: false, isDefaultType: false, isFamilyDefault: false, castAreActors: false, aliases: null, importShape: null,
 }
 
 const renderPage = () => render(<MemoryRouter><MediaTypesPage /></MemoryRouter>)
@@ -77,9 +79,29 @@ describe('MediaTypesPage', () => {
     await waitFor(() => expect(api.createMediaType).toHaveBeenCalledWith({
       name: 'board-games', displayName: 'Board Games', description: '', hierarchyLevels: 2, hierarchyLabels: ['Game', 'Expansion'],
       interactionVerb: 'played', progressUnit: 'sessions', supportsCollections: false, isTrackable: true, scanStrategy: null, isActive: true, scanHints: '', providerFamily: '', castHeading: '',
+      aliases: '', importShape: '', isPersonType: false, isDefaultType: false, isFamilyDefault: false, castAreActors: false,
     }))
     expect(await screen.findByText('Added Board Games.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('sends the aliases, import shape and role flags that are set', async () => {
+    vi.mocked(api.createMediaType).mockResolvedValue({ ...COMICS, id: 11, name: 'documentaries' })
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Add a type' }))
+    const dialog = screen.getByRole('dialog', { name: 'Add a media type' })
+
+    await userEvent.type(within(dialog).getByLabelText('Display name'), 'Documentaries')
+    await userEvent.type(within(dialog).getByLabelText('Internal name'), 'documentaries')
+    await userEvent.type(within(dialog).getByLabelText('Other names for this type'), 'Docs, Documentary')
+    await userEvent.selectOptions(within(dialog).getByLabelText('How imported plays are filed'), 'episodic')
+    await userEvent.click(within(dialog).getByLabelText(/Credits are actors/))
+    await userEvent.click(within(dialog).getByLabelText(/Default type when a client/))
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.createMediaType).toHaveBeenCalledWith(expect.objectContaining({
+      aliases: 'docs, documentary', importShape: 'episodic', castAreActors: true, isDefaultType: true, isPersonType: false, isFamilyDefault: false,
+    })))
   })
 
   it('keeps the form open and shows the reason when the server refuses', async () => {

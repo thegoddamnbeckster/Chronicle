@@ -172,7 +172,7 @@ namespace Chronicle.Services
                 Season       = info.Season,
                 Episode      = info.Episode,
                 EpisodeTitle = request.EpisodeTitle ?? info.EpisodeTitle,
-                MediaType    = request.MediaType ?? "tv",
+                MediaType    = request.MediaType ?? MediaTypeRegistry.FamilyDefault(ProviderFamilies.Tv)?.Name,
             };
         }
 

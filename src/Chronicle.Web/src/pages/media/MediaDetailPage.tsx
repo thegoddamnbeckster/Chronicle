@@ -688,7 +688,7 @@ export default function MediaDetailPage() {
   // Cast entries are {name, role} objects (see CastMemberDto) -- Hardcover tags
   // narrators with role "Narrator".
   const narrators: string[] = []
-  const isAudiobookType = (item.mediaTypeInternalName ?? item.mediaTypeName).toLowerCase() === 'audiobooks'
+  const isAudiobookType = item.mediaTypeScanStrategy === 'audiobook'
   if (isAudiobookType) {
     for (const meta of Object.values(item.pluginMetadata ?? {})) {
       const cast = (meta as Record<string, unknown>)?.cast
@@ -1438,7 +1438,7 @@ export default function MediaDetailPage() {
         <PluginFold
           foldKey={`media.${mediaId}.children`}
           label={`${childrenLabel} (${sortedChildren.length})`}
-          defaultOpen={item.mediaTypeInternalName === 'audiobooks'}
+          defaultOpen={item.mediaTypeScanStrategy === 'audiobook'}
         >
           <div className={styles.childGrid}>
             {sortedChildren.map(child => (

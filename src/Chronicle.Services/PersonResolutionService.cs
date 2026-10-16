@@ -417,7 +417,7 @@ public class PersonResolutionService(
                 .Include(x => x.MediaItem)
                 .Where(x => x.Source == source && x.ExternalId == externalPersonId)
                 .Select(x => x.MediaItem)
-                .FirstOrDefaultAsync(m => m != null && m.MediaType!.Name == "people", ct);
+                .FirstOrDefaultAsync(m => m != null && m.MediaType!.IsPersonType, ct);
         }
 
         var peopleTypeId = await GetPeopleMediaTypeIdAsync(db, ct);
@@ -628,38 +628,8 @@ public class PersonResolutionService(
     /// entry credited on other media, never something tracked/watched on its own -- see
     /// MediaType.IsTrackable.
     /// </summary>
-    private static async Task<int> GetPeopleMediaTypeIdAsync(ChronicleDbContext db, CancellationToken ct)
-    {
-        var id = await db.MediaTypes.Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
-        if (id is not null)
-            return id.Value;
-
-        var mediaType = new MediaType
-        {
-            Name            = "people",
-            DisplayName     = "People",
-            HierarchyLevels = 1,
-            InteractionVerb = "viewed",
-            ProgressUnit    = "percent",
-            IsBuiltIn       = true,
-            IsActive        = true,
-            IsTrackable     = false,
-            CreatedAt       = DateTime.UtcNow,
-        };
-        db.MediaTypes.Add(mediaType);
-        try
-        {
-            await db.SaveChangesAsync(ct);
-            return mediaType.Id;
-        }
-        catch (DbUpdateException)
-        {
-            // Lost a race with another concurrent credit resolution also creating this row --
-            // the unique index on Name rejected ours; fall back to whichever one won.
-            db.ChangeTracker.Clear();
-            return await db.MediaTypes.Where(t => t.Name == "people").Select(t => t.Id).FirstAsync(ct);
-        }
-    }
+    private static async Task<int> GetPeopleMediaTypeIdAsync(ChronicleDbContext db, CancellationToken ct) =>
+        await BuiltInMediaTypes.EnsurePersonTypeAsync(db, ct);
 
     private async Task SeedEnrichmentRowsAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct, bool save = true)
     {
@@ -667,7 +637,7 @@ public class PersonResolutionService(
         foreach (var (pluginId, provider, _) in pluginRegistry.GetMetadataProviderEntries())
         {
             var supported = provider.GetSupportedMediaTypes()
-                .Any(t => string.Equals(t.MediaTypeName, "people", StringComparison.OrdinalIgnoreCase));
+                .Any(t => MediaTypeRegistry.IsPersonType(t.MediaTypeName));
             if (!supported) continue;
 
             toAdd.Add(new MediaItemEnrichment

@@ -23,6 +23,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
     public MetadataEnrichmentServiceTests()
     {
+        RegistryFixtures.LoadBuiltIns();
         var opts = new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
         _db = new ChronicleDbContext(opts);
@@ -1930,7 +1931,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         // item's own match -- it must still count as a conflict.
         var peopleType = new MediaType
         {
-            Name = "people", DisplayName = "People", HierarchyLevels = 1,
+            Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
             HierarchyLabels = "Person", InteractionVerb = "viewed", ProgressUnit = "percent",
         };
         _db.MediaTypes.Add(peopleType);
@@ -2024,7 +2025,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         // never be treated as "a working match worth preserving" for a "people" item.
         var peopleType = new MediaType
         {
-            Name = "people", DisplayName = "People", HierarchyLevels = 1,
+            Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
             HierarchyLabels = "Person", InteractionVerb = "viewed", ProgressUnit = "percent",
         };
         _db.MediaTypes.Add(peopleType);
@@ -2434,7 +2435,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         // and a second stub for the exact same real person got created every time.
         var peopleType = new MediaType
         {
-            Name = "people", DisplayName = "People", HierarchyLevels = 1,
+            Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
             HierarchyLabels = "Person", InteractionVerb = "viewed", ProgressUnit = "percent",
         };
         _db.MediaTypes.Add(peopleType);
@@ -2473,7 +2474,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         // other "imdb:" id is stripped to. Titles keep the bare "tt…" form other plugins share.
         var peopleType = new MediaType
         {
-            Name = "people", DisplayName = "People", HierarchyLevels = 1,
+            Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
             HierarchyLabels = "Person", InteractionVerb = "viewed", ProgressUnit = "percent",
         };
         _db.MediaTypes.Add(peopleType);

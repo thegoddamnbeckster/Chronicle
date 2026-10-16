@@ -59,10 +59,10 @@ export default function AddCollectionPage() {
   // Standalone anime films live on the flat anime_movies type instead.
   const mediaTypes = allMediaTypes.filter(t => t.hierarchyLevels === 1)
 
-  // Default the selector to "Movies" the first time media types load, since that's
-  // still the most common case — the user can change it to any other flat type.
+  // Default the selector to the type an administrator marked as the default, the first time media types load —
+  // the user can change it to any other flat type.
   const effectiveMediaTypeId = mediaTypeId
-    ?? mediaTypes.find(t => t.name.toLowerCase() === 'movies')?.id
+    ?? mediaTypes.find(t => t.isDefaultType)?.id
     ?? mediaTypes[0]?.id
     ?? null
 

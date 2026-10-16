@@ -133,7 +133,7 @@ public class MergeService(
         // Which of the loser's ids will NOT be grafted onto the winner (and so must be re-created, not moved back, by an
         // Unmerge). People are exempt from the one-id-per-source rule: two person records for one real person
         // legitimately carry two ids from one provider.
-        var isPeople = await dbContext.MediaTypes.AnyAsync(t => t.Id == winner.MediaTypeId && t.Name == "people", ct);
+        var isPeople = await dbContext.MediaTypes.AnyAsync(t => t.Id == winner.MediaTypeId && t.IsPersonType, ct);
         var winnerSourceIds = winnerExternalIds
             .GroupBy(e => e.Source, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Select(e => e.ExternalId).ToHashSet(StringComparer.OrdinalIgnoreCase),

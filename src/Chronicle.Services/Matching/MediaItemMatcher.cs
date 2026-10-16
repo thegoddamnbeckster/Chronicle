@@ -20,29 +20,12 @@ namespace Chronicle.Services.Matching;
 public static class MediaItemMatcher
 {
     /// <summary>
-    /// Normalizes a plugin/import's free-text media type string to Chronicle's actual
-    /// seeded <c>MediaTypes.Name</c> values. Anything not recognized here is passed through
-    /// unchanged (lowercased) — Chronicle's media types are user-configurable (Architecture
-    /// Rule 1: "Nothing hardcoded" beyond the plugin-facing contract), so a custom type a
-    /// user has added must still be matchable by its own Name.
+    /// Normalizes a plugin/import's free-text media type string to the internal media type name it stands for: a type's own
+    /// name, or one of the aliases listed on a type ("film" for movies, "tv_episode" for TV - edited on the Media Types page).
+    /// Anything not recognized is passed through unchanged (lowercased), so a custom type an administrator added is still
+    /// matchable by its own name.
     /// </summary>
-    public static string NormalizeMediaTypeName(string mediaType) => mediaType.ToLowerInvariant() switch
-    {
-        // "episode" (no tv_ prefix) is what Kodi's own Player.GetItem/VideoLibrary
-        // JSON-RPC literally returns as an item's "type" for a TV episode -- confirmed
-        // in Chronicle_Scrobbler's media_info.py, whose media_type property passes it
-        // straight through unchanged into every scrobble payload's mediaType field.
-        // Missing here meant every TV episode scrobble/resume-lookup had a mediaType
-        // this table didn't recognize, so it could never resolve to the seeded "tv"
-        // type at all -- silently defeating the whole point of type-scoped matching
-        // for the single most common TV scrobble source.
-        "tv_show" or "tv_episode" or "show" or "tv" or "episode" => "tv",
-        "movie" or "film"                            => "movies",
-        "anime_episode"                              => "anime",
-        "track" or "song"                            => "music",
-        "book"                                       => "books",
-        var other                                    => other,
-    };
+    public static string NormalizeMediaTypeName(string mediaType) => MediaTypeRegistry.Canonical(mediaType);
 
     /// <summary>
     /// Resolves a MediaTypeId strictly for use as a MATCH filter — returns null when the
@@ -68,17 +51,17 @@ public static class MediaItemMatcher
     /// Resolves a MediaTypeId for STUB CREATION — unlike the match resolver above, this
     /// must always return a real id (a MediaItem can't be created without one), so it falls
     /// back to the first configured active type when the requested one doesn't exist, and
-    /// defaults an omitted mediaType to "movies" (Chronicle's original scrobble-side
-    /// default when a client sends no type at all). Only call this once a match attempt
+    /// defaults an omitted mediaType to the type flagged as the default (the original
+    /// scrobble-side default when a client sends no type at all). Only call this once a match attempt
     /// (TryResolveMediaTypeIdForMatchAsync + FindByTitleYearAsync) has already come back
     /// empty — using this fallback id as a match filter is the bug this type exists to fix.
     /// </summary>
     public static async Task<int> ResolveMediaTypeIdForStubAsync(
         ChronicleDbContext db, string? mediaType, CancellationToken ct)
     {
-        var input = string.IsNullOrWhiteSpace(mediaType) ? "movies" : mediaType;
+        var input = string.IsNullOrWhiteSpace(mediaType) ? MediaTypeRegistry.DefaultType?.Name : mediaType;
 
-        var resolved = await ResolveTypeIdPreferringLiteralAsync(db, input, ct);
+        var resolved = string.IsNullOrWhiteSpace(input) ? null : await ResolveTypeIdPreferringLiteralAsync(db, input, ct);
         if (resolved.HasValue) return resolved.Value;
 
         var fallback = await db.MediaTypes
@@ -112,12 +95,12 @@ public static class MediaItemMatcher
         if (literal.HasValue)
             return literal;
 
-        var aliased = NormalizeMediaTypeName(raw);
-        if (aliased == raw)
-            return null; // no alias applies, and the literal lookup above already came back empty
-
+        // Not a type's own name: the type that lists it as an alias ("film", "tv_episode"), read from the table so a
+        // change made on the Media Types page applies at once.
+        var padded = "," + raw + ",";
         return await db.MediaTypes
-            .Where(t => t.Name == aliased && t.IsActive)
+            .Where(t => t.IsActive && t.Aliases != null && ("," + t.Aliases + ",").Contains(padded))
+            .OrderBy(t => t.Id)
             .Select(t => (int?)t.Id)
             .FirstOrDefaultAsync(ct);
     }

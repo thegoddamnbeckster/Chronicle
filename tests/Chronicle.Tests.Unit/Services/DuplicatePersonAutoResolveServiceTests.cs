@@ -32,7 +32,7 @@ public class DuplicatePersonAutoResolveServiceTests : IDisposable
             .Options;
         _db = new ChronicleDbContext(opts);
 
-        _peopleType = new MediaType { Name = "people", DisplayName = "People", HierarchyLevels = 1, IsTrackable = false };
+        _peopleType = new MediaType { Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, IsTrackable = false };
         _db.MediaTypes.Add(_peopleType);
         _db.SaveChanges();
 

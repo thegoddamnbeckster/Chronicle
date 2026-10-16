@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  SCAN_STRATEGIES, createMediaType, deleteMediaType, listMediaTypesAdmin, releaseMediaType, updateMediaType,
+  IMPORT_SHAPES, SCAN_STRATEGIES, createMediaType, deleteMediaType, listMediaTypesAdmin, releaseMediaType, updateMediaType,
   type MediaTypeAdmin, type MediaTypeInput,
 } from '@/api/mediaTypes'
 import { isKnownVerb } from '@/utils/typeWording'
@@ -28,19 +28,27 @@ interface FormState {
   hints: string
   family: string
   castHeading: string
+  aliases: string
+  importShape: string
+  person: boolean
+  isDefault: boolean
+  familyDefault: boolean
+  actors: boolean
   active: boolean
 }
 
 const BLANK: FormState = {
   name: '', displayName: '', description: '', levels: '1', labels: '', verb: 'watched', unit: 'minutes',
-  collections: false, trackable: true, scan: '', hints: '', family: '', castHeading: '', active: true,
+  collections: false, trackable: true, scan: '', hints: '', family: '', castHeading: '', aliases: '', importShape: '',
+  person: false, isDefault: false, familyDefault: false, actors: false, active: true,
 }
 
 function fromType(t: MediaTypeAdmin): FormState {
   return {
     name: t.name, displayName: t.displayName, description: t.description ?? '', levels: String(t.hierarchyLevels),
     labels: t.hierarchyLabels.join(', '), verb: t.interactionVerb, unit: t.progressUnit,
-    collections: t.supportsCollections, trackable: t.isTrackable, scan: t.scanStrategy ?? '', hints: t.scanHints ?? '', family: t.providerFamily ?? '', castHeading: t.castHeading ?? '', active: t.isActive,
+    collections: t.supportsCollections, trackable: t.isTrackable, scan: t.scanStrategy ?? '', hints: t.scanHints ?? '', family: t.providerFamily ?? '', castHeading: t.castHeading ?? '', aliases: t.aliases ?? '', importShape: t.importShape ?? '',
+    person: t.isPersonType, isDefault: t.isDefaultType, familyDefault: t.isFamilyDefault, actors: t.castAreActors, active: t.isActive,
   }
 }
 
@@ -60,6 +68,12 @@ function toInput(f: FormState, creating: boolean): MediaTypeInput {
     scanHints: f.hints.trim(),
     providerFamily: f.family.trim().toLowerCase(),
     castHeading: f.castHeading.trim(),
+    aliases: f.aliases.trim().toLowerCase(),
+    importShape: f.importShape,
+    isPersonType: f.person,
+    isDefaultType: f.isDefault,
+    isFamilyDefault: f.familyDefault,
+    castAreActors: f.actors,
   }
 }
 
@@ -245,6 +259,25 @@ export default function MediaTypesPage() {
               <input id="mt-cast" className={styles.textInput} value={form.castHeading} onChange={e => set('castHeading', e.target.value)} placeholder="Cast" />
               <span className={styles.hint}>Shown above the people on an item&apos;s page: &quot;Band Members&quot;, &quot;Narrators&quot;. Blank: &quot;Cast&quot;.</span>
             </div>
+          </div>
+          <div className={styles.formRow}>
+            <div className={styles.formGroup}>
+              <label className={styles.label} htmlFor="mt-aliases">Other names for this type</label>
+              <input id="mt-aliases" className={styles.textInput} value={form.aliases} onChange={e => set('aliases', e.target.value)} placeholder="film, movie" />
+              <span className={styles.hint}>Names plugins, scrobblers and imports use for this kind of item, comma-separated. A play labelled with one of these is filed under this type.</span>
+            </div>
+            <div className={styles.formGroup}>
+              <label className={styles.label} htmlFor="mt-shape">How imported plays are filed</label>
+              <select id="mt-shape" className={styles.textInput} value={form.importShape} onChange={e => set('importShape', e.target.value)}>
+                {IMPORT_SHAPES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className={styles.formRow}>
+            <label className={styles.checkLabel}><input type="checkbox" checked={form.actors} onChange={e => set('actors', e.target.checked)} /> Credits are actors playing characters</label>
+            <label className={styles.checkLabel}><input type="checkbox" checked={form.isDefault} onChange={e => set('isDefault', e.target.checked)} /> Default type when a client does not say</label>
+            <label className={styles.checkLabel}><input type="checkbox" checked={form.familyDefault} onChange={e => set('familyDefault', e.target.checked)} /> Default for its provider family (new Kodi items)</label>
+            <label className={styles.checkLabel}><input type="checkbox" checked={form.person} onChange={e => set('person', e.target.checked)} /> Holds the people credited on other media</label>
           </div>
           <div className={styles.formRow}>
             <div className={styles.formGroup}>

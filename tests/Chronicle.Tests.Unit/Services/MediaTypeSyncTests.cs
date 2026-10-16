@@ -20,6 +20,7 @@ public class MediaTypeSyncTests : IDisposable
 
     public MediaTypeSyncTests()
     {
+        RegistryFixtures.LoadBuiltIns();
         _db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
         _registry.Setup(r => r.GetFileScannerPlugins()).Returns([]);
     }
@@ -54,11 +55,75 @@ public class MediaTypeSyncTests : IDisposable
     }
 
     [Fact]
-    public async Task AnAudiobooksTypeCreatedByAPlugin_GetsTheAudiobookScanStrategyAsData_WhenThePluginDoesNotSay()
+    public async Task ATypeNamedLikeAudiobooks_GetsNoScanStrategy_WhenThePluginDoesNotSay_TheNameNeverDecides()
     {
         await Service(Declares("audiobooks", "Audiobooks", 3, ["Author", "Series", "Book"], "listened")).SyncMediaTypesFromPluginsAsync(_db, default);
 
-        _db.MediaTypes.Single().ScanStrategy.Should().Be("audiobook");
+        _db.MediaTypes.Single().ScanStrategy.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ANewType_TakesEveryRuleTheDeclarationStates_AndNothingElse()
+    {
+        var declared = Declares("sitcoms", "Sitcoms", 3, ["Show", "Season", "Episode"]);
+        declared.ProviderFamily = " TV ";
+        declared.CastHeading = "Cast and Crew";
+        declared.CastAreActors = true;
+        declared.ImportShape = ImportShapes.Episodic;
+        declared.Aliases = ["Sitcom_Episode", "sitcom"];
+        await Service(declared).SyncMediaTypesFromPluginsAsync(_db, default);
+
+        var t = _db.MediaTypes.Single();
+        t.ProviderFamily.Should().Be("tv");
+        t.CastHeading.Should().Be("Cast and Crew");
+        t.CastAreActors.Should().BeTrue();
+        t.ImportShape.Should().Be("episodic");
+        t.Aliases.Should().Be("sitcom_episode,sitcom");
+        t.IsPersonType.Should().BeFalse();
+        t.IsDefaultType.Should().BeFalse("only an administrator or the seed decides the default");
+        t.IsFamilyDefault.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task APluginMayDeclareThePersonType_AndAnUnknownImportShapeIsNotStored()
+    {
+        var declared = Declares("everyone", "Everyone", 1, null);
+        declared.IsPersonType = true;
+        declared.ImportShape = "made-up";
+        await Service(declared).SyncMediaTypesFromPluginsAsync(_db, default);
+
+        var t = _db.MediaTypes.Single();
+        t.IsPersonType.Should().BeTrue();
+        t.ImportShape.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ATypeWithNothingDeclared_GetsNoFamilyHeadingOrAliases_NoMatterWhatItIsCalled()
+    {
+        await Service(Declares("anime", "Anime", 3)).SyncMediaTypesFromPluginsAsync(_db, default);
+
+        var t = _db.MediaTypes.Single();
+        t.ProviderFamily.Should().BeNull();
+        t.CastHeading.Should().BeNull();
+        t.Aliases.Should().BeNull();
+        t.CastAreActors.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ADeclaration_FillsBlanksOnAnExistingType_ButNeverOverwritesAStoredValue()
+    {
+        _db.MediaTypes.Add(new MediaType { Name = "anime", DisplayName = "Anime", ProviderFamily = "movie", Aliases = "ani", CreatedAt = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+        var declared = Declares("anime", "Anime", 1);
+        declared.ProviderFamily = "tv";
+        declared.CastHeading = "Voices";
+        declared.Aliases = ["anime_episode", "ANI"];
+        await Service(declared).SyncMediaTypesFromPluginsAsync(_db, default);
+
+        var t = _db.MediaTypes.Single();
+        t.ProviderFamily.Should().Be("movie", "a stored family is not replaced");
+        t.CastHeading.Should().Be("Voices");
+        t.Aliases.Should().Be("ani,anime_episode");
     }
 
     [Fact]

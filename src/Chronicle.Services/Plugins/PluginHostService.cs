@@ -168,6 +168,12 @@ public sealed class PluginHostService : IHostedService
                     // (trackable) default.
                     IsTrackable     = g.All(s => s.IsTrackable),
                     ScanStrategy    = g.Select(s => s.ScanStrategy).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                    ProviderFamily  = g.Select(s => s.ProviderFamily).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                    CastHeading     = g.Select(s => s.CastHeading).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                    CastAreActors   = g.Any(s => s.CastAreActors),
+                    IsPersonType    = g.Any(s => s.IsPersonType),
+                    ImportShape     = g.Select(s => s.ImportShape).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                    Aliases         = g.SelectMany(s => s.Aliases ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                 };
             })
             .ToList();
@@ -198,11 +204,16 @@ public sealed class PluginHostService : IHostedService
                     IsBuiltIn       = false,
                     IsActive        = true,
                     IsTrackable     = support.IsTrackable,
-                    ScanStrategy    = Chronicle.Core.Models.ScanStrategies.IsKnown(support.ScanStrategy) && support.ScanStrategy is not null
-                                        ? support.ScanStrategy
-                                        : Chronicle.Core.Models.ScanStrategies.DefaultFor(support.MediaTypeName),
-                    ProviderFamily  = Chronicle.Core.Models.ProviderFamilies.DefaultFor(support.MediaTypeName),
-                    CastHeading     = Chronicle.Core.Models.ProviderFamilies.DefaultCastHeadingFor(support.MediaTypeName),
+                    // What a plugin declares about a type it creates; nothing is guessed from the type's name.
+                    ScanStrategy    = Chronicle.Core.Models.ScanStrategies.IsKnown(support.ScanStrategy) ? support.ScanStrategy : null,
+                    ProviderFamily  = string.IsNullOrWhiteSpace(support.ProviderFamily) ? null : support.ProviderFamily.Trim().ToLowerInvariant(),
+                    CastHeading     = string.IsNullOrWhiteSpace(support.CastHeading) ? null : support.CastHeading.Trim(),
+                    CastAreActors   = support.CastAreActors,
+                    IsPersonType    = support.IsPersonType,
+                    ImportShape     = Chronicle.Core.Models.ImportShapes.IsKnown(support.ImportShape) ? support.ImportShape : null,
+                    Aliases         = support.Aliases is { Length: > 0 }
+                                        ? string.Join(",", support.Aliases.Select(a => a.Trim().ToLowerInvariant()).Where(a => a.Length > 0).Distinct())
+                                        : null,
                     CreatedAt       = DateTime.UtcNow,
                 });
                 _log.Information("MediaTypeSync: added new media type '{Name}' ({Display})",
@@ -234,6 +245,27 @@ public sealed class PluginHostService : IHostedService
                 if (existing.IsTrackable != support.IsTrackable)
                 { existing.IsTrackable = support.IsTrackable; changed = true; }
 
+                // What a plugin declares fills a blank; it never replaces a value already stored (that is the administrator's
+                // or an earlier declaration's). The scan strategy is never touched once the type exists.
+                if (string.IsNullOrWhiteSpace(existing.ProviderFamily) && !string.IsNullOrWhiteSpace(support.ProviderFamily))
+                { existing.ProviderFamily = support.ProviderFamily.Trim().ToLowerInvariant(); changed = true; }
+                if (string.IsNullOrWhiteSpace(existing.CastHeading) && !string.IsNullOrWhiteSpace(support.CastHeading))
+                { existing.CastHeading = support.CastHeading.Trim(); changed = true; }
+                if (string.IsNullOrWhiteSpace(existing.ImportShape) && Chronicle.Core.Models.ImportShapes.IsKnown(support.ImportShape) && support.ImportShape is not null)
+                { existing.ImportShape = support.ImportShape; changed = true; }
+                if (support.CastAreActors && !existing.CastAreActors)
+                { existing.CastAreActors = true; changed = true; }
+                if (support.IsPersonType && !existing.IsPersonType)
+                { existing.IsPersonType = true; changed = true; }
+                if (support.Aliases is { Length: > 0 })
+                {
+                    var merged = MediaTypeRegistry.SplitAliases(existing.Aliases)
+                        .Union(support.Aliases.Select(a => a.Trim().ToLowerInvariant()).Where(a => a.Length > 0))
+                        .Where(a => !string.Equals(a, existing.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
+                    var joined = merged.Length == 0 ? null : string.Join(",", merged);
+                    if (joined != existing.Aliases) { existing.Aliases = joined; changed = true; }
+                }
+
                 if (changed)
                 {
                     _log.Information("MediaTypeSync: updated media type '{Name}' metadata", support.MediaTypeName);
@@ -244,7 +276,7 @@ public sealed class PluginHostService : IHostedService
 
         if (synced > 0)
             await db.SaveChangesAsync(ct);
-        await MediaTypeFamilies.RefreshAsync(db, ct);
+        await MediaTypeRegistry.RefreshAsync(db, ct);
 
         _log.Debug("MediaTypeSync: verified {Count} media type(s) from plugins ({Synced} changed)",
             allSupport.Count, synced);
@@ -263,7 +295,7 @@ public sealed class PluginHostService : IHostedService
     /// </summary>
     private async Task BackfillPersonCreditsAsync(ChronicleDbContext db, IServiceProvider services, CancellationToken ct)
     {
-        var peopleTypeExists = await db.MediaTypes.AnyAsync(t => t.Name == "people", ct);
+        var peopleTypeExists = await db.MediaTypes.AnyAsync(t => t.IsPersonType, ct);
         if (!peopleTypeExists)
             return;
 
@@ -363,7 +395,7 @@ public sealed class PluginHostService : IHostedService
     internal async Task BackfillCreditsFromCachedMetadataAsync(
         ChronicleDbContext db, IPersonResolutionService personResolutionService, CancellationToken ct)
     {
-        var peopleTypeExists = await db.MediaTypes.AnyAsync(t => t.Name == "people", ct);
+        var peopleTypeExists = await db.MediaTypes.AnyAsync(t => t.IsPersonType, ct);
         if (!peopleTypeExists)
         {
             _log.Debug("CachedCreditsBackfill: skipped — \"people\" media type not registered yet");
@@ -407,7 +439,7 @@ public sealed class PluginHostService : IHostedService
 
                 // See CreditRoleHelper's own doc for the bug this guards against -- only a
                 // performance type's Cast entries are actors playing a character.
-                var castIsActing = Chronicle.Core.Helpers.CreditRoleHelper.CastEntryIsActingCredit(item.MediaTypeName);
+                var castIsActing = MediaTypeRegistry.CastAreActors(item.MediaTypeName);
 
                 foreach (var (pluginId, blob) in blobs)
                 {

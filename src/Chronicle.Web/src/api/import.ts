@@ -1,5 +1,5 @@
 import client from './client'
-import type { ApiResponse, ImportProvider, ImportAuthStart, ImportPollResult, ImportResult, SyncResult, SyncJobStatus } from '@/types'
+import type { ApiResponse, ImportProvider, ImportAuthStart, ImportPollResult, ImportResult, SyncJobStatus } from '@/types'
 
 export async function getImportProviders(): Promise<ImportProvider[]> {
   const { data } = await client.get<ApiResponse<ImportProvider[]>>('/import/providers')
@@ -77,21 +77,3 @@ export async function getSyncJobStatus(pluginId: string, jobId: string): Promise
   return data.data
 }
 
-/**
- * Convenience wrapper used by PluginsPage: fire-and-forget + poll loop in one call.
- * BackgroundTasksPage uses startSyncJob + getSyncJobStatus directly instead.
- */
-export async function triggerSync(pluginId: string, fullSync: boolean): Promise<SyncResult> {
-  const jobId = await startSyncJob(pluginId, fullSync)
-
-  for (;;) {
-    await new Promise(r => setTimeout(r, 3_000))
-    const snap = await getSyncJobStatus(pluginId, jobId)
-    if (snap.status === 'complete') {
-      if (!snap.summary) throw new Error('Sync completed but returned no summary')
-      return snap.summary
-    }
-    if (snap.status === 'failed') throw new Error(snap.error ?? 'Sync failed')
-    // 'running' → keep polling
-  }
-}

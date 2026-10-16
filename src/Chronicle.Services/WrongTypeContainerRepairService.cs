@@ -25,7 +25,7 @@ public sealed class WrongTypeContainerRepairService(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        var peopleTypeIds = await db.MediaTypes.Where(t => t.Name == "people").Select(t => t.Id).ToListAsync(ct);
+        var peopleTypeIds = await db.MediaTypes.Where(t => t.IsPersonType).Select(t => t.Id).ToListAsync(ct);
         if (peopleTypeIds.Count == 0) return;
 
         var deepTypeIds = await db.MediaTypes.Where(t => t.HierarchyLevels >= 2).Select(t => t.Id).ToListAsync(ct);

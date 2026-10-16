@@ -71,7 +71,7 @@ public sealed class UserMergeRestoreService(
         ChronicleDbContext db, int winnerId, string articleId, DateTime mergedAt, CancellationToken ct)
     {
         var winnerType = await db.MediaItems.Where(m => m.Id == winnerId)
-            .Select(m => new { m.MediaTypeId, IsPerson = m.MediaType!.Name == "people" })
+            .Select(m => new { m.MediaTypeId, IsPerson = m.MediaType!.IsPersonType })
             .FirstOrDefaultAsync(ct);
         if (winnerType is null || !winnerType.IsPerson) return null;
 

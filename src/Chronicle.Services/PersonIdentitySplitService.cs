@@ -151,7 +151,7 @@ public sealed class PersonIdentitySplitService(
         var resolution = scope.ServiceProvider.GetRequiredService<IMetadataResolutionService>();
 
         var peopleTypeId = await db.MediaTypes
-            .Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
+            .Where(t => t.IsPersonType).Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
         if (peopleTypeId is null)
         {
             logger.LogInformation("Person identity split: no 'people' media type exists yet, nothing to do");

@@ -17,12 +17,16 @@ public sealed record MediaTypeAdminDto(
     int Id, string Name, string DisplayName, string? Description, int HierarchyLevels, string[] HierarchyLabels,
     string InteractionVerb, string ProgressUnit, bool IsBuiltIn, bool IsActive, bool SupportsCollections, bool IsTrackable,
     string? ScanStrategy, bool IsUserModified, int ItemCount, IReadOnlyList<PluginRefDto> Plugins, string? ScanHints = null,
-    string? ProviderFamily = null, string? CastHeading = null);
+    string? ProviderFamily = null, string? CastHeading = null,
+    bool IsPersonType = false, bool IsDefaultType = false, bool IsFamilyDefault = false, bool CastAreActors = false,
+    string? Aliases = null, string? ImportShape = null);
 
 public sealed record MediaTypeRequest(
     string? Name, string DisplayName, string? Description, int HierarchyLevels, string[]? HierarchyLabels,
     string InteractionVerb, string ProgressUnit, bool SupportsCollections, bool IsTrackable, string? ScanStrategy, bool IsActive = true,
-    string? ScanHints = null, string? ProviderFamily = null, string? CastHeading = null);
+    string? ScanHints = null, string? ProviderFamily = null, string? CastHeading = null,
+    bool? IsPersonType = null, bool? IsDefaultType = null, bool? IsFamilyDefault = null, bool? CastAreActors = null,
+    string? Aliases = null, string? ImportShape = null);
 
 /// <summary>
 /// Settings -> Media Types. Lists every media type with how many items it holds and which installed plugins handle it,
@@ -69,7 +73,8 @@ public class MediaTypesController : ControllerBase
         new(t.Id, t.Name, t.DisplayName, t.Description, t.HierarchyLevels, MediaTypeRules.SplitLabels(t.HierarchyLabels),
             t.InteractionVerb, t.ProgressUnit, t.IsBuiltIn, t.IsActive, t.SupportsCollections, t.IsTrackable, t.ScanStrategy,
             t.IsUserModified, knownCount ?? await _db.MediaItems.CountAsync(i => i.MediaTypeId == t.Id),
-            plugins.TryGetValue(t.Name, out var list) ? list : [], t.ScanHintsJson, t.ProviderFamily, t.CastHeading);
+            plugins.TryGetValue(t.Name, out var list) ? list : [], t.ScanHintsJson, t.ProviderFamily, t.CastHeading,
+            t.IsPersonType, t.IsDefaultType, t.IsFamilyDefault, t.CastAreActors, t.Aliases, t.ImportShape);
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
@@ -87,7 +92,44 @@ public class MediaTypesController : ControllerBase
         (r.InteractionVerb ?? "").Trim().ToLowerInvariant(), (r.ProgressUnit ?? "").Trim().ToLowerInvariant(),
         r.SupportsCollections, r.IsTrackable, string.IsNullOrWhiteSpace(r.ScanStrategy) ? null : r.ScanStrategy.Trim(), r.IsActive,
         string.IsNullOrWhiteSpace(r.ProviderFamily) ? null : r.ProviderFamily.Trim().ToLowerInvariant(),
-        string.IsNullOrWhiteSpace(r.CastHeading) ? null : r.CastHeading.Trim());
+        string.IsNullOrWhiteSpace(r.CastHeading) ? null : r.CastHeading.Trim(),
+        r.IsPersonType ?? false, r.IsDefaultType ?? false, r.IsFamilyDefault ?? false, r.CastAreActors ?? false,
+        NormalizeAliases(r.Aliases), string.IsNullOrWhiteSpace(r.ImportShape) ? null : r.ImportShape.Trim());
+
+    private static string? NormalizeAliases(string? text)
+    {
+        var list = MediaTypeRegistry.SplitAliases(text);
+        return list.Length == 0 ? null : string.Join(",", list);
+    }
+
+    /// <summary>Names an alias may not take: another type's own name, or an alias another type already lists.</summary>
+    private async Task<string?> AliasProblemAsync(string? aliases, int? ownId, string ownName, CancellationToken ct)
+    {
+        var wanted = MediaTypeRegistry.SplitAliases(aliases);
+        if (wanted.Length == 0) return null;
+        var others = await _db.MediaTypes.AsNoTracking().Where(t => t.Id != ownId).Select(t => new { t.Name, t.Aliases }).ToListAsync(ct);
+        foreach (var alias in wanted)
+        {
+            if (string.Equals(alias, ownName, StringComparison.OrdinalIgnoreCase))
+                return $"'{alias}' is this type's own name; it does not need to be an alias.";
+            if (others.Any(o => string.Equals(o.Name, alias, StringComparison.OrdinalIgnoreCase)))
+                return $"'{alias}' is the name of another media type.";
+            if (others.Any(o => MediaTypeRegistry.SplitAliases(o.Aliases).Contains(alias)))
+                return $"'{alias}' is already an alias of another media type.";
+        }
+        return null;
+    }
+
+    /// <summary>Only one type is the people type and only one the default; only one per family is that family's default.</summary>
+    private async Task EnforceExclusiveRolesAsync(MediaType type, CancellationToken ct)
+    {
+        var others = await _db.MediaTypes.Where(t => t.Id != type.Id).ToListAsync(ct);
+        if (type.IsPersonType) foreach (var o in others.Where(o => o.IsPersonType)) o.IsPersonType = false;
+        if (type.IsDefaultType) foreach (var o in others.Where(o => o.IsDefaultType)) o.IsDefaultType = false;
+        if (type.IsFamilyDefault)
+            foreach (var o in others.Where(o => o.IsFamilyDefault && string.Equals(o.ProviderFamily, type.ProviderFamily, StringComparison.OrdinalIgnoreCase)))
+                o.IsFamilyDefault = false;
+    }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] MediaTypeRequest req, CancellationToken ct)
@@ -102,6 +144,8 @@ public class MediaTypesController : ControllerBase
         var name = input.Name!.Trim();
         if (await _db.MediaTypes.AnyAsync(t => t.Name == name, ct))
             return Conflict(ApiResponse<object>.Fail("MEDIA_TYPE_EXISTS", $"A media type named '{name}' already exists."));
+        if (await AliasProblemAsync(input.Aliases, null, name, ct) is { } aliasProblem)
+            return Conflict(ApiResponse<object>.Fail("ALIAS_IN_USE", aliasProblem));
 
         var type = new MediaType
         {
@@ -111,13 +155,17 @@ public class MediaTypesController : ControllerBase
             SupportsCollections = input.SupportsCollections, IsTrackable = input.IsTrackable, ScanStrategy = input.ScanStrategy,
             ScanHintsJson = string.IsNullOrWhiteSpace(req.ScanHints) ? null : req.ScanHints.Trim(),
             ProviderFamily = input.ProviderFamily, CastHeading = input.CastHeading,
+            IsPersonType = input.IsPersonType, IsDefaultType = input.IsDefaultType, IsFamilyDefault = input.IsFamilyDefault,
+            CastAreActors = input.CastAreActors, Aliases = input.Aliases, ImportShape = input.ImportShape,
             IsBuiltIn = false, IsActive = true,
             // Made by a person: no plugin's declaration may rewrite it later.
             IsUserModified = true, CreatedAt = DateTime.UtcNow,
         };
         _db.MediaTypes.Add(type);
         await _db.SaveChangesAsync(ct);
-        await MediaTypeFamilies.RefreshAsync(_db, ct);
+        await EnforceExclusiveRolesAsync(type, ct);
+        await _db.SaveChangesAsync(ct);
+        await MediaTypeRegistry.RefreshAsync(_db, ct);
         _log.LogInformation("MEDIATYPE created '{Name}' by an administrator", name);
         return Ok(ApiResponse<MediaTypeAdminDto>.Ok(await ToDtoAsync(type, PluginsByType(), 0)));
     }
@@ -134,6 +182,11 @@ public class MediaTypesController : ControllerBase
 
         if (ScanHints.Validate(req.ScanHints) is { } hintsProblem)
             return BadRequest(ApiResponse<object>.Fail("INVALID_SCAN_HINTS", hintsProblem));
+
+        // Omitted = leave as is.
+        var aliases = req.Aliases is null ? type.Aliases : input.Aliases;
+        if (await AliasProblemAsync(aliases, type.Id, type.Name, ct) is { } aliasProblem)
+            return Conflict(ApiResponse<object>.Fail("ALIAS_IN_USE", aliasProblem));
 
         var items = await _db.MediaItems.CountAsync(i => i.MediaTypeId == id, ct);
         if (items > 0 && input.HierarchyLevels != type.HierarchyLevels)
@@ -157,10 +210,17 @@ public class MediaTypesController : ControllerBase
         // Omitted = leave as is; an empty string clears (same rule as the scan hints).
         if (req.ProviderFamily is not null) type.ProviderFamily = input.ProviderFamily;
         if (req.CastHeading is not null) type.CastHeading = input.CastHeading;
+        if (req.IsPersonType is not null) type.IsPersonType = input.IsPersonType;
+        if (req.IsDefaultType is not null) type.IsDefaultType = input.IsDefaultType;
+        if (req.IsFamilyDefault is not null) type.IsFamilyDefault = input.IsFamilyDefault;
+        if (req.CastAreActors is not null) type.CastAreActors = input.CastAreActors;
+        if (req.Aliases is not null) type.Aliases = input.Aliases;
+        if (req.ImportShape is not null) type.ImportShape = input.ImportShape;
         type.IsActive = input.IsActive;
         type.IsUserModified = true;
+        await EnforceExclusiveRolesAsync(type, ct);
         await _db.SaveChangesAsync(ct);
-        await MediaTypeFamilies.RefreshAsync(_db, ct);
+        await MediaTypeRegistry.RefreshAsync(_db, ct);
         _log.LogInformation("MEDIATYPE '{Name}' edited by an administrator", type.Name);
         return Ok(ApiResponse<MediaTypeAdminDto>.Ok(await ToDtoAsync(type, PluginsByType(), items)));
     }
@@ -173,7 +233,7 @@ public class MediaTypesController : ControllerBase
         if (type is null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "No such media type."));
         type.IsUserModified = false;
         await _db.SaveChangesAsync(ct);
-        await MediaTypeFamilies.RefreshAsync(_db, ct);
+        await MediaTypeRegistry.RefreshAsync(_db, ct);
         return Ok(ApiResponse<MediaTypeAdminDto>.Ok(await ToDtoAsync(type, PluginsByType())));
     }
 
@@ -192,7 +252,7 @@ public class MediaTypesController : ControllerBase
 
         _db.MediaTypes.Remove(type);
         await _db.SaveChangesAsync(ct);
-        await MediaTypeFamilies.RefreshAsync(_db, ct);
+        await MediaTypeRegistry.RefreshAsync(_db, ct);
         _log.LogInformation("MEDIATYPE '{Name}' deleted by an administrator", type.Name);
         return Ok(ApiResponse<object>.Ok(new { deleted = type.Name }));
     }

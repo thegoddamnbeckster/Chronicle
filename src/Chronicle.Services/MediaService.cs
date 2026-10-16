@@ -297,8 +297,8 @@ namespace Chronicle.Services
             {
                 var supported = provider.GetSupportedMediaTypes()
                     .Any(t => string.Equals(
-                        NormalizeTypeName(t.MediaTypeName),
-                        NormalizeTypeName(newTypeName),
+                        MediaTypeRegistry.ProviderName(t.MediaTypeName),
+                        MediaTypeRegistry.ProviderName(newTypeName),
                         StringComparison.OrdinalIgnoreCase));
                 if (!supported) continue;
 
@@ -318,13 +318,6 @@ namespace Chronicle.Services
 
             await _context.SaveChangesAsync(ct);
         }
-
-        /// <summary>
-        /// Normalises a media-type name for plugin-compatibility matching.
-        /// Mirrors the logic in MetadataEnrichmentService: "movies" → "movie".
-        /// </summary>
-        private static string NormalizeTypeName(string name) =>
-            name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
         /// <summary>
         /// Strips all plugin metadata from a MetadataJson blob while keeping the

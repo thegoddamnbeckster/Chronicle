@@ -268,7 +268,7 @@ namespace Chronicle.API.Controllers
         }
 
         private async Task<int?> GetPeopleMediaTypeIdAsync(CancellationToken ct) =>
-            await _context.MediaTypes.Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
+            await _context.MediaTypes.Where(t => t.IsPersonType).Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
 
         /// <summary>
         /// Re-resolves any credit whose person link was cleared (PersonMediaItemId == null) --
@@ -308,7 +308,7 @@ namespace Chronicle.API.Controllers
 
                 // See CreditRoleHelper's own doc for the bug this guards against -- only a
                 // performance type's Cast entries are actors playing a character.
-                var castIsActing = CreditRoleHelper.CastEntryIsActingCredit(item.MediaTypeName);
+                var castIsActing = MediaTypeRegistry.CastAreActors(item.MediaTypeName);
 
                 // Only (item, source) pairs that currently have an orphaned credit get cleared
                 // and re-derived -- a pair with no orphaned credit is left untouched.

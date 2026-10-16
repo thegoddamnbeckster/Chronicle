@@ -26,20 +26,6 @@ public class SettingsController : ControllerBase
     private readonly IMetadataResolutionService  _resolutionService;
     private readonly ILogger<SettingsController> _logger;
 
-    // NormalizeMediaTypeName: maps DB type names to the canonical form used by plugin declarations.
-    // "movies" (DB plural) ↔ "movie" (TMDB/enrichment canonical).
-    private static string NormalizeMediaTypeName(string name) =>
-        name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
-
-    // Parent-type relationships: providers that support the parent are also offered for the sub-type.
-    // e.g. Trakt supports "tv" → it should appear for "anime" assignments too.
-    private static readonly Dictionary<string, string> TypeParentMap =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["anime"]    = "tv",
-            ["fanedits"] = "movie",
-        };
-
     public SettingsController(
         ChronicleDbContext db,
         IPluginRegistry pluginRegistry,
@@ -196,10 +182,12 @@ public class SettingsController : ControllerBase
             assignmentKey =>
             {
                 var dot          = assignmentKey.IndexOf('.');
-                var baseTypeName = NormalizeMediaTypeName(dot < 0 ? assignmentKey : assignmentKey[..dot]);
+                var rawTypeName  = dot < 0 ? assignmentKey : assignmentKey[..dot];
+                var baseTypeName = MediaTypeRegistry.ProviderName(rawTypeName);
                 var level        = dot < 0 ? 0 : (int.TryParse(assignmentKey[(dot + 1)..], out var li) ? li : 0);
 
-                TypeParentMap.TryGetValue(baseTypeName, out var parentTypeName);
+                // Providers of the type's family are offered too (Trakt supports "tv", so it appears for "anime").
+                var parentTypeName = MediaTypeRegistry.Family(rawTypeName);
 
                 return assignableFields[assignmentKey].ToDictionary(
                     field => field,
@@ -210,7 +198,7 @@ public class SettingsController : ControllerBase
                             var support = e.Provider.GetSupportedMediaTypes()
                                 .FirstOrDefault(s =>
                                 {
-                                    var tn = NormalizeMediaTypeName(s.MediaTypeName);
+                                    var tn = MediaTypeRegistry.ProviderName(s.MediaTypeName);
                                     return string.Equals(tn, baseTypeName, StringComparison.OrdinalIgnoreCase)
                                         || (parentTypeName != null && string.Equals(tn, parentTypeName, StringComparison.OrdinalIgnoreCase));
                                 });
@@ -579,13 +567,13 @@ public class SettingsController : ControllerBase
 
         foreach (var dbType in dbTypes)
         {
-            var dbNorm = NormalizeMediaTypeName(dbType.Name);
+            var dbNorm = MediaTypeRegistry.ProviderName(dbType.Name);
 
             // Collect all MediaTypeSupport entries from plugins that match this DB type.
             var matchingSupport = allEntries
                 .SelectMany(e => e.Provider.GetSupportedMediaTypes()
                     .Where(s => string.Equals(
-                        NormalizeMediaTypeName(s.MediaTypeName), dbNorm,
+                        MediaTypeRegistry.ProviderName(s.MediaTypeName), dbNorm,
                         StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 

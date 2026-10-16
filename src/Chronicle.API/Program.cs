@@ -514,7 +514,7 @@ using (var scope = app.Services.CreateScope())
             db.Database.ExecuteSqlRaw("PRAGMA optimize;");
 
         // Provider families (anime -> tv, ...) are read from media_types by code that has no database handle.
-        await Chronicle.Services.MediaTypeFamilies.RefreshAsync(db);
+        await Chronicle.Services.MediaTypeRegistry.RefreshAsync(db);
 
         // Seed the cut-off list so suspensions survive a restart. (Deleted accounts need no
         // entry here: any token they hold predates the restart, and a fresh sign-in is

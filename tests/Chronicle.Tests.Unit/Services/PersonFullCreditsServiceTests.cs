@@ -30,7 +30,7 @@ public class PersonFullCreditsServiceTests
         {
             Db.MediaTypes.AddRange(
                 new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow },
-                new MediaType { Id = 2, Name = "people", DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+                new MediaType { Id = 2, Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
             Person = Item(2, "Keanu");
             Db.MediaItems.Add(Person);
             Db.SaveChanges();

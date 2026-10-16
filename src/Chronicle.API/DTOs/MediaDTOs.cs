@@ -130,6 +130,9 @@ namespace Chronicle.API.DTOs
         /// which carries the user-facing display name (e.g. "TV Shows").
         /// </summary>
         string? MediaTypeInternalName = null,
+        /// <summary>How the file scanner groups this item's type ("audiobook" = one book per folder); the screens that treat such
+        /// types differently read this rather than recognising the type's name.</summary>
+        string? MediaTypeScanStrategy = null,
         /// <summary>
         /// True when this item or any of its descendants has an associated physical file
         /// (i.e. the fileScanner metadata key contains a non-empty filePaths array or a filePath string).
@@ -229,7 +232,7 @@ namespace Chronicle.API.DTOs
     /// names of its hierarchy levels come from the type, never from its name).</summary>
     public record MediaTypeDto(int Id, string Name, string DisplayName, int HierarchyLevels,
         string InteractionVerb = "watched", string[]? HierarchyLabels = null, bool SupportsCollections = false,
-        string? CastHeading = null);
+        string? CastHeading = null, bool IsDefaultType = false, bool IsPersonType = false, string? ScanStrategy = null);
 
     /// <summary>Optional body for POST /api/v1/media/{id}/refresh/{pluginId}.</summary>
     public record PluginRefreshRequestDto(string? Input = null);

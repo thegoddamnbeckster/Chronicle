@@ -52,11 +52,6 @@ export async function mergeItems(id: number, targetId: number, winnerId: number)
   await client.post(`/media/${id}/merge`, { targetId, winnerId })
 }
 
-export async function getMergeHistory(id: number): Promise<MergeHistoryEntry[]> {
-  const res = await client.get(`/media/${id}/merges`)
-  return res.data.data
-}
-
 export async function unmergeItem(id: number, mergeId: number): Promise<void> {
   await client.delete(`/media/${id}/merges/${mergeId}`)
 }

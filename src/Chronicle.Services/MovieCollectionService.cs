@@ -1485,7 +1485,7 @@ public class MovieCollectionService(
             var batch = await db.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
-                .Where(m => (m.MediaType!.Name == "movies" || m.MediaType!.Name == "fanedits" || m.MediaType!.Name == "anime_movies") &&
+                .Where(m => m.MediaType!.ProviderFamily == ProviderFamilies.Movie &&
                             m.HierarchyLevel <= 1 &&
                             m.IsStub == false &&
                             m.Id > lastId &&
@@ -1540,7 +1540,7 @@ public class MovieCollectionService(
             var batch = await db.MediaItems
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
-                .Where(m => (m.MediaType!.Name == "movies" || m.MediaType!.Name == "fanedits" || m.MediaType!.Name == "anime_movies") &&
+                .Where(m => m.MediaType!.ProviderFamily == ProviderFamilies.Movie &&
                             m.HierarchyLevel == 0 &&
                             m.Id > lastId &&
                             m.ExternalIds.Any(e => e.ExternalId.StartsWith("collection:")))
@@ -1833,7 +1833,7 @@ public class MovieCollectionService(
     /// HierarchyLevels == 3) is deliberately excluded — standalone anime films live on the flat
     /// anime_movies type instead, so "anime" itself never needs TMDB collection grouping.
     /// </summary>
-    private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeFamilies.IsMovieLike(name);
+    private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeRegistry.IsMovieLike(name);
 
     /// <param name="Id">Plugin-specific collection identifier (string for portability).</param>
     /// <param name="Name">Display name of the collection.</param>

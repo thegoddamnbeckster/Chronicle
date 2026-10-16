@@ -20,6 +20,7 @@ public class PersonResolutionServiceTests : IDisposable
 
     public PersonResolutionServiceTests()
     {
+        RegistryFixtures.LoadBuiltIns();
         var opts = new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
         _db = new ChronicleDbContext(opts);
@@ -29,7 +30,7 @@ public class PersonResolutionServiceTests : IDisposable
         _svc = new PersonResolutionService(
             _registry.Object, Mock.Of<IMetadataResolutionService>(), Mock.Of<ILogger<PersonResolutionService>>());
 
-        _db.MediaTypes.Add(new MediaType { Id = 1, Name = "people", DisplayName = "People", CreatedAt = DateTime.UtcNow });
+        _db.MediaTypes.Add(new MediaType { Id = 1, Name = "people", IsPersonType = true, DisplayName = "People", CreatedAt = DateTime.UtcNow });
         _db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow });
         _db.SaveChanges();
     }
@@ -127,7 +128,7 @@ public class PersonResolutionServiceTests : IDisposable
         var opts = new DbContextOptionsBuilder<ChronicleDbContext>().UseInMemoryDatabase(dbName).Options;
         using var dbA = new ChronicleDbContext(opts);
         using var dbB = new ChronicleDbContext(opts);
-        dbA.MediaTypes.Add(new MediaType { Id = 1, Name = "people", DisplayName = "People", CreatedAt = DateTime.UtcNow });
+        dbA.MediaTypes.Add(new MediaType { Id = 1, Name = "people", IsPersonType = true, DisplayName = "People", CreatedAt = DateTime.UtcNow });
         await dbA.SaveChangesAsync();
 
         var svcA = new PersonResolutionService(_registry.Object, Mock.Of<IMetadataResolutionService>(), Mock.Of<ILogger<PersonResolutionService>>());

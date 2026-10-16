@@ -55,10 +55,11 @@ namespace Chronicle.API.Controllers
             var rows = await _context.MediaTypes
                 .Where(t => t.IsActive)
                 .OrderBy(t => t.DisplayName)
-                .Select(t => new { t.Id, t.Name, t.DisplayName, t.HierarchyLevels, t.InteractionVerb, t.HierarchyLabels, t.SupportsCollections, t.CastHeading })
+                .Select(t => new { t.Id, t.Name, t.DisplayName, t.HierarchyLevels, t.InteractionVerb, t.HierarchyLabels, t.SupportsCollections, t.CastHeading, t.IsDefaultType, t.IsPersonType, t.ScanStrategy })
                 .ToListAsync();
             var types = rows.Select(t => new MediaTypeDto(t.Id, t.Name, t.DisplayName, t.HierarchyLevels,
-                t.InteractionVerb, Chronicle.Services.MediaTypeRules.SplitLabels(t.HierarchyLabels), t.SupportsCollections, t.CastHeading)).ToList();
+                t.InteractionVerb, Chronicle.Services.MediaTypeRules.SplitLabels(t.HierarchyLabels), t.SupportsCollections, t.CastHeading,
+                t.IsDefaultType, t.IsPersonType, t.ScanStrategy)).ToList();
             return Ok(ApiResponse<List<MediaTypeDto>>.Ok(types));
         }
 
@@ -484,7 +485,7 @@ namespace Chronicle.API.Controllers
         public async Task<IActionResult> FixWrongActorWikipediaMatches(CancellationToken ct)
         {
             var peopleTypeId = await _context.MediaTypes
-                .Where(t => t.Name == "people").Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
+                .Where(t => t.IsPersonType).Select(t => (int?)t.Id).FirstOrDefaultAsync(ct);
             if (peopleTypeId is null)
                 return Ok(ApiResponse<object>.Ok(new { checkedCount = 0, fixedCount = 0 }));
 
@@ -1221,6 +1222,7 @@ namespace Chronicle.API.Controllers
                 Ancestors: ancestors,
                 EnrichmentStatuses: enrichmentStatuses,
                 MediaTypeInternalName: m.MediaType?.Name,
+                MediaTypeScanStrategy: m.MediaType?.ScanStrategy,
                 HasPhysicalFile: hasPhysicalFile,
                 HasMetadataOnly: hasMetadataOnly,
                 ResolvedMetadata: resolvedMetadata,
@@ -1246,7 +1248,7 @@ namespace Chronicle.API.Controllers
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number
                 ? v.GetInt32() : null;
 
-        private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeFamilies.IsMovieLike(name);
+        private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeRegistry.IsMovieLike(name);
 
         private static double? TryGetDouble(System.Text.Json.JsonElement el, string key) =>
             el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number

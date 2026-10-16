@@ -356,7 +356,7 @@ namespace Chronicle.Services
                     f.ParsedTitle,
                     f.ParsedYear,
                     f.ConfidenceScore,
-                    string.IsNullOrEmpty(f.MediaTypeHint) ? "movie" : f.MediaTypeHint))
+                    string.IsNullOrEmpty(f.MediaTypeHint) ? MediaTypeRegistry.DefaultProviderName : f.MediaTypeHint))
                 .ToList();
             return new ScanPreview(results);
         }
@@ -1351,11 +1351,11 @@ namespace Chronicle.Services
             var all = _registry.GetMetadataProviders();
             if (all.Count == 0) return all;
 
-            var normalizedType = NormalizeMediaTypeName(mediaTypeHint);
+            var normalizedType = MediaTypeRegistry.ProviderName(mediaTypeHint);
 
             return all.Where(p => p.GetSupportedMediaTypes().Any(t =>
                     !t.EnrichOnly
-                    && string.Equals(NormalizeMediaTypeName(t.MediaTypeName), normalizedType,
+                    && string.Equals(MediaTypeRegistry.ProviderName(t.MediaTypeName), normalizedType,
                         StringComparison.OrdinalIgnoreCase)))
                 .ToList();
         }
@@ -1669,7 +1669,7 @@ namespace Chronicle.Services
                         // dispatch again.
                         var sourceProvider = _registry.GetMetadataProvider(pluginId);
                         var sourceDeclaresType = sourceProvider?.GetSupportedMediaTypes().Any(t =>
-                            NormalizeMediaTypeName(t.MediaTypeName) == NormalizeMediaTypeName(mediaType.Name)) ?? false;
+                            MediaTypeRegistry.ProviderName(t.MediaTypeName) == MediaTypeRegistry.ProviderName(mediaType.Name)) ?? false;
                         if (!sourceDeclaresType)
                             _log.Warning(
                                 "AddFromSearchAsync: seeded unconditional enrichment row for item {ItemId} " +
@@ -1703,8 +1703,8 @@ namespace Chronicle.Services
                         if (cProvider is null) continue;
                         var cTypeSupported = cProvider.GetSupportedMediaTypes().Any(t =>
                         {
-                            var n = NormalizeMediaTypeName(t.MediaTypeName);
-                            return n == NormalizeMediaTypeName(mediaType.Name)
+                            var n = MediaTypeRegistry.ProviderName(t.MediaTypeName);
+                            return n == MediaTypeRegistry.ProviderName(mediaType.Name)
                                 || n == ToMediaTypeHint(mediaType.Name);
                         });
                         if (!cTypeSupported) continue;
@@ -1744,8 +1744,8 @@ namespace Chronicle.Services
                             var typeSupported = candidateProvider.GetSupportedMediaTypes()
                                 .Any(t =>
                                 {
-                                    var n = NormalizeMediaTypeName(t.MediaTypeName);
-                                    return n == NormalizeMediaTypeName(mediaType.Name)
+                                    var n = MediaTypeRegistry.ProviderName(t.MediaTypeName);
+                                    return n == MediaTypeRegistry.ProviderName(mediaType.Name)
                                         || n == ToMediaTypeHint(mediaType.Name);
                                 });
                             if (!typeSupported) continue;
@@ -2275,7 +2275,7 @@ namespace Chronicle.Services
         /// (and would do the same for "books" or any future custom type), seeding hundreds of
         /// enrichment rows those plugins can never resolve.
         /// </summary>
-        private static string? ToMediaTypeHint(string mediaTypeName) => MediaTypeFamilies.Resolve(mediaTypeName);
+        private static string? ToMediaTypeHint(string mediaTypeName) => MediaTypeRegistry.Family(mediaTypeName);
 
         // ── Hierarchy grouping ────────────────────────────────────────────────────
 
@@ -2746,7 +2746,7 @@ namespace Chronicle.Services
             var allScanners = _registry.GetFileScannerPlugins();
             var scanner = allScanners
                 .FirstOrDefault(s => s.GetSupportedMediaTypes()
-                    .Any(m => string.Equals(m.MediaTypeName, "audiobooks", StringComparison.OrdinalIgnoreCase)))
+                    .Any(m => string.Equals(m.MediaTypeName, mediaType.Name, StringComparison.OrdinalIgnoreCase)))
                 ?? allScanners.FirstOrDefault()
                 ?? throw new InvalidOperationException("No file scanner plugin is loaded.");
 
@@ -3717,11 +3717,11 @@ namespace Chronicle.Services
 
                 // Match on normalized name OR on the parent type hint (anime→tv, etc.) so that
                 // providers declaring "tv" are seeded for items with media type "anime".
-                var normalizedItem = NormalizeMediaTypeName(mediaTypeName);
+                var normalizedItem = MediaTypeRegistry.ProviderName(mediaTypeName);
                 var hintItem       = ToMediaTypeHint(mediaTypeName);
                 if (!supportedNames.Any(n =>
-                        NormalizeMediaTypeName(n) == normalizedItem ||
-                        NormalizeMediaTypeName(n) == hintItem))
+                        MediaTypeRegistry.ProviderName(n) == normalizedItem ||
+                        MediaTypeRegistry.ProviderName(n) == hintItem))
                     continue;
 
                 // In chunks (SQLite limits an IN list): this used to read every row of the plugin (~90,000 ids) to look at a handful.
@@ -3760,14 +3760,6 @@ namespace Chronicle.Services
         }
 
         // ── Helpers ──────────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Maps DB media-type names to the canonical form used by plugin
-        /// <c>GetSupportedMediaTypes()</c> declarations so "movies" (DB) matches
-        /// "movie" (TMDB plugin) and vice versa.
-        /// </summary>
-        private static string NormalizeMediaTypeName(string name) =>
-            name.Equals("movies", StringComparison.OrdinalIgnoreCase) ? "movie" : name.ToLowerInvariant();
 
         // ── Confidence threshold ─────────────────────────────────────────────────
 

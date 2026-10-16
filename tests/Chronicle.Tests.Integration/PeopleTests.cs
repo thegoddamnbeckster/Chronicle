@@ -51,7 +51,7 @@ namespace Chronicle.Tests.Integration
                 var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
                     ?? (await db.MediaTypes.AddAsync(new MediaType
                     {
-                        Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                        Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
                         InteractionVerb = "viewed", ProgressUnit = "percent",
                         IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
                     })).Entity;
@@ -123,7 +123,7 @@ namespace Chronicle.Tests.Integration
             var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
                 ?? (await db.MediaTypes.AddAsync(new MediaType
                 {
-                    Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                    Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
                     InteractionVerb = "viewed", ProgressUnit = "percent",
                     IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
                 })).Entity;
@@ -169,7 +169,7 @@ namespace Chronicle.Tests.Integration
             var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
                 ?? (await db.MediaTypes.AddAsync(new MediaType
                 {
-                    Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                    Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
                     InteractionVerb = "viewed", ProgressUnit = "percent",
                     IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
                 })).Entity;
@@ -233,7 +233,7 @@ namespace Chronicle.Tests.Integration
             var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
                 ?? (await db.MediaTypes.AddAsync(new MediaType
                 {
-                    Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                    Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
                     InteractionVerb = "viewed", ProgressUnit = "percent",
                     IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
                 })).Entity;
@@ -306,7 +306,7 @@ namespace Chronicle.Tests.Integration
             var peopleType = await db.MediaTypes.FirstOrDefaultAsync(t => t.Name == "people")
                 ?? (await db.MediaTypes.AddAsync(new MediaType
                 {
-                    Name = "people", DisplayName = "People", HierarchyLevels = 1,
+                    Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1,
                     InteractionVerb = "viewed", ProgressUnit = "percent",
                     IsBuiltIn = true, IsActive = true, CreatedAt = DateTime.UtcNow,
                 })).Entity;

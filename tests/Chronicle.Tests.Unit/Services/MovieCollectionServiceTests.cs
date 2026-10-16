@@ -12,6 +12,8 @@ namespace Chronicle.Tests.Unit.Services;
 
 public class MovieCollectionServiceTests
 {
+    public MovieCollectionServiceTests() => RegistryFixtures.LoadBuiltIns();
+
     private static MovieCollectionService CreateService() =>
         new(Mock.Of<IServiceScopeFactory>(), new StubHttpClientFactory(new StubImageHandler()),
             NullLogger<MovieCollectionService>.Instance);
@@ -1569,7 +1571,7 @@ public class MovieCollectionServiceTests
     public async Task IsCollectionContainerAsync_PeopleItemWithChildren_IsNotACollection()
     {
         await using var db = CreateInMemoryDb();
-        var mt = new MediaType { Id = 1, Name = "people", DisplayName = "People", HierarchyLevels = 1, SupportsCollections = false, CreatedAt = DateTime.UtcNow };
+        var mt = new MediaType { Id = 1, Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, SupportsCollections = false, CreatedAt = DateTime.UtcNow };
         db.MediaTypes.Add(mt);
         var person = new MediaItem { Id = 1, Name = "Iain M. Banks", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         var child = new MediaItem { Id = 2, Name = "Transition", MediaTypeId = mt.Id, ParentId = 1, HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
@@ -1585,7 +1587,7 @@ public class MovieCollectionServiceTests
     public async Task IsCollectionContainerAsync_ExplicitCollectionIdOnAPersonStillCounts()
     {
         await using var db = CreateInMemoryDb();
-        var mt = new MediaType { Id = 1, Name = "people", DisplayName = "People", HierarchyLevels = 1, SupportsCollections = false, CreatedAt = DateTime.UtcNow };
+        var mt = new MediaType { Id = 1, Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, SupportsCollections = false, CreatedAt = DateTime.UtcNow };
         db.MediaTypes.Add(mt);
         var item = new MediaItem { Id = 1, Name = "Odd", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         db.MediaItems.Add(item);

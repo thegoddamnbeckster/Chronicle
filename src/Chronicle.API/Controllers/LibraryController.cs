@@ -492,7 +492,7 @@ namespace Chronicle.API.Controllers
         /// Returns true when the given MetadataJson contains a fileScanner entry with at least
         /// one non-null file path.  Mirrors the same helper in MediaController.
         /// </summary>
-        private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeFamilies.IsMovieLike(name);
+        private static bool IsMovieLikeTypeName(string? name) => Chronicle.Services.MediaTypeRegistry.IsMovieLike(name);
 
         /// <summary>
         /// Single-item counterpart to GetLibrary's batched fallback-poster lookup, for the

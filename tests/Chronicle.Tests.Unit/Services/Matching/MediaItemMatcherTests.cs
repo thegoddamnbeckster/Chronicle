@@ -12,13 +12,14 @@ namespace Chronicle.Tests.Unit.Services.Matching
 
         public MediaItemMatcherTests()
         {
+            RegistryFixtures.LoadBuiltIns();
             var options = new DbContextOptionsBuilder<ChronicleDbContext>()
                 .UseInMemoryDatabase(Guid.NewGuid().ToString())
                 .Options;
             _db = new ChronicleDbContext(options);
 
-            _db.MediaTypes.Add(new MediaType { Id = 1, Name = "tv", DisplayName = "TV Shows", CreatedAt = DateTime.UtcNow });
-            _db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", CreatedAt = DateTime.UtcNow });
+            _db.MediaTypes.Add(new MediaType { Id = 1, Name = "tv", DisplayName = "TV Shows", Aliases = "tv_show,tv_episode,show,episode", CreatedAt = DateTime.UtcNow });
+            _db.MediaTypes.Add(new MediaType { Id = 2, Name = "movies", DisplayName = "Movies", Aliases = "movie,film", CreatedAt = DateTime.UtcNow });
             _db.SaveChanges();
         }
 

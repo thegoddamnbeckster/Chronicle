@@ -20,6 +20,8 @@ file sealed class SingleContextScopeFactory(ChronicleDbContext ctx) : IServiceSc
 
 public class MetadataResolutionServiceTests
 {
+    public MetadataResolutionServiceTests() => RegistryFixtures.LoadBuiltIns();
+
     // ── ParsePluginBlobs ──────────────────────────────────────────────────────
 
     [Fact]
@@ -491,7 +493,7 @@ public class MetadataResolutionServiceTests
         {
             Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
             PosterUrl = "https://stale.example/wrong-shared-photo.jpg",
-            MediaType = new MediaType { Id = 9, Name = "people", DisplayName = "People" },
+            MediaType = new MediaType { Id = 9, Name = "people", IsPersonType = true, DisplayName = "People" },
         };
         db.MediaItems.Add(item);
         await db.SaveChangesAsync();
@@ -513,7 +515,7 @@ public class MetadataResolutionServiceTests
         var item = new MediaItem
         {
             Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
-            MediaType = new MediaType { Id = 9, Name = "people", DisplayName = "People" },
+            MediaType = new MediaType { Id = 9, Name = "people", IsPersonType = true, DisplayName = "People" },
         };
         db.MediaItems.Add(item);
         db.PersonHeadshots.Add(new PersonHeadshot

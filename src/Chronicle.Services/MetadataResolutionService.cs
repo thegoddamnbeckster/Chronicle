@@ -97,7 +97,7 @@ public class MetadataResolutionService(
             // genuinely cross-plugin-source and accumulating (Section 1.5), not siloed per
             // plugin the way every other field/type is. An explicit pin (checked above) still
             // always wins.
-            if (assignmentField == "poster_url" && mediaTypeName == "people")
+            if (assignmentField == "poster_url" && MediaTypeRegistry.IsPersonType(mediaTypeName))
             {
                 // Always records a decision (a real URL, or an explicit JSON null) rather than
                 // simply omitting the key when there's no headshot -- confirmed live (2026-09-11)
@@ -194,7 +194,7 @@ public class MetadataResolutionService(
         // Promote first-class columns
         if (resolved.TryGetValue("posterUrl", out var poster) && HasValue(poster))
             item.PosterUrl = poster.GetString();
-        else if (mediaTypeName == "people" && resolved.ContainsKey("posterUrl"))
+        else if (MediaTypeRegistry.IsPersonType(mediaTypeName) && resolved.ContainsKey("posterUrl"))
             // The people-specific branch above always records a decision (see its own doc) --
             // a present-but-valueless "posterUrl" here specifically means "no headshot exists
             // right now", so the stale old value must be cleared, not left in place. Scoped to
@@ -233,8 +233,8 @@ public class MetadataResolutionService(
         // existing, intentional level-0-only behavior; see
         // ResolveAsync_TitleAndYearNotPromotedAboveLevelZero for a level-1 type this must NOT
         // affect.
-        var isEpisode          = MediaTypeFamilies.IsShowLike(mediaTypeName)  && item.HierarchyLevel == 2;
-        var isCollectionMember = MediaTypeFamilies.IsMovieLike(mediaTypeName) && item.HierarchyLevel == 1;
+        var isEpisode          = MediaTypeRegistry.IsShowLike(mediaTypeName)  && item.HierarchyLevel == 2;
+        var isCollectionMember = MediaTypeRegistry.IsMovieLike(mediaTypeName) && item.HierarchyLevel == 1;
         if (item.HierarchyLevel == 0 || isEpisode || isCollectionMember)
         {
             if (resolved.TryGetValue("title", out var title) && HasValue(title))

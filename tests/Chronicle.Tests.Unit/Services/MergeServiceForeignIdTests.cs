@@ -16,6 +16,8 @@ namespace Chronicle.Tests.Unit.Services;
 /// </summary>
 public class MergeServiceForeignIdTests
 {
+    public MergeServiceForeignIdTests() => RegistryFixtures.LoadBuiltIns();
+
     private static (ChronicleDbContext db, MergeService svc) Setup()
     {
         var db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
@@ -28,7 +30,7 @@ public class MergeServiceForeignIdTests
 
     private static async Task<(MediaItem winner, MediaItem loser)> SeedAsync(ChronicleDbContext db, string typeName)
     {
-        db.MediaTypes.Add(new MediaType { Id = 1, Name = typeName, DisplayName = typeName, HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+        db.MediaTypes.Add(new MediaType { Id = 1, Name = typeName, DisplayName = typeName, HierarchyLevels = 1, IsPersonType = typeName == "people", CreatedAt = DateTime.UtcNow });
         var winner = new MediaItem { MediaTypeId = 1, Name = "Same Name", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         var loser = new MediaItem { MediaTypeId = 1, Name = "Same Name", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         db.MediaItems.AddRange(winner, loser);

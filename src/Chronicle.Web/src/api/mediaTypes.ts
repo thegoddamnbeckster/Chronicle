@@ -25,6 +25,18 @@ export interface MediaTypeAdmin {
   /** "tv", "movie", "music"...: providers of this family also serve the type. */
   providerFamily: string | null
   castHeading: string | null
+  /** The one type that holds the people credited on other media. */
+  isPersonType: boolean
+  /** The type used when a client does not say what kind of item it means. */
+  isDefaultType: boolean
+  /** The type new items get under when only the provider family is known (Kodi's movie scraper adding a film). */
+  isFamilyDefault: boolean
+  /** True when a cast entry is an actor playing a character, false when the entry's role is the contribution. */
+  castAreActors: boolean
+  /** Other names clients use for this type, comma-separated ("film,movie"). */
+  aliases: string | null
+  /** How imported plays are filed: show/season/episode, author/series/book or artist/album/track. */
+  importShape: string | null
 }
 
 export interface MediaTypeInput {
@@ -44,7 +56,21 @@ export interface MediaTypeInput {
   scanHints?: string
   providerFamily?: string
   castHeading?: string
+  isPersonType?: boolean
+  isDefaultType?: boolean
+  isFamilyDefault?: boolean
+  castAreActors?: boolean
+  /** Omit to leave unchanged; an empty string clears. */
+  aliases?: string
+  importShape?: string
 }
+
+export const IMPORT_SHAPES = [
+  { value: '', label: 'Flat (each play is one item)' },
+  { value: 'episodic', label: 'Show / season / episode' },
+  { value: 'author-series-work', label: 'Author / series / book' },
+  { value: 'artist-album-track', label: 'Artist / album / track' },
+]
 
 export const SCAN_STRATEGIES = [
   { value: '', label: 'Automatic (by number of levels)' },

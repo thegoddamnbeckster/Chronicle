@@ -153,7 +153,7 @@ public sealed class MovieExternalIdRepairService(
 
         // Every flat-type item with a TMDB record: both rules need the item's own provider data.
         var candidateIds = await db.MediaItems.AsNoTracking()
-            .Where(m => m.HierarchyLevel <= 1 && m.MediaType!.HierarchyLevels == 1 && m.MediaType.Name != "people" &&
+            .Where(m => m.HierarchyLevel <= 1 && m.MediaType!.HierarchyLevels == 1 && !m.MediaType.IsPersonType &&
                         m.MetadataJson != null && m.MetadataJson.Contains("chronicle.plugin.tmdb"))
             .Select(m => m.Id)
             .ToListAsync(ct);

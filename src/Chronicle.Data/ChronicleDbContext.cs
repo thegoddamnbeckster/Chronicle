@@ -210,53 +210,14 @@ namespace Chronicle.Data
                 entity.Property(e => e.CastHeading).HasMaxLength(40);
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
 
-                // Seed: built-in media types
-                entity.HasData(
-                    new MediaType
-                    {
-                        Id = 1,
-                        Name = "tv",
-                        DisplayName = "TV Shows",
-                        Description = "Television series, seasons, and episodes",
-                        HierarchyLevels = 3,
-                        HierarchyLabels = "Show,Season,Episode",
-                        InteractionVerb = "watched",
-                        ProgressUnit = "minutes",
-                        ProviderFamily = "tv",
-                        IsBuiltIn = true,
-                        IsActive = true,
-                        CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-                    },
-                    new MediaType
-                    {
-                        Id = 2,
-                        Name = "movies",
-                        DisplayName = "Movies",
-                        Description = "Feature films and short films",
-                        HierarchyLevels = 1,
-                        HierarchyLabels = "Movie",
-                        InteractionVerb = "watched",
-                        ProgressUnit = "minutes",
-                        ProviderFamily = "movie",
-                        IsBuiltIn = true,
-                        IsActive = true,
-                        CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-                    },
-                    new MediaType
-                    {
-                        Id = 3,
-                        Name = "music",
-                        DisplayName = "Music",
-                        Description = "Artists, albums, and tracks",
-                        HierarchyLevels = 3,
-                        HierarchyLabels = "Artist,Album,Track",
-                        InteractionVerb = "listened",
-                        ProgressUnit = "tracks",
-                        ProviderFamily = "music",
-                        IsBuiltIn = true,
-                        IsActive = true,
-                        CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-                    });
+                // Seed: built-in media types (their definitions live in BuiltInMediaTypes)
+                entity.HasData(BuiltInMediaTypes.Seed());
+                entity.Property(e => e.IsPersonType).HasDefaultValue(false);
+                entity.Property(e => e.IsDefaultType).HasDefaultValue(false);
+                entity.Property(e => e.IsFamilyDefault).HasDefaultValue(false);
+                entity.Property(e => e.CastAreActors).HasDefaultValue(false);
+                entity.Property(e => e.Aliases).HasMaxLength(300);
+                entity.Property(e => e.ImportShape).HasMaxLength(30);
             });
 
             modelBuilder.Entity<MediaItem>(entity =>
