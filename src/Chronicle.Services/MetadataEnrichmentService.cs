@@ -1082,6 +1082,19 @@ public class MetadataEnrichmentService(
             _                       => query
         };
 
+        // One UPDATE statement on a real database: a plugin's whole queue is hundreds of thousands of rows, which used to be loaded
+        // into the change tracker one entity at a time.
+        if (db.Database.IsRelational())
+        {
+            await query.ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.Status, EnrichmentStatus.Pending)
+                .SetProperty(x => x.RetryCount, 0)
+                .SetProperty(x => x.ErrorMessage, (string?)null)
+                .SetProperty(x => x.LastAttemptedAt, (DateTime?)null), ct);
+            statsCache?.Invalidate();
+            return;
+        }
+
         // Load entities and update in memory to stay compatible with the EF InMemory provider
         // (which does not support ExecuteUpdateAsync bulk operations).
         var rows = await query.ToListAsync(ct);

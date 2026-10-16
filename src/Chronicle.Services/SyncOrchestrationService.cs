@@ -322,10 +322,13 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         // INSERT hasn't committed yet. Do one final title+year lookup inside this
         // method before inserting so at most one stub is created.
         var normalizedTitle = MediaItemNormalizer.NormalizeName(stubTitle);
+        // A stub is a root item: its twin is one too (a flat type such as movies also counts a collection member), never an episode or track.
+        var rootCeiling = mediaType.HierarchyLevels > 1 ? 0 : 1;
         if (!string.IsNullOrEmpty(normalizedTitle))
         {
             var existing = await db.MediaItems
                 .FirstOrDefaultAsync(m => m.MediaTypeId == mediaType.Id
+                                       && m.HierarchyLevel <= rootCeiling
                                        && m.Year == stubYear
                                        && m.NormalizedName == normalizedTitle, ct);
             if (existing is not null)
@@ -347,6 +350,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
                 {
                     existing = await db.MediaItems
                         .FirstOrDefaultAsync(m => m.MediaTypeId == mediaType.Id
+                                               && m.HierarchyLevel <= rootCeiling
                                                && m.Year == stubYear
                                                && m.NormalizedName == deparenNormalized, ct);
                     if (existing is not null)
