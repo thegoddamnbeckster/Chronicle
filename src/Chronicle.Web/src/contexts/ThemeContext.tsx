@@ -6,6 +6,7 @@ import {
   useState,
 } from 'react'
 import { fetchThemes, type ThemeDto } from '@/api/themes'
+import { colorSchemeFor } from '@/utils/colorScheme'
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
 
@@ -26,6 +27,9 @@ function applyVariables(vars: Record<string, string>) {
   for (const [name, value] of Object.entries(vars)) {
     root.style.setProperty(name, value)
   }
+  // Tell the browser which scheme the page is in, so native controls -- above all the open list of a <select> -- are drawn
+  // dark on a dark theme instead of as white boxes with unreadable light text.
+  root.style.colorScheme = colorSchemeFor(vars)
 }
 
 /** Compose the storage key for a theme: "{pluginId}:{themeKey}" */

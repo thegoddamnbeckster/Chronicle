@@ -4,6 +4,7 @@ import AdvancedToggle from '@/components/ui/AdvancedToggle'
 import {
   getBackgroundTasks,
   updateBackgroundTask,
+  moveBackgroundTask,
   runBackgroundTask,
   type BackgroundTask,
 } from '@/api/backgroundTasks'
@@ -52,6 +53,8 @@ function fmtRelative(iso: string | null): string {
 }
 
 function statusBadge(task: BackgroundTask) {
+  // Started but held back by a higher-priority task that cannot share the database.
+  if (task.waitingFor) return { cls: styles.paused, label: 'Paused' }
   if (task.isRunning) return { cls: styles.running, label: 'Running' }
   if (task.lastRunSucceeded === null) return { cls: styles.idle, label: 'Idle' }
   if (task.lastRunSucceeded) return { cls: styles.success, label: 'Success' }
@@ -303,7 +306,7 @@ return (
                     {(() => {
                       const t = pluginFetchTasks.get(s.pluginId)
                       if (!t) return null
-                      const running = runningPluginIds.has(s.pluginId)
+                      const running = runningPluginIds.has(s.pluginId) && !t.waitingFor
                       const { cls, label } = running ? { cls: styles.running, label: 'Running' } : statusBadge(t)
                       const failed = !running && t.lastRunSucceeded === false
                       return (
@@ -561,9 +564,10 @@ interface TaskCardProps {
   onSave: (taskId: string, cron: string, enabled: boolean) => Promise<void>
   onCancelEdit: () => void
   onToggle: () => void
+  onMove: (direction: 'up' | 'down') => void
 }
 
-function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCancelEdit, onToggle }: TaskCardProps) {
+function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCancelEdit, onToggle, onMove }: TaskCardProps) {
   const { cls, label } = statusBadge(task)
   const brandColor = task.brandColorDark ?? undefined
   const [confirmPending, setConfirmPending] = useState(false)
@@ -617,6 +621,10 @@ function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCanc
         <p className={styles.errorText}>{task.lastErrorMessage}</p>
       )}
 
+      {task.waitingFor && (
+        <p className={styles.taskDesc}>Paused until {task.waitingFor} is done: it has a higher priority and the two cannot share the database.</p>
+      )}
+
       <div className={styles.metaGrid}>
         <div className={styles.metaRow}>
           <span className={styles.metaLabel}>Last Run</span>
@@ -636,6 +644,20 @@ function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCanc
             {task.isEnabled ? fmtRelative(task.nextRunAt) : 'Disabled'}
           </span>
         </div>
+        {task.priority != null && task.priority > 0 && (
+          <div className={styles.metaRow}>
+            <span className={styles.metaLabel}>Priority</span>
+            <span className={styles.metaValue}>
+              <span className={styles.priorityControls}>
+                <span title={task.exclusive ? 'A heavy database job: it conflicts with every other task, so of any two the higher priority runs and the other waits.' : 'Runs alongside other light tasks; waits only for a higher-priority heavy job.'}>
+                  #{task.priority}{task.exclusive ? ' · heavy' : ''}
+                </span>
+                <button className={styles.priorityBtn} onClick={() => onMove('up')} aria-label={`Raise priority of ${task.displayName}`}>▲</button>
+                <button className={styles.priorityBtn} onClick={() => onMove('down')} aria-label={`Lower priority of ${task.displayName}`}>▼</button>
+              </span>
+            </span>
+          </div>
+        )}
         <div className={styles.metaRow}>
           <span className={styles.metaLabel}>Schedule</span>
           <span className={styles.metaValue} style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>
@@ -1015,6 +1037,7 @@ export default function BackgroundTasksPage() {
                         onSave={handleSave}
                         onCancelEdit={() => setEditingId(null)}
                         onToggle={() => updateBackgroundTask(task.taskId, { isEnabled: !task.isEnabled }).then(load)}
+                        onMove={direction => { void moveBackgroundTask(task.taskId, direction).then(load) }}
                       />
                     ))}
                     {enrichStat && (

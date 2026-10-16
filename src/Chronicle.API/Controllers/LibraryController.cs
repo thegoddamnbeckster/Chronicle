@@ -63,6 +63,46 @@ namespace Chronicle.API.Controllers
         /// Which media types have library items and how many each -- all the Library page needs
         /// to draw its section headers before it asks for any one section's first page.
         /// </summary>
+        /// <summary>
+        /// Ordered ids of one Library section (same filters and sort as the page itself) -- lets a detail page that was
+        /// not opened from the list still offer Previous/Next among its neighbours.
+        /// </summary>
+        [HttpGet("section-ids")]
+        public async Task<IActionResult> GetSectionIds(
+            [FromQuery] int mediaTypeId,
+            [FromQuery] string? status,
+            [FromQuery] bool includeMoviesInCollections = false,
+            [FromQuery] string? sortBy = null,
+            [FromQuery] string? sortDir = null,
+            [FromQuery] string? ignoreArticles = null,
+            CancellationToken ct = default)
+        {
+            LibraryStatus? parsedStatus = null;
+            if (!string.IsNullOrEmpty(status))
+            {
+                if (!Enum.TryParse<LibraryStatus>(status, out var st))
+                    return BadRequest(ApiResponse<List<int>>.Fail("INVALID_STATUS", $"Unknown status '{status}'."));
+                parsedStatus = st;
+            }
+            LibrarySort? sort = null;
+            if (!string.IsNullOrEmpty(sortBy))
+            {
+                if (!Enum.TryParse<LibrarySortField>(sortBy, ignoreCase: true, out var field))
+                    return BadRequest(ApiResponse<List<int>>.Fail("INVALID_SORT", $"Unknown sort '{sortBy}'."));
+                var articles = string.IsNullOrWhiteSpace(ignoreArticles)
+                    ? null
+                    : ignoreArticles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                sort = new LibrarySort(field, string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase), articles);
+            }
+
+            var userId = GetUserId();
+            var prefs = await _userService.GetPreferencesAsync(userId);
+            var ids = await _libraryService.GetSectionItemIdsAsync(
+                userId, parsedStatus, rootOnly: true, includeMoviesInCollections, prefs.CreateCollectionStubs ?? true,
+                mediaTypeId, sort, ct);
+            return Ok(ApiResponse<List<int>>.Ok(ids.ToList()));
+        }
+
         [HttpGet("sections")]
         public async Task<IActionResult> GetSections(
             [FromQuery] string? status,

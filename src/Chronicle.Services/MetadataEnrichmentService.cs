@@ -135,6 +135,60 @@ public class MetadataEnrichmentService(
     private bool IsEnrichmentRunning(string pluginId) =>
         _pluginLocks.TryGetValue(pluginId, out var sem) && sem.CurrentCount == 0;
 
+    /// <summary>True when the exception (or one inside it) is SQLite saying the database is locked or busy.</summary>
+    internal static bool IsDatabaseBusy(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException!)
+        {
+            if (e is Microsoft.Data.Sqlite.SqliteException sqlite && sqlite.SqliteErrorCode is 5 or 6) return true;
+            if (e.InnerException is null) break;
+        }
+        return false;
+    }
+
+    /// <summary>Forgets the changes a failed save left pending, so the next item's save does not try them again.</summary>
+    private static void DiscardPendingChanges(ChronicleDbContext db)
+    {
+        foreach (var entry in db.ChangeTracker.Entries()
+                     .Where(e => e.State is Microsoft.EntityFrameworkCore.EntityState.Added
+                                 or Microsoft.EntityFrameworkCore.EntityState.Modified
+                                 or Microsoft.EntityFrameworkCore.EntityState.Deleted)
+                     .ToList())
+            entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+    }
+
+    /// <summary>
+    /// Runs one item again in its own context after the database was busy, waiting a little longer each time for
+    /// the other writer to finish. Returns false if it was still busy after every try.
+    /// </summary>
+    private async Task<bool> RetryItemWhenDatabaseFreesAsync(
+        string pluginId, IMetadataProvider provider, int enrichmentRowId,
+        IReadOnlyList<(string PluginId, IMetadataProvider Provider)> allProviders, CancellationToken ct)
+    {
+        foreach (var wait in new[] { 5, 15, 45 })
+        {
+            await Task.Delay(TimeSpan.FromSeconds(wait), ct);
+            try
+            {
+                await using var itemScope = scopeFactory.CreateAsyncScope();
+                var itemDb = itemScope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+                var fresh = await itemDb.MediaEnrichments
+                    .Include(x => x.MediaItem).ThenInclude(m => m!.MediaType)
+                    .Include(x => x.MediaItem).ThenInclude(m => m!.Parent).ThenInclude(p => p!.Parent)
+                    .FirstOrDefaultAsync(x => x.Id == enrichmentRowId, ct);
+                if (fresh?.MediaItem is null) return true;                       // gone meanwhile: nothing to retry
+                await EnrichItemCoreAsync(itemDb, provider, pluginId, fresh,
+                    new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && IsDatabaseBusy(ex))
+            {
+                logger.LogWarning("EnrichPendingAsync: database still busy retrying enrichment row {RowId} for {PluginId}", enrichmentRowId, pluginId);
+            }
+        }
+        return false;
+    }
+
     // ── Background / batch operations ─────────────────────────────────────────
     public async Task EnrichPendingAsync(string pluginId, CancellationToken ct = default)
     {
@@ -336,15 +390,20 @@ public class MetadataEnrichmentService(
             // both branches to break the outer while(true) instead of starting another pass that
             // would just hit the same wall for every remaining item.
             bool providerUnavailable = false;
+            bool databaseBusy = false;
 
             if (itemConcurrency <= 1)
             {
                 // Unchanged from before this feature existed -- every plugin that doesn't
                 // declare max_enrichment_concurrency in its manifest still runs exactly this
                 // strictly-sequential path, sharing the outer db/ChangeTracker as always.
+                var consecutiveBusy = 0;
                 foreach (var row in rows)
                 {
                     ct.ThrowIfCancellationRequested();
+                    // Safe point: a higher-ranked job that cannot share the database (the backup, duplicate cleanup...)
+                    // makes this one wait here, between items, until it is done. See TaskPriorityGate.
+                    await TaskGate.CheckpointAsync(ct);
                     try
                     {
                         // Cascade: false — this loop already walks the full hierarchy itself via
@@ -352,6 +411,7 @@ public class MetadataEnrichmentService(
                         // would process every child twice.
                         await EnrichItemCoreAsync(db, provider, pluginId, row,
                             new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                        consecutiveBusy = 0;
                     }
                     catch (ProviderUnavailableException)
                     {
@@ -359,6 +419,26 @@ public class MetadataEnrichmentService(
                         // burning through them one doomed call at a time.
                         providerUnavailable = true;
                         break;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException && IsDatabaseBusy(ex))
+                    {
+                        // SQLite has one writer at a time and gave up waiting for it (the nightly tasks all start
+                        // together). That says nothing about this item, and used to end the plugin's whole pass --
+                        // MusicBrainz and TheAudioDB showed "Failed" nightly with tens of thousands still pending.
+                        // The failed save is thrown away (a failed SaveChanges leaves its changes pending, and the
+                        // next item's save would try them again), the item is retried once the other writer has had
+                        // time to finish, and only a database that stays busy ends the run.
+                        DiscardPendingChanges(db);
+                        if (await RetryItemWhenDatabaseFreesAsync(pluginId, provider, row.Id, allProviders, ct))
+                            consecutiveBusy = 0;
+                        else if (++consecutiveBusy >= 3)
+                        {
+                            logger.LogWarning(
+                                "EnrichPendingAsync: stopping for plugin {PluginId} this run -- the database stayed busy for {Count} items in a row; the rest stay Pending for the next run",
+                                pluginId, consecutiveBusy);
+                            databaseBusy = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -374,6 +454,7 @@ public class MetadataEnrichmentService(
                     await gate.WaitAsync(ct);
                     try
                     {
+                        await TaskGate.CheckpointAsync(ct);
                         await using var itemScope = scopeFactory.CreateAsyncScope();
                         var itemDb = itemScope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
                         var freshRow = await itemDb.MediaEnrichments
@@ -421,6 +502,8 @@ public class MetadataEnrichmentService(
             // For a 38k-item music library processed in 3 passes this would otherwise
             // hold ~114k entities in memory by the time the last pass completes.
             db.ChangeTracker.Clear();
+
+            if (databaseBusy) break;
 
             if (providerUnavailable)
             {

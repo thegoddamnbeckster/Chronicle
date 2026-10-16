@@ -20,7 +20,8 @@ public sealed class DuplicateMaintenanceTask(
     public string TaskId      => "duplicate_maintenance";
     public string DisplayName => "Duplicate Maintenance";
     public string Description => "Nightly: scans for probable duplicate media items and people (cached for the Duplicates page), automatically merges or dismisses the person duplicates with strong evidence, and removes items sharing the same file path, keeping the best copy.";
-    public string DefaultCron => "0 2 * * *";
+    public string DefaultCron => "20 2 * * *";   // staggered after the backup
+    public bool Exclusive => true; // a heavy database writer: conflicts with every other task (see TaskPriorityGate)
     public IReadOnlyList<string> ReplacesTaskIds => ["duplicate_candidate_scan", "duplicate_person_auto_resolve", "duplicate_cleanup"];
 
     public async Task ExecuteAsync(CancellationToken ct)

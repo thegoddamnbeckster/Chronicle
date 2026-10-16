@@ -20,17 +20,23 @@ public class BackgroundTasksController : ControllerBase
     // apart from a background_tasks row that exists purely for status display (see IsRunnable
     // below). Distinct from _scheduler: that's the runner, this is the registry of what it can run.
     private readonly HashSet<string> _registeredTaskIds;
+    private readonly Dictionary<string, bool> _exclusiveSystemTasks;
+    private readonly ITaskPriorityGate _gate;
 
     public BackgroundTasksController(
         ChronicleDbContext db,
         ITaskSchedulerService scheduler,
         IPluginRegistry pluginRegistry,
-        IEnumerable<IScheduledTask> registeredTasks)
+        IEnumerable<IScheduledTask> registeredTasks,
+        ITaskPriorityGate gate)
     {
         _db        = db;
         _scheduler = scheduler;
         _pluginRegistry = pluginRegistry;
-        _registeredTaskIds = registeredTasks.Select(t => t.TaskId).ToHashSet();
+        _gate = gate;
+        var tasks = registeredTasks.ToList();
+        _registeredTaskIds = tasks.Select(t => t.TaskId).ToHashSet();
+        _exclusiveSystemTasks = tasks.ToDictionary(t => t.TaskId, t => t.Exclusive);
     }
 
     /// <summary>Returns all registered background tasks with live status and plugin branding.</summary>
@@ -41,6 +47,14 @@ public class BackgroundTasksController : ControllerBase
             .Include(t => t.Plugin)
             .OrderBy(t => t.DisplayName)
             .ToListAsync();
+
+        var order = (await _gate.GetOrderAsync()).ToList();
+        var waiting = _gate.WaitingFor();
+        var names = rows.ToDictionary(r => r.TaskId, r => r.DisplayName);
+        int PriorityOf(string id) { var i = order.IndexOf(id); return i < 0 ? order.Count + 1 : i + 1; }
+        bool IsExclusive(Chronicle.Core.Models.BackgroundTask r) => r.PluginId is null
+            ? _exclusiveSystemTasks.GetValueOrDefault(r.TaskId)
+            : TaskPriorityGate.IsExclusivePluginTask(r.TaskId.Contains(':') ? r.TaskId[(r.TaskId.IndexOf(':') + 1)..] : r.TaskId);
 
         var dtos = rows.Select(r => new BackgroundTaskDto(
             TaskId:           r.TaskId,
@@ -96,7 +110,10 @@ public class BackgroundTasksController : ControllerBase
             RunConfirmation:  r.RunConfirmationTitle is not null
                 ? new BackgroundTaskRunConfirmationDto(r.RunConfirmationTitle, r.RunConfirmationMessage ?? string.Empty)
                 : null,
-            PluginIntegrityBlockedAt: r.Plugin?.IntegrityBlockedAt
+            PluginIntegrityBlockedAt: r.Plugin?.IntegrityBlockedAt,
+            Priority:         PriorityOf(r.TaskId),
+            Exclusive:        IsExclusive(r),
+            WaitingFor:       waiting.TryGetValue(r.TaskId, out var blocker) ? names.GetValueOrDefault(blocker, blocker) : null
         ));
 
         return Ok(new { success = true, data = dtos });
@@ -139,6 +156,20 @@ public class BackgroundTasksController : ControllerBase
 
         await _db.SaveChangesAsync();
         return NoContent();
+    }
+
+    /// <summary>Moves a task one place up or down in the priority order (admin).</summary>
+    [HttpPost("{id}/priority")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> MovePriority(string id, [FromBody] MoveBackgroundTaskRequest body)
+    {
+        var direction = string.Equals(body.Direction, "up", StringComparison.OrdinalIgnoreCase) ? -1
+            : string.Equals(body.Direction, "down", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        if (direction == 0)
+            return BadRequest(new { success = false, error = new { code = "INVALID_DIRECTION", message = "Direction must be 'up' or 'down'." } });
+
+        var moved = await _gate.MoveAsync(id, direction);
+        return Ok(new { success = true, moved });
     }
 
     /// <summary>Triggers a task immediately. Returns 409 if already running.</summary>
@@ -222,8 +253,16 @@ public record BackgroundTaskDto(
     bool      IsRunnable,
     BackgroundTaskRunConfirmationDto? RunConfirmation,
     // Set when the owning plugin's files changed without approval and it was not loaded: its tasks cannot run.
-    DateTime? PluginIntegrityBlockedAt = null
+    DateTime? PluginIntegrityBlockedAt = null,
+    // 1 is the highest priority; every task has its own. Of two tasks that conflict the higher one runs and the other waits.
+    int       Priority = 0,
+    // A heavy database writer: conflicts with every other task.
+    bool      Exclusive = false,
+    // Set while the task is paused or queued: the name of the higher-priority task it is waiting for.
+    string?   WaitingFor = null
 );
+
+public record MoveBackgroundTaskRequest(string Direction);
 
 public record BackgroundTaskRunConfirmationDto(string Title, string Message);
 

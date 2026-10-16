@@ -47,6 +47,26 @@ export interface LibrarySectionPageParams {
   ignoreArticles?: string[]
 }
 
+/** The ids of one section in the order the Library page lists it (and nothing else), for a detail page that was not
+ * opened from the list but still wants Previous/Next among its neighbours. */
+export async function getLibrarySectionIds(p: {
+  mediaTypeId: number
+  status?: LibraryStatus
+  includeMoviesInCollections: boolean
+  sortBy: LibrarySectionPageParams['sortBy']
+  sortDir: 'asc' | 'desc'
+  ignoreArticles?: string[]
+}): Promise<number[]> {
+  const params: Record<string, string | number | boolean> = {
+    mediaTypeId: p.mediaTypeId, sortBy: p.sortBy, sortDir: p.sortDir,
+  }
+  if (p.status) params.status = p.status
+  if (p.includeMoviesInCollections) params.includeMoviesInCollections = true
+  if (p.ignoreArticles?.length) params.ignoreArticles = p.ignoreArticles.join(',')
+  const { data } = await client.get<ApiResponse<number[]>>('/library/section-ids', { params })
+  return data.data ?? []
+}
+
 /** One page of one section, already sorted by the server -- the Library page only ever asks for
  * the slice it is about to show. */
 export async function getLibrarySectionPage(p: LibrarySectionPageParams): Promise<LibraryEntry[]> {

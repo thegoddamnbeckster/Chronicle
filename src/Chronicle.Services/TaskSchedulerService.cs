@@ -29,13 +29,16 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ConcurrentDictionary<string, bool> _running = new();
     private readonly ILogger _log = Log.ForContext<TaskSchedulerService>();
+    private readonly ITaskPriorityGate? _gate;
 
     public TaskSchedulerService(
         IEnumerable<IScheduledTask> tasks,
-        IServiceScopeFactory scopeFactory)
+        IServiceScopeFactory scopeFactory,
+        ITaskPriorityGate? gate = null)
     {
         _tasks = tasks.ToList();
         _scopeFactory = scopeFactory;
+        _gate = gate;
     }
 
     // ── BackgroundService ─────────────────────────────────────────────────────
@@ -44,6 +47,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
     {
         _log.Information("TaskSchedulerService starting with {Count} system task(s)", _tasks.Count);
         await SeedTasksAsync(stoppingToken);
+        await StaggerSchedulesAsync(stoppingToken);
         await SkipMissedRunsAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -157,6 +161,50 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>app_settings key set once the shared start times have been spread out (see <see cref="StaggerSchedulesAsync"/>).</summary>
+    internal const string StaggerAppliedSettingKey = "scheduler.stagger_applied";
+
+    /// <summary>
+    /// Spreads tasks that share one start time: with every nightly job on the same cron minute (the backup, duplicate cleanup,
+    /// OMDb, SIMKL and Hardcover all began at 02:00 together) they fight for SQLite's single writer. Within each group of
+    /// enabled tasks with an identical cron expression the highest-priority task keeps the minute and each next one starts a
+    /// few minutes later. Done once, so a schedule an administrator sets afterwards is never touched; only crons with a fixed
+    /// minute and hour are moved.
+    /// </summary>
+    internal async Task StaggerSchedulesAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        if (await db.AppSettings.AnyAsync(a => a.Key == StaggerAppliedSettingKey, ct)) return;
+
+        var order = _gate is null ? [] : (await _gate.GetOrderAsync(ct)).ToList();
+        int RankOf(string id) { var i = order.IndexOf(id); return i < 0 ? int.MaxValue : i; }
+
+        var rows = await db.BackgroundTasks.Where(t => t.IsEnabled && t.CronExpression != "").ToListAsync(ct);
+        var moved = 0;
+        foreach (var group in rows.GroupBy(r => r.CronExpression).Where(g => g.Count() > 1))
+        {
+            var parts = group.Key.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 5 || !int.TryParse(parts[0], out var minute) || !int.TryParse(parts[1], out var hour)) continue;
+
+            var members = group.OrderBy(r => RankOf(r.TaskId)).ThenBy(r => r.TaskId, StringComparer.Ordinal).ToList();
+            var step = Math.Clamp((59 - minute) / Math.Max(1, members.Count - 1), 1, 7);
+            for (var k = 1; k < members.Count; k++)
+            {
+                var cron = $"{Math.Min(59, minute + k * step)} {hour} {parts[2]} {parts[3]} {parts[4]}";
+                _log.Information("TaskScheduler: staggered '{TaskId}' from '{Old}' to '{New}' (it shared that start time with {Others} other task(s))",
+                    members[k].TaskId, group.Key, cron, members.Count - 1);
+                members[k].CronExpression = cron;
+                members[k].NextRunAt = GetNextOccurrence(cron);
+                moved++;
+            }
+        }
+
+        db.AppSettings.Add(new Chronicle.Core.Models.AppSetting { Key = StaggerAppliedSettingKey, Value = DateTime.UtcNow.ToString("O") });
+        await db.SaveChangesAsync(ct);
+        _log.Information("TaskScheduler: spread the start times of {Count} task(s) that shared one", moved);
+    }
+
     /// <summary>
     /// Restarting Chronicle must not start work. A task whose next run time passed while the app was down (or while it
     /// was restarting) is moved on to its next cron time instead of firing the moment the scheduler starts; tasks run
@@ -239,11 +287,27 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
 
     private async Task RunTaskAsync(BackgroundTask row, CancellationToken ct)
     {
-        _log.Information("TaskScheduler: starting '{TaskId}'", row.TaskId);
+        _log.Information("TaskScheduler: starting '{TaskId}' at {At:HH:mm:ss} UTC", row.TaskId, DateTime.UtcNow);
         var startedAt = DateTime.UtcNow;
+        TaskTicket? ticket = null;
 
         try
         {
+            // Wait for the database if a higher-ranked job that cannot share it is queued or running; once running,
+            // the job pauses at its own safe points (TaskGate.CheckpointAsync) if one arrives. See TaskPriorityGate.
+            if (_gate is not null)
+            {
+                var bare = row.TaskId.Contains(':') ? row.TaskId[(row.TaskId.IndexOf(':') + 1)..] : row.TaskId;
+                var exclusive = row.PluginId is null
+                    ? _tasks.FirstOrDefault(t => t.TaskId == row.TaskId)?.Exclusive ?? false
+                    : TaskPriorityGate.IsExclusivePluginTask(bare);
+                ticket = await _gate.EnterAsync(row.TaskId, exclusive, ct);
+                TaskGate.Use(ticket);
+                if ((DateTime.UtcNow - startedAt).TotalSeconds > 1)
+                    _log.Information("TaskScheduler: '{TaskId}' began running at {At:HH:mm:ss} UTC after waiting {Seconds:F0}s for its turn",
+                        row.TaskId, DateTime.UtcNow, (DateTime.UtcNow - startedAt).TotalSeconds);
+            }
+
             if (row.PluginId is not null)
             {
                 // Plugin-owned task: route through IPluginTaskRunner resolved from scope
@@ -280,21 +344,50 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
             }
 
             await PersistRunResultAsync(row.TaskId, startedAt, succeeded: true, error: null);
-            _log.Information("TaskScheduler: '{TaskId}' completed successfully in {Elapsed:F1}s",
-                row.TaskId, (DateTime.UtcNow - startedAt).TotalSeconds);
+            _log.Information("TaskScheduler: '{TaskId}' completed successfully in {Elapsed:F1}s (started {Start:HH:mm:ss}, finished {End:HH:mm:ss} UTC)",
+                row.TaskId, (DateTime.UtcNow - startedAt).TotalSeconds, startedAt, DateTime.UtcNow);
         }
         catch (Exception ex)
         {
-            _log.Error(ex, "TaskScheduler: '{TaskId}' failed", row.TaskId);
+            _log.Error(ex, "TaskScheduler: '{TaskId}' failed after {Elapsed:F1}s (started {Start:HH:mm:ss}, failed {End:HH:mm:ss} UTC)",
+                row.TaskId, (DateTime.UtcNow - startedAt).TotalSeconds, startedAt, DateTime.UtcNow);
             await PersistRunResultAsync(row.TaskId, startedAt, succeeded: false, error: ex.Message, exception: ex);
         }
         finally
         {
+            TaskGate.Use(null);
+            ticket?.Dispose();
             _running.TryRemove(row.TaskId, out _);
         }
     }
 
+    /// <summary>
+    /// Records how a run ended, waiting out a busy database (SQLite has one writer; every nightly task finishes into the
+    /// same few minutes) instead of losing the result -- a task that had succeeded kept showing its old state.
+    /// </summary>
     private async Task PersistRunResultAsync(
+        string taskId, DateTime lastRunAt, bool succeeded, string? error, Exception? exception = null)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await PersistRunResultOnceAsync(taskId, lastRunAt, succeeded, error, exception);
+                return;
+            }
+            catch (Exception ex) when (attempt < 3 && MetadataEnrichmentService.IsDatabaseBusy(ex))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(attempt == 0 ? 3 : attempt == 1 ? 10 : 30));
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "TaskScheduler: failed to persist run result for '{TaskId}'", taskId);
+                return;
+            }
+        }
+    }
+
+    private async Task PersistRunResultOnceAsync(
         string taskId, DateTime lastRunAt, bool succeeded, string? error, Exception? exception = null)
     {
         try
@@ -348,7 +441,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
                 }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!MetadataEnrichmentService.IsDatabaseBusy(ex))
         {
             _log.Error(ex, "TaskScheduler: failed to persist run result for '{TaskId}'", taskId);
         }

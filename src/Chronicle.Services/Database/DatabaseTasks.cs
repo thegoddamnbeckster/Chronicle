@@ -30,6 +30,7 @@ namespace Chronicle.Services.Database
         public string DisplayName => "Database Backup & Maintenance";
         public string Description => "Nightly: takes a zipped backup (removing the oldest beyond the retention count), warns if the database has grown large, refreshes query statistics and trims the write-ahead log, and removes notifications older than the retention period.";
         public string DefaultCron => "0 2 * * *";
+        public bool Exclusive => true; // a heavy database writer: conflicts with every other task (see TaskPriorityGate)
 
         public async Task ExecuteAsync(CancellationToken ct)
         {
@@ -109,6 +110,7 @@ namespace Chronicle.Services.Database
         public string DisplayName => "Database Maintenance (full rebuild)";
         public string Description => "Rebuilds indexes and compacts the database file to reclaim free space. Locks the database while it runs, and needs free disk space about the size of the database.";
         public string DefaultCron => "0 4 1 * *";
+        public bool Exclusive => true; // a heavy database writer: conflicts with every other task (see TaskPriorityGate)
 
         public async Task ExecuteAsync(CancellationToken ct)
         {

@@ -39,6 +39,7 @@ public sealed class ScheduledScanService : IScheduledTask
     public string DisplayName => "Scheduled File Scan";
     public string Description => "Scans all enabled scan folders and auto-imports groups above the confidence threshold.";
     public string DefaultCron => "0 3 * * *";
+    public bool Exclusive => true; // a heavy database writer: conflicts with every other task (see TaskPriorityGate)
 
     public async Task ExecuteAsync(CancellationToken ct)
     {

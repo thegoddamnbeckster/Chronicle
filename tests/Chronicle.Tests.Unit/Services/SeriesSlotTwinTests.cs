@@ -156,7 +156,7 @@ public class SeriesSlotTwinTests
     private const string FileJson = """{"fileScanner":{"filePaths":["E:/Audio Books/Matt Dinniman/Dungeon Crawler Carl - 1 - (2021) - Dungeon Crawler Carl"]}}""";
 
     [Fact]
-    public async Task Repair_NeverRemovesAFlaggedPlaceholderThatHoldsAFile()
+    public async Task Repair_KeepsAFlaggedPlaceholderThatHoldsAFile_AsTheEntry_AndRemovesTheFilelessOne()
     {
         // The scanner attached the user's folder to the provider's item and never cleared its stub flag, so the
         // "placeholder" is in fact the item that owns the file (Dungeon Crawler Carl #1, 2026-10-15).
@@ -168,8 +168,9 @@ public class SeriesSlotTwinTests
 
         await NewRepair(db).ExecuteAsync(default);
 
+        // the item that holds the file is THE entry, flag or no flag; the one without a file is the duplicate
         Assert.NotNull(await db.MediaItems.FindAsync(lib.Placeholder.Id));
-        Assert.NotNull(await db.MediaItems.FindAsync(lib.Real.Id));
+        Assert.Null(await db.MediaItems.FindAsync(lib.Real.Id));
         Assert.Contains(await db.MediaExternalIds.Where(e => e.MediaItemId == lib.Placeholder.Id).ToListAsync(),
             e => e.ExternalId == "hardcover:1486584");   // its ids stay with it
     }
@@ -227,6 +228,130 @@ public class SeriesSlotTwinTests
         Assert.Contains("hardcover:1486584", ids);          // the placeholder's id replaces it
         Assert.All(await db.MediaEnrichments.Where(e => e.MediaItemId == lib.Real.Id).ToListAsync(),
             e => Assert.Equal(EnrichmentStatus.Pending, e.Status));   // so the providers look again
+    }
+
+    [Fact]
+    public async Task Repair_GivesTheTwinTheIdsEvenWhenTheEbookCopyOfTheSameBookHoldsThem()
+    {
+        // A book and its audiobook carry the same Hardcover id; only another item of the SAME type holding it blocks.
+        var lib = await BuildAsync();
+        await using var db = lib.Db;
+        db.MediaTypes.Add(new MediaType { Id = 2, Name = "books", DisplayName = "Books", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow });
+        var ebook = new MediaItem { MediaTypeId = 2, Name = "Heroes", HierarchyLevel = 2, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.MediaItems.Add(ebook);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = ebook.Id, Source = "hardcover", ExternalId = "hardcover:1486584" });
+        await db.SaveChangesAsync();
+
+        await NewRepair(db).ExecuteAsync(default);
+
+        Assert.Null(await db.MediaItems.FindAsync(lib.Placeholder.Id));
+        var ids = (await db.MediaExternalIds.Where(e => e.MediaItemId == lib.Real.Id).ToListAsync()).Select(e => e.ExternalId);
+        Assert.Contains("hardcover:1486584", ids);
+    }
+
+    [Fact]
+    public async Task Repair_DoesNotRemoveTheTwinsOwnIdWhenTheReplacementIsBlockedBySameTypeItem()
+    {
+        var lib = await BuildAsync(realName: "The Dungeon Anarchist's Cookbook: Dungeon Crawler Carl, Book 3", stubName: "The Butcher's Masquerade");
+        await using var db = lib.Db;
+        lib.Real.MetadataJson = """{"fileScanner":{"folderPath":"E:/Audio Books/Matt Dinniman/Dungeon Crawler Carl - 5 - (2022) - The Butcher's Masquerade","filePaths":["E:/x/y"]}}""";
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = lib.Real.Id, Source = "hardcover", ExternalId = "hardcover:2333834" });
+        var other = Item("Another Audiobook", 2, lib.Series.Id, number: 99);
+        db.MediaItems.Add(other);
+        await db.SaveChangesAsync();
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = other.Id, Source = "hardcover", ExternalId = "hardcover:1486584" });
+        await db.SaveChangesAsync();
+
+        await NewRepair(db).ExecuteAsync(default);
+
+        var ids = (await db.MediaExternalIds.Where(e => e.MediaItemId == lib.Real.Id).ToListAsync()).Select(e => e.ExternalId);
+        Assert.Contains("hardcover:2333834", ids);   // still has the id it had: nothing was lost for nothing
+    }
+
+    // ── the item that holds the file is THE entry ─────────────────────────────
+
+    /// <summary>A series slot: the user's book WITH a file, plus a second book at the same position with none.</summary>
+    private static async Task<(Library Lib, MediaItem Leftover)> FileAndLeftoverAsync(string leftoverName = "Heroes: A Hell Divers Novel")
+    {
+        var lib = await BuildAsync();
+        lib.Db.MediaItems.Remove(lib.Placeholder);                      // only the file/no-file pair is under test
+        lib.Real.MetadataJson = FileJson;
+        var leftover = Item(leftoverName, 2, lib.Series.Id, number: 12);
+        lib.Db.MediaItems.Add(leftover);
+        await lib.Db.SaveChangesAsync();
+        lib.Db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = leftover.Id, Source = "hardcover", ExternalId = "hardcover:2333832" });
+        await lib.Db.SaveChangesAsync();
+        return (lib, leftover);
+    }
+
+    [Fact]
+    public async Task Repair_RemovesTheFilelessDuplicate_AndTheFileHolderKeepsItsOwnIds()
+    {
+        var (lib, leftover) = await FileAndLeftoverAsync();
+        await using var db = lib.Db;
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = lib.Real.Id, Source = "hardcover", ExternalId = "hardcover:446681" });
+        // the library page had created an untouched "unwatched" row for the leftover -- that is not user data
+        db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = leftover.Id, Status = LibraryStatus.Unwatched, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        await NewRepair(db).ExecuteAsync(default);
+
+        Assert.Null(await db.MediaItems.FindAsync(leftover.Id));
+        Assert.NotNull(await db.MediaItems.FindAsync(lib.Real.Id));
+        var ids = (await db.MediaExternalIds.Where(e => e.MediaItemId == lib.Real.Id).ToListAsync()).Select(e => e.ExternalId).ToList();
+        Assert.Contains("hardcover:446681", ids);
+        Assert.DoesNotContain("hardcover:2333832", ids);   // one id per source: the file holder keeps its own
+    }
+
+    [Fact]
+    public async Task Repair_KeepsAFilelessItemTheUserHasRatedOrMarked()
+    {
+        var (lib, leftover) = await FileAndLeftoverAsync();
+        await using var db = lib.Db;
+        db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = leftover.Id, Status = LibraryStatus.Completed, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        await NewRepair(db).ExecuteAsync(default);
+
+        Assert.NotNull(await db.MediaItems.FindAsync(leftover.Id));
+    }
+
+    [Fact]
+    public async Task Repair_LeavesTwoItemsThatBothHoldAFile_AndUnrelatedTitles()
+    {
+        var (both, leftoverWithFile) = await FileAndLeftoverAsync();
+        await using (both.Db)
+        {
+            leftoverWithFile.MetadataJson = """{"fileScanner":{"filePaths":["E:/Audio Books/other-edition"]}}""";
+            await both.Db.SaveChangesAsync();
+            await NewRepair(both.Db).ExecuteAsync(default);
+            Assert.NotNull(await both.Db.MediaItems.FindAsync(leftoverWithFile.Id));   // two editions on disk
+        }
+
+        var (unrelated, other) = await FileAndLeftoverAsync(leftoverName: "A Completely Different Title");
+        await using (unrelated.Db)
+        {
+            await NewRepair(unrelated.Db).ExecuteAsync(default);
+            Assert.NotNull(await unrelated.Db.MediaItems.FindAsync(other.Id));
+        }
+    }
+
+    [Fact]
+    public async Task Sync_PrefersTheItemThatHoldsTheFileWhenAnIdMatchesSeveral()
+    {
+        var lib = await BuildAsync();
+        await using var db = lib.Db;
+        lib.Real.MetadataJson = FileJson;                       // the file holder is a real item
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = lib.Real.Id, Source = "hardcover", ExternalId = "hardcover:1486584" });
+        await db.SaveChangesAsync();                            // the placeholder carries the same id (an edition)
+
+        var provider = Provider(HardcoverBook("hardcover:1486584", "Hell Divers XII: Heroes", 12));
+        await new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance)
+            .EnsureSeriesStubsAsync(db, lib.Series, provider.Object, default);
+
+        var remaining = await db.MediaItems.Where(m => m.ParentId == lib.Series.Id).ToListAsync();
+        Assert.Contains(remaining, m => m.Id == lib.Real.Id);   // the entry with the file survives
     }
 
     [Fact]

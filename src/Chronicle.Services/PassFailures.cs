@@ -13,6 +13,8 @@ internal sealed class PassFailures(ILogger logger, string taskName)
 
     public async Task RunAsync(string pass, Func<CancellationToken, Task> run, CancellationToken ct)
     {
+        // A safe point between passes: a higher-ranked job that cannot share the database makes this one wait here.
+        await TaskGate.CheckpointAsync(ct);
         try
         {
             await run(ct);

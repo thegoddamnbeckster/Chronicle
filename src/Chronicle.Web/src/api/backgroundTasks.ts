@@ -27,6 +27,12 @@ export interface BackgroundTask {
   runConfirmation: { title: string; message: string } | null
   /** Set when the owning plugin's files changed without approval and it was not loaded. */
   pluginIntegrityBlockedAt?: string | null
+  /** 1 is the highest priority; every task has its own. Of two tasks that conflict the higher one runs and the other waits. */
+  priority?: number
+  /** A heavy database writer: conflicts with every other task. */
+  exclusive?: boolean
+  /** While paused or queued: the name of the higher-priority task it is waiting for. */
+  waitingFor?: string | null
 }
 
 export async function getBackgroundTasks(): Promise<BackgroundTask[]> {
@@ -39,6 +45,11 @@ export async function updateBackgroundTask(
   patch: { cronExpression?: string; isEnabled?: boolean },
 ): Promise<void> {
   await client.patch(`/background-tasks/${taskId}`, patch)
+}
+
+/** Moves a task one place up or down in the priority order (admin). */
+export async function moveBackgroundTask(taskId: string, direction: 'up' | 'down'): Promise<void> {
+  await client.post(`/background-tasks/${taskId}/priority`, { direction })
 }
 
 export async function runBackgroundTask(taskId: string): Promise<void> {

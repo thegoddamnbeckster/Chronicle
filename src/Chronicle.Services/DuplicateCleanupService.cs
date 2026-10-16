@@ -213,6 +213,12 @@ public sealed class DuplicateCleanupService
                 var winner = ordered[0];
                 foreach (var loser in ordered.Skip(1))
                 {
+                    // Below the top level a merge is only ever allowed within one parent (a track within its album),
+                    // so the same recording on two albums -- which one id legitimately names -- can never merge.
+                    // Skipped here, before anything is logged or checked: this used to try, log a warning and be
+                    // refused ~11,000 times a night, keeping the whole task busy for a quarter of an hour.
+                    if (winner.HierarchyLevel > 0 && winner.ParentId != loser.ParentId) continue;
+
                     // Confirmed root cause (2026-08-21): unlike Pass 1 (same file path) and Pass 3
                     // (title match by construction), a shared (source, externalId) here is NOT
                     // proof the two items are the same real-world thing -- an episode's external ID

@@ -190,6 +190,26 @@ namespace Chronicle.Services
             return System.Linq.Expressions.Expression.Lambda<Func<LibraryRow, string>>(body, row);
         }
 
+        public async Task<IReadOnlyList<int>> GetSectionItemIdsAsync(
+            int userId, LibraryStatus? status, bool rootOnly, bool includeMoviesInCollections, bool includeStubs,
+            int mediaTypeId, LibrarySort? sort, CancellationToken ct = default)
+        {
+            var itemsQuery = (await BuildItemsQueryAsync(rootOnly, includeMoviesInCollections, includeStubs, ct))
+                .Where(m => m.MediaTypeId == mediaTypeId);
+
+            var joined =
+                from m in itemsQuery
+                join l in _context.UserLibraries.Where(ul => ul.UserId == userId)
+                    on m.Id equals l.MediaItemId into libGroup
+                from lib in libGroup.DefaultIfEmpty()
+                select new LibraryRow { MediaItem = m, Lib = lib };
+
+            if (status.HasValue)
+                joined = joined.Where(x => (x.Lib != null ? x.Lib.Status : LibraryStatus.Unwatched) == status.Value);
+
+            return await ApplySort(joined, sort).Select(x => x.MediaItem.Id).ToListAsync(ct);
+        }
+
         public async Task<IReadOnlyList<LibrarySection>> GetSectionsAsync(
             int userId, LibraryStatus? status, bool rootOnly, bool includeMoviesInCollections, bool includeStubs,
             CancellationToken ct = default)

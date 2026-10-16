@@ -18,6 +18,12 @@ namespace Chronicle.Services
         Task<IEnumerable<UserLibrary>> GetForUserAsync(int userId, LibraryStatus? status = null, int page = 1, int perPage = 20, bool rootOnly = false, bool includeMoviesInCollections = false, bool includeStubs = true, CancellationToken ct = default, int? mediaTypeId = null, LibrarySort? sort = null);
 
         /// <summary>One entry per media type that has library items, with how many (for the Library page's section headers).</summary>
+        /// <summary>
+        /// The ids of one section in the order the Library page lists it, and nothing else -- what a detail page needs
+        /// to offer Previous/Next among its neighbours when it was not opened from the list. Creates no rows.
+        /// </summary>
+        Task<IReadOnlyList<int>> GetSectionItemIdsAsync(int userId, LibraryStatus? status, bool rootOnly, bool includeMoviesInCollections, bool includeStubs, int mediaTypeId, LibrarySort? sort, CancellationToken ct = default);
+
         Task<IReadOnlyList<LibrarySection>> GetSectionsAsync(int userId, LibraryStatus? status, bool rootOnly, bool includeMoviesInCollections, bool includeStubs, CancellationToken ct = default);
 
         Task<UserLibrary?> GetEntryAsync(int userId, int mediaItemId);

@@ -14,6 +14,10 @@ namespace Chronicle.Services;
 ///                                 re-applied (the split now leaves a user's merge alone).
 ///   1d. Stub Flag Repair       -- an item that holds a file is not a provider's placeholder; its stub flag is
 ///                                 cleared (cleanups treat a stub as disposable).
+///   1e. Misattached Series Repair -- a standalone book that was given another author's series (same name) is turned
+///                                 back into a book: series ids and placeholder children removed, re-enriched.
+///   1f. Ghost Item Repair      -- an item the scanner created whose file is gone and that holds nothing else (a
+///                                 renamed folder's old name), and a series left empty by that, are removed.
 ///   2. Movie External ID Repair -- ids no provider returned for a movie (a remake's or original's)
 ///                                 are detached.
 ///   3. Movie File Year Repair  -- a video file whose name year contradicts a provider-confirmed movie
@@ -48,6 +52,8 @@ public sealed class LibraryIntegrityRepairService(
     YearOverviewArticleSplitService yearOverviewSplit,
     UserMergeRestoreService userMergeRestore,
     StubFlagRepairService stubFlags,
+    MisattachedSeriesRepairService misattachedSeries,
+    GhostItemRepairService ghostItems,
     MovieExternalIdRepairService movieExternalIds,
     MovieFileYearRepairService movieFileYear,
     ImplausibleYearRepairService implausibleYear,
@@ -68,6 +74,7 @@ public sealed class LibraryIntegrityRepairService(
     public string DisplayName => "Library Integrity Repair";
     public string Description => "Nightly data repair: fixes data attached to the wrong thing (people mixed with a same-named person, movies carrying another film's ids, misfiled books and series, bad years), clears File Scanner links to files that no longer exist, and strips stray \"(film)\"-style suffixes from stored titles.";
     public string DefaultCron => "45 2 * * *";
+    public bool Exclusive => true; // a heavy database writer: conflicts with every other task (see TaskPriorityGate)
 
     public async Task ExecuteAsync(CancellationToken ct)
     {
@@ -75,6 +82,8 @@ public sealed class LibraryIntegrityRepairService(
         await passes.RunAsync("person identity split", personSplit.ExecuteAsync, ct);
         await passes.RunAsync("year overview article split", yearOverviewSplit.ExecuteAsync, ct);
         await passes.RunAsync("stub flag repair", stubFlags.ExecuteAsync, ct);
+        await passes.RunAsync("misattached series repair", misattachedSeries.ExecuteAsync, ct);
+        await passes.RunAsync("ghost item repair", ghostItems.ExecuteAsync, ct);
         await passes.RunAsync("user merge restore", userMergeRestore.ExecuteAsync, ct);
         await passes.RunAsync("movie external id repair", movieExternalIds.ExecuteAsync, ct);
         await passes.RunAsync("movie file year repair", movieFileYear.ExecuteAsync, ct);

@@ -27,6 +27,13 @@ public interface IScheduledTask
     IReadOnlyList<string> ReplacesTaskIds => [];
 
     /// <summary>
+    /// True for a heavy database writer (the backup, duplicate cleanup, the integrity repair, a library scan). An exclusive
+    /// task conflicts with every other task: of two that conflict, the higher-ranked one runs and the other pauses until it
+    /// is done (see <see cref="TaskPriorityGate"/>). Light tasks do not conflict with one another.
+    /// </summary>
+    bool Exclusive => false;
+
+    /// <summary>
     /// Execute one run of this task.
     /// Called by TaskSchedulerService on schedule and on manual trigger.
     /// </summary>

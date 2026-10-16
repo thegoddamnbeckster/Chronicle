@@ -146,7 +146,7 @@ builder.Services.AddDbContext<ChronicleDbContext>((serviceProvider, options) =>
         var sqliteTemp = string.IsNullOrWhiteSpace(sqliteFile) || sqliteFile.StartsWith(":", StringComparison.Ordinal)
             ? null
             : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sqliteFile))!, "temp");
-        options.AddInterceptors(new SqliteBusyTimeoutInterceptor(sqliteTemp));
+        options.AddInterceptors(new SqliteBusyTimeoutInterceptor(sqliteTemp), new SlowCommandLogger(), new LongTransactionLogger());
     }
 
     // Tells the web UI which library items changed (provider-independent).
@@ -278,6 +278,8 @@ builder.Services.AddSingleton<AudiobookSeriesNumberRepairService>();
 builder.Services.AddSingleton<SeriesSlotTwinRepairService>();
 builder.Services.AddSingleton<UserMergeRestoreService>();
 builder.Services.AddSingleton<StubFlagRepairService>();
+builder.Services.AddSingleton<MisattachedSeriesRepairService>();
+builder.Services.AddSingleton<GhostItemRepairService>();
 builder.Services.AddSingleton<AlbumNameYearRepairService>();
 builder.Services.AddSingleton<SeriesFragmentRepairService>();
 builder.Services.AddSingleton<UnknownSeriesRepairService>();
@@ -325,6 +327,7 @@ builder.Services.AddSingleton<PluginUpdateCheckService>();
 builder.Services.AddSingleton<IScheduledTask>(
     sp => sp.GetRequiredService<PluginUpdateCheckService>());
 
+builder.Services.AddSingleton<Chronicle.Services.ITaskPriorityGate, Chronicle.Services.TaskPriorityGate>();
 builder.Services.AddSingleton<TaskSchedulerService>();
 builder.Services.AddSingleton<ITaskSchedulerService>(
     sp => sp.GetRequiredService<TaskSchedulerService>());
@@ -465,6 +468,10 @@ if (!dbProvider.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
 // Runs BEFORE the startup work below so that nothing writes to the database being copied from.
 if (DatabaseCopyCommand.ParseTarget(args) is { } copyTarget)
     return await DatabaseCopyCommand.RunAsync(connectionString, copyTarget, DatabaseCopyCommand.WantsReplace(args), Console.Out);
+
+Log.Information(
+    "Database timing: SQLite busy timeout {Busy} ms, command timeout 30 s; a command over {Slow} s and a transaction over {Long} s are logged with their start time and the job that ran them",
+    SqliteBusyTimeoutInterceptor.BusyTimeoutMs, SlowCommandLogger.SlowThreshold.TotalSeconds, LongTransactionLogger.LongThreshold.TotalSeconds);
 
 // ── Migrate on startup (skip for InMemory used in tests) ─────────────────────
 using (var scope = app.Services.CreateScope())

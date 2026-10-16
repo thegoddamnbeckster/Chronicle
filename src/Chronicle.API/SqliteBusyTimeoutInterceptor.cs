@@ -26,12 +26,14 @@ namespace Chronicle.API;
 /// </summary>
 internal sealed class SqliteBusyTimeoutInterceptor : DbConnectionInterceptor
 {
-    private readonly string _pragmas;
+    /// <summary>How long SQLite itself waits for a lock before reporting it busy (the EF command timeout, 30 s by default, applies on top).</summary>
+    internal const int BusyTimeoutMs = 5000;
 
+    private readonly string _pragmas;
     /// <param name="tempDirectory">Where SQLite may put scratch files (created if missing). Null leaves SQLite's default.</param>
     public SqliteBusyTimeoutInterceptor(string? tempDirectory = null)
     {
-        _pragmas = "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;";
+        _pragmas = $"PRAGMA busy_timeout={BusyTimeoutMs}; PRAGMA foreign_keys=ON;";
         if (tempDirectory is not null)
         {
             Directory.CreateDirectory(tempDirectory);

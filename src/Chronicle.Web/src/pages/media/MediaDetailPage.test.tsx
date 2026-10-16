@@ -40,6 +40,7 @@ const mockedDeleteMedia = vi.mocked(mediaApi.deleteMedia)
 const mockedGetLibraryEntryForMedia = vi.mocked(libraryApi.getLibraryEntryForMedia)
 const mockedGetLibraryEntriesForMediaIds = vi.mocked(libraryApi.getLibraryEntriesForMediaIds)
 const mockedAddToLibrary = vi.mocked(libraryApi.addToLibrary)
+const mockedGetLibrarySectionIds = vi.mocked(libraryApi.getLibrarySectionIds)
 const mockedUpdateLibraryEntry = vi.mocked(libraryApi.updateLibraryEntry)
 
 const mockedListPlugins = vi.mocked(pluginsApi.listPlugins)
@@ -151,6 +152,7 @@ beforeEach(() => {
 
   mockedGetLibraryEntryForMedia.mockResolvedValue(null)
   mockedGetLibraryEntriesForMediaIds.mockResolvedValue([])
+  mockedGetLibrarySectionIds.mockResolvedValue([])
   mockedAddToLibrary.mockResolvedValue(makeLibraryEntry(makeItem()))
   mockedUpdateLibraryEntry.mockResolvedValue(makeLibraryEntry(makeItem()))
 
@@ -180,6 +182,48 @@ async function openFold(label: string) {
 }
 
 describe('MediaDetailPage', () => {
+  it('offers Previous/Next from the Library section when opened without a list (a top-level item)', async () => {
+    sessionStorage.clear()
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 1, name: 'audiobooks', displayName: 'Audiobooks', hierarchyLevels: 3, hierarchyLabels: ['Author', 'Series', 'Book'] },
+    ])
+    mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 1, mediaTypeName: 'Audiobooks', hierarchyLevel: 0, parentId: null, name: 'Michael Cheney' }))
+    mockedGetLibrarySectionIds.mockResolvedValue([10, MEDIA_ID, 30])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Michael Cheney' })
+
+    expect(await screen.findByText(/2 \/ 3/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Prev/ })).toHaveAttribute('href', '/media/10')
+    expect(screen.getByRole('link', { name: /Next/ })).toHaveAttribute('href', '/media/30')
+    // asked in the order the Library page uses (its saved sort)
+    expect(mockedGetLibrarySectionIds).toHaveBeenCalledWith(expect.objectContaining({ mediaTypeId: 1, sortBy: 'name', sortDir: 'asc' }))
+  })
+
+  it('offers Previous/Next among the children of the parent, in the grid order, when opened without a list', async () => {
+    sessionStorage.clear()
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 1, name: 'audiobooks', displayName: 'Audiobooks', hierarchyLevels: 3, hierarchyLabels: ['Author', 'Series', 'Book'] },
+    ])
+    mockedGetMedia.mockImplementation(async id => id === MEDIA_ID
+      ? makeItem({ mediaTypeId: 1, mediaTypeName: 'Audiobooks', hierarchyLevel: 1, parentId: 900, name: 'Middle Series', ancestors: [{ id: 900, name: 'An Author' }] })
+      : makeItem({ id }))
+    mockedGetMediaChildren.mockImplementation(async id => id === 900
+      ? [
+        makeItem({ id: 303, name: 'Zed Series', mediaTypeId: 1, hierarchyLevel: 1, parentId: 900 }),
+        makeItem({ id: MEDIA_ID, name: 'Middle Series', mediaTypeId: 1, hierarchyLevel: 1, parentId: 900 }),
+        makeItem({ id: 101, name: 'Alpha Series', mediaTypeId: 1, hierarchyLevel: 1, parentId: 900 }),
+      ]
+      : [])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Middle Series' })
+
+    expect(await screen.findByText(/2 \/ 3/)).toBeInTheDocument()   // Alpha, Middle, Zed
+    expect(screen.getByRole('link', { name: /Prev/ })).toHaveAttribute('href', '/media/101')
+    expect(screen.getByRole('link', { name: /Next/ })).toHaveAttribute('href', '/media/303')
+  })
+
   it('after deleting a top-level item, lands on the Library', async () => {
     const user = userEvent.setup()
     mockedDeleteMedia.mockResolvedValue(undefined)

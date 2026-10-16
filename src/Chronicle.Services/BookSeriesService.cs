@@ -39,6 +39,22 @@ public class BookSeriesService(
         if (series.MediaType is null || series.MediaType.HierarchyLevels < 3 || series.ParentId is null)
             return true; // not an Author -> Series -> Book type, or has no author -- nothing to do
 
+        // A series container holds no file itself -- its books do. An item that holds one, and has no real book of
+        // its own under it, is a standalone book (it sits at the series level too) that a provider matched to a
+        // same-named series by another author; building that series' books under it showed their covers as the
+        // book's own ("Prey", "Next"). One that has real children (the user's own nested folders) is left to sync.
+        if (Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(series.MetadataJson))
+        {
+            var kids = await db.MediaItems.Where(m => m.ParentId == series.Id).ToListAsync(ct);
+            if (!kids.Any(k => !SeriesSlotTwins.IsPlaceholder(k)))
+            {
+                logger.LogInformation(
+                    "Series sync skipped for {SeriesId} \"{Name}\" -- it holds a file and has no real book under it, so it is a book, not a series",
+                    series.Id, series.Name);
+                return true;
+            }
+        }
+
         var callerEntry = allProviders?.FirstOrDefault(p => ReferenceEquals(p.Provider, provider));
         var providerSource = callerEntry.HasValue
             ? PluginIdHelper.ToSource(callerEntry.Value.PluginId)
@@ -160,7 +176,8 @@ public class BookSeriesService(
             var representativeId = part.ExternalId;
             var idMatches = subtree
                 .Where(m => m.ExternalIds.Any(e => partIds.Contains(e.ExternalId)))
-                .OrderBy(m => m.IsStub)
+                .OrderBy(m => Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(m.MetadataJson) ? 0 : 1)
+                .ThenBy(m => m.IsStub)
                 .ThenBy(m => m.ExternalIds.Any(e => string.Equals(e.ExternalId, representativeId, StringComparison.OrdinalIgnoreCase)) ? 0 : 1)
                 .ThenBy(m => m.Id)
                 .ToList();
@@ -442,7 +459,13 @@ public class BookSeriesService(
         var blobs = await db.MediaItems.Where(m => idList.Contains(m.Id))
             .Select(m => new { m.Id, m.MetadataJson }).ToListAsync(ct);
         result.UnionWith(blobs.Where(b => Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(b.MetadataJson)).Select(b => b.Id));
-        result.UnionWith(await db.UserLibraries.Where(u => idList.Contains(u.MediaItemId)).Select(u => u.MediaItemId).ToListAsync(ct));
+        // A library row alone is not the user's data: one is created for every item the library page lists, with the
+        // default "unwatched" state. Only a row the user actually changed counts.
+        result.UnionWith(await db.UserLibraries
+            .Where(u => idList.Contains(u.MediaItemId) &&
+                        (u.Status != LibraryStatus.Unwatched || u.UserRating != null || u.Notes != null ||
+                         u.StartedAt != null || u.CompletedAt != null))
+            .Select(u => u.MediaItemId).ToListAsync(ct));
         result.UnionWith(await db.InteractionEvents.Where(e => idList.Contains(e.MediaItemId)).Select(e => e.MediaItemId).ToListAsync(ct));
         result.UnionWith(await db.MediaListItems.Where(l => idList.Contains(l.MediaItemId)).Select(l => l.MediaItemId).ToListAsync(ct));
         return result;

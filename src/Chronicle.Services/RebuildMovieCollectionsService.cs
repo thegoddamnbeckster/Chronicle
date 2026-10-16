@@ -30,6 +30,7 @@ public sealed class RebuildMovieCollectionsService : IScheduledTask
     public string DisplayName => "Rebuild Movie Collections";
     public string Description => "Re-parents all movies into their correct collections and creates stub entries for missing collection members using stored metadata — no re-fetch required for pass 1.";
     public string DefaultCron => "0 4 * * 0"; // weekly, Sunday 4 AM — manual trigger is the normal path
+    public bool Exclusive => true; // a heavy database writer: conflicts with every other task (see TaskPriorityGate)
 
     async Task IScheduledTask.ExecuteAsync(CancellationToken ct)
     {

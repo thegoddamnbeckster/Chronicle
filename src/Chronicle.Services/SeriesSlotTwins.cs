@@ -84,7 +84,7 @@ internal static class SeriesSlotTwins
     internal static async Task<bool> AdoptAsync(
         ChronicleDbContext db, MediaItem twin, IReadOnlyCollection<MediaItem> placeholders,
         IEnumerable<(string Source, string ExternalId)> extraIds, ILogger logger, CancellationToken ct,
-        string? providerTitle = null)
+        string? providerTitle = null, bool allowReplacingOwnIds = true)
     {
         var protectedIds = await BookSeriesService.StubIdsWithUserDataAsync(db, placeholders.Select(p => p.Id), ct);
         if (placeholders.Any(p => protectedIds.Contains(p.Id))) return false;
@@ -106,13 +106,22 @@ internal static class SeriesSlotTwins
 
         // Only the folder name ties them (the title does not): the id the book carries came from a wrong match.
         var title = providerTitle ?? placeholders.FirstOrDefault()?.Name;
-        var replaceOwnIds = !NamesRelated(twin.Name, title) && FolderRelated(twin, title);
+        var replaceOwnIds = allowReplacingOwnIds && !NamesRelated(twin.Name, title) && FolderRelated(twin, title);
 
         var added = false;
         foreach (var (source, externalId) in ids)
         {
+            // An id may be shared with the same work in another format (a book and its audiobook carry the same
+            // Hardcover id); only another item of the SAME type holding it is a conflict. Checked before anything
+            // is removed, so a blocked id never costs the twin the one it already has.
+            var heldElsewhere = await db.MediaExternalIds.AnyAsync(
+                e => e.Source == source && e.ExternalId == externalId && e.MediaItemId != twin.Id &&
+                     e.MediaItem!.MediaTypeId == twin.MediaTypeId, ct);
+            if (heldElsewhere) continue;
+
             var own = twin.ExternalIds.Where(e => string.Equals(e.Source, source, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (own.Count > 0 && replaceOwnIds && !own.Any(e => e.ExternalId == externalId))
+            if (own.Any(e => e.ExternalId == externalId)) continue;
+            if (own.Count > 0 && replaceOwnIds)
             {
                 db.MediaExternalIds.RemoveRange(own);
                 foreach (var gone in own) twin.ExternalIds.Remove(gone);
@@ -121,10 +130,9 @@ internal static class SeriesSlotTwins
             }
             // one id per source: a twin that already has one of its own keeps it
             if (own.Count > 0) continue;
-            var heldElsewhere = await db.MediaExternalIds.AnyAsync(
-                e => e.Source == source && e.ExternalId == externalId && e.MediaItemId != twin.Id, ct);
-            if (heldElsewhere || twin.ExternalIds.Any(e => e.Source == source && e.ExternalId == externalId)) continue;
-            db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = twin.Id, Source = source, ExternalId = externalId });
+            var gained = new MediaExternalId { MediaItemId = twin.Id, Source = source, ExternalId = externalId };
+            db.MediaExternalIds.Add(gained);
+            twin.ExternalIds.Add(gained);
             added = true;
         }
         // Only when it gained an id: providers need to look again. Otherwise what it already has stands.
@@ -192,5 +200,47 @@ public sealed class SeriesSlotTwinRepairService(
         }
 
         logger.LogInformation("Series slot twin repair: joined {Count} placeholder(s) to the book already in the library", joined);
+        await RemoveFilelessDuplicatesAsync(db, ct);
+    }
+
+    /// <summary>
+    /// The item that holds the user's file is THE entry. When another item sits at the same position in the same
+    /// series, holds no file, belongs to nobody (no rating, status, notes or play history) and reads as the same
+    /// book, it is a leftover duplicate and is removed; the entry with the file keeps its own ids and takes any it
+    /// lacked. Two items that BOTH hold a file are never touched (two editions on disk), nor is anything ambiguous.
+    /// </summary>
+    private async Task RemoveFilelessDuplicatesAsync(ChronicleDbContext db, CancellationToken ct)
+    {
+        var books = await db.MediaItems
+            .Include(m => m.ExternalIds)
+            .Where(m => m.HierarchyLevel == 2 && m.ParentId != null && m.MediaType!.HierarchyLevels > 2)
+            .ToListAsync(ct);
+        var manual = books
+            .Where(b => b.ExternalIds.Any(e => e.ExternalId == BookSeriesService.ManualSeriesMemberMarker))
+            .Select(b => b.Id)
+            .ToHashSet();
+
+        var removed = 0;
+        foreach (var seriesBooks in books.GroupBy(b => b.ParentId!.Value))
+        {
+            foreach (var slot in seriesBooks.Where(b => SeriesPositionHelper.Effective(b).HasValue)
+                         .GroupBy(b => SeriesPositionHelper.Effective(b)!.Value))
+            {
+                var holders = slot.Where(b => Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(b.MetadataJson)).ToList();
+                if (holders.Count != 1) continue;                       // none, or two editions on disk
+                var keeper = holders[0];
+
+                var leftovers = slot
+                    .Where(b => b.Id != keeper.Id && !manual.Contains(b.Id) &&
+                                !Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(b.MetadataJson) &&
+                                (SeriesSlotTwins.NamesRelated(b.Name, keeper.Name) || SeriesSlotTwins.FolderRelated(keeper, b.Name)))
+                    .ToList();
+                if (leftovers.Count == 0 || manual.Contains(keeper.Id)) continue;
+
+                if (await SeriesSlotTwins.AdoptAsync(db, keeper, leftovers, [], logger, ct, allowReplacingOwnIds: false)) removed += leftovers.Count;
+            }
+        }
+
+        logger.LogInformation("Series slot twin repair: removed {Count} file-less duplicate(s) of a book that holds a file", removed);
     }
 }

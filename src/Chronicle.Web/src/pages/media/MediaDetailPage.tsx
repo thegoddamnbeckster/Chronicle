@@ -1,12 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, unparentFromSeries, reparentToSeries, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { childrenLabel as childrenLabelFor, statusLabel } from '@/utils/typeWording'
-import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, addToLibrary, updateLibraryEntry, resetWatchProgress } from '@/api/library'
+import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, getLibrarySectionIds, addToLibrary, updateLibraryEntry, resetWatchProgress } from '@/api/library'
 import { posterProgressPercent } from '@/utils/posterProgress'
+import { sortChildItems } from '@/utils/childOrder'
+import { loadPrefs } from '@/utils/libraryPrefs'
+import { loadSortSettings } from '@/utils/sortSettings'
 import { listPlugins } from '@/api/plugins'
 import { getPluginDisplayOrder, getAppSettings } from '@/api/settings'
 import { getMyPreferences, updateMyPreferences } from '@/api/users'
@@ -147,18 +150,13 @@ export default function MediaDetailPage() {
   }, [mediaId, navState])
 
   // Fall back to sessionStorage when arriving via breadcrumb or direct URL (no location.state)
-  const effectiveNavState = (() => {
+  const rememberedNavState = (() => {
     if (navState?.listIds?.length) return navState
     try {
       const stored = sessionStorage.getItem(`chronicle.listNav.${mediaId}`)
       return stored ? JSON.parse(stored) as { listIds: number[]; listLabel?: string } : null
     } catch { return null }
   })()
-
-  const listIds = effectiveNavState?.listIds ?? []
-  const currentIndex = listIds.indexOf(mediaId)
-  const prevId = currentIndex > 0 ? listIds[currentIndex - 1] : null
-  const nextId = currentIndex < listIds.length - 1 ? listIds[currentIndex + 1] : null
 
   const { data: item, isLoading, error } = useQuery({
     queryKey: ['media', mediaId],
@@ -464,6 +462,48 @@ export default function MediaDetailPage() {
 
   // The on-screen group's heading ("Band Members", "Narrators", ...) comes from the media type's own setting.
   const castLabel = mediaTypes.find(t => t.id === item?.mediaTypeId)?.castHeading || 'Cast'
+
+  // Previous/Next follows the list the page was opened from. When it was not opened from one (reached by "up", a
+  // breadcrumb, a search, a new tab) the list is worked out instead, so the buttons are always there: an item below
+  // the top level takes its parent's children, in the order the grid shows them; a top-level item takes its Library
+  // section, in the order and with the filters the Library page currently uses.
+  const needsOwnList = !rememberedNavState?.listIds?.length && !!item
+  const { data: siblings = [] } = useQuery({
+    queryKey: ['media', item?.parentId, 'children'],
+    queryFn: () => getMediaChildren(item!.parentId!),
+    enabled: needsOwnList && item?.parentId != null,
+  })
+  const libraryPrefs = useMemo(() => loadPrefs(), [])
+  const librarySort = useMemo(() => loadSortSettings(), [])
+  const articles = librarySort.ignoreArticles ? librarySort.ignoredArticles : undefined
+  const { data: sectionIds = [] } = useQuery({
+    queryKey: ['library', 'section-ids', item?.mediaTypeId, libraryPrefs.statusFilter ?? null,
+      libraryPrefs.groupMoviesIntoCollections, libraryPrefs.sortBy, libraryPrefs.sortDir, articles ?? null],
+    queryFn: () => getLibrarySectionIds({
+      mediaTypeId: item!.mediaTypeId,
+      status: libraryPrefs.statusFilter,
+      includeMoviesInCollections: !libraryPrefs.groupMoviesIntoCollections,
+      sortBy: libraryPrefs.sortBy,
+      sortDir: libraryPrefs.sortDir,
+      ignoreArticles: articles,
+    }),
+    enabled: needsOwnList && item != null && item.parentId == null,
+    staleTime: 5 * 60 * 1000,
+  })
+  const ownNavState = (() => {
+    if (!needsOwnList || !item) return null
+    const type = mediaTypes.find(t => t.id === item.mediaTypeId)
+    if (item.parentId != null) {
+      const ids = sortChildItems(siblings, type?.hierarchyLevels === 1).map(c => c.id)
+      return ids.length > 1 ? { listIds: ids, listLabel: childrenLabelFor(type, Math.max(0, (item.ancestors?.length ?? 1) - 1)) } : null
+    }
+    return sectionIds.length > 1 ? { listIds: sectionIds, listLabel: type?.displayName ?? item.mediaTypeName } : null
+  })()
+  const effectiveNavState = rememberedNavState ?? ownNavState
+  const listIds = effectiveNavState?.listIds ?? []
+  const currentIndex = listIds.indexOf(mediaId)
+  const prevId = currentIndex > 0 ? listIds[currentIndex - 1] : null
+  const nextId = currentIndex < listIds.length - 1 ? listIds[currentIndex + 1] : null
 
   const changeTypeMut = useMutation({
     mutationFn: (targetTypeId: number) => changeMediaType(mediaId, targetTypeId),
@@ -1383,26 +1423,7 @@ export default function MediaDetailPage() {
 
         if (isMovieCollection) return null
 
-        const sortedChildren = [...children].sort((a, b) => {
-          if (isMovieCollection) {
-            // Oldest release first; null years sort to end
-            const ya = a.year ?? 9999
-            const yb = b.year ?? 9999
-            return ya !== yb ? ya - yb : a.name.localeCompare(b.name)
-          }
-          // Prefer the precise (possibly fractional) seriesPosition over the floored number --
-          // see MediaItem.seriesPosition's own doc for why two different books can otherwise
-          // both sort as tied at "1".
-          const pa = a.seriesPosition ?? a.number
-          const pb = b.seriesPosition ?? b.number
-          // Both have a position → numeric ascending
-          if (pa != null && pb != null) return pa - pb
-          // Only one has a position → positioned item comes first
-          if (pa != null) return -1
-          if (pb != null) return 1
-          // Neither has a number → natural sort on name (handles "E01" < "E02" < "E10")
-          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-        })
+        const sortedChildren = sortChildItems(children, isMovieCollection)
         const childrenLabel = childrenLabelFor(currentMediaType, item.ancestors?.length ?? 0)
         // A list that mixes items holding children with items that don't (an author's series beside their
         // standalone books) gets a badge on the ones that hold some, named after this level ("Series"), the way

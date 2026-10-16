@@ -93,6 +93,21 @@
 .running { background: #1a4d8f; color: #a8ccff; animation: pulse 1.5s infinite; }
 .success { background: #1a4d2a; color: #6fcf97; }
 .failed  { background: #4d1a1a; color: #eb5757; }
+.paused  { background: #4d3d12; color: #f2c94c; }
+
+.priorityControls { display: inline-flex; align-items: center; gap: 6px; }
+.priorityBtn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 0 6px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.priorityBtn:hover { color: var(--text-primary); border-color: var(--accent); }
+
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }

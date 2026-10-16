@@ -18,6 +18,13 @@
                 root.style.setProperty(name, vars[name]);
               }
             }
+            // Same as ThemeContext: native controls (the open list of a <select>) follow the scheme, not the variables.
+            var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec((vars['--bg-primary'] || vars['--bg-secondary'] || '').trim());
+            if (m) {
+              var h = m[1].length === 3 ? m[1].replace(/./g, '$&$&') : m[1];
+              var lum = (0.2126 * parseInt(h.slice(0, 2), 16) + 0.7152 * parseInt(h.slice(2, 4), 16) + 0.0722 * parseInt(h.slice(4, 6), 16)) / 255;
+              root.style.colorScheme = lum < 0.5 ? 'dark' : 'light';
+            }
           }
         } catch (e) { /* ignore */ }
       })();
