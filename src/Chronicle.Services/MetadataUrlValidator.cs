@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
+using System.Net.Sockets;
 using Chronicle.Plugins.Models;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Chronicle.Services;
@@ -20,8 +23,21 @@ public interface IMetadataUrlValidator
 
 public class MetadataUrlValidator(
     IHttpClientFactory httpClientFactory,
-    ILogger<MetadataUrlValidator> logger) : IMetadataUrlValidator
+    ILogger<MetadataUrlValidator> logger,
+    IMemoryCache? cache = null) : IMetadataUrlValidator
 {
+    /// <summary>How a URL checked out. <see cref="Unknown"/> (rate limited, server trouble, timeout) keeps the URL: a provider's
+    /// image must not be thrown away because its CDN was busy for a moment.</summary>
+    internal enum Verdict { Valid, Invalid, Unknown }
+
+    internal static readonly TimeSpan ValidFor = TimeSpan.FromHours(12);
+    internal static readonly TimeSpan InvalidFor = TimeSpan.FromMinutes(30);
+    private const int MaxConcurrentPerHost = 4;
+
+    // One gate per host, shared by every enrichment running at once: an album with thirty cover images used to fire sixty
+    // requests at the same CDN together, which is how a rate limit turned good images into "invalid" ones.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> HostGates = new(StringComparer.OrdinalIgnoreCase);
+
     public async Task ValidateAndCleanAsync(MediaMetadata metadata, CancellationToken ct = default)
     {
         var client = httpClientFactory.CreateClient("url-validation");
@@ -43,7 +59,7 @@ public class MetadataUrlValidator(
             .Select(async f =>
             {
                 var url = f.Get()!;
-                if (!await IsValidUrlAsync(url, client, ct))
+                if (await CheckAsync(url, client, ct) == Verdict.Invalid)
                 {
                     logger.LogWarning(
                         "Dropping invalid {Field} URL from provider '{Source}': {Url}",
@@ -52,17 +68,16 @@ public class MetadataUrlValidator(
                 }
             });
 
+        // A thumbnail lives beside its image on the same host, so only the image itself is checked: validating both doubled the
+        // requests for nothing, and a thumbnail without a valid image goes with it below.
         var imageChecks = metadata.AdditionalImages.Select(async img =>
         {
-            if (!string.IsNullOrWhiteSpace(img.Url) && !await IsValidUrlAsync(img.Url, client, ct))
+            if (!string.IsNullOrWhiteSpace(img.Url) && await CheckAsync(img.Url, client, ct) == Verdict.Invalid)
             {
                 logger.LogWarning(
                     "Dropping invalid AdditionalImage URL from provider '{Source}': {Url}",
                     metadata.Source, img.Url);
                 img.Url = string.Empty;
-            }
-            if (!string.IsNullOrWhiteSpace(img.ThumbnailUrl) && !await IsValidUrlAsync(img.ThumbnailUrl, client, ct))
-            {
                 img.ThumbnailUrl = null;
             }
         });
@@ -74,22 +89,40 @@ public class MetadataUrlValidator(
         metadata.AdditionalImages.RemoveAll(img => string.IsNullOrWhiteSpace(img.Url));
     }
 
-    private static async Task<bool> IsValidUrlAsync(string url, HttpClient client, CancellationToken ct)
+    private async Task<Verdict> CheckAsync(string url, HttpClient client, CancellationToken ct)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         {
-            return false;
+            return Verdict.Invalid;
         }
 
-        // Try HEAD first (cheapest — no body transfer). Some CDNs reject HEAD outright
-        // (405/403) despite serving the same URL fine on GET, so fall back before giving up.
-        if (await TryRequestAsync(client, HttpMethod.Head, uri, ct))
-            return true;
-        return await TryRequestAsync(client, HttpMethod.Get, uri, ct);
+        var key = "url-validation:" + uri.AbsoluteUri;
+        if (cache is not null && cache.TryGetValue(key, out Verdict known))
+            return known;
+
+        var gate = HostGates.GetOrAdd(uri.Host, _ => new SemaphoreSlim(MaxConcurrentPerHost, MaxConcurrentPerHost));
+        await gate.WaitAsync(ct);
+        Verdict verdict;
+        try
+        {
+            // Try HEAD first (cheapest — no body transfer). Some CDNs reject HEAD outright
+            // (405/403) despite serving the same URL fine on GET, so fall back before giving up.
+            verdict = await TryRequestAsync(client, HttpMethod.Head, uri, ct);
+            if (verdict != Verdict.Valid)
+                verdict = await TryRequestAsync(client, HttpMethod.Get, uri, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        if (cache is not null && verdict != Verdict.Unknown)
+            cache.Set(key, verdict, verdict == Verdict.Valid ? ValidFor : InvalidFor);
+        return verdict;
     }
 
-    private static async Task<bool> TryRequestAsync(HttpClient client, HttpMethod method, Uri uri, CancellationToken ct)
+    private static async Task<Verdict> TryRequestAsync(HttpClient client, HttpMethod method, Uri uri, CancellationToken ct)
     {
         try
         {
@@ -97,17 +130,25 @@ public class MetadataUrlValidator(
             // ResponseHeadersRead means a GET fallback never actually downloads the image body —
             // only the status line/headers are read before the response is disposed.
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            return response.IsSuccessStatusCode;
+            if (response.IsSuccessStatusCode) return Verdict.Valid;
+
+            var status = (int)response.StatusCode;
+            // Busy or broken for the moment says nothing about whether the image exists.
+            return status is 408 or 429 || status >= 500 ? Verdict.Unknown : Verdict.Invalid;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
+        catch (HttpRequestException ex) when (ex.InnerException is SocketException { SocketErrorCode: SocketError.HostNotFound or SocketError.NoData })
+        {
+            // The host does not exist: the provider built the address from a bad assumption (what this check is for).
+            return Verdict.Invalid;
+        }
         catch (Exception)
         {
-            // Per-URL client timeout, DNS failure, connection refused, TLS error, etc. — all
-            // mean the URL doesn't currently evaluate to valid data, same as a bad status code.
-            return false;
+            // Per-URL client timeout, connection refused, TLS error, etc.: can't tell, so keep the URL.
+            return Verdict.Unknown;
         }
     }
 }

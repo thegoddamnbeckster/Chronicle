@@ -547,6 +547,7 @@ using (var scope = app.Services.CreateScope())
         {
             var batch = await db.MediaItems
                 .Where(m => m.NormalizedName == null)
+                .OrderBy(m => m.Id)
                 .Take(500)
                 .ToListAsync(CancellationToken.None);
             if (batch.Count == 0) break;

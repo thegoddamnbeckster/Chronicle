@@ -3007,8 +3007,16 @@ namespace Chronicle.Services
                 row.MissingSince = now;
         }
 
+        /// <summary>app_settings marker: the folder-path backfill has run to the end once.</summary>
+        internal const string BackfillFolderPathsCompleteKey = "folder_paths_backfill_complete";
+
         public async Task BackfillFolderPathsAsync(CancellationToken ct = default)
         {
+            // Once is enough: everything imported since writes its folder path. Without this marker every startup ran a LIKE over the
+            // whole 4 GB of item metadata (414,000 rows) to find the same few hundred items that have no file to take a folder from.
+            if (await _context.AppSettings.AnyAsync(s => s.Key == BackfillFolderPathsCompleteKey, ct))
+                return;
+
             // Find items where fileScanner.folderPath is explicitly JSON null.
             // The literal text `"folderPath":null` will always be present because
             // JsonSerializer serializes nullable reference types as null, not omitting them.
@@ -3048,8 +3056,8 @@ namespace Chronicle.Services
                 }
             }
 
-            if (updated > 0)
-                await _context.SaveChangesAsync(ct);
+            _context.AppSettings.Add(new AppSetting { Key = BackfillFolderPathsCompleteKey, Value = DateTime.UtcNow.ToString("O") });
+            await _context.SaveChangesAsync(ct);
 
             _log.Information("BackfillFolderPaths: updated {Count} of {Total} candidate items",
                 updated, candidates.Count);

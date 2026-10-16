@@ -62,6 +62,7 @@ public sealed class DuplicateCleanupService
 
         int removed = 0;
         var alreadyRemoved = new HashSet<int>();
+        var skips = new MergeSkips();
 
         // ── Pass 1: file-path duplicates ──────────────────────────────────────
         // Items that share the same physical file path in fileScanner.filePaths[0].
@@ -114,7 +115,7 @@ public sealed class DuplicateCleanupService
                         _log.Information(
                             "DuplicateCleanup: path '{Path}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                             group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
-                        if (await TryMergeAsync(context, mergeService, winner, loser, ct))
+                        if (await TryMergeAsync(context, mergeService, winner, loser, skips, ct))
                         {
                             alreadyRemoved.Add(loser.Id);
                             removed++;
@@ -244,7 +245,7 @@ public sealed class DuplicateCleanupService
                     _log.Information(
                         "DuplicateCleanup: external ID '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         group.Key, winner.Id, winner.Name, loser.Id, loser.Name);
-                    if (await TryMergeAsync(context, mergeService, winner, loser, ct))
+                    if (await TryMergeAsync(context, mergeService, winner, loser, skips, ct))
                     {
                         alreadyRemoved.Add(loser.Id);
                         removed++;
@@ -324,7 +325,7 @@ public sealed class DuplicateCleanupService
                     _log.Information(
                         "DuplicateCleanup: title-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         $"{group.Key.Item1} / {group.Key.Year}", winner.Id, winner.Name, loser.Id, loser.Name);
-                    if (await TryMergeAsync(context, mergeService, winner, loser, ct))
+                    if (await TryMergeAsync(context, mergeService, winner, loser, skips, ct))
                     {
                         alreadyRemoved.Add(loser.Id);
                         removed++;
@@ -423,16 +424,17 @@ public sealed class DuplicateCleanupService
                     // different values (e.g. two different hardcover.app edition IDs), that is
                     // direct evidence they are distinct real-world items, not duplicates —
                     // regardless of what their names/parent happen to share.
-                    var winnerIdsBySource = winner.ExternalIds.ToLookup(e => e.Source, e => e.ExternalId, StringComparer.OrdinalIgnoreCase);
+                    // Ids of a different entity kind (a provider's artist id on one record, its album id on the other)
+                    // prove nothing about whether these two are the same item -- see ExternalIdComparison.
                     var hasConflictingExternalId = loser.ExternalIds.Any(le =>
-                        winnerIdsBySource[le.Source].Any(we => !string.Equals(we, le.ExternalId, StringComparison.OrdinalIgnoreCase)));
+                        winner.ExternalIds.Any(we => ExternalIdComparison.Conflicts(we.Source, we.ExternalId, le.Source, le.ExternalId)));
                     if (hasConflictingExternalId)
                         continue;
 
                     _log.Information(
                         "DuplicateCleanup: same-parent name-match '{Key}' — keeping {WId} ('{WName}'), removing {LId} ('{LName}')",
                         $"{group.Key.Item2} / parent {group.Key.ParentId}", winner.Id, winner.Name, loser.Id, loser.Name);
-                    if (await TryMergeAsync(context, mergeService, winner, loser, ct))
+                    if (await TryMergeAsync(context, mergeService, winner, loser, skips, ct))
                     {
                         alreadyRemoved.Add(loser.Id);
                         removed++;
@@ -536,7 +538,7 @@ public sealed class DuplicateCleanupService
                         "DuplicateCleanup: container Number {Number} under parent {ParentId} — keeping {WId} " +
                         "('{WName}'), removing {LId} ('{LName}')",
                         group.Key.Number, group.Key.ParentId, winner.Id, winner.Name, loser.Id, loser.Name);
-                    if (await TryMergeAsync(context, mergeService, winner, loser, ct))
+                    if (await TryMergeAsync(context, mergeService, winner, loser, skips, ct))
                     {
                         alreadyRemoved.Add(loser.Id);
                         removed++;
@@ -557,6 +559,10 @@ public sealed class DuplicateCleanupService
 
         if (removed > 0)
             _log.Information("DuplicateCleanup: total {Count} duplicate item(s) removed", removed);
+        if (skips.Count > 0)
+            _log.Information(
+                "DuplicateCleanup: {Count} candidate pair(s) were not merged because merging them would be unsafe (for example the same " +
+                "track on two different albums); first: {WId}/{LId} -- {Reason}", skips.Count, skips.FirstWinner, skips.FirstLoser, skips.FirstReason);
 
         return removed;
     }
@@ -574,12 +580,15 @@ public sealed class DuplicateCleanupService
     /// an unattended scheduled task aborting entirely over one bad pair is not.
     /// </summary>
     private async Task<bool> TryMergeAsync(
-        ChronicleDbContext context, IMergeService mergeService, MediaItem winner, MediaItem loser, CancellationToken ct)
+        ChronicleDbContext context, IMergeService mergeService, MediaItem winner, MediaItem loser, MergeSkips skips, CancellationToken ct)
     {
         var reason = await mergeService.CheckMergeEligibilityAsync(context, winner, loser, ct);
         if (reason is not null)
         {
-            _log.Warning("MergeAndDelete: skipping {WId}/{LId} — {Reason}", winner.Id, loser.Id, reason);
+            // Expected and constant: one recording on several albums shares its provider ids, and the same pairs come back on
+            // every run. One summary line per run (see RunAsync) instead of a warning per pair (11,000 a night).
+            skips.Add(winner.Id, loser.Id, reason);
+            _log.Debug("MergeAndDelete: skipping {WId}/{LId} -- {Reason}", winner.Id, loser.Id, reason);
             return false;
         }
 
@@ -588,6 +597,20 @@ public sealed class DuplicateCleanupService
         await context.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return true;
+    }
+
+    /// <summary>Pairs a run found but could not safely merge, kept to report once.</summary>
+    private sealed class MergeSkips
+    {
+        public int Count { get; private set; }
+        public int FirstWinner { get; private set; }
+        public int FirstLoser { get; private set; }
+        public string? FirstReason { get; private set; }
+
+        public void Add(int winnerId, int loserId, string reason)
+        {
+            if (Count++ == 0) { FirstWinner = winnerId; FirstLoser = loserId; FirstReason = reason; }
+        }
     }
 
     private static string NormalizeTitle(string name)

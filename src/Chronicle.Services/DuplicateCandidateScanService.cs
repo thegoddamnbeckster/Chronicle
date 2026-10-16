@@ -1,3 +1,4 @@
+using Chronicle.Core.Helpers;
 using Chronicle.Data;
 using Chronicle.Services.Scan;
 using Microsoft.EntityFrameworkCore;
@@ -98,8 +99,7 @@ public sealed class DuplicateCandidateScanService(
                 return false;
             foreach (var (sourceA, externalIdA) in a)
             foreach (var (sourceB, externalIdB) in b)
-                if (string.Equals(sourceA, sourceB, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(externalIdA, externalIdB, StringComparison.OrdinalIgnoreCase))
+                if (ExternalIdComparison.Conflicts(sourceA, externalIdA, sourceB, externalIdB))
                     return true;
             return false;
         }

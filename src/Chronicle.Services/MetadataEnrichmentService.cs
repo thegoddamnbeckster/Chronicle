@@ -1865,6 +1865,7 @@ public class MetadataEnrichmentService(
                         var siblingItems = await db.MediaItems
                             .Where(m => m.ParentId == row.MediaItem.ParentId
                                      && m.Id       != row.MediaItem.Id)
+                            .OrderBy(m => m.Number).ThenBy(m => m.Id)
                             .Take(50)
                             .ToListAsync(ct);
                         if (siblingItems.Count > 0)
@@ -1881,6 +1882,7 @@ public class MetadataEnrichmentService(
                         // Parent: fetch children — shared between ChildNames and SubItemMetadata
                         var childItems = await db.MediaItems
                             .Where(m => m.ParentId == row.MediaItem.Id)
+                            .OrderBy(m => m.Number).ThenBy(m => m.Id)
                             .Take(200)
                             .ToListAsync(ct);
                         if (childItems.Count > 0)
@@ -3065,7 +3067,7 @@ public class MetadataEnrichmentService(
         var titles = await db.MediaCredits
             .Where(c => c.PersonMediaItemId == personMediaItemId)
             .Select(c => c.MediaItem!.Name)
-            .Distinct().Take(40).ToListAsync(ct);
+            .Distinct().OrderBy(n => n).Take(40).ToListAsync(ct);
         return titles.Count > 0 ? titles : null;
     }
 
@@ -3081,7 +3083,7 @@ public class MetadataEnrichmentService(
             .Where(c => c.PersonMediaItemId == personMediaItemId)
             .Join(db.MediaExternalIds.Where(e => e.Source == source),
                   c => c.MediaItemId, e => e.MediaItemId, (c, e) => e.ExternalId)
-            .Distinct().Take(60).ToListAsync(ct);
+            .Distinct().OrderBy(id => id).Take(60).ToListAsync(ct);
         return ids.Count > 0 ? ids : null;
     }
 

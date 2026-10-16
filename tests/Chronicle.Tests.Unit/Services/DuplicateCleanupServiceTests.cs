@@ -479,6 +479,31 @@ public class DuplicateCleanupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_MergesSameParentSameName_WhenTheOnlyDifferingExternalIdsAreOfDifferentKinds()
+    {
+        // Live (2026-10-15): two self-titled album containers under one artist, one carrying fanarttv "album:..." and
+        // the other fanarttv "artist:.../noRelease:...". Same provider, but an artist id and an album id say nothing about
+        // whether the records differ, so this must not block the merge (8,000 duplicate tracks hung on it).
+        var artist = new MediaItem { Name = "The Band", MediaTypeId = _moviesType.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _context.MediaItems.Add(artist);
+        await _context.SaveChangesAsync();
+
+        var albumA = new MediaItem { Name = "The Band", MediaTypeId = _moviesType.Id, ParentId = artist.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var albumB = new MediaItem { Name = "The Band", MediaTypeId = _moviesType.Id, ParentId = artist.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _context.MediaItems.AddRange(albumA, albumB);
+        await _context.SaveChangesAsync();
+
+        _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = albumA.Id, Source = "fanarttv", ExternalId = "album:abc/def" });
+        _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = albumB.Id, Source = "fanarttv", ExternalId = "artist:abc/noRelease:The Band" });
+        await _context.SaveChangesAsync();
+
+        var removed = await _service.RunAsync();
+
+        removed.Should().Be(1);
+        _context.MediaItems.Count(m => m.ParentId == artist.Id).Should().Be(1);
+    }
+
+    [Fact]
     public async Task RunAsync_SameParentSameName_PrefersLosersFileScannerWhenWinnersDoesNotMatchTitle()
     {
         // Confirmed live (2026-09-21): an episode enriched correctly via TMDB (right season/
