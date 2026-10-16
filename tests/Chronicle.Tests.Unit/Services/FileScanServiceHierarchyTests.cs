@@ -294,6 +294,48 @@ public class FileScanServiceHierarchyTests
     }
 
     /// <summary>
+    /// Live (2026-10-15): scanning the band "Genesis" matched the root group to a TRACK named "Genesis" (another artist's album track)
+    /// because the root name lookup was not limited to root-level items, and ninety-four of the band's albums were filed under that
+    /// track. A root group of a multi-level type may only match a root-level item.
+    /// </summary>
+    [Fact]
+    public async Task ImportGroupsAsync_RootNameEqualsATrackName_CreatesTheArtist_NotAChildOfTheTrack()
+    {
+        await using var context = NewInMemoryContext();
+
+        context.MediaTypes.Add(new MediaType { Id = 3, Name = "music", DisplayName = "Music", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow });
+        var otherArtist = new MediaItem { Id = 10, MediaTypeId = 3, Name = "Devin Townsend", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var album = new MediaItem { Id = 11, MediaTypeId = 3, ParentId = 10, Name = "Genesis", HierarchyLevel = 1, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var track = new MediaItem { Id = 12, MediaTypeId = 3, ParentId = 11, Name = "Genesis", HierarchyLevel = 2, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        context.MediaItems.AddRange(otherArtist, album, track);
+        await context.SaveChangesAsync();
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
+
+        var foxtrot = new ScanGroupImport(Name: "Foxtrot", Year: 1972, PosterPath: null, Children: [], Files: [],
+            FolderPath: Path.Combine("E:", "Music", "Genesis", "Foxtrot"));
+        var band = new ScanGroupImport(Name: "Genesis", Year: null, PosterPath: null, Children: [foxtrot], Files: [],
+            FolderPath: Path.Combine("E:", "Music", "Genesis"));
+        await service.ImportGroupsAsync(new ImportGroupsRequest([band], MediaTypeId: 3), userIds: [1], manageProgress: false);
+
+        var artists = await context.MediaItems.Where(m => m.MediaTypeId == 3 && m.HierarchyLevel == 0 && m.Name == "Genesis").ToListAsync();
+        Assert.Single(artists);                                    // a real "Genesis" artist now exists
+        var foxtrotItem = await context.MediaItems.SingleAsync(m => m.Name == "Foxtrot");
+        Assert.Equal(artists[0].Id, foxtrotItem.ParentId);         // and the album is under it, not under the track
+        Assert.NotEqual(12, foxtrotItem.ParentId);
+    }
+
+    [Theory]
+    [InlineData(1, 1)]   // movies: a collection member counts as a root
+    [InlineData(0, 1)]
+    [InlineData(2, 0)]
+    [InlineData(3, 0)]
+    public void RootLevelCeiling(int totalLevels, int expected) =>
+        Assert.Equal(expected, FileScanService.RootLevelCeiling(totalLevels));
+
+    /// <summary>
     /// Caught in review (2026-09-20): the Quaternary alias tier had the identical unguarded-year
     /// defect the Tertiary (name) tier right above it was just fixed for -- and is MORE likely
     /// to be reached now that Tertiary correctly rejects a year-mismatched candidate instead of

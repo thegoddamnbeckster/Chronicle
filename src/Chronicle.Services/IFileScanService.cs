@@ -90,6 +90,10 @@ namespace Chronicle.Services
         /// </summary>
         Task BackfillFolderPathsAsync(CancellationToken ct = default);
 
+        /// <summary>Adds Pending enrichment rows for these items against every installed metadata provider that supports the media type
+        /// (rows that already exist are left alone). For code that creates items outside a scan, such as repair passes.</summary>
+        Task SeedPendingEnrichmentAsync(List<int> itemIds, string mediaTypeName, CancellationToken ct = default);
+
         /// <summary>
         /// One-time data migration: populates MediaItemKnownFileNames (the indexed lookup
         /// ScraperController.SearchMovies's filename fast-path now uses) for every MediaItem

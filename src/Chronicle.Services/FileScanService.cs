@@ -1094,6 +1094,10 @@ namespace Chronicle.Services
         /// name-matching tier: a stored name that equals any variant necessarily contains it. Null when no such word exists (no
         /// narrowing, the whole set is searched). ASCII only, because SQLite's lower() and LIKE fold nothing else.
         /// </summary>
+        /// <summary>The deepest level a root-level scan group may match: 1 for a type with a single level (movies, where a collection member
+        /// stands in as a root), otherwise 0 (an artist, show or author can only be another artist, show or author).</summary>
+        internal static int RootLevelCeiling(int totalHierarchyLevels) => totalHierarchyLevels <= 1 ? 1 : 0;
+
         internal static string? NamePrefilterWord(IReadOnlyList<string> variants)
         {
             if (variants.Count == 0) return null;
@@ -3367,15 +3371,21 @@ namespace Chronicle.Services
             // from its grandparent's stored ExternalId). A whole Star Trek: TNG season was
             // misfiled under Rick and Morty's Season 04 this way, in one real run.
             var groupNameClean = StripTrailingYearSuffix(group.Name ?? "");
+            var rootCeiling = RootLevelCeiling(totalHierarchyLevels);
             if (existing is null)
             {
                 var groupVariants = TitleMatchVariants(group.Name ?? "");
                 // Only reached when the file and folder tiers found nothing, and then only the rows that could possibly match: this
                 // used to load EVERY item of the type (with its whole metadata blob) for every group of a scan, even one already
                 // matched by its file path.
+                // A root group may match root-level items only (a flat type such as movies also lets a collection member, level 1, count
+                // as a root). Unscoped by level, the artist "Genesis" was matched to a TRACK called "Genesis" and ninety-four of the
+                // band's albums were filed under it.
                 var nameQuery = _context.MediaItems
                     .Where(m => m.MediaTypeId == mediaTypeId &&
-                                (hierarchyLevel == 0 || (m.ParentId == parentId && m.HierarchyLevel == hierarchyLevel)));
+                                (hierarchyLevel == 0
+                                    ? m.HierarchyLevel <= rootCeiling
+                                    : m.ParentId == parentId && m.HierarchyLevel == hierarchyLevel));
                 if (NamePrefilterWord(groupVariants) is { } word)
                 {
                     var pattern = $"%{word}%";
@@ -3431,8 +3441,9 @@ namespace Chronicle.Services
                 var aliasCandidates = await _context.MediaItemAliases
                     .Where(a => a.Alias.ToLower() == groupNameCleanLower
                              && a.MediaItem!.MediaTypeId == mediaTypeId
-                             && (hierarchyLevel == 0 ||
-                                 (a.MediaItem.ParentId == parentId && a.MediaItem.HierarchyLevel == hierarchyLevel)))
+                             && (hierarchyLevel == 0
+                                 ? a.MediaItem.HierarchyLevel <= rootCeiling
+                                 : a.MediaItem.ParentId == parentId && a.MediaItem.HierarchyLevel == hierarchyLevel))
                     .Select(a => a.MediaItem!)
                     .ToListAsync(ct);
                 existing = aliasCandidates.FirstOrDefault(m => !YearsConflict(group.Year, m.Year));
@@ -3683,6 +3694,9 @@ namespace Chronicle.Services
         /// <paramref name="itemIds"/> against every installed <see cref="IMetadataProvider"/>
         /// that supports <paramref name="mediaTypeName"/>. Existing rows are skipped.
         /// </summary>
+        public Task SeedPendingEnrichmentAsync(List<int> itemIds, string mediaTypeName, CancellationToken ct = default) =>
+            SeedEnrichmentRowsForNewItemsAsync(itemIds, mediaTypeName, ct);
+
         private async Task SeedEnrichmentRowsForNewItemsAsync(
             List<int> itemIds, string mediaTypeName, CancellationToken ct = default)
         {
@@ -3710,14 +3724,15 @@ namespace Chronicle.Services
                         NormalizeMediaTypeName(n) == hintItem))
                     continue;
 
-                // Avoid SQLite IN-clause limit: query all rows for this plugin, filter in-memory.
-                var itemIdSet = itemIds.ToHashSet();
-                var existingSet = (await _context.MediaEnrichments
-                    .Where(x => x.PluginId == manifestPluginId)
-                    .Select(x => x.MediaItemId)
-                    .ToListAsync(ct))
-                    .Where(id => itemIdSet.Contains(id))
-                    .ToHashSet();
+                // In chunks (SQLite limits an IN list): this used to read every row of the plugin (~90,000 ids) to look at a handful.
+                var existingSet = new HashSet<int>();
+                foreach (var chunk in itemIds.Chunk(500))
+                {
+                    existingSet.UnionWith(await _context.MediaEnrichments
+                        .Where(x => x.PluginId == manifestPluginId && chunk.Contains(x.MediaItemId))
+                        .Select(x => x.MediaItemId)
+                        .ToListAsync(ct));
+                }
 
                 foreach (var itemId in itemIds)
                 {

@@ -39,6 +39,9 @@ namespace Chronicle.Services;
 ///                                 name, so the series lists in reading order.
 ///   10b. Series Slot Twin Repair -- a provider's placeholder book and the user's own book at the same
 ///                                 position in a series (no id or title ever matched them) become one item.
+///   10c. Inverted Hierarchy Repair -- albums/seasons filed under a track or episode that shares the artist's or show's
+///                                 name are moved under a real artist/show (created when the library has none).
+///   10d. Wrong-Type Container Repair -- a person record whose children are all audiobooks (say) becomes an audiobook item.
 ///   11. Album Name Year Repair -- an album named after its folder ("(2000) Title") gets the plain name and
 ///                                 the year in its Year field.
 ///   12. Missing Source Reconciliation -- an item whose scanned file/folder is gone from disk loses the stale
@@ -59,6 +62,8 @@ public sealed class LibraryIntegrityRepairService(
     ImplausibleYearRepairService implausibleYear,
     NestedMovieRepairService nestedMovies,
     MisparentedChildRepairService misparentedChildren,
+    InvertedHierarchyRepairService invertedHierarchy,
+    WrongTypeContainerRepairService wrongTypeContainers,
     UnknownSeriesRepairService unknownSeries,
     SeriesFragmentRepairService seriesFragments,
     BookTitleFragmentRepairService bookTitleFragments,
@@ -90,6 +95,8 @@ public sealed class LibraryIntegrityRepairService(
         await passes.RunAsync("implausible year repair", implausibleYear.ExecuteAsync, ct);
         await passes.RunAsync("nested movie repair", nestedMovies.ExecuteAsync, ct);
         await passes.RunAsync("misparented child repair", misparentedChildren.ExecuteAsync, ct);
+        await passes.RunAsync("inverted hierarchy repair", invertedHierarchy.ExecuteAsync, ct);
+        await passes.RunAsync("wrong-type container repair", wrongTypeContainers.ExecuteAsync, ct);
         await passes.RunAsync("unknown series repair", unknownSeries.ExecuteAsync, ct);
         await passes.RunAsync("series fragment repair", seriesFragments.ExecuteAsync, ct);
         await passes.RunAsync("book title fragment repair", bookTitleFragments.ExecuteAsync, ct);

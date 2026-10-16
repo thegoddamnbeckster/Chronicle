@@ -44,11 +44,9 @@ public class MergeService(
         if (ineligibleReason is not null)
             throw new InvalidOperationException(ineligibleReason);
 
-        // If the media types differ, silently coerce the loser to the winner's type.
-        // The loser is absorbed and deleted, so its type only matters for the merge log —
-        // the resulting item will always carry the winner's type.
-        if (winner.MediaTypeId != loser.MediaTypeId)
-            loser.MediaTypeId = winner.MediaTypeId; // committed inside the transaction below
+        // The loser keeps its own media type: the merge log records it, and an Unmerge recreates the item with it. (It used to be
+        // overwritten with the winner's type first, so undoing the merge of the audiobook author "Iain M. Banks" into a person
+        // record brought him back as a PERSON, with his five audiobook series filed under him.)
 
         await MergeLoadedItemsAsync(db, winner, loser, mergedByUserId, ct);
 
@@ -68,6 +66,17 @@ public class MergeService(
         if (winner.HierarchyLevel > 0 && winner.ParentId != loser.ParentId)
             return $"non-root items must share the same parent item to be merged (winner parent " +
                    $"{winner.ParentId?.ToString() ?? "root"}, loser parent {loser.ParentId?.ToString() ?? "root"})";
+
+        // Items of another media type may be absorbed, but not with children of their own type: the children would be filed under a
+        // winner that cannot hold them (audiobooks under a person, tracks under a film).
+        if (winner.MediaTypeId != loser.MediaTypeId)
+        {
+            var strangers = await dbContext.MediaItems.CountAsync(
+                c => c.ParentId == loser.Id && c.MediaTypeId != winner.MediaTypeId, ct);
+            if (strangers > 0)
+                return $"the item to absorb has {strangers} child item(s) of its own media type, which cannot be filed under an item of " +
+                       "a different media type. Merge it with an item of the same type, or move its children first.";
+        }
 
         // A collection container carries real children, curated collection artwork, and a
         // "collection:{id}" identity marker. A container may ABSORB a plain item (the usual duplicate: a

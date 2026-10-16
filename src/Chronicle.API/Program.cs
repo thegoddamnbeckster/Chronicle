@@ -286,6 +286,8 @@ builder.Services.AddSingleton<MovieFileYearRepairService>();
 builder.Services.AddSingleton<ImplausibleYearRepairService>();
 builder.Services.AddSingleton<NestedMovieRepairService>();
 builder.Services.AddSingleton<MisparentedChildRepairService>();
+builder.Services.AddSingleton<InvertedHierarchyRepairService>();
+builder.Services.AddSingleton<WrongTypeContainerRepairService>();
 builder.Services.AddSingleton<AudiobookSeriesNumberRepairService>();
 builder.Services.AddSingleton<SeriesSlotTwinRepairService>();
 builder.Services.AddSingleton<UserMergeRestoreService>();
