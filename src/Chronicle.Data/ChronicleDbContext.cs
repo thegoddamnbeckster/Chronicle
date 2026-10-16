@@ -265,6 +265,9 @@ namespace Chronicle.Data
                 entity.HasKey(e => e.Id);
                 entity.HasIndex(e => e.MediaTypeId);
                 entity.HasIndex(e => e.Name);
+                // Covers the title search ("level 0 whose lower(name) contains ..."): the scan reads this narrow index instead of every
+                // wide item row. Measured on a 150,000-row stand-in: 0.09 s -> 0.012 s; ~0.5 s -> ~0.07 s on the live table.
+                entity.HasIndex(e => new { e.HierarchyLevel, e.Name });
                 entity.HasIndex(e => e.ParentId);
                 entity.Property(e => e.Name).IsRequired();
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");

@@ -91,10 +91,9 @@ namespace Chronicle.Services
 
         public async Task<IEnumerable<MediaItem>> SearchAsync(string query, int? mediaTypeId = null, int page = 1, int perPage = 20, bool allLevels = false, CancellationToken ct = default)
         {
-            var q = _context.MediaItems
-                .Include(m => m.MediaType)
-                .Include(m => m.ExternalIds)
-                .AsQueryable();
+            // Filtered and ordered on the bare table, then only the page's rows are loaded in full (type and ids included). The sort
+            // used to carry every matching row's whole record: a common word such as "the" matched 6,500 items of ~5 KB each.
+            var q = _context.MediaItems.AsQueryable();
 
             if (!allLevels)
                 q = q.Where(m => m.HierarchyLevel == 0);
@@ -105,11 +104,12 @@ namespace Chronicle.Services
             if (page < 1) page = 1;
 
             if (string.IsNullOrWhiteSpace(query))
-                return await q
-                    .OrderBy(m => m.Name)
+                return await LoadInOrderAsync(await q
+                    .OrderBy(m => m.Name).ThenBy(m => m.Id)
                     .Skip((page - 1) * perPage)
                     .Take(perPage)
-                    .ToListAsync(ct);
+                    .Select(m => m.Id)
+                    .ToListAsync(ct), ct);
 
             // Best matches first. Results are capped at a page, so the order decides what's
             // found at all: root-caused live (2026-10-02), "invincible" matched 215 items and
@@ -144,7 +144,7 @@ namespace Chronicle.Services
             var skip = page == 1 ? 0 : firstPage + (page - 2) * perPage;
             var take = page == 1 ? firstPage : perPage;
 
-            return await q
+            var pageIds = await q
                 .OrderBy(m =>
                     EF.Functions.Like(m.Name.ToLower(), exact, LikeEscape) ||
                     m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), exact, LikeEscape)) ? 0
@@ -156,7 +156,21 @@ namespace Chronicle.Services
                 .ThenBy(m => m.Id)
                 .Skip(skip)
                 .Take(take)
+                .Select(m => m.Id)
                 .ToListAsync(ct);
+            return await LoadInOrderAsync(pageIds, ct);
+        }
+
+        /// <summary>The items with these ids, with their media type and external ids, in the order of <paramref name="ids"/>.</summary>
+        private async Task<List<MediaItem>> LoadInOrderAsync(List<int> ids, CancellationToken ct)
+        {
+            if (ids.Count == 0) return [];
+            var byId = await _context.MediaItems
+                .Include(m => m.MediaType)
+                .Include(m => m.ExternalIds)
+                .Where(m => ids.Contains(m.Id))
+                .ToDictionaryAsync(m => m.Id, ct);
+            return ids.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
         }
 
         private const string LikeEscape = "\\";
