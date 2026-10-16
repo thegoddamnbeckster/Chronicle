@@ -188,7 +188,7 @@ Newest first. One entry per working session: what was reviewed, what was found, 
 
 | # | Item | Why it is open |
 |---|---|---|
-| ~~O1~~ | ~~Any signed-in user can edit or delete shared media~~ | Resolved by the owner's decision: an admin-set rule (Settings > Users) says who may delete (`MediaRightsPolicy`: everyone / admins only / nobody except admins), enforced server-side (403 `MEDIA_DELETE_RESTRICTED`) and hiding the buttons for those who cannot. |
+| ~~O1~~ | ~~Any signed-in user can edit or delete shared media~~ | Resolved by the owner's decision: an admin-set rule (Settings > Users, `auth.media_delete_admin_only`: every signed-in user, or administrators only; default every user) decides who may delete, enforced server-side (403 `MEDIA_DELETE_RESTRICTED`) and hiding the buttons for those who cannot. |
 | O2 | Downstairs Shield (10.0.0.203) still sends a revoked API key (tag 0cadc4f3) | 12 stale API keys (ids 2, 3, 4, 5, 7, 8, 9, 11, 13, 14, 16, 17) were deleted; the Shield was pairing against one of them and must be paired again (Edit Connection). The key named "Claude" was kept. |
 | O8 | Kodi add-on modules still under ~60% line coverage: kodi_scan_signal, progress_sync, movie_art_sync (both add-ons), full_sync_check (TV), tvshow_location, library_repair edge cases | Each needs Kodi-library fixtures; covered next. |
 | O3 | Some duplicated album subtrees (e.g. "The Doobie Brothers" albums 414426 / 806909) created when a library folder was renamed and rescanned | The scanner created new track items instead of matching the moved files. Needs the FileScanService review (Phase 3). |
