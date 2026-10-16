@@ -667,6 +667,11 @@ app.UseSerilogRequestLogging(options =>
     options.MessageTemplate =
         "{RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms " +
         "(RemoteIp={RemoteIp} UserAgent={UserAgent})";
+    // The web UI and the monitors poll /api/health every few seconds (6,000 lines a day, nothing in them): logged only when it fails.
+    options.GetLevel = (httpContext, _, ex) =>
+        ex is not null || httpContext.Response.StatusCode >= 500 ? Serilog.Events.LogEventLevel.Error
+        : httpContext.Request.Path.StartsWithSegments("/api/health") && httpContext.Response.StatusCode < 400 ? Serilog.Events.LogEventLevel.Verbose
+        : Serilog.Events.LogEventLevel.Information;
     options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
     {
         diagnosticContext.Set("RemoteIp", httpContext.Connection.RemoteIpAddress?.ToString());
