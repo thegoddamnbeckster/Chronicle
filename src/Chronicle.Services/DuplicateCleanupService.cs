@@ -68,11 +68,26 @@ public sealed class DuplicateCleanupService
         // Items that share the same physical file path in fileScanner.filePaths[0].
         // NOTE: folderPath is NOT used here — it is the parent directory and is shared
         // by every item in a folder, which would incorrectly flag season episodes.
-        var itemsWithPaths = await context.MediaItems
-            .Include(m => m.ExternalIds)
-            .Where(m => m.MetadataJson != null
-                     && EF.Functions.Like(m.MetadataJson, "%fileScanner%"))
-            .ToListAsync(ct);
+        // The keys are worked out while streaming (id and key only, nothing tracked), and only the items that really share a path
+        // are loaded for merging. This used to load and track every scanned item (100,000+ records, metadata blobs included), which
+        // made every SaveChanges after it -- one per merge -- scan that whole set: ~3 seconds a merge.
+        var pathKeyById = new Dictionary<int, string>();
+        await foreach (var row in context.MediaItems.AsNoTracking()
+                           .Where(m => m.MetadataJson != null && EF.Functions.Like(m.MetadataJson, "%fileScanner%"))
+                           .Select(m => new { m.Id, m.MetadataJson })
+                           .AsAsyncEnumerable().WithCancellation(ct))
+        {
+            if (FileIdentityJson.PrimaryFilePathKey(row.MetadataJson) is { Length: > 0 } key)
+                pathKeyById[row.Id] = key;
+        }
+        var sharedPathIds = pathKeyById
+            .GroupBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g.Select(kv => kv.Key))
+            .ToList();
+        var itemsWithPaths = new List<MediaItem>();
+        foreach (var chunk in sharedPathIds.Chunk(500))
+            itemsWithPaths.AddRange(await context.MediaItems.Include(m => m.ExternalIds).Where(m => chunk.Contains(m.Id)).ToListAsync(ct));
 
         var filePathGroups = itemsWithPaths
             .GroupBy(m => FileIdentityJson.PrimaryFilePathKey(m.MetadataJson) ?? string.Empty,
@@ -129,10 +144,29 @@ public sealed class DuplicateCleanupService
         // Catches items imported by two different sources (e.g. file scanner + SIMKL sync)
         // that share the same (source, externalId) entry in media_external_ids.
         // These never share a file path, so Pass 1 misses them entirely.
-        var allExternalIds = await context.MediaExternalIds
-            .Include(e => e.MediaItem).ThenInclude(m => m!.ExternalIds)
-            .Where(e => e.MediaItem != null)
+        // Ids shared by more than one item are found by the database; only the rows of those are loaded (with their items). This
+        // used to load ALL 720,000 ids with every item they belong to, tracked, on every run.
+        context.ChangeTracker.Clear();   // Pass 1's items are not used again; keep the tracker small for the merges that follow
+        var sharedKeys = await context.MediaExternalIds.AsNoTracking()
+            .GroupBy(e => new { Source = e.Source.ToLower(), Id = e.ExternalId.ToLower() })
+            .Where(g => g.Select(x => x.MediaItemId).Distinct().Count() > 1)
+            .Select(g => new { g.Key.Source, g.Key.Id })
             .ToListAsync(ct);
+        var wantedKeys = sharedKeys
+            .Select(k => $"{k.Source}:{k.Id}")
+            // Bookkeeping sentinels and the provider fallbacks named below are not identities (checked again, with the reasons, further down);
+            // dropping them here saves loading their (huge) groups at all.
+            .Where(k => !k.EndsWith(":__suppress__", StringComparison.OrdinalIgnoreCase)
+                     && !k.EndsWith(":manual-collection-member", StringComparison.OrdinalIgnoreCase)
+                     && !k.StartsWith("fanarttv:artist:", StringComparison.OrdinalIgnoreCase)
+                     && !k.StartsWith("hardcover:hardcover:series:", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var allExternalIds = new List<MediaExternalId>();
+        foreach (var chunk in wantedKeys.Chunk(300))
+            allExternalIds.AddRange(await context.MediaExternalIds
+                .Include(e => e.MediaItem).ThenInclude(m => m!.ExternalIds)
+                .Where(e => e.MediaItem != null && chunk.Contains(e.Source.ToLower() + ":" + e.ExternalId.ToLower()))
+                .ToListAsync(ct));
 
         var extIdGroups = allExternalIds
             .GroupBy(e => $"{e.Source}:{e.ExternalId}", StringComparer.OrdinalIgnoreCase)
@@ -254,6 +288,8 @@ public sealed class DuplicateCleanupService
             }
         }
 
+        context.ChangeTracker.Clear();   // nothing pending (each merge commits); the next passes load what they need by id
+
         // ── Pass 3: title-normalisation duplicates ─────────────────────────────
         // Catches file-scanner items like "Batman v Superman - Dawn of Justice (2016)"
         // that duplicated SIMKL stubs like "Batman v Superman: Dawn of Justice (2016)"
@@ -368,6 +404,7 @@ public sealed class DuplicateCleanupService
             foreach (var group in nameGroups)
             {
                 ct.ThrowIfCancellationRequested();
+                context.ChangeTracker.Clear();   // each group loads what it needs; nothing is pending between merges
                 var projections = group.Where(m => !alreadyRemoved.Contains(m.Id)).ToList();
                 if (projections.Count < 2) continue;
 
@@ -494,6 +531,7 @@ public sealed class DuplicateCleanupService
             foreach (var group in containerGroups)
             {
                 ct.ThrowIfCancellationRequested();
+                context.ChangeTracker.Clear();
                 var candidateIds = group.Where(m => !alreadyRemoved.Contains(m.Id)).Select(m => m.Id).ToList();
                 if (candidateIds.Count < 2) continue;
 
@@ -592,12 +630,26 @@ public sealed class DuplicateCleanupService
             return false;
         }
 
-        await using var tx = await context.Database.BeginTransactionAsync(ct);
-        await mergeService.MergeLoadedItemsAsync(context, winner, loser, mergedByUserId: null, ct);
-        await context.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+        // A higher-ranked task may be waiting (see TaskPriorityGate).
+        await TaskGate.CheckpointAsync(ct);
+
+        await using (var tx = await context.Database.BeginTransactionAsync(ct))
+        {
+            await mergeService.MergeLoadedItemsAsync(context, winner, loser, mergedByUserId: null, ct);
+            await context.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+
+        // A merge holds the database's single write lock for about three seconds. Thousands in a row (a renamed music library leaves
+        // that many duplicates) would keep every other writer -- a Kodi scrobble, a button in the web UI -- waiting until it times out,
+        // because SQLite hands the lock to whoever asks at the right instant, not in turn. A short rest lets them in.
+        if (MergeBreather > TimeSpan.Zero)
+            await Task.Delay(MergeBreather, ct);
         return true;
     }
+
+    /// <summary>The pause after each merge. Tests set it to zero.</summary>
+    internal static TimeSpan MergeBreather { get; set; } = TimeSpan.FromMilliseconds(400);
 
     /// <summary>Pairs a run found but could not safely merge, kept to report once.</summary>
     private sealed class MergeSkips
