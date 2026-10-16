@@ -15,6 +15,8 @@ namespace Chronicle.Services;
 /// </summary>
 public class FieldAliasCache(IServiceScopeFactory scopeFactory) : IDisposable
 {
+    private static readonly JsonSerializerOptions CaseInsensitive = new() { PropertyNameCaseInsensitive = true };
+
     private const string SettingKey = "metadata_field_aliases.config";
 
     // What ships out of the box when nothing has been configured yet — not a regression risk,
@@ -62,7 +64,7 @@ public class FieldAliasCache(IServiceScopeFactory scopeFactory) : IDisposable
         try
         {
             var parsed = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(
-                json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                json, CaseInsensitive);
             return parsed is not null
                 ? new Dictionary<string, List<string>>(parsed, StringComparer.OrdinalIgnoreCase)
                 : new(Defaults, StringComparer.OrdinalIgnoreCase);

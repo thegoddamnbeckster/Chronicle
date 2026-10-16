@@ -24,6 +24,7 @@ public class MetadataEnrichmentService(
     EnrichmentStatsCache? statsCache = null) : IMetadataEnrichmentService
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
+    private static readonly System.Text.Json.JsonSerializerOptions CaseInsensitiveOptions = new() { PropertyNameCaseInsensitive = true };
 
     // Camelcase options used when serialising MediaMetadata objects into metadata_json plugin
     // blobs.  MetadataResolutionService.FieldMap and MediaController._resolved reads all use
@@ -2475,7 +2476,7 @@ public class MetadataEnrichmentService(
                     row.MediaItem?.Parent?.Name, row.MediaItem?.Parent?.Parent?.Name, row.MediaItem?.MediaType?.Name, row.MediaItem?.HierarchyLevel));
 
             row.DiagnosticsJson = JsonSerializer.Serialize(diag,
-                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                MetadataBlobOptions);
         }
         catch (Exception diagEx)
         {
@@ -3797,7 +3798,7 @@ public class MetadataEnrichmentService(
         try
         {
             return System.Text.Json.JsonSerializer.Deserialize<List<SharedIdScope>>(raw,
-                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+                CaseInsensitiveOptions) ?? [];
         }
         catch (System.Text.Json.JsonException) { return [.. DefaultSharedIdScopes]; }
     }

@@ -64,7 +64,7 @@ public class SeriesPositionFromTitleTests
         db.MediaItems.Add(Item("Mark of the Fool 4", 2, series.Id, number: 4));
         await db.SaveChangesAsync();
 
-        var svc = new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance);
+        var svc = new BookSeriesService(NullLogger<BookSeriesService>.Instance);
         await svc.ReparentIntoSeriesAsync(db, loose5.Id, series.Id);
         await svc.ReparentIntoSeriesAsync(db, loose10.Id, series.Id);
         await svc.ReparentIntoSeriesAsync(db, oddTitle.Id, series.Id);
@@ -91,7 +91,7 @@ public class SeriesPositionFromTitleTests
         db.MediaItems.Add(Item("Mark of the Fool 1", 2, series.Id, number: 1));
         await db.SaveChangesAsync();
 
-        await new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance).ReparentIntoSeriesAsync(db, book.Id, series.Id);
+        await new BookSeriesService(NullLogger<BookSeriesService>.Instance).ReparentIntoSeriesAsync(db, book.Id, series.Id);
 
         Assert.Equal(7, (await db.MediaItems.FindAsync(book.Id))!.Number);
     }

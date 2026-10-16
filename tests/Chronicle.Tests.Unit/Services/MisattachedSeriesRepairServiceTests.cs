@@ -149,7 +149,7 @@ public class MisattachedSeriesRepairServiceTests
                 }],
             });
 
-        var ok = await new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance)
+        var ok = await new BookSeriesService(NullLogger<BookSeriesService>.Instance)
             .EnsureSeriesStubsAsync(db, w.Book, provider.Object, default);
 
         Assert.True(ok);

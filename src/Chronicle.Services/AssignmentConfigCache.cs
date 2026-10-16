@@ -7,6 +7,8 @@ namespace Chronicle.Services;
 
 public class AssignmentConfigCache(IServiceScopeFactory scopeFactory) : IDisposable
 {
+    private static readonly JsonSerializerOptions CaseInsensitive = new() { PropertyNameCaseInsensitive = true };
+
     // Generation + data travel together as one immutable object so publishing a reload result
     // is a single atomic CompareExchange rather than a separate "check generation, then write
     // data" pair of statements — see the comment on LoadAsync for why that distinction matters
@@ -45,7 +47,7 @@ public class AssignmentConfigCache(IServiceScopeFactory scopeFactory) : IDisposa
         try
         {
             return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<string>>>>(
-                json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+                json, CaseInsensitive) ?? [];
         }
         catch (JsonException) { return []; }
     }

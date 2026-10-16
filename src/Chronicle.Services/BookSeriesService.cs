@@ -15,9 +15,7 @@ namespace Chronicle.Services;
 /// Author -&gt; Series -&gt; Book counterpart of <see cref="MovieCollectionService"/>'s collection-stub
 /// machinery -- see <see cref="IBookSeriesService"/> for the design and why it exists.
 /// </summary>
-public class BookSeriesService(
-    IServiceScopeFactory scopeFactory,
-    ILogger<BookSeriesService> logger) : IBookSeriesService
+public class BookSeriesService(ILogger<BookSeriesService> logger) : IBookSeriesService
 {
     /// <summary>
     /// Sentinel MediaExternalId.ExternalId (Source "chronicle") marking that a book's current

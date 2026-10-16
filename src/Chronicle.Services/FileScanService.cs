@@ -2638,7 +2638,7 @@ namespace Chronicle.Services
             if (IsAudiobookScan(mediaType))
                 return await PreviewAudiobooksAsync(request, mediaType, ct);
 
-            var allPaths = CollectPreviewPaths(request);
+            var allPaths = CollectPreviewPaths(request, ct);
 
             _log.Information("Grouped preview: {Count} files found, grouping with {Levels} hierarchy levels",
                 allPaths.Count, mediaType.HierarchyLevels);

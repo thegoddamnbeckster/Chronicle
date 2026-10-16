@@ -13,6 +13,8 @@ namespace Chronicle.API.Controllers;
 [Authorize(Roles = "Admin")] // server paths, DB location, git info: registration is open, so "logged in" is not enough
 public class DiagnosticsController : ControllerBase
 {
+    private static readonly JsonSerializerOptions CaseInsensitive = new() { PropertyNameCaseInsensitive = true };
+
     private readonly IConfiguration _config;
 
     public DiagnosticsController(IConfiguration config)
@@ -39,7 +41,7 @@ public class DiagnosticsController : ControllerBase
             {
                 var ports = JsonSerializer.Deserialize<PortsConfig>(
                     System.IO.File.ReadAllText(portsFile),
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    CaseInsensitive);
                 if (ports != null) { apiPort = ports.Api; webPort = ports.Web; }
             }
             catch { }

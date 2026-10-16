@@ -21,7 +21,7 @@ public class BookSeriesServiceTests
     private static ChronicleDbContext NewDb() => new(new DbContextOptionsBuilder<ChronicleDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
 
-    private static BookSeriesService NewService() => new(null!, NullLogger<BookSeriesService>.Instance);
+    private static BookSeriesService NewService() => new(NullLogger<BookSeriesService>.Instance);
 
     private static async Task<(ChronicleDbContext db, MediaType type, MediaItem author)> SetupAsync()
     {

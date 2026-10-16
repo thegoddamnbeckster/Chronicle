@@ -184,7 +184,7 @@ public class SeriesSlotTwinTests
         await db.SaveChangesAsync();
 
         var provider = Provider(HardcoverBook("hardcover:1486584", "Hell Divers XII: Heroes", 12));
-        await new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance)
+        await new BookSeriesService(NullLogger<BookSeriesService>.Instance)
             .EnsureSeriesStubsAsync(db, lib.Series, provider.Object, default);
 
         Assert.NotNull(await db.MediaItems.FindAsync(lib.Placeholder.Id));
@@ -347,7 +347,7 @@ public class SeriesSlotTwinTests
         await db.SaveChangesAsync();                            // the placeholder carries the same id (an edition)
 
         var provider = Provider(HardcoverBook("hardcover:1486584", "Hell Divers XII: Heroes", 12));
-        await new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance)
+        await new BookSeriesService(NullLogger<BookSeriesService>.Instance)
             .EnsureSeriesStubsAsync(db, lib.Series, provider.Object, default);
 
         var remaining = await db.MediaItems.Where(m => m.ParentId == lib.Series.Id).ToListAsync();
@@ -409,7 +409,7 @@ public class SeriesSlotTwinTests
         await db.SaveChangesAsync();
 
         var provider = Provider(HardcoverBook("hardcover:1486584", "Hell Divers XII: Heroes", 12));
-        await new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance)
+        await new BookSeriesService(NullLogger<BookSeriesService>.Instance)
             .EnsureSeriesStubsAsync(db, lib.Series, provider.Object, default);
 
         var books = await db.MediaItems.Where(m => m.ParentId == lib.Series.Id).ToListAsync();
@@ -427,7 +427,7 @@ public class SeriesSlotTwinTests
         await using var db = lib.Db;
 
         var provider = Provider(HardcoverBook("hardcover:1486584", "Hell Divers XII: Heroes", 12));
-        await new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance)
+        await new BookSeriesService(NullLogger<BookSeriesService>.Instance)
             .EnsureSeriesStubsAsync(db, lib.Series, provider.Object, default);
 
         var only = Assert.Single(await db.MediaItems.Where(m => m.ParentId == lib.Series.Id).ToListAsync());
@@ -445,7 +445,7 @@ public class SeriesSlotTwinTests
         var provider = Provider(
             HardcoverBook("hardcover:1", "Heroes (print)", 12),
             HardcoverBook("hardcover:2", "Heroes (omnibus)", 12));
-        await new BookSeriesService(null!, NullLogger<BookSeriesService>.Instance)
+        await new BookSeriesService(NullLogger<BookSeriesService>.Instance)
             .EnsureSeriesStubsAsync(db, lib.Series, provider.Object, default);
 
         // the user's book was not claimed by either listing
