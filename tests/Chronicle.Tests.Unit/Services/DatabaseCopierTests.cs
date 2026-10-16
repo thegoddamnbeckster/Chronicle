@@ -71,7 +71,7 @@ public sealed class DatabaseCopierTests : IDisposable
         items.Select(i => (i.Id, i.ParentId)).Should().Equal((100, 300), (200, null), (300, 400), (400, null));
         items.Single(i => i.Id == 200).MetadataJson.Should().Contain("café").And.Contain("日本語");
         (await target.Users.SingleAsync()).Username.Should().Be("alice");
-        (await target.AppSettings.SingleAsync()).Key.Should().Be("plugins.catalog_url");
+        (await target.AppSettings.AnyAsync(a => a.Key == "plugins.catalog_url")).Should().BeTrue();
         (await target.UserLibraries.SingleAsync()).Status.Should().Be(LibraryStatus.Completed);
     }
 
@@ -165,6 +165,7 @@ public sealed class DatabaseCopierTests : IDisposable
     {
         await using var source = NewSqlite("source.db");
         await source.Database.ExecuteSqlRawAsync("DELETE FROM media_types");
+        await source.Database.ExecuteSqlRawAsync("DELETE FROM app_settings");   // the migration seeds the starting enrichment rules
         await using var target = NewSqlite("target.db");
 
         var report = await DatabaseCopier.CopyAsync(source, target, replace: false);

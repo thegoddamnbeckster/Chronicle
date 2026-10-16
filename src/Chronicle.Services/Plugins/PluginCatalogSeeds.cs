@@ -1,31 +1,24 @@
+using System.Reflection;
 using Chronicle.Core.Models;
 
 namespace Chronicle.Services.Plugins;
 
-/// <summary>List of GitHub repos that make up Chronicle's plugin catalog. See PluginCatalogSeed's own doc for why this is deliberately the only static part left.</summary>
+/// <summary>
+/// The plugin catalog compiled into Chronicle, used only when the hosted list (see <see cref="PluginCatalogSource"/>) cannot be
+/// reached and no earlier copy exists. It is the repository's own plugins.json embedded at build time, so there is exactly one
+/// list to edit.
+/// </summary>
 public static class PluginCatalogSeeds
 {
-    public static readonly PluginCatalogSeed[] Entries =
-    [
-        new("chronicle.plugin.tmdb",              "thegoddamnbeckster/Chronicle.Plugin.TMDB",              ["movies", "tv", "metadata"]),
-        new("chronicle.plugin.musicbrainz",        "thegoddamnbeckster/Chronicle.Plugin.MusicBrainz",        ["music", "audio", "metadata"]),
-        new("chronicle.plugin.filescanner",        "thegoddamnbeckster/Chronicle.Plugin.FileScanner",        ["movies", "tv", "audio", "filescanner", "local"]),
-        new("chronicle.plugin.wikipedia",          "thegoddamnbeckster/Chronicle.Plugin.Wikipedia",          ["movies", "tv", "music", "books", "games", "people", "metadata"]),
-        new("chronicle.plugin.moviesremastered",   "thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered",   ["movies", "fanedits", "metadata"]),
-        new("chronicle.plugin.trakt",              "thegoddamnbeckster/Chronicle.Plugin.Trakt",              ["movies", "tv", "scrobbling", "sync"]),
-        new("hardcover",                           "thegoddamnbeckster/Chronicle.Plugin.Hardcover",          ["books", "audiobooks", "metadata", "sync"]),
-        new("chronicle.plugin.thetvdb",            "thegoddamnbeckster/Chronicle.Plugin.TheTVDB",            ["tv", "metadata"]),
-        new("chronicle.plugin.tvmaze",             "thegoddamnbeckster/Chronicle.Plugin.TVMaze",             ["tv", "metadata"]),
-        new("chronicle.plugin.fanedit",            "thegoddamnbeckster/Chronicle.Plugin.FanEdit",            ["movies", "fanedits", "metadata"]),
-        new("chronicle.plugin.anilist",            "thegoddamnbeckster/Chronicle.Plugin.AniList",            ["anime", "anime_movies", "metadata"]),
-        new("chronicle.plugin.deezer",             "thegoddamnbeckster/Chronicle.Plugin.Deezer",             ["music", "metadata"]),
-        new("chronicle.plugin.theaudiodb",         "thegoddamnbeckster/Chronicle.Plugin.TheAudioDB",         ["music", "metadata"]),
-        new("chronicle.plugin.omdb",               "thegoddamnbeckster/Chronicle.Plugin.OMDb",               ["movies", "tv", "anime", "metadata"]),
-        new("chronicle.plugin.openlibrary",        "thegoddamnbeckster/Chronicle.Plugin.OpenLibrary",        ["books", "audiobooks", "metadata"]),
-        new("chronicle.plugin.simkl",              "thegoddamnbeckster/Chronicle.Plugin.Simkl",              ["movies", "tv", "anime", "metadata"]),
-        new("chronicle.plugin.imdb",               "thegoddamnbeckster/Chronicle.Plugin.IMDb",               ["movies", "tv", "anime", "music_videos", "games", "people", "metadata", "ratings"]),
-        new("chronicle.plugin.fanarttv",           "thegoddamnbeckster/Chronicle.Plugin.FanartTV",           ["movies", "tv", "music", "artwork", "metadata"]),
-        new("chronicle.plugin.lastfm",             "thegoddamnbeckster/Chronicle.Plugin.LastFM",             ["music", "metadata", "sync"]),
-        new("chronicle.plugin.themes.default",     "thegoddamnbeckster/Chronicle.Plugin.Themes.Default",     ["themes", "ui"]),
-    ];
+    public static IReadOnlyList<PluginCatalogSeed> Entries => _entries.Value;
+
+    private static readonly Lazy<IReadOnlyList<PluginCatalogSeed>> _entries = new(Load);
+
+    private static IReadOnlyList<PluginCatalogSeed> Load()
+    {
+        using var stream = typeof(PluginCatalogSeeds).Assembly.GetManifestResourceStream("plugins.json");
+        if (stream is null) return [];
+        using var reader = new StreamReader(stream);
+        return PluginCatalogSource.Parse(reader.ReadToEnd(), out _) ?? [];
+    }
 }

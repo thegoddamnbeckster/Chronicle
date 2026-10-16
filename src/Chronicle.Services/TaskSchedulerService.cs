@@ -22,7 +22,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
     // How soon a plugin's own "fetch-missing-metadata" task is retried when it finishes a run
     // still owing Pending enrichment rows, instead of waiting for its normal (often once-daily)
     // cron. See ComputeNextRunAtAsync's own doc for the full reasoning.
-    private static readonly TimeSpan FetchMissingRetryInterval = TimeSpan.FromMinutes(15);
+    private static TimeSpan FetchMissingRetryInterval => Tunables.Minutes(Tunables.FetchMissingRetryMinutes);
     private const string FetchMissingMetadataTaskId = "fetch-missing-metadata";
 
     private readonly IReadOnlyList<IScheduledTask> _tasks;

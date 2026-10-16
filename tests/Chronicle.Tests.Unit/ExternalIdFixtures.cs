@@ -25,7 +25,7 @@ public static class ExternalIdFixtures
                 CrossRefFormats = { ["movie"] = "simkl:movie:{id}", ["anime"] = "simkl:anime:{id}", ["default"] = "simkl:tv:{id}" },
                 CrossRefValueKinds = ["number"] },
         new() { Source = "fanarttv", PluginId = "chronicle.plugin.fanarttv", IgnoredForConflicts = true },
-        new() { Source = "wikipedia", PluginId = WikipediaPluginId, NameDerived = true },
+        new() { Source = "wikipedia", PluginId = WikipediaPluginId, NameDerived = true, DisambiguatedTitleField = "title" },
     ];
 
     [ModuleInitializer]

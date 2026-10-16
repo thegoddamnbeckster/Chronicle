@@ -80,6 +80,10 @@ namespace Chronicle.Data.Postgres.Migrations
             migrationBuilder.Sql("UPDATE media_types SET \"ImportShape\" = 'episodic', \"Aliases\" = COALESCE(\"Aliases\", 'anime_episode') WHERE \"Name\" = 'anime' AND \"ImportShape\" IS NULL");
             migrationBuilder.Sql("UPDATE media_types SET \"ImportShape\" = 'author-series-work' WHERE \"Name\" IN ('books', 'audiobooks') AND \"ImportShape\" IS NULL");
             migrationBuilder.Sql("UPDATE media_types SET \"Aliases\" = 'book' WHERE \"Name\" = 'books' AND \"Aliases\" IS NULL");
+
+            // Starting values of two enrichment rules that used to be code defaults: they are settings now, so an administrator can change them and no type is named in code.
+            migrationBuilder.Sql("INSERT INTO app_settings (\"Key\", \"Value\") SELECT 'enrichment.same_work_media_types', '[[\"books\",\"audiobooks\"]]' WHERE NOT EXISTS (SELECT 1 FROM app_settings WHERE \"Key\" = 'enrichment.same_work_media_types')");
+            migrationBuilder.Sql("INSERT INTO app_settings (\"Key\", \"Value\") SELECT 'enrichment.shared_id_scopes', '[{\"mediaType\":\"music\",\"level\":2,\"requireSameName\":true,\"requireSameArtist\":true}]' WHERE NOT EXISTS (SELECT 1 FROM app_settings WHERE \"Key\" = 'enrichment.shared_id_scopes')");
         }
 
         /// <inheritdoc />

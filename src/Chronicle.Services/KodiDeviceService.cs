@@ -15,7 +15,7 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
     // directly, not just the last-heartbeat time, so IsScanActiveAsync is a single string
     // comparison with no TimeSpan arithmetic of its own.
     private const string ScanActiveUntilKey = "kodi.scan_active_until";
-    private static readonly TimeSpan ScanActivityTtl = TimeSpan.FromMinutes(3);
+    private static TimeSpan ScanActivityTtl => Tunables.Minutes(Tunables.KodiScanActiveMinutes);
     public async Task RegisterAsync(int userId, int apiTokenId, string name, string host, int port,
         string? username, string? password, CancellationToken ct = default)
     {

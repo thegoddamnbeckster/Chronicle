@@ -32,7 +32,7 @@ public sealed class PersonFullCreditsService(IPluginRegistry registry, ILogger<P
         MediaTypeRegistry.FamilyDefault(string.Equals(providerKind, ProviderFamilies.Tv, StringComparison.OrdinalIgnoreCase)
             ? ProviderFamilies.Tv : ProviderFamilies.Movie)?.Name ?? string.Empty;
 
-    public static readonly TimeSpan MaxAge = TimeSpan.FromDays(7);
+    public static TimeSpan MaxAge => Tunables.Days(Tunables.FullCreditsDays);
 
     public async Task<PersonFullCreditsResult> GetAsync(ChronicleDbContext db, int personId, CancellationToken ct)
     {

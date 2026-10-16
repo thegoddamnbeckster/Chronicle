@@ -47,7 +47,7 @@ public sealed class PersonIdentitySplitService(
     ILogger<PersonIdentitySplitService> logger)
 {
     /// <summary>Minimum birth-year difference treated as two different people.</summary>
-    internal const int MinYearGap = 2;
+    internal static int MinYearGap => Tunables.Int(Tunables.YearConflictGap);
 
     // The provider whose ids come from an item's name (declared by the plugin, see ExternalIdPolicy.NameDerived).
     internal static string NameDerivedPluginId => ExternalIdPolicies.NameDerivedPluginId();

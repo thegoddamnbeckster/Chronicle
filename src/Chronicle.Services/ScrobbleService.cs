@@ -8,7 +8,7 @@ namespace Chronicle.Services
 {
     public class ScrobbleService : IScrobbleService
     {
-        private const double WatchedThreshold = 80.0;
+        private static double WatchedThreshold => Tunables.Value(Tunables.WatchedPercent);
         private readonly ChronicleDbContext _context;
 
         public ScrobbleService(ChronicleDbContext context)
@@ -434,7 +434,7 @@ namespace Chronicle.Services
         /// interval is the correct margin against jitter/a slower-than-default configured
         /// interval, not a magic number.
         /// </summary>
-        private static readonly TimeSpan ActiveSessionWindow = TimeSpan.FromSeconds(90);
+        private static TimeSpan ActiveSessionWindow => Tunables.Seconds(Tunables.ActiveSessionSeconds);
 
         public async Task<IReadOnlyList<ActiveSession>> GetActiveSessionsAsync(int userId, CancellationToken ct = default)
         {
@@ -559,7 +559,7 @@ namespace Chronicle.Services
         // new "watch session" for history-display purposes. Long enough to survive a pause
         // or a quick interruption, short enough that a genuinely separate rewatch days (or
         // even hours) later still gets counted as its own session.
-        private const int HistorySessionGapSeconds = 1800;
+        private static double HistorySessionGapSeconds => Tunables.Value(Tunables.HistorySessionGapSeconds);
 
         // Bounded recent-event window scanned before session-collapsing -- see
         // GetHistoryAsync's own doc comment for why this isn't the user's entire history.

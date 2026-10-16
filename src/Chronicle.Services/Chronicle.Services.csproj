@@ -26,6 +26,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The plugin catalog Chronicle falls back to when the hosted copy cannot be reached: the repository's own plugins.json, so the list lives in one place. -->
+    <EmbeddedResource Include="..\..\plugins.json" LogicalName="plugins.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Chronicle.Tests.Unit" />
   </ItemGroup>
 

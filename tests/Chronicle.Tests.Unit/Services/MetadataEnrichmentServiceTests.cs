@@ -27,6 +27,11 @@ public class MetadataEnrichmentServiceTests : IDisposable
         var opts = new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
         _db = new ChronicleDbContext(opts);
+        // The starting values the database migration seeds for the two enrichment rules that are settings, not code.
+        _db.AppSettings.AddRange(
+            new AppSetting { Key = MetadataEnrichmentService.SameWorkTypesSettingKey, Value = "[[\"books\",\"audiobooks\"]]" },
+            new AppSetting { Key = MetadataEnrichmentService.SharedIdScopesSettingKey, Value = "[{\"mediaType\":\"music\",\"level\":2,\"requireSameName\":true,\"requireSameArtist\":true}]" });
+        _db.SaveChanges();
         _registry = new Mock<IPluginRegistry>();
         var scopeFactory = BuildScopeFactory(_db, _registry.Object);
         _svc = new MetadataEnrichmentService(scopeFactory, Mock.Of<IMetadataResolutionService>(), Mock.Of<IMovieCollectionService>(), Mock.Of<IMetadataUrlValidator>(), Mock.Of<IPersonResolutionService>(), Mock.Of<ILogger<MetadataEnrichmentService>>());

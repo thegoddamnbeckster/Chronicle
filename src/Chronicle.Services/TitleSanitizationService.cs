@@ -27,8 +27,8 @@ namespace Chronicle.Services;
 /// "chronicle.plugin.wikipedia" in code -- consistent with this codebase's existing
 /// metadata_assignment.config pattern, and because the actual operation (strip a trailing
 /// parenthetical) is generic string processing, not something that requires knowing Wikipedia's
-/// specific naming convention at compile time. Falls back to a sensible default (Wikipedia's
-/// own title field) only when nothing has been configured yet, so this works out of the box
+/// specific naming convention at compile time. Falls back to what the installed providers declare
+/// (their disambiguated title field) only when nothing has been configured yet, so this works out of the box
 /// without requiring a manual setup step.
 /// </summary>
 public sealed class TitleSanitizationService(
@@ -132,10 +132,11 @@ public sealed class TitleSanitizationService(
         var setting = await db.AppSettings.FindAsync(["title_sanitization.config"], ct);
         if (setting?.Value is null)
         {
-            // Default, seeded only when nothing has ever been configured -- an admin can add,
-            // remove, or clear entries via app_settings without a code change (same pattern as
-            // metadata_assignment.config).
-            return [new SanitizationTarget("chronicle.plugin.wikipedia", "title")];
+            // Nothing configured: the providers that declare a title field carrying a disambiguation suffix
+            // (ExternalIdPolicy.DisambiguatedTitleField) are cleaned. An admin can replace the list via app_settings
+            // without a code change (same pattern as metadata_assignment.config).
+            return ExternalIdPolicies.DisambiguatedTitleFields()
+                .Select(f => new SanitizationTarget(f.PluginId, f.Field)).ToList();
         }
 
         try

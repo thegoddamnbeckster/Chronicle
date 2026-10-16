@@ -71,8 +71,9 @@ namespace Chronicle.Services.Security
                 var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
                 _snapshot = await db.AppSettings
                     .AsNoTracking()
-                    .Where(s => s.Key.StartsWith(Prefix) || s.Key.StartsWith(ScanPrefix))
+                    .Where(s => s.Key.StartsWith(Prefix) || s.Key.StartsWith(ScanPrefix) || s.Key.StartsWith(Tunables.Prefix))
                     .ToDictionaryAsync(s => s.Key, s => s.Value);
+                Tunables.Load(_snapshot);
             }
             catch (Exception ex)
             {

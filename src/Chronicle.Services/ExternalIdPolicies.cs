@@ -41,6 +41,11 @@ public static class ExternalIdPolicies
     /// <summary>True when this source's id comes from the item's name rather than an independent identity.</summary>
     public static bool IsNameDerived(string? source) => Find(source)?.NameDerived == true;
 
+    /// <summary>The (plugin id, partition field) pairs whose titles can carry a trailing disambiguation parenthetical.</summary>
+    public static (string PluginId, string Field)[] DisambiguatedTitleFields() =>
+        Current.BySource.Values.Where(p => p.DisambiguatedTitleField is { Length: > 0 })
+            .Select(p => (p.PluginId, p.DisambiguatedTitleField!)).ToArray();
+
     /// <summary>The plugin id of the first name-derived provider ("" when none is installed).</summary>
     public static string NameDerivedPluginId() =>
         Current.BySource.Values.Where(p => p.NameDerived).Select(p => p.PluginId).FirstOrDefault() ?? string.Empty;

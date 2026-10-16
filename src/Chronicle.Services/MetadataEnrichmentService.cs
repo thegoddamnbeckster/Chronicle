@@ -23,7 +23,7 @@ public class MetadataEnrichmentService(
     ILogger<MetadataEnrichmentService> logger,
     EnrichmentStatsCache? statsCache = null) : IMetadataEnrichmentService
 {
-    private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
+    private static TimeSpan RetryWindow => Tunables.Hours(Tunables.EnrichmentRetryHours);
     private static readonly System.Text.Json.JsonSerializerOptions CaseInsensitiveOptions = new() { PropertyNameCaseInsensitive = true };
 
     // Camelcase options used when serialising MediaMetadata objects into metadata_json plugin
@@ -1368,7 +1368,7 @@ public class MetadataEnrichmentService(
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int MediaItemId, string PluginId), SemaphoreSlim>
         _itemPluginLocks = new();
 
-    private const int DefaultConfidenceThreshold = 50;
+    private static int DefaultConfidenceThreshold => Tunables.Int(Tunables.ConfidenceThreshold);
 
     // How long a caller will wait to acquire the per-(item, plugin) lock below before giving up.
     // Must be longer than ProviderCallGuard.DefaultTimeout (the lock is held for the duration of
@@ -3658,16 +3658,16 @@ public class MetadataEnrichmentService(
     }
 
     /// <summary>app_settings key: JSON array of arrays of media type names that hold the same work in different
-    /// formats. Defaults to books and audiobooks when unset.</summary>
+    /// formats. Seeded by the database migration that introduced it; empty (no type pairs) when unset.</summary>
     internal const string SameWorkTypesSettingKey = "enrichment.same_work_media_types";
 
     private static async Task<List<string[]>> LoadSameWorkTypeGroupsAsync(ChronicleDbContext db, CancellationToken ct)
     {
         var raw = await db.AppSettings.AsNoTracking().Where(a => a.Key == SameWorkTypesSettingKey)
             .Select(a => a.Value).FirstOrDefaultAsync(ct);
-        if (string.IsNullOrWhiteSpace(raw)) return [["books", "audiobooks"]];
+        if (string.IsNullOrWhiteSpace(raw)) return [];
         try { return System.Text.Json.JsonSerializer.Deserialize<List<string[]>>(raw) ?? []; }
-        catch (System.Text.Json.JsonException) { return [["books", "audiobooks"]]; }
+        catch (System.Text.Json.JsonException) { return []; }
     }
 
     internal static bool IsSameWorkTypePair(IEnumerable<string[]> groups, string? a, string? b) =>
@@ -3678,25 +3678,23 @@ public class MetadataEnrichmentService(
     /// at that level may share a provider id with another such item (and so each be matched), when -- if requireSameName -- they have
     /// the same name and -- if requireSameArtist -- the same artist (the top of their hierarchy; "Various Artists" matches any, a
     /// compilation's tracks being the real artists' recordings). Without the artist check two unrelated songs of one title would be
-    /// given one name-matched article. Defaults to music tracks: a recording is one thing that appears on many releases, and the library holds one track
-    /// item per release (the same song on its album, a greatest hits, a single).</summary>
+    /// given one name-matched article. Seeded by the database migration that introduced it with music tracks (a recording is one thing
+    /// that appears on many releases, and the library holds one track item per release); none when unset.</summary>
     internal const string SharedIdScopesSettingKey = "enrichment.shared_id_scopes";
 
     internal sealed record SharedIdScope(string MediaType, int Level, bool RequireSameName = true, bool RequireSameArtist = true);
-
-    private static readonly SharedIdScope[] DefaultSharedIdScopes = [new("music", 2, true, true)];
 
     private static async Task<List<SharedIdScope>> LoadSharedIdScopesAsync(ChronicleDbContext db, CancellationToken ct)
     {
         var raw = await db.AppSettings.AsNoTracking().Where(a => a.Key == SharedIdScopesSettingKey)
             .Select(a => a.Value).FirstOrDefaultAsync(ct);
-        if (string.IsNullOrWhiteSpace(raw)) return [.. DefaultSharedIdScopes];
+        if (string.IsNullOrWhiteSpace(raw)) return [];
         try
         {
             return System.Text.Json.JsonSerializer.Deserialize<List<SharedIdScope>>(raw,
                 CaseInsensitiveOptions) ?? [];
         }
-        catch (System.Text.Json.JsonException) { return [.. DefaultSharedIdScopes]; }
+        catch (System.Text.Json.JsonException) { return []; }
     }
 
     internal static bool IsSharedIdPair(IEnumerable<SharedIdScope> scopes, MediaItem a, MediaItem b)

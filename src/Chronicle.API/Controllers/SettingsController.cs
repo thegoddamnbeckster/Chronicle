@@ -72,6 +72,51 @@ public class SettingsController : ControllerBase
         return NoContent();
     }
 
+    // ── Tunables (policy numbers with defaults; see Chronicle.Services.Tunables) ──────────────
+
+    /// <summary>Every adjustable number with its default, its allowed range and its current value.</summary>
+    [HttpGet("tunables")]
+    public async Task<IActionResult> GetTunables()
+    {
+        var stored = await _db.AppSettings.AsNoTracking()
+            .Where(s => s.Key.StartsWith(Tunables.Prefix)).ToDictionaryAsync(s => s.Key, s => s.Value);
+        var rows = Tunables.All.Select(d => new
+        {
+            key = d.Key, group = d.Group, label = d.Label, description = d.Description, unit = d.Unit,
+            @default = d.Default, min = d.Min, max = d.Max,
+            value = stored.TryGetValue(d.Key, out var text) && Tunables.TryParse(d, text, out var v) ? v : d.Default,
+            isCustom = stored.TryGetValue(d.Key, out var t2) && Tunables.TryParse(d, t2, out _),
+        });
+        return Ok(rows);
+    }
+
+    /// <summary>Sets one adjustable number. A null value puts the default back. Admin only.</summary>
+    [HttpPut("tunables/{key}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> PutTunable(string key, [FromBody] TunableUpdateRequest body)
+    {
+        var def = Tunables.Find(key);
+        if (def is null) return NotFound(new { error = "No such setting." });
+        if (body.Value is { } v && (double.IsNaN(v) || v < def.Min || v > def.Max))
+            return BadRequest(new { error = $"{def.Label} must be between {def.Min} and {def.Max} {def.Unit}." });
+
+        var row = await _db.AppSettings.FindAsync(key);
+        if (body.Value is null)
+        {
+            if (row is not null) _db.AppSettings.Remove(row);
+        }
+        else
+        {
+            var text = body.Value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (row is null) _db.AppSettings.Add(new AppSetting { Key = key, Value = text });
+            else row.Value = text;
+        }
+        await _db.SaveChangesAsync();
+
+        Tunables.Load(await _db.AppSettings.AsNoTracking().Where(s => s.Key.StartsWith(Tunables.Prefix)).ToDictionaryAsync(s => s.Key, s => s.Value));
+        return NoContent();
+    }
+
     /// <summary>
     /// Returns the current Windows service status for Chronicle.
     /// When running in development (service not installed) returns isInstalled: false.
@@ -660,6 +705,8 @@ public class SettingsController : ControllerBase
 }
 
 public record AppSettingUpdateRequest([Required] string Value);
+
+public record TunableUpdateRequest(double? Value);
 
 public record MetadataAssignmentRequest(
     [Required] Dictionary<string, Dictionary<string, string[]>>? Assignments

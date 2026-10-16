@@ -55,6 +55,7 @@ public class CatalogEntryGuardTests
     [Fact]
     public void EveryBuiltInCatalogEntry_Passes()
     {
+        PluginCatalogSeeds.Entries.Should().NotBeEmpty("plugins.json is embedded in the build");
         foreach (var entry in PluginCatalogSeeds.Entries)
             CatalogEntryGuard.Check(Entry(id: entry.PluginId, repo: entry.GithubRepo)).Should().BeNull($"{entry.PluginId} is shipped with Chronicle");
     }

@@ -155,6 +155,11 @@ export default function Layout() {
               Media Types
             </NavLink>
           )}
+          {user.isAdmin && (
+            <NavLink to="/settings/tuning" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+              Tuning
+            </NavLink>
+          )}
           <NavLink to="/settings/metadata-assignment" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
             Metadata Assignment
           </NavLink>

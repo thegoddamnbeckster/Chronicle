@@ -31,7 +31,7 @@ public sealed class MovieFileYearRepairService(
     IServiceScopeFactory scopeFactory,
     ILogger<MovieFileYearRepairService> logger)
 {
-    internal const int MinYearGap = 2;
+    internal static int MinYearGap => Tunables.Int(Tunables.YearConflictGap);
     private const int PageSize = 500;
 
     private static readonly HashSet<string> VideoExtensions =

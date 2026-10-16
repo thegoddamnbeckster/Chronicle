@@ -44,6 +44,10 @@ public sealed class ExternalIdPolicy
     /// </summary>
     public bool NameDerived { get; set; }
 
+    /// <summary>The field of this provider's own metadata partition (e.g. "title") that can arrive carrying a trailing
+    /// disambiguation parenthetical ("Heat (film)") which Chronicle should strip. Null when the provider's titles are clean.</summary>
+    public string? DisambiguatedTitleField { get; set; }
+
     /// <summary>
     /// How an id this provider reports inside another provider's cross-reference block is written, per kind of item
     /// ("movie", "tv", "anime", else "default"), with <c>{id}</c> standing for the value. Missing kinds fall back to "default",

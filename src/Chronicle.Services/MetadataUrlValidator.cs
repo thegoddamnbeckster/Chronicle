@@ -30,8 +30,8 @@ public class MetadataUrlValidator(
     /// image must not be thrown away because its CDN was busy for a moment.</summary>
     internal enum Verdict { Valid, Invalid, Unknown }
 
-    internal static readonly TimeSpan ValidFor = TimeSpan.FromHours(12);
-    internal static readonly TimeSpan InvalidFor = TimeSpan.FromMinutes(30);
+    internal static TimeSpan ValidFor => Tunables.Hours(Tunables.ImageCheckValidHours);
+    internal static TimeSpan InvalidFor => Tunables.Minutes(Tunables.ImageCheckInvalidMinutes);
     private const int MaxConcurrentPerHost = 4;
 
     // One gate per host, shared by every enrichment running at once: an album with thirty cover images used to fire sixty

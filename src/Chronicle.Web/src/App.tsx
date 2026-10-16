@@ -30,6 +30,7 @@ const BackgroundTasksPage = lazy(() => import('@/pages/settings/BackgroundTasksP
 const DatabasePage = lazy(() => import('@/pages/settings/DatabasePage'))
 const EmailSettingsPage = lazy(() => import('@/pages/settings/EmailSettingsPage'))
 const MediaTypesPage = lazy(() => import('@/pages/settings/MediaTypesPage'))
+const TuningPage = lazy(() => import('@/pages/settings/TuningPage'))
 const EnrichmentDrillDownPage = lazy(() => import('@/pages/settings/EnrichmentDrillDownPage'))
 const PluginsPage = lazy(() => import('@/pages/plugins/PluginsPage'))
 const GettingStartedPage = lazy(() => import('@/pages/setup/GettingStartedPage'))
@@ -110,6 +111,7 @@ export default function App() {
         <Route path="settings/database" element={<DatabasePage />} />
         <Route path="settings/email" element={<EmailSettingsPage />} />
         <Route path="settings/media-types" element={<MediaTypesPage />} />
+        <Route path="settings/tuning" element={<TuningPage />} />
         <Route path="settings/enrichment/:pluginId" element={<EnrichmentDrillDownPage />} />
         <Route path="settings/metadata-assignment" element={<MetadataAssignmentPage />} />
         <Route path="settings/field-aliases" element={<FieldAliasesPage />} />

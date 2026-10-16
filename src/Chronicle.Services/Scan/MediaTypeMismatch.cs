@@ -91,8 +91,8 @@ namespace Chronicle.Services.Scan
 
     public static class MediaTypeMismatchDetector
     {
-        public const double MajorityShare = 0.6;
-        public const double MinorityShare = 0.2;
+        public static double MajorityShare => Tunables.Fraction(Tunables.TypeMismatchMajorityPercent);
+        public static double MinorityShare => Tunables.Fraction(Tunables.TypeMismatchMinorityPercent);
 
         /// <summary>Does this group's content look like a different type than <paramref name="current"/>? Only
         /// compares types that have hints; a type with none is never suggested and never flagged. Returns null when

@@ -31,14 +31,14 @@ public sealed class HardcoverSeriesReconcileService(
     // 00:00 UTC. A series' book list changes rarely, so each series is now re-checked at most once
     // per StaleAfter, oldest first, and at most MaxPerRun per pass, spreading the cost out.
     internal const string LastSyncedSettingKey = "hardcover.series_reconcile.last_synced";
-    internal static readonly TimeSpan StaleAfter = TimeSpan.FromDays(7);
-    internal const int MaxPerRun = 150;
+    internal static TimeSpan StaleAfter => Tunables.Days(Tunables.SeriesRecheckDays);
+    internal static int MaxPerRun => Tunables.Int(Tunables.SeriesChecksPerRun);
     // A series whose sync FAILED (not a throttle) is retried after this, not on the very next pass:
     // otherwise a handful of permanently-failing series sort first every run and starve the rest.
-    internal static readonly TimeSpan FailedRetryAfter = TimeSpan.FromDays(1);
+    internal static TimeSpan FailedRetryAfter => Tunables.Days(Tunables.SeriesFailureRetryDays);
     // Stop the pass after this many failures in a row -- the provider or token is broken, and every
     // further series would just repeat the same doomed (and possibly slow, backed-off) request.
-    internal const int MaxConsecutiveFailures = 3;
+    internal static int MaxConsecutiveFailures => Tunables.Int(Tunables.SeriesFailuresToStop);
 
     public async Task ExecuteAsync(CancellationToken ct)
     {

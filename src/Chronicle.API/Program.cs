@@ -532,6 +532,9 @@ using (var scope = app.Services.CreateScope())
         // own doc).
         await fileScanService.BackfillKnownFileNamesAsync();
 
+        // The adjustable policy numbers (Tunables) are read now so the first request already uses an administrator's values.
+        await ((CachedAppSettings)app.Services.GetRequiredService<ICachedAppSettings>()).RefreshAsync();
+
         // One-time removal of all NFO-derived data and the retired Kodi NFO sidecar plugin --
         // must run before PluginHostService (a hosted service, started at app.Run) would
         // otherwise auto-register that plugin's folder again. No-op after the first run.
