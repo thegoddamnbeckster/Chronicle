@@ -113,25 +113,16 @@ public class PluginsController : ControllerBase
         await using var scope = _scopeFactory.CreateAsyncScope();
         await using var db    = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
 
-        var failedPluginIds = await db.MediaEnrichments
-            .Where(e => e.Status == EnrichmentStatus.AuthFailed)
-            .Select(e => e.PluginId)
-            .Distinct()
-            .ToListAsync(ct);
-
+        // One existence probe per installed plugin, each an index seek on (PluginId, Status). The old "distinct plugin ids of all
+        // AuthFailed rows" had to walk the whole 1.5M-row index (~0.55 s per call, and the page asks every few seconds).
         var allPlugins = await _pluginService.GetAllPluginsAsync();
-        var results = failedPluginIds
-            .Select(pluginId =>
-            {
-                var plugin = allPlugins.FirstOrDefault(p => p.PluginId == pluginId);
-                return new
-                {
-                    pluginId,
-                    pluginName = plugin?.Name ?? pluginId,
-                    dbId       = plugin?.Id,
-                };
-            })
-            .ToList();
+        var results = new List<object>();
+        foreach (var plugin in allPlugins)
+        {
+            if (!await db.MediaEnrichments.AnyAsync(e => e.PluginId == plugin.PluginId && e.Status == EnrichmentStatus.AuthFailed, ct))
+                continue;
+            results.Add(new { pluginId = plugin.PluginId, pluginName = plugin.Name ?? plugin.PluginId, dbId = (int?)plugin.Id });
+        }
 
         return Ok(new { success = true, data = results });
     }

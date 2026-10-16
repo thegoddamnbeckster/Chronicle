@@ -45,10 +45,14 @@ public class ScraperController : ControllerBase
     private readonly IPluginRegistry _registry;
     private readonly ILogger<ScraperController> _logger;
 
+    private readonly EpisodeTopUpThrottle _episodeThrottle;
+
     public ScraperController(ChronicleDbContext context, IMediaService mediaService,
         IMetadataEnrichmentService enrichment, IMovieCollectionService collections,
-        IFileScanService fileScan, IPluginRegistry registry, ILogger<ScraperController> logger)
+        IFileScanService fileScan, IPluginRegistry registry, ILogger<ScraperController> logger,
+        EpisodeTopUpThrottle episodeThrottle)
     {
+        _episodeThrottle = episodeThrottle;
         _context    = context;
         _mediaService = mediaService;
         _enrichment = enrichment;
@@ -823,12 +827,16 @@ public class ScraperController : ControllerBase
     {
         var candidates = CollectProviderExternalIds(show.MetadataJson);
         if (candidates.Count == 0) return;
+        if (_episodeThrottle.IsFresh(show.Id)) return;   // looked at the provider within the last hour
 
         var showLock = _episodeResolutionLocks.GetOrAdd(show.Id, _ => new SemaphoreSlim(1, 1));
         await showLock.WaitAsync(ct);
         try
         {
+            // A request that queued behind another for the same show finds the work already done.
+            if (_episodeThrottle.IsFresh(show.Id)) return;
             await ResolveEpisodesLockedAsync(show, candidates, ct);
+            _episodeThrottle.MarkChecked(show.Id);
         }
         catch (Exception ex)
         {

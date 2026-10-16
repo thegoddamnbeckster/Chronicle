@@ -20,7 +20,8 @@ public class MetadataEnrichmentService(
     IMovieCollectionService movieCollectionService,
     IMetadataUrlValidator urlValidator,
     IPersonResolutionService personResolutionService,
-    ILogger<MetadataEnrichmentService> logger) : IMetadataEnrichmentService
+    ILogger<MetadataEnrichmentService> logger,
+    EnrichmentStatsCache? statsCache = null) : IMetadataEnrichmentService
 {
     private static readonly TimeSpan RetryWindow = TimeSpan.FromHours(24);
 
@@ -1091,6 +1092,7 @@ public class MetadataEnrichmentService(
             row.LastAttemptedAt = null;
         }
         await db.SaveChangesAsync(ct);
+        statsCache?.Invalidate();
     }
 
     public async Task SkipAsync(int mediaItemId, string pluginId, CancellationToken ct = default)
@@ -1104,6 +1106,7 @@ public class MetadataEnrichmentService(
         {
             row.Status = EnrichmentStatus.Skipped;
             await db.SaveChangesAsync(ct);
+            statsCache?.Invalidate();
         }
     }
 
@@ -1127,21 +1130,25 @@ public class MetadataEnrichmentService(
             .Where(p => p.IsEnabled && (metadataPluginIds.Contains(p.PluginId) || p.IntegrityBlockedAt != null))
             .ToListAsync(ct);
 
-        // Enrichment counts grouped by plugin ID
-        var rows = await db.MediaEnrichments
-            .GroupBy(x => x.PluginId)
-            .Select(g => new
-            {
-                PluginId   = g.Key,
-                Pending    = g.Count(x => x.Status == EnrichmentStatus.Pending),
-                Completed  = g.Count(x => x.Status == EnrichmentStatus.Completed),
-                Failed     = g.Count(x => x.Status == EnrichmentStatus.Failed),
-                Exhausted  = g.Count(x => x.Status == EnrichmentStatus.Exhausted),
-                NotFound   = g.Count(x => x.Status == EnrichmentStatus.NotFound),
-                Skipped    = g.Count(x => x.Status == EnrichmentStatus.Skipped),
-                AuthFailed = g.Count(x => x.Status == EnrichmentStatus.AuthFailed),
-            })
-            .ToListAsync(ct);
+        // Enrichment counts grouped by plugin ID -- a walk of the whole table, so shared for a few seconds between callers.
+        async Task<IReadOnlyList<EnrichmentCounts>> CountAsync()
+        {
+            await using var countScope = scopeFactory.CreateAsyncScope();
+            var countDb = countScope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            return await countDb.MediaEnrichments
+                .GroupBy(x => x.PluginId)
+                .Select(g => new EnrichmentCounts(
+                    g.Key,
+                    g.Count(x => x.Status == EnrichmentStatus.Pending),
+                    g.Count(x => x.Status == EnrichmentStatus.Completed),
+                    g.Count(x => x.Status == EnrichmentStatus.Failed),
+                    g.Count(x => x.Status == EnrichmentStatus.Exhausted),
+                    g.Count(x => x.Status == EnrichmentStatus.NotFound),
+                    g.Count(x => x.Status == EnrichmentStatus.Skipped),
+                    g.Count(x => x.Status == EnrichmentStatus.AuthFailed)))
+                .ToListAsync(CancellationToken.None);
+        }
+        var rows = statsCache is null ? await CountAsync() : await statsCache.GetAsync(CountAsync);
 
         var rowLookup = rows.ToDictionary(r => r.PluginId, StringComparer.OrdinalIgnoreCase);
 
