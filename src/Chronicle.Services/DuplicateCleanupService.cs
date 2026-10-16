@@ -649,7 +649,7 @@ public sealed class DuplicateCleanupService
     }
 
     /// <summary>The pause after each merge. Tests set it to zero.</summary>
-    internal static TimeSpan MergeBreather { get; set; } = TimeSpan.FromMilliseconds(400);
+    public static TimeSpan MergeBreather { get; set; } = TimeSpan.FromMilliseconds(400);
 
     /// <summary>Pairs a run found but could not safely merge, kept to report once.</summary>
     private sealed class MergeSkips
