@@ -493,6 +493,12 @@ namespace Chronicle.Data
                 e.ToTable("media_enrichment");
                 e.HasKey(x => x.Id);
                 e.HasIndex(x => new { x.MediaItemId, x.PluginId }).IsUnique();
+                // Every enrichment pass, every "anything still pending?" check and the per-plugin counts on the Background
+                // Tasks page ask "rows of this plugin in this status". With 1.5M rows and no index for that, each of them
+                // scanned the whole table (the wide rows carry DiagnosticsJson): 2-4 s apiece under load, run several times
+                // per pass and again on every refresh of the page. MediaItemId is last so the common "which items" query is
+                // answered from the index alone.
+                e.HasIndex(x => new { x.PluginId, x.Status, x.MediaItemId }).HasDatabaseName("IX_media_enrichment_PluginId_Status_MediaItemId");
                 e.Property(x => x.Status).HasConversion<string>();
                 e.HasOne(x => x.MediaItem)
                  .WithMany()

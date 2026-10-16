@@ -17,7 +17,7 @@ namespace Chronicle.Data.Postgres.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.20")
+                .HasAnnotation("ProductVersion", "9.0.21")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -702,6 +702,9 @@ namespace Chronicle.Data.Postgres.Migrations
 
                     b.HasIndex("MediaItemId", "PluginId")
                         .IsUnique();
+
+                    b.HasIndex("PluginId", "Status", "MediaItemId")
+                        .HasDatabaseName("IX_media_enrichment_PluginId_Status_MediaItemId");
 
                     b.ToTable("media_enrichment", (string)null);
                 });

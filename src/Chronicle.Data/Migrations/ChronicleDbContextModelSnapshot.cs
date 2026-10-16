@@ -15,7 +15,7 @@ namespace Chronicle.Data.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "9.0.20");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.21");
 
             modelBuilder.Entity("Chronicle.Core.Models.ApiToken", b =>
                 {
@@ -673,6 +673,9 @@ namespace Chronicle.Data.Migrations
 
                     b.HasIndex("MediaItemId", "PluginId")
                         .IsUnique();
+
+                    b.HasIndex("PluginId", "Status", "MediaItemId")
+                        .HasDatabaseName("IX_media_enrichment_PluginId_Status_MediaItemId");
 
                     b.ToTable("media_enrichment", (string)null);
                 });

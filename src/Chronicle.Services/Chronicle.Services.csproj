@@ -10,6 +10,8 @@
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.*" />
     <PackageReference Include="Cronos" Version="0.11.1" />
     <PackageReference Include="MailKit" Version="4.*" />
+    <!-- MailKit pulls in 10.0.0 transitively, which has a high-severity advisory (GHSA-846f-f764-76mx); pinned to a patched build. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.3" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.3" />
     <PackageReference Include="Serilog" Version="4.3.1" />
