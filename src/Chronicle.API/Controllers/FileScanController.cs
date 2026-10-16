@@ -50,6 +50,7 @@ public class FileScanController : ControllerBase
     /// Returns {valid: true} if the path is usable, or {valid: false, error: "..."} otherwise.
     /// </summary>
     [HttpPost("validate-path")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> ValidatePath([FromBody] ValidatePathDto dto, CancellationToken ct)
     {
         var result = await _scanFolderService.ValidatePathAsync(dto.Path, ct);
@@ -61,6 +62,7 @@ public class FileScanController : ControllerBase
     /// Files with a confidence score below the threshold are reported but not added.
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> RunScan(
         [FromBody] FileScanRequestDto dto,
         CancellationToken ct)
@@ -111,6 +113,7 @@ public class FileScanController : ControllerBase
     /// Use this first step to let the user review before committing to the library.
     /// </summary>
     [HttpPost("preview")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Preview(
         [FromBody] ScanPreviewRequestDto dto,
         CancellationToken ct)
@@ -290,6 +293,7 @@ public class FileScanController : ControllerBase
     /// fetches full metadata, creates MediaItems, and adds them to the user's library.
     /// </summary>
     [HttpPost("import")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> ImportApproved(
         [FromBody] ImportRequestDto dto,
         CancellationToken ct)
@@ -323,6 +327,7 @@ public class FileScanController : ControllerBase
     /// service will enrich each item with TMDB data automatically.
     /// </summary>
     [HttpPost("import-direct")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> ImportDirect(
         [FromBody] DirectImportRequestDto dto,
         CancellationToken ct)
@@ -357,6 +362,7 @@ public class FileScanController : ControllerBase
     /// (Artist→Album→Track, Show→Season→Episode) with confidence scores. Read-only.
     /// </summary>
     [HttpPost("preview-grouped")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> PreviewGrouped(
         [FromBody] ScanPreviewRequestDto request,
         CancellationToken ct)
@@ -383,6 +389,7 @@ public class FileScanController : ControllerBase
     /// Returns 409 Conflict if an import is already running.
     /// </summary>
     [HttpPost("import-groups")]
+    [Authorize(Roles = "Admin")]
     public IActionResult ImportGroups(
         [FromBody] ImportGroupsRequestDto request)
     {

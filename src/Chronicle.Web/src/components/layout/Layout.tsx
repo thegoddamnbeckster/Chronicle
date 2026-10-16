@@ -121,7 +121,7 @@ export default function Layout() {
                 Collection
               </NavLink>
             </NavGroup>
-            {scanStatus?.available && (
+            {user.isAdmin && scanStatus?.available && (
               <NavLink to="/scan" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
                 File Scan
               </NavLink>

@@ -122,7 +122,7 @@ export default function App() {
         <Route path="getting-started" element={<RequireAdmin><GettingStartedPage /></RequireAdmin>} />
         <Route path="lists" element={<ListsPage />} />
         <Route path="lists/:id" element={<ListDetailPage />} />
-        <Route path="scan" element={<ScanPage />} />
+        <Route path="scan" element={<RequireAdmin><ScanPage /></RequireAdmin>} />
         <Route path="preferences" element={<PreferencesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

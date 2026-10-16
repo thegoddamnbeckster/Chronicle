@@ -7,7 +7,7 @@ namespace Chronicle.API.Controllers;
 
 [ApiController]
 [Route("api/v1/scan-folders")]
-[Authorize]
+[Authorize(Roles = "Admin")] // server paths the library is built from: only the people who run the server may see or change them
 public class ScanFolderController : ControllerBase
 {
     private readonly IScanFolderService _svc;
