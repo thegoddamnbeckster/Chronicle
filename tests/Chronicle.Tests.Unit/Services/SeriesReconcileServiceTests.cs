@@ -19,9 +19,9 @@ namespace Chronicle.Tests.Unit.Services;
 /// <see cref="IBookSeriesService.EnsureSeriesStubsAsync"/> -- chained after Hardcover's own
 /// fetch-missing-metadata task (see TaskSchedulerService's own call site).
 /// </summary>
-public class HardcoverSeriesReconcileServiceTests
+public class SeriesReconcileServiceTests
 {
-    private static (ChronicleDbContext db, HardcoverSeriesReconcileService svc, Mock<IMetadataProvider> provider)
+    private static (ChronicleDbContext db, SeriesReconcileService svc, Mock<IMetadataProvider> provider)
         Setup(bool pluginInstalled = true)
     {
         var db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
@@ -42,8 +42,8 @@ public class HardcoverSeriesReconcileServiceTests
             .AddScoped<IBookSeriesService, BookSeriesService>()
             .AddSingleton<Microsoft.Extensions.Logging.ILogger<BookSeriesService>>(NullLogger<BookSeriesService>.Instance)
             .BuildServiceProvider();
-        return (db, new HardcoverSeriesReconcileService(
-            services.GetRequiredService<IServiceScopeFactory>(), NullLogger<HardcoverSeriesReconcileService>.Instance), provider);
+        return (db, new SeriesReconcileService(
+            services.GetRequiredService<IServiceScopeFactory>(), NullLogger<SeriesReconcileService>.Instance), provider);
     }
 
     private static MediaItem Item(string name, int level, int? parentId, int? number = null) => new()
@@ -76,7 +76,7 @@ public class HardcoverSeriesReconcileServiceTests
         provider.Setup(p => p.GetByIdAsync("hardcover:series:2", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MediaMetadata { Title = "Series Two", Results = [new MediaMetadata { ExternalId = "hardcover:2", Title = "Book B" }] });
 
-        await svc.ExecuteAsync(default);
+        await svc.ExecuteAsync("hardcover", default);
 
         Assert.Equal(1, await db.MediaItems.CountAsync(m => m.ParentId == series1.Id));
         Assert.Equal(1, await db.MediaItems.CountAsync(m => m.ParentId == series2.Id));
@@ -89,7 +89,7 @@ public class HardcoverSeriesReconcileServiceTests
         var (db, svc, _) = Setup(pluginInstalled: false);
         await using var _ = db;
 
-        await svc.ExecuteAsync(default); // must not throw
+        await svc.ExecuteAsync("hardcover", default); // must not throw
     }
 
     [Fact]
@@ -114,7 +114,7 @@ public class HardcoverSeriesReconcileServiceTests
         provider.Setup(p => p.GetByIdAsync("hardcover:series:2", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MediaMetadata { Title = "Fine Series", Results = [new MediaMetadata { ExternalId = "hardcover:2", Title = "Book" }] });
 
-        await svc.ExecuteAsync(default); // must not throw, and must still process "fine"
+        await svc.ExecuteAsync("hardcover", default); // must not throw, and must still process "fine"
 
         Assert.Equal(1, await db.MediaItems.CountAsync(m => m.ParentId == fine.Id));
     }
@@ -144,7 +144,7 @@ public class HardcoverSeriesReconcileServiceTests
         var never = await AddSeriesAsync(db, author, "Never", 3);
         db.AppSettings.Add(new AppSetting
         {
-            Key = HardcoverSeriesReconcileService.LastSyncedSettingKey,
+            Key = SeriesReconcileService.LastSyncedKey("hardcover"),
             Value = JsonSerializer.Serialize(new Dictionary<int, DateTime>
             {
                 [fresh.Id] = DateTime.UtcNow.AddDays(-1),
@@ -156,13 +156,13 @@ public class HardcoverSeriesReconcileServiceTests
             provider.Setup(p => p.GetByIdAsync($"hardcover:series:{n}", It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new MediaMetadata { Title = n == 1 ? "Fresh" : n == 2 ? "Stale" : "Never", Results = [] });
 
-        await svc.ExecuteAsync(default);
+        await svc.ExecuteAsync("hardcover", default);
 
         provider.Verify(p => p.GetByIdAsync("hardcover:series:1", It.IsAny<CancellationToken>()), Times.Never);
         provider.Verify(p => p.GetByIdAsync("hardcover:series:2", It.IsAny<CancellationToken>()), Times.Once);
         provider.Verify(p => p.GetByIdAsync("hardcover:series:3", It.IsAny<CancellationToken>()), Times.Once);
         var saved = JsonSerializer.Deserialize<Dictionary<int, DateTime>>(
-            (await db.AppSettings.SingleAsync(s => s.Key == HardcoverSeriesReconcileService.LastSyncedSettingKey)).Value)!;
+            (await db.AppSettings.SingleAsync(s => s.Key == SeriesReconcileService.LastSyncedKey("hardcover"))).Value)!;
         Assert.True(saved[stale.Id] > DateTime.UtcNow.AddMinutes(-1)); // stamped now
         Assert.True(saved[never.Id] > DateTime.UtcNow.AddMinutes(-1));
     }
@@ -180,13 +180,13 @@ public class HardcoverSeriesReconcileServiceTests
         provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("quota", null, HttpStatusCode.TooManyRequests));
 
-        await svc.ExecuteAsync(default); // must not throw
+        await svc.ExecuteAsync("hardcover", default); // must not throw
 
         // Stopped after the first failure, not one doomed call per series...
         provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         // ...and a throttled provider is not evidence the stored ids are bad: both must survive.
         Assert.Equal(2, await db.MediaExternalIds.CountAsync(e => e.ExternalId.StartsWith("hardcover:series:")));
-        var setting = await db.AppSettings.FirstOrDefaultAsync(s => s.Key == HardcoverSeriesReconcileService.LastSyncedSettingKey);
+        var setting = await db.AppSettings.FirstOrDefaultAsync(s => s.Key == SeriesReconcileService.LastSyncedKey("hardcover"));
         var saved = setting is null ? [] : JsonSerializer.Deserialize<Dictionary<int, DateTime>>(setting.Value)!;
         Assert.Empty(saved);
     }
@@ -199,16 +199,16 @@ public class HardcoverSeriesReconcileServiceTests
         var author = Item("Author", 0, null);
         db.MediaItems.Add(author);
         await db.SaveChangesAsync();
-        for (var i = 1; i <= HardcoverSeriesReconcileService.MaxPerRun + 10; i++)
+        for (var i = 1; i <= SeriesReconcileService.MaxPerRun + 10; i++)
             await AddSeriesAsync(db, author, $"S{i}", i);
         provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string id, CancellationToken _) => new MediaMetadata
                 { Title = db.MediaExternalIds.Where(e => e.ExternalId == id).Select(e => e.MediaItem!.Name).First(), Results = [] });
 
-        await svc.ExecuteAsync(default);
+        await svc.ExecuteAsync("hardcover", default);
 
         provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(HardcoverSeriesReconcileService.MaxPerRun));
+            Times.Exactly(SeriesReconcileService.MaxPerRun));
     }
 
     [Fact]
@@ -223,17 +223,17 @@ public class HardcoverSeriesReconcileServiceTests
         provider.Setup(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Hardcover API returned 403 after 3 attempts"));
 
-        await svc.ExecuteAsync(default);
+        await svc.ExecuteAsync("hardcover", default);
 
         provider.Verify(p => p.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(HardcoverSeriesReconcileService.MaxConsecutiveFailures));
+            Times.Exactly(SeriesReconcileService.MaxConsecutiveFailures));
         // Their ids all survive (a failed fetch is not proof the id is bad)...
         Assert.Equal(5, await db.MediaExternalIds.CountAsync(e => e.ExternalId.StartsWith("hardcover:series:")));
         // ...and the failures are stamped so the next pass moves on to the untried ones first.
         var saved = JsonSerializer.Deserialize<Dictionary<int, DateTime>>(
-            (await db.AppSettings.SingleAsync(s => s.Key == HardcoverSeriesReconcileService.LastSyncedSettingKey)).Value)!;
-        Assert.Equal(HardcoverSeriesReconcileService.MaxConsecutiveFailures, saved.Count);
-        Assert.All(saved.Values, at => Assert.True(DateTime.UtcNow - at < HardcoverSeriesReconcileService.StaleAfter));
+            (await db.AppSettings.SingleAsync(s => s.Key == SeriesReconcileService.LastSyncedKey("hardcover"))).Value)!;
+        Assert.Equal(SeriesReconcileService.MaxConsecutiveFailures, saved.Count);
+        Assert.All(saved.Values, at => Assert.True(DateTime.UtcNow - at < SeriesReconcileService.StaleAfter));
     }
 
     [Fact]
@@ -247,15 +247,15 @@ public class HardcoverSeriesReconcileServiceTests
         var live = await AddSeriesAsync(db, author, "Live", 1);
         db.AppSettings.Add(new AppSetting
         {
-            Key = HardcoverSeriesReconcileService.LastSyncedSettingKey,
+            Key = SeriesReconcileService.LastSyncedKey("hardcover"),
             Value = JsonSerializer.Serialize(new Dictionary<int, DateTime> { [live.Id] = DateTime.UtcNow.AddDays(-1), [999999] = DateTime.UtcNow }),
         });
         await db.SaveChangesAsync();
 
-        await svc.ExecuteAsync(default);
+        await svc.ExecuteAsync("hardcover", default);
 
         var saved = JsonSerializer.Deserialize<Dictionary<int, DateTime>>(
-            (await db.AppSettings.SingleAsync(s => s.Key == HardcoverSeriesReconcileService.LastSyncedSettingKey)).Value)!;
+            (await db.AppSettings.SingleAsync(s => s.Key == SeriesReconcileService.LastSyncedKey("hardcover"))).Value)!;
         Assert.Equal([live.Id], saved.Keys);
     }
 }

@@ -2943,8 +2943,13 @@ namespace Chronicle.Services
         /// </summary>
         public async Task<int> GetConfidenceThresholdAsync(string mediaTypeName, CancellationToken ct = default)
         {
-            var plugin = await _context.Plugins
-                .FirstOrDefaultAsync(p => p.PluginId == "chronicle.plugin.filescanner" && p.IsEnabled, ct);
+            // The scanner that serves this type (else the first loaded one) owns the setting.
+            var scanner = _registry.GetFileScannerPlugins()
+                .FirstOrDefault(s => s.GetSupportedMediaTypes().Any(m => string.Equals(m.MediaTypeName, mediaTypeName, StringComparison.OrdinalIgnoreCase)))
+                ?? _registry.GetFileScannerPlugins().FirstOrDefault();
+            var scannerPluginId = scanner?.PluginId;
+            var plugin = scannerPluginId is null ? null : await _context.Plugins
+                .FirstOrDefaultAsync(p => p.PluginId == scannerPluginId && p.IsEnabled, ct);
             if (plugin?.SettingsJson is { } json)
             {
                 try
@@ -2973,7 +2978,6 @@ namespace Chronicle.Services
                 }
             }
             // 3. Plugin instance's per-type method / fallback default
-            var scanner = _registry.GetFileScannerPlugins().FirstOrDefault();
             return scanner?.GetConfidenceThreshold(mediaTypeName) ?? 75;
         }
 

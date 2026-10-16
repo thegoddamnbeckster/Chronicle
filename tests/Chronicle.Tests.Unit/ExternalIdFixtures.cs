@@ -48,6 +48,7 @@ public static class ExternalIdFixtures
         new() { Source = "simkl", PluginId = "chronicle.plugin.simkl", RefusedIdPattern = @"^simkl:\d+$",
                 CrossRefFormats = { ["movie"] = "simkl:movie:{id}", ["anime"] = "simkl:anime:{id}", ["default"] = "simkl:tv:{id}" },
                 CrossRefValueKinds = ["number"], FamilyIdPatterns = { ["movie"] = ":movie:" } },
+        new() { Source = "hardcover", PluginId = "hardcover", SeriesIdMarker = "series:" },
         new() { Source = "fanarttv", PluginId = "chronicle.plugin.fanarttv", IgnoredForConflicts = true },
         new() { Source = "wikipedia", PluginId = WikipediaPluginId, NameDerived = true, DisambiguatedTitleField = "title" },
     ];

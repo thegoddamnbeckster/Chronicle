@@ -24,11 +24,14 @@ namespace Chronicle.Services
             IReadOnlyDictionary<string, MediaTypeInfo> ByName, IReadOnlyDictionary<string, MediaTypeInfo> ByAlias,
             IReadOnlyDictionary<int, MediaTypeInfo> ById);
 
+        /// <summary>The view one flow of execution (a test) has of its own; a reload inside that flow updates it, not the shared one.</summary>
+        private sealed class Holder { public Snapshot View = null!; }
+
         private static volatile Snapshot _snapshot = Build([]);
 
         // A test can give its own flow of execution its own types without touching what other tests running beside it see.
-        private static readonly AsyncLocal<Snapshot?> _scoped = new();
-        private static Snapshot Current => _scoped.Value ?? _snapshot;
+        private static readonly AsyncLocal<Holder?> _scoped = new();
+        private static Snapshot Current => _scoped.Value?.View ?? _snapshot;
 
         private static Snapshot Build(IEnumerable<MediaTypeInfo> types)
         {
@@ -43,10 +46,19 @@ namespace Chronicle.Services
         }
 
         /// <summary>Replaces the snapshot (used by <see cref="RefreshAsync"/>).</summary>
-        public static void Load(IEnumerable<MediaTypeInfo> types) => _snapshot = Build(types);
+        public static void Load(IEnumerable<MediaTypeInfo> types)
+        {
+            var built = Build(types);
+            if (_scoped.Value is { } mine) mine.View = built;   // a flow with a view of its own reloads that, not everyone's
+            else _snapshot = built;
+        }
 
         /// <summary>Replaces the snapshot for the current flow of execution only (tests run in parallel; each keeps its own types).</summary>
-        public static void LoadForCurrentContext(IEnumerable<MediaTypeInfo> types) => _scoped.Value = Build(types);
+        public static void LoadForCurrentContext(IEnumerable<MediaTypeInfo> types) => _scoped.Value = new Holder { View = Build(types) };
+
+        /// <summary>Gives the current flow of execution its own copy of what is loaded now, so other hosts starting or reloading in
+        /// the same process (parallel integration tests) cannot change what this flow sees.</summary>
+        public static void IsolateForCurrentContext() => _scoped.Value = new Holder { View = _snapshot };
 
         public static async Task RefreshAsync(ChronicleDbContext db, CancellationToken ct = default) =>
             Load((await db.MediaTypes.AsNoTracking().ToListAsync(ct)).Select(ToInfo));

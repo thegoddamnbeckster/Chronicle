@@ -15,6 +15,14 @@ specific to one type: a type describes itself, and the rest of the application r
 | `supports_collections` | The top level is a bucket of separate works (a movie collection). |
 | `is_trackable` | Whether items appear in each person's library (reference types such as "people" are not). |
 | `scan_strategy` | How the file scanner groups files: blank = by number of levels, `audiobook` = one book per folder. |
+| `provider_family` | `tv`, `movie`, `music` or blank: which family of metadata providers (and Kodi library) serves the type. See below. |
+| `is_person_type` | The reference type whose items are the people credited on other media. Found by this flag, not by its name. |
+| `is_default_type` | The type new items get when a client does not say what they are. |
+| `is_family_default` | The type a provider calls by its family name (the movie family's default is what a provider means by "movie"). |
+| `cast_are_actors` | A cast entry on this type is an actor playing a character (shown with the character name). |
+| `cast_heading` | The heading for credited people: "Band Members", "Narrators"; blank = "Cast". |
+| `aliases` | Other names clients use for the type ("film", "tv_episode", "track"); a client's name resolves to the type that lists it. |
+| `import_shape` | How files imported from a sync source become items: `episodic` (show / season / episode), `author-series-work` (author / series / work), `artist-album-track`, or blank. |
 | `is_user_modified` | Set when an administrator edits the type; plugins then stop re-describing it. |
 
 Screens that mix every type (the library filter, the dashboard, history, reports) use wording with no action word
@@ -34,18 +42,22 @@ and no items says so and links to the plugin catalogue.
 
 ## Starting values
 
-`ScanStrategies.DefaultFor` maps the name `audiobooks` to the `audiobook` strategy, **once**, when a plugin first creates
-that type (and a migration carried the old behaviour over for existing databases). After that the database is the truth.
+A new database is given three starting types (TV, movies, music; `BuiltInMediaTypes.Seed`), and a plugin that declares a
+type fills in any of the fields above it leaves blank, **once**, when it first creates the type. After that the database
+is the truth: renaming a type, or moving the "people" or "default" flag to another type, changes behaviour with no code
+involved. No rule in Chronicle is attached to a type's *name*.
+
+## How code reads types
+
+Code that has no database handle asks `MediaTypeRegistry`, a small in-memory snapshot of `media_types` reloaded at start
+and whenever a type is created, edited or removed. A name the snapshot has never seen answers "nothing known" (no family,
+not the people type), never a guess from how the name is spelled. Plugins describe a type through `MediaTypeSupport`
+(`ProviderFamily`, `CastHeading`, `CastAreActors`, `Aliases`, `IsPersonType`, `ImportShape`...).
 
 ## Provider family and credits heading
 
-Two more per-type settings, both editable on Settings -> Media Types (and seeded once from the type's name, after which the
-database is the truth):
-
-* **Provider family** (`media_types.ProviderFamily`: `tv`, `movie`, `music` or blank). A metadata plugin that supports a
-  family is also used for every type in it, so a plugin declaring only `tv` serves `anime`. It replaces name-guessing in
-  the scanner and enrichment code. Code that has no database handle reads it through `MediaTypeFamilies`, an in-memory
-  snapshot reloaded at start and whenever a type is created, edited or removed. The Plugins catalog uses it too
-  (`GET /plugins/catalog?mediaType=anime`).
-* **Heading for credited people** (`media_types.CastHeading`): "Band Members" for music, "Narrators" for audiobooks,
-  blank = "Cast".
+* **Provider family**: a metadata plugin that supports a family is also used for every type in it, so a plugin
+  declaring only `tv` serves `anime`. It replaces name-guessing in the scanner and enrichment code. The Plugins catalog
+  uses it too (`GET /plugins/catalog?mediaType=anime`). `tv`, `movie` and `music` are the vocabulary providers and Kodi
+  speak; a type outside every family is served only by plugins that name it.
+* **Heading for credited people** (`cast_heading`): "Band Members" for music, "Narrators" for audiobooks, blank = "Cast".

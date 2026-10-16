@@ -181,7 +181,7 @@ builder.Services.AddScoped<IMediaListService, MediaListService>();
 builder.Services.AddScoped<IMergeService, MergeService>();
 builder.Services.AddScoped<IMovieCollectionService, MovieCollectionService>();
 builder.Services.AddScoped<IBookSeriesService, BookSeriesService>();
-builder.Services.AddScoped<HardcoverSeriesReconcileService>();
+builder.Services.AddScoped<SeriesReconcileService>();
 builder.Services.AddScoped<IDeviceAuthService, DeviceAuthService>();
 // ScanProgressService and ImportProgressService are singletons so the scoped
 // FileScanService (writer) and the controller progress endpoints (reader) share the same state.
@@ -534,7 +534,7 @@ using (var scope = app.Services.CreateScope())
         await fileScanService.BackfillKnownFileNamesAsync();
 
         // The adjustable policy numbers (Tunables) are read now so the first request already uses an administrator's values.
-        await ((CachedAppSettings)app.Services.GetRequiredService<ICachedAppSettings>()).RefreshAsync();
+        await app.Services.GetRequiredService<ICachedAppSettings>().RefreshAsync();
 
         // One-time removal of all NFO-derived data and the retired Kodi NFO sidecar plugin --
         // must run before PluginHostService (a hosted service, started at app.Run) would

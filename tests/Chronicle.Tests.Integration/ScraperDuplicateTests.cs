@@ -23,6 +23,8 @@ public class ScraperDuplicateTests : IClassFixture<ChronicleApiFactory>
     {
         factory.SeedDatabase();
         _factory = factory;
+        // Other test classes start and edit hosts in this same process; this test's view of the media types stays its own.
+        Chronicle.Services.MediaTypeRegistry.IsolateForCurrentContext();
     }
 
     private (int MovieTypeId, int FanEditTypeId, int AnimeMovieTypeId, int TvTypeId, int AnimeTypeId) EnsureTypes()

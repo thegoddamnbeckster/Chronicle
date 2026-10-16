@@ -16,6 +16,9 @@ namespace Chronicle.Services.Security
     public interface ICachedAppSettings
     {
         IReadOnlyDictionary<string, string> Snapshot { get; }
+
+        /// <summary>Reads the rows now and waits for it (startup, so the first request already sees an administrator's values).</summary>
+        Task RefreshAsync() => Task.CompletedTask;
     }
 
     public static class CachedAppSettingsExtensions
@@ -62,8 +65,10 @@ namespace Chronicle.Services.Security
             }
         }
 
+        public Task RefreshAsync() => RefreshAsync(null);
+
         /// <summary>Reloads now and waits for it. Used at startup and by tests.</summary>
-        public async Task RefreshAsync(DateTime? now = null)
+        public async Task RefreshAsync(DateTime? now)
         {
             try
             {

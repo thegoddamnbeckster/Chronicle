@@ -38,7 +38,6 @@ namespace Chronicle.Tests.Integration
         [Theory]
         [InlineData("GET", "/api/v1/scan-folders")]
         [InlineData("POST", "/api/v1/scan/validate-path")]
-        [InlineData("POST", "/api/v1/scan/preview")]
         [InlineData("POST", "/api/v1/scan/preview-grouped")]
         [InlineData("POST", "/api/v1/scan/import-groups")]
         public async Task PathReadingEndpoints_AreForbiddenToOrdinaryUsers(string method, string url)

@@ -263,6 +263,29 @@ Other host behaviour that has surprised plugin authors:
 * **The free-tier trap: one result per search.** If the provider cannot return a ranking, verify the one record you are given
   (name, parent, year) and refuse it when it does not fit; never accept a similar name.
 
+### External id policy (how Chronicle treats your ids)
+
+Chronicle contains no provider names. Anything it must do differently for one provider's ids, that provider declares by
+implementing the optional `IExternalIdPolicyProvider` and returning an `ExternalIdPolicy`. A plugin that implements nothing
+gets plain handling: ids stored exactly as issued, "source:value" in cross-references.
+
+| Field | Meaning |
+|---|---|
+| `Source` | The short key your ids are stored under (the last segment of your plugin id). |
+| `SharedRawIdPrefix`, `KeepSharedPrefixWhenIdStarts` | Other plugins also report your id with this prefix ("imdb:tt0137523"); it is stored bare under your source so everyone shares one row. An id starting with one of the listed fragments keeps the prefix (a person id). |
+| `StoredPrefixRewrites` | Entity prefixes you dispatch on that must be stored in another form (`person:` -> `tmdb:`). |
+| `RefusedIdPattern` | Ids that are unusable and must never be stored. |
+| `IgnoredForConflicts` | Your ids are shared by many items (an artist id), so disagreeing on one proves nothing. |
+| `NameDerived` | Your id comes from searching the item's name, so agreeing on it is never proof of identity. |
+| `DisambiguatedTitleField` | A field of your metadata partition that can carry "(film)"-style suffixes to strip. |
+| `CrossRefFormats`, `CrossRefValueKinds` | How your id is written when it appears in another provider's `ids` block, per kind ("movie", a media type name, "default"). |
+| `IdShapes` | The shapes of id you issue and where each can sit (depth in the hierarchy, kind of item, kind of parent). A stale id of the wrong kind is discarded. An id matching no shape is trusted. |
+| `ChildIds`, `PositionInIdPattern` | How a season/episode id is built from the show's id, and how a position is read back out of an id. |
+| `FamilyIdPatterns` | Ids that can only denote one kind of item ("movie"). |
+| `SeriesIdMarker` | Marks ids of your book series; Chronicle then keeps those series' book lists in step after your metadata fetch. |
+
+Declare only what is true of your provider; each shipped plugin repository tests its own policy.
+
 ### Cross-reference seeding
 
 Chronicle maintains a web of cross-references between plugins so each plugin can jump straight

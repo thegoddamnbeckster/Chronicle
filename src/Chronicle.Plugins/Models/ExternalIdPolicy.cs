@@ -50,6 +50,10 @@ public sealed class ExternalIdPolicy
     /// </summary>
     public ExternalIdShape[] IdShapes { get; set; } = [];
 
+    /// <summary>A fragment of an id (e.g. "series:") that marks a library item as one of this provider's book series. A provider
+    /// that declares it has those series' book lists kept in step with it after its metadata fetch runs.</summary>
+    public string? SeriesIdMarker { get; set; }
+
     /// <summary>How the id of an item lower in the hierarchy is built from its top-level item's id (a season's from its show's),
     /// so Chronicle can fill it in without knowing the provider's id syntax.</summary>
     public ExternalIdChildTemplate[] ChildIds { get; set; } = [];
