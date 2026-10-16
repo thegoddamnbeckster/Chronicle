@@ -55,6 +55,26 @@ public sealed class InvertedHierarchyRepairService(
                 .Distinct().ToList();
             if (folders.Count != 1 || folders[0] is not { } folder || !FolderIsNamed(folder, parent.Name))
             {
+                // No folder to go by (a season a provider created, not a scan). When the wrong parent is an episode that sits directly under a
+                // root (a show with no season level), the root is the one parent that keeps every level in order.
+                var grandparent = parent.HierarchyLevel == 2 && parent.ParentId is { } gpId
+                    ? await db.MediaItems.FirstOrDefaultAsync(g => g.Id == gpId, ct)
+                    : null;
+                if (grandparent is { HierarchyLevel: 0 } && grandparent.MediaTypeId == parent.MediaTypeId)
+                {
+                    foreach (var child in children)
+                    {
+                        child.ParentId = grandparent.Id;
+                        child.UpdatedAt = DateTime.UtcNow;
+                    }
+                    await db.SaveChangesAsync(ct);
+                    moved += children.Count;
+                    logger.LogInformation(
+                        "Inverted hierarchy repair: {Count} item(s) were filed under the episode \"{Parent}\" ({ParentId}); moved up to its show {Root} ({RootId})",
+                        children.Count, parent.Name, parent.Id, grandparent.Name, grandparent.Id);
+                    continue;
+                }
+
                 logger.LogInformation(
                     "Inverted hierarchy repair: {Count} item(s) under \"{Parent}\" ({ParentId}) are in no single folder of that name; left alone",
                     children.Count, parent.Name, parent.Id);

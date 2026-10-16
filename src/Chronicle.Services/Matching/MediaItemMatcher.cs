@@ -174,8 +174,14 @@ public static class MediaItemMatcher
         // opposite of tonight's earlier "Rick and Morty" fix. Confirmed "Robot Jox
         // Collection" itself carries the "collection:487727" external id, so that signal
         // alone is enough without needing the type-ambiguous children check at all.
+        // Root-level items only (a flat type such as movies also counts a collection member). Unscoped by level, the title of a show
+        // matched an EPISODE of the same name, and the season the scrobble then needed was created UNDER that episode.
+        var levels = await db.MediaTypes.Where(t => t.Id == mediaTypeId).Select(t => (int?)t.HierarchyLevels).FirstOrDefaultAsync(ct);
+        var rootCeiling = levels is > 1 ? 0 : 1;
+
         var exact = await db.MediaItems.FirstOrDefaultAsync(m =>
             m.MediaTypeId == mediaTypeId &&
+            m.HierarchyLevel <= rootCeiling &&
             (!year.HasValue || m.Year == year) &&
             (m.Name == title      || m.Name == nameWithYear  ||
              m.Name == dashTitle  || m.Name == dashWithYear  ||
@@ -194,7 +200,7 @@ public static class MediaItemMatcher
         var nameBefore = $"{title} ({before})";
         var nameAfter  = $"{title} ({after})";
         var near = await db.MediaItems
-            .Where(m => m.MediaTypeId == mediaTypeId && (m.Year == before || m.Year == after) &&
+            .Where(m => m.MediaTypeId == mediaTypeId && m.HierarchyLevel <= rootCeiling && (m.Year == before || m.Year == after) &&
                 (m.Name == title      || m.Name == dashTitle  || m.Name == colonTitle ||
                  m.Name == deparenthesized ||
                  m.Name == nameBefore || m.Name == nameAfter) &&

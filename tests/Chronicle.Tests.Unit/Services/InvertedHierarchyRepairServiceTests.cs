@@ -117,6 +117,20 @@ public class InvertedHierarchyRepairServiceTests
     }
 
     [Fact]
+    public async Task ASeasonAProviderCreatedUnderAnEpisode_MovesUpToTheShow_WhenTheEpisodeSitsDirectlyUnderIt()
+    {
+        using var rig = new Rig();
+        var show = rig.Add("Some Reality Show", 0);
+        var episode = rig.Add("Snatch Me If You Can", 2, show.Id);
+        var season = rig.Add("Season 8", 1, episode.Id, "{\"_resolved\":{}}");
+
+        await rig.Service.ExecuteAsync(CancellationToken.None);
+
+        (await rig.Db.MediaItems.FindAsync(season.Id))!.ParentId.Should().Be(show.Id);
+        (await rig.Db.MediaItems.FindAsync(episode.Id))!.ParentId.Should().Be(show.Id, "the episode stays where it was");
+    }
+
+    [Fact]
     public async Task ChildrenInDifferentFolders_AreLeftAlone()
     {
         using var rig = new Rig();
