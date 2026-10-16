@@ -387,40 +387,6 @@ public class FileScanServiceHierarchyTests
         Assert.Equal(2016, remake.Year);
     }
 
-    /// <summary>
-    /// Caught in review (2026-09-20): ImportDirectAsync's flat branch writes
-    /// fileScanner.filePaths (via SerializeMetadata) but, unlike UpsertGroupItemAsync's own
-    /// write sites, never synced MediaItemKnownFileNames -- an item imported this way could
-    /// never be found by ScraperController.SearchMovies's filename fast-path, permanently
-    /// falling back to a full-candidate-list scan for every future scrape of it.
-    /// </summary>
-    [Fact]
-    public async Task ImportDirectAsync_FlatImport_PopulatesKnownFileNameForTheNewItem()
-    {
-        await using var context = NewInMemoryContext();
-        var movieType = new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow };
-        context.MediaTypes.Add(movieType);
-        await context.SaveChangesAsync();
-
-        var registry = new Mock<IPluginRegistry>();
-        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
-        var service = new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!);
-
-        var request = new DirectImportRequest(
-            Files: [new DirectImportFile(
-                FilePath: @"F:\Videos\Movies\Some Movie (2020)\Some Movie (2020).mkv",
-                ParsedTitle: "Some Movie", ParsedYear: 2020,
-                MediaTypeHint: "movies")],
-            MediaTypeId: 1, UserId: 1);
-
-        await service.ImportDirectAsync(request);
-
-        var item = await context.MediaItems.SingleAsync(m => m.MediaTypeId == 1);
-        var knownNames = await context.MediaItemKnownFileNames
-            .Where(k => k.MediaItemId == item.Id).Select(k => k.FileName).ToListAsync();
-        Assert.Contains("Some Movie (2020).mkv", knownNames);
-    }
-
     [Fact]
     public async Task ImportGroupsAsync_NoAliasMatch_StillCreatesNewRoot()
     {

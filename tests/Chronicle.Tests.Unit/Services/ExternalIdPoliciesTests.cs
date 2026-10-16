@@ -95,4 +95,64 @@ public class ExternalIdPoliciesTests
 
         CrossRefHelper.ExtractCrossRefIds(meta, "trakt").Should().BeEmpty();
     }
+
+    [Theory]
+    [InlineData("tmdb", "movie:550", 0, "movie", null, true)]
+    [InlineData("tmdb", "movie:550", 0, null, null, false)]                // a film id on a person: refused
+    [InlineData("tmdb", "movie:550", 0, "tv", null, false)]
+    [InlineData("tmdb", "movie:550", 1, "movie", "movie", true)]           // a film inside a collection
+    [InlineData("tmdb", "movie:550", 1, "movie", "tv", false)]
+    [InlineData("tmdb", "tv:1396", 0, "tv", null, true)]
+    [InlineData("tmdb", "tv:1396", 1, "tv", null, false)]                   // a show's own id on a season
+    [InlineData("tmdb", "tv:1396/season:2", 1, "tv", null, true)]
+    [InlineData("tmdb", "tv:1396/season:2/episode:3", 2, "tv", null, true)]
+    [InlineData("tmdb", "tv:1396/season:2/episode:3", 1, "tv", null, false)]
+    [InlineData("tmdb", "person:42", 0, null, null, true)]                  // a shape nobody described is trusted
+    [InlineData("tmdb", "collection:9", 0, "movie", null, true)]
+    [InlineData("musicbrainz", "artist:abc", 0, "music", null, true)]
+    [InlineData("musicbrainz", "artist:abc", 0, "movie", null, false)]
+    [InlineData("musicbrainz", "release-group:abc", 1, "music", null, true)]
+    [InlineData("musicbrainz", "release:abc", 1, "music", null, false)]     // recognised, valid nowhere
+    [InlineData("hardcover", "movie:550", 0, "movie", null, true)]           // another provider's grammar is not applied to it
+    public void AStoredId_IsPlausible_WhereItsProviderSaidItCanSit(
+        string source, string id, int depth, string? family, string? parentFamily, bool valid) =>
+        ExternalIdPolicies.Assess(source, id, depth, family, parentFamily).Valid.Should().Be(valid);
+
+    [Fact]
+    public void ADeclaredShape_SaysWhetherAChildsIdIsBuiltFromItsParents()
+    {
+        ExternalIdPolicies.Assess("tmdb", "tv:1/season:2", 1, "tv", null).EmbedsParentId.Should().BeTrue();
+        ExternalIdPolicies.Assess("hardcover", "123", 1, "books", null).EmbedsParentId.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("tv:1396", 1, 2, null, "tv:1396/season:2")]
+    [InlineData("tv:1396", 2, 5, 2, "tv:1396/season:2/episode:5")]
+    [InlineData("tv:1396", 2, 5, null, null)]                // a number the template needs is missing
+    [InlineData("tv:1396/season:2", 1, 2, null, null)]        // not a top-level id
+    [InlineData("movie:550", 1, 2, null, null)]
+    public void AChildsId_IsBuiltByTheProvidersOwnTemplate(string root, int depth, int? n, int? parentN, string? expected) =>
+        ExternalIdPolicies.DeriveChildId("tmdb", root, depth, n, parentN).Should().Be(expected);
+
+    [Fact]
+    public void ANoPolicySource_DerivesNoChildId() =>
+        ExternalIdPolicies.DeriveChildId("tvmaze", "tv:1396", 1, 2, null).Should().BeNull();
+
+    [Fact]
+    public void ThePositionAnIdNames_IsReadByThePatternItsProviderDeclared()
+    {
+        ExternalIdPolicies.PositionInId("tmdb", "tv:1/season:14/episode:3").Should().Be((14, 3));
+        ExternalIdPolicies.PositionInId("tmdb", "tv:1/season:14").Should().BeNull();
+        ExternalIdPolicies.PositionInId("tvmaze", "tv:1/season:14/episode:3").Should().BeNull("a source that declared no pattern names no position");
+        ExternalIdPolicies.PositionInAnyId([("tvmaze", "episode:77"), ("tmdb", "tv:5/season:2/episode:9")]).Should().Be((2, 9));
+    }
+
+    [Theory]
+    [InlineData("tmdb", "movie:550", "movie")]
+    [InlineData("tmdb", "tv:1396", null)]
+    [InlineData("simkl", "simkl:movie:636830", "movie")]
+    [InlineData("simkl", "simkl:tv:12", null)]
+    [InlineData("tvmaze", "movie:550", null)]
+    public void AnIdThatCanOnlyDenoteOneKindOfItem_SaysSo(string source, string id, string? family) =>
+        ExternalIdPolicies.FamilyOfId(source, id).Should().Be(family);
 }

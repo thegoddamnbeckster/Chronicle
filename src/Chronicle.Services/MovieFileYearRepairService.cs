@@ -34,8 +34,7 @@ public sealed class MovieFileYearRepairService(
     internal static int MinYearGap => Tunables.Int(Tunables.YearConflictGap);
     private const int PageSize = 500;
 
-    private static readonly HashSet<string> VideoExtensions =
-        new(StringComparer.OrdinalIgnoreCase) { ".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts", ".mpg", ".mpeg" };
+    private static HashSet<string> VideoExtensions => Scan.MediaFileExtensions.Video;
 
     private static readonly Regex YearInName = new(@"[\(\[]((?:19|20)\d{2})[\)\]]", RegexOptions.Compiled);
 

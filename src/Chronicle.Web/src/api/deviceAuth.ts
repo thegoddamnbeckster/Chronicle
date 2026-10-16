@@ -7,11 +7,6 @@ export interface DeviceAuthInfoDto {
   expiresAt: string
 }
 
-export interface PollDeviceAuthResponseDto {
-  status: string
-  apiKey: string | null
-}
-
 export async function getDeviceAuthInfo(code: string): Promise<DeviceAuthInfoDto> {
   const res = await client.get<{ data: DeviceAuthInfoDto }>(`/auth/device/${code}`)
   return res.data.data

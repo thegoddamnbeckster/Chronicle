@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Chronicle.Core.Helpers;
+using Chronicle.Core.Models;
 using Chronicle.Plugins.Models;
 
 namespace Chronicle.Services;
@@ -24,12 +25,12 @@ internal static class CrossRefHelper
         if (!ext.TryGetProperty("ids", out var ids)) return result;
         if (ids.ValueKind != JsonValueKind.Object) return result;
 
-        // Which kind of item the ids describe: the media type's own family decides whether it is movie-like; an id shaped like a
-        // movie id ("movie:550") says so when the type is not known. The type's name is passed on so a provider that
-        // writes ids differently for a type it distinguishes (it declares that in its ExternalIdPolicy) can.
+        // Which kind of item the ids describe: the media type's own family decides whether it is movie-like; an id the
+        // producing provider says can only denote a movie (ExternalIdPolicy.FamilyIdPatterns) says so when the type is not
+        // known. The type's name is passed on so a provider that writes ids differently for a type it distinguishes (it
+        // declares that in its ExternalIdPolicy) can.
         bool isMovie = MediaTypeRegistry.IsMovieLike(mediaTypeName)
-                    || meta.ExternalId?.Contains(":movie:", StringComparison.OrdinalIgnoreCase) == true
-                    || meta.ExternalId?.StartsWith("movie:", StringComparison.OrdinalIgnoreCase) == true;
+                    || ExternalIdPolicies.FamilyOfId(fromSource, meta.ExternalId) == ProviderFamilies.Movie;
 
         foreach (var prop in ids.EnumerateObject())
         {

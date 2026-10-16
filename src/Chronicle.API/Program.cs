@@ -222,19 +222,20 @@ builder.Services.AddMemoryCache();
 // ── Named HttpClient for validating metadata-provider image URLs before persisting them ───────
 // Short timeout: this runs inline on every enrichment, once per URL field (see
 // MetadataUrlValidator), and must not let one slow/dead host stall a whole enrichment batch.
+// How Chronicle introduces itself to the sites it calls. The project address is the one in plugins.json's default catalog URL.
+const string userAgent = "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)";
+
 builder.Services.AddHttpClient("url-validation", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(8);
-    c.DefaultRequestHeaders.UserAgent.ParseAdd(
-        "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
 });
 
 // ── Named HttpClient for GitHub API (plugin catalog downloads) ─────────────────
 builder.Services.AddHttpClient("github", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(60);
-    c.DefaultRequestHeaders.UserAgent.ParseAdd(
-        "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
     c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
     c.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
 

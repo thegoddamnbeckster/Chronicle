@@ -20,10 +20,6 @@ namespace Chronicle.Services
         private static readonly Regex AliasRule = new(@"^[a-z0-9][a-z0-9_-]{1,48}$", RegexOptions.Compiled);
         private static readonly Regex WordRule = new(@"^[a-z]{2,20}$", RegexOptions.Compiled);
 
-        /// <summary>The verbs the interface knows how to turn into labels. Anything else is allowed (and gets neutral
-        /// wording), but these are offered first.</summary>
-        public static readonly string[] SuggestedVerbs = ["watched", "listened", "read", "played"];
-
         /// <summary>Null when valid, otherwise a sentence an administrator can act on.</summary>
         public static string? Validate(MediaTypeInput input, bool creating)
         {

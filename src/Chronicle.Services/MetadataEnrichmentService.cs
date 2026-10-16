@@ -1446,7 +1446,7 @@ public class MetadataEnrichmentService(
         // branch this method can reach -- an empty re-search, a provider 404, or an id already
         // owned by a different item -- needs to know whether THIS row previously had a real,
         // merged match, not just whatever forceRefreshHadMatch narrowly covers (it excludes Fix
-        // Match's own IdOverride, and a stored id that fails IsRootLevelIdTypeValid). See
+        // Match's own IdOverride, and a stored id the provider's declared shapes reject). See
         // RejectToNotFoundAsync's own doc for the bug this closes.
         var hadPriorMatch = row.Status == EnrichmentStatus.Completed;
 
@@ -1473,11 +1473,11 @@ public class MetadataEnrichmentService(
                     item.Id, item.Name, item.MediaType?.Name, item.HierarchyLevel, item.Year, item.Parent?.Name, item.Parent?.Parent?.Name,
                     row.PluginId, row.ExternalId ?? "(none)", resolvedId, row.Status);
 
-                if (item.ParentId is not null
-                    && resolvedId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase)
-                    && !resolvedId.Contains('/'))
+                // A bare top-level id entered for a season/episode item is promoted to that item's own id, using the
+                // provider's declared id templates and the item's position in the hierarchy.
+                if (item.ParentId is not null && !resolvedId.Contains('/'))
                 {
-                    var showTmdbId = resolvedId.Split(':', 2)[1];
+                    var ownerSource = PluginIdHelper.ToSource(pluginId);
                     if (item.HierarchyLevel >= 2 && item.Parent is not null)
                     {
                         int? seasonNum = item.Parent.Number;
@@ -1486,11 +1486,11 @@ public class MetadataEnrichmentService(
                         int? epNum = item.Number;
                         if (epNum is null && item.Name is { } en && DigitParsingHelper.TryParseLeadingNumber(en, out var parsedEpNum))
                             epNum = parsedEpNum;
-                        if (seasonNum.HasValue && epNum.HasValue)
+                        if (ExternalIdPolicies.DeriveChildId(ownerSource, resolvedId, 2, epNum, seasonNum) is { } episodeId)
                         {
-                            resolvedId = $"tv:{showTmdbId}/season:{seasonNum}/episode:{epNum}";
+                            resolvedId = episodeId;
                             logger.LogInformation(
-                                "Fix Match: promoted bare show ID to episode compound ID {Id} for item {ItemId}",
+                                "Fix Match: promoted bare top-level ID to episode ID {Id} for item {ItemId}",
                                 resolvedId, item.Id);
                         }
                     }
@@ -1499,11 +1499,11 @@ public class MetadataEnrichmentService(
                         int? seasonNum = item.Number;
                         if (seasonNum is null && item.Name is { } sn && DigitParsingHelper.TryParseLeadingNumber(sn, out var parsedSeasonNum))
                             seasonNum = parsedSeasonNum;
-                        if (seasonNum.HasValue)
+                        if (ExternalIdPolicies.DeriveChildId(ownerSource, resolvedId, 1, seasonNum, null) is { } seasonId)
                         {
-                            resolvedId = $"tv:{showTmdbId}/season:{seasonNum}";
+                            resolvedId = seasonId;
                             logger.LogInformation(
-                                "Fix Match: promoted bare show ID to season compound ID {Id} for item {ItemId}",
+                                "Fix Match: promoted bare top-level ID to season ID {Id} for item {ItemId}",
                                 resolvedId, item.Id);
                         }
                     }
@@ -1522,13 +1522,13 @@ public class MetadataEnrichmentService(
             // in the not-found branch rather than downgrading a working match to NotFound.
             var forceRefreshOriginalId = options.Mode == EnrichmentMode.Force ? row.ExternalId : null;
             // A stored id only counts as "a working match worth preserving" if it's actually
-            // type-valid for this item (see IsRootLevelIdTypeValid) -- otherwise Force mode's
+            // type-valid for this item (the provider's declared id shapes, ExternalIdPolicies.Assess) -- otherwise Force mode's
             // own "keep/re-fetch the previous match on search failure" safety net would just
             // keep re-fetching and re-applying the SAME wrong data forever, since Step 1 below
             // never gets a chance to run and discard it (it only inspects row.ExternalId, which
             // this block would otherwise have already cleared).
-            var forceRefreshOriginalIdTypeValid = row.MediaItem?.ParentId is not null || IsRootLevelIdTypeValid(
-                forceRefreshOriginalId, MediaTypeRegistry.ProviderName(row.MediaItem?.MediaType?.Name ?? string.Empty));
+            var forceRefreshOriginalIdTypeValid = row.MediaItem?.ParentId is not null || ExternalIdPolicies.Assess(
+                PluginIdHelper.ToSource(pluginId), forceRefreshOriginalId, 0, MediaTypeRegistry.Family(row.MediaItem?.MediaType?.Name), null).Valid;
             var forceRefreshHadMatch = options.Mode == EnrichmentMode.Force
                 && options.IdOverride is null
                 && row.Status == EnrichmentStatus.Completed
@@ -1546,100 +1546,38 @@ public class MetadataEnrichmentService(
             // when Force mode just cleared the ID above to force a fresh derivation/search.
             if (options.IdOverride is null && !string.IsNullOrEmpty(row.ExternalId) && row.MediaItem is not null)
             {
-                bool idIsValid = true;
-                var sep = row.ExternalId.IndexOf(':');
-                if (sep > 0)
+                // Whether the stored id can sit on this item is the provider's own declared knowledge (ExternalIdPolicy.IdShapes):
+                // which shapes of id it issues, at what depth of the hierarchy and for which kind of item. An id of no declared
+                // shape (a plugin that declared none, or an id of a kind it did not describe) is trusted as it is -- it was seeded
+                // by the plugin's own logic. Checking depth alone let a stale id from a COMPLETELY different kind of item pass
+                // (confirmed live: a "people" item also carried a film's id, and that film's title and poster were promoted onto
+                // the person), hence the item's type family is part of the question.
+                var ownerSource = PluginIdHelper.ToSource(pluginId);
+                var itemFamily = MediaTypeRegistry.Family(row.MediaItem.MediaType?.Name);
+                int depth = 0;
+                string? parentFamily = null;
+                if (row.MediaItem.ParentId != null)
                 {
-                    var entityType = row.ExternalId[..sep];
-
-                    // The hierarchy validity check only applies to TMDB-format IDs
-                    // ("movie:N", "tv:N", "tv:N/season:M", etc.) and MusicBrainz artist IDs.
-                    // Plugin-specific IDs (simkl:*, trakt:*, tvdb:*, hardcover:*, etc.) are
-                    // trusted as-is — they were seeded by the plugin's own logic and don't
-                    // need a level/type consistency check.
-                    bool isTmdbOrMusicBrainzFormat =
-                        entityType is "movie" or "tv" or "artist" or "release-group" or "release"
-                                    or "season" or "album" or "recording" or "episode";
-
-                    if (isTmdbOrMusicBrainzFormat && row.MediaItem.ParentId == null)
-                    {
-                        // Root item — TMDB/MusicBrainz format: the entity type must match what
-                        // this item's OWN media type actually is, not just be "some root-level
-                        // TMDB/MusicBrainz shape". Checking hierarchy level alone let a stale or
-                        // mis-seeded id from a COMPLETELY different media type validate as fine
-                        // purely because both are root-level formats -- confirmed live: a
-                        // "people" item (Will Brill, a real actor correctly linked via Wikipedia)
-                        // also carried a "movie:N" id belonging to an unrelated film, and that
-                        // film's title/overview/poster got silently promoted onto the person's
-                        // own record. Every future refresh kept calling the bad id "valid" and
-                        // reusing it, since level-only validation had no way to catch the
-                        // media-type mismatch. See IsRootLevelIdTypeValid.
-                        idIsValid = IsRootLevelIdTypeValid(
-                            row.ExternalId, MediaTypeRegistry.ProviderName(row.MediaItem.MediaType?.Name ?? string.Empty));
-                    }
-                    else if (isTmdbOrMusicBrainzFormat)
-                    {
-                        var parent = await db.MediaItems
-                            .AsNoTracking()
-                            .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId, ct);
-                        if (parent?.ParentId == null)
-                        {
-                            // This could be: season/album level OR a movie under a collection.
-                            // Check if the parent is a movies-type collection (HierarchyLevel 0, same MediaType as a movie).
-                            // If so, a "movie" entity type is valid at this depth.
-                            bool parentIsMovieCollection = false;
-                            if (entityType == "movie" && parent is not null)
-                            {
-                                var parentMediaType = await db.MediaTypes
-                                    .AsNoTracking()
-                                    .FirstOrDefaultAsync(t => t.Id == parent.MediaTypeId, ct);
-                                var pName = parentMediaType?.Name;
-                                parentIsMovieCollection =
-                                    string.Equals(pName, "movies",   StringComparison.OrdinalIgnoreCase) ||
-                                    string.Equals(pName, "fanedits", StringComparison.OrdinalIgnoreCase) ||
-                                    string.Equals(pName, "anime",    StringComparison.OrdinalIgnoreCase);
-                            }
-
-                            if (parentIsMovieCollection)
-                            {
-                                idIsValid = true; // movie under a collection — valid
-                            }
-                            else if (entityType == "tv")
-                            {
-                                idIsValid = row.ExternalId.Contains("/season:", StringComparison.OrdinalIgnoreCase)
-                                         || row.ExternalId.Contains(":s", StringComparison.OrdinalIgnoreCase);
-                            }
-                            else
-                            {
-                                idIsValid = entityType is "release-group" or "season" or "album";
-                            }
-                        }
-                        else
-                        {
-                            // Episode/track level — MusicBrainz "recording:" or TMDB "tv:N/season:N/episode:N"
-                            idIsValid = entityType is "recording" or "episode"
-                                || (entityType == "tv" && row.ExternalId.Contains("/episode:", StringComparison.OrdinalIgnoreCase));
-                        }
-                    }
+                    var parent = await db.MediaItems
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(m => m.Id == row.MediaItem.ParentId, ct);
+                    depth = parent?.ParentId == null ? 1 : 2;
+                    if (parent is not null)
+                        parentFamily = MediaTypeRegistry.Family(await db.MediaTypes.AsNoTracking()
+                            .Where(t => t.Id == parent.MediaTypeId).Select(t => t.Name).FirstOrDefaultAsync(ct));
                 }
+                var assessment = ExternalIdPolicies.Assess(ownerSource, row.ExternalId, depth, itemFamily, parentFamily);
+                bool idIsValid = assessment.Valid;
 
-                // For hierarchical items, verify the stored ID's show portion matches the
-                // parent's show ID. Catches a child enriched against the wrong show (e.g.
-                // episodes matched to tv:157239 while the parent season is tv:243129/season:1).
+                // For hierarchical items, verify the stored ID's top-level portion matches the parent's. Catches a child
+                // enriched against the wrong show (episodes matched to one show while the parent season belongs to another).
                 //
-                // Only meaningful for TMDB/MusicBrainz-style IDs, where a child's ID is built
-                // by literally appending to the parent's ID string (e.g. "tv:157239/season:1").
-                // Plugins with flat, independent ID namespaces per entity type (e.g. Hardcover:
-                // book IDs and series IDs are unrelated integer sequences) would have this
-                // comparison fail unconditionally for every valid ID — confirmed real bug: a
-                // correctly-matched Hardcover book was discarded and re-derived on every single
-                // refresh because its ID naturally shares no prefix with its series' ID.
-                var storedEntityType = row.ExternalId!.IndexOf(':') is var sep2 && sep2 > 0
-                    ? row.ExternalId[..sep2] : null;
-                var isHierarchicalIdFormat = storedEntityType is "movie" or "tv" or "artist"
-                    or "release-group" or "release" or "season" or "album" or "recording" or "episode";
-
-                if (idIsValid && isHierarchicalIdFormat
+                // Only meaningful for providers whose child ids are built by appending to the parent's id string
+                // ("tv:157239/season:1" under "tv:157239"); the shape says so (EmbedsParentId). Plugins with flat, independent
+                // id namespaces per entity type (e.g. Hardcover: book ids and series ids are unrelated integer sequences) would
+                // fail this comparison for every valid id -- confirmed real bug: a correctly-matched Hardcover book was
+                // discarded and re-derived on every refresh because its id shares no prefix with its series'.
+                if (idIsValid && assessment.EmbedsParentId
                     && row.MediaItem.HierarchyLevel > 0 && row.MediaItem.ParentId is not null)
                 {
                     var parentRow = await db.MediaEnrichments
@@ -1740,25 +1678,22 @@ public class MetadataEnrichmentService(
                             e => e.MediaItemId == parentItem.ParentId && e.PluginId == row.PluginId,
                             ct);
 
-                    if (showEnrichment?.ExternalId is { } showExternalId
-                        && showExternalId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase)
-                        && !showExternalId.Contains('/'))
+                    var ownerSource = PluginIdHelper.ToSource(pluginId);
+                    if (showEnrichment?.ExternalId is { } showExternalId)
                     {
-                        var showTmdbId = showExternalId.Split(':', 2)[1];
-
                         int? seasonNumber = parentItem.Number;
                         if (seasonNumber is null && parentItem.Name is { } pnm && DigitParsingHelper.TryParseLeadingNumber(pnm, out var parsedSeasonNumber))
                             seasonNumber = parsedSeasonNumber;
-                        if (itemNumber.HasValue && seasonNumber.HasValue)
+                        if (ExternalIdPolicies.DeriveChildId(ownerSource, showExternalId, 2, itemNumber, seasonNumber) is { } episodeId)
                         {
-                            row.ExternalId = $"tv:{showTmdbId}/season:{seasonNumber}/episode:{itemNumber}";
+                            row.ExternalId = episodeId;
                             hierarchyDerivedId = true;
                             logger.LogInformation(
-                                "TV hierarchy lookup (episode): item={ItemId} → {ExternalId}",
+                                "Hierarchy lookup (level 2): item={ItemId} → {ExternalId}",
                                 row.MediaItemId, row.ExternalId);
                         }
                     }
-                    // else: show not enriched or no tv: ID — fall through to name search
+                    // else: top-level item not enriched, or this provider declares no child ids — fall through to name search
                 }
                 else
                 {
@@ -1768,21 +1703,16 @@ public class MetadataEnrichmentService(
                             e => e.MediaItemId == parentId && e.PluginId == row.PluginId,
                             ct);
 
-                    if (showEnrichment?.ExternalId is { } showExternalId
-                        && showExternalId.StartsWith("tv:", StringComparison.OrdinalIgnoreCase)
-                        && !showExternalId.Contains('/'))
+                    if (showEnrichment?.ExternalId is { } showExternalId &&
+                        ExternalIdPolicies.DeriveChildId(PluginIdHelper.ToSource(pluginId), showExternalId, 1, itemNumber, null) is { } seasonId)
                     {
-                        var showTmdbId = showExternalId.Split(':', 2)[1];
-                        if (itemNumber.HasValue)
-                        {
-                            row.ExternalId = $"tv:{showTmdbId}/season:{itemNumber}";
-                            hierarchyDerivedId = true;
-                            logger.LogInformation(
-                                "TV hierarchy lookup (season): item={ItemId} → {ExternalId}",
-                                row.MediaItemId, row.ExternalId);
-                        }
+                        row.ExternalId = seasonId;
+                        hierarchyDerivedId = true;
+                        logger.LogInformation(
+                            "Hierarchy lookup (level 1): item={ItemId} → {ExternalId}",
+                            row.MediaItemId, row.ExternalId);
                     }
-                    // else: parent not enriched with a tv: ID — fall through to name search
+                    // else: parent not enriched, or this provider declares no child ids — fall through to name search
                 }
 
                 // If we derived an ID, call the provider now
@@ -2500,7 +2430,7 @@ public class MetadataEnrichmentService(
     /// Code review (2026-09-28) caught the first version of this fix only covering the third one
     /// inline -- a previously-Completed row reaching either of the other two through Fix Match's
     /// own IdOverride (excluded from forceRefreshHadMatch's own check) or a stored id that fails
-    /// IsRootLevelIdTypeValid hit the exact same stale-blob bug, just through a different door.
+    /// the stored-id shape check hit the exact same stale-blob bug, just through a different door.
     /// See hadPriorMatch's own call-site doc for why it, not forceRefreshHadMatch, is the right
     /// signal for "did this row actually have a real match to invalidate."
     /// </summary>
@@ -2554,37 +2484,6 @@ public class MetadataEnrichmentService(
             return new EnrichScannerSignals(folder, hasPoster, null);
         }
         catch { return null; }
-    }
-
-    /// <summary>
-    /// For a ROOT-level TMDB/MusicBrainz-format id ("movie:N", "tv:N", "artist:N", ...),
-    /// checks that the entity type actually matches what <paramref name="normalizedMediaTypeName"/>
-    /// (already run through <see cref="NormalizeMediaTypeName"/>) is. Returns true for anything
-    /// that isn't a recognized TMDB/MusicBrainz root-level shape (plugin-specific ids like
-    /// "hardcover:*" are trusted as-is) or for a null/empty id (nothing to validate).
-    /// Shared by the Force-refresh "was there a working match worth preserving" check and by
-    /// Step 1's stored-id validation below, so a stale id from a completely different media
-    /// type — e.g. a "movie:N" id belonging to an unrelated film seeded onto a "people" item —
-    /// is judged the same way regardless of which code path is looking at it.
-    /// </summary>
-    private static bool IsRootLevelIdTypeValid(string? externalId, string normalizedMediaTypeName)
-    {
-        if (string.IsNullOrEmpty(externalId)) return true;
-        var sep = externalId.IndexOf(':');
-        if (sep <= 0) return true;
-        var entityType = externalId[..sep];
-        bool isTmdbOrMusicBrainzFormat =
-            entityType is "movie" or "tv" or "artist" or "release-group" or "release"
-                        or "season" or "album" or "recording" or "episode";
-        if (!isTmdbOrMusicBrainzFormat) return true;
-
-        return entityType switch
-        {
-            "artist" => normalizedMediaTypeName is "music",
-            "movie"  => normalizedMediaTypeName is "movie" or "fanedits" or "anime",
-            "tv"     => normalizedMediaTypeName is "tv",
-            _        => false, // release-group/season/album/recording/episode are never root-level
-        };
     }
 
     /// <summary>
@@ -3427,13 +3326,6 @@ public class MetadataEnrichmentService(
             }
         }
     }
-
-    private static string NormalizeSearchName(string name) =>
-        System.Text.RegularExpressions.Regex
-            .Replace(name, @"[:\-,]", " ")   // keep apostrophes and dots — dots are meaningful in names like "shutdown.exe"
-            .Replace("  ", " ")
-            .Trim()
-            .ToLowerInvariant();
 
     /// <summary>
     /// Returns true if the item's MetadataJson indicates it was created by the file scanner

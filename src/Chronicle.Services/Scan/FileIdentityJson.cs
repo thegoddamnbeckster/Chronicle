@@ -184,9 +184,6 @@ namespace Chronicle.Services.Scan
         private static readonly Regex SeasonEpisodeInFileNameRegex =
             new(@"[Ss](\d{1,2})[Ee](\d{1,3})", RegexOptions.Compiled);
 
-        private static readonly Regex SeasonEpisodeInExternalIdRegex =
-            new(@"season:(\d+)/episode:(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
         /// <summary>Season/episode parsed from a "SxxEyy"-style filename fragment, if present.</summary>
         public static (int Season, int Episode)? ExtractSeasonEpisodeFromFileName(string? fileName)
         {
@@ -197,19 +194,13 @@ namespace Chronicle.Services.Scan
 
         /// <summary>
         /// Season/episode parsed from the first external id (of any source) that encodes one
-        /// in the "season:N/episode:M" shape this codebase's own tmdb ids already use (see
-        /// ScraperController's own extendedData.seasonNumber/episodeNumber). Other sources
-        /// (e.g. a bare tvmaze "episode:12345") don't encode this and are silently skipped.
+        /// in the shape its provider declared (ExternalIdPolicy.PositionInIdPattern). Sources whose ids carry no position
+        /// (e.g. a bare "episode:12345") are silently skipped.
         /// </summary>
         public static (int Season, int Episode)? ExtractSeasonEpisodeFromExternalIds(
             IEnumerable<Chronicle.Core.Models.MediaExternalId> externalIds)
         {
-            foreach (var id in externalIds)
-            {
-                var m = SeasonEpisodeInExternalIdRegex.Match(id.ExternalId ?? string.Empty);
-                if (m.Success) return (int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value));
-            }
-            return null;
+            return ExternalIdPolicies.PositionInAnyId(externalIds.Select(i => (i.Source, i.ExternalId ?? string.Empty)));
         }
 
         /// <summary>

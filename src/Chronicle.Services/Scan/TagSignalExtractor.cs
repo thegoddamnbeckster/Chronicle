@@ -21,11 +21,7 @@ namespace Chronicle.Services.Scan
         // they rarely carry useful embedded tags, and opening them with TagLib on
         // a slow/network drive causes a costly synchronous read for every file.
         // Folder structure and filenames are the authoritative signal for video.
-        private static readonly HashSet<string> _supported = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".mp3", ".flac", ".m4a", ".ogg", ".opus",
-            ".wma", ".aac", ".wav", ".aiff", ".ape", ".mpc",
-        };
+        private static HashSet<string> _supported => MediaFileExtensions.Audio;
 
         /// <summary>
         /// Returns null if the file extension is unsupported, the file doesn't exist,

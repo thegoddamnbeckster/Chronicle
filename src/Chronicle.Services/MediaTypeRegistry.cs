@@ -142,13 +142,5 @@ namespace Chronicle.Services
         /// <summary>Belongs to Kodi's video library at all (movie- or show-like).</summary>
         public static bool IsVideoLibraryType(string? mediaTypeName) => IsMovieLike(mediaTypeName) || IsShowLike(mediaTypeName);
 
-        /// <summary>The names of every type in the given provider family (for queries).</summary>
-        public static string[] NamesInFamily(string family) =>
-            Current.ById.Values.Where(t => string.Equals(t.Family, family, StringComparison.OrdinalIgnoreCase))
-                .Select(t => t.Name).ToArray();
-
-        public static int[] IdsInFamily(string family) =>
-            Current.ById.Values.Where(t => string.Equals(t.Family, family, StringComparison.OrdinalIgnoreCase))
-                .Select(t => t.Id).ToArray();
     }
 }

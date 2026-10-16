@@ -52,21 +52,6 @@ export async function importWatchlist(pluginId: string): Promise<ImportResult> {
   return data.data
 }
 
-/**
- * Fire a sync job and return the jobId immediately.
- * The caller is responsible for polling getSyncJobStatus() until done.
- */
-export async function startSyncJob(pluginId: string, fullSync: boolean): Promise<string> {
-  const { data } = await client.post<ApiResponse<{ jobId: string }>>(
-    `/sync/${pluginId}`,
-    null,
-    { params: { fullSync } },
-  )
-  if (!data.success || !data.data?.jobId)
-    throw new Error(data.error?.message ?? 'Failed to start sync')
-  return data.data.jobId
-}
-
 /** Poll a sync job for its current status. */
 export async function getSyncJobStatus(pluginId: string, jobId: string): Promise<SyncJobStatus> {
   const { data } = await client.get<ApiResponse<SyncJobStatus>>(

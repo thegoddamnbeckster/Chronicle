@@ -49,19 +49,6 @@ public class PluginsController : ControllerBase
     private static readonly TimeSpan IconCacheDuration = TimeSpan.FromHours(24);
 
     /// <summary>
-    /// Raster Content-Type prefixes that can be served directly after a magic-byte check.
-    /// </summary>
-    private static readonly string[] RasterContentTypePrefixes =
-    [
-        "image/x-icon",
-        "image/vnd.microsoft.icon",
-        "image/png",
-        "image/jpeg",
-        "image/gif",
-        "image/webp",
-    ];
-
-    /// <summary>
     /// Magic byte signatures for permitted raster image formats.
     /// Used as a second validation layer after the Content-Type check.
     /// </summary>
@@ -615,7 +602,6 @@ public class PluginsController : ControllerBase
     public async Task<IActionResult> SearchMetadata(
         int id,
         [FromQuery] string query,
-        [FromQuery] string mediaType = "movie",
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(query))

@@ -2,34 +2,7 @@ namespace Chronicle.Services
 {
     public interface IFileScanService
     {
-        Task<FileScanSummary> ScanAsync(FileScanRequest request, int userId, CancellationToken ct = default);
         Task<(bool Available, string[] SupportedMediaTypeNames)> GetStatusAsync();
-
-        /// <summary>
-        /// Scans a directory and returns what was found without touching the database.
-        /// The caller reviews the results, then calls IdentifyAsync.
-        /// </summary>
-        Task<ScanPreview> PreviewAsync(ScanPreviewRequest request, CancellationToken ct = default);
-
-        /// <summary>
-        /// For each scanned file, queries the first available metadata provider and
-        /// returns a ranked list of candidates for the user to approve or dismiss.
-        /// </summary>
-        Task<IdentifyResult> IdentifyAsync(IdentifyRequest request, CancellationToken ct = default);
-
-        /// <summary>
-        /// Fetches full metadata for each approved (filePath, externalId) pair,
-        /// creates MediaItems, stores external IDs, and adds them to the user's library.
-        /// </summary>
-        Task<ImportApprovedSummary> ImportApprovedAsync(ImportApprovedRequest request, CancellationToken ct = default);
-
-        /// <summary>
-        /// Imports scanned files directly into the library using only the data the file
-        /// scanner already collected (title, year, file path). No metadata provider call is
-        /// made — the background MetadataRefreshService will enrich each item with TMDB
-        /// (or another provider) data automatically after import.
-        /// </summary>
-        Task<ImportApprovedSummary> ImportDirectAsync(DirectImportRequest request, CancellationToken ct = default);
 
         /// <summary>
         /// Scans a directory and returns files grouped into a candidate hierarchy

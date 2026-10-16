@@ -44,6 +44,23 @@ public sealed class ExternalIdPolicy
     /// </summary>
     public bool NameDerived { get; set; }
 
+    /// <summary>
+    /// The shapes of id this provider issues and where each belongs, so Chronicle can tell a stale id from another kind of item
+    /// (a film's id left on a person, a show's id on an episode) from a good one. An id matching no shape is trusted as it is.
+    /// </summary>
+    public ExternalIdShape[] IdShapes { get; set; } = [];
+
+    /// <summary>How the id of an item lower in the hierarchy is built from its top-level item's id (a season's from its show's),
+    /// so Chronicle can fill it in without knowing the provider's id syntax.</summary>
+    public ExternalIdChildTemplate[] ChildIds { get; set; } = [];
+
+    /// <summary>A regular expression with named groups <c>season</c> and <c>episode</c> that reads an item's position back out
+    /// of one of this provider's ids. Null when the ids carry no position.</summary>
+    public string? PositionInIdPattern { get; set; }
+
+    /// <summary>Per provider family ("movie", "tv"), a regular expression an id matches when it can only denote that kind of item.</summary>
+    public Dictionary<string, string> FamilyIdPatterns { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The field of this provider's own metadata partition (e.g. "title") that can arrive carrying a trailing
     /// disambiguation parenthetical ("Heat (film)") which Chronicle should strip. Null when the provider's titles are clean.</summary>
     public string? DisambiguatedTitleField { get; set; }
@@ -57,4 +74,41 @@ public sealed class ExternalIdPolicy
 
     /// <summary>The kinds of JSON value that count as an id in a cross-reference block: "number", "string". Both when empty.</summary>
     public string[] CrossRefValueKinds { get; set; } = [];
+}
+
+/// <summary>
+/// One shape of id a provider issues ("tv:1396", "tv:1396/season:2"), and the items it can legitimately sit on.
+/// A depth is how far down the library hierarchy the item is: 0 for a top-level item, 1 for a child of one, 2 below that.
+/// </summary>
+public sealed class ExternalIdShape
+{
+    /// <summary>Regular expression the whole id must match.</summary>
+    public string Pattern { get; set; } = string.Empty;
+
+    /// <summary>Hierarchy depths an id of this shape may sit at. Empty = recognised, but never valid on any item.</summary>
+    public int[] Depths { get; set; } = [];
+
+    /// <summary>Provider families (a media type's <c>ProviderFamily</c>) of the item the id may sit on. Empty = any.</summary>
+    public string[] ItemFamilies { get; set; } = [];
+
+    /// <summary>Provider families of the item's parent, for a shape that is only valid under a particular kind of parent
+    /// (a film inside a collection). Empty = any.</summary>
+    public string[] ParentFamilies { get; set; } = [];
+
+    /// <summary>True when a child's id is built from its parent's ("tv:1396/season:1" under "tv:1396"), so the part before
+    /// the first "/" must agree with the parent's.</summary>
+    public bool EmbedsParentId { get; set; } = true;
+}
+
+/// <summary>How a lower item's id is made from the id of the item above it.</summary>
+public sealed class ExternalIdChildTemplate
+{
+    /// <summary>Matches the top-level item's id and captures the part to reuse in a group named <c>root</c>.</summary>
+    public string RootIdPattern { get; set; } = string.Empty;
+
+    /// <summary>1 for a child of the top-level item (a season), 2 for the level below (an episode).</summary>
+    public int Depth { get; set; }
+
+    /// <summary>The id, with <c>{root}</c>, <c>{n}</c> (the item's own number) and <c>{parentN}</c> (its parent's number) filled in.</summary>
+    public string Template { get; set; } = string.Empty;
 }

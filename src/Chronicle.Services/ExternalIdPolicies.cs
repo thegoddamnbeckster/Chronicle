@@ -92,6 +92,81 @@ public static class ExternalIdPolicies
     public static bool IsRefused(string? source, string id) =>
         Find(source)?.RefusedIdPattern is { Length: > 0 } pattern && Regex.IsMatch(id, pattern, RegexOptions.IgnoreCase);
 
+    // ── is this id plausible for this item ──────────────────────────────────────
+
+    /// <summary>What a provider's declared id shapes say about one stored id.</summary>
+    public readonly record struct IdAssessment(bool Recognized, bool Valid, bool EmbedsParentId)
+    {
+        public static readonly IdAssessment Trusted = new(false, true, false);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="externalId"/>, which <paramref name="source"/> issued, can sit on an item at this depth of the
+    /// hierarchy whose type is in <paramref name="itemFamily"/>. An id of no declared shape is trusted as it is.
+    /// </summary>
+    public static IdAssessment Assess(string? source, string? externalId, int depth, string? itemFamily, string? parentFamily)
+    {
+        if (string.IsNullOrEmpty(externalId) || Find(source) is not { IdShapes.Length: > 0 } policy) return IdAssessment.Trusted;
+
+        var recognized = false;
+        var valid = false;
+        var embeds = false;
+        foreach (var shape in policy.IdShapes)
+        {
+            if (!Regex.IsMatch(externalId, shape.Pattern, RegexOptions.IgnoreCase)) continue;
+            recognized = true;
+            embeds |= shape.EmbedsParentId;
+            if (shape.Depths.Contains(depth)
+                && (shape.ItemFamilies.Length == 0 || (itemFamily is not null && shape.ItemFamilies.Contains(itemFamily, StringComparer.OrdinalIgnoreCase)))
+                && (shape.ParentFamilies.Length == 0 || (parentFamily is not null && shape.ParentFamilies.Contains(parentFamily, StringComparer.OrdinalIgnoreCase))))
+                valid = true;
+        }
+        return recognized ? new IdAssessment(true, valid, embeds) : IdAssessment.Trusted;
+    }
+
+    // ── ids of lower items, positions, kinds ────────────────────────────────────
+
+    /// <summary>
+    /// The id of an item <paramref name="depth"/> levels below a top-level item whose id is <paramref name="rootId"/>, as the
+    /// provider's own templates build it (null when the provider declared none that fits, or a number the template needs is missing).
+    /// </summary>
+    public static string? DeriveChildId(string? source, string rootId, int depth, int? number, int? parentNumber)
+    {
+        if (Find(source) is not { } policy) return null;
+        foreach (var t in policy.ChildIds.Where(c => c.Depth == depth))
+        {
+            var m = Regex.Match(rootId, t.RootIdPattern, RegexOptions.IgnoreCase);
+            if (!m.Success) continue;
+            if ((t.Template.Contains("{n}") && number is null) || (t.Template.Contains("{parentN}") && parentNumber is null)) continue;
+            return t.Template
+                .Replace("{root}", m.Groups["root"].Value)
+                .Replace("{n}", number?.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                .Replace("{parentN}", parentNumber?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        return null;
+    }
+
+    /// <summary>The (season, episode) a provider's id names, by the pattern the provider declared; null when it names none.</summary>
+    public static (int Season, int Episode)? PositionInId(string? source, string? externalId)
+    {
+        if (string.IsNullOrEmpty(externalId) || Find(source)?.PositionInIdPattern is not { Length: > 0 } pattern) return null;
+        var m = Regex.Match(externalId, pattern, RegexOptions.IgnoreCase);
+        return m.Success && int.TryParse(m.Groups["season"].Value, out var s) && int.TryParse(m.Groups["episode"].Value, out var e) ? (s, e) : null;
+    }
+
+    /// <summary>The first position found in any of the ids (each tagged with its source).</summary>
+    public static (int Season, int Episode)? PositionInAnyId(IEnumerable<(string Source, string ExternalId)> ids) =>
+        ids.Select(i => PositionInId(i.Source, i.ExternalId)).FirstOrDefault(p => p is not null);
+
+    /// <summary>The provider family an id can only denote ("movie"), by the patterns the provider declared; null when it says none.</summary>
+    public static string? FamilyOfId(string? source, string? externalId)
+    {
+        if (string.IsNullOrEmpty(externalId) || Find(source) is not { } policy) return null;
+        foreach (var (family, pattern) in policy.FamilyIdPatterns)
+            if (Regex.IsMatch(externalId, pattern, RegexOptions.IgnoreCase)) return family;
+        return null;
+    }
+
     // ── cross references ────────────────────────────────────────────────────────
 
     /// <summary>The stored form of a source's id found inside another provider's cross-reference block, or null. The first of

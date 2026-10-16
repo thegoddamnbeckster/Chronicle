@@ -14,10 +14,7 @@ namespace Chronicle.Services.Scan
     public static class TrackFileName
     {
         /// <summary>Audio file extensions; names of anything else (TV episodes!) are never reinterpreted as tracks.</summary>
-        public static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wma", ".aac", ".wav", ".aiff", ".ape", ".mpc", ".wv",
-        };
+        public static HashSet<string> AudioExtensions => MediaFileExtensions.Audio;
 
         private static readonly Regex DiscTrack = new(@"^(\d)[-.](\d{2})(?:\s*[-._)]+\s*|\s+)(.+)$", RegexOptions.Compiled);
         private static readonly Regex TrackWord = new(@"^[Tt]rack\s*(\d{1,3})(?:\s*[-._)]+\s*|\s+)?(.*)$", RegexOptions.Compiled);

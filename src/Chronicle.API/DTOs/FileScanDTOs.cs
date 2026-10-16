@@ -2,26 +2,6 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Chronicle.API.DTOs
 {
-    public record FileScanRequestDto(
-        [Required] string Path,
-        bool Recursive = true,
-        [Required] int MediaTypeId = 0,
-        int ConfidenceThreshold = 80
-    );
-
-    public record FileScanSummaryDto(
-        int Added,
-        int Skipped,
-        int AlreadyInLibrary,
-        List<SkippedFileDto> SkippedFiles
-    );
-
-    public record SkippedFileDto(
-        string FilePath,
-        string ParsedTitle,
-        int ConfidenceScore
-    );
-
     public record FileScanStatusDto(
         bool Available,
         string[] SupportedMediaTypeNames
@@ -35,24 +15,7 @@ namespace Chronicle.API.DTOs
         [Required] int MediaTypeId = 0
     );
 
-    public record ScannedFileDto(
-        string FilePath,
-        string ParsedTitle,
-        int? ParsedYear,
-        int ConfidenceScore,
-        string MediaTypeHint
-    );
-
-    public record ScanPreviewDto(
-        List<ScannedFileDto> Files
-    );
-
     // ── Identify ──────────────────────────────────────────────────────────────
-
-    public record IdentifyRequestDto(
-        [Required] List<ScannedFileDto> Files,
-        [Required] int MediaTypeId
-    );
 
     /// <summary>API-layer mirror of Chronicle.Services.ContributingExternalId (see its own docs)
     /// -- carries the contributing provider's own Source alongside its id rather than leaving
@@ -75,30 +38,7 @@ namespace Chronicle.API.DTOs
         int? LibraryItemId = null
     );
 
-    public record FileIdentificationDto(
-        ScannedFileDto File,
-        List<MetadataCandidateDto> Candidates
-    );
-
-    public record IdentifyResultDto(
-        List<FileIdentificationDto> Results
-    );
-
     // ── Import approved ───────────────────────────────────────────────────────
-
-    public record ImportApprovalDto(
-        [Required] string FilePath,
-        [Required] string ExternalId,
-        /// <summary>The source (plugin short name, e.g. "imdb") of the chosen candidate -- the candidate's
-        /// own <c>Source</c>. Lets the server route the id to the plugin that issued it instead of guessing
-        /// from the id's shape.</summary>
-        string? Source = null
-    );
-
-    public record ImportRequestDto(
-        [Required] List<ImportApprovalDto> Approvals,
-        [Required] int MediaTypeId
-    );
 
     public record ImportSummaryDto(
         int Imported,
@@ -108,22 +48,6 @@ namespace Chronicle.API.DTOs
     );
 
     // ── Direct import (scanner data only) ────────────────────────────────────
-
-    public record DirectImportFileDto(
-        [Required] string FilePath,
-        [Required] string ParsedTitle,
-        int? ParsedYear,
-        string MediaTypeHint = "movie",
-        string? ShowTitle = null,
-        int? SeasonNumber = null,
-        int? EpisodeNumber = null,
-        string? EpisodeTitle = null,
-        int? AudioTrackNumber = null);
-
-    public record DirectImportRequestDto(
-        [Required] List<DirectImportFileDto> Files,
-        [Required] int MediaTypeId
-    );
 
     // ── Add from search ───────────────────────────────────────────────────────
 

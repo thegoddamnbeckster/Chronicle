@@ -42,11 +42,6 @@ export interface BackupInfo {
   rowCounts: Record<string, number> | null
 }
 
-export interface BackupValidation {
-  valid: boolean
-  error: string | null
-}
-
 export interface MaintenanceResult {
   summary: string
   elapsed: string

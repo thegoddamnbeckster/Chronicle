@@ -2,13 +2,6 @@ namespace Chronicle.Services
 {
     // ── Existing scan-and-import flow ─────────────────────────────────────────
 
-    public record FileScanRequest(
-        string Path,
-        bool Recursive,
-        int MediaTypeId,
-        int ConfidenceThreshold = 80
-    );
-
     public record FileScanSummary(
         int Added,
         int Skipped,
@@ -34,24 +27,7 @@ namespace Chronicle.Services
         public const int AutoDetect = 0;
     }
 
-    public record ScannedFileResult(
-        string FilePath,
-        string ParsedTitle,
-        int? ParsedYear,
-        int ConfidenceScore,
-        string MediaTypeHint
-    );
-
-    public record ScanPreview(
-        List<ScannedFileResult> Files
-    );
-
     // ── Identify (match scanned files against a metadata provider) ────────────
-
-    public record IdentifyRequest(
-        List<ScannedFileResult> Files,
-        int MediaTypeId
-    );
 
     /// <summary>
     /// One other provider's own id for the same real-world item, discovered during search-time
@@ -76,28 +52,7 @@ namespace Chronicle.Services
         List<ContributingExternalId>? ContributingExternalIds = null
     );
 
-    public record FileIdentification(
-        ScannedFileResult File,
-        List<MetadataCandidate> Candidates
-    );
-
-    public record IdentifyResult(
-        List<FileIdentification> Results
-    );
-
     // ── Import approved matches ───────────────────────────────────────────────
-
-    public record ImportApproval(
-        string FilePath,
-        string ExternalId,
-        string? Source = null
-    );
-
-    public record ImportApprovedRequest(
-        List<ImportApproval> Approvals,
-        int MediaTypeId,
-        int UserId
-    );
 
     public record ImportApprovedSummary(
         int Imported,
@@ -123,12 +78,6 @@ namespace Chronicle.Services
         int? EpisodeNumber = null,
         string? EpisodeTitle = null,
         int? AudioTrackNumber = null);
-
-    public record DirectImportRequest(
-        List<DirectImportFile> Files,
-        int MediaTypeId,
-        int UserId
-    );
 
     // ── Grouped import (hierarchical scanner) ────────────────────────────────
 

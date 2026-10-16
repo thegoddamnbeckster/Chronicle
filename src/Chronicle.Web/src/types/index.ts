@@ -335,50 +335,6 @@ export interface FileScanStatus {
   supportedMediaTypeNames: string[]
 }
 
-export interface SkippedFile {
-  filePath: string
-  parsedTitle: string
-  confidenceScore: number
-}
-
-export interface FileScanResult {
-  added: number
-  skipped: number
-  alreadyInLibrary: number
-  skippedFiles: SkippedFile[]
-}
-
-export interface ScannedFile {
-  filePath: string
-  parsedTitle: string
-  parsedYear: number | null
-  confidenceScore: number
-  mediaTypeHint: string
-}
-
-export interface ScanPreview {
-  files: ScannedFile[]
-}
-
-export interface MetadataCandidate {
-  externalId: string
-  title: string
-  year: number | null
-  posterUrl: string | null
-  overview: string | null
-  rating: number | null
-  matchScore: number
-}
-
-export interface FileIdentification {
-  file: ScannedFile
-  candidates: MetadataCandidate[]
-}
-
-export interface IdentifyResult {
-  results: FileIdentification[]
-}
-
 export interface ImportSummary {
   imported: number
   failed: number

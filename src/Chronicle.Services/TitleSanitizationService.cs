@@ -129,7 +129,7 @@ public sealed class TitleSanitizationService(
 
     private static async Task<List<SanitizationTarget>> LoadConfigAsync(ChronicleDbContext db, CancellationToken ct)
     {
-        var setting = await db.AppSettings.FindAsync(["title_sanitization.config"], ct);
+        var setting = await db.AppSettings.FindAsync([ConfigKey], ct);
         if (setting?.Value is null)
         {
             // Nothing configured: the providers that declare a title field carrying a disambiguation suffix
