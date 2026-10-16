@@ -131,6 +131,37 @@ public class InvertedHierarchyRepairServiceTests
     }
 
     [Fact]
+    public async Task AnEmptyCopyOfTheSeasonFiledUnderOneOfItsOwnEpisodes_IsRemoved()
+    {
+        using var rig = new Rig();
+        var show = rig.Add("Drag Race", 0);
+        var season = rig.Add("Season 8", 1, show.Id);
+        var episode = rig.Add("Snatch Me If You Can", 2, season.Id);
+        var stray = rig.Add("Season 8", 1, episode.Id, "{\"_resolved\":{}}");
+
+        await rig.Service.ExecuteAsync(CancellationToken.None);
+
+        (await rig.Db.MediaItems.FindAsync(stray.Id)).Should().BeNull();
+        (await rig.Db.MediaItems.FindAsync(season.Id)).Should().NotBeNull();
+        (await rig.Db.MediaItems.FindAsync(episode.Id)).Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ACopyThatHoldsSomething_IsNotRemoved()
+    {
+        using var rig = new Rig();
+        var show = rig.Add("Drag Race", 0);
+        var season = rig.Add("Season 8", 1, show.Id);
+        var episode = rig.Add("Snatch Me If You Can", 2, season.Id);
+        var stray = rig.Add("Season 8", 1, episode.Id, "{\"_resolved\":{}}");
+        rig.Add("Some Child", 2, stray.Id);
+
+        await rig.Service.ExecuteAsync(CancellationToken.None);
+
+        (await rig.Db.MediaItems.FindAsync(stray.Id)).Should().NotBeNull("it has a child of its own");
+    }
+
+    [Fact]
     public async Task ChildrenInDifferentFolders_AreLeftAlone()
     {
         using var rig = new Rig();
