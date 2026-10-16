@@ -147,22 +147,23 @@ public class InvertedHierarchyRepairServiceTests
     }
 
     [Fact]
-    public async Task ACopyThatHoldsSomething_IsNotRemoved()
+    public async Task ACopyOfTheSeasonThatTheUserHasWatched_IsNotTouched()
     {
         using var rig = new Rig();
         var show = rig.Add("Drag Race", 0);
         var season = rig.Add("Season 8", 1, show.Id);
         var episode = rig.Add("Snatch Me If You Can", 2, season.Id);
         var stray = rig.Add("Season 8", 1, episode.Id, "{\"_resolved\":{}}");
-        rig.Add("Some Child", 2, stray.Id, System.Text.Json.JsonSerializer.Serialize(new { fileScanner = new { filePaths = new[] { Path.Combine("E:", "TV", "x.mkv") } } }));
+        rig.Db.UserLibraries.Add(new UserLibrary { UserId = 1, MediaItemId = stray.Id, Status = LibraryStatus.Completed });
+        rig.Db.SaveChanges();
 
         await rig.Service.ExecuteAsync(CancellationToken.None);
 
-        (await rig.Db.MediaItems.FindAsync(stray.Id)).Should().NotBeNull("one of its children is a real file");
+        (await rig.Db.MediaItems.FindAsync(stray.Id)).Should().NotBeNull("the user's own data is on it");
     }
 
     [Fact]
-    public async Task ACopyAndTheEmptyCopyOfTheEpisodeUnderIt_GoTogether()
+    public async Task WhatHangsUnderAStrayCopy_MovesToTheRealSeason_WithItsWatchHistory_BeforeTheCopyGoes()
     {
         using var rig = new Rig();
         var show = rig.Add("Drag Race", 0);
@@ -170,12 +171,14 @@ public class InvertedHierarchyRepairServiceTests
         var episode = rig.Add("Snatch Me If You Can", 2, season.Id);
         var stray = rig.Add("Season 8", 1, episode.Id, "{\"_resolved\":{}}");
         var strayEpisode = rig.Add("Snatch Me If You Can", 2, stray.Id, "{\"_resolved\":{}}");
+        rig.Db.InteractionEvents.Add(new InteractionEvent { UserId = 1, MediaItemId = strayEpisode.Id, Timestamp = DateTime.UtcNow, ProgressPercent = 100, MarkedAsWatched = true });
+        rig.Db.SaveChanges();
 
         await rig.Service.ExecuteAsync(CancellationToken.None);
 
         (await rig.Db.MediaItems.FindAsync(stray.Id)).Should().BeNull();
-        (await rig.Db.MediaItems.FindAsync(strayEpisode.Id)).Should().BeNull();
-        (await rig.Db.MediaItems.FindAsync(episode.Id)).Should().NotBeNull();
+        (await rig.Db.MediaItems.FindAsync(strayEpisode.Id))!.ParentId.Should().Be(season.Id, "it is not deleted; the duplicate cleanup merges it into the original with its history");
+        (await rig.Db.InteractionEvents.CountAsync(e => e.MediaItemId == strayEpisode.Id)).Should().Be(1);
     }
 
     [Fact]
