@@ -149,21 +149,29 @@ public sealed class InvertedHierarchyRepairService(
         if (children.Any(c => c.MediaTypeId != season.MediaTypeId || !string.Equals(c.Name.Trim(), season.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
             return null;
 
-        var ids = children.Select(c => c.Id).ToList();
-        if (children.Any(c => Scan.FileIdentityJson.HasKnownFile(c.MetadataJson) || !string.IsNullOrEmpty(Scan.FileIdentityJson.PrimaryFilePathKey(c.MetadataJson))))
+        // The copies and whatever hangs under them (a copy of the episode, under a copy of the season, under the episode): all of it
+        // must be empty placeholders, one level deep at most (the copy of the episode), or nothing is removed.
+        var strayIds = children.Select(c => c.Id).ToList();
+        var below = await db.MediaItems.Where(k => k.ParentId != null && strayIds.Contains(k.ParentId.Value)).ToListAsync(ct);
+        var belowIds = below.Select(b => b.Id).ToList();
+        if (belowIds.Count > 0 && await db.MediaItems.AnyAsync(k => k.ParentId != null && belowIds.Contains(k.ParentId.Value), ct)) return null;
+
+        var all = children.Concat(below).ToList();
+        var ids = all.Select(c => c.Id).ToList();
+        if (all.Any(c => Scan.FileIdentityJson.HasKnownFile(c.MetadataJson) || !string.IsNullOrEmpty(Scan.FileIdentityJson.PrimaryFilePathKey(c.MetadataJson))))
             return null;
-        if (await db.MediaItems.AnyAsync(k => k.ParentId != null && ids.Contains(k.ParentId.Value), ct)) return null;
         if (await db.MediaExternalIds.AnyAsync(e => ids.Contains(e.MediaItemId), ct)) return null;
         if (await db.MediaEnrichments.AnyAsync(e => ids.Contains(e.MediaItemId) && e.Status == EnrichmentStatus.Completed, ct)) return null;
         if ((await BookSeriesService.StubIdsWithUserDataAsync(db, ids, ct)).Count > 0) return null;
 
         db.MediaEnrichments.RemoveRange(db.MediaEnrichments.Where(e => ids.Contains(e.MediaItemId)));
+        db.MediaItems.RemoveRange(below);
         db.MediaItems.RemoveRange(children);
         await db.SaveChangesAsync(ct);
         logger.LogInformation(
             "Inverted hierarchy repair: removed {Count} empty copy(ies) of \"{Season}\" ({SeasonId}) filed under its own episodes",
             children.Count, season.Name, season.Id);
-        return children.Count;
+        return children.Count + below.Count;
     }
 
     /// <summary>True when the last segment of <paramref name="normalizedFolder"/> is <paramref name="name"/>, ignoring case.</summary>

@@ -154,11 +154,28 @@ public class InvertedHierarchyRepairServiceTests
         var season = rig.Add("Season 8", 1, show.Id);
         var episode = rig.Add("Snatch Me If You Can", 2, season.Id);
         var stray = rig.Add("Season 8", 1, episode.Id, "{\"_resolved\":{}}");
-        rig.Add("Some Child", 2, stray.Id);
+        rig.Add("Some Child", 2, stray.Id, System.Text.Json.JsonSerializer.Serialize(new { fileScanner = new { filePaths = new[] { Path.Combine("E:", "TV", "x.mkv") } } }));
 
         await rig.Service.ExecuteAsync(CancellationToken.None);
 
-        (await rig.Db.MediaItems.FindAsync(stray.Id)).Should().NotBeNull("it has a child of its own");
+        (await rig.Db.MediaItems.FindAsync(stray.Id)).Should().NotBeNull("one of its children is a real file");
+    }
+
+    [Fact]
+    public async Task ACopyAndTheEmptyCopyOfTheEpisodeUnderIt_GoTogether()
+    {
+        using var rig = new Rig();
+        var show = rig.Add("Drag Race", 0);
+        var season = rig.Add("Season 8", 1, show.Id);
+        var episode = rig.Add("Snatch Me If You Can", 2, season.Id);
+        var stray = rig.Add("Season 8", 1, episode.Id, "{\"_resolved\":{}}");
+        var strayEpisode = rig.Add("Snatch Me If You Can", 2, stray.Id, "{\"_resolved\":{}}");
+
+        await rig.Service.ExecuteAsync(CancellationToken.None);
+
+        (await rig.Db.MediaItems.FindAsync(stray.Id)).Should().BeNull();
+        (await rig.Db.MediaItems.FindAsync(strayEpisode.Id)).Should().BeNull();
+        (await rig.Db.MediaItems.FindAsync(episode.Id)).Should().NotBeNull();
     }
 
     [Fact]
