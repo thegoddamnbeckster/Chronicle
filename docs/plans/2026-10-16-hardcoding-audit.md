@@ -115,7 +115,7 @@ Left alone because they are contracts, not dead: `ScannedFile` fields plugins fi
 
 `ExternalIdPolicies`: 56 cases (normalisation, refusals, cross-reference formats, id-shape validity by depth and family, child-id
 templates, positions, family patterns); `Tunables`: 7; `MediaTypeRegistry` and media-type sync cases extended. Unit 2,039
-pass, web 299 pass, integration run on a clean copy. Two integration hazards found and fixed on the way: the startup
+pass, web 299 pass, integration 559 pass / 9 skipped (run on a clean copy), and one policy test in each of the eight plugin repositories. Two integration hazards found and fixed on the way: the startup
 settings read cast the injected settings to the concrete class (47 failures in the test host), and parallel hosts overwrote
 each other's process-wide media-type snapshot (`MediaTypeRegistry.IsolateForCurrentContext`, `PreserveExecutionContext`).
 
@@ -124,4 +124,5 @@ each other's process-wide media-type snapshot (`MediaTypeRegistry.IsolateForCurr
 * A TMDB `movie:N` id on a *tv-family* item (e.g. an `anime` root) is now judged implausible, as `tv` always was; previously `anime` was exempted by name. The live database has none (checked).
 * Stored ids are judged only by their own provider's shapes. A provider that declares none is trusted, as unrecognised ids always were.
 * The startup Trakt credit backfill is gone; `QueueCachedCreditsBackfill` already resolves credits from cached metadata.
-* A new migration (`MediaTypeDataDrivenFlags`, both SQLite and PostgreSQL sets) adds the media-type columns, converts existing rows, and seeds the two enrichment settings. It is applied at the next API start.
+* A new migration (`MediaTypeDataDrivenFlags`, both SQLite and PostgreSQL sets) adds the media-type columns, converts existing rows, and seeds the two enrichment settings. It was applied to the live database on the API restart at 14:28 on 2026-10-16.
+* **Core and plugins now go together.** Chronicle no longer carries the rules the policies replace, so a released Chronicle needs the released plugins that declare them (TMDB, IMDb, Trakt, Simkl, FanartTV, Wikipedia, MusicBrainz, Hardcover). Without TMDB's policy, for example, `person:N` ids would be stored as issued again. `RunTestEnvironment.ps1` rebuilds the plugins from their repositories, so the development install already has them; the plugin releases have not been cut.
