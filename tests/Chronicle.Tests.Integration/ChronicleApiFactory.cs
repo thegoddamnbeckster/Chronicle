@@ -79,11 +79,17 @@ namespace Chronicle.Tests.Integration
                     Id = 1, Name = "tv", DisplayName = "TV Shows",
                     HierarchyLevels = 3, HierarchyLabels = "Show,Season,Episode",
                     InteractionVerb = "watched", ProgressUnit = "minutes",
+                    ProviderFamily = Chronicle.Core.Models.ProviderFamilies.Tv, IsFamilyDefault = true, CastAreActors = true,
                     IsBuiltIn = true, IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 });
                 db.SaveChanges();
             }
+
+            // The application reads media types from a snapshot loaded at start, which (here) was taken before this seed. Give the
+            // calling test its own view of what is in this database, so it never depends on which other host loaded the process-wide one.
+            Chronicle.Services.MediaTypeRegistry.IsolateForCurrentContext();
+            Chronicle.Services.MediaTypeRegistry.RefreshAsync(db).GetAwaiter().GetResult();
         }
     }
 }

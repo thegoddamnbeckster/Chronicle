@@ -277,6 +277,7 @@ gets plain handling: ids stored exactly as issued, "source:value" in cross-refer
 | `RefusedIdPattern` | Ids that are unusable and must never be stored. |
 | `IgnoredForConflicts` | Your ids are shared by many items (an artist id), so disagreeing on one proves nothing. |
 | `NameDerived` | Your id comes from searching the item's name, so agreeing on it is never proof of identity. |
+| `BirthYearTagPattern`, `NotAnEntityTitlePattern` | For a name-derived provider: how a birth year is read from one of your tags ("1981 births", group `year`) and which titles are pages about no single item ("2022 in film"). |
 | `DisambiguatedTitleField` | A field of your metadata partition that can carry "(film)"-style suffixes to strip. |
 | `CrossRefFormats`, `CrossRefValueKinds` | How your id is written when it appears in another provider's `ids` block, per kind ("movie", a media type name, "default"). |
 | `IdShapes` | The shapes of id you issue and where each can sit (depth in the hierarchy, kind of item, kind of parent). A stale id of the wrong kind is discarded. An id matching no shape is trusted. |

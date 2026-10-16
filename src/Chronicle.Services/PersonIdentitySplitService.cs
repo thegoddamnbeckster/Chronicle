@@ -54,8 +54,6 @@ public sealed class PersonIdentitySplitService(
     private static string NameDerivedSource => ExternalIdPolicies.NameDerivedSource();
     private const int PageSize = 500;
 
-    private static readonly Regex BirthsTag = new(@"^\s*(\d{4})\s+births\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
     /// <summary>
     /// Pure detector. Returns true when <paramref name="metadataJson"/> holds a Wikipedia partition
     /// with a "YYYY births" category AND at least one other provider partition with a birthDate,
@@ -79,13 +77,13 @@ public sealed class PersonIdentitySplitService(
                 return false;
 
             int? wikiYear = null;
-            if (wiki.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array)
+            if (ExternalIdPolicies.BirthYearTag() is { } birthsTag && wiki.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Array)
             {
                 foreach (var t in tags.EnumerateArray())
                 {
                     if (t.ValueKind != JsonValueKind.String) continue;
-                    var m = BirthsTag.Match(t.GetString() ?? "");
-                    if (m.Success) { wikiYear = int.Parse(m.Groups[1].Value); break; }
+                    var m = birthsTag.Match(t.GetString() ?? "");
+                    if (m.Success && int.TryParse(m.Groups["year"].Value, out var y)) { wikiYear = y; break; }
                 }
             }
             if (wikiYear is null) return false;

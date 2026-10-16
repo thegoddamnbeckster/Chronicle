@@ -46,6 +46,15 @@ public static class ExternalIdPolicies
         Current.BySource.Values.Where(p => p.DisambiguatedTitleField is { Length: > 0 })
             .Select(p => (p.PluginId, p.DisambiguatedTitleField!)).ToArray();
 
+    /// <summary>The name-derived provider's birth-year tag pattern, or null.</summary>
+    public static Regex? BirthYearTag() => Compile(Current.BySource.Values.FirstOrDefault(p => p.NameDerived)?.BirthYearTagPattern);
+
+    /// <summary>The name-derived provider's pattern for pages that are not about one item, or null.</summary>
+    public static Regex? NotAnEntityTitle() => Compile(Current.BySource.Values.FirstOrDefault(p => p.NameDerived)?.NotAnEntityTitlePattern);
+
+    private static Regex? Compile(string? pattern) =>
+        string.IsNullOrEmpty(pattern) ? null : new Regex(pattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+
     /// <summary>The plugin id of the first name-derived provider ("" when none is installed).</summary>
     public static string NameDerivedPluginId() =>
         Current.BySource.Values.Where(p => p.NameDerived).Select(p => p.PluginId).FirstOrDefault() ?? string.Empty;

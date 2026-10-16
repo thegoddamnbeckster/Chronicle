@@ -69,6 +69,14 @@ public sealed class ExternalIdPolicy
     /// disambiguation parenthetical ("Heat (film)") which Chronicle should strip. Null when the provider's titles are clean.</summary>
     public string? DisambiguatedTitleField { get; set; }
 
+    /// <summary>For a name-derived provider: a regular expression with a group named <c>year</c> that reads a person's birth year
+    /// out of one of the provider's tags ("1981 births"). Lets Chronicle notice an article about a different person.</summary>
+    public string? BirthYearTagPattern { get; set; }
+
+    /// <summary>For a name-derived provider: a regular expression for titles of pages that are not about one item at all
+    /// (a year-overview page such as "2022 in film"), which must never be kept as an item's article.</summary>
+    public string? NotAnEntityTitlePattern { get; set; }
+
     /// <summary>
     /// How an id this provider reports inside another provider's cross-reference block is written, per kind of item
     /// ("movie", "tv", "anime", else "default"), with <c>{id}</c> standing for the value. Missing kinds fall back to "default",

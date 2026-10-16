@@ -42,8 +42,8 @@ public sealed class YearOverviewArticleSplitService(
     private static string NameDerivedSource => ExternalIdPolicies.NameDerivedSource();
     private const int PageSize = 500;
 
-    internal static readonly Regex YearOverviewTitle =
-        new(@"^\s*\d{4}\s+in\s+(film|television)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    /// <summary>Titles of pages that are not about one item, as the name-derived provider declares them (a year-overview page).</summary>
+    internal static Regex? YearOverviewTitle => ExternalIdPolicies.NotAnEntityTitle();
 
     /// <summary>Pure detector: the item's Wikipedia partition is titled like "2022 in film", and at least
     /// one other plugin partition has its own title that is NOT the same year-overview shape.</summary>
@@ -66,7 +66,7 @@ public sealed class YearOverviewArticleSplitService(
                 wikiTitleEl.ValueKind != JsonValueKind.String)
                 return false;
             var wikiTitle = wikiTitleEl.GetString() ?? "";
-            if (!YearOverviewTitle.IsMatch(wikiTitle)) return false;
+            if (YearOverviewTitle is not { } overview || !overview.IsMatch(wikiTitle)) return false;
 
             foreach (var p in doc.RootElement.EnumerateObject())
             {
@@ -75,7 +75,7 @@ public sealed class YearOverviewArticleSplitService(
                 if (MetadataResolutionService.TryGetBlobProperty(p.Value, "title", out var otherTitle) &&
                     otherTitle.ValueKind == JsonValueKind.String &&
                     !string.IsNullOrWhiteSpace(otherTitle.GetString()) &&
-                    !YearOverviewTitle.IsMatch(otherTitle.GetString()!))
+                    !overview.IsMatch(otherTitle.GetString()!))
                 {
                     wikipediaTitle = wikiTitle;
                     return true;

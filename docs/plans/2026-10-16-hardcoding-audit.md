@@ -53,13 +53,14 @@ through `ExternalIdPolicies` (refilled whenever plugins load or unload). Documen
 | TMDB `person:N` stored as `tmdb:N` | TMDB (`StoredPrefixRewrites`) |
 | untyped `simkl:N` refused (helper class + 9 tests) | Simkl (`RefusedIdPattern`) |
 | `fanarttv` skipped in conflict checks | FanartTV (`IgnoredForConflicts`) |
-| `wikipedia` excluded as merge proof; `chronicle.plugin.wikipedia` + `"wikipedia"` in three repair services; default title-cleanup target | Wikipedia (`NameDerived`, `DisambiguatedTitleField`); the repair services read the name-derived provider from the policy |
+| `wikipedia` excluded as merge proof; `chronicle.plugin.wikipedia` + `"wikipedia"` in three repair services; default title-cleanup target | Wikipedia (`NameDerived`, `DisambiguatedTitleField`, `BirthYearTagPattern`, `NotAnEntityTitlePattern`); the repair services read the provider and its patterns from the policy |
 | cross-reference formats (`movie:N`, `tv:N`, `trakt:movie:N`, `simkl:anime:N` ...) in `CrossRefHelper`; `isAnime` from the type name | each provider (`CrossRefFormats`, tried by "movie" then by the item's type name) |
 | TMDB/MusicBrainz id grammar in the enrichment step (`movie`, `tv`, `artist`, `release-group`, `recording`, depth rules, "movie inside a collection") | TMDB and MusicBrainz (`IdShapes`: shape, depth, item family, parent family) |
 | building `tv:{id}/season:{n}/episode:{m}` from a show's id (three places) | TMDB (`ChildIds`) |
 | reading season/episode back out of an id (regex in `FileIdentityJson`) | TMDB (`PositionInIdPattern`) |
 | "this id is a movie id" sniffed from `movie:` / `:movie:` | TMDB, Simkl, Trakt (`FamilyIdPatterns`) |
 | `MovieExternalIdRepairService` believing TMDB, its `movie:N` shape, its `imdb`/`tvdb` cross-references | the item's authority = first provider in the Metadata Assignment precedence for its type that has data on it; "movie id" from that provider's `FamilyIdPatterns`; cross-references compared only when written alike |
+| "YYYY births" tag and "YYYY in film" title shapes inside the Wikipedia repair services | Wikipedia (`BirthYearTagPattern`, `NotAnEntityTitlePattern`); the services keep only the splitting mechanics |
 | Hardcover series reconcile hard-wired to `"hardcover"` and chained to it in the task scheduler | Hardcover (`SeriesIdMarker`); the service is now `SeriesReconcileService`, parameterised by plugin id |
 | TMDB image host test when clearing a stale child poster | removed: a child with no poster in the new result drops its poster and the resolver re-promotes whatever remains |
 
@@ -89,7 +90,6 @@ unreadable or out-of-range stored value is ignored, so a typo cannot disable a r
 | `ProviderFamilies` (`movie`, `tv`, `music`) | family vocabulary | It is the vocabulary providers and Kodi speak; types and providers both refer to it. |
 | `ScraperController` (`imdb`, `tvdb`, `tmdb`, `trakt` keys) | Kodi `uniqueid` types and the scraper payload | The Kodi add-on's contract, not Chronicle's choice. |
 | `BuiltInMediaTypes` | `tv`, `movies`, `music`, `people` | The seed. Rows are ordinary afterwards. |
-| `PersonIdentitySplitService`, `YearOverviewArticleSplitService`, `UserMergeRestoreService` | read the name-derived provider from the policy, but still inspect that provider's data shape ("YYYY births", "YYYY in film" pages) | Provider-specific repairs of a provider's own bugs. Properly they are a repair hook inside the Wikipedia plugin, which needs a plugin-side database hook that does not exist. Deferred. |
 | `LegacyNfoPurgeService` | the retired Kodi NFO plugin id and partition names | One-shot, marker-gated upgrade of data from a feature that no longer exists. Delete once every install has run it. |
 | Migrations | type names in data fixes | History. |
 | Constants such as page sizes, timeouts, `MaxEntries`, `PasswordHasher.WorkFactor`, `MaxSessionsPerUser` | technical limits | Not policy. |

@@ -15,6 +15,8 @@ RUN dotnet restore src/Chronicle.API/Chronicle.API.csproj
 
 # Copy full source and publish a self-contained-friendly, trimmed release binary
 COPY src/ src/
+# The built-in plugin catalogue is plugins.json, embedded into Chronicle.Services at build time.
+COPY plugins.json ./
 
 RUN dotnet publish src/Chronicle.API/Chronicle.API.csproj \
     -c Release \

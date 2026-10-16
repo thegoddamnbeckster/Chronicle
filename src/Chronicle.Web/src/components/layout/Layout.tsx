@@ -50,6 +50,12 @@ export default function Layout() {
   // RequireAuth guarantees user is non-null before Layout mounts
   if (!user) return null
 
+  const settingsLink = (to: string, label: string) => (
+    <NavLink to={to} className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
+      {label}
+    </NavLink>
+  )
+
   return (
     <div className={styles.shell}>
       <header className={styles.header}>
@@ -135,66 +141,35 @@ export default function Layout() {
           </NavGroup>
         </NavGroup>
 
-        {/* Settings group — default closed */}
-        <NavGroup label="Settings" storageKey="nav_group_settings" defaultOpen={false}>
-          <NavLink to="/settings/background-tasks" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Background Tasks
-          </NavLink>
-          {user.isAdmin && (
-            <NavLink to="/settings/database" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-              Database
-            </NavLink>
-          )}
-          {user.isAdmin && (
-            <NavLink to="/settings/email" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-              Email
-            </NavLink>
-          )}
-          {user.isAdmin && (
-            <NavLink to="/settings/media-types" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-              Media Types
-            </NavLink>
-          )}
-          {user.isAdmin && (
-            <NavLink to="/settings/tuning" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-              Tuning
-            </NavLink>
-          )}
-          <NavLink to="/settings/metadata-assignment" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Metadata Assignment
-          </NavLink>
-          <NavLink to="/settings/field-aliases" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Field Aliases
-          </NavLink>
-          <NavLink to="/settings/duplicates" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Duplicates
-          </NavLink>
-          <NavLink to="/settings/api-keys" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            API Keys
-          </NavLink>
-          <NavLink to="/settings/library" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Library
-          </NavLink>
-          <NavLink to="/plugins" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Plugins
-          </NavLink>
-          <NavLink to="/preferences" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Preferences
-          </NavLink>
-          <NavLink to="/settings/service" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-            Service
-          </NavLink>
+        {/* Settings: what is used often sits at the top; the rest is grouped by purpose and folded away.
+            Every list below is alphabetical. A fold opens by itself when the page you are on is inside it. */}
+        <NavGroup label="Settings" storageKey="nav_group_settings_v2" defaultOpen={true}>
+          {settingsLink('/settings/background-tasks', 'Background Tasks')}
+          {settingsLink('/settings/duplicates', 'Duplicates')}
+          {settingsLink('/settings/library', 'Library')}
+          {settingsLink('/plugins', 'Plugins')}
 
-          {/* Own section, alphabetically last within Settings */}
-          <NavGroup label="Users" storageKey="nav_group_users" defaultOpen={false}>
-            <NavLink to="/settings/profile" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-              My Profile
-            </NavLink>
-            {user.isAdmin && (
-              <NavLink to="/settings/users" className={({ isActive }) => isActive ? styles.activeLink : styles.link}>
-                Manage Users
-              </NavLink>
-            )}
+          <NavGroup label="Account" storageKey="nav_group_settings_account" defaultOpen={false}
+                    containsPaths={['/settings/api-keys', '/settings/users', '/settings/profile', '/preferences']}>
+            {settingsLink('/settings/api-keys', 'API Keys')}
+            {user.isAdmin && settingsLink('/settings/users', 'Manage Users')}
+            {settingsLink('/settings/profile', 'My Profile')}
+            {settingsLink('/preferences', 'Preferences')}
+          </NavGroup>
+
+          <NavGroup label="Metadata" storageKey="nav_group_settings_metadata" defaultOpen={false}
+                    containsPaths={['/settings/field-aliases', '/settings/media-types', '/settings/metadata-assignment']}>
+            {settingsLink('/settings/field-aliases', 'Field Aliases')}
+            {user.isAdmin && settingsLink('/settings/media-types', 'Media Types')}
+            {settingsLink('/settings/metadata-assignment', 'Metadata Assignment')}
+          </NavGroup>
+
+          <NavGroup label="System" storageKey="nav_group_settings_system" defaultOpen={false}
+                    containsPaths={['/settings/database', '/settings/email', '/settings/service', '/settings/tuning']}>
+            {user.isAdmin && settingsLink('/settings/database', 'Database')}
+            {user.isAdmin && settingsLink('/settings/email', 'Email')}
+            {settingsLink('/settings/service', 'Service')}
+            {user.isAdmin && settingsLink('/settings/tuning', 'Tuning')}
           </NavGroup>
         </NavGroup>
 

@@ -1,18 +1,27 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import styles from './NavGroup.module.css'
 
 interface NavGroupProps {
   label: string
   storageKey: string
   defaultOpen: boolean
+  /** Paths inside this group: arriving on one opens the group (without remembering it as the person's choice). */
+  containsPaths?: string[]
   children: React.ReactNode
 }
 
-export default function NavGroup({ label, storageKey, defaultOpen, children }: NavGroupProps) {
+export default function NavGroup({ label, storageKey, defaultOpen, containsPaths, children }: NavGroupProps) {
   const [open, setOpen] = useState<boolean>(() => {
     const stored = localStorage.getItem(storageKey)
     return stored !== null ? stored === 'true' : defaultOpen
   })
+
+  const { pathname } = useLocation()
+  const inside = !!containsPaths?.some(p => pathname === p || pathname.startsWith(p + '/'))
+  useEffect(() => {
+    if (inside) setOpen(true)
+  }, [inside])
 
   function toggle() {
     const next = !open

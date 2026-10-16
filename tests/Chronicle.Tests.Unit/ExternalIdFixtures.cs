@@ -50,7 +50,8 @@ public static class ExternalIdFixtures
                 CrossRefValueKinds = ["number"], FamilyIdPatterns = { ["movie"] = ":movie:" } },
         new() { Source = "hardcover", PluginId = "hardcover", SeriesIdMarker = "series:" },
         new() { Source = "fanarttv", PluginId = "chronicle.plugin.fanarttv", IgnoredForConflicts = true },
-        new() { Source = "wikipedia", PluginId = WikipediaPluginId, NameDerived = true, DisambiguatedTitleField = "title" },
+        new() { Source = "wikipedia", PluginId = WikipediaPluginId, NameDerived = true, DisambiguatedTitleField = "title",
+                BirthYearTagPattern = @"^\s*(?<year>\d{4})\s+births\s*$", NotAnEntityTitlePattern = @"^\s*\d{4}\s+in\s+(film|television)\s*$" },
     ];
 
     [ModuleInitializer]

@@ -330,6 +330,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             catch (Exception ex) { _log.Warning(ex, "A plugin's external id policy could not be read; it is ignored"); }
         }
         ExternalIdPolicies.Load(policies);
+        _log.Information("External id policies declared by loaded plugins: {Sources}", policies.Select(p => p.Source).OrderBy(x => x).ToArray());
     }
 
     public void Dispose()
