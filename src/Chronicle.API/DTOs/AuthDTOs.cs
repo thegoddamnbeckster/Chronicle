@@ -31,3 +31,9 @@ namespace Chronicle.API.DTOs
     public record UserDto(int Id, string Username, string? Email, string? DisplayName, bool IsAdmin, bool ShowDiagnostics,
         bool ShowNowPlayingBanner = true, bool ShowAllCredits = false);
 }
+
+namespace Chronicle.API.DTOs
+{
+    public record RegistrationStatusDto(bool Locked);
+    public record SetRegistrationLockedRequest(bool Locked);
+}

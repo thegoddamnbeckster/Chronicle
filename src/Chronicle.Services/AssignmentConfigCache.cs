@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.Services;
 
-public class AssignmentConfigCache(IServiceScopeFactory scopeFactory)
+public class AssignmentConfigCache(IServiceScopeFactory scopeFactory) : IDisposable
 {
     // Generation + data travel together as one immutable object so publishing a reload result
     // is a single atomic CompareExchange rather than a separate "check generation, then write
@@ -15,6 +15,9 @@ public class AssignmentConfigCache(IServiceScopeFactory scopeFactory)
 
     private CacheState _state = new(0, null);
     private readonly SemaphoreSlim _lock = new(1, 1);
+
+    /// <summary>Releases the lock when the container shuts the singleton down.</summary>
+    public void Dispose() => _lock.Dispose();
 
     public async Task<Dictionary<string, List<string>>> GetForTypeAsync(
         string mediaTypeName, int hierarchyLevel, CancellationToken ct = default)

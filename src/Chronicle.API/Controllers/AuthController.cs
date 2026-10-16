@@ -20,11 +20,13 @@ namespace Chronicle.API.Controllers
         private readonly IPasswordResetService _reset;
         private readonly ResetMailDispatcher _mail;
         private readonly ICachedAppSettings _settings;
+        private readonly IRegistrationPolicy _registration;
 
         public AuthController(IUserService userService, ISessionStore sessions,
             ILoginThrottle throttle, AuthAuditLog audit,
-            IPasswordResetService reset, ResetMailDispatcher mail, ICachedAppSettings settings)
+            IPasswordResetService reset, ResetMailDispatcher mail, ICachedAppSettings settings, IRegistrationPolicy registration)
         {
+            _registration = registration;
             _userService = userService;
             _sessions = sessions;
             _throttle = throttle;
@@ -46,9 +48,26 @@ namespace Chronicle.API.Controllers
                 $"Too many {what}. Try again in {(seconds < 90 ? $"{seconds} seconds" : $"{(int)Math.Ceiling(seconds / 60.0)} minutes")}."));
         }
 
+        /// <summary>Whether sign-up is open, so the sign-in page can hide its "create account" link. Public by necessity.</summary>
+        [HttpGet("registration")]
+        public async Task<IActionResult> RegistrationStatus(CancellationToken ct) =>
+            Ok(ApiResponse<RegistrationStatusDto>.Ok(new RegistrationStatusDto(await _registration.IsClosedAsync(ct))));
+
+        /// <summary>Locks or unlocks self-service sign-up. Recovery without an admin login: <c>Chronicle.API --unlock-registration</c>.</summary>
+        [HttpPut("registration")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> SetRegistrationLocked([FromBody] SetRegistrationLockedRequest request, CancellationToken ct)
+        {
+            await _registration.SetLockedAsync(request.Locked, ct);
+            return Ok(ApiResponse<RegistrationStatusDto>.Ok(new RegistrationStatusDto(request.Locked)));
+        }
+
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
+            if (await _registration.IsClosedAsync(HttpContext.RequestAborted))
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<AuthResponse>.Fail(
+                    "REGISTRATION_LOCKED", "New accounts are disabled. Ask an administrator to create one for you."));
             var allowed = _throttle.CheckRegistration(CallerAddress);
             if (!allowed.Allowed)
             {

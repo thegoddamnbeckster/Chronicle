@@ -3,11 +3,16 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import UsersPage from './UsersPage'
 import * as users from '@/api/users'
+import * as auth from '@/api/auth'
 import { useAuth } from '@/hooks/useAuth'
 
 vi.mock('@/api/users', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/users')>()
   return { ...actual, listUsers: vi.fn(), issueResetToken: vi.fn() }
+})
+vi.mock('@/api/auth', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/auth')>()
+  return { ...actual, getRegistrationLocked: vi.fn(), setRegistrationLocked: vi.fn() }
 })
 vi.mock('@/hooks/useAuth')
 
@@ -17,6 +22,7 @@ const account = (over: Partial<users.UserAccountDto>): users.UserAccountDto => (
 })
 
 beforeEach(() => {
+  vi.mocked(auth.getRegistrationLocked).mockResolvedValue(false)
   vi.mocked(useAuth).mockReturnValue({
     user: { id: 1, username: 'admin', email: null, displayName: null, isAdmin: true, showDiagnostics: false, showNowPlayingBanner: true, showAllCredits: false },
     loading: false, logout: vi.fn(), setUser: vi.fn(),
@@ -67,5 +73,19 @@ describe('UsersPage reset codes', () => {
 
     expect(await screen.findByText(/reactivate it before issuing a reset/)).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Reset code' })).not.toBeInTheDocument()
+  })
+})
+
+describe('UsersPage sign-up lock', () => {
+  it('turns self-service sign-up off and on again', async () => {
+    vi.mocked(auth.setRegistrationLocked).mockImplementation(async locked => locked)
+    render(<UsersPage />)
+    const box = await screen.findByLabelText(/allow people to create their own accounts/i)
+    expect(box).toBeChecked()
+    await userEvent.click(box)
+    expect(auth.setRegistrationLocked).toHaveBeenLastCalledWith(true)
+    expect(await screen.findByLabelText(/allow people to create/i)).not.toBeChecked()
+    await userEvent.click(box)
+    expect(auth.setRegistrationLocked).toHaveBeenLastCalledWith(false)
   })
 })

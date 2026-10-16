@@ -507,7 +507,7 @@ public class TaskSchedulerServiceTests
             PluginId       = "chronicle.plugin.musicbrainz",
             DisplayName    = "Fetch Missing Metadata",
             Description    = "Looks up metadata for new items.",
-            CronExpression = "0 4 * * *",
+            CronExpression = FarOffDailyCron(),
             IsEnabled      = true,
             NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
         });
@@ -577,6 +577,9 @@ public class TaskSchedulerServiceTests
     // provider became unavailable, so "still Pending right after a completed run" reliably
     // means "got blocked", not just "big queue, more to do eventually").
 
+    /// <summary>A once-a-day cron whose next occurrence is about twelve hours away, so a "retry in 15 minutes" assertion never depends on the clock.</summary>
+    private static string FarOffDailyCron() => $"0 {(DateTime.UtcNow.Hour + 12) % 24} * * *";
+
     [Fact]
     public async Task PersistRunResult_FetchMissingMetadataStillPending_SchedulesSoonRetryNotFullCron()
     {
@@ -587,7 +590,7 @@ public class TaskSchedulerServiceTests
             PluginId       = "chronicle.plugin.tmdb",
             DisplayName    = "Fetch Missing Metadata",
             Description    = "Looks up metadata for new items.",
-            CronExpression = "0 4 * * *", // once daily -- the actual live TMDB schedule
+            CronExpression = FarOffDailyCron(), // once daily, like the live TMDB schedule, but never near the time the test runs
             IsEnabled      = true,
             NextRunAt      = DateTime.UtcNow.AddMinutes(-1),
         });
@@ -651,7 +654,7 @@ public class TaskSchedulerServiceTests
             .FirstAsync(t => t.TaskId == "chronicle.plugin.tmdb:fetch-missing-metadata");
         row.NextRunAt.Should().NotBeNull();
         // Falls back to the real cron occurrence -- comfortably more than 15 minutes away for
-        // an "0 4 * * *" schedule regardless of what time the test happens to run.
+        // a daily schedule set twelve hours away regardless of what time the test happens to run.
         row.NextRunAt!.Value.Should().BeAfter(DateTime.UtcNow.AddHours(1),
             "a fully-drained queue must fall back to the task's own normal cron, not keep retrying soon");
     }

@@ -15,6 +15,10 @@ namespace Chronicle.Services
         private readonly IPasswordHasher _passwordHasher;
         private readonly IDeactivatedUserCache _deactivated;
 
+        // Registrations run one at a time: "is this the first account?" and the insert must not interleave, or two sign-ups on an
+        // empty install would both become administrators.
+        private static readonly SemaphoreSlim RegistrationGate = new(1, 1);
+
         public UserService(ChronicleDbContext context, IPasswordHasher passwordHasher,
             IDeactivatedUserCache deactivated)
         {
@@ -38,6 +42,13 @@ namespace Chronicle.Services
         }
 
         public async Task<User> RegisterAsync(string username, string password, string? email)
+        {
+            await RegistrationGate.WaitAsync();
+            try { return await RegisterCoreAsync(username, password, email); }
+            finally { RegistrationGate.Release(); }
+        }
+
+        private async Task<User> RegisterCoreAsync(string username, string password, string? email)
         {
             if (await _context.Users.AnyAsync(u => u.Username == username))
                 throw new DuplicateUsernameException(username);

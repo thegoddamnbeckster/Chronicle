@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Text;
 using Chronicle.API;
@@ -29,6 +30,14 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.Console(theme: AnsiConsoleTheme.Code,
         outputTemplate: "{Timestamp:HH:mm:ss} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
+
+// Culture-neutral by design: every parse, format and case change on the server must give the same answer on every machine.
+// Under a Turkish or Azeri locale "I".ToLower() is "ı", which silently breaks name and username matching, and a comma-decimal
+// locale breaks number parsing. Responses never depend on the host's language, so pin it before anything can run.
+CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
+CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
+CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -157,6 +166,7 @@ builder.Services.AddDbContext<ChronicleDbContext>((serviceProvider, options) =>
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<IApiTokenService, ApiTokenService>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IRegistrationPolicy, RegistrationPolicy>();
 // Singleton so the scoped UserService (writer) and the JWT validation event (reader) share
 // one view of which accounts are cut off. Seeded from the database at startup.
 builder.Services.AddSingleton<IDeactivatedUserCache, DeactivatedUserCache>();
@@ -554,6 +564,10 @@ using (var scope = app.Services.CreateScope())
 // server. Only someone who controls this machine (and so the database file) can run it.
 if (RecoveryCommand.ParseUsername(args) is { } recoveryUser)
     return await RecoveryCommand.RunAsync(app.Services, recoveryUser, Console.Out);
+
+// Local recovery: reopen self-service sign-up (locked from Settings -> Users) and exit.
+if (UnlockRegistrationCommand.IsRequested(args))
+    return await UnlockRegistrationCommand.RunAsync(app.Services, Console.Out);
 
 // Developer/operator command: trust the plugin files currently on disk, then exit.
 if (PluginCommand.IsRequested(args))

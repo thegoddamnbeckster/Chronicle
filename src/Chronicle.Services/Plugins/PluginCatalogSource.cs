@@ -32,7 +32,7 @@ namespace Chronicle.Services.Plugins
     /// only). The last list that was read successfully is kept in <c>plugins.catalog_cache</c>; if the file cannot be
     /// reached or is not valid, that copy is used, and failing that the list compiled into Chronicle.
     /// </summary>
-    public sealed class PluginCatalogSource : IPluginCatalogSource
+    public sealed class PluginCatalogSource : IPluginCatalogSource, IDisposable
     {
         public const string UrlKey = "plugins.catalog_url";
         public const string CacheKey = "plugins.catalog_cache";
@@ -49,6 +49,9 @@ namespace Chronicle.Services.Plugins
         private readonly TimeProvider _clock;
         private readonly ILogger _log = Log.ForContext<PluginCatalogSource>();
         private readonly SemaphoreSlim _gate = new(1, 1);
+
+        /// <summary>Releases the lock when the container shuts the singleton down.</summary>
+        public void Dispose() => _gate.Dispose();
         private CatalogListing? _cached;
 
         public PluginCatalogSource(IServiceScopeFactory scopes, IHttpClientFactory http, TimeProvider? clock = null)

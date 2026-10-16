@@ -13,7 +13,7 @@ namespace Chronicle.Services;
 /// alias names layered on top, so an admin can extend/correct plugin-naming differences
 /// without a redeploy.
 /// </summary>
-public class FieldAliasCache(IServiceScopeFactory scopeFactory)
+public class FieldAliasCache(IServiceScopeFactory scopeFactory) : IDisposable
 {
     private const string SettingKey = "metadata_field_aliases.config";
 
@@ -34,6 +34,9 @@ public class FieldAliasCache(IServiceScopeFactory scopeFactory)
 
     private CacheState _state = new(0, null);
     private readonly SemaphoreSlim _lock = new(1, 1);
+
+    /// <summary>Releases the lock when the container shuts the singleton down.</summary>
+    public void Dispose() => _lock.Dispose();
 
     public async Task<Dictionary<string, List<string>>> GetAllAsync(CancellationToken ct = default) =>
         await LoadAsync(ct);

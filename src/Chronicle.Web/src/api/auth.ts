@@ -61,3 +61,14 @@ export async function listUserSessions(userId: number): Promise<SessionInfo[]> {
 export async function endUserSessions(userId: number): Promise<void> {
   await client.delete(`/users/${userId}/sessions`)
 }
+
+/** True when an administrator has closed self-service sign-up (the very first account is always allowed). */
+export async function getRegistrationLocked(): Promise<boolean> {
+  const { data } = await client.get<ApiResponse<{ locked: boolean }>>('/auth/registration')
+  return !!data.data?.locked
+}
+
+export async function setRegistrationLocked(locked: boolean): Promise<boolean> {
+  const { data } = await client.put<ApiResponse<{ locked: boolean }>>('/auth/registration', { locked })
+  return !!data.data?.locked
+}

@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { login } from '@/api/auth'
+import { login, getRegistrationLocked } from '@/api/auth'
 import { useAuth } from '@/hooks/useAuth'
 import { useServerReady } from '@/hooks/useServerReady'
 import styles from './Auth.module.css'
@@ -14,6 +14,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [signUpLocked, setSignUpLocked] = useState(false)
+
+  useEffect(() => {
+    getRegistrationLocked().then(setSignUpLocked).catch(() => { /* unknown: keep the link, the server decides */ })
+  }, [])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -63,9 +68,11 @@ export default function LoginPage() {
         <p className={styles.footer}>
           <Link to="/forgot-password">Forgot password?</Link>
         </p>
-        <p className={styles.footer}>
-          No account? <Link to="/register">Register</Link>
-        </p>
+        {!signUpLocked && (
+          <p className={styles.footer}>
+            No account? <Link to="/register">Register</Link>
+          </p>
+        )}
       </div>
     </div>
   )

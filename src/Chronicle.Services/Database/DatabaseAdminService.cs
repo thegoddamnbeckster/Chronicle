@@ -50,7 +50,7 @@ namespace Chronicle.Services.Database
     /// Only SQLite is supported; for PostgreSQL every operation reports that plainly rather than
     /// pretending (use pg_dump).
     /// </summary>
-    public sealed class DatabaseAdminService : IDatabaseAdminService
+    public sealed class DatabaseAdminService : IDatabaseAdminService, IDisposable
     {
         public const string DbEntryName = "chronicle.db";
         public const string ManifestEntryName = "manifest.json";
@@ -68,6 +68,9 @@ namespace Chronicle.Services.Database
         private readonly TimeProvider _clock;
         private readonly ILogger _log = Log.ForContext<DatabaseAdminService>();
         private readonly SemaphoreSlim _busy = new(1, 1);
+
+        /// <summary>Releases the lock when the container shuts the singleton down.</summary>
+        public void Dispose() => _busy.Dispose();
         private readonly Func<string, long> _freeDisk;
 
         /// <param name="freeDisk">Free bytes on the drive holding a path. Replaceable so tests can simulate a full disk.</param>

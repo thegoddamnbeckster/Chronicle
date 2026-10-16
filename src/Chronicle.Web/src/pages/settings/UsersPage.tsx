@@ -15,7 +15,7 @@ import {
 } from '@/api/users'
 import ContactsEditor from '@/components/settings/ContactsEditor'
 import SessionsList from '@/components/settings/SessionsList'
-import { listUserSessions, endUserSessions } from '@/api/auth'
+import { listUserSessions, endUserSessions, getRegistrationLocked, setRegistrationLocked } from '@/api/auth'
 import { issueResetToken, type ResetTokenDto } from '@/api/users'
 import styles from './UsersPage.module.css'
 
@@ -51,7 +51,25 @@ export default function UsersPage() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
+  const [signUpLocked, setSignUpLocked] = useState(false)
+  const [lockBusy, setLockBusy] = useState(false)
+
   useEffect(() => { void load() }, [])
+  useEffect(() => {
+    getRegistrationLocked().then(setSignUpLocked).catch(() => { /* leave unlocked; the toggle reports failures */ })
+  }, [])
+
+  async function toggleSignUp(allow: boolean) {
+    setLockBusy(true)
+    setError('')
+    try {
+      setSignUpLocked(await setRegistrationLocked(!allow))
+    } catch (err) {
+      setError(apiMessage(err, 'Could not change the sign-up setting.'))
+    } finally {
+      setLockBusy(false)
+    }
+  }
 
   async function load() {
     try {
@@ -151,6 +169,17 @@ export default function UsersPage() {
           <button className={styles.smallBtn} onClick={() => setIssued(null)}>Done</button>
         </div>
       )}
+
+      <div className={styles.card}>
+        <label>
+          <input type="checkbox" checked={!signUpLocked} disabled={lockBusy}
+                 onChange={e => void toggleSignUp(e.target.checked)} />{' '}
+          Allow people to create their own accounts
+        </label>
+        <p className={styles.label}>
+          When off, only an administrator can add users. If you are locked out, run <code>Chronicle.API --unlock-registration</code> on the server.
+        </p>
+      </div>
 
       <div className={styles.card}>
         <div className={styles.cardHeader}>
