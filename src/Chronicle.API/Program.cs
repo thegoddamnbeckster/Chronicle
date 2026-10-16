@@ -507,6 +507,11 @@ using (var scope = app.Services.CreateScope())
         if (db.Database.GetPendingMigrations().Any())
             db.Database.Migrate();
 
+        // Keep the query planner's statistics current (it only analyses what is stale or new, e.g. an index a migration just
+        // created). Without statistics SQLite ignores a covering index that would answer a query from the index alone.
+        if (db.Database.IsSqlite())
+            db.Database.ExecuteSqlRaw("PRAGMA optimize;");
+
         // Provider families (anime -> tv, ...) are read from media_types by code that has no database handle.
         await Chronicle.Services.MediaTypeFamilies.RefreshAsync(db);
 
