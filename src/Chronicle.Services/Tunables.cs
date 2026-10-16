@@ -18,16 +18,16 @@ public static class Tunables
     public const string Prefix = "tuning.";
 
     public static readonly TunableDefinition WatchedPercent = new(
-        "tuning.scrobble.watched_percent", "Scrobbling", "Counts as watched at",
+        "tuning.scrobble.watched_percent", "Playback tracking", "Counts as watched at",
         "A play that reaches this much of the item is marked watched; less than this is saved as a resume position.",
         80, 1, 100, "%");
 
     public static readonly TunableDefinition ActiveSessionSeconds = new(
-        "tuning.scrobble.active_session_seconds", "Scrobbling", "Now-playing window",
+        "tuning.scrobble.active_session_seconds", "Playback tracking", "Now-playing window",
         "A device that reported progress this recently is shown as still playing.", 90, 10, 3600, "seconds");
 
     public static readonly TunableDefinition HistorySessionGapSeconds = new(
-        "tuning.scrobble.history_session_gap_seconds", "Scrobbling", "Watch session gap",
+        "tuning.scrobble.history_session_gap_seconds", "Playback tracking", "Watch session gap",
         "Plays of one item further apart than this are separate viewings in the history.", 1800, 60, 86400, "seconds");
 
     public static readonly TunableDefinition EnrichmentRetryHours = new(
@@ -48,19 +48,19 @@ public static class Tunables
         2, 1, 50, "years");
 
     public static readonly TunableDefinition SeriesRecheckDays = new(
-        "tuning.books.series_recheck_days", "Books", "Re-check a series after",
-        "A matched book series is compared with its provider again this many days after the last check.", 7, 1, 365, "days");
+        "tuning.series.series_recheck_days", "Series", "Re-check a series after",
+        "A matched series is compared with its provider again this many days after the last check.", 7, 1, 365, "days");
 
     public static readonly TunableDefinition SeriesChecksPerRun = new(
-        "tuning.books.series_checks_per_run", "Books", "Series checked per run",
+        "tuning.series.series_checks_per_run", "Series", "Series checked per run",
         "At most this many series are re-checked in one pass, which spreads a provider's request quota over the day.", 150, 1, 5000, "series");
 
     public static readonly TunableDefinition SeriesFailureRetryDays = new(
-        "tuning.books.series_failure_retry_days", "Books", "Retry a failed series check after",
+        "tuning.series.series_failure_retry_days", "Series", "Retry a failed series check after",
         "A series whose check failed rests this long before it is tried again.", 1, 1, 30, "days");
 
     public static readonly TunableDefinition SeriesFailuresToStop = new(
-        "tuning.books.series_failures_to_stop", "Books", "Failures that end a run",
+        "tuning.series.series_failures_to_stop", "Series", "Failures that end a run",
         "A series pass that fails this many times in a row stops, assuming the provider is unavailable.", 3, 1, 100, "failures");
 
     public static readonly TunableDefinition FetchMissingRetryMinutes = new(
@@ -75,9 +75,9 @@ public static class Tunables
         "tuning.images.invalid_minutes", "Images", "Re-check a broken image address after",
         "An image address that failed to load is checked again after this long.", 30, 1, 1440, "minutes");
 
-    public static readonly TunableDefinition KodiScanActiveMinutes = new(
-        "tuning.kodi.scan_active_minutes", "Kodi", "Scan signal lifetime",
-        "A Kodi scan the add-on reported stays marked as running this long without a further report.", 3, 1, 120, "minutes");
+    public static readonly TunableDefinition DeviceScanActiveMinutes = new(
+        "tuning.devices.scan_active_minutes", "Connected devices", "Device scan lifetime",
+        "A library scan a connected device reported stays marked as running this long without a further report.", 3, 1, 120, "minutes");
 
     public static readonly TunableDefinition TypeMismatchMajorityPercent = new(
         "tuning.scan.mismatch_majority_percent", "Scanning", "Folder looks like another type at",
@@ -92,7 +92,7 @@ public static class Tunables
         WatchedPercent, ActiveSessionSeconds, HistorySessionGapSeconds,
         EnrichmentRetryHours, ConfidenceThreshold, FullCreditsDays,
         YearConflictGap, SeriesRecheckDays, SeriesChecksPerRun, SeriesFailureRetryDays, SeriesFailuresToStop,
-        FetchMissingRetryMinutes, ImageCheckValidHours, ImageCheckInvalidMinutes, KodiScanActiveMinutes,
+        FetchMissingRetryMinutes, ImageCheckValidHours, ImageCheckInvalidMinutes, DeviceScanActiveMinutes,
         TypeMismatchMajorityPercent, TypeMismatchMinorityPercent,
     ];
 

@@ -59,6 +59,7 @@ through `ExternalIdPolicies` (refilled whenever plugins load or unload). Documen
 | building `tv:{id}/season:{n}/episode:{m}` from a show's id (three places) | TMDB (`ChildIds`) |
 | reading season/episode back out of an id (regex in `FileIdentityJson`) | TMDB (`PositionInIdPattern`) |
 | "this id is a movie id" sniffed from `movie:` / `:movie:` | TMDB, Simkl, Trakt (`FamilyIdPatterns`) |
+| `MovieExternalIdRepairService` believing TMDB, its `movie:N` shape, its `imdb`/`tvdb` cross-references | the item's authority = first provider in the Metadata Assignment precedence for its type that has data on it; "movie id" from that provider's `FamilyIdPatterns`; cross-references compared only when written alike |
 | Hardcover series reconcile hard-wired to `"hardcover"` and chained to it in the task scheduler | Hardcover (`SeriesIdMarker`); the service is now `SeriesReconcileService`, parameterised by plugin id |
 | TMDB image host test when clearing a stale child poster | removed: a child with no poster in the new result drops its poster and the resolver re-promotes whatever remains |
 
@@ -88,7 +89,6 @@ unreadable or out-of-range stored value is ignored, so a typo cannot disable a r
 | `ProviderFamilies` (`movie`, `tv`, `music`) | family vocabulary | It is the vocabulary providers and Kodi speak; types and providers both refer to it. |
 | `ScraperController` (`imdb`, `tvdb`, `tmdb`, `trakt` keys) | Kodi `uniqueid` types and the scraper payload | The Kodi add-on's contract, not Chronicle's choice. |
 | `BuiltInMediaTypes` | `tv`, `movies`, `music`, `people` | The seed. Rows are ordinary afterwards. |
-| `MovieExternalIdRepairService` | TMDB `movie:N` ids, the TMDB partition, `imdb`/`tvdb` cross-references | A nightly repair that treats TMDB as the authority for a film's identity. Making it generic needs an "identity authority" declaration plus a mapping from the cross-reference key to the stored source (`tvdb` vs the `thetvdb` plugin), which no provider declares today. Deferred. |
 | `PersonIdentitySplitService`, `YearOverviewArticleSplitService`, `UserMergeRestoreService` | read the name-derived provider from the policy, but still inspect that provider's data shape ("YYYY births", "YYYY in film" pages) | Provider-specific repairs of a provider's own bugs. Properly they are a repair hook inside the Wikipedia plugin, which needs a plugin-side database hook that does not exist. Deferred. |
 | `LegacyNfoPurgeService` | the retired Kodi NFO plugin id and partition names | One-shot, marker-gated upgrade of data from a feature that no longer exists. Delete once every install has run it. |
 | Migrations | type names in data fixes | History. |

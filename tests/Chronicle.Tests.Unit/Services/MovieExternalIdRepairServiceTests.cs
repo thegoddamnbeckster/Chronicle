@@ -24,7 +24,7 @@ public class MovieExternalIdRepairServiceTests
             Row("simkl", "simkl:58746"), Row("simkl", "simkl:62022"),
         };
 
-        var foreign = MovieExternalIdRepairService.FindForeignIds(rows, Corpus);
+        var foreign = MovieExternalIdRepairService.FindForeignIds(rows, "tmdb", Corpus);
 
         Assert.Equal(new[] { "movie:9291", "tt0398165", "simkl:62022" }, foreign.Select(f => f.ExternalId).OrderBy(x => x == "movie:9291" ? 0 : x == "tt0398165" ? 1 : 2));
     }
@@ -34,7 +34,7 @@ public class MovieExternalIdRepairServiceTests
     {
         var rows = new[] { Row("tmdb", "movie:4985"), Row("tmdb", "movie:9291"), Row("tvdb", "12254"), Row("tvdb", "1609") };
 
-        var foreign = MovieExternalIdRepairService.FindForeignIds(rows, Corpus);
+        var foreign = MovieExternalIdRepairService.FindForeignIds(rows, "tmdb", Corpus);
 
         Assert.Single(foreign);
         Assert.Equal("movie:9291", foreign[0].ExternalId);
@@ -44,7 +44,7 @@ public class MovieExternalIdRepairServiceTests
     public void ItemWithOnlyOneTmdbMovieId_IsNeverTouched()
     {
         var rows = new[] { Row("tmdb", "movie:4985"), Row("imdb", "tt0071771"), Row("imdb", "tt0398165") };
-        Assert.Empty(MovieExternalIdRepairService.FindForeignIds(rows, Corpus));
+        Assert.Empty(MovieExternalIdRepairService.FindForeignIds(rows, "tmdb", Corpus));
     }
 
     [Fact]
@@ -63,17 +63,11 @@ public class MovieExternalIdRepairServiceTests
         var rows = new[] { Row("tmdb", "movie:1181709"), Row("tmdb", "movie:14907") };
 
         var foreign = MovieExternalIdRepairService.FindForeignIds(
-            rows, corpus, new Dictionary<string, string> { ["tmdb"] = "movie:1181709" });
+            rows, "tmdb", corpus, new Dictionary<string, string> { ["tmdb"] = "movie:1181709" });
 
         Assert.Single(foreign);
         Assert.Equal("movie:14907", foreign[0].ExternalId);
     }
-
-    [Theory]
-    [InlineData("chronicle.plugin.thetvdb", "tvdb")]
-    [InlineData("chronicle.plugin.tmdb", "tmdb")]
-    public void SourceOfPlugin_MapsPluginIdsToExternalIdSources(string pluginId, string source) =>
-        Assert.Equal(source, MovieExternalIdRepairService.SourceOfPlugin(pluginId));
 
     [Fact]
     public void RowsThatContradictTheItemsOwnProviderData_AreForeign_EvenWhenTheyAreTheOnlyRow()
@@ -83,7 +77,7 @@ public class MovieExternalIdRepairServiceTests
         var rows = new[] { Row("tmdb", "movie:861"), Row("imdb", "tt1386703"), Row("simkl", "simkl:143170"), Row("wikipedia", "wikipedia:en:Total_Recall_(1990_film)") };
         var authority = new Dictionary<string, string> { ["imdb"] = "tt0100802", ["simkl"] = "simkl:movie:54420" };
 
-        var foreign = MovieExternalIdRepairService.FindContradictedIds(rows, authority);
+        var foreign = MovieExternalIdRepairService.FindContradictedIds(rows, "tmdb", authority);
 
         Assert.Equal(["simkl:143170", "tt1386703"], foreign.Select(f => f.ExternalId).OrderBy(x => x, StringComparer.Ordinal));
     }
@@ -94,19 +88,47 @@ public class MovieExternalIdRepairServiceTests
         var rows = new[] { Row("imdb", "tt0100802"), Row("tvdb", "999"), Row("tmdb", "movie:861") };
         var authority = new Dictionary<string, string> { ["imdb"] = "tt0100802", ["tmdb"] = "movie:1" };
 
-        Assert.Empty(MovieExternalIdRepairService.FindContradictedIds(rows, authority));
+        Assert.Empty(MovieExternalIdRepairService.FindContradictedIds(rows, "tmdb", authority));
     }
 
     [Fact]
-    public void TmdbCrossReferences_ReadsImdbAndTvdbFromTheTmdbRecord()
+    public void CrossReferences_AreReadFromTheNamedAuthoritysPartition()
     {
-        var json = """{"chronicle.plugin.tmdb":{"extendedData":{"ids":{"imdb":"tt0100802","tvdb":1751,"wikidata":"Q1"}}}}""";
+        var json = """{"chronicle.plugin.tmdb":{"extendedData":{"ids":{"imdb":"tt0100802","tvdb":1751}}},"chronicle.plugin.other":{"extendedData":{"ids":{"imdb":"tt9"}}}}""";
 
-        var ids = MovieExternalIdRepairService.TmdbCrossReferences(json);
+        var ids = MovieExternalIdRepairService.CrossReferences(json, "chronicle.plugin.tmdb");
 
         Assert.Equal("tt0100802", ids["imdb"]);
         Assert.Equal("1751", ids["tvdb"]);
-        Assert.False(ids.ContainsKey("wikidata"));
-        Assert.Empty(MovieExternalIdRepairService.TmdbCrossReferences(null));
+        Assert.Equal("tt9", MovieExternalIdRepairService.CrossReferences(json, "chronicle.plugin.other")["imdb"]);
+        Assert.Empty(MovieExternalIdRepairService.CrossReferences(json, "chronicle.plugin.absent"));
+        Assert.Empty(MovieExternalIdRepairService.CrossReferences(null, "chronicle.plugin.tmdb"));
+    }
+
+    [Fact]
+    public void AnyProviderCanBeTheAuthority_WhenItDeclaresWhichOfItsIdsAreMovies()
+    {
+        ExternalIdPolicies.LoadForCurrentContext(
+        [
+            new Chronicle.Plugins.Models.ExternalIdPolicy { Source = "acme", FamilyIdPatterns = { ["movie"] = "^film-" } },
+        ]);
+        var rows = new[] { Row("acme", "film-1"), Row("acme", "film-2") };
+        var corpus = "film-1";
+
+        var foreign = MovieExternalIdRepairService.FindForeignIds(rows, "acme", corpus);
+
+        Assert.Equal("film-2", Assert.Single(foreign).ExternalId);
+        // the same rows judged with an authority that declares nothing: no movie ids, so no trigger
+        Assert.Empty(MovieExternalIdRepairService.FindForeignIds(rows, "tmdb", corpus));
+    }
+
+    [Fact]
+    public void AnIdWrittenAnotherWay_IsNotJudgedAgainstTheAuthoritysValue()
+    {
+        // The authority's bare number says nothing about a row holding a slug.
+        var rows = new[] { Row("trakt", "trakt:movie:total-recall") };
+        var authority = new Dictionary<string, string> { ["trakt"] = "12345" };
+
+        Assert.Empty(MovieExternalIdRepairService.FindContradictedIds(rows, "tmdb", authority));
     }
 }

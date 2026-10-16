@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Chronicle.Core.Helpers;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Microsoft.EntityFrameworkCore;
@@ -17,8 +18,11 @@ namespace Chronicle.Services;
 /// carrying the 1984 id, The Thing, The Abyss ...). The merge log holds no trace of how the extra
 /// ids arrived, so this repairs the data rather than assuming one cause.
 ///
-/// Trigger: a movie item owning two or more distinct TMDB "movie:N" ids. Two real films can never
-/// share one item, so at least one of those ids is foreign. Which one is proven by ATTESTATION:
+/// Which provider is believed is not named here: it is the item's authority, the first provider in the
+/// Metadata Assignment precedence for the item's media type that has data on the item. Trigger: a movie
+/// item owning two or more distinct movie ids of that provider (a provider says which of its ids can only
+/// be a movie, ExternalIdPolicy.FamilyIdPatterns). Two real films can never share one item, so at least
+/// one of those ids is foreign. Which one is proven by ATTESTATION:
 /// an id is attested when a provider actually returned it for this item -- it appears in the
 /// item's own provider partitions (a partition's externalId/cross-reference ids) or as an
 /// enrichment row's ExternalId. Within each source, if at least one id is attested, every
@@ -40,19 +44,20 @@ public sealed class MovieExternalIdRepairService(
     /// ids (partitions JSON + enrichment ExternalIds), returns the rows to detach.
     /// </summary>
     internal static List<MediaExternalId> FindForeignIds(
-        IReadOnlyList<MediaExternalId> rows, string attestationCorpus,
+        IReadOnlyList<MediaExternalId> rows, string authoritySource, string attestationCorpus,
         IReadOnlyDictionary<string, string>? enrichedIdBySource = null)
     {
-        var tmdbMovieIds = rows
-            .Where(r => r.Source == "tmdb" && r.ExternalId.StartsWith("movie:", StringComparison.OrdinalIgnoreCase))
-            .Select(r => r.ExternalId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (tmdbMovieIds.Count < 2) return [];
+        bool IsMovieId(MediaExternalId r) =>
+            string.Equals(r.Source, authoritySource, StringComparison.OrdinalIgnoreCase)
+            && ExternalIdPolicies.FamilyOfId(authoritySource, r.ExternalId) == ProviderFamilies.Movie;
+
+        var movieIds = rows.Where(IsMovieId).Select(r => r.ExternalId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (movieIds.Count < 2) return [];
 
         var foreign = new List<MediaExternalId>();
-        // The trigger is about TMDB *movie* ids, so within the tmdb source only "movie:" rows are
-        // judged -- a collection:/tv: id on the same item is a different kind of id, never foreign.
-        var judged = rows.Where(r => r.Source != "tmdb" ||
-                                     r.ExternalId.StartsWith("movie:", StringComparison.OrdinalIgnoreCase));
+        // The trigger is about the authority's *movie* ids, so within its source only those are judged --
+        // a collection or show id on the same item is a different kind of id, never foreign.
+        var judged = rows.Where(r => !string.Equals(r.Source, authoritySource, StringComparison.OrdinalIgnoreCase) || IsMovieId(r));
         foreach (var group in judged.GroupBy(r => r.Source))
         {
             var distinct = group.Select(r => r.ExternalId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -61,7 +66,7 @@ public sealed class MovieExternalIdRepairService(
             // The provider's OWN enrichment row for this source is the strongest evidence: it is
             // the id that provider actually resolved this item under. It outranks the loose
             // text corpus, which can also mention a foreign id (confirmed live: a Fanart.tv
-            // partition carrying another film's id made the wrong TMDB id look attested).
+            // partition carrying another film's id made the wrong id look attested).
             HashSet<string> attested;
             if (enrichedIdBySource is not null && enrichedIdBySource.TryGetValue(group.Key, out var enrichedId) &&
                 distinct.Any(id => SameCore(id, enrichedId)))
@@ -82,16 +87,20 @@ public sealed class MovieExternalIdRepairService(
     /// own Simkl enrichment said 54420 -- so nothing looked "multiple" and the first rule never fired,
     /// and Kodi was then handed the remake's ids for the 1990 film.
     /// <paramref name="authoritativeIds"/> is source -> the id the item's own provider data gives (the
-    /// provider's enrichment id, else the id its TMDB record cross-references). Rows of a source with
-    /// no authority, TMDB's own rows, and sources where a row already matches are left alone.
+    /// provider's enrichment id, else the id the authority's record cross-references). Rows of a source with
+    /// no authority, the authority's own rows, and sources where a row already matches are left alone.
     /// </summary>
     internal static List<MediaExternalId> FindContradictedIds(
-        IReadOnlyList<MediaExternalId> rows, IReadOnlyDictionary<string, string> authoritativeIds)
+        IReadOnlyList<MediaExternalId> rows, string authoritySource, IReadOnlyDictionary<string, string> authoritativeIds)
     {
         var foreign = new List<MediaExternalId>();
-        foreach (var group in rows.Where(r => r.Source != "tmdb").GroupBy(r => r.Source))
+        foreach (var group in rows.Where(r => !string.Equals(r.Source, authoritySource, StringComparison.OrdinalIgnoreCase)).GroupBy(r => r.Source))
         {
             if (!authoritativeIds.TryGetValue(group.Key, out var authority) || string.IsNullOrWhiteSpace(authority))
+                continue;
+            // Only ids written the same way can be compared: an authority's bare number says nothing about a row that
+            // holds another provider's slug. A row of a different shape is not judged.
+            if (group.Any(r => Shape(Core(r.ExternalId)) != Shape(Core(authority))))
                 continue;
             if (group.Any(r => SameCore(r.ExternalId, authority)))
                 continue; // an agreeing row exists; the first rule handles any extras
@@ -100,42 +109,38 @@ public sealed class MovieExternalIdRepairService(
         return foreign;
     }
 
-    /// <summary>The imdb/tvdb ids an item's TMDB partition cross-references (extendedData.ids), keyed
-    /// by external-id source. Empty when the partition is missing or has none.</summary>
-    internal static Dictionary<string, string> TmdbCrossReferences(string? metadataJson)
+    /// <summary>The ids the authority's partition of an item cross-references (extendedData.ids), keyed by external-id
+    /// source. Empty when the partition is missing or has none.</summary>
+    internal static Dictionary<string, string> CrossReferences(string? metadataJson, string authorityPluginId)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(metadataJson)) return result;
         try
         {
             using var doc = JsonDocument.Parse(metadataJson);
-            if (!doc.RootElement.TryGetProperty("chronicle.plugin.tmdb", out var tmdb) ||
-                !tmdb.TryGetProperty("extendedData", out var ext) || ext.ValueKind != JsonValueKind.Object ||
+            if (!doc.RootElement.TryGetProperty(authorityPluginId, out var partition) ||
+                !partition.TryGetProperty("extendedData", out var ext) || ext.ValueKind != JsonValueKind.Object ||
                 !ext.TryGetProperty("ids", out var ids) || ids.ValueKind != JsonValueKind.Object)
                 return result;
-            foreach (var source in new[] { "imdb", "tvdb" })
+            foreach (var prop in ids.EnumerateObject())
             {
-                if (!ids.TryGetProperty(source, out var v)) continue;
+                var v = prop.Value;
                 var text = v.ValueKind == JsonValueKind.String ? v.GetString() : v.ValueKind == JsonValueKind.Number ? v.GetRawText() : null;
-                if (!string.IsNullOrWhiteSpace(text)) result[source] = text!;
+                if (!string.IsNullOrWhiteSpace(text)) result[prop.Name.ToLowerInvariant()] = text!;
             }
         }
         catch (JsonException) { }
         return result;
     }
 
+    /// <summary>The character classes of an id's core token (digits and letters collapsed), to tell ids written alike from ids that are not.</summary>
+    private static string Shape(string core) =>
+        Regex.Replace(Regex.Replace(Regex.Replace(core, "[0-9]+", "9"), "[A-Za-z]+", "a"), "[^9a]+", "-");
+
     private static string Core(string id) => id[(id.LastIndexOf(':') + 1)..];
 
     private static bool SameCore(string a, string b) =>
         Core(a).Length > 0 && string.Equals(Core(a), Core(b), StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>Provider plugin id ("chronicle.plugin.thetvdb") to the external-id Source it writes
-    /// ("tvdb"); every other plugin's source is simply the last id segment.</summary>
-    internal static string SourceOfPlugin(string pluginId)
-    {
-        var last = pluginId[(pluginId.LastIndexOf('.') + 1)..];
-        return last == "thetvdb" ? "tvdb" : last;
-    }
 
     /// <summary>An id counts as attested when its core token (the part after the last ':' -- "9291"
     /// from "movie:9291", "tt0398165" as-is) appears standalone in the corpus.</summary>
@@ -150,42 +155,60 @@ public sealed class MovieExternalIdRepairService(
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var assignments = scope.ServiceProvider.GetRequiredService<AssignmentConfigCache>();
 
-        // Every flat-type item with a TMDB record: both rules need the item's own provider data.
-        var candidateIds = await db.MediaItems.AsNoTracking()
+        // Every flat movie-family item: both rules need the item's own provider data.
+        var candidates = await db.MediaItems.AsNoTracking()
             .Where(m => m.HierarchyLevel <= 1 && m.MediaType!.HierarchyLevels == 1 && !m.MediaType.IsPersonType &&
-                        m.MetadataJson != null && m.MetadataJson.Contains("chronicle.plugin.tmdb"))
-            .Select(m => m.Id)
+                        m.MediaType.ProviderFamily == ProviderFamilies.Movie && m.MetadataJson != null)
+            .Select(m => new { m.Id, TypeName = m.MediaType!.Name })
             .ToListAsync(ct);
 
+        // The authority of a media type is the first provider in its Metadata Assignment precedence (the title's list first).
+        var precedence = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var typeName in candidates.Select(c => c.TypeName).Distinct())
+        {
+            var byField = await assignments.GetForTypeAsync(typeName, 0, ct);
+            precedence[typeName] = (byField.TryGetValue("title", out var titles) ? titles : [])
+                .Concat(byField.Values.SelectMany(v => v)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
         int repaired = 0, detachedRows = 0;
-        foreach (var chunk in candidateIds.Chunk(PageSize))
+        foreach (var chunk in candidates.Chunk(PageSize))
         {
             ct.ThrowIfCancellationRequested();
-            var items = await db.MediaItems.Where(m => chunk.Contains(m.Id)).ToListAsync(ct);
-            var allRows = await db.MediaExternalIds.Where(e => chunk.Contains(e.MediaItemId)).ToListAsync(ct);
+            var chunkIds = chunk.Select(c => c.Id).ToList();
+            var typeById = chunk.ToDictionary(c => c.Id, c => c.TypeName);
+            var items = await db.MediaItems.Where(m => chunkIds.Contains(m.Id)).ToListAsync(ct);
+            var allRows = await db.MediaExternalIds.Where(e => chunkIds.Contains(e.MediaItemId)).ToListAsync(ct);
             var enrichments = await db.MediaEnrichments.AsNoTracking()
-                .Where(e => chunk.Contains(e.MediaItemId) && e.ExternalId != null)
+                .Where(e => chunkIds.Contains(e.MediaItemId) && e.ExternalId != null)
                 .Select(e => new { e.MediaItemId, e.PluginId, e.ExternalId })
                 .ToListAsync(ct);
 
             foreach (var item in items)
             {
+                // The authority: the highest-precedence provider that actually has data on this item.
+                var authorityPluginId = precedence[typeById[item.Id]]
+                    .FirstOrDefault(pid => item.MetadataJson!.Contains("\"" + pid + "\""));
+                if (authorityPluginId is null) continue;
+                var authoritySource = PluginIdHelper.ToSource(authorityPluginId);
+
                 var rows = allRows.Where(r => r.MediaItemId == item.Id).ToList();
                 var corpus = (item.MetadataJson ?? "") + "\n" +
                              string.Join("\n", enrichments.Where(e => e.MediaItemId == item.Id).Select(e => e.ExternalId));
 
                 var enrichedIds = enrichments.Where(e => e.MediaItemId == item.Id)
-                    .GroupBy(e => SourceOfPlugin(e.PluginId))
+                    .GroupBy(e => PluginIdHelper.ToSource(e.PluginId))
                     .ToDictionary(g => g.Key, g => g.First().ExternalId!, StringComparer.OrdinalIgnoreCase);
-                var foreign = FindForeignIds(rows, corpus, enrichedIds);
+                var foreign = FindForeignIds(rows, authoritySource, corpus, enrichedIds);
 
                 // Second rule: rows contradicting the item's own provider data. The enrichment id
-                // wins; the TMDB record's imdb/tvdb cross-references fill the sources with no
+                // wins; the authority record's cross-references fill the sources with no
                 // enrichment row of their own.
-                var authority = TmdbCrossReferences(item.MetadataJson);
+                var authority = CrossReferences(item.MetadataJson, authorityPluginId);
                 foreach (var (source, id) in enrichedIds) authority[source] = id;
-                foreach (var row in FindContradictedIds(rows, authority))
+                foreach (var row in FindContradictedIds(rows, authoritySource, authority))
                     if (!foreign.Contains(row)) foreign.Add(row);
 
                 if (foreign.Count == 0) continue;
@@ -203,6 +226,6 @@ public sealed class MovieExternalIdRepairService(
 
         logger.LogInformation(
             "Movie external id repair: {Candidates} movie(s) checked -- repaired {Repaired}, detached {Rows} id row(s)",
-            candidateIds.Count, repaired, detachedRows);
+            candidates.Count, repaired, detachedRows);
     }
 }
