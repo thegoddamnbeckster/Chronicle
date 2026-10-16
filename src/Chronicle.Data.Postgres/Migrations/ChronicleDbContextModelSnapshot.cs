@@ -533,8 +533,6 @@ namespace Chronicle.Data.Postgres.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MediaTypeId");
-
                     b.HasIndex("Name");
 
                     b.HasIndex("ParentId");
@@ -546,6 +544,8 @@ namespace Chronicle.Data.Postgres.Migrations
 
                     b.HasIndex("NormalizedNameLoose", "MediaTypeId")
                         .HasDatabaseName("idx_media_items_normalized_name_loose_mediatypeid");
+
+                    b.HasIndex("MediaTypeId", "ParentId", "IsStub");
 
                     b.ToTable("media_items", (string)null);
                 });
