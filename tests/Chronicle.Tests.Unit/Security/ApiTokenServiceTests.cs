@@ -245,4 +245,59 @@ public class ApiTokenServiceTests : IDisposable
 
         result.Should().BeFalse();
     }
+
+    // ── the "last used" stamp must never cost (or fail) a request ──────────────
+
+    /// <summary>A context whose saves fail the way SQLite does when another writer holds the lock for too long.</summary>
+    private sealed class BusyDb(DbContextOptions<ChronicleDbContext> options) : ChronicleDbContext(options)
+    {
+        public bool Busy { get; set; }
+        public int SaveAttempts { get; private set; }
+
+        public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            SaveAttempts++;
+            if (Busy)
+                throw new DbUpdateException("An error occurred while saving the entity changes.",
+                    new Microsoft.Data.Sqlite.SqliteException("database is locked", 5));
+            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateTokenAsync_StillAuthenticates_WhenTheDatabaseIsTooBusyToStampLastUsed()
+    {
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new BusyDb(options);
+        db.Users.Add(new User { Username = "busy", PasswordHash = "h", IsActive = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var service = new ApiTokenService(db);
+        var (_, raw) = await service.CreateTokenAsync(db.Users.Single().Id, "Kodi", null);
+        db.ChangeTracker.Clear();
+
+        db.Busy = true;
+        var token = await service.ValidateTokenAsync(raw);
+
+        token.Should().NotBeNull();                              // the request is not failed by a cosmetic write
+        token!.LastUsedAt.Should().BeNull();                     // and nothing half-written is left on the entity
+        db.ChangeTracker.Entries().Should().NotContain(e => e.State == EntityState.Modified);
+
+        db.Busy = false;
+        var again = await service.ValidateTokenAsync(raw);       // the next request stamps it as usual
+        again!.LastUsedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ValidateTokenAsync_StampsLastUsedOnlyOncePerFiveMinutes()
+    {
+        var (_, raw) = await _service.CreateTokenAsync(_user.Id, "Debounce", null);
+
+        var first = await _service.ValidateTokenAsync(raw);
+        var stamped = first!.LastUsedAt;
+        await Task.Delay(20);
+        var second = await _service.ValidateTokenAsync(raw);
+
+        stamped.Should().NotBeNull();
+        second!.LastUsedAt.Should().Be(stamped);                 // not rewritten within five minutes
+    }
 }

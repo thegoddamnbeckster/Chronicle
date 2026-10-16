@@ -49,7 +49,7 @@ public class ApiTokenService : IApiTokenService
     /// <inheritdoc/>
     public async Task<ApiToken?> ValidateTokenAsync(string rawToken, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(rawToken) || !rawToken.StartsWith("chr_live_"))
+        if (string.IsNullOrWhiteSpace(rawToken) || !rawToken.StartsWith("chr_live_", StringComparison.Ordinal))
             return null;
 
         var hash = HashToken(rawToken);
@@ -69,12 +69,41 @@ public class ApiTokenService : IApiTokenService
         // high-frequency scrobbler requests don't generate a DB write on every call.
         var now = DateTime.UtcNow;
         if (token.LastUsedAt is null || (now - token.LastUsedAt.Value).TotalMinutes >= 5)
-        {
-            token.LastUsedAt = now;
-            await _db.SaveChangesAsync(ct);
-        }
+            await TryRecordUseAsync(token, now, ct);
 
         return token;
+    }
+
+    /// <summary>How long the "last used" stamp may wait for SQLite's single writer before it is skipped.</summary>
+    internal static readonly TimeSpan LastUsedWriteBudget = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Stamps the key as used. Cosmetic, and done inside authentication, so it must never cost a request: it was a plain
+    /// SaveChanges, which under writer contention (the nightly tasks) waited up to ~34 s for the lock and then threw out of the
+    /// auth handler -- every Kodi poll sharing that moment stalled or failed (kodi-scan-signal averaged 6 s, scan-active 3.7 s,
+    /// maxima at 34 s). Now it gets a couple of seconds and is simply skipped when the database is busy; the next request tries again.
+    /// </summary>
+    private async Task TryRecordUseAsync(ApiToken token, DateTime now, CancellationToken ct)
+    {
+        var previous = token.LastUsedAt;
+        var relational = _db.Database.IsRelational();
+        var previousTimeout = relational ? _db.Database.GetCommandTimeout() : null;
+        token.LastUsedAt = now;
+        try
+        {
+            if (relational) _db.Database.SetCommandTimeout(LastUsedWriteBudget);
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && (ex is DbUpdateException || MetadataEnrichmentService.IsDatabaseBusy(ex)))
+        {
+            // Leave nothing pending on the context the rest of the request shares.
+            _db.Entry(token).State = EntityState.Unchanged;
+            token.LastUsedAt = previous;
+        }
+        finally
+        {
+            if (relational) _db.Database.SetCommandTimeout(previousTimeout);
+        }
     }
 
     /// <inheritdoc/>
