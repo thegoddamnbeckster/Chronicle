@@ -31,11 +31,11 @@ namespace Chronicle.Tests.Integration
             var token = JsonDocument.Parse(await reg.Content.ReadAsStringAsync())
                 .RootElement.GetProperty("data").GetProperty("token").GetString()!;
 
-            if (admin)
+            // The first account ever created is promoted to administrator automatically, so set the role explicitly either way.
+            using (var scope = _factory.Services.CreateScope())
             {
-                using var scope = _factory.Services.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<Chronicle.Data.ChronicleDbContext>();
-                (await db.Users.FirstAsync(u => u.Username == username)).IsAdmin = true;
+                (await db.Users.FirstAsync(u => u.Username == username)).IsAdmin = admin;
                 await db.SaveChangesAsync();
             }
 
