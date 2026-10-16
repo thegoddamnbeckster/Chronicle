@@ -49,7 +49,7 @@ namespace Chronicle.API.Controllers
 
             try
             {
-                var entry = await _libraryService.AddAsync(userId, new AddToLibraryRequest(request.MediaItemId, status));
+                var entry = await _libraryService.AddAsync(userId, new AddToLibraryRequest(request.MediaItemId, status), ct);
                 var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
                 return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));
             }

@@ -67,11 +67,30 @@ public sealed class DuplicateCandidateScanService(
         // overriding evidence the two items are provably different. A source only present on
         // one side (or matching on both) is not a conflict -- only a same-source, different-id
         // pair is definitive proof.
-        var externalIdsByItem = (await db.MediaExternalIds
-            .Select(e => new { e.MediaItemId, e.Source, e.ExternalId })
-            .ToListAsync(ct))
-            .GroupBy(e => e.MediaItemId)
-            .ToDictionary(g => g.Key, g => g.Select(e => (e.Source, e.ExternalId)).ToList());
+        //
+        // Only the items that share a name with another item can ever be compared, so only their ids are loaded (this used to
+        // read all ~720,000 external-id rows, strings and all, to answer questions about a few hundred items).
+        var contestedIds = new HashSet<int>();
+        foreach (var g in items.GroupBy(m => (m.MediaTypeId, m.HierarchyLevel, m.ParentId, m.NormalizedName)).Where(g => g.Count() > 1))
+            foreach (var m in g) contestedIds.Add(m.Id);
+        foreach (var g in items.Where(m => m.HierarchyLevel == 0 && !string.IsNullOrEmpty(m.NormalizedNameLoose))
+                     .GroupBy(m => m.NormalizedNameLoose).Where(g => g.Count() > 1))
+            foreach (var m in g) contestedIds.Add(m.Id);
+
+        var externalIdsByItem = new Dictionary<int, List<(string Source, string ExternalId)>>();
+        foreach (var chunk in contestedIds.Chunk(500))
+        {
+            var rows = await db.MediaExternalIds.AsNoTracking()
+                .Where(e => chunk.Contains(e.MediaItemId))
+                .Select(e => new { e.MediaItemId, e.Source, e.ExternalId })
+                .ToListAsync(ct);
+            foreach (var e in rows)
+            {
+                if (!externalIdsByItem.TryGetValue(e.MediaItemId, out var list))
+                    externalIdsByItem[e.MediaItemId] = list = [];
+                list.Add((e.Source, e.ExternalId));
+            }
+        }
 
         bool ExternalIdsConflict(int idA, int idB)
         {

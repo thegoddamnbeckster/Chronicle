@@ -82,7 +82,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
         // Look up the row — required for both run-result tracking and plugin routing
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
-        var taskRow = await db.BackgroundTasks.FindAsync(taskId);
+        var taskRow = await db.BackgroundTasks.FindAsync([taskId], ct);
 
         if (taskRow is null)
         {
