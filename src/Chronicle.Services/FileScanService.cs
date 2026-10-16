@@ -1089,6 +1089,25 @@ namespace Chronicle.Services
         /// definition of "these two titles are the same title," so a future fix to what counts as
         /// a match only ever has to be made once.
         /// </summary>
+        /// <summary>
+        /// A lower-case ASCII word (3+ letters or digits) that every title variant contains, used to narrow the database query for the
+        /// name-matching tier: a stored name that equals any variant necessarily contains it. Null when no such word exists (no
+        /// narrowing, the whole set is searched). ASCII only, because SQLite's lower() and LIKE fold nothing else.
+        /// </summary>
+        internal static string? NamePrefilterWord(IReadOnlyList<string> variants)
+        {
+            if (variants.Count == 0) return null;
+            HashSet<string>? common = null;
+            foreach (var variant in variants)
+            {
+                var words = System.Text.RegularExpressions.Regex.Matches(variant.ToLowerInvariant(), "[a-z0-9]{3,}")
+                    .Select(m => m.Value).ToHashSet(StringComparer.Ordinal);
+                if (common is null) common = words; else common.IntersectWith(words);
+                if (common.Count == 0) return null;
+            }
+            return common!.OrderByDescending(w => w.Length).ThenBy(w => w, StringComparer.Ordinal).First();
+        }
+
         private static IReadOnlyList<string> TitleMatchVariants(string title)
         {
             var variants = new List<string>();
@@ -3348,13 +3367,21 @@ namespace Chronicle.Services
             // from its grandparent's stored ExternalId). A whole Star Trek: TNG season was
             // misfiled under Rick and Morty's Season 04 this way, in one real run.
             var groupNameClean = StripTrailingYearSuffix(group.Name ?? "");
-            var nameCandidates = await _context.MediaItems
-                .Where(m => m.MediaTypeId == mediaTypeId &&
-                            (hierarchyLevel == 0 || (m.ParentId == parentId && m.HierarchyLevel == hierarchyLevel)))
-                .ToListAsync(ct);
             if (existing is null)
             {
                 var groupVariants = TitleMatchVariants(group.Name ?? "");
+                // Only reached when the file and folder tiers found nothing, and then only the rows that could possibly match: this
+                // used to load EVERY item of the type (with its whole metadata blob) for every group of a scan, even one already
+                // matched by its file path.
+                var nameQuery = _context.MediaItems
+                    .Where(m => m.MediaTypeId == mediaTypeId &&
+                                (hierarchyLevel == 0 || (m.ParentId == parentId && m.HierarchyLevel == hierarchyLevel)));
+                if (NamePrefilterWord(groupVariants) is { } word)
+                {
+                    var pattern = $"%{word}%";
+                    nameQuery = nameQuery.Where(m => EF.Functions.Like(m.Name.ToLower(), pattern));
+                }
+                var nameCandidates = await nameQuery.OrderBy(m => m.Id).ToListAsync(ct);
                 existing = nameCandidates.FirstOrDefault(m =>
                 {
                     // A year that flatly contradicts the file's own parsed year is never a real
