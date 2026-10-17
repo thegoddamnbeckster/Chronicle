@@ -59,6 +59,31 @@ public class MetadataResolutionService(
             ["death_date"]      = ["deathDate"],
         };
 
+    /// <summary>
+    /// A top-level container (an author, an artist, a show) is named after its folder when the scanner creates it, and the next
+    /// scan finds it again by that name. When a provider's title then renames it ("Iain M. Banks" -> "Iain Banks"), the folder no
+    /// longer matches anything and the scan creates the author a second time, every night, however often the two are merged.
+    /// So the name it had is kept as an alias, which the scanner consults when no item carries the folder's name.
+    /// </summary>
+    private static async Task KeepFormerNameAsync(MediaItem item, string newName, ChronicleDbContext db, CancellationToken ct)
+    {
+        var former = item.Name?.Trim();
+        if (item.Id == 0 || item.HierarchyLevel != 0 || string.IsNullOrEmpty(former) ||
+            string.Equals(former, newName.Trim(), StringComparison.OrdinalIgnoreCase))
+            return;
+        var levels = item.MediaType?.HierarchyLevels
+            ?? await db.MediaTypes.Where(t => t.Id == item.MediaTypeId).Select(t => (int?)t.HierarchyLevels).FirstOrDefaultAsync(ct) ?? 1;
+        if (levels < 2) return;   // a flat item (a film) is not found again by a folder name
+
+        var lower = former.ToLowerInvariant();
+        var known = await db.MediaItemAliases.AnyAsync(a => a.MediaItemId == item.Id && a.Alias.ToLower() == lower, ct);
+        if (!known)
+            db.MediaItemAliases.Add(new MediaItemAlias
+            {
+                MediaItemId = item.Id, Alias = former, Source = "rename", CreatedAt = DateTime.UtcNow,
+            });
+    }
+
     public IReadOnlyCollection<string> GetCanonicalFields() => FieldMap.Keys;
 
     public async Task ResolveAsync(MediaItem item, ChronicleDbContext db, CancellationToken ct = default)
@@ -238,7 +263,11 @@ public class MetadataResolutionService(
         if (item.HierarchyLevel == 0 || isEpisode || isCollectionMember)
         {
             if (resolved.TryGetValue("title", out var title) && HasValue(title))
-                item.Name = title.GetString()!;
+            {
+                var newName = title.GetString()!;
+                await KeepFormerNameAsync(item, newName, db, ct);
+                item.Name = newName;
+            }
             if (resolved.TryGetValue("year", out var yr) && yr.ValueKind == JsonValueKind.Number)
                 item.Year = yr.GetInt32();
         }

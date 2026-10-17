@@ -638,8 +638,81 @@ public class MetadataResolutionServiceTests
         Dictionary<string, List<string>> fieldPriorityMap,
         Dictionary<string, List<string>>? fieldAliases = null)
     {
+        await ResolveWithDb(item, mediaTypeName, hierarchyLevel, fieldPriorityMap, fieldAliases);
+    }
+
+    /// <summary>Resolves against a real (in-memory) database and hands it back, for tests that look at what resolving recorded.</summary>
+    private static async Task<ChronicleDbContext> ResolveWithDb(
+        MediaItem item, string mediaTypeName, int hierarchyLevel,
+        Dictionary<string, List<string>> fieldPriorityMap, Dictionary<string, List<string>>? fieldAliases = null)
+    {
+        var db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
         var svc = BuildService(mediaTypeName, hierarchyLevel, fieldPriorityMap, fieldAliases);
-        await svc.ResolveAsync(item, null!, CancellationToken.None);
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+        await db.SaveChangesAsync();
+        return db;
+    }
+
+    // ── A renamed container keeps its old name as an alias (the scanner finds folders by it) ──
+
+    private static readonly Dictionary<string, List<string>> TitleFromHardcover = new() { ["title"] = ["hardcover"] };
+
+    [Fact]
+    public async Task ResolveAsync_ARenamedAuthor_KeepsItsFolderName_AsAnAlias()
+    {
+        // Live: the folder "Iain M. Banks" was matched by Hardcover to the author "Iain Banks"; the item took that name and the
+        // next scan, finding nothing called "Iain M. Banks", created the author again -- every night, however often merged.
+        var item = BuildItem("audiobooks", 0, """{"hardcover":{"title":"Iain Banks"}}""");
+        item.Name = "Iain M. Banks";
+        item.MediaType = new MediaType { Id = 1, Name = "audiobooks", DisplayName = "Audiobooks", HierarchyLevels = 3 };
+
+        var db = await ResolveWithDb(item, "audiobooks", 0, TitleFromHardcover);
+
+        item.Name.Should().Be("Iain Banks");
+        var alias = await db.MediaItemAliases.SingleAsync();
+        alias.Alias.Should().Be("Iain M. Banks");
+        alias.MediaItemId.Should().Be(item.Id);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ResolvingTwice_DoesNotRepeatTheAlias()
+    {
+        var item = BuildItem("audiobooks", 0, """{"hardcover":{"title":"Iain Banks"}}""");
+        item.Name = "Iain M. Banks";
+        item.MediaType = new MediaType { Id = 1, Name = "audiobooks", DisplayName = "Audiobooks", HierarchyLevels = 3 };
+        var db = await ResolveWithDb(item, "audiobooks", 0, TitleFromHardcover);
+
+        item.Name = "iain m. banks";   // renamed back and forth
+        await BuildService("audiobooks", 0, TitleFromHardcover).ResolveAsync(item, db, CancellationToken.None);
+        await db.SaveChangesAsync();
+
+        (await db.MediaItemAliases.CountAsync()).Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData("audiobooks", 1)]   // a book inside a series is not found by a folder name at the top
+    [InlineData("movies", 0)]       // a flat item is not a container
+    public async Task ResolveAsync_OnlyATopLevelContainer_KeepsItsFormerName(string type, int level)
+    {
+        var item = BuildItem(type, level, """{"hardcover":{"title":"New Title"}}""");
+        item.Name = "Old Title";
+        item.MediaType = new MediaType { Id = 1, Name = type, DisplayName = type, HierarchyLevels = type == "movies" ? 1 : 3 };
+
+        var db = await ResolveWithDb(item, type, level, TitleFromHardcover);
+
+        (await db.MediaItemAliases.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ANameThatDidNotChange_RecordsNothing()
+    {
+        var item = BuildItem("audiobooks", 0, """{"hardcover":{"title":"iain banks"}}""");
+        item.Name = "Iain Banks";
+
+        var db = await ResolveWithDb(item, "audiobooks", 0, TitleFromHardcover);
+
+        (await db.MediaItemAliases.CountAsync()).Should().Be(0);
     }
 
     /// Same wiring as ResolveWithConfig, but hands back the service so a test can drive the
