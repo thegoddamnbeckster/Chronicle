@@ -177,8 +177,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* On a phone the Back button, the breadcrumb, the "up" link and the Prev / position / Next group do not fit on one line:
+   * the row used to run off the screen, taking Next with it, and squeezed the "up" link down to a bare arrow. Wrapping lets
+   * the Prev / Next group take a line of its own. */
+  flex-wrap: wrap;
   margin-bottom: 24px;
-  gap: 16px;
+  gap: 10px 16px;
 }
 
 .backBtn {
@@ -198,6 +202,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
+  margin-left: auto;   /* stays on the right whether it shares a line or has its own */
 }
 
 .navBtn {

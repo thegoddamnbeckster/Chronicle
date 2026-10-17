@@ -100,6 +100,43 @@ public class DuplicateCandidateScanServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Books_OfOneAuthor_WithOneTitleAndDifferentYears_AreTheSameBookTwice_Flagged()
+    {
+        // Live: "The Venom Business" under Michael Crichton twice, folder years (2013) and (2023); Hardcover and Open Library both say 1969.
+        var books = new MediaType { Name = "audiobooks", DisplayName = "Audiobooks", HierarchyLevels = 3, ImportShape = ImportShapes.AuthorSeriesWork };
+        _db.MediaTypes.Add(books);
+        await _db.SaveChangesAsync();
+        var author = MakeItem("Michael Crichton", books);
+        await _db.SaveChangesAsync();
+        var first  = MakeItem("The Venom Business", books, year: 2013, hierarchyLevel: 1, parentId: author.Id);
+        var second = MakeItem("The Venom Business", books, year: 2023, hierarchyLevel: 1, parentId: author.Id);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().Contain((Math.Min(first.Id, second.Id), Math.Max(first.Id, second.Id)));
+    }
+
+    [Fact]
+    public async Task Books_WithDifferentSameTitleAndYearsButConflictingProviderIds_AreStillDifferent()
+    {
+        var books = new MediaType { Name = "audiobooks", DisplayName = "Audiobooks", HierarchyLevels = 3, ImportShape = ImportShapes.AuthorSeriesWork };
+        _db.MediaTypes.Add(books);
+        await _db.SaveChangesAsync();
+        var author = MakeItem("Some Author", books);
+        await _db.SaveChangesAsync();
+        var a = MakeItem("Same Title", books, year: 2001, hierarchyLevel: 1, parentId: author.Id);
+        var b = MakeItem("Same Title", books, year: 2020, hierarchyLevel: 1, parentId: author.Id);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = a.Id, Source = "hardcover", ExternalId = "hardcover:1" },
+            new MediaExternalId { MediaItemId = b.Id, Source = "hardcover", ExternalId = "hardcover:2" });
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().BeEmpty("two different Hardcover books are two books");
+    }
+
+    [Fact]
     public async Task SameType_OneSideMissingYear_StillFlagged()
     {
         // Pre-existing behavior: a missing year on either side is treated as "not enough

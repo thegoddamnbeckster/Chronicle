@@ -112,6 +112,12 @@ public sealed class DuplicateCandidateScanService(
             .Select(t => new { t.Id, t.HierarchyLevels })
             .ToDictionaryAsync(t => t.Id, t => t.HierarchyLevels, ct);
 
+        // Types whose items are books of an author (a type's ImportShape says so): the year on one is the year of an EDITION
+        // (the audiobook's recording, a reprint, often just the folder's own tag), so two items of one author with one title and
+        // different years are the same book twice, not two works the way a film and its remake are.
+        var editionYearTypes = (await db.MediaTypes.Where(t => t.ImportShape == Chronicle.Core.Models.ImportShapes.AuthorSeriesWork)
+            .Select(t => t.Id).ToListAsync(ct)).ToHashSet();
+
         // Separate, UNFILTERED load for AddSameParentSameNumberCandidates -- deliberately not
         // reusing `items` above, which excludes blank-NormalizedName rows for the name-matching
         // passes' own purposes. Caught in review before release: DuplicateCleanupService's own
@@ -153,7 +159,7 @@ public sealed class DuplicateCandidateScanService(
                     // different works (e.g. Aladdin 1992 vs Aladdin 2019) — not duplicates.
                     var yearI = list[i].Year;
                     var yearJ = list[j].Year;
-                    if (yearI.HasValue && yearJ.HasValue && yearI != yearJ)
+                    if (yearI.HasValue && yearJ.HasValue && yearI != yearJ && !editionYearTypes.Contains(list[i].MediaTypeId))
                         continue;
 
                     // If both items have a known Number (season/episode index within their
