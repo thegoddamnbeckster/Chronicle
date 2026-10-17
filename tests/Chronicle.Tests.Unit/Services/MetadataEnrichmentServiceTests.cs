@@ -292,6 +292,63 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichPendingAsync_AnAuthorsAlternateNames_BecomeAliases_SoAFolderUnderAPenNameFindsThem()
+    {
+        var audio = await EnsureMediaTypeAsync("audiobooks");
+        var author = new MediaItem { Name = "Jeremy Robinson", MediaTypeId = audio.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(author);
+        await _db.SaveChangesAsync();
+        _db.MediaItemAliases.Add(new MediaItemAlias { MediaItemId = author.Id, Alias = "Jeremiah Knight", Source = "merge", CreatedAt = DateTime.UtcNow });
+        var row = new MediaItemEnrichment { MediaItemId = author.Id, PluginId = "hardcover", ExternalId = "hardcover:author:131566", Status = EnrichmentStatus.Pending, MaxRetries = 3 };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("hardcover");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "audiobooks", HierarchyLevels = 3 }]);
+        provider.Setup(p => p.GetByIdAsync("hardcover:author:131566", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata
+            {
+                Title = "Jeremy Robinson", ExternalId = "hardcover:author:131566",
+                AlternateNames = ["Jeremy Bishop", "jeremiah knight", "Jeremy Robinson", "", "  "],
+            });
+        _registry.Setup(r => r.GetMetadataProvider("hardcover")).Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("hardcover");
+
+        var aliases = await _db.MediaItemAliases.AsNoTracking().Where(a => a.MediaItemId == author.Id).ToListAsync();
+        aliases.Select(a => a.Alias).Should().BeEquivalentTo(["Jeremiah Knight", "Jeremy Bishop"],
+            "its own name and blanks are not aliases, and a name already recorded (any case) is not repeated");
+        aliases.Single(a => a.Alias == "Jeremy Bishop").Source.Should().Be("plugin:hardcover");
+        aliases.Single(a => a.Alias == "Jeremiah Knight").Source.Should().Be("merge", "an existing alias is left as it was");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ABooksAlternateNames_AreNotAliases()
+    {
+        var audio = await EnsureMediaTypeAsync("audiobooks");
+        var author = new MediaItem { Name = "A", MediaTypeId = audio.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(author);
+        await _db.SaveChangesAsync();
+        var book = new MediaItem { Name = "The Book", MediaTypeId = audio.Id, HierarchyLevel = 2, ParentId = author.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(book);
+        await _db.SaveChangesAsync();
+        var row = new MediaItemEnrichment { MediaItemId = book.Id, PluginId = "hardcover", ExternalId = "hardcover:7", Status = EnrichmentStatus.Pending, MaxRetries = 3 };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("hardcover");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "audiobooks", HierarchyLevels = 3 }]);
+        provider.Setup(p => p.GetByIdAsync("hardcover:7", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "The Book", ExternalId = "hardcover:7", AlternateNames = ["Another Title"] });
+        _registry.Setup(r => r.GetMetadataProvider("hardcover")).Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("hardcover");
+
+        (await _db.MediaItemAliases.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
     public async Task EnrichPendingAsync_ABookRefusedOnlyBecauseOfItsAudiobook_IsPutBackInTheQueue()
     {
         var books = await EnsureMediaTypeAsync("books");

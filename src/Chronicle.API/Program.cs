@@ -325,6 +325,7 @@ builder.Services.AddSingleton<IScheduledTask>(
 // Passes of the library integrity repair task, not tasks of their own.
 builder.Services.AddSingleton<MissingSourceReconciliationService>();
 builder.Services.AddSingleton<TitleSanitizationService>();
+builder.Services.AddSingleton<AlternateNameAliasService>();
 
 // Database backups / restore / maintenance (Settings -> Database) and their scheduled tasks.
 builder.Services.AddSingleton<IDatabaseAdminService, DatabaseAdminService>();

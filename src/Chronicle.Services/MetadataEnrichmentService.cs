@@ -2202,6 +2202,7 @@ public class MetadataEnrichmentService(
                 // can look up directly rather than falling back to a text search.
                 await SeedCrossRefEnrichmentRowsAsync(db, row.MediaItemId, result, row.PluginId,
                     row.MediaItem!.MediaType?.Name, allProviders, ct);
+                await RecordAlternateNamesAsync(db, row.MediaItem!, result.AlternateNames, row.PluginId, ct);
                 // If this is a TMDB movie enrichment, ensure collection parent exists and re-parent if needed.
                 // Stubs are skipped — they're placeholders and must not trigger further collection creation.
                 //
@@ -3554,6 +3555,35 @@ public class MetadataEnrichmentService(
         var scopes = await LoadSharedIdScopesAsync(db, ct);
         return owners.FirstOrDefault(o => o is null ||
             !(IsSameWorkTypePair(sameWork, item.MediaType.Name, o.MediaType?.Name) || IsSharedIdPair(scopes, item, o)));
+    }
+
+    /// <summary>The most alternate names kept from one provider for one item (a provider listing hundreds is not describing a pen name).</summary>
+    private const int MaxAlternateNames = 20;
+
+    /// <summary>
+    /// A provider that knows other names for an author or artist (pen names, spellings: Hardcover's <c>alternate_names</c>)
+    /// is describing the same one, so those names become aliases of the item. The scanner consults aliases before it creates
+    /// anything, so a folder named after a pen name finds the author it belongs to instead of starting a second one. Only for a
+    /// top-level container (an author, an artist, a show): an alternate title of a book is not a name to find a folder by, and a
+    /// person record is matched by credits and ids, where a shared alias would risk joining two different people. Aliases already there
+    /// (a merge's, a rename's, a person's own) are never touched, and nothing here removes one.
+    /// </summary>
+    internal static async Task RecordAlternateNamesAsync(
+        ChronicleDbContext db, MediaItem item, IEnumerable<string>? alternateNames, string pluginId, CancellationToken ct)
+    {
+        if (alternateNames is null || item.HierarchyLevel != 0) return;
+        if ((item.MediaType?.HierarchyLevels ?? 1) < 2) return;
+
+        var candidates = alternateNames.Select(n => n?.Trim() ?? "")
+            .Where(n => n.Length is >= 2 and <= 200 && MergeService.NamesRequireAka(n, item.Name))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxAlternateNames).ToList();
+        if (candidates.Count == 0) return;
+
+        var have = (await db.MediaItemAliases.Where(a => a.MediaItemId == item.Id).Select(a => a.Alias).ToListAsync(ct))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var source = $"plugin:{PluginIdHelper.ToSource(pluginId)}";
+        foreach (var name in candidates.Where(n => !have.Contains(n)))
+            db.MediaItemAliases.Add(new MediaItemAlias { MediaItemId = item.Id, Alias = name, Source = source, CreatedAt = DateTime.UtcNow });
     }
 
     /// <summary>

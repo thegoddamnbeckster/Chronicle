@@ -46,6 +46,8 @@ namespace Chronicle.Services;
 ///                                 the year in its Year field.
 ///   12. Missing Source Reconciliation -- an item whose scanned file/folder is gone from disk loses the stale
 ///                                 File Scanner link (everything else about it is kept).
+///   14. Alternate Name Aliases -- the other names a provider lists for an author, artist or show become aliases the
+///                                 scanner can find a folder by.
 ///   13. Title Sanitization     -- a stray trailing parenthetical ("(film)") left in a plugin's stored title is
 ///                                 stripped and the item's resolved metadata recomputed.
 /// A failing pass is logged and never stops the ones after it; the task still fails at the end (see PassFailures).
@@ -73,6 +75,7 @@ public sealed class LibraryIntegrityRepairService(
     AlbumNameYearRepairService albumNameYear,
     MissingSourceReconciliationService missingSources,
     TitleSanitizationService titleSanitization,
+    AlternateNameAliasService alternateNameAliases,
     ILogger<LibraryIntegrityRepairService> logger) : IScheduledTask
 {
     public string TaskId      => "library_integrity_repair";
@@ -106,6 +109,7 @@ public sealed class LibraryIntegrityRepairService(
         await passes.RunAsync("album name year repair", albumNameYear.ExecuteAsync, ct);
         await passes.RunAsync("missing source reconciliation", missingSources.ExecuteAsync, ct);
         await passes.RunAsync("title sanitization", titleSanitization.ExecuteAsync, ct);
+        await passes.RunAsync("alternate name aliases", alternateNameAliases.ExecuteAsync, ct);
         passes.ThrowIfAny();
     }
 }
