@@ -65,11 +65,14 @@ public class MetadataResolutionService(
     /// longer matches anything and the scan creates the author a second time, every night, however often the two are merged.
     /// So the name it had is kept as an alias, which the scanner consults when no item carries the folder's name.
     /// </summary>
+    private static string WithoutYearSuffix(string name) =>
+        System.Text.RegularExpressions.Regex.Replace(name, @"\s*[\(\[]\d{4}[\)\]]\s*$", "");
+
     private static async Task KeepFormerNameAsync(MediaItem item, string newName, ChronicleDbContext db, CancellationToken ct)
     {
         var former = item.Name?.Trim();
         if (item.Id == 0 || item.HierarchyLevel != 0 || string.IsNullOrEmpty(former) ||
-            string.Equals(former, newName.Trim(), StringComparison.OrdinalIgnoreCase))
+            !MergeService.NamesRequireAka(WithoutYearSuffix(newName), WithoutYearSuffix(former)))   // a year suffix or different casing is the same name
             return;
         var levels = item.MediaType?.HierarchyLevels
             ?? await db.MediaTypes.Where(t => t.Id == item.MediaTypeId).Select(t => (int?)t.HierarchyLevels).FirstOrDefaultAsync(ct) ?? 1;

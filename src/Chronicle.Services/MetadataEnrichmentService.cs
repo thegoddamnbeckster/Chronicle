@@ -3572,7 +3572,8 @@ public class MetadataEnrichmentService(
             real.MediaType is not { HierarchyLevels: >= 3 } ||
             SeriesSlotTwins.IsPlaceholder(real) || !SeriesSlotTwins.IsPlaceholder(stub))
             return;
-        await SeriesSlotTwins.AdoptAsync(db, real, [stub], [], logger, ct);
+        // not queueEnrichment: the match being processed is the enrichment; resetting it would send the row round again
+        await SeriesSlotTwins.AdoptAsync(db, real, [stub], [], logger, ct, queueEnrichment: false);
     }
 
     /// <summary>app_settings key: JSON array of arrays of media type names that hold the same work in different

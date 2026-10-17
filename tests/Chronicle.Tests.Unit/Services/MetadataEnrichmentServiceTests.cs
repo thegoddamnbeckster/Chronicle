@@ -288,6 +288,7 @@ public class MetadataEnrichmentServiceTests : IDisposable
         (await _db.MediaItems.AnyAsync(m => m.Id == stub.Id)).Should().BeFalse("the placeholder is the same book");
         (await _db.MediaItems.AnyAsync(m => m.Id == real.Id)).Should().BeTrue();
         (await _db.MediaExternalIds.CountAsync(e => e.ExternalId == "hardcover:1184387")).Should().Be(1);
+        (await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id)).LastCompletedAt.Should().NotBeNull("the match just made must not be queued for another pass");
     }
 
     [Fact]

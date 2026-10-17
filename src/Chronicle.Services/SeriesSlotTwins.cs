@@ -92,7 +92,7 @@ internal static class SeriesSlotTwins
     internal static async Task<bool> AdoptAsync(
         ChronicleDbContext db, MediaItem twin, IReadOnlyCollection<MediaItem> placeholders,
         IEnumerable<(string Source, string ExternalId)> extraIds, ILogger logger, CancellationToken ct,
-        string? providerTitle = null, bool allowReplacingOwnIds = true)
+        string? providerTitle = null, bool allowReplacingOwnIds = true, bool queueEnrichment = true)
     {
         var protectedIds = await BookSeriesService.StubIdsWithUserDataAsync(db, placeholders.Select(p => p.Id), ct);
         if (placeholders.Any(p => protectedIds.Contains(p.Id))) return false;
@@ -144,7 +144,7 @@ internal static class SeriesSlotTwins
             added = true;
         }
         // Only when it gained an id: providers need to look again. Otherwise what it already has stands.
-        if (added) await BookSeriesService.ResetEnrichmentAsync(db, twin.Id, ct);
+        if (added && queueEnrichment) await BookSeriesService.ResetEnrichmentAsync(db, twin.Id, ct);
         twin.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
 

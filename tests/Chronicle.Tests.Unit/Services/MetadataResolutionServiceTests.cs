@@ -704,6 +704,20 @@ public class MetadataResolutionServiceTests
         (await db.MediaItemAliases.CountAsync()).Should().Be(0);
     }
 
+    [Theory]
+    [InlineData("The Wire (2002)", "The Wire")]    // only a year suffix differs
+    [InlineData("the wire", "The Wire")]           // only the casing differs
+    public async Task ResolveAsync_ATrivialRename_RecordsNoAlias(string folderName, string providerTitle)
+    {
+        var item = BuildItem("audiobooks", 0, "{\"hardcover\":{\"title\":\"" + providerTitle + "\"}}");
+        item.Name = folderName;
+        item.MediaType = new MediaType { Id = 1, Name = "audiobooks", DisplayName = "Audiobooks", HierarchyLevels = 3 };
+
+        var db = await ResolveWithDb(item, "audiobooks", 0, TitleFromHardcover);
+
+        (await db.MediaItemAliases.CountAsync()).Should().Be(0);
+    }
+
     [Fact]
     public async Task ResolveAsync_ANameThatDidNotChange_RecordsNothing()
     {
