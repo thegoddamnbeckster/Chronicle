@@ -628,11 +628,33 @@ namespace Chronicle.Tests.Unit.Services
             entry.UserRating.Should().Be(3);
         }
 
+        [Fact]
+        public async Task RateAsync_ZeroRemovesTheRating_KeepsTheEntry_AndStampsIt()
+        {
+            await _service.RateAsync(1, new RateRequest(1, 8));
+
+            var result = await _service.RateAsync(1, new RateRequest(1, 0));
+
+            result.Rating.Should().Be(0);
+            var entry = await _context.UserLibraries.AsNoTracking().FirstAsync(l => l.UserId == 1 && l.MediaItemId == 1);
+            entry.UserRating.Should().BeNull();
+            entry.Status.Should().Be(LibraryStatus.Completed, "taking the rating off does not take the item's status with it");
+            entry.UserRatingUpdatedAt.Should().NotBeNull("an older provider rating must not put it back");
+        }
+
+        [Fact]
+        public async Task RateAsync_ZeroForAnItemTheCallerHasNoEntryFor_CreatesNothing()
+        {
+            var result = await _service.RateAsync(1, new RateRequest(1, 0));
+
+            result.Rating.Should().Be(0);
+            (await _context.UserLibraries.AnyAsync(l => l.UserId == 1 && l.MediaItemId == 1)).Should().BeFalse();
+        }
+
         [Theory]
-        [InlineData(0)]
         [InlineData(11)]
         [InlineData(-1)]
-        public async Task RateAsync_RatingOutsideOneToTen_ThrowsArgumentException(int rating)
+        public async Task RateAsync_RatingOutsideZeroToTen_ThrowsArgumentException(int rating)
         {
             await FluentActions.Invoking(() => _service.RateAsync(1, new RateRequest(1, rating)))
                 .Should().ThrowAsync<ArgumentException>();

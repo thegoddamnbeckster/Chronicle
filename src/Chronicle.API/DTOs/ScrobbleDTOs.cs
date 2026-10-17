@@ -59,7 +59,8 @@ namespace Chronicle.API.DTOs
     /// that same item.</summary>
     public record RateRequestDto(
         int? MediaItemId,
-        [Range(1, 10)] int Rating,
+        /// <summary>1-10, or 0 to remove the rating (Kodi's own convention for "not rated").</summary>
+        [Range(0, 10)] int Rating,
         Dictionary<string, string>? ExternalIds = null,
         string? Title = null,
         int? Year = null,

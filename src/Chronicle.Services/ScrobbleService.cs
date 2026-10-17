@@ -325,7 +325,7 @@ namespace Chronicle.Services
         }
 
         /// <summary>
-        /// Sets the caller's UserRating for an item, resolving it the same way
+        /// Sets (1-10) or removes (0) the caller's UserRating for an item, resolving it the same way
         /// GetResumeStateAsync does (MediaItemId when known, else external-id/title/year
         /// match -- never a stub creation, since a rating is expected to arrive after the
         /// item was already scrobbled at least once). Creates the UserLibrary row if one
@@ -335,8 +335,8 @@ namespace Chronicle.Services
         /// </summary>
         public async Task<RateResult> RateAsync(int userId, RateRequest request, CancellationToken ct = default)
         {
-            if (request.Rating is < 1 or > 10)
-                throw new ArgumentException("Rating must be between 1 and 10.");
+            if (request.Rating is < 0 or > 10)
+                throw new ArgumentException("Rating must be between 1 and 10, or 0 to remove it.");
 
             int mediaItemId;
             if (request.MediaItemId.HasValue)
@@ -358,6 +358,10 @@ namespace Chronicle.Services
 
             var entry = await _context.UserLibraries
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == mediaItemId, ct);
+
+            // Removing a rating from an item the caller has no entry for: nothing to remove, and no entry to make for it.
+            if (entry is null && request.Rating == 0)
+                return new RateResult(mediaItemId, 0);
 
             if (entry is null)
             {
@@ -383,7 +387,7 @@ namespace Chronicle.Services
             // live, right now, as newer than a provider rating from before it -- previously
             // left null here, which meant a stale provider re-sync could silently overwrite
             // a fresh live rating (a missing stored timestamp always loses in that guard).
-            entry.UserRating          = request.Rating;
+            entry.UserRating          = request.Rating == 0 ? null : request.Rating;   // 0 = remove, as Kodi says it
             entry.UserRatingUpdatedAt = DateTime.UtcNow;
             entry.UpdatedAt           = DateTime.UtcNow;
             await _context.SaveChangesAsync(ct);
