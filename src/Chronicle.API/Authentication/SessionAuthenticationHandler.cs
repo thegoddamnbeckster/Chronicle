@@ -137,6 +137,12 @@ public class SessionAuthenticationHandler : AuthenticationHandler<Authentication
             new(SessionIdClaimType, session.SessionId.ToString()),
         };
 
+        // A signed-in request that arrives without the image cookie (the browser dropped it, or the session began before cookies
+        // existed) gets it again, so images that need it work from the next page load, not only after signing in again.
+        if (GetType() == typeof(SessionAuthenticationHandler) && !Response.HasStarted &&
+            !(Request.Cookies.TryGetValue(SessionCookie.Name, out var held) && held == key))
+            SessionCookie.Set(Response, key, session.AbsoluteExpiresAt);
+
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
     }
@@ -169,8 +175,15 @@ public static class SessionCookie
 {
     public const string Name = "chronicle_session";
 
-    public static void Set(HttpResponse response, string key) =>
-        response.Cookies.Append(Name, key, Options(response.HttpContext));
+    /// <summary>Sets the cookie. It lasts as long as the session does: a cookie that ended with the browser session would be gone
+    /// whenever a phone's browser is reopened, while the web app (which keeps its key in local storage) was still signed in, and
+    /// every image that needs the cookie would fail until the next sign-in.</summary>
+    public static void Set(HttpResponse response, string key, DateTime? sessionExpiresUtc = null)
+    {
+        var options = Options(response.HttpContext);
+        if (sessionExpiresUtc is { } expires) options.Expires = new DateTimeOffset(DateTime.SpecifyKind(expires, DateTimeKind.Utc));
+        response.Cookies.Append(Name, key, options);
+    }
 
     public static void Clear(HttpResponse response) =>
         response.Cookies.Delete(Name, Options(response.HttpContext));

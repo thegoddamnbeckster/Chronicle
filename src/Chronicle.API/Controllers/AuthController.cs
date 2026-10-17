@@ -81,7 +81,7 @@ namespace Chronicle.API.Controllers
             {
                 var user = await _userService.RegisterAsync(request.Username, request.Password, request.Email);
                 var (key, session) = _sessions.Create(user.Id, AuthAudit.Agent(HttpContext), AuthAudit.Ip(HttpContext));
-                SessionCookie.Set(Response, key);
+                SessionCookie.Set(Response, key, session.AbsoluteExpiresAt);
                 _audit.Registered(HttpContext, user.Username, user.Id, session.SessionId);
                 var dto = await ToDtoAsync(user);
                 return Ok(ApiResponse<AuthResponse>.Ok(new AuthResponse(key, dto)));
@@ -110,7 +110,7 @@ namespace Chronicle.API.Controllers
                 var user = await _userService.AuthenticateAsync(request.Username, request.Password);
                 _throttle.RecordLoginSuccess(CallerAddress, request.Username);
                 var (key, session) = _sessions.Create(user.Id, AuthAudit.Agent(HttpContext), AuthAudit.Ip(HttpContext));
-                SessionCookie.Set(Response, key);
+                SessionCookie.Set(Response, key, session.AbsoluteExpiresAt);
                 _audit.LoginSucceeded(HttpContext, user.Username, user.Id, session.SessionId);
                 var dto = await ToDtoAsync(user);
                 return Ok(ApiResponse<AuthResponse>.Ok(new AuthResponse(key, dto)));

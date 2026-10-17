@@ -445,6 +445,41 @@ namespace Chronicle.Tests.Integration
         }
 
         [Fact]
+        public async Task TheCookie_OutlivesTheBrowserSession_ByLastingAsLongAsTheSession()
+        {
+            var host = Host();
+            var user = await RegisterAsync(host, admin: false);
+
+            var response = await host.CreateClient().PostAsJsonAsync("/api/v1/auth/login", new { user.Username, password = Password });
+
+            CookieValue(response, out var raw);
+            raw.ToLowerInvariant().Should().Contain("expires=", "a cookie without an expiry is dropped when the phone's browser is closed");
+        }
+
+        [Fact]
+        public async Task ASignedInRequestWithoutTheCookie_GetsItAgain_SoImagesWorkWithoutSigningInAgain()
+        {
+            var host = Host();
+            var user = await RegisterAsync(host, admin: false);
+            var login = await host.CreateClient().PostAsJsonAsync("/api/v1/auth/login", new { user.Username, password = Password });
+            var cookie = CookieValue(login, out _)!;
+
+            // the web app still holds the key in local storage and sends it as a header; the browser lost the cookie
+            var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/users/me");
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", cookie);
+            var response = await host.CreateClient().SendAsync(req);
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            CookieValue(response, out _).Should().Be(cookie, "the same session's key is put back");
+
+            // and once it has the cookie, nothing is sent again
+            var again = new HttpRequestMessage(HttpMethod.Get, "/api/v1/users/me");
+            again.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", cookie);
+            again.Headers.Add("Cookie", $"{SessionCookie.Name}={cookie}");
+            CookieValue(await host.CreateClient().SendAsync(again), out _).Should().BeNull();
+        }
+
+        [Fact]
         public async Task ImageRoutes_AcceptTheCookie_AndRefuseAnonymousCallers()
         {
             var host = Host();
