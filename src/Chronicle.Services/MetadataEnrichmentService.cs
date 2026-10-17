@@ -2113,9 +2113,13 @@ public class MetadataEnrichmentService(
             // an id is exactly as real and independent as the new item's own match -- it is
             // never provider-supplied corroborating evidence for ANOTHER person the way a
             // collection's parts-list stub is for a movie, so it must still count as a conflict.
+            MediaItem? bypassedStub = null;
             if (conflictOwner is { IsStub: true } &&
                 conflictOwner.MediaType?.IsPersonType != true)
+            {
+                bypassedStub = conflictOwner;
                 conflictOwner = null;
+            }
 
             if (conflictOwner is not null)
             {
@@ -2187,6 +2191,9 @@ public class MetadataEnrichmentService(
                 // because conflictOwner is already known to be null here -- re-running the same
                 // query UpsertExternalIdForEnrichmentAsync would otherwise do is redundant work
                 // on every successful match, not just the rare conflicting one.
+                // A provider's placeholder for the very book this item has just been matched to, in the same series, is the same
+                // book: it goes now, not at the next weekly series check, so the series never shows both.
+                if (bypassedStub is not null) await AbsorbSeriesPlaceholderAsync(db, row.MediaItemId, bypassedStub.Id, ct);
                 await UpsertExternalIdForEnrichmentAsync(db, row.MediaItemId, result.ExternalId, ct, row.PluginId,
                     skipConflictCheck: true);
                 // Cascade cross-ref IDs from this enrichment result to any other installed plugin
@@ -3547,6 +3554,25 @@ public class MetadataEnrichmentService(
         var scopes = await LoadSharedIdScopesAsync(db, ct);
         return owners.FirstOrDefault(o => o is null ||
             !(IsSameWorkTypePair(sameWork, item.MediaType.Name, o.MediaType?.Name) || IsSharedIdPair(scopes, item, o)));
+    }
+
+    /// <summary>
+    /// Removes <paramref name="placeholderId"/>, a provider's placeholder for a book, when it sits in the same series and type as
+    /// <paramref name="itemId"/>, which has just been matched to the same provider id: they are one book. Left alone when the
+    /// placeholder holds a file, or anything the user did with it (see <see cref="SeriesSlotTwins.AdoptAsync"/>).
+    /// A movie collection's placeholder is reconciled by the collection service, not here.
+    /// </summary>
+    private async Task AbsorbSeriesPlaceholderAsync(ChronicleDbContext db, int itemId, int placeholderId, CancellationToken ct)
+    {
+        var real = await db.MediaItems.Include(m => m.ExternalIds).Include(m => m.MediaType)
+            .FirstOrDefaultAsync(m => m.Id == itemId, ct);
+        var stub = await db.MediaItems.Include(m => m.ExternalIds).FirstOrDefaultAsync(m => m.Id == placeholderId, ct);
+        if (real is null || stub is null || real.ParentId is null || real.ParentId != stub.ParentId ||
+            real.MediaTypeId != stub.MediaTypeId || real.HierarchyLevel != stub.HierarchyLevel ||
+            real.MediaType is not { HierarchyLevels: >= 3 } ||
+            SeriesSlotTwins.IsPlaceholder(real) || !SeriesSlotTwins.IsPlaceholder(stub))
+            return;
+        await SeriesSlotTwins.AdoptAsync(db, real, [stub], [], logger, ct);
     }
 
     /// <summary>app_settings key: JSON array of arrays of media type names that hold the same work in different

@@ -254,6 +254,43 @@ public class MetadataEnrichmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichPendingAsync_ABookMatchedToTheIdOfItsSeriesPlaceholder_ReplacesThePlaceholder()
+    {
+        // Live: the user's "Enemy A[n]t the Gates" was matched to Hardcover's id for the book, which Hardcover's placeholder
+        // "Enemy A(n)t the Gates" in the same series already held -- and both stayed, side by side, until the weekly series check.
+        var audio = await EnsureMediaTypeAsync("audiobooks");
+        var author = new MediaItem { Name = "RinoZ", MediaTypeId = audio.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(author);
+        await _db.SaveChangesAsync();
+        var series = new MediaItem { Name = "Chrysalis", MediaTypeId = audio.Id, HierarchyLevel = 1, ParentId = author.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(series);
+        await _db.SaveChangesAsync();
+        var real = new MediaItem { Name = "Enemy A[n]t the Gates", MediaTypeId = audio.Id, HierarchyLevel = 2, ParentId = series.Id, Number = 5, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            MetadataJson = """{"fileScanner":{"filePaths":["E:/Audio Books/RinoZ/Chrysalis - 5 - (2024) - Enemy A[n]t the Gates"]}}""" };
+        var stub = new MediaItem { Name = "Enemy A(n)t the Gates", MediaTypeId = audio.Id, HierarchyLevel = 2, ParentId = series.Id, Number = 5, IsStub = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.AddRange(real, stub);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = stub.Id, Source = "hardcover", ExternalId = "hardcover:1184387" });
+        var row = new MediaItemEnrichment { MediaItemId = real.Id, PluginId = "hardcover", ExternalId = "hardcover:1184387", Status = EnrichmentStatus.Pending, MaxRetries = 3 };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("hardcover");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "audiobooks", HierarchyLevels = 3 }]);
+        provider.Setup(p => p.GetByIdAsync("hardcover:1184387", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Enemy A(n)t the Gates", ExternalId = "hardcover:1184387" });
+        _registry.Setup(r => r.GetMetadataProvider("hardcover")).Returns(provider.Object);
+
+        await _svc.EnrichPendingAsync("hardcover");
+
+        (await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id)).Status.Should().Be(EnrichmentStatus.Completed);
+        (await _db.MediaItems.AnyAsync(m => m.Id == stub.Id)).Should().BeFalse("the placeholder is the same book");
+        (await _db.MediaItems.AnyAsync(m => m.Id == real.Id)).Should().BeTrue();
+        (await _db.MediaExternalIds.CountAsync(e => e.ExternalId == "hardcover:1184387")).Should().Be(1);
+    }
+
+    [Fact]
     public async Task EnrichPendingAsync_ABookRefusedOnlyBecauseOfItsAudiobook_IsPutBackInTheQueue()
     {
         var books = await EnsureMediaTypeAsync("books");

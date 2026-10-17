@@ -305,6 +305,37 @@ public class SeriesSlotTwinTests
     }
 
     [Fact]
+    public async Task Repair_RemovesAFilelessDuplicate_ThatHoldsTheSameProviderId_EvenWhenTheTitlesSpellDifferently()
+    {
+        // Live: "Enemy A[n]t the Gates" (the user's folder) beside Hardcover's "Enemy A(n)t the Gates" -- both #5 of the series, both
+        // carrying hardcover:1184387. Brackets and parentheses normalise differently, so neither title contained the other.
+        var (lib, leftover) = await FileAndLeftoverAsync("Enemy A(n)t the Gates");
+        await using var db = lib.Db;
+        lib.Real.Name = "Enemy A[n]t the Gates";
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = lib.Real.Id, Source = "hardcover", ExternalId = "hardcover:2333832" });
+        await db.SaveChangesAsync();
+
+        await NewRepair(db).ExecuteAsync(default);
+
+        Assert.Null(await db.MediaItems.FindAsync(leftover.Id));
+        Assert.NotNull(await db.MediaItems.FindAsync(lib.Real.Id));
+        Assert.Equal(1, await db.MediaExternalIds.CountAsync(e => e.ExternalId == "hardcover:2333832"));
+    }
+
+    [Fact]
+    public async Task Repair_KeepsAFilelessItemWithAnotherTitle_WhenItHoldsADifferentProviderId()
+    {
+        var (lib, leftover) = await FileAndLeftoverAsync("A Completely Different Book");
+        await using var db = lib.Db;
+        db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = lib.Real.Id, Source = "hardcover", ExternalId = "hardcover:446681" });
+        await db.SaveChangesAsync();
+
+        await NewRepair(db).ExecuteAsync(default);
+
+        Assert.NotNull(await db.MediaItems.FindAsync(leftover.Id));
+    }
+
+    [Fact]
     public async Task Repair_KeepsAFilelessItemTheUserHasRatedOrMarked()
     {
         var (lib, leftover) = await FileAndLeftoverAsync();

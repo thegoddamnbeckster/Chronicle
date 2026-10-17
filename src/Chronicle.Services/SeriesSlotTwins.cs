@@ -67,6 +67,14 @@ internal static class SeriesSlotTwins
         return nt.Length >= 3 && nf.Length >= 3 && nf.Contains(nt, StringComparison.Ordinal);
     }
 
+    /// <summary>Both hold the same id from the same provider: one book, whatever the two spell the title as
+    /// ("Enemy A[n]t the Gates" beside "Enemy A(n)t the Gates", which normalise differently).</summary>
+    internal static bool SharesProviderId(MediaItem a, MediaItem b) =>
+        a.ExternalIds.Any(x => !string.Equals(x.Source, "chronicle", StringComparison.OrdinalIgnoreCase) &&
+                               x.ExternalId != BookSeriesService.ManualSeriesMemberMarker &&
+                               b.ExternalIds.Any(y => string.Equals(x.Source, y.Source, StringComparison.OrdinalIgnoreCase) &&
+                                                      string.Equals(x.ExternalId, y.ExternalId, StringComparison.OrdinalIgnoreCase)));
+
     /// <summary>One title contains the other once both are normalised ("Dungeon Crawler Carl" in "Dungeon Crawler Carl: A LitRPG ...").</summary>
     internal static bool NamesRelated(string? a, string? b)
     {
@@ -207,7 +215,8 @@ public sealed class SeriesSlotTwinRepairService(
     /// The item that holds the user's file is THE entry. When another item sits at the same position in the same
     /// series, holds no file, belongs to nobody (no rating, status, notes or play history) and reads as the same
     /// book, it is a leftover duplicate and is removed; the entry with the file keeps its own ids and takes any it
-    /// lacked. Two items that BOTH hold a file are never touched (two editions on disk), nor is anything ambiguous.
+    /// lacked. Reading as the same book means the titles are related, the folder name holds the title, or the two hold the
+/// same provider id. Two items that BOTH hold a file are never touched (two editions on disk), nor is anything ambiguous.
     /// </summary>
     private async Task RemoveFilelessDuplicatesAsync(ChronicleDbContext db, CancellationToken ct)
     {
@@ -233,7 +242,8 @@ public sealed class SeriesSlotTwinRepairService(
                 var leftovers = slot
                     .Where(b => b.Id != keeper.Id && !manual.Contains(b.Id) &&
                                 !Chronicle.Services.Scan.FileIdentityJson.HasKnownFile(b.MetadataJson) &&
-                                (SeriesSlotTwins.NamesRelated(b.Name, keeper.Name) || SeriesSlotTwins.FolderRelated(keeper, b.Name)))
+                                (SeriesSlotTwins.NamesRelated(b.Name, keeper.Name) || SeriesSlotTwins.FolderRelated(keeper, b.Name) ||
+                                 SeriesSlotTwins.SharesProviderId(b, keeper)))
                     .ToList();
                 if (leftovers.Count == 0 || manual.Contains(keeper.Id)) continue;
 
