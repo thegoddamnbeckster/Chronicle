@@ -1556,7 +1556,8 @@ public class MetadataEnrichmentService(
                 var itemFamily = MediaTypeRegistry.Family(row.MediaItem.MediaType?.Name);
                 int depth = 0;
                 string? parentFamily = null;
-                if (row.MediaItem.ParentId != null)
+                // The hierarchy is only looked up for a provider that declared id shapes to judge it by.
+                if (row.MediaItem.ParentId != null && ExternalIdPolicies.Find(ownerSource) is { IdShapes.Length: > 0 })
                 {
                     var parent = await db.MediaItems
                         .AsNoTracking()

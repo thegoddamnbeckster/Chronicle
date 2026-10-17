@@ -123,6 +123,7 @@ each other's process-wide media-type snapshot (`MediaTypeRegistry.IsolateForCurr
 
 * A TMDB `movie:N` id on a *tv-family* item (e.g. an `anime` root) is now judged implausible, as `tv` always was; previously `anime` was exempted by name. The live database has none (checked).
 * Stored ids are judged only by their own provider's shapes. A provider that declares none is trusted, as unrecognised ids always were.
+* A provider's policy only applies while its plugin is loaded. Data it left behind (Wikipedia ids on people, say) is treated plainly if the plugin is disabled or uninstalled, so for example Wikipedia ids would count as merge evidence again until it is back.
 * The startup Trakt credit backfill is gone; `QueueCachedCreditsBackfill` already resolves credits from cached metadata.
 * A new migration (`MediaTypeDataDrivenFlags`, both SQLite and PostgreSQL sets) adds the media-type columns, converts existing rows, and seeds the two enrichment settings. It was applied to the live database on the API restart at 14:28 on 2026-10-16.
 * **Core and plugins now go together.** Chronicle no longer carries the rules the policies replace, so a released Chronicle needs the released plugins that declare them (TMDB, IMDb, Trakt, Simkl, FanartTV, Wikipedia, MusicBrainz, Hardcover). Without TMDB's policy, for example, `person:N` ids would be stored as issued again. `RunTestEnvironment.ps1` rebuilds the plugins from their repositories, so the development install already has them; the plugin releases have not been cut.

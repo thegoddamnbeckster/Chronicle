@@ -155,4 +155,24 @@ public class ExternalIdPoliciesTests
     [InlineData("tvmaze", "movie:550", null)]
     public void AnIdThatCanOnlyDenoteOneKindOfItem_SaysSo(string source, string id, string? family) =>
         ExternalIdPolicies.FamilyOfId(source, id).Should().Be(family);
+
+    [Fact]
+    public void APolicyWithABrokenPattern_CostsOnlyItsOwnRule_NeverTheCaller()
+    {
+        ExternalIdPolicies.LoadForCurrentContext(
+        [
+            new Chronicle.Plugins.Models.ExternalIdPolicy
+            {
+                Source = "broken", RefusedIdPattern = "([unclosed", PositionInIdPattern = "(?<season>", FamilyIdPatterns = { ["movie"] = "[" },
+                IdShapes = [new() { Pattern = "(", Depths = [0] }],
+                ChildIds = [new() { RootIdPattern = "*", Depth = 1, Template = "{root}" }],
+            },
+        ]);
+
+        ExternalIdPolicies.IsRefused("broken", "x").Should().BeFalse();
+        ExternalIdPolicies.PositionInId("broken", "x").Should().BeNull();
+        ExternalIdPolicies.FamilyOfId("broken", "x").Should().BeNull();
+        ExternalIdPolicies.Assess("broken", "x", 0, "movie", null).Valid.Should().BeTrue("an id no shape describes is trusted");
+        ExternalIdPolicies.DeriveChildId("broken", "x", 1, 1, null).Should().BeNull();
+    }
 }

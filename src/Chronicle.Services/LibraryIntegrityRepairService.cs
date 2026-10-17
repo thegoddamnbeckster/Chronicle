@@ -46,10 +46,10 @@ namespace Chronicle.Services;
 ///                                 the year in its Year field.
 ///   12. Missing Source Reconciliation -- an item whose scanned file/folder is gone from disk loses the stale
 ///                                 File Scanner link (everything else about it is kept).
-///   14. Alternate Name Aliases -- the other names a provider lists for an author, artist or show become aliases the
-///                                 scanner can find a folder by.
 ///   13. Title Sanitization     -- a stray trailing parenthetical ("(film)") left in a plugin's stored title is
 ///                                 stripped and the item's resolved metadata recomputed.
+///   14. Alternate Name Aliases -- the other names a provider lists for an author, artist or show become aliases the
+///                                 scanner can find a folder by.
 /// A failing pass is logged and never stops the ones after it; the task still fails at the end (see PassFailures).
 /// </summary>
 public sealed class LibraryIntegrityRepairService(

@@ -46,24 +46,50 @@ public static class ExternalIdPolicies
         Current.BySource.Values.Where(p => p.DisambiguatedTitleField is { Length: > 0 })
             .Select(p => (p.PluginId, p.DisambiguatedTitleField!)).ToArray();
 
+    private static ExternalIdPolicy? FirstNameDerived() =>
+        Current.BySource.Values.Where(p => p.NameDerived).OrderBy(p => p.Source, StringComparer.Ordinal).FirstOrDefault();
+
     /// <summary>The name-derived provider's birth-year tag pattern, or null.</summary>
-    public static Regex? BirthYearTag() => Compile(Current.BySource.Values.FirstOrDefault(p => p.NameDerived)?.BirthYearTagPattern);
+    public static Regex? BirthYearTag() => Compile(FirstNameDerived()?.BirthYearTagPattern);
 
     /// <summary>The name-derived provider's pattern for pages that are not about one item, or null.</summary>
-    public static Regex? NotAnEntityTitle() => Compile(Current.BySource.Values.FirstOrDefault(p => p.NameDerived)?.NotAnEntityTitlePattern);
+    public static Regex? NotAnEntityTitle() => Compile(FirstNameDerived()?.NotAnEntityTitlePattern);
 
-    private static Regex? Compile(string? pattern) =>
-        string.IsNullOrEmpty(pattern) ? null : new Regex(pattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+    // A plugin supplies these patterns, so one that does not parse, or that runs away, must cost only its own rule, never the
+    // enrichment pass that asked. Compiled once per pattern.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex?> Compiled = new();
+
+    private static Regex? Compile(string? pattern)
+    {
+        if (string.IsNullOrEmpty(pattern)) return null;
+        return Compiled.GetOrAdd(pattern, p =>
+        {
+            try { return new Regex(p, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)); }
+            catch (ArgumentException) { return null; }
+        });
+    }
+
+    private static bool IsMatch(string pattern, string input)
+    {
+        try { return Compile(pattern)?.IsMatch(input) == true; }
+        catch (RegexMatchTimeoutException) { return false; }
+    }
+
+    private static Match? Match(string pattern, string input)
+    {
+        try { return Compile(pattern)?.Match(input); }
+        catch (RegexMatchTimeoutException) { return null; }
+    }
 
     /// <summary>The plugin id of the first name-derived provider ("" when none is installed).</summary>
     public static string NameDerivedPluginId() =>
-        Current.BySource.Values.Where(p => p.NameDerived).Select(p => p.PluginId).FirstOrDefault() ?? string.Empty;
+        Current.BySource.Values.Where(p => p.NameDerived).OrderBy(p => p.Source, StringComparer.Ordinal).Select(p => p.PluginId).FirstOrDefault() ?? string.Empty;
 
     /// <summary>The source of the first name-derived provider ("" when none is installed).</summary>
     public static string NameDerivedSource() => NameDerivedSources().FirstOrDefault() ?? string.Empty;
 
     public static string[] NameDerivedSources() =>
-        Current.BySource.Values.Where(p => p.NameDerived).Select(p => p.Source).ToArray();
+        Current.BySource.Values.Where(p => p.NameDerived).Select(p => p.Source).OrderBy(x => x, StringComparer.Ordinal).ToArray();
 
     // ── how a raw id is filed ───────────────────────────────────────────────────
 
@@ -99,7 +125,7 @@ public static class ExternalIdPolicies
 
     /// <summary>True when the provider declared this id unusable and it must not be stored.</summary>
     public static bool IsRefused(string? source, string id) =>
-        Find(source)?.RefusedIdPattern is { Length: > 0 } pattern && Regex.IsMatch(id, pattern, RegexOptions.IgnoreCase);
+        Find(source)?.RefusedIdPattern is { Length: > 0 } pattern && IsMatch(pattern, id);
 
     // ── is this id plausible for this item ──────────────────────────────────────
 
@@ -122,7 +148,7 @@ public static class ExternalIdPolicies
         var embeds = false;
         foreach (var shape in policy.IdShapes)
         {
-            if (!Regex.IsMatch(externalId, shape.Pattern, RegexOptions.IgnoreCase)) continue;
+            if (!IsMatch(shape.Pattern, externalId)) continue;
             recognized = true;
             embeds |= shape.EmbedsParentId;
             if (shape.Depths.Contains(depth)
@@ -144,8 +170,8 @@ public static class ExternalIdPolicies
         if (Find(source) is not { } policy) return null;
         foreach (var t in policy.ChildIds.Where(c => c.Depth == depth))
         {
-            var m = Regex.Match(rootId, t.RootIdPattern, RegexOptions.IgnoreCase);
-            if (!m.Success) continue;
+            var m = Match(t.RootIdPattern, rootId);
+            if (m is not { Success: true }) continue;
             if ((t.Template.Contains("{n}") && number is null) || (t.Template.Contains("{parentN}") && parentNumber is null)) continue;
             return t.Template
                 .Replace("{root}", m.Groups["root"].Value)
@@ -159,8 +185,8 @@ public static class ExternalIdPolicies
     public static (int Season, int Episode)? PositionInId(string? source, string? externalId)
     {
         if (string.IsNullOrEmpty(externalId) || Find(source)?.PositionInIdPattern is not { Length: > 0 } pattern) return null;
-        var m = Regex.Match(externalId, pattern, RegexOptions.IgnoreCase);
-        return m.Success && int.TryParse(m.Groups["season"].Value, out var s) && int.TryParse(m.Groups["episode"].Value, out var e) ? (s, e) : null;
+        var m = Match(pattern, externalId);
+        return m is { Success: true } && int.TryParse(m.Groups["season"].Value, out var s) && int.TryParse(m.Groups["episode"].Value, out var e) ? (s, e) : null;
     }
 
     /// <summary>The first position found in any of the ids (each tagged with its source).</summary>
@@ -172,7 +198,7 @@ public static class ExternalIdPolicies
     {
         if (string.IsNullOrEmpty(externalId) || Find(source) is not { } policy) return null;
         foreach (var (family, pattern) in policy.FamilyIdPatterns)
-            if (Regex.IsMatch(externalId, pattern, RegexOptions.IgnoreCase)) return family;
+            if (IsMatch(pattern, externalId)) return family;
         return null;
     }
 
