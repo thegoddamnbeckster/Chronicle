@@ -223,7 +223,9 @@ namespace Chronicle.API.DTOs
     public record UpdateLibraryRequestDto(
         string? Status,
         int? UserRating,
-        string? Notes
+        string? Notes,
+        /// <summary>True removes the rating. Needed because leaving <c>UserRating</c> out means "leave it as it is".</summary>
+        bool ClearRating = false
     );
 
     public record ResetWatchProgressRequestDto(bool ApplyToAllUsers = false);

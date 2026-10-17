@@ -3,7 +3,7 @@ using Chronicle.Core.Models;
 namespace Chronicle.Services
 {
     public record AddToLibraryRequest(int MediaItemId, LibraryStatus Status = LibraryStatus.PlanToWatch);
-    public record UpdateLibraryRequest(LibraryStatus? Status, int? UserRating, string? Notes);
+    public record UpdateLibraryRequest(LibraryStatus? Status, int? UserRating, string? Notes, bool ClearRating = false);
 
     public enum LibrarySortField { Name, Year, DateAdded, Rating, Status }
 

@@ -387,7 +387,7 @@ namespace Chronicle.API.Controllers
 
             try
             {
-                var entry = await _libraryService.UpdateAsync(userId, id, new UpdateLibraryRequest(parsedStatus, request.UserRating, request.Notes));
+                var entry = await _libraryService.UpdateAsync(userId, id, new UpdateLibraryRequest(parsedStatus, request.UserRating, request.Notes, request.ClearRating));
 
                 var fallbackPoster = await GetFallbackPosterIfNeededAsync(entry.MediaItem, ct);
                 return Ok(ApiResponse<LibraryEntryDto>.Ok(ToDto(entry, fallbackPosterUrl: fallbackPoster)));

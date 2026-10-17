@@ -196,6 +196,25 @@ namespace Chronicle.Tests.Integration
         }
 
         [Fact]
+        public async Task UpdateLibraryEntry_ARatingCanBeSet_LeftAloneWhenOmitted_AndCleared()
+        {
+            var (client, mediaId) = await SetupAsync();
+            var addResp = await client.PostAsJsonAsync("/api/v1/library", new { mediaItemId = mediaId, status = "PlanToWatch" });
+            var entryId = JsonDocument.Parse(await addResp.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("data").GetProperty("id").GetInt32();
+
+            async Task<JsonElement> PatchAsync(object body) =>
+                JsonDocument.Parse(await (await client.PatchAsJsonAsync($"/api/v1/library/{entryId}", body)).Content.ReadAsStringAsync())
+                    .RootElement.GetProperty("data");
+
+            (await PatchAsync(new { userRating = 7 })).GetProperty("userRating").GetInt32().Should().Be(7);
+            // a change of status says nothing about the rating
+            (await PatchAsync(new { status = "Completed" })).GetProperty("userRating").GetInt32().Should().Be(7);
+            // "Not rated" has to be said outright: leaving the rating out means leave it
+            (await PatchAsync(new { clearRating = true })).GetProperty("userRating").ValueKind.Should().Be(JsonValueKind.Null);
+        }
+
+        [Fact]
         public async Task UpdateLibraryEntry_InvalidStatus_Returns400()
         {
             var (client, mediaId) = await SetupAsync();

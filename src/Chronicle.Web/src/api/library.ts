@@ -116,7 +116,7 @@ export async function addToLibrary(mediaItemId: number, status: LibraryStatus = 
 
 export async function updateLibraryEntry(
   id: number,
-  payload: { status?: LibraryStatus; userRating?: number; notes?: string },
+  payload: { status?: LibraryStatus; userRating?: number; clearRating?: boolean; notes?: string },
 ): Promise<LibraryEntry> {
   const { data } = await client.patch<ApiResponse<LibraryEntry>>(`/library/${id}`, payload)
   if (!data.success || !data.data) throw new Error(data.error?.message ?? 'Failed to update entry')

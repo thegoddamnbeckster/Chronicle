@@ -202,8 +202,8 @@ export default function MediaDetailPage() {
   })
 
   const updateMut = useMutation({
-    mutationFn: ({ status, rating }: { status?: LibraryStatus; rating?: number }) =>
-      updateLibraryEntry(libraryEntry!.id, { status, userRating: rating }),
+    mutationFn: ({ status, rating, clearRating }: { status?: LibraryStatus; rating?: number; clearRating?: boolean }) =>
+      updateLibraryEntry(libraryEntry!.id, { status, userRating: rating, clearRating }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
   })
 
@@ -1353,7 +1353,7 @@ export default function MediaDetailPage() {
                     className={styles.stripSelect}
                     value={libraryEntry.userRating ?? ''}
                     onChange={e =>
-                      updateMut.mutate({ rating: e.target.value ? Number(e.target.value) : undefined })
+                      updateMut.mutate(e.target.value ? { rating: Number(e.target.value) } : { clearRating: true })
                     }
                   >
                     <option value="">Not rated</option>

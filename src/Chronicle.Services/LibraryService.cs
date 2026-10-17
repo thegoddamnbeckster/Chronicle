@@ -391,7 +391,17 @@ namespace Chronicle.Services
                     entry.CompletedAt = DateTime.UtcNow;
             }
 
-            if (request.UserRating.HasValue) entry.UserRating = request.UserRating;
+            // A rating changed here is the newest word on it (a later sync of an older rating must not put it back), so it is stamped.
+            if (request.ClearRating)
+            {
+                entry.UserRating = null;
+                entry.UserRatingUpdatedAt = DateTime.UtcNow;
+            }
+            else if (request.UserRating.HasValue)
+            {
+                entry.UserRating = request.UserRating;
+                entry.UserRatingUpdatedAt = DateTime.UtcNow;
+            }
             if (request.Notes != null) entry.Notes = request.Notes;
 
             entry.UpdatedAt = DateTime.UtcNow;
