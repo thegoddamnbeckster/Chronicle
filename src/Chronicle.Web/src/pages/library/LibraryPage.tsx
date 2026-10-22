@@ -282,6 +282,10 @@ export default function LibraryPage() {
   // section hasn't loaded that card (collapsed, or on another page), look up which section it
   // belongs to and open that section whole so the card exists to scroll to.
   const locatedFor = useRef<number | null>(null)
+  // The visit (navigation) that has already been scrolled to its #media-<id> target. The hash stays in the address while the
+  // person browses on, and this effect re-runs on every data refresh (a watch in progress refreshes the library every few
+  // seconds): without this it pulled the page back to that item each time, mid-scroll.
+  const scrolledFor = useRef<string | null>(null)
   useEffect(() => {
     if (isLoading || sectionsLoading) return
     const hash = location.hash  // e.g. "#media-42"
@@ -324,12 +328,14 @@ export default function LibraryPage() {
     })
 
     // Scroll after images have had time to load -- instant behavior avoids
-    // mid-animation layout shifts from lazy-loaded posters above the target.
+    // mid-animation layout shifts from lazy-loaded posters above the target. Once per visit, never again on later refreshes.
+    const visit = `${location.key}|${targetId}`
+    if (scrolledFor.current === visit) return
     const timer = setTimeout(() => {
-      document.getElementById(`media-${targetId}`)?.scrollIntoView({
-        behavior: 'instant',
-        block: 'center',
-      })
+      const card = document.getElementById(`media-${targetId}`)
+      if (!card) return
+      card.scrollIntoView({ behavior: 'instant', block: 'center' })
+      scrolledFor.current = visit
     }, 500)
     return () => clearTimeout(timer)
   }, [isLoading, sectionsLoading, location.hash, grouped])

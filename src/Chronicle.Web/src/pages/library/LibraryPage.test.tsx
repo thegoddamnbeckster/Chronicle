@@ -362,4 +362,22 @@ describe('LibraryPage', () => {
     expect(mockedGetEntryForMedia).toHaveBeenCalledWith(target.mediaItem.id)
     expect(mockedGetSectionPage).toHaveBeenLastCalledWith(expect.objectContaining({ perPage: 0 }))
   })
+
+  it('scrolls to a #media-<id> target once, and does not pull the page back when the library refreshes', async () => {
+    // Live (2026-10-22): browsing anime movies was choppy and kept dumping the user back around Harry Potter, the item whose
+    // #media-<id> was still in the address; every library refresh while a film played re-ran the scroll.
+    const entries = Array.from({ length: 5 }, (_, i) => makeEntry({}, { name: `Film ${i}` }))
+    installLibraryHandlers(entries)
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    const { queryClient } = await import('@/test/test-utils').then(m => ({ queryClient: m.createTestQueryClient() }))
+
+    renderWithProviders(<LibraryPage />, { initialEntries: [`/library#media-${entries[2].mediaItem.id}`], queryClient })
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1), { timeout: 3000 })
+
+    await queryClient.invalidateQueries({ queryKey: ['library'] })
+    await new Promise(r => setTimeout(r, 900))
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+  })
 })
