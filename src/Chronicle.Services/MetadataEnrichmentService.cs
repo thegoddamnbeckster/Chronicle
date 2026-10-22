@@ -3706,22 +3706,20 @@ public class MetadataEnrichmentService(
         catch (System.Text.Json.JsonException) { return []; }
     }
 
-    internal static bool IsSameEntityPair(IEnumerable<SameEntityGroup> groups, MediaItem a, MediaItem b)
+    internal static bool IsSameEntityPair(IEnumerable<SameEntityGroup> groups, MediaItem a, MediaItem b) =>
+        IsSameEntityPair(groups, a.MediaType?.Name, a.HierarchyLevel, a.NormalizedNameLoose ?? a.NormalizedName,
+            b.MediaType?.Name, b.HierarchyLevel, b.NormalizedNameLoose ?? b.NormalizedName);
+
+    private static bool IsSameEntityPair(IEnumerable<SameEntityGroup> groups,
+        string? typeA, int levelA, string? nameA, string? typeB, int levelB, string? nameB)
     {
-        var typeA = a.MediaType?.Name;
-        var typeB = b.MediaType?.Name;
         if (typeA is null || typeB is null || string.Equals(typeA, typeB, StringComparison.OrdinalIgnoreCase)) return false;
         foreach (var group in groups)
         {
-            if (a.HierarchyLevel != group.Level || b.HierarchyLevel != group.Level) continue;
+            if (levelA != group.Level || levelB != group.Level) continue;
             if (!group.MediaTypes.Contains(typeA, StringComparer.OrdinalIgnoreCase) ||
                 !group.MediaTypes.Contains(typeB, StringComparer.OrdinalIgnoreCase)) continue;
-            if (group.RequireSameName)
-            {
-                var na = a.NormalizedNameLoose ?? a.NormalizedName;
-                var nb = b.NormalizedNameLoose ?? b.NormalizedName;
-                if (string.IsNullOrEmpty(na) || na != nb) continue;
-            }
+            if (group.RequireSameName && (string.IsNullOrEmpty(nameA) || nameA != nameB)) continue;
             return true;
         }
         return false;
@@ -3737,8 +3735,17 @@ public class MetadataEnrichmentService(
     {
         var groups = await LoadSameEntityGroupsAsync(db, ct);
         if (groups.Count == 0) return [];
-        if (item.MediaType is null)
-            item.MediaType = await db.MediaTypes.AsNoTracking().FirstAsync(t => t.Id == item.MediaTypeId, ct);
+
+        // Only an item whose type and level are in a group can have a partner: answer nothing at once for everything else (a
+        // TV episode, a track, a film), before any candidate query -- this runs on every media item page.
+        var typeInfo = item.MediaType is { } loaded
+            ? new { loaded.Name, loaded.IsPersonType }
+            : await db.MediaTypes.AsNoTracking().Where(t => t.Id == item.MediaTypeId)
+                .Select(t => new { t.Name, t.IsPersonType }).FirstOrDefaultAsync(ct);
+        if (typeInfo is null) return [];
+        if (!groups.Any(g => g.Level == item.HierarchyLevel && g.MediaTypes.Contains(typeInfo.Name, StringComparer.OrdinalIgnoreCase)))
+            return [];
+
         var loose = item.NormalizedNameLoose ?? item.NormalizedName;
         if (string.IsNullOrEmpty(loose)) return [];
 
@@ -3746,11 +3753,12 @@ public class MetadataEnrichmentService(
                 .Where(m => m.Id != item.Id && m.HierarchyLevel == item.HierarchyLevel
                             && (m.NormalizedNameLoose == loose || (m.NormalizedNameLoose == null && m.NormalizedName == loose)))
                 .ToListAsync(ct))
-            .Where(m => IsSameEntityPair(groups, item, m))
+            .Where(m => IsSameEntityPair(groups, typeInfo.Name, item.HierarchyLevel, loose,
+                m.MediaType?.Name, m.HierarchyLevel, m.NormalizedNameLoose ?? m.NormalizedName))
             .ToList();
         if (candidates.Count == 0) return [];
 
-        var personSide = item.MediaType.IsPersonType;
+        var personSide = typeInfo.IsPersonType;
         var counterparts = candidates.Where(c => (c.MediaType?.IsPersonType ?? false) != personSide).ToList();
         if (counterparts.Count == 0) return [];
 

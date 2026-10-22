@@ -165,11 +165,6 @@ namespace Chronicle.API.Controllers
         /// there via GetPeople's own ordinary page/perPage -- GetPeople no longer needs to know
         /// about jumping at all.
         /// </summary>
-        /// <summary>
-        /// Where one person sits in the People list (the default, unfiltered order the People page uses) and who is either
-        /// side of them, so a person's page has Prev/Next even when it was not opened from that list (a search, an author
-        /// link, a bookmark). Null ids at either end; index/total are 0-based and a count. 404 for a non-person.
-        /// </summary>
         [HttpGet("{id:int}/neighbors")]
         public async Task<IActionResult> GetNeighbors(int id, CancellationToken ct = default)
         {
@@ -298,6 +293,7 @@ namespace Chronicle.API.Controllers
         /// <summary>Hides one photo from the person's gallery (all size variants of it). Kept as a hidden row rather
         /// than deleted, so the next metadata refresh cannot re-add it. The photo currently shown cannot be hidden.</summary>
         [HttpPost("{id:int}/headshots/{headshotId:int}/hide")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> HideHeadshot(int id, int headshotId, CancellationToken ct)
         {
             var posterUrl = await _context.MediaItems
@@ -315,6 +311,7 @@ namespace Chronicle.API.Controllers
 
         /// <summary>Makes every hidden photo of the person visible again.</summary>
         [HttpPost("{id:int}/headshots/restore")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> RestoreHeadshots(int id, CancellationToken ct)
         {
             var restored = await HeadshotGallery.RestoreAllAsync(_context, id, ct);

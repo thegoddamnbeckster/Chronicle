@@ -91,11 +91,55 @@ public class ReleaseYearTests
         Assert.Equal("Biomancer 2", doc.GetProperty("hardcover").GetProperty("title").GetString());
     }
 
+    [Theory]
+    [InlineData("{\"hardcover\":{\"year\":99999999999,\"title\":\"x\"}}")]
+    [InlineData("{\"hardcover\":{\"year\":2022.5,\"title\":\"x\"}}")]
+    [InlineData("{\"hardcover\":{\"year\":-20,\"title\":\"x\"}}")]
+    public void ScrubMetadataJson_NeverThrows_OnANumberThatIsNotAnOrdinaryYear(string json)
+    {
+        // a poison row used to throw and stop the whole repair at that item
+        var clean = ReleaseYear.ScrubMetadataJson(json)!;
+
+        Assert.Equal(System.Text.Json.JsonValueKind.Null,
+            System.Text.Json.JsonDocument.Parse(clean).RootElement.GetProperty("hardcover").GetProperty("year").ValueKind);
+    }
+
     [Fact]
     public void ScrubMetadataJson_LeavesCleanDataAlone()
     {
         Assert.Null(ReleaseYear.ScrubMetadataJson("{\"tmdb\":{\"year\":2022}}"));
         Assert.Null(ReleaseYear.ScrubMetadataJson(null));
         Assert.Null(ReleaseYear.ScrubMetadataJson("{\"tmdb\":{\"title\":\"x\"}}"));
+    }
+
+    [Fact]
+    public async Task Repair_CleansStoredPluginYearsOnce_ThenLeavesTheBlobsAlone()
+    {
+        var db = new ChronicleDbContext(new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        await using var _ = db;
+        db.MediaTypes.Add(new MediaType { Id = 1, Name = "books", DisplayName = "Books", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+        MediaItem Item(string name, string json) => new()
+        {
+            MediaTypeId = 1, Name = name, HierarchyLevel = 0, MetadataJson = json, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        var bad = Item("Biomancer 2", "{\"hardcover\":{\"year\":20222,\"title\":\"Biomancer 2\"}}");
+        db.MediaItems.AddRange(bad, Item("Fine", "{\"hardcover\":{\"year\":2022}}"));
+        await db.SaveChangesAsync();
+        var services = new ServiceCollection().AddSingleton(db).BuildServiceProvider();
+        var svc = new ImplausibleYearRepairService(services.GetRequiredService<IServiceScopeFactory>(), NullLogger<ImplausibleYearRepairService>.Instance);
+
+        await svc.ExecuteAsync(default);
+
+        Assert.DoesNotContain("20222", (await db.MediaItems.AsNoTracking().SingleAsync(m => m.Id == bad.Id)).MetadataJson);
+        Assert.Contains("2022", (await db.MediaItems.AsNoTracking().SingleAsync(m => m.Name == "Fine")).MetadataJson);
+        Assert.True(await db.AppSettings.AnyAsync(a => a.Key == ImplausibleYearRepairService.ScrubMarkerKey));
+
+        // a later run does not read the blobs again (new writes are checked as they are stored), so it leaves this one
+        var later = await db.MediaItems.SingleAsync(m => m.Id == bad.Id);
+        later.MetadataJson = "{\"hardcover\":{\"year\":20222}}";
+        await db.SaveChangesAsync();
+        await svc.ExecuteAsync(default);
+        Assert.Contains("20222", (await db.MediaItems.AsNoTracking().SingleAsync(m => m.Id == bad.Id)).MetadataJson);
     }
 }

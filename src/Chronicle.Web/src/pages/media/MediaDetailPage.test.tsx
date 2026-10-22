@@ -591,6 +591,17 @@ describe('MediaDetailPage: an author who is also a person', () => {
     expect(screen.queryByRole('button', { name: /← Back/ })).not.toBeInTheDocument()
   })
 
+  it("embedded, it does not store the host page's Prev/Next list as its own", async () => {
+    sessionStorage.clear()
+    mockedGetMedia.mockResolvedValue(makeItem())
+    renderWithProviders(<MediaDetailPage embeddedId={42} />, {
+      initialEntries: [{ pathname: '/people/900', state: { listIds: [1, 2, 3], listLabel: 'People' } }],
+    })
+
+    expect(await screen.findByText('Test Movie')).toBeInTheDocument()
+    expect(sessionStorage.getItem('chronicle.listNav.42')).toBeNull()
+  })
+
   it('does not redirect an item with no linked person', async () => {
     renderMediaDetailPage()
 

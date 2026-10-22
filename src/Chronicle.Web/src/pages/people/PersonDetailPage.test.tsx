@@ -40,9 +40,9 @@ function person(): MediaItem {
   } as MediaItem
 }
 
-function setUser(showAllCredits: boolean) {
+function setUser(showAllCredits: boolean, isAdmin = false) {
   vi.mocked(useAuth).mockReturnValue({
-    user: { ...USER, showAllCredits }, loading: false, logout: vi.fn(), setUser: vi.fn(),
+    user: { ...USER, showAllCredits, isAdmin }, loading: false, logout: vi.fn(), setUser: vi.fn(),
   })
 }
 
@@ -128,6 +128,17 @@ describe('PersonDetailPage photo gallery: hiding a wrong photo', () => {
   beforeEach(() => {
     vi.mocked(peopleApi.hidePersonHeadshot).mockResolvedValue()
     vi.mocked(peopleApi.restorePersonHeadshots).mockResolvedValue()
+    setUser(false, true)          // hiding and restoring photos is an admin action (the server enforces it too)
+  })
+
+  it('offers no Hide or Restore to a person who is not an administrator', async () => {
+    setUser(false, false)
+    vi.mocked(peopleApi.getPersonHeadshots).mockResolvedValue([photo(1, { isCurrent: true }), photo(2), photo(3, { isHidden: true })])
+    renderPage()
+
+    await screen.findByText('Photos')
+    expect(screen.queryByRole('button', { name: /hide this photo/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /restore hidden/i })).not.toBeInTheDocument()
   })
 
   it('asks for hidden photos too, so it can offer to bring them back', async () => {

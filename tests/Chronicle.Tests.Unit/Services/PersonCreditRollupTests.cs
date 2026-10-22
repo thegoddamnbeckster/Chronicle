@@ -92,6 +92,9 @@ public class PersonCreditRollupTests
     [InlineData("Captain Gabriel Lorca|The Emperor|Captain Gabriel Lorca", "Captain Gabriel Lorca / The Emperor")]
     [InlineData("James Hook / George Darling|Mr. Darling|Captain Hook", "James Hook / George Darling / Mr. Darling / Captain Hook")]
     [InlineData("Volmer|Volmer", "Volmer")]
+    [InlineData("Dan|Jordan", "Dan / Jordan")]
+    [InlineData("Ann|Hannah", "Ann / Hannah")]
+    [InlineData("Al|Alfred Pennyworth", "Al / Alfred Pennyworth")]
     public void MergeCharacters_KeepsOnePartPerCharacter_PreferringTheFullerSpelling(string joined, string expected) =>
         Assert.Equal(expected, PersonCreditRollup.MergeCharacters(joined.Split('|')));
 

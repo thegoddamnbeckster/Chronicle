@@ -253,7 +253,7 @@ const SectionCards = memo(function SectionCards({ entries, typeName, selectMode,
   revealId: number | null
   /** Rows the section has in all, and a request for more of them when the ones fetched so far are all on screen. */
   totalCount: number
-  onNeedMore: (typeName: string) => void
+  onNeedMore: (typeName: string, totalCount: number) => void
   onToggleSelected: (mediaId: number) => void
   onStatusChange: (entryId: number, status: LibraryStatus) => void
   onRemove: (entryId: number) => void
@@ -277,11 +277,11 @@ const SectionCards = memo(function SectionCards({ entries, typeName, selectMode,
     const observer = new IntersectionObserver(found => {
       if (!found.some(f => f.isIntersecting)) return
       if (shown < entries.length) setShown(prev => prev + MORE_CARDS)
-      else onNeedMore(typeName)
+      else onNeedMore(typeName, totalCount)
     }, { rootMargin: '1500px 0px' })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [hasMore, shown, canObserve, entries.length, onNeedMore, typeName])
+  }, [hasMore, shown, canObserve, entries.length, onNeedMore, typeName, totalCount])
 
   return (
     <>
@@ -439,8 +439,11 @@ export default function LibraryPage() {
   const { mutate: mutateStatus } = updateMut
   const { mutate: mutateRemove } = removeMut
   const changeStatus = useCallback((entryId: number, status: LibraryStatus) => mutateStatus({ id: entryId, status }), [mutateStatus])
-  const growFetchLimit = useCallback((typeName: string) => {
-    setFetchLimit(prev => ({ ...prev, [typeName]: (prev[typeName] ?? FIRST_FETCH) * 2 }))
+  const growFetchLimit = useCallback((typeName: string, totalCount: number) => {
+    setFetchLimit(prev => {
+      const current = prev[typeName] ?? FIRST_FETCH
+      return current >= totalCount ? prev : { ...prev, [typeName]: Math.min(current * 2, totalCount) }
+    })
   }, [])
   const removeEntry = useCallback((entryId: number) => {
     if (confirm('Remove from library?')) mutateRemove(entryId)
@@ -493,12 +496,14 @@ export default function LibraryPage() {
   const grouped = useMemo(() => {
     const map = new Map<string, LibraryEntry[]>()
     orderedSections.forEach((sec, i) => {
-      const rows = sectionResults[i]?.data
-      if (rows) lastRows.current.set(sec.name, rows)
-      map.set(sec.name, rows ?? lastRows.current.get(sec.name) ?? [])
+      map.set(sec.name, sectionResults[i]?.data ?? lastRows.current.get(sec.name) ?? [])
     })
     return map
   }, [orderedSections, sectionResults.map(r => `${r.dataUpdatedAt}:${r.data ? 1 : 0}`).join(',')])
+  // remembered after the render, so rendering itself stays free of side effects
+  useEffect(() => {
+    grouped.forEach((rows, name) => { if (rows.length > 0) lastRows.current.set(name, rows) })
+  }, [grouped])
   const sectionsLoading = sectionResults.some(r => r.isLoading)
 
   const location = useLocation()

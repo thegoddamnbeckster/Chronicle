@@ -42,18 +42,27 @@ public static class ReleaseYear
             ? date : null;
 
     private static readonly System.Text.RegularExpressions.Regex YearFieldRe =
-        new(@"""year""\s*:\s*(-?\d+)", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"""year""\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
     /// A stored metadata document with every impossible "year" (in a plugin's blob or the resolved one) set to null, or
     /// null when nothing needed changing. Plugin blobs written before years were validated keep their bad value otherwise.
     /// </summary>
+    /// <summary>A JSON number that is not a plausible whole year: out of range, fractional, or too big for an int. Never throws.</summary>
+    private static bool YearIsImpossible(System.Text.Json.Nodes.JsonNode yv)
+    {
+        if (yv.GetValueKind() != System.Text.Json.JsonValueKind.Number) return false;
+        var element = yv.GetValue<System.Text.Json.JsonElement>();
+        return !(element.TryGetInt64(out var whole) && whole is >= int.MinValue and <= int.MaxValue && IsPlausible((int)whole));
+    }
+
     public static string? ScrubMetadataJson(string? metadataJson)
     {
         if (string.IsNullOrEmpty(metadataJson)) return null;
         var bad = false;
         foreach (System.Text.RegularExpressions.Match m in YearFieldRe.Matches(metadataJson))
-            if (long.TryParse(m.Groups[1].Value, out var y) && (y > int.MaxValue || !IsPlausible((int)y))) { bad = true; break; }
+            if (!double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var y)
+                || y != Math.Floor(y) || y > int.MaxValue || y < int.MinValue || !IsPlausible((int)y)) { bad = true; break; }
         if (!bad) return null;
 
         var root = System.Text.Json.Nodes.JsonNode.Parse(metadataJson) as System.Text.Json.Nodes.JsonObject;
@@ -62,7 +71,7 @@ public static class ReleaseYear
         foreach (var (_, blob) in root)
         {
             if (blob is not System.Text.Json.Nodes.JsonObject o || !o.TryGetPropertyValue("year", out var yv) || yv is null) continue;
-            if (yv.GetValueKind() == System.Text.Json.JsonValueKind.Number && !IsPlausible(yv.GetValue<int?>()))
+            if (YearIsImpossible(yv))
             {
                 o["year"] = null;
                 changed = true;

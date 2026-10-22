@@ -71,7 +71,8 @@ export default function MediaDetailPage({ embeddedId, embeddedPosterUrl }: { emb
   const { user } = useAuth()
   const isAdmin = user?.isAdmin ?? false
 
-  const navState = (location.state as { listIds?: number[]; listLabel?: string } | null) ?? null
+  // An embedded record is drawn inside another page: that page's router state (its own Prev/Next list) is not this record's.
+  const navState = embedded ? null : (location.state as { listIds?: number[]; listLabel?: string } | null) ?? null
 
   // Persist navigation state so breadcrumb / up-button navigation (which carries no state) can restore it.
   // Wrapped in try/catch: large libraries can exceed the sessionStorage quota and would otherwise crash.

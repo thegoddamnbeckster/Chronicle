@@ -13,6 +13,9 @@ public sealed class ImplausibleYearRepairService(
     IServiceScopeFactory scopeFactory,
     ILogger<ImplausibleYearRepairService> logger)
 {
+    /// <summary>app_settings key written once the stored plugin results have been cleaned of impossible years.</summary>
+    public const string ScrubMarkerKey = "maintenance.plugin_year_scrub_v1";
+
     public async Task ExecuteAsync(CancellationToken ct)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -29,8 +32,11 @@ public sealed class ImplausibleYearRepairService(
         var fixedCount = items.Count;
 
         // The years stored inside plugin results (a provider's own typo, e.g. 20222) too: they feed the item's resolved year.
+        // A full pass reads every item's metadata (hundreds of MB), so it runs ONCE: from then on a plugin result is checked as
+        // it is written (MetadataEnrichmentService.MergeMetadata), and the marker below records that the old data was cleaned.
         int scrubbed = 0, lastId = 0;
-        while (true)
+        var done = await db.AppSettings.AsNoTracking().AnyAsync(a => a.Key == ScrubMarkerKey, ct);
+        while (!done)
         {
             ct.ThrowIfCancellationRequested();
             var batch = await db.MediaItems.AsNoTracking()
@@ -51,6 +57,11 @@ public sealed class ImplausibleYearRepairService(
             }
             await db.SaveChangesAsync(ct);
             db.ChangeTracker.Clear();
+        }
+        if (!done)
+        {
+            db.AppSettings.Add(new Chronicle.Core.Models.AppSetting { Key = ScrubMarkerKey, Value = DateTime.UtcNow.ToString("O") });
+            await db.SaveChangesAsync(ct);
         }
 
         logger.LogInformation("Implausible year repair: cleared the year on {Count} item(s) and in the stored plugin data of {Scrubbed}", fixedCount, scrubbed);

@@ -923,8 +923,8 @@ namespace Chronicle.API.Controllers
         }
 
         /// <summary>
-        /// For each plugin whose match on this item was refused because another item already holds the id (the stored
-        /// reason names it), who that other item is -- so the page can say "already in Chronicle as X" and link to it.
+        /// The other record(s) for the same real-world entity as this item (an author's People record, a person's author
+        /// records), so the page can show them as one. Null when there is no unambiguous partner.
         /// </summary>
         private async Task<List<LinkedItemDto>?> GetLinkedItemsAsync(MediaItem item, CancellationToken ct)
         {
@@ -934,6 +934,10 @@ namespace Chronicle.API.Controllers
                 : partners.Select(p => new LinkedItemDto(p.Id, p.Name, p.MediaType?.DisplayName ?? string.Empty, p.MediaType?.IsPersonType ?? false)).ToList();
         }
 
+        /// <summary>
+        /// For each plugin whose match on this item was refused because another item already holds the id (the stored
+        /// reason names it), who that other item is -- so the page can say "already in Chronicle as X" and link to it.
+        /// </summary>
         private async Task<Dictionary<string, EnrichmentConflictDto>?> GetEnrichmentConflictsAsync(int mediaItemId, CancellationToken ct)
         {
             var refused = await _context.MediaEnrichments

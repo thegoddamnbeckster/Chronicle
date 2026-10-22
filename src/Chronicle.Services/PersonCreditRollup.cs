@@ -20,20 +20,27 @@ public static class PersonCreditRollup
         foreach (var c in credits)
             if (c.MediaItem is { } m) known[m.Id] = m;
 
-        async Task<MediaItem> RootAsync(MediaItem item)
+        // An episode or season climbs to its show. The parents are loaded a level at a time with one query per level
+        // (an episode's season, then the season's show), not one query per credit.
+        static bool Climbs(MediaItem m) =>
+            m.HierarchyLevel > 0 && m.ParentId != null && MediaTypeRegistry.IsShowLike(m.MediaType?.Name);
+
+        var frontier = known.Values.Where(Climbs).Select(m => m.ParentId!.Value).Where(id => !known.ContainsKey(id)).Distinct().ToList();
+        for (var depth = 0; depth < 5 && frontier.Count > 0; depth++)
+        {
+            var loaded = new List<MediaItem>();
+            foreach (var chunk in frontier.Chunk(400))
+                loaded.AddRange(await db.MediaItems.AsNoTracking().Include(m => m.MediaType)
+                    .Where(m => chunk.Contains(m.Id)).ToListAsync(ct));
+            foreach (var m in loaded) known[m.Id] = m;
+            frontier = loaded.Where(Climbs).Select(m => m.ParentId!.Value).Where(id => !known.ContainsKey(id)).Distinct().ToList();
+        }
+
+        MediaItem RootOf(MediaItem item)
         {
             var seen = new HashSet<int>();
-            while (item.HierarchyLevel > 0 && item.ParentId is int parentId
-                   && MediaTypeRegistry.IsShowLike(item.MediaType?.Name) && seen.Add(item.Id))
-            {
-                if (!known.TryGetValue(parentId, out var parent))
-                {
-                    parent = await db.MediaItems.AsNoTracking().Include(m => m.MediaType).FirstOrDefaultAsync(m => m.Id == parentId, ct);
-                    if (parent is null) break;
-                    known[parent.Id] = parent;
-                }
+            while (Climbs(item) && seen.Add(item.Id) && known.TryGetValue(item.ParentId!.Value, out var parent))
                 item = parent;
-            }
             return item;
         }
 
@@ -42,7 +49,7 @@ public static class PersonCreditRollup
         {
             if (c.MediaItem is null) continue;
             // "Cast" and "Actor" are the same role spelled two ways across sources.
-            resolved.Add((c.Role == "Cast" ? "Actor" : c.Role, await RootAsync(c.MediaItem), c.CharacterName));
+            resolved.Add((c.Role == "Cast" ? "Actor" : c.Role, RootOf(c.MediaItem), c.CharacterName));
         }
 
         return resolved
@@ -74,7 +81,9 @@ public static class PersonCreditRollup
         var kept = new List<(string Raw, string Key)>();
         foreach (var p in parts.OrderByDescending(p => p.Key.Length).ThenByDescending(p => p.Raw.Length))
         {
-            var covered = kept.FindIndex(k => k.Key.Contains(p.Key, StringComparison.Ordinal));
+            // covered only as WHOLE WORDS ("Captain Gabriel Lorca" inside "USS Discovery Captain Gabriel Lorca"): a plain substring
+            // would drop "Dan" next to "Jordan" and "Ann" next to "Hannah", which are different parts
+            var covered = kept.FindIndex(k => (" " + k.Key + " ").Contains(" " + p.Key + " ", StringComparison.Ordinal));
             if (covered < 0) kept.Add(p);
         }
         // keep the order the names first appeared in

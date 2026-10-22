@@ -447,7 +447,7 @@ export default function PersonDetailPage() {
               <div className={styles.photosHeader}>
                 <h2 className={styles.creditGroupTitle}>Photos</h2>
                 <div className={styles.photosActions}>
-                  {hiddenCount > 0 && (
+                  {isAdmin && hiddenCount > 0 && (
                     <button
                       type="button"
                       className={styles.resetPhotoBtn}
@@ -482,7 +482,7 @@ export default function PersonDetailPage() {
                       <PosterImage posterUrl={h.thumbnailUrl ?? h.url} name={person.name} lazy />
                       {h.isCurrent && <span className={styles.photoCurrentBadge}>Current</span>}
                     </button>
-                    {!h.isCurrent && (
+                    {isAdmin && !h.isCurrent && (
                       <button
                         type="button"
                         className={styles.photoHideBtn}

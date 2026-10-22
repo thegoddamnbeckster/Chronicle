@@ -29,11 +29,14 @@ namespace Chronicle.API.Controllers
                 | System.Text.RegularExpressions.RegexOptions.Compiled);
 
         private readonly Chronicle.Services.Live.LibraryChangeFeed _changeFeed;
+        private readonly ILogger<LibraryController> _log;
 
         public LibraryController(ILibraryService libraryService, ChronicleDbContext context, IUserService userService,
-            IMovieCollectionService movieCollectionService, Chronicle.Services.Live.LibraryChangeFeed changeFeed)
+            IMovieCollectionService movieCollectionService, Chronicle.Services.Live.LibraryChangeFeed changeFeed,
+            ILogger<LibraryController> log)
         {
             _changeFeed = changeFeed;
+            _log = log;
             _libraryService = libraryService;
             _context = context;
             _userService = userService;
@@ -163,7 +166,14 @@ namespace Chronicle.API.Controllers
 
             var phase = System.Diagnostics.Stopwatch.StartNew();
             var phases = new List<string>();
-            void Mark(string name) { phases.Add($"{name} {phase.ElapsedMilliseconds}ms"); phase.Restart(); }
+            long totalMs = 0;
+            void Mark(string name)
+            {
+                var ms = phase.ElapsedMilliseconds;
+                totalMs += ms;
+                phases.Add($"{name} {ms}ms");
+                phase.Restart();
+            }
             var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, includeMoviesInCollections, includeStubs, ct, mediaTypeId, sort);
 
             // Batch-fetch descendant MetadataJson for all root items in two queries
@@ -291,8 +301,8 @@ namespace Chronicle.API.Controllers
             }).ToList();
 
             Mark("dto");
-            if (phases.Sum(p => long.Parse(p.Split(' ')[^1].Replace("ms", ""))) > 1000)
-                Serilog.Log.Information("Slow library page ({Rows} rows, perPage {PerPage}, type {Type}): {Phases}", dtos.Count, perPage, mediaTypeId, string.Join(", ", phases));
+            if (totalMs > 1000)
+                _log.LogInformation("Slow library page ({Rows} rows, perPage {PerPage}, type {Type}): {Phases}", dtos.Count, perPage, mediaTypeId, string.Join(", ", phases));
             return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }
 
