@@ -13,6 +13,15 @@ vi.mock('@/api/library')
 vi.mock('@/api/media')
 vi.mock('@/api/mediaRights')
 
+// Counts how many times each poster renders, to prove that an unrelated change does not re-render every card on the page.
+const posterRenders = vi.hoisted(() => ({} as Record<string, number>))
+vi.mock('@/components/PosterImage', () => ({
+  PosterImage: ({ name }: { name: string }) => {
+    posterRenders[name] = (posterRenders[name] ?? 0) + 1
+    return <div data-testid="poster" data-name={name} />
+  },
+}))
+
 const mockedGetSections = vi.mocked(libraryApi.getLibrarySections)
 const mockedGetSectionPage = vi.mocked(libraryApi.getLibrarySectionPage)
 const mockedGetEntryForMedia = vi.mocked(libraryApi.getLibraryEntryForMedia)
@@ -379,5 +388,23 @@ describe('LibraryPage', () => {
     await new Promise(r => setTimeout(r, 900))
 
     expect(scrollIntoView).toHaveBeenCalledTimes(1)
+  })
+
+  it('closing one section does not re-render the cards of the others', async () => {
+    // Live (2026-10-22): closing the Anime fold took seconds on a phone because every card on the page re-rendered.
+    const movies = Array.from({ length: 5 }, (_, i) => makeEntry({}, { name: `Movie ${i}`, mediaTypeName: 'Movies' }))
+    const anime = Array.from({ length: 3 }, (_, i) => makeEntry({}, { name: `Anime ${i}`, mediaTypeName: 'Anime' }))
+    installLibraryHandlers([...movies, ...anime])
+    for (const k of Object.keys(posterRenders)) delete posterRenders[k]
+    renderWithProviders(<LibraryPage />)
+    await screen.findByText('Anime 0')
+    await screen.findByText('Movie 0')
+    const before = posterRenders['Movie 0']
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: /Anime/ }))
+
+    expect(screen.queryByText('Anime 0')).not.toBeInTheDocument()
+    expect(posterRenders['Movie 0']).toBe(before)
   })
 })

@@ -178,6 +178,8 @@
 .section { margin-bottom: 32px; }
 
 .sectionHeader {
+  /* A tap on the header toggles at once, with no double-tap-zoom wait that lets a second tap land on whatever moved underneath. */
+  touch-action: manipulation;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -231,6 +233,11 @@
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s;
+  /* Cards far off screen are neither laid out nor painted until they near the viewport: a section of hundreds of posters
+   * scrolls and collapses without the page doing work for all of them (the library was choppy on a phone). The size
+   * is a placeholder for the skipped cards; the real height replaces it once a card has been seen. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 340px;
 }
 
 .card:hover { border-color: var(--accent); }

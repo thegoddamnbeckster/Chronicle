@@ -1,5 +1,5 @@
 import { neutralStatusLabel } from '@/utils/typeWording'
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -101,6 +101,171 @@ function describePrefs(p: LibraryPrefs): string {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
+/** One library card. Memoised: a card re-renders only when its own entry or selection state changes, so opening or closing
+ *  a section, or a data refresh in another one, no longer re-renders every card on the page (seconds, on a phone). */
+const LibraryCard = memo(function LibraryCard({ entry, navState, selectMode, selected, letterSort, onToggleSelected, onStatusChange, onRemove }: {
+  entry: LibraryEntry
+  navState: { listIds: number[]; listLabel: string }
+  selectMode: boolean
+  selected: boolean
+  letterSort: ReturnType<typeof loadSortSettings> | null
+  onToggleSelected: (mediaId: number) => void
+  onStatusChange: (entryId: number, status: LibraryStatus) => void
+  onRemove: (entryId: number) => void
+}) {
+  return (
+        <div
+          key={entry.id}
+          id={`media-${entry.mediaItem.id}`}
+          data-letter={letterSort ? getIndexLetter(entry.mediaItem.name, letterSort) : undefined}
+          className={[
+            styles.card,
+            entry.mediaItem.isCollectionContainer ? styles.cardCollection : '',
+            // hasMetadataOnly, not isStub -- isStub is only true for a collection's
+            // own auto-created placeholder rows. A SIMKL/Trakt watch-history import is
+            // a real (non-stub) item with a genuine library entry and still has no
+            // physical file at all; hasMetadataOnly is the field that actually answers
+            // "is this missing a file" for every case, stub or not. Mirrors the same
+            // fix already made to the collection detail page's own "Not in Library"
+            // badge (CollectionMetadataBox.tsx).
+            entry.mediaItem.hasMetadataOnly ? styles.cardStub : '',
+            selectMode && selected ? styles.cardSelected : '',
+          ].filter(Boolean).join(' ')}
+          onClick={selectMode ? () => onToggleSelected(entry.mediaItem.id) : undefined}
+          style={selectMode ? { cursor: 'pointer' } : undefined}
+        >
+          {selectMode ? (
+            <div className={styles.posterLink} style={{ position: 'relative' }}>
+              <div className={styles.poster}>
+                <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent, entry.lastKnownProgressPercent)} />
+                {entry.mediaItem.hasPhysicalFile && (
+                  <div className={styles.fileIndicator}>
+                    <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
+                  </div>
+                )}
+                {entry.mediaItem.isCollectionContainer && (
+                  <div className={styles.collectionBadge}>Collection</div>
+                )}
+                {entry.mediaItem.hasMetadataOnly && (
+                  <div className={styles.stubBadge}>Missing</div>
+                )}
+                {entry.mediaItem.deathDate && (
+                  <div className={styles.deceasedBadge} title={`Deceased ${new Date(entry.mediaItem.deathDate).getUTCFullYear()}`}>
+                    Deceased
+                  </div>
+                )}
+              </div>
+              {selected && (
+                <div className={styles.selectOverlay}>✓</div>
+              )}
+            </div>
+          ) : (
+            <Link to={`/media/${entry.mediaItem.id}`} state={navState} className={styles.posterLink}>
+              <div className={styles.poster}>
+                <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent, entry.lastKnownProgressPercent)} />
+                {entry.mediaItem.hasPhysicalFile && (
+                  <div className={styles.fileIndicator}>
+                    <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
+                  </div>
+                )}
+                {entry.mediaItem.isCollectionContainer && (
+                  <div className={styles.collectionBadge}>Collection</div>
+                )}
+                {entry.mediaItem.hasMetadataOnly && (
+                  <div className={styles.stubBadge}>Missing</div>
+                )}
+                {entry.mediaItem.deathDate && (
+                  <div className={styles.deceasedBadge} title={`Deceased ${new Date(entry.mediaItem.deathDate).getUTCFullYear()}`}>
+                    Deceased
+                  </div>
+                )}
+              </div>
+            </Link>
+          )}
+          <div className={styles.info}>
+            {/* A tracked episode/season's own name is often a generic code (e.g.
+                "S01E01") that's meaningless without knowing which show it's from --
+                ancestors[0] is the root show, so show it as a prefix line whenever
+                this entry is anything other than a standalone root-level item. */}
+            {entry.mediaItem.ancestors && entry.mediaItem.ancestors.length > 0 && (
+              <div className={styles.showName}>{entry.mediaItem.ancestors[0].name}</div>
+            )}
+            {selectMode ? (
+              <div className={styles.name}>{entry.mediaItem.name}</div>
+            ) : (
+              <Link to={`/media/${entry.mediaItem.id}`} state={navState} className={styles.nameLink}>
+                <div className={styles.name}>{entry.mediaItem.name}</div>
+              </Link>
+            )}
+            <div className={styles.metaRow}>
+              {entry.mediaItem.year && <span className={styles.year}>{entry.mediaItem.year}</span>}
+              {entry.mediaItem.resolvedMetadata?.rating != null && (
+                <span className={styles.rating} title="Public rating">★ {entry.mediaItem.resolvedMetadata.rating.toFixed(1)}</span>
+              )}
+              {entry.userRating != null && (
+                <span className={styles.userRating} title={`My Rating${entry.userRatingSource ? ` (via ${entry.userRatingSource})` : ''}`}>♥ {entry.userRating}</span>
+              )}
+            </div>
+            {!selectMode && (
+              <>
+                {!entry.mediaItem.isCollectionContainer && (
+                  <select
+                    className={styles.statusSelect}
+                    value={entry.status}
+                    onChange={e =>
+                      onStatusChange(entry.id, e.target.value as LibraryStatus)
+                    }
+                  >
+                    {STATUS_OPTIONS.map(s => (
+                      <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  className={styles.removeBtn}
+                  onClick={() => onRemove(entry.id)}
+                >
+                  Remove
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+  )
+})
+
+/** The grid of one section. Memoised on its entries, so the grid of a section whose data did not change is skipped entirely. */
+const SectionCards = memo(function SectionCards({ entries, typeName, selectMode, selectedIds, letterSort, onToggleSelected, onStatusChange, onRemove }: {
+  entries: LibraryEntry[]
+  typeName: string
+  selectMode: boolean
+  selectedIds: Set<number>
+  letterSort: ReturnType<typeof loadSortSettings> | null
+  onToggleSelected: (mediaId: number) => void
+  onStatusChange: (entryId: number, status: LibraryStatus) => void
+  onRemove: (entryId: number) => void
+}) {
+  const navState = useMemo(() => ({ listIds: entries.map(e => e.mediaItem.id), listLabel: typeName }), [entries, typeName])
+  return (
+    <>
+      {entries.map(entry => (
+        <LibraryCard
+          key={entry.id}
+          entry={entry}
+          navState={navState}
+          selectMode={selectMode}
+          selected={selectMode && selectedIds.has(entry.mediaItem.id)}
+          letterSort={letterSort}
+          onToggleSelected={onToggleSelected}
+          onStatusChange={onStatusChange}
+          onRemove={onRemove}
+        />
+      ))}
+    </>
+  )
+})
+
 export default function LibraryPage() {
   const [prefs, setPrefsState] = useState<LibraryPrefs>(loadPrefs)
   const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
@@ -164,14 +329,14 @@ export default function LibraryPage() {
     setDeleteConfirm(false)
   }
 
-  function toggleSelected(mediaId: number) {
+  const toggleSelected = useCallback((mediaId: number) => {
     setSelectedIds(prev => {
       const next = new Set(prev)
       if (next.has(mediaId)) next.delete(mediaId)
       else next.add(mediaId)
       return next
     })
-  }
+  }, [])
 
   function selectAll() {
     // Only what has been loaded: sections fetch just their visible page, so "all" means all on screen.
@@ -227,6 +392,14 @@ export default function LibraryPage() {
     mutationFn: (id: number) => removeFromLibrary(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
   })
+
+  // Stable identities (mutate never changes), so a section's cards are not re-rendered by an unrelated state change.
+  const { mutate: mutateStatus } = updateMut
+  const { mutate: mutateRemove } = removeMut
+  const changeStatus = useCallback((entryId: number, status: LibraryStatus) => mutateStatus({ id: entryId, status }), [mutateStatus])
+  const removeEntry = useCallback((entryId: number) => {
+    if (confirm('Remove from library?')) mutateRemove(entryId)
+  }, [mutateRemove])
 
   const sortSettings = useMemo(() => loadSortSettings(), [])
   const pageSize = PAGE_SIZES[prefs.pageSizePreset]
@@ -525,10 +698,6 @@ export default function LibraryPage() {
         const totalPages = pageSize === Infinity ? 1 : Math.ceil(typeCount / pageSize)
         const visible = grouped.get(typeName) ?? []
         const hasMore = pageSize !== Infinity && typeCount > pageSize
-        const sectionNavState = {
-          listIds: visible.map(e => e.mediaItem.id),
-          listLabel: typeName,
-        }
 
         return (
           <section key={typeName} className={styles.section}>
@@ -556,127 +725,16 @@ export default function LibraryPage() {
             )}
 
             {!isCollapsed && <div className={styles.grid}>
-              {visible.map(entry => (
-                <div
-                  key={entry.id}
-                  id={`media-${entry.mediaItem.id}`}
-                  data-letter={prefs.sortBy === 'name' ? getIndexLetter(entry.mediaItem.name, sortSettings) : undefined}
-                  className={[
-                    styles.card,
-                    entry.mediaItem.isCollectionContainer ? styles.cardCollection : '',
-                    // hasMetadataOnly, not isStub -- isStub is only true for a collection's
-                    // own auto-created placeholder rows. A SIMKL/Trakt watch-history import is
-                    // a real (non-stub) item with a genuine library entry and still has no
-                    // physical file at all; hasMetadataOnly is the field that actually answers
-                    // "is this missing a file" for every case, stub or not. Mirrors the same
-                    // fix already made to the collection detail page's own "Not in Library"
-                    // badge (CollectionMetadataBox.tsx).
-                    entry.mediaItem.hasMetadataOnly ? styles.cardStub : '',
-                    selectMode && selectedIds.has(entry.mediaItem.id) ? styles.cardSelected : '',
-                  ].filter(Boolean).join(' ')}
-                  onClick={selectMode ? () => toggleSelected(entry.mediaItem.id) : undefined}
-                  style={selectMode ? { cursor: 'pointer' } : undefined}
-                >
-                  {selectMode ? (
-                    <div className={styles.posterLink} style={{ position: 'relative' }}>
-                      <div className={styles.poster}>
-                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent, entry.lastKnownProgressPercent)} />
-                        {entry.mediaItem.hasPhysicalFile && (
-                          <div className={styles.fileIndicator}>
-                            <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
-                          </div>
-                        )}
-                        {entry.mediaItem.isCollectionContainer && (
-                          <div className={styles.collectionBadge}>Collection</div>
-                        )}
-                        {entry.mediaItem.hasMetadataOnly && (
-                          <div className={styles.stubBadge}>Missing</div>
-                        )}
-                        {entry.mediaItem.deathDate && (
-                          <div className={styles.deceasedBadge} title={`Deceased ${new Date(entry.mediaItem.deathDate).getUTCFullYear()}`}>
-                            Deceased
-                          </div>
-                        )}
-                      </div>
-                      {selectedIds.has(entry.mediaItem.id) && (
-                        <div className={styles.selectOverlay}>✓</div>
-                      )}
-                    </div>
-                  ) : (
-                    <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.posterLink}>
-                      <div className={styles.poster}>
-                        <PosterImage posterUrl={entry.mediaItem.posterUrl} name={entry.mediaItem.name} lazy progressPercent={posterProgressPercent(entry.status, entry.resumePositionPercent, entry.lastKnownProgressPercent)} />
-                        {entry.mediaItem.hasPhysicalFile && (
-                          <div className={styles.fileIndicator}>
-                            <span className={styles.fileIcon} title="Has physical file on disk"><IconHdd /></span>
-                          </div>
-                        )}
-                        {entry.mediaItem.isCollectionContainer && (
-                          <div className={styles.collectionBadge}>Collection</div>
-                        )}
-                        {entry.mediaItem.hasMetadataOnly && (
-                          <div className={styles.stubBadge}>Missing</div>
-                        )}
-                        {entry.mediaItem.deathDate && (
-                          <div className={styles.deceasedBadge} title={`Deceased ${new Date(entry.mediaItem.deathDate).getUTCFullYear()}`}>
-                            Deceased
-                          </div>
-                        )}
-                      </div>
-                    </Link>
-                  )}
-                  <div className={styles.info}>
-                    {/* A tracked episode/season's own name is often a generic code (e.g.
-                        "S01E01") that's meaningless without knowing which show it's from --
-                        ancestors[0] is the root show, so show it as a prefix line whenever
-                        this entry is anything other than a standalone root-level item. */}
-                    {entry.mediaItem.ancestors && entry.mediaItem.ancestors.length > 0 && (
-                      <div className={styles.showName}>{entry.mediaItem.ancestors[0].name}</div>
-                    )}
-                    {selectMode ? (
-                      <div className={styles.name}>{entry.mediaItem.name}</div>
-                    ) : (
-                      <Link to={`/media/${entry.mediaItem.id}`} state={sectionNavState} className={styles.nameLink}>
-                        <div className={styles.name}>{entry.mediaItem.name}</div>
-                      </Link>
-                    )}
-                    <div className={styles.metaRow}>
-                      {entry.mediaItem.year && <span className={styles.year}>{entry.mediaItem.year}</span>}
-                      {entry.mediaItem.resolvedMetadata?.rating != null && (
-                        <span className={styles.rating} title="Public rating">★ {entry.mediaItem.resolvedMetadata.rating.toFixed(1)}</span>
-                      )}
-                      {entry.userRating != null && (
-                        <span className={styles.userRating} title={`My Rating${entry.userRatingSource ? ` (via ${entry.userRatingSource})` : ''}`}>♥ {entry.userRating}</span>
-                      )}
-                    </div>
-                    {!selectMode && (
-                      <>
-                        {!entry.mediaItem.isCollectionContainer && (
-                          <select
-                            className={styles.statusSelect}
-                            value={entry.status}
-                            onChange={e =>
-                              updateMut.mutate({ id: entry.id, status: e.target.value as LibraryStatus })
-                            }
-                          >
-                            {STATUS_OPTIONS.map(s => (
-                              <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                            ))}
-                          </select>
-                        )}
-                        <button
-                          className={styles.removeBtn}
-                          onClick={() => {
-                            if (confirm('Remove from library?')) removeMut.mutate(entry.id)
-                          }}
-                        >
-                          Remove
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
+              <SectionCards
+                entries={visible}
+                typeName={typeName}
+                selectMode={selectMode}
+                selectedIds={selectedIds}
+                letterSort={prefs.sortBy === 'name' ? sortSettings : null}
+                onToggleSelected={toggleSelected}
+                onStatusChange={changeStatus}
+                onRemove={removeEntry}
+              />
             </div>}
 
             {!isCollapsed && hasMore && (
