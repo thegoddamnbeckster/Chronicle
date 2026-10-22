@@ -34,15 +34,18 @@ export function AlphabetScrollIndicator({ selector, enabled }: AlphabetScrollInd
     function currentLetter(): string | null {
       const nodes = document.querySelectorAll<HTMLElement>(selector)
       if (nodes.length === 0) return null
-      // Nodes are in sorted document order, so the last one whose top has scrolled
-      // past the reference line is the "current" one — scan forward and stop at the
-      // first miss instead of checking every node.
-      let current = nodes[0]
-      for (const node of nodes) {
-        if (node.getBoundingClientRect().top > REFERENCE_LINE_PX) break
-        current = node
+      // Nodes are in document order, which is also top-to-bottom order, so their tops never decrease down the list: the "current"
+      // one is the last whose top is at or above the reference line, found by binary search. A scan from the first node read the
+      // layout of thousands of cards on every scroll frame once a long section was open, which is what made scrolling choppy.
+      let lo = 0
+      let hi = nodes.length - 1
+      let current = 0
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1
+        if (nodes[mid].getBoundingClientRect().top > REFERENCE_LINE_PX) hi = mid - 1
+        else { current = mid; lo = mid + 1 }
       }
-      return current.dataset.letter ?? null
+      return nodes[current].dataset.letter ?? null
     }
 
     function onScroll() {

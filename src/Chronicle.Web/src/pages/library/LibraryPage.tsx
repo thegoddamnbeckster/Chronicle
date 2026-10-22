@@ -1,9 +1,9 @@
 import { neutralStatusLabel } from '@/utils/typeWording'
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  getLibrarySections, getLibrarySectionPage, getLibraryEntryForMedia,
+  getLibrarySections, getLibrarySectionPage, getLibraryEntryForMedia, getLibrarySectionIds,
   updateLibraryEntry, removeFromLibrary,
 } from '@/api/library'
 import { deleteMedia } from '@/api/media'
@@ -450,6 +450,7 @@ export default function LibraryPage() {
   const sectionsLoading = sectionResults.some(r => r.isLoading)
 
   const location = useLocation()
+  const navigate = useNavigate()
 
   // Coming back from a detail page ("#media-42"): find the item's card and scroll to it. If its
   // section hasn't loaded that card (collapsed, or on another page), look up which section it
@@ -478,17 +479,31 @@ export default function LibraryPage() {
       if (locatedFor.current === targetId) return
       locatedFor.current = targetId
       let cancelled = false
-      void getLibraryEntryForMedia(targetId).then(entry => {
+      void (async () => {
+        const entry = await getLibraryEntryForMedia(targetId)
         const name = entry?.mediaItem.mediaTypeName
-        if (cancelled || !name) return
+        if (cancelled || !entry || !name) return
         setCollapsedSections(prev => {
           if (!prev[name]) return prev
           const next = { ...prev, [name]: false }
           localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
           return next
         })
-        setExpanded(prev => ({ ...prev, [name]: true }))
-      }).catch(() => { /* not in this library view; nothing to scroll to */ })
+        if (pageSize === Infinity) return          // the whole section is already loaded
+        // Open the PAGE that holds the item, not the whole section: "Show all" on a 6,000 film section put thousands of
+        // posters on the page (slow and clunky to scroll for everything below it, music included).
+        const ids = await getLibrarySectionIds({
+          mediaTypeId: entry.mediaItem.mediaTypeId,
+          status: prefs.statusFilter,
+          includeMoviesInCollections,
+          sortBy: prefs.sortBy,
+          sortDir: prefs.sortDir,
+          ignoreArticles: sortSettings.ignoreArticles ? sortSettings.ignoredArticles : undefined,
+        })
+        const at = ids.indexOf(targetId)
+        if (cancelled || at < 0) return
+        setSectionPage(prev => ({ ...prev, [name]: Math.floor(at / pageSize) }))
+      })().catch(() => { /* not in this library view; nothing to scroll to */ })
       return () => { cancelled = true }
     }
     const resolvedTypeName = targetTypeName
@@ -509,9 +524,11 @@ export default function LibraryPage() {
       if (!card) return
       card.scrollIntoView({ behavior: 'instant', block: 'center' })
       scrolledFor.current = visit
+      // The target is spent: drop it from the address, so a reload, Back or a later visit does not scroll there again.
+      navigate({ pathname: location.pathname, search: location.search }, { replace: true })
     }, 500)
     return () => clearTimeout(timer)
-  }, [isLoading, sectionsLoading, location.hash, grouped])
+  }, [isLoading, sectionsLoading, location.hash, grouped])  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className={styles.page}>

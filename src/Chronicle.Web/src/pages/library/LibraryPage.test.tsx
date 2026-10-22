@@ -357,19 +357,22 @@ describe('LibraryPage', () => {
     expect(await screen.findByText('No items in your library yet.')).toBeInTheDocument()
   })
 
-  it('opens the section of a #media-<id> target that is not on the loaded page', async () => {
+  it('opens the PAGE holding a #media-<id> target that is not on the loaded page, not the whole section', async () => {
     const entries = Array.from({ length: 40 }, (_, i) =>
       makeEntry({}, { name: `Film ${String(i).padStart(2, '0')}` }))
     installLibraryHandlers(entries)
     const target = entries[35]
     mockedGetEntryForMedia.mockResolvedValue(target)
+    vi.mocked(libraryApi.getLibrarySectionIds).mockResolvedValue(
+      [...entries].sort((a, b) => a.mediaItem.name.localeCompare(b.mediaItem.name)).map(e => e.mediaItem.id))
 
     renderWithProviders(<LibraryPage />, { initialEntries: [`/library#media-${target.mediaItem.id}`] })
 
-    // Not on the first page of 24, so the page looks the item up and loads the section whole.
+    // Not on the first page of 24: its position in the section decides which page to open (the second), never the whole section.
     expect(await screen.findByText('Film 35')).toBeInTheDocument()
     expect(mockedGetEntryForMedia).toHaveBeenCalledWith(target.mediaItem.id)
-    expect(mockedGetSectionPage).toHaveBeenLastCalledWith(expect.objectContaining({ perPage: 0 }))
+    expect(mockedGetSectionPage).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, perPage: 24 }))
+    expect(mockedGetSectionPage).not.toHaveBeenCalledWith(expect.objectContaining({ perPage: 0 }))
   })
 
   it('scrolls to a #media-<id> target once, and does not pull the page back when the library refreshes', async () => {
