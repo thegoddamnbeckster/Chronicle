@@ -170,44 +170,9 @@ namespace Chronicle.API.Controllers
                 .Select(e => e.MediaItem!.Id)
                 .ToList();
 
-            Dictionary<int, List<string?>> directChildrenByRoot = new();
-            Dictionary<int, List<string?>> grandchildrenByRoot = new();
-
-            if (rootIds.Count > 0)
-            {
-                var directChildren = await _context.MediaItems
-                    .Where(m => m.ParentId != null && rootIds.Contains(m.ParentId.Value))
-                    .Select(m => new { m.Id, m.ParentId, m.MetadataJson })
-                    .ToListAsync(ct);
-
-                foreach (var c in directChildren)
-                {
-                    var pid = c.ParentId!.Value;
-                    if (!directChildrenByRoot.TryGetValue(pid, out var list))
-                        directChildrenByRoot[pid] = list = new List<string?>();
-                    list.Add(c.MetadataJson);
-                }
-
-                var directChildIds = directChildren.Select(c => c.Id).ToList();
-                if (directChildIds.Count > 0)
-                {
-                    // Map grandchildren back to the root item via the direct child's parent.
-                    var directChildToRoot = directChildren.ToDictionary(c => c.Id, c => c.ParentId!.Value);
-
-                    var grandchildren = await _context.MediaItems
-                        .Where(m => m.ParentId != null && directChildIds.Contains(m.ParentId.Value))
-                        .Select(m => new { m.ParentId, m.MetadataJson })
-                        .ToListAsync(ct);
-
-                    foreach (var gc in grandchildren)
-                    {
-                        if (!directChildToRoot.TryGetValue(gc.ParentId!.Value, out var rootId)) continue;
-                        if (!grandchildrenByRoot.TryGetValue(rootId, out var list))
-                            grandchildrenByRoot[rootId] = list = new List<string?>();
-                        list.Add(gc.MetadataJson);
-                    }
-                }
-            }
+            // Per root: has it any children, and does any leaf under it have a file. Answered without reading the descendants'
+            // metadata (a page of 24 music artists meant ~58 MB of blobs pulled out of the database and parsed, seconds per page).
+            var childFlags = await LibraryChildFlags.LoadAsync(_context, rootIds, ct);
 
             // For an entry tracked above the leaf level (e.g. a TV season, not a specific
             // episode — the common case for "Watching" status), find the most recently
@@ -294,28 +259,27 @@ namespace Chronicle.API.Controllers
                 if (e.MediaItem is null || e.MediaItem.HierarchyLevel != 0) continue;
                 if (!string.IsNullOrEmpty(e.MediaItem.PosterUrl)) continue;
                 if (!IsMovieLikeTypeName(e.MediaItem.MediaType?.Name)) continue;
-                if (!directChildrenByRoot.TryGetValue(e.MediaItem.Id, out var dc) || dc.Count == 0) continue;
+                if (!childFlags.TryGetValue(e.MediaItem.Id, out var flags) || !flags.HasChildren) continue;
                 fallbackPosterByRoot[e.MediaItem.Id] =
                     await _movieCollectionService.GetFallbackPosterAsync(_context, e.MediaItem.Id, ct);
             }
 
             var dtos = entries.Select(e =>
             {
-                List<string?>? dc = null;
-                List<string?>? gc = null;
+                var childrenHaveFile = false;
+                var hasChildren = false;
                 List<AncestorDto>? ancestors = null;
                 string? displayName = null;
                 string? fallbackPosterUrl = null;
                 if (e.MediaItem != null)
                 {
-                    directChildrenByRoot.TryGetValue(e.MediaItem.Id, out dc);
-                    grandchildrenByRoot.TryGetValue(e.MediaItem.Id, out gc);
+                    if (childFlags.TryGetValue(e.MediaItem.Id, out var flags)) { childrenHaveFile = flags.ChildrenHaveFile; hasChildren = flags.HasChildren; }
                     var displayId = displayIdByRoot.GetValueOrDefault(e.MediaItem.Id, e.MediaItem.Id);
                     ancestorsByItem.TryGetValue(displayId, out ancestors);
                     displayNameByRoot.TryGetValue(e.MediaItem.Id, out displayName);
                     fallbackPosterByRoot.TryGetValue(e.MediaItem.Id, out fallbackPosterUrl);
                 }
-                return ToDto(e, dc, gc, ancestors, displayName, fallbackPosterUrl);
+                return ToDto(e, childrenHaveFile, hasChildren, ancestors, displayName, fallbackPosterUrl);
             }).ToList();
 
             return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
@@ -542,8 +506,8 @@ namespace Chronicle.API.Controllers
         // of "Season 01" for a season tracked as Watching) — see the caller in GetLibrary.
         private static LibraryEntryDto ToDto(
             UserLibrary e,
-            List<string?>? directChildrenMeta = null,
-            List<string?>? grandchildrenMeta = null,
+            bool childrenHaveFile = false,
+            bool hasChildren = false,
             List<AncestorDto>? ancestors = null,
             string? displayName = null,
             // Precomputed by the caller (IMovieCollectionService.GetFallbackPosterAsync) only
@@ -559,20 +523,6 @@ namespace Chronicle.API.Controllers
             {
                 // Compute physical-file indicators using the same leaf-level logic as MediaController.
                 bool hasOwnFile = HasFileScannerData(e.MediaItem.MetadataJson);
-                bool childrenHaveFile;
-
-                if (grandchildrenMeta?.Count > 0)
-                {
-                    childrenHaveFile = grandchildrenMeta.Any(HasFileScannerData);
-                }
-                else if (directChildrenMeta?.Count > 0)
-                {
-                    childrenHaveFile = directChildrenMeta.Any(HasFileScannerData);
-                }
-                else
-                {
-                    childrenHaveFile = false;
-                }
 
                 bool hasPhysicalFile = hasOwnFile || childrenHaveFile;
                 // Per-user correction (2026-08-30): "MISSING" now means no physical file
@@ -607,7 +557,7 @@ namespace Chronicle.API.Controllers
                     MediaTypeInternalName: e.MediaItem.MediaType?.Name,
                     IsCollectionContainer: e.MediaItem.HierarchyLevel == 0
                         && (e.MediaItem.MediaType?.SupportsCollections ?? false)
-                        && directChildrenMeta?.Count > 0,
+                        && hasChildren,
                     IsStub: e.MediaItem.IsStub,
                     Ancestors: ancestors is { Count: > 0 } ? ancestors : null,
                     SeriesPosition: e.MediaItem.SeriesPosition);
