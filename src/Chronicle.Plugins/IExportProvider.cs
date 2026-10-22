@@ -130,6 +130,9 @@ public interface IExportProvider
 /// </summary>
 public static class ExportKeys
 {
+    /// <summary>The id sources <see cref="Normalize"/> understands; an item's ids from any other source are not sent to a service.</summary>
+    public static readonly IReadOnlyList<string> Sources = ["imdb", "tmdb", "tvdb", "simkl"];
+
     /// <summary>The keys for an item: imdb, tmdb, tvdb and simkl ids, namespaced by kind where ids can collide.</summary>
     public static IReadOnlyList<string> For(ExportItemRef item)
     {

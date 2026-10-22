@@ -518,6 +518,13 @@ export default function LibraryPage() {
   // person browses on, and this effect re-runs on every data refresh (a watch in progress refreshes the library every few
   // seconds): without this it pulled the page back to that item each time, mid-scroll.
   const scrolledFor = useRef<string | null>(null)
+  // The lookup below is started once per target but this effect re-runs whenever any section's data changes, and a re-run's
+  // cleanup used to cancel the lookup in flight (and nothing restarted it): the target was never opened. The lookup now lives
+  // for as long as the page does, and reads the preferences current WHEN IT FINISHES, not when it started.
+  const alive = useRef(true)
+  useEffect(() => () => { alive.current = false }, [])
+  const latest = useRef({ prefs, includeMoviesInCollections, sortSettings, pageSize, expanded })
+  latest.current = { prefs, includeMoviesInCollections, sortSettings, pageSize, expanded }
   useEffect(() => {
     if (isLoading || sectionsLoading) return
     const hash = location.hash  // e.g. "#media-42"
@@ -536,11 +543,10 @@ export default function LibraryPage() {
     if (!targetTypeName) {
       if (locatedFor.current === targetId) return
       locatedFor.current = targetId
-      let cancelled = false
       void (async () => {
         const entry = await getLibraryEntryForMedia(targetId)
         const name = entry?.mediaItem.mediaTypeName
-        if (cancelled || !entry || !name) return
+        if (!alive.current || !entry || !name) return
         setCollapsedSections(prev => {
           if (!prev[name]) return prev
           const next = { ...prev, [name]: false }
@@ -549,20 +555,25 @@ export default function LibraryPage() {
         })
         // Open the PAGE that holds the item, not the whole section: "Show all" on a 6,000 film section put thousands of
         // posters on the page (slow and clunky to scroll for everything below it, music included).
+        const now = latest.current
         const ids = await getLibrarySectionIds({
           mediaTypeId: entry.mediaItem.mediaTypeId,
-          status: prefs.statusFilter,
-          includeMoviesInCollections,
-          sortBy: prefs.sortBy,
-          sortDir: prefs.sortDir,
-          ignoreArticles: sortSettings.ignoreArticles ? sortSettings.ignoredArticles : undefined,
+          status: now.prefs.statusFilter,
+          includeMoviesInCollections: now.includeMoviesInCollections,
+          sortBy: now.prefs.sortBy,
+          sortDir: now.prefs.sortDir,
+          ignoreArticles: now.sortSettings.ignoreArticles ? now.sortSettings.ignoredArticles : undefined,
         })
         const at = ids.indexOf(targetId)
-        if (cancelled || at < 0) return
-        if (pageSize === Infinity || (expanded[name] ?? false)) setFetchLimit(prev => ({ ...prev, [name]: Math.max(prev[name] ?? FIRST_FETCH, at + MORE_CARDS) }))
-        else setSectionPage(prev => ({ ...prev, [name]: Math.floor(at / pageSize) }))
+        if (!alive.current || at < 0) return
+        const current = latest.current
+        if (current.pageSize === Infinity || (current.expanded[name] ?? false)) {
+          setFetchLimit(prev => ({ ...prev, [name]: Math.max(prev[name] ?? FIRST_FETCH, at + MORE_CARDS) }))
+        } else {
+          setSectionPage(prev => ({ ...prev, [name]: Math.floor(at / current.pageSize) }))
+        }
       })().catch(() => { /* not in this library view; nothing to scroll to */ })
-      return () => { cancelled = true }
+      return
     }
     const resolvedTypeName = targetTypeName
 

@@ -20,7 +20,6 @@ public class ExportScopeTests
 
         Assert.True(scope.MovieTypes.Contains("movies") && scope.MovieTypes.Contains("anime_movies"));
         Assert.True(scope.ShowTypes.Contains("tv") && scope.ShowTypes.Contains("anime"));
-        Assert.True(scope.IdSources.Contains("imdb") && scope.IdSources.Contains("tmdb") && scope.IdSources.Contains("tvdb") && scope.IdSources.Contains("simkl"));
         Assert.DoesNotContain("fanedits", scope.MovieTypes);   // fan edits carry the original film's ids; exporting one would mark the original watched
     }
 
@@ -51,5 +50,21 @@ public class ExportScopeTests
         var scope = await ExportScope.LoadAsync(db);
 
         Assert.Contains("tv", scope.ShowTypes);
+    }
+
+    [Fact]
+    public async Task TypeIds_AreResolvedFromTheNamesInOneQuery()
+    {
+        await using var db = NewDb();
+        db.MediaTypes.AddRange(
+            new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow },
+            new MediaType { Id = 2, Name = "tv", DisplayName = "TV", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow },
+            new MediaType { Id = 3, Name = "fanedits", DisplayName = "Fan Edits", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        var (movies, shows) = await (await ExportScope.LoadAsync(db)).TypeIdsAsync(db);
+
+        Assert.Equal([1], movies);
+        Assert.Equal([2], shows);
     }
 }

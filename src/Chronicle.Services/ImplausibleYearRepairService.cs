@@ -60,8 +60,15 @@ public sealed class ImplausibleYearRepairService(
         }
         if (!done)
         {
-            db.AppSettings.Add(new Chronicle.Core.Models.AppSetting { Key = ScrubMarkerKey, Value = DateTime.UtcNow.ToString("O") });
-            await db.SaveChangesAsync(ct);
+            try
+            {
+                db.AppSettings.Add(new Chronicle.Core.Models.AppSetting { Key = ScrubMarkerKey, Value = DateTime.UtcNow.ToString("O") });
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException)
+            {
+                // another run finished and recorded the marker first: nothing to do
+            }
         }
 
         logger.LogInformation("Implausible year repair: cleared the year on {Count} item(s) and in the stored plugin data of {Scrubbed}", fixedCount, scrubbed);

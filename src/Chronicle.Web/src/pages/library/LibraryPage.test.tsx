@@ -469,4 +469,21 @@ describe('LibraryPage', () => {
 
     expect(Math.min(...counts, 96)).toBeGreaterThanOrEqual(96)
   })
+
+  it('still opens the page of a #media-<id> target when another section finishes loading while the lookup is in flight', async () => {
+    // A re-run of the effect (any section's data arriving) used to cancel the lookup in flight, and nothing restarted it.
+    const films = Array.from({ length: 40 }, (_, i) => makeEntry({}, { name: `Film ${String(i).padStart(2, '0')}`, mediaTypeName: 'Movies' }))
+    const songs = Array.from({ length: 3 }, (_, i) => makeEntry({}, { name: `Song ${i}`, mediaTypeName: 'Music' }))
+    installLibraryHandlers([...films, ...songs])
+    const serve = mockedGetSectionPage.getMockImplementation()!
+    mockedGetSectionPage.mockImplementation(async p => { if (p.mediaTypeId === 2) await new Promise(r => setTimeout(r, 250)); return serve(p) })
+    const target = films[35]
+    mockedGetEntryForMedia.mockImplementation(async () => { await new Promise(r => setTimeout(r, 500)); return target })
+    vi.mocked(libraryApi.getLibrarySectionIds).mockResolvedValue(
+      [...films].sort((a, b) => a.mediaItem.name.localeCompare(b.mediaItem.name)).map(e => e.mediaItem.id))
+
+    renderWithProviders(<LibraryPage />, { initialEntries: [`/library#media-${target.mediaItem.id}`] })
+
+    expect(await screen.findByText('Film 35', {}, { timeout: 4000 })).toBeInTheDocument()
+  })
 })

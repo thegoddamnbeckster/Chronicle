@@ -79,10 +79,11 @@ public class ExportService : IExportService
             // here ends the run (GetRemoteStateAsync throws rather than return something incomplete).
             var remote = await provider.GetRemoteStateAsync(ct);
 
-            var scope2 = await ExportScope.LoadAsync(db, ct);
+            var exportScope = await ExportScope.LoadAsync(db, ct);
+            var (movieTypeIds, showTypeIds) = await exportScope.TypeIdsAsync(db, ct);
             var local = new List<LocalItem>();
-            local.AddRange(await GatherMoviesAsync(db, resolvedUserId.Value, importSources, scope2, ct));
-            local.AddRange(await GatherEpisodesAsync(db, resolvedUserId.Value, importSources, scope2, ct));
+            local.AddRange(await GatherMoviesAsync(db, resolvedUserId.Value, importSources, movieTypeIds, ct));
+            local.AddRange(await GatherEpisodesAsync(db, resolvedUserId.Value, importSources, showTypeIds, ct));
 
             var batch = ExportPlanner.Plan(local, remote, caps, options);
             _log.LogInformation(
@@ -211,10 +212,8 @@ public class ExportService : IExportService
     };
 
     private static async Task<List<LocalItem>> GatherMoviesAsync(
-        ChronicleDbContext db, int userId, ISet<string> importSources, ExportScope scope, CancellationToken ct)
+        ChronicleDbContext db, int userId, ISet<string> importSources, List<int> movieTypeIds, CancellationToken ct)
     {
-        var movieTypeIds = (await db.MediaTypes.Select(t => new { t.Id, t.Name }).ToListAsync(ct))
-            .Where(t => scope.MovieTypes.Contains(t.Name)).Select(t => t.Id).ToList();
         if (movieTypeIds.Count == 0) return [];
 
         // A movie is anything of a movie type that has no children. Movies inside a collection are level-1 children
@@ -228,14 +227,12 @@ public class ExportService : IExportService
             select new { Library = l, Item = new ItemRow(m.Id, m.Name, m.Year) }).ToListAsync(ct);
 
         return await BuildAsync(db, userId, importSources,
-            libraries.Select(x => (x.Library, x.Item)).ToList(), scope, ct, episodeContext: null);
+            libraries.Select(x => (x.Library, x.Item)).ToList(), ct, episodeContext: null);
     }
 
     private static async Task<List<LocalItem>> GatherEpisodesAsync(
-        ChronicleDbContext db, int userId, ISet<string> importSources, ExportScope scope, CancellationToken ct)
+        ChronicleDbContext db, int userId, ISet<string> importSources, List<int> tvTypeIds, CancellationToken ct)
     {
-        var tvTypeIds = (await db.MediaTypes.Select(t => new { t.Id, t.Name }).ToListAsync(ct))
-            .Where(t => scope.ShowTypes.Contains(t.Name)).Select(t => t.Id).ToList();
         if (tvTypeIds.Count == 0) return [];
 
         var rows = await (
@@ -271,7 +268,7 @@ public class ExportService : IExportService
             items.Add((r.Library, new ItemRow(r.EpisodeId, r.Name, show.Year)));
         }
 
-        return await BuildAsync(db, userId, importSources, items, scope, ct, episodeContext);
+        return await BuildAsync(db, userId, importSources, items, ct, episodeContext);
     }
 
     private sealed record ItemRow(int Id, string Name, int? Year);
@@ -282,7 +279,7 @@ public class ExportService : IExportService
     /// <summary>Builds the comparable items; for an episode the ids are the SHOW's.</summary>
     private static async Task<List<LocalItem>> BuildAsync(
         ChronicleDbContext db, int userId, ISet<string> importSources,
-        List<(UserLibrary Library, ItemRow Item)> items, ExportScope scope, CancellationToken ct,
+        List<(UserLibrary Library, ItemRow Item)> items, CancellationToken ct,
         Dictionary<int, EpisodeContext>? episodeContext)
     {
         if (items.Count == 0) return [];
@@ -294,7 +291,7 @@ public class ExportService : IExportService
         foreach (var chunk in idOwner.Chunk(Chunk))
             foreach (var e in await db.MediaExternalIds.AsNoTracking()
                          .Where(x => chunk.Contains(x.MediaItemId)
-                                     && scope.IdSources.Contains(x.Source))
+                                     && ExportKeys.Sources.Contains(x.Source))
                          .Select(x => new { x.MediaItemId, x.Source, x.ExternalId }).ToListAsync(ct))
             {
                 if (!idsByOwner.TryGetValue(e.MediaItemId, out var d))
