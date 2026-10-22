@@ -94,7 +94,8 @@ public record ExportPushResult(
     int ListStatusesPushed,
     int NotFound,
     IReadOnlyList<string> Errors,
-    int Deferred = 0);
+    int Deferred = 0,
+    int Skipped = 0);
 
 public interface IExportProvider
 {

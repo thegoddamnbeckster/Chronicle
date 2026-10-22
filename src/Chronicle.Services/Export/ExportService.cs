@@ -104,8 +104,8 @@ public class ExportService : IExportService
 
             var result = await provider.PushAsync(batch, ct);
             _log.LogInformation(
-                "Export to {PluginId} sent: {Watches} watches, {Ratings} ratings, {Statuses} list statuses; {NotFound} items the service could not match; {Deferred} left for the next run; {Errors} errors",
-                pluginId, result.WatchesPushed, result.RatingsPushed, result.ListStatusesPushed, result.NotFound, result.Deferred, result.Errors.Count);
+                "Export to {PluginId} sent: {Watches} watches, {Ratings} ratings, {Statuses} list statuses; {NotFound} items the service could not match; {Deferred} left for the next run; {Skipped} the service cannot take; {Errors} errors",
+                pluginId, result.WatchesPushed, result.RatingsPushed, result.ListStatusesPushed, result.NotFound, result.Deferred, result.Skipped, result.Errors.Count);
             foreach (var error in result.Errors.Take(20))
                 _log.LogWarning("Export to {PluginId}: {Error}", pluginId, error);
 
