@@ -522,9 +522,10 @@ export default function LibraryPage() {
   // cleanup used to cancel the lookup in flight (and nothing restarted it): the target was never opened. The lookup now lives
   // for as long as the page does, and reads the preferences current WHEN IT FINISHES, not when it started.
   const alive = useRef(true)
-  useEffect(() => () => { alive.current = false }, [])
+  // set again on mount: React StrictMode (development) mounts, cleans up and mounts again, and a clean-up alone left it false for good
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const latest = useRef({ prefs, includeMoviesInCollections, sortSettings, pageSize, expanded })
-  latest.current = { prefs, includeMoviesInCollections, sortSettings, pageSize, expanded }
+  useEffect(() => { latest.current = { prefs, includeMoviesInCollections, sortSettings, pageSize, expanded } })   // after every render, never during one
   useEffect(() => {
     if (isLoading || sectionsLoading) return
     const hash = location.hash  // e.g. "#media-42"

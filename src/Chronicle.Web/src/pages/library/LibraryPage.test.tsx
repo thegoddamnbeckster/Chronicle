@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -483,6 +484,21 @@ describe('LibraryPage', () => {
       [...films].sort((a, b) => a.mediaItem.name.localeCompare(b.mediaItem.name)).map(e => e.mediaItem.id))
 
     renderWithProviders(<LibraryPage />, { initialEntries: [`/library#media-${target.mediaItem.id}`] })
+
+    expect(await screen.findByText('Film 35', {}, { timeout: 4000 })).toBeInTheDocument()
+  })
+
+  it('opens a #media-<id> target under React StrictMode too (effects mount, clean up and mount again in development)', async () => {
+    // The lookup's "page is still here" flag was cleared by the StrictMode clean-up and never set again, so in development
+    // (the dev server) the lookup always gave up: the target was never opened.
+    const films = Array.from({ length: 40 }, (_, i) => makeEntry({}, { name: `Film ${String(i).padStart(2, '0')}` }))
+    installLibraryHandlers(films)
+    const target = films[35]
+    mockedGetEntryForMedia.mockResolvedValue(target)
+    vi.mocked(libraryApi.getLibrarySectionIds).mockResolvedValue(
+      [...films].sort((a, b) => a.mediaItem.name.localeCompare(b.mediaItem.name)).map(e => e.mediaItem.id))
+
+    renderWithProviders(<StrictMode><LibraryPage /></StrictMode>, { initialEntries: [`/library#media-${target.mediaItem.id}`] })
 
     expect(await screen.findByText('Film 35', {}, { timeout: 4000 })).toBeInTheDocument()
   })
