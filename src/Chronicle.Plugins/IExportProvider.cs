@@ -95,7 +95,14 @@ public record ExportPushResult(
     int NotFound,
     IReadOnlyList<string> Errors,
     int Deferred = 0,
-    int Skipped = 0);
+    int Skipped = 0)
+{
+    /// <summary>The shape before <c>Skipped</c> existed. A plugin built against that shape has this exact constructor baked into
+    /// its code; without it such a plugin would fail at runtime on a newer Chronicle.</summary>
+    public ExportPushResult(int watchesPushed, int ratingsPushed, int listStatusesPushed, int notFound,
+        IReadOnlyList<string> errors, int deferred)
+        : this(watchesPushed, ratingsPushed, listStatusesPushed, notFound, errors, deferred, 0) { }
+}
 
 public interface IExportProvider
 {

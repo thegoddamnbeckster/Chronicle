@@ -65,9 +65,10 @@ public sealed class ImplausibleYearRepairService(
                 db.AppSettings.Add(new Chronicle.Core.Models.AppSetting { Key = ScrubMarkerKey, Value = DateTime.UtcNow.ToString("O") });
                 await db.SaveChangesAsync(ct);
             }
-            catch (DbUpdateException)
+            catch (DbUpdateException ex)
             {
-                // another run finished and recorded the marker first: nothing to do
+                // most likely another run recorded the marker first; if not, the next run simply scans again
+                logger.LogDebug(ex, "Implausible year repair: could not record the scrub marker");
             }
         }
 
