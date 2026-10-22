@@ -428,9 +428,45 @@ describe('LibraryPage', () => {
     await screen.findByText('Film 000')
     expect(document.querySelectorAll('[id^="media-"]').length).toBe(96)
 
+    // Everything fetched so far (96 rows) is on screen, so reaching the end asks the server for more -- twice as many, not all 300.
     await waitFor(() => expect(fire).not.toBeNull())
     fire!()
-    await waitFor(() => expect(document.querySelectorAll('[id^="media-"]').length).toBe(192))
+    await waitFor(() => expect(mockedGetSectionPage).toHaveBeenCalledWith(expect.objectContaining({ page: 1, perPage: 192 })))
+    expect(mockedGetSectionPage).not.toHaveBeenCalledWith(expect.objectContaining({ perPage: 0 }))
+    expect(mockedGetSectionPage).not.toHaveBeenCalledWith(expect.objectContaining({ perPage: 300 }))
+    // ...and a fresh look at the end (the observer is re-armed when rows arrive) draws the next batch of cards.
+    await waitFor(() => { fire!(); expect(document.querySelectorAll('[id^="media-"]').length).toBe(192) })
     vi.unstubAllGlobals()
+  })
+
+  it('keeps the cards on screen while a section fetches more rows (the list never empties, so the scroll position survives)', async () => {
+    // Live (2026-10-22): reaching the end of a section emptied it for ~0.8 s until the larger fetch returned; the page shrank,
+    // the scroll position was clamped to the top, and the person was dropped near the start of the list.
+    const entries = Array.from({ length: 300 }, (_, i) => makeEntry({}, { name: `Film ${String(i).padStart(3, '0')}` }))
+    installLibraryHandlers(entries)
+    const serve = mockedGetSectionPage.getMockImplementation()!
+    mockedGetSectionPage.mockImplementation(async p => { if (p.perPage > 96) await new Promise(r => setTimeout(r, 300)); return serve(p) })
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ sortBy: 'name', sortDir: 'asc', pageSizePreset: 'all', groupMoviesIntoCollections: true }))
+    let fire: (() => void) | null = null
+    class FakeObserver {
+      constructor(cb: (e: { isIntersecting: boolean }[]) => void) { fire = () => cb([{ isIntersecting: true }]) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+    renderWithProviders(<LibraryPage />)
+    await screen.findByText('Film 000')
+    await waitFor(() => expect(fire).not.toBeNull())
+
+    const counts: number[] = []
+    const watcher = new MutationObserver(() => counts.push(document.querySelectorAll('[id^="media-"]').length))
+    watcher.observe(document.body, { childList: true, subtree: true })
+    fire!()
+    await waitFor(() => expect(mockedGetSectionPage).toHaveBeenCalledWith(expect.objectContaining({ perPage: 192 })))
+    await new Promise(r => setTimeout(r, 500))                     // the larger fetch returns
+    watcher.disconnect()
+    vi.unstubAllGlobals()
+
+    expect(Math.min(...counts, 96)).toBeGreaterThanOrEqual(96)
   })
 })

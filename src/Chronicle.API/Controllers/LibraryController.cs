@@ -161,6 +161,9 @@ namespace Chronicle.API.Controllers
             var prefs = await _userService.GetPreferencesAsync(userId);
             var includeStubs = prefs.CreateCollectionStubs ?? true;
 
+            var phase = System.Diagnostics.Stopwatch.StartNew();
+            var phases = new List<string>();
+            void Mark(string name) { phases.Add($"{name} {phase.ElapsedMilliseconds}ms"); phase.Restart(); }
             var entries = await _libraryService.GetForUserAsync(userId, parsedStatus, page, perPage, rootOnly, includeMoviesInCollections, includeStubs, ct, mediaTypeId, sort);
 
             // Batch-fetch descendant MetadataJson for all root items in two queries
@@ -170,9 +173,11 @@ namespace Chronicle.API.Controllers
                 .Select(e => e.MediaItem!.Id)
                 .ToList();
 
+            Mark("page");
             // Per root: has it any children, and does any leaf under it have a file. Answered without reading the descendants'
             // metadata (a page of 24 music artists meant ~58 MB of blobs pulled out of the database and parsed, seconds per page).
             var childFlags = await LibraryChildFlags.LoadAsync(_context, rootIds, ct);
+            Mark("childFlags");
 
             // For an entry tracked above the leaf level (e.g. a TV season, not a specific
             // episode — the common case for "Watching" status), find the most recently
@@ -240,6 +245,7 @@ namespace Chronicle.API.Controllers
                 }
             }
 
+            Mark("descendants+events");
             // Ancestor context (e.g. "Show" for a season-level entry, "Show, Season" for an
             // episode) — without this, entries like a season being tracked as "Watching" show
             // only its own bare name ("Season 07") with no indication of which show it's from.
@@ -248,6 +254,7 @@ namespace Chronicle.API.Controllers
             var ancestorsByItem = await AncestorHelper.BuildAncestorsBatchAsync(
                 _context, displayIdByRoot.Values, ct);
 
+            Mark("ancestors");
             // Collection containers with no poster of their own need a fallback -- same rule as
             // the collection detail page and Kodi's set-art fallback
             // (IMovieCollectionService.GetFallbackPosterAsync). Computed here, once per
@@ -264,6 +271,7 @@ namespace Chronicle.API.Controllers
                     await _movieCollectionService.GetFallbackPosterAsync(_context, e.MediaItem.Id, ct);
             }
 
+            Mark("fallbackPosters");
             var dtos = entries.Select(e =>
             {
                 var childrenHaveFile = false;
@@ -282,6 +290,9 @@ namespace Chronicle.API.Controllers
                 return ToDto(e, childrenHaveFile, hasChildren, ancestors, displayName, fallbackPosterUrl);
             }).ToList();
 
+            Mark("dto");
+            if (phases.Sum(p => long.Parse(p.Split(' ')[^1].Replace("ms", ""))) > 1000)
+                Serilog.Log.Information("Slow library page ({Rows} rows, perPage {PerPage}, type {Type}): {Phases}", dtos.Count, perPage, mediaTypeId, string.Join(", ", phases));
             return Ok(ApiResponse<List<LibraryEntryDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }
 

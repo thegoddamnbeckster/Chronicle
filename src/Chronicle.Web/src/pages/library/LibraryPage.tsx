@@ -240,8 +240,10 @@ const LibraryCard = memo(function LibraryCard({ entry, navState, selectMode, sel
 // 100,000 elements on the page, and every open, close or refresh cost seconds of style and paint work.
 const FIRST_CARDS = 96
 const MORE_CARDS = 96
+// Rows of a whole-section view fetched at first; the limit doubles each time the end of what was fetched is reached.
+const FIRST_FETCH = 96
 
-const SectionCards = memo(function SectionCards({ entries, typeName, selectMode, selectedIds, letterSort, revealId, onToggleSelected, onStatusChange, onRemove }: {
+const SectionCards = memo(function SectionCards({ entries, typeName, selectMode, selectedIds, letterSort, revealId, totalCount, onNeedMore, onToggleSelected, onStatusChange, onRemove }: {
   entries: LibraryEntry[]
   typeName: string
   selectMode: boolean
@@ -249,6 +251,9 @@ const SectionCards = memo(function SectionCards({ entries, typeName, selectMode,
   letterSort: ReturnType<typeof loadSortSettings> | null
   /** An item the page is about to scroll to (a #media-<id> target): drawn even when it is beyond the cards shown so far. */
   revealId: number | null
+  /** Rows the section has in all, and a request for more of them when the ones fetched so far are all on screen. */
+  totalCount: number
+  onNeedMore: (typeName: string) => void
   onToggleSelected: (mediaId: number) => void
   onStatusChange: (entryId: number, status: LibraryStatus) => void
   onRemove: (entryId: number) => void
@@ -264,16 +269,19 @@ const SectionCards = memo(function SectionCards({ entries, typeName, selectMode,
     if (at >= 0) setShown(prev => (at >= prev ? at + MORE_CARDS : prev))
   }, [revealId, entries])
 
-  const hasMore = shown < entries.length
+  const moreOnServer = entries.length < totalCount
+  const hasMore = shown < entries.length || moreOnServer
   useEffect(() => {
     const el = sentinel.current
     if (!hasMore || !el || !canObserve) return
     const observer = new IntersectionObserver(found => {
-      if (found.some(f => f.isIntersecting)) setShown(prev => prev + MORE_CARDS)
+      if (!found.some(f => f.isIntersecting)) return
+      if (shown < entries.length) setShown(prev => prev + MORE_CARDS)
+      else onNeedMore(typeName)
     }, { rootMargin: '1500px 0px' })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [hasMore, shown, canObserve])
+  }, [hasMore, shown, canObserve, entries.length, onNeedMore, typeName])
 
   return (
     <>
@@ -300,6 +308,9 @@ export default function LibraryPage() {
   const [presets, setPresets] = useState<LibraryPreset[]>(loadPresets)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [sectionPage, setSectionPage] = useState<Record<string, number>>({})
+  // How many rows of a whole-section view ("Show all") have been asked for. A film section is ~270 MB of stored metadata, so
+  // asking for all 4,000 at once took ~20 s; the first FIRST_FETCH rows come at once and the limit doubles as the end is reached.
+  const [fetchLimit, setFetchLimit] = useState<Record<string, number>>({})
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [presetName, setPresetName] = useState('')
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(() => {
@@ -329,6 +340,7 @@ export default function LibraryPage() {
     savePrefs({ ...DEFAULT_PREFS })
     setExpanded({})
     setSectionPage({})
+    setFetchLimit({})
   }
 
   function applyPreset(preset: LibraryPreset) {
@@ -336,6 +348,7 @@ export default function LibraryPage() {
     savePrefs({ ...preset.prefs })
     setExpanded({})
     setSectionPage({})
+    setFetchLimit({})
   }
 
   function toggleSection(mediaTypeName: string) {
@@ -426,6 +439,9 @@ export default function LibraryPage() {
   const { mutate: mutateStatus } = updateMut
   const { mutate: mutateRemove } = removeMut
   const changeStatus = useCallback((entryId: number, status: LibraryStatus) => mutateStatus({ id: entryId, status }), [mutateStatus])
+  const growFetchLimit = useCallback((typeName: string) => {
+    setFetchLimit(prev => ({ ...prev, [typeName]: (prev[typeName] ?? FIRST_FETCH) * 2 }))
+  }, [])
   const removeEntry = useCallback((entryId: number) => {
     if (confirm('Remove from library?')) mutateRemove(entryId)
   }, [mutateRemove])
@@ -446,7 +462,7 @@ export default function LibraryPage() {
     queries: orderedSections.map(sec => {
       const wholeSection = pageSize === Infinity || (expanded[sec.name] ?? false)
       const page = wholeSection ? 1 : (sectionPage[sec.name] ?? 0) + 1
-      const perPage = wholeSection ? 0 : pageSize
+      const perPage = wholeSection ? Math.min(fetchLimit[sec.name] ?? FIRST_FETCH, Math.max(sec.count, 1)) : pageSize
       return {
         queryKey: ['library', 'section', {
           mediaTypeId: sec.mediaTypeId, status: prefs.statusFilter ?? null, includeMoviesInCollections,
@@ -471,11 +487,18 @@ export default function LibraryPage() {
   })
 
   // Entries currently loaded for each section (its visible page, or the whole section when expanded).
+  // A section keeps showing its last rows while the next request (more rows, another page, a changed filter) is on its way:
+  // emptying it, even for a moment, shrinks the page and the browser clamps the scroll position to the top.
+  const lastRows = useRef(new Map<string, LibraryEntry[]>())
   const grouped = useMemo(() => {
     const map = new Map<string, LibraryEntry[]>()
-    orderedSections.forEach((sec, i) => map.set(sec.name, sectionResults[i]?.data ?? []))
+    orderedSections.forEach((sec, i) => {
+      const rows = sectionResults[i]?.data
+      if (rows) lastRows.current.set(sec.name, rows)
+      map.set(sec.name, rows ?? lastRows.current.get(sec.name) ?? [])
+    })
     return map
-  }, [orderedSections, sectionResults.map(r => r.dataUpdatedAt).join(',')])
+  }, [orderedSections, sectionResults.map(r => `${r.dataUpdatedAt}:${r.data ? 1 : 0}`).join(',')])
   const sectionsLoading = sectionResults.some(r => r.isLoading)
 
   const location = useLocation()
@@ -519,7 +542,6 @@ export default function LibraryPage() {
           localStorage.setItem('chronicle.library.collapsed', JSON.stringify(next))
           return next
         })
-        if (pageSize === Infinity) return          // the whole section is already loaded
         // Open the PAGE that holds the item, not the whole section: "Show all" on a 6,000 film section put thousands of
         // posters on the page (slow and clunky to scroll for everything below it, music included).
         const ids = await getLibrarySectionIds({
@@ -532,7 +554,8 @@ export default function LibraryPage() {
         })
         const at = ids.indexOf(targetId)
         if (cancelled || at < 0) return
-        setSectionPage(prev => ({ ...prev, [name]: Math.floor(at / pageSize) }))
+        if (pageSize === Infinity || (expanded[name] ?? false)) setFetchLimit(prev => ({ ...prev, [name]: Math.max(prev[name] ?? FIRST_FETCH, at + MORE_CARDS) }))
+        else setSectionPage(prev => ({ ...prev, [name]: Math.floor(at / pageSize) }))
       })().catch(() => { /* not in this library view; nothing to scroll to */ })
       return () => { cancelled = true }
     }
@@ -685,7 +708,7 @@ export default function LibraryPage() {
               <button
                 key={preset}
                 className={prefs.pageSizePreset === preset ? styles.filterActive : styles.filter}
-                onClick={() => { setPrefs({ pageSizePreset: preset }); setExpanded({}); setSectionPage({}) }}
+                onClick={() => { setPrefs({ pageSizePreset: preset }); setExpanded({}); setSectionPage({}); setFetchLimit({}) }}
               >
                 {preset === 'minimal' ? 'Few (6)' : preset === 'medium' ? 'Medium (24)' : preset === 'maximal' ? 'Many (100)' : 'All'}
               </button>
@@ -779,6 +802,8 @@ export default function LibraryPage() {
                 selectedIds={selectedIds}
                 letterSort={prefs.sortBy === 'name' ? sortSettings : null}
                 revealId={revealId}
+                totalCount={typeCount}
+                onNeedMore={growFetchLimit}
                 onToggleSelected={toggleSelected}
                 onStatusChange={changeStatus}
                 onRemove={removeEntry}

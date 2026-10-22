@@ -94,6 +94,32 @@ public class LibraryChildFlagsTests
     }
 
     [Fact]
+    public async Task SeveralRootsInOneCall_EachGetsItsOwnAnswer()
+    {
+        var db = NewDb();
+        await using var _ = db;
+        db.MediaTypes.Add(new MediaType { Id = 1, Name = "music", DisplayName = "Music", HierarchyLevels = 3, CreatedAt = DateTime.UtcNow });
+        var withFile = Item("WithFile", 0, null);
+        var without = Item("Without", 0, null);
+        var lone = Item("Lone", 0, null);
+        db.MediaItems.AddRange(withFile, without, lone);
+        await db.SaveChangesAsync();
+        var a1 = Item("Album1", 1, withFile.Id);
+        var a2 = Item("Album2", 1, without.Id);
+        db.MediaItems.AddRange(a1, a2);
+        await db.SaveChangesAsync();
+        db.MediaItems.AddRange(Item("t", 2, a1.Id, WithFile), Item("t", 2, a2.Id, EmptyFiles), Item("t2", 2, a2.Id));
+        await db.SaveChangesAsync();
+
+        var flags = await LibraryChildFlags.LoadAsync(db, [withFile.Id, without.Id, lone.Id]);
+
+        Assert.True(flags[withFile.Id].ChildrenHaveFile);
+        Assert.False(flags[without.Id].ChildrenHaveFile);
+        Assert.True(flags[without.Id].HasChildren);
+        Assert.False(flags.ContainsKey(lone.Id));
+    }
+
+    [Fact]
     public async Task WithoutGrandchildren_TheDirectChildrenAreTheLeaves()
     {
         var db = NewDb();
