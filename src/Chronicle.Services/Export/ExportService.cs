@@ -128,6 +128,32 @@ public class ExportService : IExportService
             _log.LogWarning(ex, "Export to {PluginId} failed - nothing further was sent", pluginId);
             return Skipped(pluginId, $"the export failed: {ex.Message}");
         }
+        finally
+        {
+            await PersistRefreshedSettingsAsync(import, pluginId);
+        }
+    }
+
+    /// <summary>
+    /// A service that renews its login while exporting (SIMKL AUTH V2 refresh tokens) hands the new tokens back here.
+    /// The old access token stops working the moment it is renewed, so they are saved even when the run failed.
+    /// Deliberately not tied to the caller's cancellation: a cancelled run must not lose a token that was just renewed.
+    /// </summary>
+    private async Task PersistRefreshedSettingsAsync(IImportProvider? import, string pluginId)
+    {
+        try
+        {
+            var refreshed = import?.GetRefreshedSettings();
+            if (refreshed is not { Count: > 0 }) return;
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var plugins = scope.ServiceProvider.GetRequiredService<IPluginService>();
+            _log.LogInformation("Persisting refreshed login tokens for {PluginId}", pluginId);
+            await plugins.MergeSettingsAsync(pluginId, refreshed, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not save the refreshed login tokens for {PluginId}", pluginId);
+        }
     }
 
     private static ExportSummary Skipped(string pluginId, string why) => new(pluginId, why, false, 0, 0, 0, null);
