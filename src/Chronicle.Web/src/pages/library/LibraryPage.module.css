@@ -352,15 +352,15 @@
 
 .nameLink { text-decoration: none; color: inherit; }
 
+/* Names wrap so a long one is fully visible; overflow-wrap: anywhere also breaks a single very long word. */
 .showName {
   font-size: 10px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.02em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .name {

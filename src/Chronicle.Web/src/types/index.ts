@@ -39,6 +39,21 @@ export interface FileScannerMeta {
   importedAt: string | null
 }
 
+/** A record that is the same real-world entity as the item it is attached to (an author and that author's People record). */
+export interface LinkedItem {
+  itemId: number
+  name: string
+  mediaTypeName: string
+  isPerson: boolean
+}
+
+/** The item that already holds a provider id a match was refused for (a genuine duplicate). */
+export interface EnrichmentConflict {
+  itemId: number
+  itemName: string
+  mediaTypeName: string
+}
+
 export interface RefreshLog {
   providerName: string
   refreshedAt: string
@@ -76,6 +91,10 @@ export interface MediaItem {
   /** Enrichment attempt status per plugin, keyed by plugin ID.
    *  Present even when pluginMetadata has no entry (e.g. status is "NotFound").
    *  Values: "Pending" | "Completed" | "NotFound" | "Failed" | "Exhausted" */
+  /** Per plugin: which item already holds the id this plugin's match was refused for. */
+  enrichmentConflicts?: Record<string, EnrichmentConflict>
+  /** The other record(s) for the same real-world entity: an author's person, or a person's author(s). */
+  linkedItems?: LinkedItem[]
   enrichmentStatuses?: Record<string, string> | null
   /** Canonical internal media type name (e.g. "tv", "movies", "music").
    *  Used for plugin compatibility checks. mediaTypeName is the user-facing display
@@ -212,6 +231,8 @@ export interface PersonHeadshot {
   source: string
   firstSeenAt: string
   isCurrent: boolean
+  /** The user hid this photo (wrong person, say). Only returned when asked for with includeHidden. */
+  isHidden: boolean
 }
 
 export interface LibraryEntry {

@@ -143,13 +143,14 @@
   color: var(--text-muted);
 }
 
+/* Names wrap so a long one is fully visible; overflow-wrap: anywhere also breaks a single very long word. */
 .rowName {
   flex: 1;
   font-size: 13px;
   font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .rowCount {

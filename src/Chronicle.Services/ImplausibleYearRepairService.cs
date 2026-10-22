@@ -28,6 +28,31 @@ public sealed class ImplausibleYearRepairService(
         await db.SaveChangesAsync(ct);
         var fixedCount = items.Count;
 
-        logger.LogInformation("Implausible year repair: cleared the year on {Count} item(s)", fixedCount);
+        // The years stored inside plugin results (a provider's own typo, e.g. 20222) too: they feed the item's resolved year.
+        int scrubbed = 0, lastId = 0;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var batch = await db.MediaItems.AsNoTracking()
+                .Where(m => m.Id > lastId && m.MetadataJson != null)
+                .OrderBy(m => m.Id).Take(2000)
+                .Select(m => new { m.Id, m.MetadataJson })
+                .ToListAsync(ct);
+            if (batch.Count == 0) break;
+            lastId = batch[^1].Id;
+            foreach (var row in batch)
+            {
+                var clean = ReleaseYear.ScrubMetadataJson(row.MetadataJson);
+                if (clean is null) continue;
+                var item = await db.MediaItems.FindAsync([row.Id], ct);
+                if (item is null) continue;
+                item.MetadataJson = clean;
+                scrubbed++;
+            }
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear();
+        }
+
+        logger.LogInformation("Implausible year repair: cleared the year on {Count} item(s) and in the stored plugin data of {Scrubbed}", fixedCount, scrubbed);
     }
 }

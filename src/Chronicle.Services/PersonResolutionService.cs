@@ -360,14 +360,20 @@ public class PersonResolutionService(
         string source, CancellationToken ct)
     {
         var anyNew = false;
+
+        // Seen = the same PICTURE, not the same URL (HeadshotImageKey): one TMDB file arrives as h632, w500 and
+        // original, and a photo the user hid must not come back under another size. The person's rows are read once
+        // per call rather than once per candidate photo.
+        var seenKeys = (await db.PersonHeadshots
+                .Where(h => h.PersonMediaItemId == person.Id).Select(h => h.Url).ToListAsync(ct))
+            .Select(HeadshotImageKey.Of).ToHashSet();
+        foreach (var pending in db.ChangeTracker.Entries<PersonHeadshot>()
+                     .Where(e => e.State == EntityState.Added && e.Entity.PersonMediaItemId == person.Id))
+            seenKeys.Add(HeadshotImageKey.Of(pending.Entity.Url));
+
         foreach (var (url, thumbnailUrl) in photos)
         {
-            var alreadyPending = db.ChangeTracker.Entries<PersonHeadshot>().Any(e =>
-                e.State == EntityState.Added &&
-                e.Entity.PersonMediaItemId == person.Id && e.Entity.Url == url);
-            var alreadySeen = alreadyPending || await db.PersonHeadshots.AnyAsync(
-                h => h.PersonMediaItemId == person.Id && h.Url == url, ct);
-            if (alreadySeen)
+            if (!seenKeys.Add(HeadshotImageKey.Of(url)))
                 continue;
 
             db.PersonHeadshots.Add(new PersonHeadshot

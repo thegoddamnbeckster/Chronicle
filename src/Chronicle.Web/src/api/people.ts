@@ -31,6 +31,23 @@ export async function getJumpPosition(params: GetJumpPositionParams): Promise<{ 
   return data.data ?? { index: 0, total: 0 }
 }
 
+export interface PersonNeighbors {
+  index: number
+  total: number
+  prevId: number | null
+  nextId: number | null
+}
+
+/** Where a person sits in the People list and who is either side, for Prev/Next when not opened from that list. */
+export async function getPersonNeighbors(id: number): Promise<PersonNeighbors | null> {
+  try {
+    const { data } = await client.get<ApiResponse<PersonNeighbors>>(`/people/${id}/neighbors`)
+    return data.data ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function getPersonRoles(): Promise<string[]> {
   const { data } = await client.get<ApiResponse<string[]>>('/people/roles')
   return data.data ?? []
@@ -46,7 +63,22 @@ export async function getPersonAllCredits(id: number): Promise<PersonAllCredits>
   return data.data ?? { groups: [], incomplete: false }
 }
 
-export async function getPersonHeadshots(id: number): Promise<PersonHeadshot[]> {
-  const { data } = await client.get<ApiResponse<PersonHeadshot[]>>(`/people/${id}/headshots`)
+/** One entry per distinct picture. Hidden photos are left out unless includeHidden is set (the page asks for
+ * them so it can offer to restore them). */
+export async function getPersonHeadshots(id: number, includeHidden = false): Promise<PersonHeadshot[]> {
+  const { data } = await client.get<ApiResponse<PersonHeadshot[]>>(`/people/${id}/headshots`, {
+    params: includeHidden ? { includeHidden: true } : undefined,
+  })
   return data.data ?? []
+}
+
+/** Hides a photo from this person's gallery (e.g. a stranger's picture in the provider's gallery). The photo
+ * currently shown cannot be hidden. */
+export async function hidePersonHeadshot(personId: number, headshotId: number): Promise<void> {
+  await client.post(`/people/${personId}/headshots/${headshotId}/hide`)
+}
+
+/** Brings back every photo hidden from this person's gallery. */
+export async function restorePersonHeadshots(personId: number): Promise<void> {
+  await client.post(`/people/${personId}/headshots/restore`)
 }

@@ -978,7 +978,8 @@ public class PluginsController : ControllerBase
         return new(p.Id, p.PluginId, p.Name, p.Version, p.Author, p.Description,
             p.IsEnabled, p.InstalledAt, p.UpdatedAt, iconUrl, fixMatchHint, supportedMediaTypes,
             p.LatestVersionAvailable, p.UpdateCheckedAt,
-            p.FilesSha256?[..12], p.PreviousFilesSha256?[..12], p.FilesChangedAt, p.IntegrityBlockedAt);
+            p.FilesSha256?[..12], p.PreviousFilesSha256?[..12], p.FilesChangedAt, p.IntegrityBlockedAt,
+            loaded?.Manifest.SourceUrls?.Select(r => new PluginSourceUrlDto(r.Match, r.Url)).ToList());
     }
 
     /// <summary>

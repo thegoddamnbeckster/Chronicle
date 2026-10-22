@@ -26,6 +26,14 @@ public class PersonHeadshot
 
     public DateTime FirstSeenAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// The user hid this photo (it is of someone else, or simply wrong - TMDB's gallery for a person can carry a
+    /// stranger's picture). The row is kept, not deleted: rows are insert-only and re-enrichment skips what it has
+    /// already seen, so a deleted photo would be re-added at the next refresh. A hidden photo is not shown in the
+    /// gallery, never chosen as the person's current photo, and not used to match duplicate people.
+    /// </summary>
+    public bool IsHidden { get; set; }
+
     // Navigation
     public MediaItem PersonMediaItem { get; set; } = null!;
 }

@@ -154,7 +154,7 @@ public class MetadataResolutionService(
                     if (!blobs.TryGetValue(pluginId, out var blob)) continue;
                     if (blob.ValueKind != JsonValueKind.Object) continue;
                     if (!TryGetBlobPropertyAny(blob, jsonKeys, out var val)) continue;
-                    if (!HasValue(val)) continue;
+                    if (!IsUsable(canonicalKey, val)) continue;
                     resolved[canonicalKey] = val;
                     found = true;
                     break;
@@ -171,7 +171,7 @@ public class MetadataResolutionService(
                         if (pluginId.StartsWith('_') || plugins.Contains(pluginId, StringComparer.OrdinalIgnoreCase)) continue;
                         if (blob.ValueKind != JsonValueKind.Object) continue;
                         if (!TryGetBlobPropertyAny(blob, jsonKeys, out var val)) continue;
-                        if (!HasValue(val)) continue;
+                        if (!IsUsable(canonicalKey, val)) continue;
                         resolved[canonicalKey] = val;
                         break;
                     }
@@ -184,7 +184,7 @@ public class MetadataResolutionService(
                 {
                     if (blob.ValueKind != JsonValueKind.Object) continue;
                     if (!TryGetBlobPropertyAny(blob, jsonKeys, out var val)) continue;
-                    if (!HasValue(val)) continue;
+                    if (!IsUsable(canonicalKey, val)) continue;
                     resolved[canonicalKey] = val;
                     break;
                 }
@@ -235,9 +235,9 @@ public class MetadataResolutionService(
             item.Overview = ov.GetString();
         if (resolved.TryGetValue("runtimeMinutes", out var rt) && rt.ValueKind == JsonValueKind.Number)
             item.RuntimeMinutes = rt.GetInt32();
-        if (resolved.TryGetValue("birthDate", out var bd) && HasValue(bd) && DateTime.TryParse(bd.GetString(), out var bdVal))
+        if (resolved.TryGetValue("birthDate", out var bd) && HasValue(bd) && DateTime.TryParse(bd.GetString(), out var bdVal) && ReleaseYear.IsPlausibleBirthDate(bdVal))
             item.BirthDate = bdVal;
-        if (resolved.TryGetValue("deathDate", out var dd) && HasValue(dd) && DateTime.TryParse(dd.GetString(), out var ddVal))
+        if (resolved.TryGetValue("deathDate", out var dd) && HasValue(dd) && DateTime.TryParse(dd.GetString(), out var ddVal) && ReleaseYear.IsPlausibleDeathDate(ddVal))
             item.DeathDate = ddVal;
         else if (droppedInconsistentDeathDate)
             // Same "must actually clear, not just skip" reasoning as posterUrl's own
@@ -271,7 +271,7 @@ public class MetadataResolutionService(
                 await KeepFormerNameAsync(item, newName, db, ct);
                 item.Name = newName;
             }
-            if (resolved.TryGetValue("year", out var yr) && yr.ValueKind == JsonValueKind.Number)
+            if (resolved.TryGetValue("year", out var yr) && yr.ValueKind == JsonValueKind.Number && ReleaseYear.IsPlausible(yr.GetInt32()))
                 item.Year = yr.GetInt32();
         }
 
@@ -319,7 +319,7 @@ public class MetadataResolutionService(
     /// have been recorded yet -- resolution falls through with no poster_url for this field.</summary>
     private static async Task<string?> GetLatestHeadshotUrlAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct) =>
         await db.PersonHeadshots
-            .Where(h => h.PersonMediaItemId == personMediaItemId)
+            .Where(h => h.PersonMediaItemId == personMediaItemId && !h.IsHidden)
             .OrderByDescending(h => h.FirstSeenAt)
             .Select(h => h.Url)
             .FirstOrDefaultAsync(ct);
@@ -483,6 +483,25 @@ public class MetadataResolutionService(
             return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(metadataJson) ?? [];
         }
         catch (JsonException) { return []; }
+    }
+
+    /// A value a plugin offered for a field, fit to be the resolved one: non-empty and, for a year or a date, not obviously
+    /// wrong (a typo such as year 20222, a birth date in the future). An unusable value is skipped exactly like an empty
+    /// one, so the next plugin in the field's precedence supplies it.
+    internal static bool IsUsable(string canonicalKey, JsonElement el)
+    {
+        if (!HasValue(el)) return false;
+        switch (canonicalKey)
+        {
+            case "year":
+                return el.ValueKind != JsonValueKind.Number || (el.TryGetInt32(out var y) && ReleaseYear.IsPlausible(y));
+            case "birthDate":
+                return el.ValueKind != JsonValueKind.String || !DateTime.TryParse(el.GetString(), out var b) || ReleaseYear.IsPlausibleBirthDate(b);
+            case "deathDate":
+                return el.ValueKind != JsonValueKind.String || !DateTime.TryParse(el.GetString(), out var d) || ReleaseYear.IsPlausibleDeathDate(d);
+            default:
+                return true;
+        }
     }
 
     /// Returns true when a JsonElement has a meaningful (non-empty) value.

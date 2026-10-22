@@ -373,3 +373,12 @@
 .lightboxCounter {
   color: rgba(255,255,255,0.5);
 }
+
+.sourceLink {
+  font-size: 12px;
+  color: var(--accent, #01b4e4);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.sourceLink:hover { text-decoration: underline; }

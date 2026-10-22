@@ -184,8 +184,25 @@ namespace Chronicle.API.DTOs
         /// How many items sit directly under this one. Set only when listing an item's children, so the
         /// page can tell a series that holds books from a standalone book in the same list.
         /// </summary>
-        int? ChildCount = null
+        int? ChildCount = null,
+        /// <summary>
+        /// For a plugin whose match was refused because a DIFFERENT item in Chronicle already holds that provider id
+        /// (a genuine duplicate), keyed by full plugin ID: which item it is. Lets the page say "already in Chronicle as
+        /// ..." with a link, instead of only reporting that nothing matched. Absent when no match was refused that way.
+        /// </summary>
+        Dictionary<string, EnrichmentConflictDto>? EnrichmentConflicts = null,
+        /// <summary>
+        /// The other record(s) holding the same real-world entity: an author's People record, or a person's author record(s)
+        /// in the book/audiobook libraries. The page shows them together as one. Null when there is no unambiguous partner.
+        /// </summary>
+        List<LinkedItemDto>? LinkedItems = null
     );
+
+    /// <summary>A record that is the same real-world entity as the item it is attached to. See MediaItemDto.LinkedItems.</summary>
+    public record LinkedItemDto(int ItemId, string Name, string MediaTypeName, bool IsPerson);
+
+    /// <summary>The item that already holds a provider id a match was refused for. See MediaItemDto.EnrichmentConflicts.</summary>
+    public record EnrichmentConflictDto(int ItemId, string ItemName, string MediaTypeName);
 
     /// <summary>One manually-pinned field override on a media item. See MediaItemDto.Overrides.</summary>
     public record MediaOverrideDto(

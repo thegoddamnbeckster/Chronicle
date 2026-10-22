@@ -216,10 +216,10 @@ public sealed class DuplicatePersonAutoResolveService(
         // OrdinalIgnoreCase comparer; filtering client-side is what actually makes the exclusion
         // case-insensitive the way agreeingSource's own (already in-memory) check above is.
         var rawHeadsA = await db.PersonHeadshots
-            .Where(h => h.PersonMediaItemId == idA)
+            .Where(h => h.PersonMediaItemId == idA && !h.IsHidden)
             .Select(h => new { h.Url, h.Source }).ToListAsync(ct);
         var rawHeadsB = await db.PersonHeadshots
-            .Where(h => h.PersonMediaItemId == idB)
+            .Where(h => h.PersonMediaItemId == idB && !h.IsHidden)
             .Select(h => new { h.Url, h.Source }).ToListAsync(ct);
         var headsA = rawHeadsA.Where(h => !ExternalIdPolicies.IsNameDerived(h.Source)).Select(h => h.Url);
         var headsB = rawHeadsB.Where(h => !ExternalIdPolicies.IsNameDerived(h.Source)).Select(h => h.Url);

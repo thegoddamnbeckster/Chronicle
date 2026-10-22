@@ -93,6 +93,8 @@ namespace Chronicle.API.Controllers
             var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
             var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
             var enrichmentStatusDict = await GetEnrichmentStatusDictAsync(id, ct);
+            var enrichmentConflicts = await GetEnrichmentConflictsAsync(id, ct);
+            var linkedItems = await GetLinkedItemsAsync(item, ct);
 
             // Fetch MetadataJson for all descendants (children + grandchildren) so we can compute
             // hasPhysicalFile / hasMetadataOnly for parent items (TV shows, artists, etc.) that
@@ -100,7 +102,7 @@ namespace Chronicle.API.Controllers
             // (Show→Season→Episode or Artist→Album→Track), so two levels covers all cases.
             var (directChildrenMeta, grandchildrenMeta) = await GetDescendantMetaAsync(id, ct);
 
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict, directChildrenMeta, grandchildrenMeta)));
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict, directChildrenMeta, grandchildrenMeta, enrichmentConflicts, linkedItems)));
         }
 
         [HttpGet("search")]
@@ -270,8 +272,10 @@ namespace Chronicle.API.Controllers
                 var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
                 var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
+                var enrichmentConflicts = await GetEnrichmentConflictsAsync(id, ct);
+                var linkedItems = await GetLinkedItemsAsync(item, ct);
                 var (directChildrenMeta, grandchildrenMeta) = await GetDescendantMetaAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, directChildrenMeta, grandchildrenMeta)));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, directChildrenMeta, grandchildrenMeta, enrichmentConflicts, linkedItems)));
             }
             catch (Exception ex)
             {
@@ -308,8 +312,10 @@ namespace Chronicle.API.Controllers
                 var enrichmentRecords = await _enrichment.GetEnrichmentRecordsAsync(id, ct);
                 var ancestors = await BuildAncestorsAsync(item.ParentId, ct);
                 var enrichmentStatuses = await GetEnrichmentStatusDictAsync(id, ct);
+                var enrichmentConflicts = await GetEnrichmentConflictsAsync(id, ct);
+                var linkedItems = await GetLinkedItemsAsync(item, ct);
                 var (refreshedDirectMeta, refreshedGrandchildMeta) = await GetDescendantMetaAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, refreshedDirectMeta, refreshedGrandchildMeta)));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, refreshedDirectMeta, refreshedGrandchildMeta, enrichmentConflicts, linkedItems)));
             }
             catch (MediaNotFoundException ex)
             {
@@ -916,6 +922,43 @@ namespace Chronicle.API.Controllers
             return ancestors;
         }
 
+        /// <summary>
+        /// For each plugin whose match on this item was refused because another item already holds the id (the stored
+        /// reason names it), who that other item is -- so the page can say "already in Chronicle as X" and link to it.
+        /// </summary>
+        private async Task<List<LinkedItemDto>?> GetLinkedItemsAsync(MediaItem item, CancellationToken ct)
+        {
+            var partners = await MetadataEnrichmentService.FindSameEntityPartnersAsync(_context, item, ct);
+            return partners.Count == 0
+                ? null
+                : partners.Select(p => new LinkedItemDto(p.Id, p.Name, p.MediaType?.DisplayName ?? string.Empty, p.MediaType?.IsPersonType ?? false)).ToList();
+        }
+
+        private async Task<Dictionary<string, EnrichmentConflictDto>?> GetEnrichmentConflictsAsync(int mediaItemId, CancellationToken ct)
+        {
+            var refused = await _context.MediaEnrichments
+                .Where(e => e.MediaItemId == mediaItemId && e.Status == EnrichmentStatus.NotFound && e.ErrorMessage != null)
+                .Select(e => new { e.PluginId, e.ErrorMessage })
+                .ToListAsync(ct);
+            var owners = refused
+                .Select(r => (r.PluginId, OwnerId: MetadataEnrichmentService.ParseConflictOwnerId(r.ErrorMessage)))
+                .Where(r => r.OwnerId.HasValue)
+                .ToList();
+            if (owners.Count == 0) return null;
+
+            var ids = owners.Select(o => o.OwnerId!.Value).Distinct().ToList();
+            var items = await _context.MediaItems
+                .Where(m => ids.Contains(m.Id))
+                .Select(m => new { m.Id, m.Name, TypeName = m.MediaType != null ? m.MediaType.DisplayName : string.Empty })
+                .ToDictionaryAsync(m => m.Id, ct);
+
+            var result = new Dictionary<string, EnrichmentConflictDto>();
+            foreach (var (pluginId, ownerId) in owners)
+                if (items.TryGetValue(ownerId!.Value, out var owner))
+                    result[pluginId] = new EnrichmentConflictDto(owner.Id, owner.Name, owner.TypeName);
+            return result.Count > 0 ? result : null;
+        }
+
         private async Task<Dictionary<string, string>?> GetEnrichmentStatusDictAsync(int mediaItemId, CancellationToken ct)
         {
             var rows = await _context.MediaEnrichments
@@ -952,7 +995,9 @@ namespace Chronicle.API.Controllers
             List<AncestorDto>? ancestors = null,
             Dictionary<string, string>? enrichmentStatuses = null,
             List<string?>? directChildrenMeta = null,
-            List<string?>? grandchildrenMeta = null)
+            List<string?>? grandchildrenMeta = null,
+            Dictionary<string, EnrichmentConflictDto>? enrichmentConflicts = null,
+            List<LinkedItemDto>? linkedItems = null)
         {
             var (fs, pluginMeta) = ParseMetaJson(m.MetadataJson);
             // Map enrichment records to RefreshLogDto for frontend compatibility
@@ -1113,6 +1158,8 @@ namespace Chronicle.API.Controllers
                 RefreshLogs: logDtos,
                 Ancestors: ancestors,
                 EnrichmentStatuses: enrichmentStatuses,
+                EnrichmentConflicts: enrichmentConflicts,
+                LinkedItems: linkedItems,
                 MediaTypeInternalName: m.MediaType?.Name,
                 MediaTypeScanStrategy: m.MediaType?.ScanStrategy,
                 HasPhysicalFile: hasPhysicalFile,

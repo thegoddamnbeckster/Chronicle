@@ -15,7 +15,7 @@ namespace Chronicle.Data.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "9.0.21");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.20");
 
             modelBuilder.Entity("Chronicle.Core.Models.ApiToken", b =>
                 {
@@ -517,6 +517,8 @@ namespace Chronicle.Data.Migrations
                     b.HasIndex("ParentId");
 
                     b.HasIndex("HierarchyLevel", "Name");
+
+                    b.HasIndex("MediaTypeId", "UpdatedAt");
 
                     b.HasIndex("NormalizedName", "MediaTypeId")
                         .HasDatabaseName("idx_media_items_normalized_name_mediatypeid");
@@ -1165,6 +1167,12 @@ namespace Chronicle.Data.Migrations
                     b.Property<DateTime>("FirstSeenAt")
                         .HasColumnType("TEXT")
                         .HasColumnName("first_seen_at");
+
+                    b.Property<bool>("IsHidden")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_hidden");
 
                     b.Property<int>("PersonMediaItemId")
                         .HasColumnType("INTEGER")

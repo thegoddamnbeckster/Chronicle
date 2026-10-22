@@ -14,6 +14,8 @@ export interface PluginDto {
   iconUrl: string | null
   /** User-facing hint shown in the Fix Match input. Comes from the plugin manifest. */
   fixMatchHint: string | null
+  /** How this plugin's stored id maps to the web page it resolved to (manifest sourceUrls). Null when not loaded or none declared. */
+  sourceUrls?: { match: string; url: string }[] | null
   /** Media type names this plugin can enrich (e.g. ["TV", "Movies"]). Empty when not loaded. */
   supportedMediaTypes: string[] | null
   /** Newer version found by the last scheduled update check. Null when up to date. */

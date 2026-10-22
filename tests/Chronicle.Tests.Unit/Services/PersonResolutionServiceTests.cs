@@ -326,6 +326,47 @@ public class PersonResolutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RecordOwnPortraitAsync_TheSameTmdbFileAtThreeSizes_IsOnePhoto()
+    {
+        // The real Stanislav Yanevski case: the current pick (h632), its thumbnail (w500) and the provider's
+        // gallery entry (original) are one file, and used to be stored - and shown - as three photos.
+        var person = await _svc.ResolvePersonOnlyAsync(_db, "Stanislav Yanevski", "tmdb:11290", "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        await _svc.RecordOwnPortraitAsync(_db, person,
+            [("https://image.tmdb.org/t/p/h632/8vb.jpg", (string?)null),
+             ("https://image.tmdb.org/t/p/original/8vb.jpg", "https://image.tmdb.org/t/p/w500/8vb.jpg"),
+             ("https://image.tmdb.org/t/p/w500/8vb.jpg", null)],
+            "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        (await _db.PersonHeadshots.CountAsync(h => h.PersonMediaItemId == person.Id)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RecordOwnPortraitAsync_ARediscoveredPhotoTheUserHid_StaysHiddenEvenAtAnotherSize()
+    {
+        // Re-enrichment re-discovers every provider photo. A hidden one must not come back - not as the same
+        // url, and not as a different size of the same file.
+        var person = await _svc.ResolvePersonOnlyAsync(_db, "Stanislav Yanevski", "tmdb:11290", "tmdb", default);
+        await _db.SaveChangesAsync();
+        _db.PersonHeadshots.Add(new PersonHeadshot
+        {
+            PersonMediaItemId = person.Id, Url = "https://image.tmdb.org/t/p/original/evW0.jpg", Source = "tmdb", IsHidden = true,
+        });
+        await _db.SaveChangesAsync();
+
+        await _svc.RecordOwnPortraitAsync(_db, person,
+            [("https://image.tmdb.org/t/p/original/evW0.jpg", (string?)null),
+             ("https://image.tmdb.org/t/p/w500/evW0.jpg", null)],
+            "tmdb", default);
+        await _db.SaveChangesAsync();
+
+        var rows = await _db.PersonHeadshots.Where(h => h.PersonMediaItemId == person.Id).ToListAsync();
+        rows.Should().ContainSingle().Which.IsHidden.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task RecordOwnPortraitAsync_EmptyOrBlankUrls_NoOp()
     {
         var person = await _svc.ResolvePersonOnlyAsync(_db, "Keanu Reeves", "tmdb:6384", "tmdb", default);

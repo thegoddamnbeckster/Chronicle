@@ -1704,3 +1704,17 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   color: var(--accent);
 }
 .unmergePanelBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Embedded in another page (a person's combined page) ──
+ * The edge-to-edge backdrop above assumes this page owns the top of the content column; embedded, it must instead sit inside
+ * the host's column like the cards around it, aligned to the same left and right edges. */
+.pageEmbedded { padding: 0; }
+
+.backdropActive.backdropEmbedded {
+  margin: 0;
+  width: auto;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.backdropEmbedded .backdropContentActive { padding: 16px; }

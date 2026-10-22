@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { JsonTree } from './JsonTree'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { refreshMediaForPlugin, clearMediaExternalId, suppressMediaMatch } from '@/api/media'
-import type { ExternalId, RefreshLog } from '@/types'
+import { sourceUrlFor, type SourceUrlRule } from '@/utils/sourceUrl'
+import type { EnrichmentConflict, ExternalId, RefreshLog } from '@/types'
 import { IMAGE_KEYS, IMAGE_ARRAY_KEYS, toLabel, isImageUrl, extractImages, arrayItemToString, type ImageEntry } from '@/utils/imageExtractor'
 import styles from './PluginMetadataBox.module.css'
 
@@ -21,10 +23,14 @@ export interface PluginMetadataBoxProps {
   pluginName: string
   iconUrl?: string | null
   fixMatchHint?: string | null
+  /** The plugin's id-pattern to web-page rules; with the result's id they give the "open source page" link. */
+  sourceUrls?: SourceUrlRule[] | null
   /** Undefined when enrichment was attempted but returned no match. */
   metadata?: Record<string, unknown>
   /** Enrichment status string from the server: "Pending" | "Completed" | "NotFound" | "Failed" | "Exhausted" */
   enrichmentStatus?: string
+  /** Set when the match was refused because ANOTHER item in Chronicle already holds that provider id. */
+  enrichmentConflict?: EnrichmentConflict
   externalIds: ExternalId[]
   refreshLogs?: RefreshLog[] | null
   /**
@@ -44,10 +50,12 @@ export function PluginMetadataBox({
   mediaId,
   pluginId,
   pluginName,
+  sourceUrls,
   iconUrl,
   fixMatchHint,
   metadata,
   enrichmentStatus,
+  enrichmentConflict,
   externalIds,
   refreshLogs,
   onImageClick,
@@ -56,6 +64,8 @@ export function PluginMetadataBox({
   const qc = useQueryClient()
   const [fixMatchOpen, setFixMatchOpen] = useState(false)
   const [fixMatchInput, setFixMatchInput] = useState('')
+  // Set when a Fix Match was refused because another item already holds that id; keeps the panel open to say so.
+  const [fixMatchRefused, setFixMatchRefused] = useState<EnrichmentConflict | null>(null)
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -81,6 +91,15 @@ export function PluginMetadataBox({
     onSuccess: (updated) => {
       qc.setQueryData(['media', mediaId], updated)
       qc.invalidateQueries({ queryKey: ['library'] })
+      const refused = updated.enrichmentStatuses?.[pluginId] === 'NotFound'
+        ? updated.enrichmentConflicts?.[pluginId] ?? null
+        : null
+      if (refused) {
+        // Not a failure of the lookup: that id is already on another item here. Say so, and leave the panel open.
+        setFixMatchRefused(refused)
+        return
+      }
+      setFixMatchRefused(null)
       setFixMatchOpen(false)
       setFixMatchInput('')
     },
@@ -195,6 +214,11 @@ export function PluginMetadataBox({
     return <span className={styles.value}>{String(value)}</span>
   }
 
+  // The page this result is: the provider's own address when it gave one (Hardcover pages are slug-only), else the manifest's
+  // id-pattern rule applied to the stored id.
+  const ownAddress = typeof metadata?.sourceUrl === 'string' && /^https?:\/\//i.test(metadata.sourceUrl) ? metadata.sourceUrl : null
+  const sourcePage = ownAddress ?? sourceUrlFor(typeof metadata?.externalId === 'string' ? metadata.externalId : null, sourceUrls)
+
   return (
     <div className={styles.box}>
       {/* Header */}
@@ -210,6 +234,17 @@ export function PluginMetadataBox({
             />
           )}
           <span className={styles.name}>{pluginName}</span>
+          {sourcePage && (
+            <a
+              href={sourcePage}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.sourceLink}
+              title={`Open the ${pluginName} page this resolved to`}
+            >
+              Open on {pluginName} ↗
+            </a>
+          )}
           {log && (
             <p className={styles.timestamp}>
               {log.succeeded
@@ -219,7 +254,14 @@ export function PluginMetadataBox({
           )}
           {!log && enrichmentStatus && enrichmentStatus !== 'Completed' && (
             <p className={styles.timestamp}>
-              {enrichmentStatus === 'NotFound' && 'No match found — use Fix Match to set one manually'}
+              {enrichmentStatus === 'NotFound' && enrichmentConflict && (
+                <>
+                  Already in Chronicle as{' '}
+                  <Link to={`/media/${enrichmentConflict.itemId}`}>{enrichmentConflict.itemName}</Link>
+                  {' '}({enrichmentConflict.mediaTypeName}) — that match was not added again
+                </>
+              )}
+              {enrichmentStatus === 'NotFound' && !enrichmentConflict && 'No match found — use Fix Match to set one manually'}
               {enrichmentStatus === 'Pending' && 'Enrichment pending…'}
               {enrichmentStatus === 'Failed' && 'Enrichment failed — will retry automatically'}
               {enrichmentStatus === 'Exhausted' && 'Enrichment gave up — use Fix Match to set manually'}
@@ -237,7 +279,7 @@ export function PluginMetadataBox({
           </button>
           <button
             className={styles.fixMatchBtn}
-            onClick={() => { setFixMatchOpen(v => !v); fixMatchMut.reset() }}
+            onClick={() => { setFixMatchOpen(v => !v); fixMatchMut.reset(); setFixMatchRefused(null) }}
             title={`Manually specify the correct ${pluginName} match`}
           >
             ✎ Fix Match
@@ -289,7 +331,7 @@ export function PluginMetadataBox({
               type="text"
               placeholder={`${pluginName} ID or URL…`}
               value={fixMatchInput}
-              onChange={e => { setFixMatchInput(e.target.value); fixMatchMut.reset() }}
+              onChange={e => { setFixMatchInput(e.target.value); fixMatchMut.reset(); setFixMatchRefused(null) }}
               onKeyDown={e => {
                 if (e.key === 'Enter' && fixMatchInput.trim()) fixMatchMut.mutate()
                 if (e.key === 'Escape') { setFixMatchOpen(false); setFixMatchInput('') }
@@ -305,6 +347,13 @@ export function PluginMetadataBox({
           </div>
           {fixMatchMut.isError && (
             <p className={styles.error}>{(fixMatchMut.error as Error).message}</p>
+          )}
+          {fixMatchRefused && (
+            <p className={styles.error} role="alert">
+              That {pluginName} entry is already in Chronicle as{' '}
+              <Link to={`/media/${fixMatchRefused.itemId}`}>{fixMatchRefused.itemName}</Link>
+              {' '}({fixMatchRefused.mediaTypeName}), so it was not added to this item. Open that item to merge or remove the duplicate.
+            </p>
           )}
         </div>
       )}

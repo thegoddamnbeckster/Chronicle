@@ -22,6 +22,11 @@ public class MediaMetadata
     public string Title { get; set; } = string.Empty;
     public string? Overview { get; set; }
     public int? Year { get; set; }
+    /// <summary>
+    /// The web page this result is, when the provider can say so directly (a slug-based address no id pattern can rebuild).
+    /// The UI offers it as "open on the provider's site"; absent, a rule in the plugin's manifest may build one from the id.
+    /// </summary>
+    public string? SourceUrl { get; set; }
     public string? PosterUrl { get; set; }
     public string? BackdropUrl { get; set; }
     public int? RuntimeMinutes { get; set; }

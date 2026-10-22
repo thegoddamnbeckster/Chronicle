@@ -78,20 +78,17 @@ public sealed class PersonFullCreditsService(IPluginRegistry registry, ILogger<P
         }
 
         // Library credits the provider did not list (other sources, or a person with no provider id).
-        var own = await db.MediaCredits
+        // One card per work here too: an episode credit is shown as its show.
+        var ownCredits = await db.MediaCredits
             .Where(c => c.PersonMediaItemId == personId)
-            .Select(c => new
-            {
-                c.MediaItemId, c.Role, c.CharacterName, c.MediaItem.Name, c.MediaItem.PosterUrl, c.MediaItem.Year,
-                Type = c.MediaItem.MediaType!.Name,
-            })
+            .Include(c => c.MediaItem).ThenInclude(m => m!.MediaType)
             .ToListAsync(ct);
-        foreach (var c in own)
+        foreach (var c in await PersonCreditRollup.RollUpAsync(db, ownCredits, ct))
         {
             // "Cast" and "Actor" are the same role spelled two ways across sources.
             var role = c.Role == "Cast" ? "Actor" : c.Role;
             if (!seen.Add((c.MediaItemId, NormalizeRole(role)))) continue;
-            result.Add(new PersonFullCredit(c.MediaItemId, c.Name, c.PosterUrl, c.Year, c.Type, c.CharacterName, role));
+            result.Add(new PersonFullCredit(c.MediaItemId, c.Name, c.PosterUrl, c.Year, c.MediaTypeName, c.CharacterName, role));
         }
 
         return new PersonFullCreditsResult(result, incomplete);

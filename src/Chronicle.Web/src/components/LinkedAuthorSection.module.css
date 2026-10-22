@@ -1,0 +1,8 @@
+.section { display: flex; flex-direction: column; gap: 12px; margin-top: 24px; }
+.header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.title { margin: 0; font-size: 16px; color: var(--text-primary); }
+.manage { font-size: 12px; color: var(--text-secondary); }
+.manage:hover { color: var(--text-primary); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+.card { display: flex; flex-direction: column; gap: 6px; color: var(--text-primary); text-decoration: none; min-width: 0; }
+.cardName { font-size: 12px; overflow-wrap: anywhere; word-break: break-word; }

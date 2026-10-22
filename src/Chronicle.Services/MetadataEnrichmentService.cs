@@ -2506,6 +2506,15 @@ public class MetadataEnrichmentService(
     private static readonly System.Text.RegularExpressions.Regex ConflictOwnerRe =
         new(@"already belongs to a different item \((\d+),", System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    /// <summary>The id of the item named in a "... already belongs to a different item (id, "name") ..." rejection message,
+    /// or null when the message is not one. Lets the item page say which item already has the match.</summary>
+    public static int? ParseConflictOwnerId(string? errorMessage)
+    {
+        if (string.IsNullOrEmpty(errorMessage)) return null;
+        var m = ConflictOwnerRe.Match(errorMessage);
+        return m.Success && int.TryParse(m.Groups[1].Value, out var id) ? id : null;
+    }
+
     /// <summary>Plugins whose refused rows have all been looked at and none qualified: nothing new can qualify until the next start,
     /// because the same rule no longer refuses such rows.</summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _requeueScanDone = new();
@@ -2521,7 +2530,9 @@ public class MetadataEnrichmentService(
         if (_requeueScanDone.ContainsKey(pluginId)) return;
         var groups = await LoadSameWorkTypeGroupsAsync(db, ct);
         var scopes = await LoadSharedIdScopesAsync(db, ct);
-        var names = groups.SelectMany(g => g).Concat(scopes.Select(sc => sc.MediaType)).Select(n => n.ToLower()).Distinct().ToList();
+        var entityGroups = await LoadSameEntityGroupsAsync(db, ct);
+        var names = groups.SelectMany(g => g).Concat(scopes.Select(sc => sc.MediaType))
+            .Concat(entityGroups.SelectMany(g => g.MediaTypes)).Select(n => n.ToLower()).Distinct().ToList();
         if (names.Count == 0) { _requeueScanDone[pluginId] = true; return; }
 
         // A bounded number per run: a large library can hold tens of thousands of these (every track that also sits on a
@@ -2559,7 +2570,8 @@ public class MetadataEnrichmentService(
                 var m = ConflictOwnerRe.Match(row.ErrorMessage!);
                 if (!m.Success || !owners.TryGetValue(int.Parse(m.Groups[1].Value), out var owner)) continue;
                 var item = row.MediaItem!;
-                if (!(IsSameWorkTypePair(groups, item.MediaType!.Name, owner.MediaType?.Name) || IsSharedIdPair(scopes, item, owner))) continue;
+                if (!(IsSameWorkTypePair(groups, item.MediaType!.Name, owner.MediaType?.Name) || IsSharedIdPair(scopes, item, owner)
+                      || IsSameEntityPair(entityGroups, item, owner))) continue;
                 row.Status = EnrichmentStatus.Pending;
                 row.ErrorMessage = null;
                 row.RetryCount = 0;
@@ -3183,6 +3195,9 @@ public class MetadataEnrichmentService(
         // reference when the best result points back into its own Results list).
         var savedResults = result.Results;
         var savedTotal   = result.TotalResults;
+        // A provider's impossible year (a typo such as 20222) is no year: it must not reach the stored result or win the resolved year.
+        var savedYear = result.Year;
+        result.Year = ReleaseYear.OrNull(result.Year);
         result.Results      = null;
         result.TotalResults = 0;
         try
@@ -3194,6 +3209,7 @@ public class MetadataEnrichmentService(
         {
             result.Results      = savedResults;
             result.TotalResults = savedTotal;
+            result.Year         = savedYear;
         }
 
         // NOTE: PosterUrl is NOT set directly here — ResolveAsync() is called immediately
@@ -3554,8 +3570,10 @@ public class MetadataEnrichmentService(
         if (item?.MediaType is null) return owners[0];
         var sameWork = await LoadSameWorkTypeGroupsAsync(db, ct);
         var scopes = await LoadSharedIdScopesAsync(db, ct);
+        var sameEntity = await LoadSameEntityGroupsAsync(db, ct);
         return owners.FirstOrDefault(o => o is null ||
-            !(IsSameWorkTypePair(sameWork, item.MediaType.Name, o.MediaType?.Name) || IsSharedIdPair(scopes, item, o)));
+            !(IsSameWorkTypePair(sameWork, item.MediaType.Name, o.MediaType?.Name) || IsSharedIdPair(scopes, item, o)
+              || IsSameEntityPair(sameEntity, item, o)));
     }
 
     /// <summary>The most alternate names kept from one provider for one item (a provider listing hundreds is not describing a pen name).</summary>
@@ -3665,6 +3683,101 @@ public class MetadataEnrichmentService(
             return true;
         }
         return false;
+    }
+
+    /// <summary>app_settings key: JSON array of {"mediaTypes":[...],"level":0,"requireSameName":true}. Items of two DIFFERENT media
+    /// types in one group, at that hierarchy level, are the same real-world entity held in two places -- an author in a book or
+    /// audiobook library and that author's record in the People catalog -- so they legitimately carry the same provider ids and
+    /// neither is a duplicate of the other (when requireSameName, only if their names match). Two items of the SAME type are never
+    /// paired by this rule: two people sharing a name stay a conflict. Seeded by the migration that introduced it; none when unset.</summary>
+    internal const string SameEntityTypesSettingKey = "enrichment.same_entity_media_types";
+
+    internal sealed record SameEntityGroup(string[] MediaTypes, int Level = 0, bool RequireSameName = true);
+
+    private static async Task<List<SameEntityGroup>> LoadSameEntityGroupsAsync(ChronicleDbContext db, CancellationToken ct)
+    {
+        var raw = await db.AppSettings.AsNoTracking().Where(a => a.Key == SameEntityTypesSettingKey)
+            .Select(a => a.Value).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(raw)) return [];
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<SameEntityGroup>>(raw, CaseInsensitiveOptions) ?? [];
+        }
+        catch (System.Text.Json.JsonException) { return []; }
+    }
+
+    internal static bool IsSameEntityPair(IEnumerable<SameEntityGroup> groups, MediaItem a, MediaItem b)
+    {
+        var typeA = a.MediaType?.Name;
+        var typeB = b.MediaType?.Name;
+        if (typeA is null || typeB is null || string.Equals(typeA, typeB, StringComparison.OrdinalIgnoreCase)) return false;
+        foreach (var group in groups)
+        {
+            if (a.HierarchyLevel != group.Level || b.HierarchyLevel != group.Level) continue;
+            if (!group.MediaTypes.Contains(typeA, StringComparer.OrdinalIgnoreCase) ||
+                !group.MediaTypes.Contains(typeB, StringComparer.OrdinalIgnoreCase)) continue;
+            if (group.RequireSameName)
+            {
+                var na = a.NormalizedNameLoose ?? a.NormalizedName;
+                var nb = b.NormalizedNameLoose ?? b.NormalizedName;
+                if (string.IsNullOrEmpty(na) || na != nb) continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The other record(s) holding the SAME real-world entity as <paramref name="item"/>, by the same-entity rule: for an author
+    /// (book/audiobook library) its People record, for a People record its author(s). Lets the UI show one combined page for
+    /// the pair. Several same-named candidates are narrowed to the one sharing a provider id; if that still leaves more than one
+    /// the link is ambiguous and nothing is returned (a wrong link is worse than none). Never merges or alters data.
+    /// </summary>
+    public static async Task<List<MediaItem>> FindSameEntityPartnersAsync(ChronicleDbContext db, MediaItem item, CancellationToken ct = default)
+    {
+        var groups = await LoadSameEntityGroupsAsync(db, ct);
+        if (groups.Count == 0) return [];
+        if (item.MediaType is null)
+            item.MediaType = await db.MediaTypes.AsNoTracking().FirstAsync(t => t.Id == item.MediaTypeId, ct);
+        var loose = item.NormalizedNameLoose ?? item.NormalizedName;
+        if (string.IsNullOrEmpty(loose)) return [];
+
+        var candidates = (await db.MediaItems.AsNoTracking().Include(m => m.MediaType)
+                .Where(m => m.Id != item.Id && m.HierarchyLevel == item.HierarchyLevel
+                            && (m.NormalizedNameLoose == loose || (m.NormalizedNameLoose == null && m.NormalizedName == loose)))
+                .ToListAsync(ct))
+            .Where(m => IsSameEntityPair(groups, item, m))
+            .ToList();
+        if (candidates.Count == 0) return [];
+
+        var personSide = item.MediaType.IsPersonType;
+        var counterparts = candidates.Where(c => (c.MediaType?.IsPersonType ?? false) != personSide).ToList();
+        if (counterparts.Count == 0) return [];
+
+        async Task<HashSet<(string, string)>> IdsAsync(IEnumerable<int> ids) =>
+            (await db.MediaExternalIds.AsNoTracking().Where(e => ids.Contains(e.MediaItemId))
+                .Select(e => new { e.Source, e.ExternalId }).ToListAsync(ct))
+            .Select(e => (e.Source, e.ExternalId)).ToHashSet();
+
+        if (!personSide)
+        {
+            // An author has one person: pick it, using shared ids to break a tie between same-named people.
+            if (counterparts.Count == 1) return counterparts;
+            var mine = await IdsAsync([item.Id]);
+            var shared = new List<MediaItem>();
+            foreach (var c in counterparts)
+                if ((await IdsAsync([c.Id])).Overlaps(mine)) shared.Add(c);
+            return shared.Count == 1 ? shared : [];
+        }
+
+        // A person has every author whose own best partner is this person.
+        var result = new List<MediaItem>();
+        foreach (var author in counterparts)
+        {
+            var back = await FindSameEntityPartnersAsync(db, author, ct);
+            if (back.Count == 1 && back[0].Id == item.Id) result.Add(author);
+        }
+        return result;
     }
 
     /// <summary>The top of each item's hierarchy (loaded with the item) has the same name, or either is "Various Artists". Unknown is not the same.</summary>

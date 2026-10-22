@@ -92,6 +92,7 @@
 .nameFull {
   font-weight: 600;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .positions {
@@ -100,6 +101,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Unclipped variant, used with .nameFull on a title's own cast/crew tiles (no fixed row height to protect): the
+   character an actor plays - or a crew member's role - wraps instead of ending in an ellipsis. The catalog-wide
+   People grid keeps the clipped .positions because its virtualized row height depends on a one-line role. */
+.positionsFull {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 .character {

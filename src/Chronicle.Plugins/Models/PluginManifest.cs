@@ -75,6 +75,15 @@ public class PluginManifest
     public string? FixMatchHint { get; set; }
 
     /// <summary>
+    /// How to turn this plugin's stored external id into the web page it resolved to, so a person can open it and look.
+    /// Rules are tried in order; the first whose <see cref="PluginSourceUrlRule.Match"/> regex matches the id wins, and its
+    /// <see cref="PluginSourceUrlRule.Url"/> has $0 (whole id) and $1..$n (capture groups) substituted. Optional; with none,
+    /// the card simply has no link. Example: { "match": "^movie:(\d+)", "url": "https://www.themoviedb.org/movie/$1" }.
+    /// </summary>
+    [JsonPropertyName("sourceUrls")]
+    public List<PluginSourceUrlRule>? SourceUrls { get; set; }
+
+    /// <summary>
     /// Background tasks this plugin wants Chronicle to schedule.
     /// Omit entirely if the plugin has no scheduled work.
     /// </summary>
@@ -95,4 +104,16 @@ public class PluginManifest
     /// </summary>
     [JsonPropertyName("max_enrichment_concurrency")]
     public int MaxEnrichmentConcurrency { get; set; } = 1;
+}
+
+/// <summary>One id-pattern to web-address rule of a plugin manifest's <c>sourceUrls</c>.</summary>
+public class PluginSourceUrlRule
+{
+    /// <summary>Regular expression tested against the stored external id.</summary>
+    [JsonPropertyName("match")]
+    public string Match { get; set; } = string.Empty;
+
+    /// <summary>Address template; $0 is the whole id, $1..$n are the regex's capture groups.</summary>
+    [JsonPropertyName("url")]
+    public string Url { get; set; } = string.Empty;
 }

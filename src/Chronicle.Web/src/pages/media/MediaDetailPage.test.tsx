@@ -551,3 +551,49 @@ describe('MediaDetailPage', () => {
     )
   })
 })
+
+describe('MediaDetailPage: an author who is also a person', () => {
+  const linked = { linkedItems: [{ itemId: 900, name: 'Test Movie', mediaTypeName: 'People', isPerson: true }] }
+
+  it('opens the combined person page instead, replacing the history entry so Back is not trapped', async () => {
+    mockedGetMedia.mockResolvedValue(makeItem(linked))
+    const { container } = renderWithProviders(
+      <Routes>
+        <Route path="/media/:id" element={<MediaDetailPage />} />
+        <Route path="/people/:id" element={<div>Combined person page</div>} />
+      </Routes>,
+      { initialEntries: ['/media/42'] },
+    )
+
+    expect(await screen.findByText('Combined person page')).toBeInTheDocument()
+    expect(container).toBeTruthy()
+  })
+
+  it('stays on the raw library record when asked (?raw=1)', async () => {
+    mockedGetMedia.mockResolvedValue(makeItem(linked))
+    renderWithProviders(
+      <Routes>
+        <Route path="/media/:id" element={<MediaDetailPage />} />
+        <Route path="/people/:id" element={<div>Combined person page</div>} />
+      </Routes>,
+      { initialEntries: ['/media/42?raw=1'] },
+    )
+
+    expect(await screen.findByText('Test Movie')).toBeInTheDocument()
+    expect(screen.queryByText('Combined person page')).not.toBeInTheDocument()
+  })
+
+  it('embedded in the person page it neither redirects nor draws its own top navigation', async () => {
+    mockedGetMedia.mockResolvedValue(makeItem(linked))
+    renderWithProviders(<MediaDetailPage embeddedId={42} />, { initialEntries: ['/people/900'] })
+
+    expect(await screen.findByText('Test Movie')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /← Back/ })).not.toBeInTheDocument()
+  })
+
+  it('does not redirect an item with no linked person', async () => {
+    renderMediaDetailPage()
+
+    expect(await screen.findByText('Test Movie')).toBeInTheDocument()
+  })
+})

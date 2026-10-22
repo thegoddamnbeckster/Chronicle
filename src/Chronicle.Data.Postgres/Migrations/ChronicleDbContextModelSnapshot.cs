@@ -539,6 +539,8 @@ namespace Chronicle.Data.Postgres.Migrations
 
                     b.HasIndex("HierarchyLevel", "Name");
 
+                    b.HasIndex("MediaTypeId", "UpdatedAt");
+
                     b.HasIndex("NormalizedName", "MediaTypeId")
                         .HasDatabaseName("idx_media_items_normalized_name_mediatypeid");
 
@@ -1212,6 +1214,12 @@ namespace Chronicle.Data.Postgres.Migrations
                     b.Property<DateTime>("FirstSeenAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("first_seen_at");
+
+                    b.Property<bool>("IsHidden")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_hidden");
 
                     b.Property<int>("PersonMediaItemId")
                         .HasColumnType("integer")

@@ -149,14 +149,14 @@
 }
 .nameLink:hover .name { text-decoration: underline; }
 
+/* Names wrap so a long one is fully visible; overflow-wrap: anywhere also breaks a single very long word. */
 .name {
   margin: 0;
   font-weight: 600;
   font-size: 1rem;
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .year {

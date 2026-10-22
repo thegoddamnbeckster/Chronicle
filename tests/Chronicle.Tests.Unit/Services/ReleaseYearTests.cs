@@ -57,4 +57,45 @@ public class ReleaseYearTests
         Assert.Equal(null, years.Single(x => x.Name == "Zero").Year);
         Assert.Equal(2014, years.Single(x => x.Name == "Good").Year);
     }
+
+    [Theory]
+    [InlineData("1990-05-01", true)]
+    [InlineData("0200-01-01", false)]
+    [InlineData("20222-06-21", false)]
+    public void LifeDates_BirthMustBeReal(string date, bool expected)
+    {
+        if (!DateTime.TryParse(date, out var d)) { Assert.False(expected); return; }
+        Assert.Equal(expected, ReleaseYear.IsPlausibleBirthDate(d));
+    }
+
+    [Fact]
+    public void LifeDates_NoOneIsBornOrDiesInTheFuture()
+    {
+        Assert.False(ReleaseYear.IsPlausibleBirthDate(DateTime.UtcNow.AddYears(1)));
+        Assert.False(ReleaseYear.IsPlausibleDeathDate(DateTime.UtcNow.AddYears(1)));
+        Assert.True(ReleaseYear.IsPlausibleDeathDate(DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void ScrubMetadataJson_NullsOnlyTheImpossibleYears_InPluginAndResolvedBlobs()
+    {
+        // live (2026-10-19): Hardcover reported a book as released in 20222
+        var json = "{\"fileScanner\":{\"importedAt\":\"2026-10-17\"},\"hardcover\":{\"title\":\"Biomancer 2\",\"year\":20222},\"tmdb\":{\"year\":2022},\"_resolved\":{\"year\":20222,\"title\":\"Biomancer 2\"}}";
+
+        var clean = ReleaseYear.ScrubMetadataJson(json)!;
+        var doc = System.Text.Json.JsonDocument.Parse(clean).RootElement;
+
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, doc.GetProperty("hardcover").GetProperty("year").ValueKind);
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, doc.GetProperty("_resolved").GetProperty("year").ValueKind);
+        Assert.Equal(2022, doc.GetProperty("tmdb").GetProperty("year").GetInt32());
+        Assert.Equal("Biomancer 2", doc.GetProperty("hardcover").GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public void ScrubMetadataJson_LeavesCleanDataAlone()
+    {
+        Assert.Null(ReleaseYear.ScrubMetadataJson("{\"tmdb\":{\"year\":2022}}"));
+        Assert.Null(ReleaseYear.ScrubMetadataJson(null));
+        Assert.Null(ReleaseYear.ScrubMetadataJson("{\"tmdb\":{\"title\":\"x\"}}"));
+    }
 }

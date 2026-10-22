@@ -43,14 +43,17 @@
   margin-bottom: 20px;
 }
 
+/* minmax(0, 1fr), not a bare 1fr: a bare 1fr is minmax(auto, 1fr) and cannot shrink below its content's minimum width,
+   so the non-wrapping date and badge on each row pushed the whole column wider than a phone screen and the layout
+   clipped the overflow. */
 .panels {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
 
 @media (max-width: 768px) {
-  .panels { grid-template-columns: 1fr; }
+  .panels { grid-template-columns: minmax(0, 1fr); }
 }
 
 .panel {
@@ -58,6 +61,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 20px;
+  min-width: 0;
 }
 
 .panelTitle {
@@ -71,13 +75,16 @@
 
 .list { list-style: none; }
 
+/* flex-wrap: where the date/badge does not fit beside the name (a phone, a long title) it drops underneath, so the
+   name keeps the full width instead of being squeezed into a few characters per line. */
 .listItem {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
-  gap: 8px;
+  gap: 4px 8px;
 }
 
 .listItem:last-child { border-bottom: none; }
@@ -88,12 +95,13 @@
   gap: 2px;
   min-width: 0;
   overflow: hidden;
+  flex: 1 1 11rem;
 }
 
+/* Names wrap so a long title is fully visible; overflow-wrap: anywhere also breaks a single very long word. */
 .itemName {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: var(--text-primary);
   text-decoration: none;
 }
@@ -106,9 +114,8 @@
 .itemContext {
   font-size: 11px;
   color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .rightCol {
@@ -117,6 +124,7 @@
   align-items: flex-end;
   gap: 3px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .timestamp {
@@ -140,6 +148,7 @@
   color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .empty {

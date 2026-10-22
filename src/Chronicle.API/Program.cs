@@ -209,6 +209,7 @@ builder.Services.AddScoped<IMetadataResolutionService, MetadataResolutionService
 builder.Services.AddScoped<IMetadataContributionService, MetadataContributionService>();
 builder.Services.AddSingleton<TagMismatchRematchQueue>();
 builder.Services.AddScoped<ISyncOrchestrationService, SyncOrchestrationService>();
+builder.Services.AddScoped<Chronicle.Services.Export.IExportService, Chronicle.Services.Export.ExportService>();
 builder.Services.AddSingleton<ISyncJobTracker, SyncJobTracker>();
 builder.Services.AddScoped<IPluginTaskRunner, PluginTaskRunner>();
 builder.Services.AddScoped<IKodiDeviceService, KodiDeviceService>();

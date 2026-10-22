@@ -38,8 +38,15 @@ public record PluginDto(
     string? PreviousFilesHash = null,
     DateTime? FilesChangedAt = null,
     /// <summary>Set when the plugin was not loaded because its files changed without Chronicle being told.</summary>
-    DateTime? IntegrityBlockedAt = null
+    DateTime? IntegrityBlockedAt = null,
+    /// <summary>
+    /// The plugin's id-pattern to source-page rules (manifest sourceUrls); lets the web UI link each result to the page it
+    /// resolved to. Null when the plugin is not loaded or declares none.
+    /// </summary>
+    IReadOnlyList<PluginSourceUrlDto>? SourceUrls = null
 );
+
+public record PluginSourceUrlDto(string Match, string Url);
 
 public record InstallPluginRequest(
     [Required] string DllPath

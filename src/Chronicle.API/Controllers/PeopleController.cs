@@ -71,7 +71,9 @@ namespace Chronicle.API.Controllers
                 return hit.Rows;
 
             var rows = await BuildOrderedPeopleAsync(peopleTypeId, role, deceased, ct);
-            _cache.Set(cacheKey, (version, rows), TimeSpan.FromMinutes(1));
+            // The stamp above (now index-only) decides freshness on every request, so the list itself can be kept long: rebuilding it
+            // (read 320,000 names, compute and sort their keys) is the expensive part.
+            _cache.Set(cacheKey, (version, rows), TimeSpan.FromMinutes(15));
             return rows;
         }
 
@@ -163,6 +165,30 @@ namespace Chronicle.API.Controllers
         /// there via GetPeople's own ordinary page/perPage -- GetPeople no longer needs to know
         /// about jumping at all.
         /// </summary>
+        /// <summary>
+        /// Where one person sits in the People list (the default, unfiltered order the People page uses) and who is either
+        /// side of them, so a person's page has Prev/Next even when it was not opened from that list (a search, an author
+        /// link, a bookmark). Null ids at either end; index/total are 0-based and a count. 404 for a non-person.
+        /// </summary>
+        [HttpGet("{id:int}/neighbors")]
+        public async Task<IActionResult> GetNeighbors(int id, CancellationToken ct = default)
+        {
+            var peopleTypeId = await GetPeopleMediaTypeIdAsync(ct);
+            if (peopleTypeId is null) return NotFound();
+
+            var ordered = await GetOrderedPeopleAsync(peopleTypeId.Value, null, null, ct);
+            var index = ordered.FindIndex(m => m.Id == id);
+            if (index < 0) return NotFound();
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                index,
+                total = ordered.Count,
+                prevId = index > 0 ? ordered[index - 1].Id : (int?)null,
+                nextId = index < ordered.Count - 1 ? ordered[index + 1].Id : (int?)null,
+            }));
+        }
+
         [HttpGet("jump-position")]
         public async Task<IActionResult> GetJumpPosition(
             [FromQuery] string jumpTo,
@@ -207,19 +233,15 @@ namespace Chronicle.API.Controllers
                 .Include(c => c.MediaItem).ThenInclude(m => m!.MediaType)
                 .ToListAsync(ct);
 
-            var groups = credits
+            // One card per work: a show credited per episode (IMDb) is listed once, as the show, not as each episode.
+            var rows = await PersonCreditRollup.RollUpAsync(_context, credits, ct);
+
+            var groups = rows
                 .GroupBy(c => c.Role)
                 .OrderBy(g => g.Key)
                 .Select(g => new PersonCreditGroupDto(
                     g.Key,
-                    // Same title can be resolved onto this person more than once across
-                    // sources (e.g. TMDB and a legacy Trakt import both credited "Actor" on
-                    // the same movie) -- DistinctBy the title, not the (title, source) pair,
-                    // since the detail page shows one card per title, not one per source.
-                    g.Select(c => new PersonCreditDto(
-                        c.MediaItemId, c.MediaItem.Name, c.MediaItem.PosterUrl, c.MediaItem.Year,
-                        c.MediaItem.MediaType?.Name ?? string.Empty, c.CharacterName))
-                     .DistinctBy(c => c.MediaItemId)
+                    g.Select(c => new PersonCreditDto(c.MediaItemId, c.Name, c.PosterUrl, c.Year, c.MediaTypeName, c.CharacterName))
                      // Most recent first, per-user request (2026-08-30) -- a credit with no
                      // known year sorts last (Year ?? int.MinValue) rather than as "earliest".
                      .OrderByDescending(c => c.Year ?? int.MinValue)
@@ -250,21 +272,53 @@ namespace Chronicle.API.Controllers
         /// more than one" by actually surfacing every headshot Chronicle has ever recorded for
         /// them, not just whichever one happens to be currently resolved onto PosterUrl.</summary>
         [HttpGet("{id:int}/headshots")]
-        public async Task<IActionResult> GetHeadshots(int id, CancellationToken ct)
+        public async Task<IActionResult> GetHeadshots(int id, [FromQuery] bool includeHidden = false, CancellationToken ct = default)
         {
             var posterUrl = await _context.MediaItems
                 .Where(m => m.Id == id)
                 .Select(m => m.PosterUrl)
                 .FirstOrDefaultAsync(ct);
 
-            var headshots = await _context.PersonHeadshots
+            var rows = await _context.PersonHeadshots
+                .AsNoTracking()
                 .Where(h => h.PersonMediaItemId == id)
                 .OrderByDescending(h => h.FirstSeenAt)
-                .Select(h => new PersonHeadshotDto(
-                    h.Id, h.Url, h.ThumbnailUrl, h.Source, h.FirstSeenAt, h.Url == posterUrl))
                 .ToListAsync(ct);
 
+            // One entry per distinct picture (a TMDB file stored as three sizes is one photo), hidden ones only on request.
+            var headshots = HeadshotGallery.Collapse(rows, posterUrl)
+                .Where(p => includeHidden || !p.IsHidden)
+                .Select(p => new PersonHeadshotDto(
+                    p.Row.Id, p.Row.Url, p.Row.ThumbnailUrl, p.Row.Source, p.Row.FirstSeenAt, p.IsCurrent, p.IsHidden))
+                .ToList();
+
             return Ok(ApiResponse<List<PersonHeadshotDto>>.Ok(headshots));
+        }
+
+        /// <summary>Hides one photo from the person's gallery (all size variants of it). Kept as a hidden row rather
+        /// than deleted, so the next metadata refresh cannot re-add it. The photo currently shown cannot be hidden.</summary>
+        [HttpPost("{id:int}/headshots/{headshotId:int}/hide")]
+        public async Task<IActionResult> HideHeadshot(int id, int headshotId, CancellationToken ct)
+        {
+            var posterUrl = await _context.MediaItems
+                .Where(m => m.Id == id).Select(m => m.PosterUrl).FirstOrDefaultAsync(ct);
+
+            var outcome = await HeadshotGallery.HideAsync(_context, id, headshotId, posterUrl, ct);
+            return outcome switch
+            {
+                HeadshotGallery.HideOutcome.NotFound  => NotFound(ApiResponse<object>.Fail("HEADSHOT_NOT_FOUND", "No such photo for this person.")),
+                HeadshotGallery.HideOutcome.IsCurrent => Conflict(ApiResponse<object>.Fail("HEADSHOT_IS_CURRENT",
+                    "This is the photo currently shown. Choose another photo first, then hide this one.")),
+                _                                     => Ok(ApiResponse<object>.Ok(new { hidden = true })),
+            };
+        }
+
+        /// <summary>Makes every hidden photo of the person visible again.</summary>
+        [HttpPost("{id:int}/headshots/restore")]
+        public async Task<IActionResult> RestoreHeadshots(int id, CancellationToken ct)
+        {
+            var restored = await HeadshotGallery.RestoreAllAsync(_context, id, ct);
+            return Ok(ApiResponse<object>.Ok(new { restored }));
         }
 
         private async Task<int?> GetPeopleMediaTypeIdAsync(CancellationToken ct) =>

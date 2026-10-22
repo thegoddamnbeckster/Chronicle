@@ -113,6 +113,45 @@ public class MetadataResolutionServiceTests
     }
 
     [Fact]
+    public async Task ResolveAsync_AnImpossibleYearFromTheTopPlugin_FallsThroughToTheNextPluginByPrecedence()
+    {
+        // live (2026-10-19): Hardcover carried year 20222 for a book released in 2022
+        var item = BuildItem("audiobooks", 0,
+            """{"hardcover":{"title":"Biomancer 2","year":20222},"openlibrary":{"title":"Biomancer 2","year":2022}}""");
+        item.Year = null;
+
+        await ResolveWithConfig(item, "audiobooks", 0, new()
+        {
+            ["year"] = ["hardcover", "openlibrary"],
+        });
+
+        GetResolved(item)["year"].GetInt32().Should().Be(2022);
+        item.Year.Should().Be(2022);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_AnImpossibleYearWithNoOtherSource_IsNotPromoted()
+    {
+        var item = BuildItem("audiobooks", 0, """{"hardcover":{"title":"Biomancer 2","year":20222}}""");
+        item.Year = 2022;
+
+        await ResolveWithConfig(item, "audiobooks", 0, new() { ["year"] = ["hardcover"] });
+
+        GetResolved(item).ContainsKey("year").Should().BeFalse();
+        item.Year.Should().Be(2022);   // an existing year is never overwritten by garbage
+    }
+
+    [Fact]
+    public async Task ResolveAsync_AFutureBirthDateFromTheTopPlugin_FallsThroughToTheNextPlugin()
+    {
+        var item = BuildItem("people", 0, """{"wikipedia":{"birthDate":"2999-01-01"},"tmdb":{"birthDate":"1964-09-02"}}""");
+
+        await ResolveWithConfig(item, "people", 0, new() { ["birth_date"] = ["wikipedia", "tmdb"] });
+
+        item.BirthDate.Should().Be(new DateTime(1964, 9, 2));
+    }
+
+    [Fact]
     public async Task ResolveAsync_TitleAndYearNotPromotedAboveLevelZero()
     {
         var item = BuildItem("audiobooks", 1,
@@ -529,6 +568,31 @@ public class MetadataResolutionServiceTests
         await svc.ResolveAsync(item, db, CancellationToken.None);
 
         item.PosterUrl.Should().Be("https://example/correct-own-photo.jpg");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PersonWhoseNewestHeadshotIsHidden_FallsBackToTheNewestVisibleOne()
+    {
+        // TMDB's gallery for a person can carry a stranger's photo. Once hidden, it must never be the automatic pick,
+        // even when it is the most recently discovered row.
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = new MediaItem
+        {
+            Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
+            MediaType = new MediaType { Id = 9, Name = "people", IsPersonType = true, DisplayName = "People" },
+        };
+        db.MediaItems.Add(item);
+        db.PersonHeadshots.AddRange(
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/right.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow.AddDays(-2) },
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/stranger.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow, IsHidden = true });
+        await db.SaveChangesAsync();
+
+        var svc = BuildService("people", 0, new() { ["title"] = ["tmdb"] });
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+
+        item.PosterUrl.Should().Be("https://example/right.jpg");
     }
 
     // ── Death-date-before-birth-date consistency guard ─────────────────────────

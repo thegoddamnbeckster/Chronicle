@@ -146,13 +146,14 @@
   min-width: 0;
 }
 
+/* Names wrap so a long one is fully visible; overflow-wrap: anywhere also breaks a single very long word. */
 .name {
   font-size: 13px;
   color: var(--text-primary);
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .meta {

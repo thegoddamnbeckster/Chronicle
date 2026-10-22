@@ -228,6 +228,9 @@ namespace Chronicle.Data
                 // of the trackable types" is answered from the index alone: 0.64 s -> 0.009 s on a 330,000-row stand-in, because ~99% of
                 // the rows are people, which are roots too and used to be read one by one only to be thrown away.)
                 entity.HasIndex(e => new { e.MediaTypeId, e.ParentId, e.IsStub });
+                // The People list's freshness stamp (count + newest UpdatedAt of one type) is answered from this index alone. Without it
+                // the stamp read every one of the 320,000 people rows: 0.5 s warm, 17 s on a cold cache, on every People page request.
+                entity.HasIndex(e => new { e.MediaTypeId, e.UpdatedAt });
                 entity.HasIndex(e => e.Name);
                 // Covers the title search ("level 0 whose lower(name) contains ..."): the scan reads this narrow index instead of every
                 // wide item row. Measured on a 150,000-row stand-in: 0.09 s -> 0.012 s; ~0.5 s -> ~0.07 s on the live table.
@@ -521,6 +524,7 @@ namespace Chronicle.Data
                 e.Property(h => h.ThumbnailUrl).HasColumnName("thumbnail_url");
                 e.Property(h => h.Source).HasColumnName("source").IsRequired();
                 e.Property(h => h.FirstSeenAt).HasColumnName("first_seen_at");
+                e.Property(h => h.IsHidden).HasColumnName("is_hidden").HasDefaultValue(false);
 
                 e.HasOne(h => h.PersonMediaItem)
                  .WithMany()

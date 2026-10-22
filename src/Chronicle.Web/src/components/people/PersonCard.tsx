@@ -62,7 +62,7 @@ export function PersonCard({
       </div>
       <div className={styles.info}>
         <div className={fullName ? styles.nameFull : styles.name}>{person.name}</div>
-        {position && <div className={styles.positions}>{position}</div>}
+        {position && <div className={fullName ? styles.positionsFull : styles.positions}>{position}</div>}
         {/* Birth/death years belong to the person, not to a title's cast tile -- shown on the
             catalog-wide People grid only. */}
         {!fullName && dates && <div className={styles.dates}>{dates}</div>}

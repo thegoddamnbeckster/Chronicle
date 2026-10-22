@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -13,10 +13,10 @@ import { loadPrefs } from '@/utils/libraryPrefs'
 import { loadSortSettings } from '@/utils/sortSettings'
 import { listPlugins } from '@/api/plugins'
 import { getPluginDisplayOrder, getAppSettings } from '@/api/settings'
-import { getMyPreferences, updateMyPreferences } from '@/api/users'
 import { useAuth } from '@/hooks/useAuth'
 import type { LibraryStatus, LibraryEntry } from '@/types'
 import { PluginMetadataBox } from '@/components/PluginMetadataBox'
+import { PluginFold } from '@/components/PluginFold'
 import CollectionMetadataBox from '@/components/CollectionMetadataBox'
 import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
 import { SlotGalleryModal } from '@/components/SlotGalleryModal'
@@ -58,77 +58,13 @@ function formatChildPosition(number: number | null, seriesPosition: number | nul
 
 const LIGHTBOX_SKIP = new Set(['title', 'externalid', 'source', 'totalresults', 'total_results'])
 
-// ── Plugin fold ──────────────────────────────────────────────────────────────
-
-// Module-level cache so preferences are fetched once per page session (not per component mount)
-let _foldsCache: Record<string, boolean> | null = null
-let _foldsFetch: Promise<Record<string, boolean>> | null = null
-
-function getFoldsCache(): Promise<Record<string, boolean>> {
-  if (_foldsCache !== null) return Promise.resolve(_foldsCache)
-  if (_foldsFetch) return _foldsFetch
-  _foldsFetch = getMyPreferences().then(p => {
-    _foldsCache = p.folds ?? {}
-    return _foldsCache
-  }).catch(() => {
-    _foldsCache = {}
-    return _foldsCache
-  })
-  return _foldsFetch
-}
-
-function useFold(key: string, defaultOpen: boolean) {
-  const [isOpen, setIsOpen] = useState(defaultOpen)
-  const [loaded, setLoaded] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    getFoldsCache().then(folds => {
-      if (cancelled) return
-      if (key in folds) setIsOpen(folds[key])
-      setLoaded(true)
-    })
-    return () => { cancelled = true }
-  }, [key])
-
-  function toggle() {
-    const next = !isOpen
-    setIsOpen(next)
-    if (_foldsCache) _foldsCache[key] = next
-    updateMyPreferences({ folds: { [key]: next } }).catch(() => {})
-  }
-
-  return { isOpen, toggle, loaded }
-}
-
-interface PluginFoldProps {
-  foldKey: string
-  label: string
-  iconUrl?: string | null
-  defaultOpen?: boolean
-  children: React.ReactNode
-}
-
-function PluginFold({ foldKey, label, iconUrl, defaultOpen = false, children }: PluginFoldProps) {
-  const { isOpen, toggle } = useFold(foldKey, defaultOpen)
-
-  return (
-    <div className={styles.pluginFold}>
-      <button className={styles.pluginFoldHeader} onClick={toggle} aria-expanded={isOpen}>
-        {iconUrl && <img src={iconUrl} alt="" className={styles.pluginFoldIcon} onError={e => { e.currentTarget.style.display = 'none' }} />}
-        <span className={styles.pluginFoldLabel}>{label}</span>
-        <span className={`${styles.pluginFoldChevron} ${isOpen ? styles.pluginFoldChevronOpen : ''}`}>
-          ›
-        </span>
-      </button>
-      {isOpen && <div className={styles.pluginFoldBody}>{children}</div>}
-    </div>
-  )
-}
-
-export default function MediaDetailPage() {
+/** `embeddedId`: render this record inside another page (a person's combined page shows its author record this way): no
+ *  top navigation and no redirect to the person -- the host page supplies both. `embeddedPosterUrl` is then what the poster
+ *  shows (a person's own photo, or its absence) instead of the cover art this record resolved for itself. */
+export default function MediaDetailPage({ embeddedId, embeddedPosterUrl }: { embeddedId?: number; embeddedPosterUrl?: string | null } = {}) {
   const { id } = useParams<{ id: string }>()
-  const mediaId = Number(id)
+  const embedded = embeddedId != null
+  const mediaId = embeddedId ?? Number(id)
   const navigate = useNavigate()
   const location = useLocation()
   const qc = useQueryClient()
@@ -164,6 +100,15 @@ export default function MediaDetailPage() {
     queryFn: () => getMedia(mediaId),
     enabled: !isNaN(mediaId),
   })
+
+  // An author who is also a person (same name, same shared ids) lives on one combined page: the person's. The
+  // redirect REPLACES this history entry, so Back returns to wherever the user came from instead of bouncing
+  // between the two URLs; "Manage library record" on that page links here with ?raw=1 to reach the raw record.
+  const linkedPerson = item?.linkedItems?.find(l => l.isPerson)
+  const rawRecord = new URLSearchParams(location.search).get('raw') === '1'
+  useEffect(() => {
+    if (linkedPerson && !rawRecord && !embedded) navigate(`/people/${linkedPerson.itemId}`, { replace: true, state: location.state })
+  }, [linkedPerson, rawRecord, embedded, navigate, location.state])
 
   const { data: children = [] } = useQuery({
     queryKey: ['media', mediaId, 'children'],
@@ -703,8 +648,8 @@ export default function MediaDetailPage() {
   }
 
   return (
-    <div className={styles.page}>
-      <div className={`${styles.backdropSection}${hasBackdrop ? ` ${styles.backdropActive}` : ''}`}>
+    <div className={`${styles.page}${embedded ? ` ${styles.pageEmbedded}` : ''}`}>
+      <div className={`${styles.backdropSection}${hasBackdrop ? ` ${styles.backdropActive}` : ''}${embedded ? ` ${styles.backdropEmbedded}` : ''}`}>
         {hasBackdrop && (
           <div
             className={styles.backdropImg}
@@ -714,6 +659,7 @@ export default function MediaDetailPage() {
         )}
         {hasBackdrop && <ArtTypeTag label="Backdrop" />}
         <div className={`${styles.backdropContent}${hasBackdrop ? ` ${styles.backdropContentActive}` : ''}`}>
+      {!embedded && (
       <div className={`${styles.topNav}${hasBackdrop ? ` ${styles.topNavBoxed}` : ''}`}>
         <button className={styles.backBtn} onClick={() => navigate(-1)}>← Back</button>
         {(item.ancestors && item.ancestors.length > 0) ? (
@@ -763,6 +709,7 @@ export default function MediaDetailPage() {
           </div>
         )}
       </div>
+      )}
 
       {fanartBanner && (
         <FanartImage
@@ -777,7 +724,7 @@ export default function MediaDetailPage() {
       <div className={styles.hero}>
         <div className={styles.posterWrap}>
           <PosterImage
-            posterUrl={item.posterUrl}
+            posterUrl={embedded ? (embeddedPosterUrl ?? null) : item.posterUrl}
             name={item.name}
             imgClassName={styles.posterClickable}
             onClick={() => setLightboxIdx(0)}
@@ -1544,8 +1491,10 @@ export default function MediaDetailPage() {
                     pluginName={plugin?.name ?? pluginId}
                     iconUrl={plugin?.iconUrl}
                     fixMatchHint={plugin?.fixMatchHint}
+                    sourceUrls={plugin?.sourceUrls}
                     metadata={metadata}
                     enrichmentStatus={enrichStatus}
+                    enrichmentConflict={item.enrichmentConflicts?.[pluginId]}
                     externalIds={item.externalIds ?? []}
                     refreshLogs={item.refreshLogs}
                     onImageClick={setLightboxIdx}

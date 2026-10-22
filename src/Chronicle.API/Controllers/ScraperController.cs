@@ -1004,7 +1004,7 @@ public class ScraperController : ControllerBase
             {
                 season_number  = seasonNum,
                 episode_number = ep.EpisodeNumber,
-                air_date       = ep.AirDate,
+                air_date       = ReleaseYear.OrNullDate(ep.AirDate),
             }),
         };
 
@@ -1606,7 +1606,7 @@ public class ScraperController : ControllerBase
             Overview:       core?.Overview ?? item.Overview,
             Tagline:        FirstExtended(root, ext => TryGetString(ext, "tagline")),
             Year:           core?.Year ?? item.Year,
-            Premiered:      FirstExtended(root, ext => TryGetString(ext, "released")),
+            Premiered:      FirstExtended(root, ext => ReleaseYear.OrNullDate(TryGetString(ext, "released"))),
             Mpaa:           FirstExtended(root, ext => TryGetString(ext, "certification")),
             Country:        FirstExtended(root, ext => TryGetString(ext, "country")),
             Studio:         FirstExtended(root, ext => TryGetString(ext, "network") ?? TryGetString(ext, "studio")),
@@ -1641,7 +1641,7 @@ public class ScraperController : ControllerBase
             Overview:   core?.Overview ?? item.Overview,
             Tagline:    FirstExtended(root, ext => TryGetString(ext, "tagline")),
             Year:       core?.Year ?? item.Year,
-            Premiered:  FirstExtended(root, ext => TryGetString(ext, "first_aired") ?? TryGetString(ext, "released")),
+            Premiered:  FirstExtended(root, ext => ReleaseYear.OrNullDate(TryGetString(ext, "first_aired")) ?? ReleaseYear.OrNullDate(TryGetString(ext, "released"))),
             Mpaa:       FirstExtended(root, ext => TryGetString(ext, "certification")),
             Country:    FirstExtended(root, ext => TryGetString(ext, "country")),
             Studio:     FirstExtended(root, ext => TryGetString(ext, "network")),
@@ -1672,7 +1672,7 @@ public class ScraperController : ControllerBase
             Season:         season,
             Episode:        item.Number ?? 0,
             Year:           core?.Year ?? item.Year,
-            Aired:          FirstExtended(root, ext => TryGetString(ext, "air_date") ?? TryGetString(ext, "aired") ?? TryGetString(ext, "released")),
+            Aired:          FirstExtended(root, ext => ReleaseYear.OrNullDate(TryGetString(ext, "air_date")) ?? ReleaseYear.OrNullDate(TryGetString(ext, "aired")) ?? ReleaseYear.OrNullDate(TryGetString(ext, "released"))),
             RuntimeMinutes: core?.RuntimeMinutes,
             Cast:           core?.Cast,
             Crew:           core?.Crew,

@@ -30,7 +30,8 @@ public class MetadataEnrichmentServiceTests : IDisposable
         // The starting values the database migration seeds for the two enrichment rules that are settings, not code.
         _db.AppSettings.AddRange(
             new AppSetting { Key = MetadataEnrichmentService.SameWorkTypesSettingKey, Value = "[[\"books\",\"audiobooks\"]]" },
-            new AppSetting { Key = MetadataEnrichmentService.SharedIdScopesSettingKey, Value = "[{\"mediaType\":\"music\",\"level\":2,\"requireSameName\":true,\"requireSameArtist\":true}]" });
+            new AppSetting { Key = MetadataEnrichmentService.SharedIdScopesSettingKey, Value = "[{\"mediaType\":\"music\",\"level\":2,\"requireSameName\":true,\"requireSameArtist\":true}]" },
+            new AppSetting { Key = MetadataEnrichmentService.SameEntityTypesSettingKey, Value = "[{\"mediaTypes\":[\"books\",\"audiobooks\",\"music\",\"people\"],\"level\":0,\"requireSameName\":true}]" });
         _db.SaveChanges();
         _registry = new Mock<IPluginRegistry>();
         var scopeFactory = BuildScopeFactory(_db, _registry.Object);
@@ -1685,6 +1686,166 @@ public class MetadataEnrichmentServiceTests : IDisposable
 
         capturedCtx.Should().NotBeNull();
         capturedCtx!.FilenameStem.Should().BeNull("no fileScanner metadata present");
+    }
+
+    // ── an author and that author's People record are one entity, not duplicates ──
+
+    private async Task<MediaType> EnsurePeopleTypeAsync()
+    {
+        var existing = await _db.MediaTypes.FirstOrDefaultAsync(m => m.Name == "people");
+        if (existing is not null) return existing;
+        var mt = new MediaType { Name = "people", DisplayName = "People", HierarchyLevels = 1, HierarchyLabels = "Person", IsPersonType = true };
+        _db.MediaTypes.Add(mt);
+        await _db.SaveChangesAsync();
+        return mt;
+    }
+
+    /// <summary>The audiobook library's author item, and the People record (always a stub) that already holds the same Open Library id.</summary>
+    private async Task<(MediaItem Author, MediaItem Person, MediaItemEnrichment Row)> AuthorAndPersonAsync(
+        string authorName, string personName, string olId, string authorType = "audiobooks")
+    {
+        var people = await EnsurePeopleTypeAsync();
+        var claimant = authorType == "people" ? people : await EnsureMediaTypeAsync(authorType);
+        var author = new MediaItem { Name = authorName, MediaTypeId = claimant.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        var person = new MediaItem { Name = personName, MediaTypeId = people.Id, HierarchyLevel = 0, IsStub = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.AddRange(author, person);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = person.Id, Source = "openlibrary", ExternalId = olId });
+        var row = new MediaItemEnrichment { MediaItemId = author.Id, PluginId = "chronicle.plugin.openlibrary", ExternalId = olId, Status = EnrichmentStatus.Pending, MaxRetries = 3 };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+        return (author, person, row);
+    }
+
+    private void OpenLibraryAuthorProvider(string olId, string typeName)
+    {
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.openlibrary");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = typeName, HierarchyLevels = 3 }]);
+        provider.Setup(p => p.GetByIdAsync(olId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Shemer Kuznits", ExternalId = olId });
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.openlibrary")).Returns(provider.Object);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AnAuthorWhoseIdIsHeldByTheSameNamedPersonRecord_IsMatched_NotRefusedAsADuplicate()
+    {
+        // Live (2026-10-19, Shemer Kuznits): Fix Match on the audiobook library's author was refused because the People record
+        // made from the same author already held the Open Library id - and the working entry was wiped. They are one person.
+        var (_, _, row) = await AuthorAndPersonAsync("Shemer Kuznits", "Shemer Kuznits", "OL7630410A");
+        OpenLibraryAuthorProvider("OL7630410A", "audiobooks");
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.openlibrary");
+
+        var saved = await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id);
+        Assert.True(saved.Status == EnrichmentStatus.Completed, saved.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AnAuthorAndAPersonRecordWithDifferentNames_AreStillRefused()
+    {
+        // The pairing is by name as well: an author's id on some other person's record is a wrong match.
+        var (_, _, row) = await AuthorAndPersonAsync("Shemer Kuznits", "Someone Else", "OL7630410A");
+        OpenLibraryAuthorProvider("OL7630410A", "audiobooks");
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.openlibrary");
+
+        var saved = await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id);
+        Assert.Equal(EnrichmentStatus.NotFound, saved.Status);
+        Assert.Contains("already belongs", saved.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_TwoPersonRecordsSharingAnIdAndAName_AreStillRefused()
+    {
+        // Two real people can share a name ("Sharon Alexander"): same type, so this rule never pairs them.
+        var (_, _, row) = await AuthorAndPersonAsync("Shemer Kuznits", "Shemer Kuznits", "OL7630410A", authorType: "people");
+        OpenLibraryAuthorProvider("OL7630410A", "people");
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.openlibrary");
+
+        var saved = await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id);
+        Assert.Equal(EnrichmentStatus.NotFound, saved.Status);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AnAuthorRefusedOnlyBecauseOfItsPersonRecord_IsPutBackInTheQueue()
+    {
+        var (_, person, row) = await AuthorAndPersonAsync("Shemer Kuznits", "Shemer Kuznits", "OL7630410A");
+        row.Status = EnrichmentStatus.NotFound;
+        row.ErrorMessage = $"Matched external id OL7630410A already belongs to a different item ({person.Id}, \"Shemer Kuznits\") -- likely a duplicate. Not merged.";
+        await _db.SaveChangesAsync();
+        OpenLibraryAuthorProvider("OL7630410A", "audiobooks");
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.openlibrary");
+
+        Assert.Equal(EnrichmentStatus.Completed, (await _db.MediaEnrichments.AsNoTracking().SingleAsync(e => e.Id == row.Id)).Status);
+    }
+
+    [Fact]
+    public async Task FindSameEntityPartnersAsync_AnAuthorFindsItsPerson_AndThePersonFindsItsAuthor()
+    {
+        var (author, person, _) = await AuthorAndPersonAsync("Shemer Kuznits", "Shemer Kuznits", "OL7630410A");
+
+        var forAuthor = await MetadataEnrichmentService.FindSameEntityPartnersAsync(_db, author);
+        var personWithType = await _db.MediaItems.Include(m => m.MediaType).SingleAsync(m => m.Id == person.Id);
+        var forPerson = await MetadataEnrichmentService.FindSameEntityPartnersAsync(_db, personWithType);
+
+        Assert.Equal([person.Id], forAuthor.Select(i => i.Id));
+        Assert.Equal([author.Id], forPerson.Select(i => i.Id));
+    }
+
+    [Fact]
+    public async Task FindSameEntityPartnersAsync_AMusicArtistWhoIsAlsoAPerson_IsLinkedToo()
+    {
+        // not specific to authors: any media type in the rule's group pairs with the People record of the same name
+        var (author, person, _) = await AuthorAndPersonAsync("Shemer Kuznits", "Shemer Kuznits", "OL7630410A", authorType: "music");
+
+        Assert.Equal([person.Id], (await MetadataEnrichmentService.FindSameEntityPartnersAsync(_db, author)).Select(i => i.Id));
+    }
+
+    [Fact]
+    public async Task FindSameEntityPartnersAsync_ADifferentlyNamedPerson_IsNotLinked()
+    {
+        var (author, _, _) = await AuthorAndPersonAsync("Shemer Kuznits", "Someone Else", "OL7630410A");
+
+        Assert.Empty(await MetadataEnrichmentService.FindSameEntityPartnersAsync(_db, author));
+    }
+
+    [Fact]
+    public async Task FindSameEntityPartnersAsync_TwoSameNamedPeople_AreAmbiguousUntilASharedIdBreaksTheTie()
+    {
+        var (author, person, _) = await AuthorAndPersonAsync("Sharon Alexander", "Sharon Alexander", "OL1A");
+        var people = await EnsurePeopleTypeAsync();
+        var other = new MediaItem { Name = "Sharon Alexander", MediaTypeId = people.Id, HierarchyLevel = 0, IsStub = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(other);
+        await _db.SaveChangesAsync();
+
+        // two people, no id in common with the author: a wrong link is worse than none
+        Assert.Empty(await MetadataEnrichmentService.FindSameEntityPartnersAsync(_db, author));
+
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = author.Id, Source = "openlibrary", ExternalId = "OL1A" });
+        await _db.SaveChangesAsync();
+        Assert.Equal([person.Id], (await MetadataEnrichmentService.FindSameEntityPartnersAsync(_db, author)).Select(i => i.Id));
+    }
+
+    [Fact]
+    public void IsSameEntityPair_NeedsTwoDifferentTypesOfOneGroupAtTheLevelWithTheSameName()
+    {
+        var groups = new List<MetadataEnrichmentService.SameEntityGroup> { new(["books", "audiobooks", "people"], 0, true) };
+        MediaItem Item(string name, string type, int level = 0) => new()
+        {
+            Name = name, NormalizedName = name.ToLower(), NormalizedNameLoose = name.ToLower().Replace(" ", ""),
+            HierarchyLevel = level, MediaType = new MediaType { Name = type },
+        };
+        Assert.True(MetadataEnrichmentService.IsSameEntityPair(groups, Item("Shemer Kuznits", "audiobooks"), Item("Shemer Kuznits", "people")));
+        Assert.True(MetadataEnrichmentService.IsSameEntityPair(groups, Item("Shemer Kuznits", "books"), Item("shemer kuznits", "people")));
+        Assert.False(MetadataEnrichmentService.IsSameEntityPair(groups, Item("Shemer Kuznits", "people"), Item("Shemer Kuznits", "people")));        // same type
+        Assert.False(MetadataEnrichmentService.IsSameEntityPair(groups, Item("Shemer Kuznits", "audiobooks"), Item("Someone Else", "people")));     // names differ
+        Assert.False(MetadataEnrichmentService.IsSameEntityPair(groups, Item("Shemer Kuznits", "audiobooks", 1), Item("Shemer Kuznits", "people"))); // a book, not its author
+        Assert.False(MetadataEnrichmentService.IsSameEntityPair(groups, Item("Shemer Kuznits", "movies"), Item("Shemer Kuznits", "people")));       // not in the group
+        Assert.True(MetadataEnrichmentService.IsSameEntityPair([new(["music", "people"], 0, false)], Item("A", "music"), Item("B", "people")));     // name not required
+        Assert.False(MetadataEnrichmentService.IsSameEntityPair([], Item("Shemer Kuznits", "audiobooks"), Item("Shemer Kuznits", "people")));      // no rule, no pair
     }
 
     private async Task<MediaType> EnsureMediaTypeAsync(string name)

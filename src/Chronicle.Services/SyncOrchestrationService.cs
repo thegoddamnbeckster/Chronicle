@@ -199,6 +199,20 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         if (stubsCreated > 0)
             TriggerEnrichmentInBackground();
 
+        // Push what the service is missing back to it (Chronicle -> Trakt/Simkl). Automatic, after every import;
+        // a plugin that cannot export, or has it switched off, is simply skipped. Never allowed to fail the import.
+        try
+        {
+            var export = scope.ServiceProvider.GetService<Export.IExportService>();
+            if (export is not null)
+                await export.ExportAsync(pluginId, resolvedUserId > 0 ? resolvedUserId : null, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Export after the {PluginId} import failed", pluginId);
+        }
+
         return new SyncSummary(itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, errors, progressUpdated);
     }
 

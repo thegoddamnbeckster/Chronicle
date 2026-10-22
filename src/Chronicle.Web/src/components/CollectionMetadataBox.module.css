@@ -157,12 +157,13 @@
 
 .info { padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; flex: 1; }
 
+/* Names wrap so a long one is fully visible; overflow-wrap: anywhere also breaks a single very long word. */
 .name {
   font-size: 12px;
   font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .metaRow { display: flex; align-items: center; gap: 6px; }

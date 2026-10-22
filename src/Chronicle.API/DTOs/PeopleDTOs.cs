@@ -67,6 +67,7 @@ namespace Chronicle.API.DTOs
         string? ThumbnailUrl,
         string Source,
         DateTime FirstSeenAt,
-        bool IsCurrent
+        bool IsCurrent,
+        bool IsHidden = false
     );
 }
