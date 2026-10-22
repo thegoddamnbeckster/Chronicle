@@ -585,7 +585,7 @@ export default function LibraryPage() {
 
   return (
     <div className={styles.page}>
-      <AlphabetScrollIndicator selector="[data-letter]" enabled={prefs.sortBy === 'name'} />
+      <AlphabetScrollIndicator selector="[data-letter]" groupSelector="[data-alpha-group]" enabled={prefs.sortBy === 'name'} />
 
       {/* ── Controls ── */}
       <div className={styles.controls}>
@@ -770,7 +770,7 @@ export default function LibraryPage() {
         const hasMore = pageSize !== Infinity && typeCount > pageSize
 
         return (
-          <section key={typeName} className={styles.section}>
+          <section key={typeName} className={styles.section} data-alpha-group>
             <div
               className={styles.sectionHeader}
               onClick={() => toggleSection(typeName)}
