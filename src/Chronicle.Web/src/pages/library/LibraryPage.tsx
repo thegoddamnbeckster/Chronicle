@@ -236,20 +236,48 @@ const LibraryCard = memo(function LibraryCard({ entry, navState, selectMode, sel
 })
 
 /** The grid of one section. Memoised on its entries, so the grid of a section whose data did not change is skipped entirely. */
-const SectionCards = memo(function SectionCards({ entries, typeName, selectMode, selectedIds, letterSort, onToggleSelected, onStatusChange, onRemove }: {
+// A section draws this many cards first and more as its end nears the screen. "Show all" on a few thousand films otherwise put
+// 100,000 elements on the page, and every open, close or refresh cost seconds of style and paint work.
+const FIRST_CARDS = 96
+const MORE_CARDS = 96
+
+const SectionCards = memo(function SectionCards({ entries, typeName, selectMode, selectedIds, letterSort, revealId, onToggleSelected, onStatusChange, onRemove }: {
   entries: LibraryEntry[]
   typeName: string
   selectMode: boolean
   selectedIds: Set<number>
   letterSort: ReturnType<typeof loadSortSettings> | null
+  /** An item the page is about to scroll to (a #media-<id> target): drawn even when it is beyond the cards shown so far. */
+  revealId: number | null
   onToggleSelected: (mediaId: number) => void
   onStatusChange: (entryId: number, status: LibraryStatus) => void
   onRemove: (entryId: number) => void
 }) {
   const navState = useMemo(() => ({ listIds: entries.map(e => e.mediaItem.id), listLabel: typeName }), [entries, typeName])
+  const canObserve = typeof IntersectionObserver !== 'undefined'
+  const [shown, setShown] = useState(canObserve ? FIRST_CARDS : Infinity)
+  const sentinel = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (revealId == null) return
+    const at = entries.findIndex(e => e.mediaItem.id === revealId)
+    if (at >= 0) setShown(prev => (at >= prev ? at + MORE_CARDS : prev))
+  }, [revealId, entries])
+
+  const hasMore = shown < entries.length
+  useEffect(() => {
+    const el = sentinel.current
+    if (!hasMore || !el || !canObserve) return
+    const observer = new IntersectionObserver(found => {
+      if (found.some(f => f.isIntersecting)) setShown(prev => prev + MORE_CARDS)
+    }, { rootMargin: '1500px 0px' })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasMore, shown, canObserve])
+
   return (
     <>
-      {entries.map(entry => (
+      {entries.slice(0, shown).map(entry => (
         <LibraryCard
           key={entry.id}
           entry={entry}
@@ -262,6 +290,7 @@ const SectionCards = memo(function SectionCards({ entries, typeName, selectMode,
           onRemove={onRemove}
         />
       ))}
+      {hasMore && <div ref={sentinel} aria-hidden="true" style={{ gridColumn: '1 / -1', height: 1 }} />}
     </>
   )
 })
@@ -451,6 +480,7 @@ export default function LibraryPage() {
 
   const location = useLocation()
   const navigate = useNavigate()
+  const revealId = location.hash.startsWith('#media-') ? (Number.parseInt(location.hash.slice('#media-'.length), 10) || null) : null
 
   // Coming back from a detail page ("#media-42"): find the item's card and scroll to it. If its
   // section hasn't loaded that card (collapsed, or on another page), look up which section it
@@ -748,6 +778,7 @@ export default function LibraryPage() {
                 selectMode={selectMode}
                 selectedIds={selectedIds}
                 letterSort={prefs.sortBy === 'name' ? sortSettings : null}
+                revealId={revealId}
                 onToggleSelected={toggleSelected}
                 onStatusChange={changeStatus}
                 onRemove={removeEntry}

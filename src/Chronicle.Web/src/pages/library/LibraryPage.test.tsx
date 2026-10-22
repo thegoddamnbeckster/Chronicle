@@ -410,4 +410,27 @@ describe('LibraryPage', () => {
     expect(screen.queryByText('Anime 0')).not.toBeInTheDocument()
     expect(posterRenders['Movie 0']).toBe(before)
   })
+
+  it('draws a long section in batches as its end nears the screen, not all at once', async () => {
+    // Live (2026-10-22): "Show all" on thousands of films put ~100,000 elements on the page; every open or close took seconds.
+    const entries = Array.from({ length: 300 }, (_, i) => makeEntry({}, { name: `Film ${String(i).padStart(3, '0')}` }))
+    installLibraryHandlers(entries)
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ sortBy: 'name', sortDir: 'asc', pageSizePreset: 'all', groupMoviesIntoCollections: true }))
+    let fire: (() => void) | null = null
+    class FakeObserver {
+      constructor(cb: (e: { isIntersecting: boolean }[]) => void) { fire = () => cb([{ isIntersecting: true }]) }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+    renderWithProviders(<LibraryPage />)
+
+    await screen.findByText('Film 000')
+    expect(document.querySelectorAll('[id^="media-"]').length).toBe(96)
+
+    await waitFor(() => expect(fire).not.toBeNull())
+    fire!()
+    await waitFor(() => expect(document.querySelectorAll('[id^="media-"]').length).toBe(192))
+    vi.unstubAllGlobals()
+  })
 })
