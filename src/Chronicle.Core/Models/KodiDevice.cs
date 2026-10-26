@@ -1,23 +1,17 @@
 namespace Chronicle.Core.Models
 {
     /// <summary>
-    /// A Kodi instance that has self-registered its own remote-control (JSON-RPC over HTTP)
-    /// address. Registered by
-    /// Chronicle_Scraper's movie addon (lib/device_registration.py) using whatever LAN IP it
-    /// resolves for itself and Kodi's own configured webserver settings (read locally via
-    /// xbmc.executeJSONRPC, which this addon always has access to regardless of whether
-    /// Chronicle's server can reach it) -- skipped entirely when that Kodi instance has
-    /// "Allow remote control via HTTP" turned off.
+    /// A Kodi instance that has told Chronicle it exists (Chronicle_Scraper's movie add-on,
+    /// lib/device_registration.py, once per start). Chronicle never calls a device, so the row
+    /// only gives report-kodi-id and the refresh signal something to key a device's library ids on.
+    /// Older add-on builds also sent the device's address, web-server port and login (Host, Port,
+    /// Username, Password below); nothing reads them, and a newer build's registration clears them.
+    /// Host is simply the address the registration arrived from.
     ///
     /// Keyed by the registering ApiTokenId, not UserId: one Chronicle user can have several
     /// Kodi instances (e.g. two Shields), each pairing with the device-auth flow gets its own
     /// ApiToken, and each token is exactly one physical device -- the natural upsert key,
     /// with no separate device-identity concept needed.
-    ///
-    /// Password is stored as plaintext, matching Chronicle's own established policy for every
-    /// other externally-supplied credential (see PluginSettingsProtector's own doc: encryption
-    /// adds no real protection for a self-hosted single-user app where the database and any
-    /// key files are equally reachable, while key rotation makes it strictly more fragile).
     /// </summary>
     public class KodiDevice
     {

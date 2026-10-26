@@ -6,8 +6,8 @@ public interface IKodiDeviceService
 {
     /// <summary>Upserts the calling device's own row, keyed by apiTokenId (see KodiDevice's
     /// own doc for why). Called by Chronicle_Scraper's device_registration.py on pairing and
-    /// periodically thereafter, so a changed LAN IP or webserver setting doesn't leave a stale
-    /// row Chronicle keeps failing to reach.</summary>
+    /// once per service start. host/port/username/password are only what older add-on builds
+    /// still send; nothing uses them.</summary>
     Task RegisterAsync(int userId, int apiTokenId, string name, string host, int port,
         string? username, string? password, CancellationToken ct = default);
 
@@ -80,6 +80,12 @@ public interface IKodiDeviceService
     /// in one giant, possibly-inconsistent batch.</summary>
     Task<IReadOnlyList<RefreshDueItem>> GetItemsNeedingRefreshAsync(
         int apiTokenId, IReadOnlyList<string> kinds, CancellationToken ct = default);
+
+    /// <summary>Notes that this Kodi install just called Chronicle: creates its row on first contact
+    /// (named after its API key, addressed by where the request came from) and otherwise stamps
+    /// LastSeenAt and the address. A log of the installs that touch Chronicle, nothing more --
+    /// Chronicle never calls a device. Returns true when this was the first contact.</summary>
+    Task<bool> TouchAsync(int userId, int apiTokenId, string? host, CancellationToken ct = default);
 }
 
 /// <summary>One item due for a local Kodi refresh push -- see

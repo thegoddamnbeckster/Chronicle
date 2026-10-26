@@ -478,6 +478,59 @@ public class ScraperController : ControllerBase
         return Ok(ApiResponse<List<ScraperCollectionDto>>.Ok(dtos));
     }
 
+    public record CollectionsChangedDto(DateTime AsOf, List<ScraperCollectionDto> Collections);
+
+    /// <summary>
+    /// GET /api/v1/scraper/movies/collections/changed?since= -- the collections whose artwork changed
+    /// after <c>since</c>, or all of them when <c>since</c> is absent (a device that has never synced, or
+    /// one that just met a movie set it has not had before). Chronicle keeps no list of devices and no
+    /// per-device state: each Kodi keeps its own copy of the <c>asOf</c> of its last successful sync and
+    /// sends it back here, so any number of installs each get exactly what they are missing, and a
+    /// library nobody touched answers with an empty list.
+    ///
+    /// A collection counts as changed when its own item changed (an edit, a pin, a rebuild) or when
+    /// any member did, since a collection with no poster of its own shows a member's. The device
+    /// compares the result against what Kodi already holds before writing anything, so a member
+    /// change that does not alter the artwork costs nothing visible.
+    ///
+    /// <c>asOf</c> is taken before the list is read; the device stores it only after applying the list,
+    /// so a change made while it was applying is still newer than what it stored.
+    /// </summary>
+    [HttpGet("movies/collections/changed")]
+    public async Task<IActionResult> GetChangedCollections([FromQuery] DateTime? since, CancellationToken ct)
+    {
+        var asOf = DateTime.UtcNow;
+
+        var collectionIds = await _context.MediaExternalIds
+            .Where(e => e.ExternalId.StartsWith("collection:"))
+            .Select(e => e.MediaItemId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var containers = await _context.MediaItems
+            .Where(m => collectionIds.Contains(m.Id))
+            .ToListAsync(ct);
+
+        if (since is not null)
+        {
+            var newestMember = await _context.MediaItems
+                .Where(m => m.ParentId != null && collectionIds.Contains(m.ParentId.Value))
+                .GroupBy(m => m.ParentId!.Value)
+                .Select(g => new { ParentId = g.Key, Newest = g.Max(m => m.UpdatedAt) })
+                .ToDictionaryAsync(x => x.ParentId, x => x.Newest, ct);
+            containers = containers
+                .Where(c => c.UpdatedAt > since.Value
+                         || (newestMember.TryGetValue(c.Id, out var newest) && newest > since.Value))
+                .ToList();
+        }
+
+        var dtos = new List<ScraperCollectionDto>(containers.Count);
+        foreach (var container in containers)
+            dtos.Add(await BuildCollectionDtoAsync(container, ct));
+
+        return Ok(ApiResponse<CollectionsChangedDto>.Ok(new CollectionsChangedDto(asOf, dtos)));
+    }
+
     /// <summary>
     /// Resolves and assembles the full ScraperMovieDetailsDto for one item (Kodi's getdetails
     /// step). Null if the item doesn't exist.

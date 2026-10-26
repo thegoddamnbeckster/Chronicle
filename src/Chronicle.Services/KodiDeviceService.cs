@@ -171,6 +171,44 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
         return DateTime.UtcNow < until;
     }
 
+    public async Task<bool> TouchAsync(int userId, int apiTokenId, string? host, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.ApiTokenId == apiTokenId, ct);
+        var isNew = device is null;
+        if (device is null)
+        {
+            var keyName = await db.ApiTokens.Where(t => t.Id == apiTokenId).Select(t => t.Name).FirstOrDefaultAsync(ct);
+            device = new KodiDevice
+            {
+                ApiTokenId = apiTokenId, UserId = userId, CreatedAt = now,
+                Name = string.IsNullOrWhiteSpace(keyName) ? "Kodi" : keyName,
+            };
+            db.KodiDevices.Add(device);
+        }
+
+        device.LastSeenAt = now;
+        if (!string.IsNullOrWhiteSpace(host))
+            device.Host = host;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException) when (isNew)
+        {
+            // Lost the insert race with the same device's other request; stamp the row that won.
+            db.Entry(device).State = EntityState.Detached;
+            var existing = await db.KodiDevices.FirstAsync(d => d.ApiTokenId == apiTokenId, ct);
+            existing.LastSeenAt = now;
+            if (!string.IsNullOrWhiteSpace(host))
+                existing.Host = host;
+            await db.SaveChangesAsync(ct);
+            return false;
+        }
+        return isNew;
+    }
+
     // Bounds one poll's worth of refresh-due items -- see GetItemsNeedingRefreshAsync's own doc
     // for why a large backlog is drained gradually rather than sent all at once.
     private const int MaxRefreshItemsPerPoll = 50;

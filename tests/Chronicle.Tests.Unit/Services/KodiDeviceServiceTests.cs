@@ -321,5 +321,44 @@ namespace Chronicle.Tests.Unit.Services
             due.Should().ContainSingle();
             due[0].Kind.Should().Be("episode");
         }
+
+        [Fact]
+        public async Task TouchAsync_FirstContactCreatesTheDeviceNamedAfterItsKey()
+        {
+            var first = await _service.TouchAsync(userId: 1, apiTokenId: 1, host: "10.0.0.229");
+
+            first.Should().BeTrue();
+            var device = await _context.KodiDevices.SingleAsync();
+            device.Name.Should().Be("device");
+            device.Host.Should().Be("10.0.0.229");
+            device.Port.Should().Be(0);
+            device.LastSeenAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+        }
+
+        [Fact]
+        public async Task TouchAsync_LaterContactOnlyStampsTheTimeAndAddress_AndKeepsTheRegisteredName()
+        {
+            await _service.RegisterAsync(1, 1, "Upstairs Shield", "10.0.0.229", 0, null, null);
+            var device = await _context.KodiDevices.SingleAsync();
+            device.LastSeenAt = DateTime.UtcNow.AddDays(-3);
+            await _context.SaveChangesAsync();
+
+            var first = await _service.TouchAsync(1, 1, "10.0.0.231");
+
+            first.Should().BeFalse();
+            var after = await _context.KodiDevices.SingleAsync();
+            after.Name.Should().Be("Upstairs Shield");
+            after.Host.Should().Be("10.0.0.231");
+            after.LastSeenAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+        }
+
+        [Fact]
+        public async Task TouchAsync_ABlankAddressKeepsTheOneAlreadyKnown()
+        {
+            await _service.TouchAsync(1, 1, "10.0.0.229");
+            await _service.TouchAsync(1, 1, null);
+
+            (await _context.KodiDevices.SingleAsync()).Host.Should().Be("10.0.0.229");
+        }
     }
 }

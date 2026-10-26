@@ -35,7 +35,9 @@ public class KodiDeviceController(IKodiDeviceService devices, PortConfig portCon
         return claim is null ? null : int.Parse(claim);
     }
 
-    public record RegisterKodiDeviceRequest(string Name, string Host, int Port, string? Username, string? Password);
+    /// <summary>Only Name is needed. Host/Port/Username/Password are what older add-on builds still send
+    /// (Chronicle never calls a device, so nothing uses them); a newer build sends the name alone.</summary>
+    public record RegisterKodiDeviceRequest(string? Name, string? Host = null, int Port = 0, string? Username = null, string? Password = null);
 
     /// <summary>POST /api/v1/scraper/devices/kodi/register -- upserts the calling device's own
     /// remote-control address. See KodiDevice's own doc for why this is keyed by the calling
@@ -61,26 +63,21 @@ public class KodiDeviceController(IKodiDeviceService devices, PortConfig portCon
         if (apiTokenId is null)
             return BadRequest(ApiResponse<object>.Fail(
                 "API_KEY_REQUIRED", "Device registration requires an API key, not a JWT."));
-        if (string.IsNullOrWhiteSpace(request.Host) || request.Port <= 0)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_DEVICE", "host and a positive port are required."));
+        if (request.Port < 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_DEVICE", "port cannot be negative."));
         // SSRF guard: refuse to register Chronicle's own listening port as a "Kodi device" -- a
         // general safeguard against any feature that pushes to a registered device, which an
         // attacker with a leaked API key could otherwise aim at 127.0.0.1:<this port> to hit
         // Chronicle's own API on a schedule they don't control. Doesn't attempt a general private/public IP-range policy (reverse
         // proxies, Docker networking, and IPv6 all make that a real design decision, not a
         // one-line guard) -- worth a follow-up if broader hardening is wanted.
-        if (request.Port == portConfig.Api)
+        if (request.Port > 0 && request.Port == portConfig.Api)
             return BadRequest(ApiResponse<object>.Fail(
                 "INVALID_DEVICE", "That port is Chronicle's own -- refusing to register it as a Kodi device."));
 
-        var remoteIp = HttpContext.Connection.RemoteIpAddress;
-        // Strip the IPv6-mapped-IPv4 prefix (::ffff:10.0.0.10) a dual-stack listener commonly
-        // wraps an actual IPv4 peer in -- matches the plain dotted-quad format device_registration.py
-        // itself would have sent, so this doesn't look like a surprising format change downstream
-        // (the status page's Host column, etc).
-        var host = remoteIp is { IsIPv4MappedToIPv6: true } ? remoteIp.MapToIPv4().ToString() : remoteIp?.ToString();
+        var host = KodiDeviceTouchMiddleware.Describe(HttpContext);
         if (string.IsNullOrWhiteSpace(host))
-            host = request.Host.Trim(); // couldn't read a remote address at all -- fall back rather than fail registration outright
+            host = request.Host?.Trim() ?? string.Empty; // couldn't read a remote address at all -- fall back rather than fail registration outright
 
         await devices.RegisterAsync(GetUserId(), apiTokenId.Value,
             string.IsNullOrWhiteSpace(request.Name) ? "Kodi" : request.Name.Trim(),

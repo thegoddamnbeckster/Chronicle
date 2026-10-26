@@ -702,6 +702,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<Chronicle.API.KodiDeviceTouchMiddleware>();
 
 // ── Serve the built React frontend from this same origin ─────────────────────────
 // Production only needs to hit one port -- in dev, Vite owns the frontend (its own dev
