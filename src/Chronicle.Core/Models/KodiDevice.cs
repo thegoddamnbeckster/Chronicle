@@ -25,6 +25,16 @@ namespace Chronicle.Core.Models
         public string? Username { get; set; }
         public string? Password { get; set; }
 
+        /// <summary>Which add-on this row is for. A Kodi that has both Chronicle Scraper add-ons (and the
+        /// scrobbler) holds one API key, and so one row, per add-on; these say which is which. Filled by
+        /// the add-on's own registration, null for a row only known from its calls or from an older build.</summary>
+        public string? AddonId { get; set; }
+        /// <summary>The add-on's display name, e.g. "Chronicle Scraper (Movies)".</summary>
+        public string? AddonName { get; set; }
+        public string? AddonVersion { get; set; }
+        /// <summary>The Kodi build the add-on runs in, as Kodi reports it.</summary>
+        public string? KodiVersion { get; set; }
+
         public DateTime LastSeenAt { get; set; }
         public DateTime CreatedAt { get; set; }
     }

@@ -9,7 +9,7 @@ public interface IKodiDeviceService
     /// once per service start. host/port/username/password are only what older add-on builds
     /// still send; nothing uses them.</summary>
     Task RegisterAsync(int userId, int apiTokenId, string name, string host, int port,
-        string? username, string? password, CancellationToken ct = default);
+        string? username, string? password, KodiAddonInfo? addon = null, CancellationToken ct = default);
 
     /// <summary>Records/updates this device's own Kodi-internal id for one MediaItem -- see
     /// KodiLibraryId's own doc. A no-op (not an error) if apiTokenId has no registered device
@@ -91,3 +91,6 @@ public interface IKodiDeviceService
 /// <summary>One item due for a local Kodi refresh push -- see
 /// IKodiDeviceService.GetItemsNeedingRefreshAsync's own doc.</summary>
 public sealed record RefreshDueItem(int KodiId, string Kind);
+
+/// <summary>Which add-on, and in which Kodi, a registration came from -- see KodiDevice.AddonId.</summary>
+public sealed record KodiAddonInfo(string? AddonId, string? AddonName, string? AddonVersion, string? KodiVersion);

@@ -678,6 +678,10 @@ namespace Chronicle.Data
                 e.Property(x => x.Port).HasColumnName("port").IsRequired();
                 e.Property(x => x.Username).HasColumnName("username");
                 e.Property(x => x.Password).HasColumnName("password");
+                e.Property(x => x.AddonId).HasColumnName("addon_id");
+                e.Property(x => x.AddonName).HasColumnName("addon_name");
+                e.Property(x => x.AddonVersion).HasColumnName("addon_version");
+                e.Property(x => x.KodiVersion).HasColumnName("kodi_version");
                 e.Property(x => x.LastSeenAt).HasColumnName("last_seen_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
                 // One device row per registering API token -- re-registration (a periodic

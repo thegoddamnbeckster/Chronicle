@@ -360,5 +360,51 @@ namespace Chronicle.Tests.Unit.Services
 
             (await _context.KodiDevices.SingleAsync()).Host.Should().Be("10.0.0.229");
         }
+
+        [Fact]
+        public async Task RegisterAsync_WithAddonInfo_StoresItAndNamesTheRowAfterTheAddon()
+        {
+            await _service.RegisterAsync(1, 1, "Vision", "10.0.0.162", 0, null, null,
+                new KodiAddonInfo("script.chronicle.scraper.tv", "Chronicle Scraper (TV)", "1.22.0", "21.1 (21.1.0)"));
+
+            var device = await _context.KodiDevices.SingleAsync();
+            device.Name.Should().Be("Vision \u2014 Chronicle Scraper (TV)");
+            device.AddonId.Should().Be("script.chronicle.scraper.tv");
+            device.AddonName.Should().Be("Chronicle Scraper (TV)");
+            device.AddonVersion.Should().Be("1.22.0");
+            device.KodiVersion.Should().Be("21.1 (21.1.0)");
+        }
+
+        [Fact]
+        public async Task RegisterAsync_AgainAfterAnUpdate_ReplacesTheVersion()
+        {
+            await _service.RegisterAsync(1, 1, "Vision", "h", 0, null, null, new KodiAddonInfo("a", "Add-on", "1.0", "20"));
+            await _service.RegisterAsync(1, 1, "Vision", "h", 0, null, null, new KodiAddonInfo("a", "Add-on", "1.1", "21"));
+
+            var device = await _context.KodiDevices.SingleAsync();
+            device.AddonVersion.Should().Be("1.1");
+            device.KodiVersion.Should().Be("21");
+        }
+
+        [Fact]
+        public async Task RegisterAsync_WithoutAddonInfo_KeepsTheBareNameAndNoAddonColumns()
+        {
+            await _service.RegisterAsync(1, 1, "Shield", "h", 0, null, null);
+
+            var device = await _context.KodiDevices.SingleAsync();
+            device.Name.Should().Be("Shield");
+            device.AddonId.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task RegisterAsync_BlankAndOversizedAddonFieldsAreCleaned()
+        {
+            await _service.RegisterAsync(1, 1, "Shield", "h", 0, null, null,
+                new KodiAddonInfo("  ", "Add-on", new string('x', 500), null));
+
+            var device = await _context.KodiDevices.SingleAsync();
+            device.AddonId.Should().BeNull();
+            device.AddonVersion!.Length.Should().Be(200);
+        }
     }
 }

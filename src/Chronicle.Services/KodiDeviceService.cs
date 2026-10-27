@@ -16,8 +16,25 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
     // comparison with no TimeSpan arithmetic of its own.
     private const string ScanActiveUntilKey = "kodi.scan_active_until";
     private static TimeSpan ScanActivityTtl => Tunables.Minutes(Tunables.DeviceScanActiveMinutes);
+    /// <summary>"Vision" + "Chronicle Scraper (Movies)" -> "Vision - Chronicle Scraper (Movies)", so a Kodi that
+    /// has several add-ons shows one clearly named row per add-on. A bare device name stays as it is.</summary>
+    internal static string DisplayName(string name, KodiAddonInfo? addon) =>
+        string.IsNullOrWhiteSpace(addon?.AddonName) ? name : $"{name} \u2014 {addon!.AddonName!.Trim()}";
+
+    private static void ApplyAddon(KodiDevice device, KodiAddonInfo? addon)
+    {
+        if (addon is null) return;
+        device.AddonId = Clean(addon.AddonId);
+        device.AddonName = Clean(addon.AddonName);
+        device.AddonVersion = Clean(addon.AddonVersion);
+        device.KodiVersion = Clean(addon.KodiVersion);
+    }
+
+    private static string? Clean(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : (value.Trim().Length > 200 ? value.Trim()[..200] : value.Trim());
+
     public async Task RegisterAsync(int userId, int apiTokenId, string name, string host, int port,
-        string? username, string? password, CancellationToken ct = default)
+        string? username, string? password, KodiAddonInfo? addon = null, CancellationToken ct = default)
     {
         var device = await db.KodiDevices.FirstOrDefaultAsync(d => d.ApiTokenId == apiTokenId, ct);
         var now = DateTime.UtcNow;
@@ -29,12 +46,13 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
         }
 
         device.UserId     = userId;
-        device.Name       = name;
+        device.Name       = DisplayName(name, addon);
         device.Host       = host;
         device.Port       = port;
         device.Username   = username;
         device.Password   = password;
         device.LastSeenAt = now;
+        ApplyAddon(device, addon);
 
         try
         {
@@ -51,12 +69,13 @@ public sealed class KodiDeviceService(ChronicleDbContext db) : IKodiDeviceServic
             db.Entry(device).State = EntityState.Detached;
             var existing = await db.KodiDevices.FirstAsync(d => d.ApiTokenId == apiTokenId, ct);
             existing.UserId     = userId;
-            existing.Name       = name;
+            existing.Name       = DisplayName(name, addon);
             existing.Host       = host;
             existing.Port       = port;
             existing.Username   = username;
             existing.Password   = password;
             existing.LastSeenAt = now;
+            ApplyAddon(existing, addon);
             await db.SaveChangesAsync(ct);
         }
     }

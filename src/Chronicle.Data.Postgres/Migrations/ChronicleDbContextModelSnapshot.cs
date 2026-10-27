@@ -258,6 +258,18 @@ namespace Chronicle.Data.Postgres.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("AddonId")
+                        .HasColumnType("text")
+                        .HasColumnName("addon_id");
+
+                    b.Property<string>("AddonName")
+                        .HasColumnType("text")
+                        .HasColumnName("addon_name");
+
+                    b.Property<string>("AddonVersion")
+                        .HasColumnType("text")
+                        .HasColumnName("addon_version");
+
                     b.Property<int>("ApiTokenId")
                         .HasColumnType("integer")
                         .HasColumnName("api_token_id");
@@ -272,6 +284,10 @@ namespace Chronicle.Data.Postgres.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("host");
+
+                    b.Property<string>("KodiVersion")
+                        .HasColumnType("text")
+                        .HasColumnName("kodi_version");
 
                     b.Property<DateTime>("LastSeenAt")
                         .HasColumnType("timestamp with time zone")

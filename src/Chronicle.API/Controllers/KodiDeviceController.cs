@@ -35,9 +35,11 @@ public class KodiDeviceController(IKodiDeviceService devices, PortConfig portCon
         return claim is null ? null : int.Parse(claim);
     }
 
-    /// <summary>Only Name is needed. Host/Port/Username/Password are what older add-on builds still send
-    /// (Chronicle never calls a device, so nothing uses them); a newer build sends the name alone.</summary>
-    public record RegisterKodiDeviceRequest(string? Name, string? Host = null, int Port = 0, string? Username = null, string? Password = null);
+    /// <summary>Name is the device's; AddonId/AddonName/AddonVersion/KodiVersion say which add-on in which Kodi
+    /// is registering (one API key, so one row, per add-on). Host/Port/Username/Password are what older
+    /// add-on builds still send (Chronicle never calls a device, so nothing uses them).</summary>
+    public record RegisterKodiDeviceRequest(string? Name, string? Host = null, int Port = 0, string? Username = null, string? Password = null,
+        string? AddonId = null, string? AddonName = null, string? AddonVersion = null, string? KodiVersion = null);
 
     /// <summary>POST /api/v1/scraper/devices/kodi/register -- upserts the calling device's own
     /// remote-control address. See KodiDevice's own doc for why this is keyed by the calling
@@ -81,7 +83,8 @@ public class KodiDeviceController(IKodiDeviceService devices, PortConfig portCon
 
         await devices.RegisterAsync(GetUserId(), apiTokenId.Value,
             string.IsNullOrWhiteSpace(request.Name) ? "Kodi" : request.Name.Trim(),
-            host, request.Port, request.Username, request.Password, ct);
+            host, request.Port, request.Username, request.Password,
+            new KodiAddonInfo(request.AddonId, request.AddonName, request.AddonVersion, request.KodiVersion), ct);
 
         return Ok(ApiResponse<object>.Ok(new { registered = true }));
     }

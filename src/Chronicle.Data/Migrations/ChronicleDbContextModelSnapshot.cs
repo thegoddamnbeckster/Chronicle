@@ -15,7 +15,7 @@ namespace Chronicle.Data.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "9.0.20");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.21");
 
             modelBuilder.Entity("Chronicle.Core.Models.ApiToken", b =>
                 {
@@ -245,6 +245,18 @@ namespace Chronicle.Data.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("id");
 
+                    b.Property<string>("AddonId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("addon_id");
+
+                    b.Property<string>("AddonName")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("addon_name");
+
+                    b.Property<string>("AddonVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("addon_version");
+
                     b.Property<int>("ApiTokenId")
                         .HasColumnType("INTEGER")
                         .HasColumnName("api_token_id");
@@ -259,6 +271,10 @@ namespace Chronicle.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("host");
+
+                    b.Property<string>("KodiVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kodi_version");
 
                     b.Property<DateTime>("LastSeenAt")
                         .HasColumnType("TEXT")

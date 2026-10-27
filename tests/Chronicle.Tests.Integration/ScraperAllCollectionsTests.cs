@@ -266,5 +266,9 @@ public class ScraperAllCollectionsTests : IClassFixture<ChronicleApiFactory>
         (await device.PostAsJsonAsync("/api/v1/scraper/devices/kodi/register",
             new { name = "Shield", host = "10.0.0.5", port = 8080, username = "kodi", password = "pw" }))
             .EnsureSuccessStatusCode();
+        (await device.PostAsJsonAsync("/api/v1/scraper/devices/kodi/register",
+            new { name = "Shield", addonId = "script.chronicle.scraper.movie", addonName = "Chronicle Scraper (Movies)",
+                  addonVersion = "3.25.0", kodiVersion = "21.1" }))
+            .EnsureSuccessStatusCode();
     }
 }
