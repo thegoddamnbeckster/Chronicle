@@ -598,7 +598,7 @@ export default function LibraryPage() {
       navigate({ pathname: location.pathname, search: location.search }, { replace: true })
     }, 500)
     return () => clearTimeout(timer)
-  }, [isLoading, sectionsLoading, location.hash, grouped])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isLoading, sectionsLoading, location.hash, grouped])
 
   return (
     <div className={styles.page}>
