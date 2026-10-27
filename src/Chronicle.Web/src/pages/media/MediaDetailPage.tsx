@@ -59,9 +59,8 @@ function formatChildPosition(number: number | null, seriesPosition: number | nul
 const LIGHTBOX_SKIP = new Set(['title', 'externalid', 'source', 'totalresults', 'total_results'])
 
 /** `embeddedId`: render this record inside another page (a person's combined page shows its author record this way): no
- *  top navigation and no redirect to the person -- the host page supplies both. `embeddedPosterUrl` is then what the poster
- *  shows (a person's own photo, or its absence) instead of the cover art this record resolved for itself. */
-export default function MediaDetailPage({ embeddedId, embeddedPosterUrl }: { embeddedId?: number; embeddedPosterUrl?: string | null } = {}) {
+ *  top navigation and no redirect to the person -- the host page supplies both. The record shows the poster of its own sources. */
+export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } = {}) {
   const { id } = useParams<{ id: string }>()
   const embedded = embeddedId != null
   const mediaId = embeddedId ?? Number(id)
@@ -725,7 +724,7 @@ export default function MediaDetailPage({ embeddedId, embeddedPosterUrl }: { emb
       <div className={styles.hero}>
         <div className={styles.posterWrap}>
           <PosterImage
-            posterUrl={embedded ? (embeddedPosterUrl ?? null) : item.posterUrl}
+            posterUrl={item.posterUrl}
             name={item.name}
             imgClassName={styles.posterClickable}
             onClick={() => setLightboxIdx(0)}

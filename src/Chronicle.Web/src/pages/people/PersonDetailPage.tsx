@@ -584,7 +584,7 @@ export default function PersonDetailPage() {
 
 
       {(person.linkedItems ?? []).filter(l => !l.isPerson).map(author => (
-        <LinkedAuthorSection key={author.itemId} author={author} headshotUrl={person.posterUrl} />
+        <LinkedAuthorSection key={author.itemId} author={author} />
       ))}
 
       {mergeTarget && (

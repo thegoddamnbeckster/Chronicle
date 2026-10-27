@@ -9,14 +9,15 @@ import styles from './LinkedAuthorSection.module.css'
  * progress, series and books, every plugin panel, cast and crew, images, related files. Nothing is reimplemented, so the two
  * cannot drift apart.
  */
-/** `headshotUrl`: the person's photo (null when there is none). The record shows that, not the cover art it resolved for itself. */
-export function LinkedAuthorSection({ author, headshotUrl = null }: { author: LinkedItem; headshotUrl?: string | null }) {
+/** Each record shows the poster of its OWN sources (and its own pin), never another record's: a Books record without a poster shows
+ *  none rather than borrowing the person's photo or an Audiobooks record's art. */
+export function LinkedAuthorSection({ author }: { author: LinkedItem }) {
   return (
     <section className={styles.section} aria-label={`${author.mediaTypeName} record`}>
       <div className={styles.header}>
         <h2 className={styles.title}>{author.mediaTypeName}</h2>
       </div>
-      <MediaDetailPage embeddedId={author.itemId} embeddedPosterUrl={headshotUrl} />
+      <MediaDetailPage embeddedId={author.itemId} />
     </section>
   )
 }
