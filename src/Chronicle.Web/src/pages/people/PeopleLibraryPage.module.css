@@ -80,7 +80,7 @@
 
 .roleChipActive {
   background: var(--accent);
-  color: var(--bg-primary, #000);
+  color: var(--accent-fg, #fff);
   border-color: var(--accent);
 }
 

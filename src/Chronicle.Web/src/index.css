@@ -22,6 +22,13 @@
   --success: #2e7d32;
   --warning: #e65100;
   --danger: #c62828;
+  /* Text on a success/danger/warning/status surface; the theme loader recomputes these from the active theme. */
+  --success-fg: #fff;
+  --danger-fg: #fff;
+  --warning-fg: #fff;
+  --on-status-success: #fff;
+  --on-status-danger: #fff;
+  --on-status-warning: #fff;
   /* Status badge tokens */
   --status-success-bg:     rgba(46, 125, 50, 0.1);
   --status-success-fg:     #2e7d32;

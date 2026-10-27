@@ -7,6 +7,7 @@ import {
 } from 'react'
 import { fetchThemes, type ThemeDto } from '@/api/themes'
 import { colorSchemeFor } from '@/utils/colorScheme'
+import { derivedTextColors } from '@/utils/contrast'
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
 
@@ -25,6 +26,11 @@ function applyVariables(vars: Record<string, string>) {
     if (prop.startsWith('--')) root.style.removeProperty(prop)
   }
   for (const [name, value] of Object.entries(vars)) {
+    root.style.setProperty(name, value)
+  }
+  // The text a button puts on an accent/success/danger/warning surface is worked out from that surface, so it reads on every
+  // theme (a theme's own --accent-fg is kept when it already reads, replaced when it does not).
+  for (const [name, value] of Object.entries(derivedTextColors(vars))) {
     root.style.setProperty(name, value)
   }
   // Tell the browser which scheme the page is in, so native controls -- above all the open list of a <select> -- are drawn

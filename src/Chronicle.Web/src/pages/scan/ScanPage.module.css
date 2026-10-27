@@ -82,7 +82,7 @@
 .stepDone .stepNum {
   background: var(--status-success-fg, #4caf50);
   border-color: var(--status-success-fg, #4caf50);
-  color: #fff;
+  color: var(--on-status-success, #fff);
 }
 
 .stepLabel {

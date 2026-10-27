@@ -207,6 +207,7 @@
 }
 
 .navBtn {
+  display: inline-block;
   font-size: 13px;
   color: var(--text-secondary);
   text-decoration: none;
@@ -228,6 +229,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 }
 
 .upBtn {
+  display: inline-block;
   font-size: 13px;
   color: var(--text-secondary);
   text-decoration: none;
@@ -829,7 +831,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   border-radius: 4px;
   border: none;
   background: var(--status-danger-fg, #e05555);
-  color: #fff;
+  color: var(--on-status-danger, #fff);
   cursor: pointer;
   transition: opacity 0.15s;
 }
@@ -1231,6 +1233,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 }
 
 .breadcrumbLink {
+  display: inline-block;
   color: var(--text-secondary);
   text-decoration: none;
   padding: 2px 4px;
@@ -1429,6 +1432,7 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 /* ── Change Type button & modal ─────────────────────────────────────────── */
 
 .changeTypeBtn {
+  display: inline-block;
   font-size: 12px;
   padding: 3px 10px;
   border-radius: 4px;

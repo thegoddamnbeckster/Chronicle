@@ -519,7 +519,7 @@
 
 .deleteModeBtn:hover:not(:disabled) {
   background: var(--status-danger-fg, #e05555);
-  color: white;
+  color: var(--on-status-danger, #fff);
 }
 
 .deleteModeBtn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -579,7 +579,7 @@
   border-radius: 99px;
   border: none;
   background: var(--status-danger-fg, #e05555);
-  color: #fff;
+  color: var(--on-status-danger, #fff);
   font-size: 12px;
   cursor: pointer;
   transition: opacity 0.15s;

@@ -25,7 +25,7 @@
   padding: 0 4px;
   border-radius: 8px;
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg, #fff);
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;

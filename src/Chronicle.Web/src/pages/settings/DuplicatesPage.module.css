@@ -220,7 +220,7 @@
   font-size: 0.75rem;
   white-space: nowrap;
 }
-.deleteBtn:hover { background: var(--danger, #d64545); color: #fff; }
+.deleteBtn:hover { background: var(--danger, #d64545); color: var(--danger-fg, #fff); }
 .deleteBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Pagination ── */

@@ -65,9 +65,7 @@
   top: 10px;
   right: 10px;
   background: var(--accent);
-  /* Accent can be any luminance — use a dark overlay text that works against
-     bright greens/blues, with a subtle shadow for dark accents. */
-  color: #0d1117;
+  color: var(--accent-fg, #0d1117);
   text-shadow: none;
   font-size: 0.68rem;
   padding: 3px 9px;
@@ -276,9 +274,7 @@
 .confirmBtn {
   padding: 9px 22px;
   background: var(--accent);
-  /* Dark text — high contrast against bright greens, blues, and most
-     saturated accent colours used in Chronicle themes. */
-  color: #0d1117;
+  color: var(--accent-fg, #0d1117);
   border: none;
   border-radius: 5px;
   cursor: pointer;

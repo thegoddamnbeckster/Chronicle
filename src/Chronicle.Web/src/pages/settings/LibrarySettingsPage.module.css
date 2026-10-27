@@ -128,6 +128,7 @@
 }
 
 .applyBtn {
+  display: inline-block;
   padding: 4px 12px;
   border-radius: 99px;
   border: 1px solid var(--accent);
@@ -433,7 +434,7 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
-.dangerBtnRed:hover:not(:disabled) { background: #dc2626; color: #1c1917; }
+.dangerBtnRed:hover:not(:disabled) { background: #dc2626; color: #fff; }
 .dangerBtnRed:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .dangerBtnAmber {
@@ -575,7 +576,7 @@
   background: var(--accent);
   border: none;
   border-radius: 5px;
-  color: #fff;
+  color: var(--accent-fg, #fff);
   font-size: 0.85rem;
   cursor: pointer;
   font-weight: 600;

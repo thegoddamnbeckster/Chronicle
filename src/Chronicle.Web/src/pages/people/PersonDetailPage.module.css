@@ -32,6 +32,7 @@
 .backBtn:hover { color: var(--text-primary); }
 
 .upBtn {
+  display: inline-block;
   font-size: 13px;
   color: var(--text-secondary);
   text-decoration: none;
@@ -52,6 +53,7 @@
 }
 
 .navBtn {
+  display: inline-block;
   font-size: 13px;
   color: var(--text-secondary);
   text-decoration: none;
@@ -231,7 +233,7 @@
   border-radius: 4px;
   border: none;
   background: var(--status-danger-fg, #e05555);
-  color: #fff;
+  color: var(--on-status-danger, #fff);
   cursor: pointer;
   transition: opacity 0.15s;
 }
@@ -358,6 +360,7 @@
 
 .photoHideBtn:hover:not(:disabled) {
   background: #b3261e;
+  color: #fff;
 }
 
 .photoThumb {

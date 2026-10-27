@@ -3,7 +3,7 @@
 .lead { color: var(--text-muted); margin: 0 0 1.5rem; line-height: 1.5; }
 .section { margin: 0 0 2rem; }
 .stepTitle { display: flex; align-items: center; gap: 0.6rem; font-size: 1.15rem; font-weight: 600; margin: 0 0 0.5rem; }
-.stepNumber { display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; border-radius: 50%; background: var(--accent, #5b9bd5); color: #fff; font-size: 0.9rem; }
+.stepNumber { display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; border-radius: 50%; background: var(--accent, #5b9bd5); color: var(--accent-fg, #fff); font-size: 0.9rem; }
 .types { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin: 0.5rem 0; }
 .type { display: inline-flex; align-items: center; gap: 0.4rem; }
 .list { list-style: none; margin: 0.5rem 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
@@ -14,7 +14,10 @@
 .field { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.6rem; }
 .field small { color: var(--text-muted); }
 .field input { padding: 0.4rem 0.6rem; border: 1px solid var(--border, #333); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); }
-.primary { padding: 0.5rem 1.1rem; border-radius: var(--radius, 6px); border: 1px solid var(--accent, #5b9bd5); background: var(--accent, #5b9bd5); color: #fff; cursor: pointer; text-decoration: none; white-space: nowrap; }
+.primary { display: inline-block; padding: 0.5rem 1.1rem; border-radius: var(--radius, 6px); border: 1px solid var(--accent, #5b9bd5); background: var(--accent, #5b9bd5); color: var(--accent-fg, #fff); cursor: pointer; text-decoration: none; white-space: nowrap; line-height: 1.4; }
+/* The global a:hover recolours link text to the hover shade, which is the button's own background when the button is a Link. */
+.primary:hover:not(:disabled) { background: var(--accent-hover, var(--accent, #5b9bd5)); border-color: var(--accent-hover, var(--accent, #5b9bd5)); color: var(--accent-fg, #fff); }
+.section > p { margin: 0 0 0.9rem; line-height: 1.5; }
 .primary:disabled { opacity: 0.5; cursor: default; }
 .done { color: var(--success, #3fb27f); font-weight: 600; white-space: nowrap; }
 .error { color: var(--danger, #e5534b); }
