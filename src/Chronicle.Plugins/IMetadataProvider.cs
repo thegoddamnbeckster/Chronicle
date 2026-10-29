@@ -33,6 +33,14 @@ public interface IMetadataProvider
     /// </summary>
     IReadOnlyList<string> GetAcceptedCrossRefPrefixes() => [];
 
+    /// <summary>
+    /// The same list for one kind of item (its media type's provider family: "movie", "tv", ...). Chronicle asks this, never the
+    /// plain form, when it decides whether an id found on an item may seed this provider: an item only ever gets lookups for its own
+    /// kind, so a provider that serves several kinds (movies and shows) must say which ids belong to which, or it would be handed
+    /// a show's id for a movie. The default is the plain list for every kind (a provider that serves one kind needs nothing more).
+    /// </summary>
+    IReadOnlyList<string> GetAcceptedCrossRefPrefixes(string? providerFamily) => GetAcceptedCrossRefPrefixes();
+
     /// <summary>Returns the settings schema used to generate the configuration UI.</summary>
     PluginSettingsSchema GetSettingsSchema();
 

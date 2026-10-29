@@ -3484,7 +3484,7 @@ public class MetadataEnrichmentService(
 
                 var isOwner        = string.Equals(PluginIdHelper.ToSource(candidatePluginId), xSource, StringComparison.OrdinalIgnoreCase);
                 var acceptsCrossRef = !isOwner && candidateProvider
-                    .GetAcceptedCrossRefPrefixes()
+                    .GetAcceptedCrossRefPrefixes(typeHint)
                     .Any(prefix => xId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
                 if (!isOwner && !acceptsCrossRef) continue;

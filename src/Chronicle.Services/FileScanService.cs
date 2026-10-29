@@ -928,7 +928,7 @@ namespace Chronicle.Services
                             // Accept if this plugin owns the source OR declares it accepts the prefix.
                             var isOwner    = candidatePluginId == ownPluginId;
                             var acceptsCrossRef = !isOwner && candidateProvider
-                                .GetAcceptedCrossRefPrefixes()
+                                .GetAcceptedCrossRefPrefixes(MediaTypeRegistry.Family(mediaType.Name))
                                 .Any(prefix => xId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
                             if (!isOwner && !acceptsCrossRef) continue;
@@ -951,7 +951,7 @@ namespace Chronicle.Services
                 }
             }
 
-            // Ensure library entry exists (default to PlanToWatch)
+            // Ensure library entry exists. A title added by hand is Unwatched, like every scanned item; PlanToWatch is a choice the user makes.
             var libEntry = await _context.UserLibraries
                 .FirstOrDefaultAsync(l => l.UserId == userId && l.MediaItemId == item.Id, ct);
 
@@ -961,7 +961,7 @@ namespace Chronicle.Services
                 {
                     UserId      = userId,
                     MediaItemId = item.Id,
-                    Status      = Chronicle.Core.Models.LibraryStatus.PlanToWatch,
+                    Status      = Chronicle.Core.Models.LibraryStatus.Unwatched,
                     AddedAt     = DateTime.UtcNow,
                     UpdatedAt   = DateTime.UtcNow,
                 });
