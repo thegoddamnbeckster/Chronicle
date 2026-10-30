@@ -63,6 +63,20 @@ Write-Host "Stopping any running Chronicle dev processes..." -ForegroundColor Ye
 # and "Start API/Web/ABS" sections below. Ungated, an -ApiOnly (or -WebOnly) run would
 # kill the other services too and then never bring them back, leaving them down.
 if (-not $WebOnly) {
+    # The watchdog (Settings -> Watchdog) restarts Chronicle the moment it disappears, which would fight this rebuild
+    # (and its scheduled task relaunches the watchdog itself within a minute). Tell it to stand down by switching
+    # its config off; the new API rewrites the config on startup and the watchdog resumes on its own.
+    $wdConfig = Join-Path $RepoRoot "src\Chronicle.APIin\Debug
+et9.0\watchdog.json"
+    if (Test-Path $wdConfig) {
+        $wd = Get-Content $wdConfig -Raw | ConvertFrom-Json
+        if ($wd.enabled) {
+            $wd.enabled = $false
+            $wd | ConvertTo-Json -Depth 6 | Set-Content $wdConfig
+            Write-Host "  Pausing the Chronicle watchdog until the new API starts"
+            for ($i = 0; $i -lt 20 -and (Get-Process -Name "Chronicle.Watchdog" -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
+        }
+    }
     # Kill Chronicle.API.exe (published build running as a standalone process)
     Get-Process -Name "Chronicle.API" -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Host "  Stopping Chronicle.API PID $($_.Id)"; Stop-Process $_ -Force }

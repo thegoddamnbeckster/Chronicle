@@ -49,7 +49,7 @@ export default function WatchdogPage() {
     <div className={styles.page}>
       <h1 className={styles.title}>Watchdog</h1>
       <p className={styles.hint}>
-        Keeps Chronicle running on its own. A small background program (Chronicle.Watchdog) checks every 30 seconds that
+        Keeps Chronicle running on its own. A small background program (Chronicle.Watchdog) checks every 10 seconds that
         Chronicle is answering and is using its real database, and starts it again if it is not. It starts with
         Windows and never opens a window. Stopping Chronicle on purpose is respected: it is not started again.
       </p>

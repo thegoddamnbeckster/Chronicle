@@ -23,11 +23,11 @@ public sealed class WatchdogHost : IWatchdogHost
         _stopMarkerPath = Path.Combine(directory, "chronicle-stopped.marker");
     }
 
-    public async Task<ProbeResult> ProbeAsync(WatchdogConfig config)
+    public async Task<ProbeResult> ProbeAsync(ComponentSpec component)
     {
         try
         {
-            using var response = await Http.GetAsync($"{config.ApiUrl.TrimEnd('/')}/api/health/deep");
+            using var response = await Http.GetAsync(component.ProbeUrl);
             if (response.IsSuccessStatusCode) return new ProbeResult(true, "ok");
             var body = await response.Content.ReadAsStringAsync();
             return new ProbeResult(false, $"HTTP {(int)response.StatusCode}: {Trim(body)}");
@@ -38,16 +38,19 @@ public sealed class WatchdogHost : IWatchdogHost
         }
     }
 
-    public void RestartApi(WatchdogConfig config)
+    public void Restart(ComponentSpec component)
     {
-        var launch = config.Launch;
-        foreach (var p in Process.GetProcessesByName(launch.ProcessName))
+        var launch = component.Launch;
+        if (!string.IsNullOrWhiteSpace(launch.ProcessName))
         {
-            try { p.Kill(entireProcessTree: true); p.WaitForExit(15_000); } catch { /* already gone */ }
+            foreach (var p in Process.GetProcessesByName(launch.ProcessName))
+            {
+                try { p.Kill(entireProcessTree: true); p.WaitForExit(15_000); } catch { /* already gone */ }
+            }
         }
         if (string.IsNullOrWhiteSpace(launch.File) || !File.Exists(launch.File))
         {
-            Record("error", $"Cannot restart Chronicle: '{launch.File}' does not exist.");
+            Record(component, "error", $"Cannot restart {component.Name}: '{launch.File}' does not exist.");
             return;
         }
 
@@ -65,21 +68,29 @@ public sealed class WatchdogHost : IWatchdogHost
         }
         catch (Exception ex)
         {
-            Record("error", $"Cannot restart Chronicle: {ex.Message}");
+            Record(component, "error", $"Cannot restart {component.Name}: {ex.Message}");
         }
     }
 
     public bool StoppedOnPurposeSince(DateTime since) =>
         File.Exists(_stopMarkerPath) && File.GetLastWriteTimeUtc(_stopMarkerPath) > since;
 
-    public void Record(string state, string message)
+    public void Record(ComponentSpec component, string state, string message)
     {
-        _state = state;
-        _message = message;
+        // The headline state is Chronicle's own; the web UI's events appear in the activity list.
+        if (component.RespectsStopMarker || component.Name == "Chronicle")
+        {
+            _state = state;
+            _message = message;
+        }
         _events.Add(new { timeUtc = DateTime.UtcNow, state, message });
         if (_events.Count > MaxEvents) _events.RemoveRange(0, _events.Count - MaxEvents);
         WriteStatus();
     }
+
+    /// <summary>For failures that belong to no component (the watchdog's own loop).</summary>
+    public void RecordError(string message) =>
+        Record(new ComponentSpec("Chronicle", "", new LaunchSpec(), true), "error", message);
 
     /// <summary>Refreshes the "last checked" time even when nothing changed.</summary>
     public void Heartbeat() => WriteStatus();

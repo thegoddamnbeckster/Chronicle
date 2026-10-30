@@ -12,12 +12,15 @@ public class WatchdogEngineTests
         public int Restarts;
         public List<string> States = new();
 
-        public Task<ProbeResult> ProbeAsync(WatchdogConfig config) =>
+        public Task<ProbeResult> ProbeAsync(ComponentSpec component) =>
             Task.FromResult(new ProbeResult(Healthy, Healthy ? "ok" : "no answer"));
-        public void RestartApi(WatchdogConfig config) => Restarts++;
+        public void Restart(ComponentSpec component) => Restarts++;
         public bool StoppedOnPurposeSince(DateTime since) => StoppedOnPurpose;
-        public void Record(string state, string message) => States.Add(state);
+        public void Record(ComponentSpec component, string state, string message) => States.Add(state);
     }
+
+    private static readonly ComponentSpec Api = new("Chronicle", "http://localhost:7979/api/health/deep", new LaunchSpec(), RespectsStopMarker: true);
+    private static readonly ComponentSpec Web = new("The Chronicle web UI", "http://localhost:8888", new LaunchSpec(), RespectsStopMarker: false);
 
     private static readonly WatchdogConfig Config = new() { Enabled = true, FailuresBeforeRestart = 2, MaxRestartsPerHour = 2, StartupGraceSeconds = 300 };
 
@@ -33,8 +36,8 @@ public class WatchdogEngineTests
     {
         var (engine, host, _) = Create();
 
-        await engine.TickAsync(Config);
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
+        await engine.TickAsync(Config, Api);
 
         host.Restarts.Should().Be(0);
         host.States.Should().Equal("healthy");
@@ -46,9 +49,9 @@ public class WatchdogEngineTests
         var (engine, host, _) = Create();
         host.Healthy = false;
 
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
         host.Healthy = true;
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
 
         host.Restarts.Should().Be(0);
     }
@@ -59,19 +62,19 @@ public class WatchdogEngineTests
         var (engine, host, advance) = Create();
         host.Healthy = false;
 
-        await engine.TickAsync(Config);
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
+        await engine.TickAsync(Config, Api);
         host.Restarts.Should().Be(1);
 
         advance(TimeSpan.FromSeconds(120));      // still inside the grace period: a big database is still opening
-        await engine.TickAsync(Config);
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
+        await engine.TickAsync(Config, Api);
         host.Restarts.Should().Be(1);
         host.States.Should().Contain("starting");
 
         advance(TimeSpan.FromSeconds(200));      // grace over and still down
-        await engine.TickAsync(Config);
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
+        await engine.TickAsync(Config, Api);
         host.Restarts.Should().Be(2);
     }
 
@@ -83,8 +86,8 @@ public class WatchdogEngineTests
 
         for (var i = 0; i < 6; i++)
         {
-            await engine.TickAsync(Config);
-            await engine.TickAsync(Config);
+            await engine.TickAsync(Config, Api);
+            await engine.TickAsync(Config, Api);
             advance(TimeSpan.FromSeconds(400));
         }
 
@@ -99,11 +102,31 @@ public class WatchdogEngineTests
         host.Healthy = false;
         host.StoppedOnPurpose = true;
 
-        await engine.TickAsync(Config);
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
+        await engine.TickAsync(Config, Api);
 
         host.Restarts.Should().Be(0);
         host.States.Should().Contain("stopped");
+    }
+
+    [Fact]
+    public async Task The_web_ui_is_restarted_even_after_a_deliberate_chronicle_stop()
+    {
+        var (engine, host, _) = Create();
+        host.Healthy = false;
+        host.StoppedOnPurpose = true;
+
+        await engine.TickAsync(Config, Web);
+        await engine.TickAsync(Config, Web);
+
+        host.Restarts.Should().Be(1);
+    }
+
+    [Fact]
+    public void The_web_component_exists_only_when_a_launch_command_is_given()
+    {
+        new WatchdogConfig().WebComponent.Should().BeNull();
+        new WatchdogConfig { Web = new WebSpec { Launch = new LaunchSpec { File = "cmd.exe" } } }.WebComponent.Should().NotBeNull();
     }
 
     [Fact]
@@ -111,11 +134,11 @@ public class WatchdogEngineTests
     {
         var (engine, host, _) = Create();
         host.Healthy = false;
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
         host.Healthy = true;
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
         host.Healthy = false;
-        await engine.TickAsync(Config);
+        await engine.TickAsync(Config, Api);
 
         host.Restarts.Should().Be(0);
     }

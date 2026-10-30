@@ -10,7 +10,8 @@ if (!isFirst) return;
 
 var configPath = Path.Combine(directory, "watchdog.json");
 var host = new WatchdogHost(directory);
-var engine = new WatchdogEngine(host, () => DateTime.UtcNow);
+var apiEngine = new WatchdogEngine(host, () => DateTime.UtcNow);
+var webEngine = new WatchdogEngine(host, () => DateTime.UtcNow);
 
 while (true)
 {
@@ -18,8 +19,12 @@ while (true)
     // Switched off (or its settings are gone): nothing left to do, so leave instead of idling in Task Manager.
     if (config is null || !config.Enabled) return;
 
-    try { await engine.TickAsync(config); }
-    catch (Exception ex) { host.Record("error", $"Watchdog check failed: {ex.Message}"); }
+    try
+    {
+        await apiEngine.TickAsync(config, config.ApiComponent);
+        if (config.WebComponent is { } web) await webEngine.TickAsync(config, web);
+    }
+    catch (Exception ex) { host.RecordError($"Watchdog check failed: {ex.Message}"); }
     host.Heartbeat();
 
     await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(config.IntervalSeconds, 5, 600)));

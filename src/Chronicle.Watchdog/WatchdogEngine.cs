@@ -5,12 +5,12 @@ public sealed record ProbeResult(bool Healthy, string Detail);
 /// <summary>Everything the engine does to the outside world, so the decisions can be tested without processes or HTTP.</summary>
 public interface IWatchdogHost
 {
-    Task<ProbeResult> ProbeAsync(WatchdogConfig config);
+    Task<ProbeResult> ProbeAsync(ComponentSpec component);
     /// <summary>Stops any running instance, then starts a new one.</summary>
-    void RestartApi(WatchdogConfig config);
+    void Restart(ComponentSpec component);
     /// <summary>True when Chronicle was shut down on purpose (it leaves a marker) after <paramref name="since"/>.</summary>
     bool StoppedOnPurposeSince(DateTime since);
-    void Record(string state, string message);
+    void Record(ComponentSpec component, string state, string message);
 }
 
 /// <summary>
@@ -36,20 +36,20 @@ public sealed class WatchdogEngine
         _startedAt = now();
     }
 
-    public async Task TickAsync(WatchdogConfig config)
+    public async Task TickAsync(WatchdogConfig config, ComponentSpec component)
     {
-        var probe = await _host.ProbeAsync(config);
+        var probe = await _host.ProbeAsync(component);
         if (probe.Healthy)
         {
             _failures = 0;
             _graceUntil = null;
-            Set("healthy", "Chronicle is running normally.");
+            Set(component, "healthy", $"{component.Name} is running normally.");
             return;
         }
 
         if (_graceUntil is { } grace && _now() < grace)
         {
-            Set("starting", "Chronicle is starting up.");
+            Set(component, "starting", $"{component.Name} is starting up.");
             return;
         }
 
@@ -57,9 +57,9 @@ public sealed class WatchdogEngine
         if (_failures < Math.Max(1, config.FailuresBeforeRestart))
             return;
 
-        if (_host.StoppedOnPurposeSince(_startedAt))
+        if (component.RespectsStopMarker && _host.StoppedOnPurposeSince(_startedAt))
         {
-            Set("stopped", "Chronicle was stopped on purpose; not restarting it.");
+            Set(component, "stopped", $"{component.Name} was stopped on purpose; not restarting it.");
             return;
         }
 
@@ -67,7 +67,7 @@ public sealed class WatchdogEngine
         _restarts.RemoveAll(t => t < now.AddHours(-1));
         if (_restarts.Count >= Math.Max(1, config.MaxRestartsPerHour))
         {
-            Set("gave-up", $"Chronicle keeps failing ({probe.Detail}); it was restarted {_restarts.Count} times in the last hour, so the watchdog is not trying again for now.");
+            Set(component, "gave-up", $"{component.Name} keeps failing ({probe.Detail}); it was restarted {_restarts.Count} times in the last hour, so the watchdog is not trying again for now.");
             return;
         }
 
@@ -75,15 +75,15 @@ public sealed class WatchdogEngine
         _failures = 0;
         _graceUntil = now.AddSeconds(Math.Max(30, config.StartupGraceSeconds));
         _lastState = "restarting";
-        _host.Record("restarting", $"Chronicle was not working ({probe.Detail}); restarting it.");
-        _host.RestartApi(config);
+        _host.Record(component, "restarting", $"{component.Name} was not working ({probe.Detail}); restarting it.");
+        _host.Restart(component);
     }
 
     /// <summary>Records a state change once, not on every cycle.</summary>
-    private void Set(string state, string message)
+    private void Set(ComponentSpec component, string state, string message)
     {
         if (state == _lastState) return;
         _lastState = state;
-        _host.Record(state, message);
+        _host.Record(component, state, message);
     }
 }
