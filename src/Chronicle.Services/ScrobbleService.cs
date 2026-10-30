@@ -2,6 +2,7 @@ using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Services.Matching;
+using Chronicle.Services.Plugins;
 using Microsoft.EntityFrameworkCore;
 
 namespace Chronicle.Services
@@ -11,9 +12,12 @@ namespace Chronicle.Services
         private static double WatchedThreshold => Tunables.Value(Tunables.WatchedPercent);
         private readonly ChronicleDbContext _context;
 
-        public ScrobbleService(ChronicleDbContext context)
+        private readonly IPluginRegistry? _plugins;
+
+        public ScrobbleService(ChronicleDbContext context, IPluginRegistry? plugins = null)
         {
             _context = context;
+            _plugins = plugins;
         }
 
         public async Task<ScrobbleResult> ScrobbleAsync(int userId, ScrobbleRequest request, CancellationToken ct = default)
@@ -463,8 +467,16 @@ namespace Chronicle.Services
             // ActiveSessionWindow cutoff above) is the correct signal for "still actually
             // playing" -- MarkedAsWatched is a separate, library-status concern that
             // shouldn't hide a session that's still live.
+            // Reported 2026-10-30: a Vision playback showed as "Now playing on Simkl". A sync
+            // import records each watch as an event whose DeviceName is the import provider's
+            // name and whose timestamp is recent, so it looked exactly like live playback. Those
+            // are history the service reported, not something playing on a device right now.
+            var importSources = (_plugins?.GetImportProviders() ?? [])
+                .Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
             var latestPerDevice = recentEvents
                 .Where(e => e.MediaItem != null)
+                .Where(e => e.DeviceName is null || !importSources.Contains(e.DeviceName))
                 .GroupBy(e => e.DeviceName ?? "Unknown Device")
                 .Select(g => g.First()) // already ordered desc by Timestamp above
                 .ToList();

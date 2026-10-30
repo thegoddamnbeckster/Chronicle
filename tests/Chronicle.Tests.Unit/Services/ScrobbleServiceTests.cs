@@ -1,9 +1,12 @@
 using Chronicle.Core.Exceptions;
 using Chronicle.Core.Models;
 using Chronicle.Data;
+using Chronicle.Plugins;
 using Chronicle.Services;
+using Chronicle.Services.Plugins;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace Chronicle.Tests.Unit.Services
 {
@@ -724,6 +727,25 @@ namespace Chronicle.Tests.Unit.Services
             active[0].MediaItemId.Should().Be(1);
             active[0].DeviceName.Should().Be("Kodi Living Room");
             active[0].ProgressPercent.Should().Be(30.0);
+        }
+
+        [Fact]
+        public async Task GetActiveSessionsAsync_RecentSyncImport_IsNotShownAsPlayingOnTheService()
+        {
+            // Regression (2026-10-30): a watch on Vision showed as "Now playing on Simkl" because
+            // the Simkl sync wrote a fresh event whose device name is the provider's.
+            var provider = new Mock<IImportProvider>();
+            provider.SetupGet(p => p.Name).Returns("Simkl");
+            var plugins = new Mock<IPluginRegistry>();
+            plugins.Setup(r => r.GetImportProviders()).Returns(new[] { provider.Object });
+            var service = new ScrobbleService(_context, plugins.Object);
+
+            await service.ScrobbleAsync(1, new ScrobbleRequest(1, 100.0, DateTime.UtcNow, "Simkl"));
+            await service.ScrobbleAsync(1, new ScrobbleRequest(1, 76.0, DateTime.UtcNow, "Vision"));
+
+            var active = await service.GetActiveSessionsAsync(1);
+
+            active.Should().ContainSingle().Which.DeviceName.Should().Be("Vision");
         }
 
         [Fact]
