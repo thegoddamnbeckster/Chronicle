@@ -165,11 +165,12 @@ export default function Layout() {
           </NavGroup>
 
           <NavGroup label="System" storageKey="nav_group_settings_system" defaultOpen={false}
-                    containsPaths={['/settings/database', '/settings/email', '/settings/service', '/settings/tuning']}>
+                    containsPaths={['/settings/database', '/settings/email', '/settings/service', '/settings/tuning', '/settings/watchdog']}>
             {user.isAdmin && settingsLink('/settings/database', 'Database')}
             {user.isAdmin && settingsLink('/settings/email', 'Email')}
             {settingsLink('/settings/service', 'Service')}
             {user.isAdmin && settingsLink('/settings/tuning', 'Tuning')}
+            {user.isAdmin && settingsLink('/settings/watchdog', 'Watchdog')}
           </NavGroup>
         </NavGroup>
 

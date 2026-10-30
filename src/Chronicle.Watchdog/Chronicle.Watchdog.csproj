@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe: no console window, ever. It is a background helper the user never needs to see. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Chronicle.Watchdog</AssemblyName>
+    <RootNamespace>Chronicle.Watchdog</RootNamespace>
+    <ApplicationIcon>..\Chronicle.API\chronicle.ico</ApplicationIcon>
+    <Product>Chronicle</Product>
+    <AssemblyTitle>Chronicle Watchdog</AssemblyTitle>
+    <Description>Keeps Chronicle running: restarts it if it stops answering.</Description>
+    <Company>Chronicle Contributors</Company>
+    <Version>0.9.0</Version>
+  </PropertyGroup>
+
+</Project>

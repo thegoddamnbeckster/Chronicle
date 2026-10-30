@@ -51,6 +51,19 @@ Write-Host "Publishing Chronicle.API..." -ForegroundColor Yellow
     -p:Version=$Version
 if ($LASTEXITCODE -ne 0) { Write-Error "Backend publish failed."; exit 1 }
 
+
+# The watchdog (Settings -> Watchdog) is its own small windowless program that sits next to Chronicle.API.exe.
+Write-Host "Publishing Chronicle.Watchdog..." -ForegroundColor Yellow
+& dotnet publish "$Root\src\Chronicle.Watchdog\Chronicle.Watchdog.csproj" `
+    --configuration Release `
+    --runtime win-x64 `
+    --self-contained true `
+    --output "$OutputDir" `
+    -p:PublishSingleFile=true `
+    -p:PublishTrimmed=false `
+    -p:Version=$Version
+if ($LASTEXITCODE -ne 0) { Write-Error "Watchdog publish failed."; exit 1 }
+
 Write-Host "Backend published." -ForegroundColor Green
 
 # ── 4. Build frontend ──────────────────────────────────────────────────────────

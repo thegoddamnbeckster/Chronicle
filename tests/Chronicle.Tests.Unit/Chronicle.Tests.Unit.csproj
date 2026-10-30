@@ -30,6 +30,7 @@
     <ProjectReference Include="..\..\src\Chronicle.Data\Chronicle.Data.csproj" />
     <ProjectReference Include="..\..\src\Chronicle.Data.Postgres\Chronicle.Data.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Chronicle.Plugins\Chronicle.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Chronicle.Watchdog\Chronicle.Watchdog.csproj" />
   </ItemGroup>
 
 </Project>

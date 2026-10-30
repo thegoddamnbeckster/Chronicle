@@ -4,7 +4,18 @@
     <ProjectReference Include="..\Chronicle.Data.Postgres\Chronicle.Data.Postgres.csproj" />
     <ProjectReference Include="..\Chronicle.Services\Chronicle.Services.csproj" />
     <ProjectReference Include="..\Chronicle.Core\Chronicle.Core.csproj" />
+    <!-- Built alongside the API (not referenced as a library): it is a separate program that runs on its own. -->
+    <ProjectReference Include="..\Chronicle.Watchdog\Chronicle.Watchdog.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <!-- Puts the watchdog's files next to Chronicle.API so the API can start it. A published install gets its own
+       self-contained copy from publish-windows.ps1 instead. -->
+  <Target Name="CopyWatchdog" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <ItemGroup>
+      <WatchdogFiles Include="..\Chronicle.Watchdog\bin\$(Configuration)\net9.0\Chronicle.Watchdog.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WatchdogFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.*">

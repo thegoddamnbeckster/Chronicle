@@ -370,6 +370,12 @@ builder.Services.AddSingleton(_ => AuthAuditLog.CreateDefault());
 builder.Services.AddSingleton<ISessionStore, SessionStore>();
 builder.Services.AddHostedService<SessionSweepService>();
 
+// The watchdog (Settings -> Watchdog): a separate windowless helper restarts Chronicle if it stops answering; this
+// service switches it on/off and records deliberate shutdowns so they are not "fixed".
+builder.Services.AddSingleton(portConfig);
+builder.Services.AddSingleton<WatchdogService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<WatchdogService>());
+
 builder.Services.AddAuthentication(SessionAuthenticationHandler.SchemeName)
     .AddScheme<AuthenticationSchemeOptions, SessionAuthenticationHandler>(
         SessionAuthenticationHandler.SchemeName, _ => { })
