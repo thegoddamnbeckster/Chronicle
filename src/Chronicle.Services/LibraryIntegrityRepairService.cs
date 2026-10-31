@@ -73,6 +73,7 @@ public sealed class LibraryIntegrityRepairService(
     AudiobookSeriesNumberRepairService seriesNumbers,
     SeriesSlotTwinRepairService seriesSlotTwins,
     AlbumNameYearRepairService albumNameYear,
+    VectorPosterRepairService vectorPosters,
     MissingSourceReconciliationService missingSources,
     TitleSanitizationService titleSanitization,
     AlternateNameAliasService alternateNameAliases,
@@ -107,6 +108,7 @@ public sealed class LibraryIntegrityRepairService(
         await passes.RunAsync("audiobook series number repair", seriesNumbers.ExecuteAsync, ct);
         await passes.RunAsync("series slot twin repair", seriesSlotTwins.ExecuteAsync, ct);
         await passes.RunAsync("album name year repair", albumNameYear.ExecuteAsync, ct);
+        await passes.RunAsync("vector poster repair", vectorPosters.ExecuteAsync, ct);
         await passes.RunAsync("missing source reconciliation", missingSources.ExecuteAsync, ct);
         await passes.RunAsync("title sanitization", titleSanitization.ExecuteAsync, ct);
         await passes.RunAsync("alternate name aliases", alternateNameAliases.ExecuteAsync, ct);

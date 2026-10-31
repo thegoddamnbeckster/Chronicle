@@ -298,6 +298,7 @@ builder.Services.AddSingleton<StubFlagRepairService>();
 builder.Services.AddSingleton<MisattachedSeriesRepairService>();
 builder.Services.AddSingleton<GhostItemRepairService>();
 builder.Services.AddSingleton<AlbumNameYearRepairService>();
+builder.Services.AddSingleton<VectorPosterRepairService>();
 builder.Services.AddSingleton<SeriesFragmentRepairService>();
 builder.Services.AddSingleton<UnknownSeriesRepairService>();
 builder.Services.AddSingleton<BookTitleFragmentRepairService>();

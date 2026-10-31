@@ -499,9 +499,31 @@ public class MetadataResolutionService(
                 return el.ValueKind != JsonValueKind.String || !DateTime.TryParse(el.GetString(), out var b) || ReleaseYear.IsPlausibleBirthDate(b);
             case "deathDate":
                 return el.ValueKind != JsonValueKind.String || !DateTime.TryParse(el.GetString(), out var d) || ReleaseYear.IsPlausibleDeathDate(d);
+            case "posterUrl":
+            case "backdropUrl":
+            case "logoUrl":
+            case "bannerUrl":
+            case "thumbUrl":
+            case "clearartUrl":
+            case "discUrl":
+            case "characterArtUrl":
+                // A vector image (Wikipedia's The_Voice_logo.svg won the poster slot over TVmaze's and Simkl's real
+                // posters, 2026-10-31) cannot be drawn by Kodi, so the show had no poster there. Not a plugin rule and
+                // not a poster-only rule: an SVG is skipped in every artwork slot, for every media type, wherever it
+                // comes from, and the walk moves to the next provider. The value stays in the provider's own blob.
+                return el.ValueKind != JsonValueKind.String || !IsVectorImageUrl(el.GetString());
             default:
                 return true;
         }
+    }
+
+    /// True for a URL whose path ends in .svg (the query string, e.g. Wikimedia's ?utm_source=..., is ignored).
+    internal static bool IsVectorImageUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        var end = url.IndexOfAny(['?', '#']);
+        var path = end >= 0 ? url[..end] : url;
+        return path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase);
     }
 
     /// Returns true when a JsonElement has a meaningful (non-empty) value.
