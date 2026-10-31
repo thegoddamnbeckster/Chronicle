@@ -317,12 +317,18 @@ public class MetadataResolutionService(
     /// <summary>Most-recently-discovered headshot for a person (see PersonHeadshot's own doc for
     /// why "most recent" means discovery order, not the photo's real-world date). Null if none
     /// have been recorded yet -- resolution falls through with no poster_url for this field.</summary>
-    private static async Task<string?> GetLatestHeadshotUrlAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct) =>
-        await db.PersonHeadshots
+    private static async Task<string?> GetLatestHeadshotUrlAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct)
+    {
+        var urls = await db.PersonHeadshots
             .Where(h => h.PersonMediaItemId == personMediaItemId && !h.IsHidden)
             .OrderByDescending(h => h.FirstSeenAt)
             .Select(h => h.Url)
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
+        // Wikipedia's page image for a person is sometimes their signature or a flag (an SVG), which Kodi cannot
+        // draw and which is no picture of them: the newest headshot that is a real image wins. The SVGs stay
+        // stored, just never chosen.
+        return urls.FirstOrDefault(u => !IsVectorImageUrl(u));
+    }
 
     public async Task SetOverrideAsync(MediaItem item, ChronicleDbContext db, string field, string url,
         string? sourcePluginId, string? sourceType, int? userId, CancellationToken ct = default)

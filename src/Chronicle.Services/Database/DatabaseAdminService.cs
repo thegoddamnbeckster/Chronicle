@@ -228,7 +228,9 @@ namespace Chronicle.Services.Database
                     var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
                     db.Database.SetCommandTimeout(TimeSpan.FromHours(1));
                     // The path is generated here from a timestamp - never from user input - so quoting it is enough.
+#pragma warning disable EF1002 // VACUUM INTO cannot take a parameter; the path is built here and its quotes are doubled
                     await db.Database.ExecuteSqlRawAsync($"VACUUM INTO '{snapshot.Replace("'", "''")}'", ct);
+#pragma warning restore EF1002
                 }
 
                 var (sha, length) = await HashFileAsync(snapshot, ct);

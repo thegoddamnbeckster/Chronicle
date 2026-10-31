@@ -11,7 +11,7 @@ namespace Chronicle.Tests.Unit.Services;
 
 /// <summary>
 /// An item whose poster is an SVG (which Kodi cannot draw) is resolved again so the next provider's image is used;
-/// anything else, and people, are left alone.
+/// people included; anything with a real poster is left alone.
 /// </summary>
 public class VectorPosterRepairServiceTests
 {
@@ -60,14 +60,14 @@ public class VectorPosterRepairServiceTests
     }
 
     [Fact]
-    public async Task Items_with_a_real_poster_and_people_are_not_touched()
+    public async Task A_person_with_an_svg_picture_is_resolved_again_too_but_an_item_with_a_real_poster_is_not()
     {
         var (db, resolver, service) = await BuildAsync();
         await using var _ = db;
 
         await service.ExecuteAsync(CancellationToken.None);
 
-        resolver.Verify(r => r.ResolveAsync(It.IsAny<MediaItem>(), It.IsAny<ChronicleDbContext>(), It.IsAny<CancellationToken>()), Times.Once);
-        Assert.Equal(Svg, db.MediaItems.Single(m => m.Name == "Margie Adam").PosterUrl);
+        resolver.Verify(r => r.ResolveAsync(It.Is<MediaItem>(m => m.Name == "Margie Adam"), It.IsAny<ChronicleDbContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        resolver.Verify(r => r.ResolveAsync(It.Is<MediaItem>(m => m.Name == "Has a real poster"), It.IsAny<ChronicleDbContext>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

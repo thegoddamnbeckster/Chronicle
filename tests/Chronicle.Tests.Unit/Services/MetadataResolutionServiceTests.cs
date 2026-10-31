@@ -595,6 +595,36 @@ public class MetadataResolutionServiceTests
         item.PosterUrl.Should().Be("https://example/right.jpg");
     }
 
+    [Fact]
+    public async Task ResolveAsync_PersonWhoseNewestHeadshotIsAnSvgSignature_UsesTheNewestRealImage()
+    {
+        // 2026-10-31: Wikipedia's page image for several people is their signature or a flag (an SVG), which Kodi cannot
+        // draw and which is not a picture of them. It stays stored but is never the automatic pick.
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = new MediaItem
+        {
+            Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
+            MediaType = new MediaType { Id = 9, Name = "people", IsPersonType = true, DisplayName = "People" },
+        };
+        db.MediaItems.Add(item);
+        db.PersonHeadshots.AddRange(
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/real.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow.AddDays(-2) },
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://upload.wikimedia.org/x/Some_Person_signature.svg?utm_source=en.wikipedia.org", Source = "wikipedia", FirstSeenAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        var svc = BuildService("people", 0, new() { ["title"] = ["tmdb"] });
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+        item.PosterUrl.Should().Be("https://example/real.jpg");
+
+        // With nothing but the SVG, the person has no poster rather than a signature.
+        db.PersonHeadshots.Remove(db.PersonHeadshots.Single(h => h.Url == "https://example/real.jpg"));
+        await db.SaveChangesAsync();
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+        item.PosterUrl.Should().BeNull();
+    }
+
     // ── Death-date-before-birth-date consistency guard ─────────────────────────
 
     [Fact]

@@ -292,8 +292,10 @@ namespace Chronicle.Services.Database
             var column = helper.DelimitIdentifier(prop.GetColumnName());
             var tableLiteral = table.Replace("'", "''");
             var columnName = prop.GetColumnName().Replace("'", "''");
+#pragma warning disable EF1002 // table and column names come from the EF model and are quoted/escaped above; identifiers cannot be parameters
             await db.Database.ExecuteSqlRawAsync(
                 $"SELECT setval(pg_get_serial_sequence('{tableLiteral}', '{columnName}'), (SELECT COALESCE(MAX({column}), 0) + 1 FROM {table}), false)", ct);
+#pragma warning restore EF1002
         }
     }
 }

@@ -10,8 +10,8 @@ namespace Chronicle.Services;
 /// resolved again. Kodi cannot draw an SVG, and the resolver now skips one in favour of the next provider's
 /// image (MetadataResolutionService.IsVectorImageUrl), so an item resolved before that rule (The Voice, whose
 /// poster was Wikipedia's logo while TVmaze and Simkl each had a real poster) picks up its proper poster
-/// here, from data already stored -- no provider is called. People are skipped: their picture comes from the
-/// headshot table, not the provider walk.
+/// here, from data already stored -- no provider is called. A person is handled the same way: their picture is the
+/// newest headshot that is a real image, so one whose only picture was a signature or flag SVG ends with none.
 /// </summary>
 public sealed class VectorPosterRepairService(
     IServiceScopeFactory scopeFactory,
@@ -32,7 +32,6 @@ public sealed class VectorPosterRepairService(
         foreach (var item in candidates)
         {
             if (!MetadataResolutionService.IsVectorImageUrl(item.PosterUrl)) continue;
-            if (item.MediaType?.IsPersonType == true) continue;
 
             var before = item.PosterUrl;
             await resolution.ResolveAsync(item, db, ct);
