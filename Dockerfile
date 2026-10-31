@@ -10,6 +10,7 @@ COPY src/Chronicle.Data.Postgres/Chronicle.Data.Postgres.csproj src/Chronicle.Da
 COPY src/Chronicle.Services/Chronicle.Services.csproj      src/Chronicle.Services/
 COPY src/Chronicle.API/Chronicle.API.csproj                src/Chronicle.API/
 COPY src/Chronicle.Plugins/Chronicle.Plugins.csproj         src/Chronicle.Plugins/
+COPY src/Chronicle.Watchdog/Chronicle.Watchdog.csproj       src/Chronicle.Watchdog/
 
 RUN dotnet restore src/Chronicle.API/Chronicle.API.csproj
 
