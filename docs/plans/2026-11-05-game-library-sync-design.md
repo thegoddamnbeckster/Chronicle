@@ -391,7 +391,7 @@ The rest are recommendations awaiting the owner.
 | D8 | Google: also request the restricted `play.purchases` scope | No; library and installs already list what was acquired |
 | D9 | Items the plugin cannot classify as games (Google, Apple) | Hold in the plugin's unclassified list, promotable by hand; never dropped, never misfiled |
 | D10 | Google: scrape the Play listing page for a category | Off by default, opt-in |
-| D11 | Apple: file import only, because no API exists | Yes |
+| D11 | Apple | **Decided by the owner: not built** (no Apple account; the export is a manual privacy.apple.com request). Section 5.6 stays as the record of why, and of the measured genre lookup should it ever be revisited |
 
 ## 12. Review of this design (first pass)
 
@@ -478,7 +478,7 @@ supersede anything earlier in this document that disagrees.
     people's personal data; it is flagged for the owner (decision D12).
 11. **Unverified facts stated as fact**: corrected in 3, 5.1 and the header.
 
-New open decision D12: Apple export friends and payment sections dropped (recommended) versus kept.
+D12 (Apple export friends and payment sections) is moot: Apple is not built.
 
 **Sound as checked:** the post-import export step excludes game types and these plugins are not export providers, so
 it is skipped; the match order (own id, additional ids, title and year); the `GetAppList` correction; the Xbox and
