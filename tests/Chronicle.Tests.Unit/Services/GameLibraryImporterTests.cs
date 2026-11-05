@@ -221,4 +221,13 @@ public class GameLibraryImporterTests : IDisposable
         r.Errors.Should().ContainSingle();
         r.Created.Should().Be(1);
     }
+
+    [Fact]
+    public void The_four_argument_ImportCapabilities_constructor_survives_for_plugins_already_built()
+    {
+        // Plugins compiled before SupportsLibrary existed call this exact constructor. Changing it breaks Trakt, Simkl, Goodreads at load time.
+        typeof(ImportCapabilities).GetConstructor([typeof(bool), typeof(bool), typeof(bool), typeof(bool)]).Should().NotBeNull();
+        new ImportCapabilities(true, true, true).SupportsLibrary.Should().BeFalse();
+        (new ImportCapabilities(false, false, false) { SupportsLibrary = true }).SupportsLibrary.Should().BeTrue();
+    }
 }

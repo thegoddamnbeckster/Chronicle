@@ -47,10 +47,14 @@ public record ImportCapabilities(
     /// True if the provider requires the device/PIN OAuth flow (Trakt, Simkl).
     /// False for providers that authenticate via a username or API key only (Letterboxd).
     /// </summary>
-    bool RequiresDeviceAuth = true,
-    /// <summary>True when the provider implements <see cref="IImportProvider.GetLibraryAsync"/>: what the user has, not what they played.</summary>
-    bool SupportsLibrary = false
-);
+    bool RequiresDeviceAuth = true
+)
+{
+    /// <summary>True when the provider implements <see cref="IImportProvider.GetLibraryAsync"/>: what the user has, not what they played.
+    /// An init property, not a constructor parameter: adding a parameter would change the constructor signature and break every plugin
+    /// already compiled against the four-argument form.</summary>
+    public bool SupportsLibrary { get; init; }
+}
 
 /// <summary>A single watch event imported from the tracking service.</summary>
 public record ImportedWatchEvent(
