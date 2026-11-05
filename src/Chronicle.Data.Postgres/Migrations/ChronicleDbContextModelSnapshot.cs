@@ -17,7 +17,7 @@ namespace Chronicle.Data.Postgres.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.20")
+                .HasAnnotation("ProductVersion", "9.0.22")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -1577,6 +1577,79 @@ namespace Chronicle.Data.Postgres.Migrations
                     b.ToTable("user_contacts", (string)null);
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.UserGameOwnership", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("AcquiredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("ImportStatusApplied")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsWishlist")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastPlayedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("MediaItemId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("OwnedViaSubscription")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int?>("PlaytimeMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RawJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("TagsJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.HasIndex("UserId", "Source", "SourceId")
+                        .IsUnique();
+
+                    b.ToTable("user_game_ownership", (string)null);
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.UserLibrary", b =>
                 {
                     b.Property<int>("Id")
@@ -1971,6 +2044,24 @@ namespace Chronicle.Data.Postgres.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.UserGameOwnership", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Chronicle.Core.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
 
                     b.Navigation("User");
                 });

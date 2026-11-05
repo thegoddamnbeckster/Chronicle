@@ -15,7 +15,7 @@ namespace Chronicle.Data.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "9.0.21");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.22");
 
             modelBuilder.Entity("Chronicle.Core.Models.ApiToken", b =>
                 {
@@ -1520,6 +1520,77 @@ namespace Chronicle.Data.Migrations
                     b.ToTable("user_contacts", (string)null);
                 });
 
+            modelBuilder.Entity("Chronicle.Core.Models.UserGameOwnership", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("AcquiredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<string>("ImportStatusApplied")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsWishlist")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastPlayedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("MediaItemId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("OwnedViaSubscription")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PlaytimeMinutes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RawJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TagsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaItemId");
+
+                    b.HasIndex("UserId", "Source", "SourceId")
+                        .IsUnique();
+
+                    b.ToTable("user_game_ownership", (string)null);
+                });
+
             modelBuilder.Entity("Chronicle.Core.Models.UserLibrary", b =>
                 {
                     b.Property<int>("Id")
@@ -1912,6 +1983,24 @@ namespace Chronicle.Data.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Chronicle.Core.Models.UserGameOwnership", b =>
+                {
+                    b.HasOne("Chronicle.Core.Models.MediaItem", "MediaItem")
+                        .WithMany()
+                        .HasForeignKey("MediaItemId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Chronicle.Core.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaItem");
 
                     b.Navigation("User");
                 });

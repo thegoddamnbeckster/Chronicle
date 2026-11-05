@@ -106,6 +106,7 @@ namespace Chronicle.Data
         public DbSet<KodiDevice> KodiDevices { get; set; } = null!;
         public DbSet<KodiLibraryId> KodiLibraryIds { get; set; } = null!;
         public DbSet<KodiScanAck> KodiScanAcks { get; set; } = null!;
+        public DbSet<UserGameOwnership> UserGameOwnerships { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -306,6 +307,32 @@ namespace Chronicle.Data
                     .WithMany()
                     .HasForeignKey(e => e.MediaItemId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<UserGameOwnership>(entity =>
+            {
+                entity.ToTable("user_game_ownership");
+                entity.HasKey(e => e.Id);
+                // One row per (user, platform, platform's own id): the importer's idempotency key.
+                entity.HasIndex(e => new { e.UserId, e.Source, e.SourceId }).IsUnique();
+                entity.HasIndex(e => e.MediaItemId);
+                entity.Property(e => e.Source).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.SourceId).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.Platform).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.ImportStatusApplied).HasConversion<string>();
+                entity.Property(e => e.FirstSeenAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                // SET NULL, not cascade: a row whose item was deleted is the tombstone that stops a re-import recreating it.
+                entity.HasOne(e => e.MediaItem)
+                    .WithMany()
+                    .HasForeignKey(e => e.MediaItemId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
 
             modelBuilder.Entity<InteractionEvent>(entity =>
