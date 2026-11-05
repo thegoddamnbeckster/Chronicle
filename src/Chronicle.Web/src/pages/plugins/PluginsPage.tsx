@@ -1,5 +1,5 @@
 import { getMediaTypes } from '@/api/media'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -160,6 +160,9 @@ function InlineImportSection({ provider }: { provider: ImportProvider }) {
     </div>
   )
 }
+
+/** Alphabetical, ignoring case and accents, with numbers in numeric order ("Plugin 2" before "Plugin 10"). Every list on this page uses it. */
+const alpha = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
 
 export default function PluginsPage() {
   const { user } = useAuth()
@@ -459,6 +462,12 @@ export default function PluginsPage() {
     return `${styles.badge} ${styles.healthFail}`
   }
 
+  // Every list on the page is shown alphabetically (by what a person reads: the name, the label).
+  const sortedPlugins = useMemo(() => [...plugins].sort((a, b) => alpha(a.name, b.name)), [plugins])
+  const sortedCatalog = useMemo(() => [...catalog].sort((a, b) => alpha(a.name, b.name)), [catalog])
+  const sortedCatalogTypes = useMemo(() => [...catalogTypes].sort((a, b) => alpha(a.displayName, b.displayName)), [catalogTypes])
+  const sortedThemes = useMemo(() => [...availableThemes].sort((a, b) => alpha(a.label, b.label)), [availableThemes])
+
   function formatDate(iso: string): string {
     return new Date(iso).toLocaleDateString(undefined, {
       year: 'numeric', month: 'short', day: 'numeric',
@@ -506,7 +515,7 @@ export default function PluginsPage() {
                 onChange={e => void handleCatalogTypeChange(e.target.value)}
               >
                 <option value="">any media type</option>
-                {catalogTypes.map(t => <option key={t.name} value={t.name}>{t.displayName}</option>)}
+                {sortedCatalogTypes.map(t => <option key={t.name} value={t.name}>{t.displayName}</option>)}
               </select>
             </label>
           )}
@@ -514,7 +523,7 @@ export default function PluginsPage() {
           {catalogError && <p className={styles.errorMsg}>{catalogError}</p>}
           {!catalogLoading && !catalogError && (
             <div className={styles.catalogList}>
-              {catalog.map(entry => (
+              {sortedCatalog.map(entry => (
                 <div key={entry.pluginId} className={styles.catalogCard}>
                   <div className={styles.catalogCardLeft}>
                     {entry.iconUrl && (
@@ -535,7 +544,7 @@ export default function PluginsPage() {
                       <div className={styles.catalogDesc}>{entry.description}</div>
                       <div className={styles.catalogMeta}>by {entry.author}</div>
                       <div className={styles.catalogTags}>
-                        {entry.tags.map(tag => (
+                        {[...entry.tags].sort(alpha).map(tag => (
                           <span key={tag} className={styles.tag}>{tag}</span>
                         ))}
                       </div>
@@ -606,7 +615,7 @@ export default function PluginsPage() {
           {themesLoading && (
             <p className={styles.loading}>Loading themes…</p>
           )}
-          {availableThemes.map((t) => {
+          {sortedThemes.map((t) => {
             const storageKey = `${t.pluginId}:${t.key}`
             const isActive = activeTheme === storageKey
             return (
@@ -655,7 +664,7 @@ export default function PluginsPage() {
           <p className={styles.loading}>Loading plugins…</p>
         ) : (
           <div className={styles.pluginList}>
-            {plugins.map(plugin => {
+            {sortedPlugins.map(plugin => {
               const busy = busyIds.has(plugin.id)
               const health = healthStates[plugin.id] ?? 'unknown'
 

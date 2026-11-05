@@ -66,17 +66,24 @@ if (-not $WebOnly) {
     # The watchdog (Settings -> Watchdog) restarts Chronicle the moment it disappears, which would fight this rebuild
     # (and its scheduled task relaunches the watchdog itself within a minute). Tell it to stand down by switching
     # its config off; the new API rewrites the config on startup and the watchdog resumes on its own.
-    $wdConfig = Join-Path $RepoRoot "src\Chronicle.APIin\Debug
-et9.0\watchdog.json"
+    $wdDir    = Join-Path $ApiDir "bin\Debug\net9.0"
+    $wdConfig = Join-Path $wdDir "watchdog.json"
     if (Test-Path $wdConfig) {
         $wd = Get-Content $wdConfig -Raw | ConvertFrom-Json
         if ($wd.enabled) {
             $wd.enabled = $false
             $wd | ConvertTo-Json -Depth 6 | Set-Content $wdConfig
             Write-Host "  Pausing the Chronicle watchdog until the new API starts"
-            for ($i = 0; $i -lt 20 -and (Get-Process -Name "Chronicle.Watchdog" -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
         }
+    } else {
+        Write-Host "  No watchdog config at $wdConfig (the watchdog has not run from this checkout)" -ForegroundColor DarkYellow
     }
+    # The watchdog sees the paused config within one check (every 10 seconds) and exits. Wait for it, and if it has not
+    # gone, stop it: a watchdog left running restarts the OLD API the moment this script stops it, and its files in bin\
+    # stay locked for the build. (Until 2026-11-05 this step looked for a mistyped path, found nothing, and never ran.)
+    for ($i = 0; $i -lt 25 -and (Get-Process -Name "Chronicle.Watchdog" -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
+    Get-Process -Name "Chronicle.Watchdog" -ErrorAction SilentlyContinue |
+        ForEach-Object { Write-Host "  Stopping the watchdog (PID $($_.Id)), which did not step aside"; Stop-Process $_ -Force -ErrorAction SilentlyContinue }
     # Kill Chronicle.API.exe (published build running as a standalone process)
     Get-Process -Name "Chronicle.API" -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Host "  Stopping Chronicle.API PID $($_.Id)"; Stop-Process $_ -Force }
@@ -372,6 +379,28 @@ if (-not $ApiOnly -and -not $WebOnly -and -not $NoAbsBridge) {
             "cd '$AbsBridgeDir'; python service.py" `
             -WindowStyle Normal
     }
+}
+
+# ── Bring the watchdog back ───────────────────────────────────────────────────
+# The new API switches the watchdog back on in watchdog.json once it has started (a large database takes minutes), and the
+# per-user scheduled task relaunches the watchdog within a minute. If that task is not installed on this machine nothing
+# would, so a hidden helper waits for the API to resume it and starts the watchdog if it is not running. A second copy
+# exits at once (single instance), so this never doubles it.
+if (-not $WebOnly) {
+    $wdExe = Join-Path $wdDir "Chronicle.Watchdog.exe"
+    $resume = @"
+for (`$i = 0; `$i -lt 180; `$i++) {
+  Start-Sleep -Seconds 5
+  try { `$c = Get-Content '$wdConfig' -Raw | ConvertFrom-Json } catch { continue }
+  if (`$c.enabled) {
+    if (-not (Get-Process -Name Chronicle.Watchdog -ErrorAction SilentlyContinue) -and (Test-Path '$wdExe')) {
+      Start-Process -FilePath '$wdExe' -WorkingDirectory '$wdDir' -WindowStyle Hidden
+    }
+    break
+  }
+}
+"@
+    Start-Process pwsh -ArgumentList "-NoProfile", "-Command", $resume -WindowStyle Hidden
 }
 
 # ── Done ──────────────────────────────────────────────────────────────────────

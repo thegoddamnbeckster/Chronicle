@@ -182,3 +182,47 @@ describe('PluginsPage catalog source', () => {
     expect(await screen.findByText(/17 plugins/)).toBeInTheDocument()
   })
 })
+
+describe('PluginsPage alphabetical order', () => {
+  const entry = (id: string, name: string, tags: string[] = []): pluginsApi.PluginCatalogEntry => ({
+    pluginId: id, name, description: '', author: 'a', iconUrl: null, githubRepo: 'o/r', assetName: 'r.zip',
+    dllName: 'r.dll', tags, isInstalled: false, version: '1.0.0',
+  })
+  const installed = (id: number, name: string): pluginsApi.PluginDto => ({ ...IMDB, id, pluginId: `chronicle.plugin.${id}`, name })
+  const textsOf = (selector: string) => Array.from(document.querySelectorAll(selector)).map(e => e.textContent ?? '')
+
+  it('lists installed plugins alphabetically, ignoring case', async () => {
+    vi.mocked(pluginsApi.listPlugins).mockResolvedValue([installed(1, 'TMDB'), installed(2, 'anilist'), installed(3, 'IGDB'), installed(4, 'Deezer')])
+    renderWithProviders(<PluginsPage />)
+    await screen.findByText('IGDB')
+    const names = screen.getAllByRole('button', { name: 'Configure' }).map(b => b.closest('[class*="pluginCard"]')?.textContent ?? '')
+    const order = ['anilist', 'Deezer', 'IGDB', 'TMDB'].map(n => names.findIndex(t => t.includes(n)))
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(order.every(i => i >= 0)).toBe(true)
+  })
+
+  it('lists the catalog, each entry\'s tags and the media-type filter alphabetically', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginsApi.listCatalog).mockResolvedValue([
+      entry('t', 'TMDB', ['tv', 'movies', 'metadata']), entry('a', 'AniList', ['metadata', 'anime']), entry('i', 'IGDB', ['metadata', 'game']),
+    ])
+    vi.mocked(mediaApi.getMediaTypes).mockResolvedValue([
+      { id: 1, name: 'tv', displayName: 'TV', hierarchyLevels: 3 },
+      { id: 2, name: 'game', displayName: 'Video Games', hierarchyLevels: 1 },
+      { id: 3, name: 'anime', displayName: 'Anime', hierarchyLevels: 3 },
+    ])
+    renderWithProviders(<PluginsPage />)
+    await user.click(await screen.findByRole('button', { name: /browse/i }))
+    await screen.findByText('TMDB')
+
+    const cards = textsOf('[class*="catalogName"]').map(t => t.replace(/v1\.0\.0$/, ''))
+    expect(cards).toEqual(['AniList', 'IGDB', 'TMDB'])
+
+    const options = Array.from((await screen.findByLabelText('Show plugins that handle') as HTMLSelectElement).options).map(o => o.textContent)
+    expect(options).toEqual(['any media type', 'Anime', 'TV', 'Video Games'])
+
+    const tmdbTags = textsOf('[class*="catalogTags"]')
+    expect(tmdbTags[2]).toBe('metadatamoviestv')   // TMDB's tags, in order
+    expect(tmdbTags[0]).toBe('animemetadata')
+  })
+})
