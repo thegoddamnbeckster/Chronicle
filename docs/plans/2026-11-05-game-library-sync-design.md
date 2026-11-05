@@ -375,6 +375,11 @@ today only because there are zero games.)
 
 ## 9. What the owner sees
 
+Every plugin and the new type follow `docs/PLUGIN_NEW_TYPE_CHECKLIST.md`, including the in-browser verification pass. The
+checklist exists because the first game plugin passed its tests but was not looked at on the Metadata Assignment page
+or the Library, and shipped without a developers section.
+
+
 - Plugins page: one card per platform with its settings, a Test button that makes one safe call, and plain
   messages: "profile is private", "key rejected", "npsso expired, paste a new one", "no Xbox profile on this
   account".

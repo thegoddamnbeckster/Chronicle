@@ -1,5 +1,7 @@
 # IGDB plugin: design
 
+Checklist: see docs/PLUGIN_NEW_TYPE_CHECKLIST.md (added after v1.0.0 shipped without developers on the game page and with IGDB last on the Metadata Assignment page; fixed in v1.0.1).
+
 Status: **built and released (2026-11-05): plugin v1.0.0 on GitHub (thegoddamnbeckster/Chronicle.Plugin.IGDB), 300 tests passing, running in the dev environment; the live tests against IGDB are still to be run with the owner's credentials.** Section 21 records what building it changed, including that the type is named `game`, not `games` as this document first said; where an earlier section says `games`, section 21 governs. Section 17 holds what the live probe measured; the sections it changed say so. Repo: `Chronicle.Plugin.IGDB` (public, a stale scaffold: every method throws `NotImplementedException`, it is written against the old `SearchAsync(string)` interface, and its manifest names the type `game`; it is replaced, not extended). Plugin id `chronicle.plugin.igdb`, source name `igdb`.
 
 This document was written, then reviewed adversarially against the host source and the IGDB docs. The review found three blockers and a number of wrong or missing statements; all are folded in, and section 20 records what changed so the next reader can see why.
