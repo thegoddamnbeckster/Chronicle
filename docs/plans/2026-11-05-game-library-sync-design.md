@@ -1,8 +1,10 @@
 # Game library sync: Steam, PlayStation, Xbox, Nintendo
 
 Date: 2026-11-05
-Status: **design, reviewed once (section 12). Nothing built.**
-Owner's accounts: Steam active; PlayStation Network old (may still exist); Microsoft/Xbox unknown; Nintendo none.
+Status: **design, two review passes (sections 12 and 12a). Nothing built. Facts marked unverified need the owner's credentials or exports.**
+Owner's accounts: Steam active; PlayStation Network old (may still exist); Microsoft/Xbox unknown; Nintendo none;
+Android and Apple devices possible. The owner's stance: all data available, even if it is only game names; no usage
+data needed.
 
 ## 1. Why this exists
 
@@ -45,16 +47,21 @@ Live probes run today with no credentials:
 | Probe | Result | Consequence |
 |---|---|---|
 | Steam `appdetails?appids=1245620` | 200, 29 KB, full record | Public, no key. Full store record for stubs |
-| 12 `appdetails` calls back to back | all 200 | The documented ~200 per 5 minutes is the real ceiling; pace to it |
+| 12 `appdetails` calls back to back | all 200 | No early limit in 12 calls; that proves nothing about the ceiling. Pace to the documented ~200 per 5 minutes |
 | `IPlayerService/GetOwnedGames` with no key, and with a junk key | 401 `Access is denied. Retrying will not help` | A key is mandatory. A bad key looks identical to no key |
 | `ISteamApps/GetAppList/v2` | **404 Method not found** | The existing `PLUGIN_STEAM.md` design names an endpoint that no longer exists. Do not use it |
 | `IStoreService/GetAppList/v1` without a key | 403 | Replacement exists, also key-gated. Not needed: owned games come with names |
-| `IWishlistService/GetWishlist/v1?steamid=` without a key | 200 `{"response":{}}` | Works key-less. An empty body is ambiguous: empty wishlist and private wishlist look the same |
+| `IWishlistService/GetWishlist/v1?steamid=` without a key | 200 `{"response":{}}` | Answers key-less for an arbitrary account; what a real wishlist returns is **unverified**. An empty body is ambiguous: empty and private look the same |
 | `steamcommunity.com/profiles/<id>/games?xml=1` | 302 to login | The old key-less XML route is gone |
 | Game Pass catalog `catalog.gamepass.com/sigls/v2` | 200, 11 KB, product ids | Public. It lists what Game Pass offers, not what the user owns |
+| Apple `itunes.apple.com/lookup?id=` (a game, and Facebook) | 200; game: 44 fields, genre "Games" (6014); Facebook: "Social Networking" | Key-less and classifies games from apps. Unknown id returns `resultCount 0` |
+| 10 rapid Apple lookups | all 200 | No limit hit at that rate; Apple's documented ~20 per minute per IP is unverified, so pace to it |
+| Google Play listing page for one game | 200, 1.3 MB, contains `applicationCategory: GAME_STRATEGY` | A category exists on the public page, but scraping it is fragile; opt-in only |
+| Google Play Games Services / Apple GameKit | no endpoint lists a player's games (docs) | Closed routes; see 5.5 and 5.6 |
 
 **Not measurable until the owner supplies credentials:** the Steam owned-games response, the private-profile
-response, every PlayStation call, every Xbox call. Section 14 lists what is needed. The design marks each such
+response, every PlayStation call, every Xbox call, the Google archive contents (does `doc` carry a category, what
+is the file layout), and Apple's export layout. Section 14 lists what is needed. The design marks each such
 claim "unverified" and the build plan starts with a probe step, as IGDB did.
 
 ## 4. Host change: library entries
@@ -137,7 +144,7 @@ Achievements: `ISteamUserStats/GetPlayerAchievements` and `GetSchemaForGame`, on
 Not part of the first library pass; a separate low-priority task so a 300-game library does not cost 600 calls up
 front. Needs `Completed` rule: all achievements unlocked is the only automatic `Completed` signal.
 
-Wishlist: `IWishlistService/GetWishlist/v1` (key-less, measured) feeds `GetWatchlistAsync` as `PlanToWatch`.
+Wishlist: `IWishlistService/GetWishlist/v1` (key-less; shape unverified, appids only so names come from `appdetails`) feeds the library path as `PlanToWatch` with no ownership row; see 12a.1.
 
 Ids: `steam:<appid>` own id, plus an additional id the IGDB plugin already understands (`steam:<appid>` in its Fix
 Match parser), so enrichment of a Steam-imported game can resolve straight to IGDB with no title search. This is
@@ -146,7 +153,13 @@ IGDB reading an id, not a dependency.
 Settings: api key (password), SteamID64 (text, with a vanity-url resolver `ISteamUser/ResolveVanityURL`),
 language, include wishlist (default on), include non-game apps (default on).
 
-Tasks: `import-library` (daily), `fetch-achievements` (weekly, off by default), `fill-store-metadata` (nightly).
+Everything else the owner asked to be referenced (decision D4), all through the same key: `GetRecentlyPlayedGames`
+(two-week playtime), `GetSteamLevel`, `GetBadges` and `GetCommunityBadgeProgress` (account level, kept on the
+plugin's account record, not on any item), per-game achievements with their schema (names, descriptions, icons,
+global percentages via `GetGlobalAchievementPercentagesForApp`), and each game's `appdetails` record whole. Steam's
+`appreviews` was a 302 in the key-less probe, so reviews are not planned until a probe shows how to reach them.
+
+Tasks: `import-library` (daily), `fetch-achievements` (weekly, on), `fill-store-metadata` (nightly).
 
 ### 5.2 PlayStation Network (`Chronicle.Plugin.PlayStation`) — unofficial
 
@@ -212,6 +225,91 @@ The owner has no Nintendo account, so there is nothing to test against. Independ
 Decision D2: Nintendo is documented here and **not built**. If the owner ever has an account, revisit with a probe
 first. Switch games can still be added by hand with Add Media, which the IGDB plugin serves.
 
+### 5.5 Google Play (`Chronicle.Plugin.GooglePlay`) — Android games
+
+What the owner meant by "the Google games thing": Google Play Games. It has **no API that lists a player's games**.
+The Play Games Services API is per-game and meant for a game's own developer (its `played` call records that you
+are playing *that* app; achievements and leaderboards are scoped to the calling app). So that route is closed.
+
+The route that works is Google's **Data Portability API**: an OAuth API that hands an app the same data as Google
+Takeout. Play resources, from Google's schema reference:
+
+| Resource | Scope category | Fields |
+|---|---|---|
+| `play.installs` | sensitive | doc (json), deviceAttribute (json), firstInstallationTime, lastUpdateTime |
+| `play.library` | sensitive | doc (json), acquisitionTime |
+| `play.purchases` | **restricted** | doc, invoicePrice, purchaseState, purchaseTime, giftInfo, ... |
+| `play.devices` | (not listed in the scopes table) | device registration, last active |
+| `play.subscriptions`, `play.redemptions`, `play.playpoints`, `play.promotions`, `play.grouping`, `play.usersettings` | (not listed) | see schema |
+
+The scopes page lists exactly three scopes: installs, library, purchases. The library covers "downloads (including books, games and apps)", so it
+is the "everything I have ever got from Play" list. **There is no playtime and no games-only list.** The data is
+names (inside `doc`), package names, and when each was first installed or acquired. The owner said that is
+acceptable.
+
+Design:
+
+- Scopes requested: `play.installs` and `play.library` only. `play.purchases` is "restricted" and brings a
+  security assessment for a published app; the library already lists what was acquired, so it is not requested.
+  (Decision D8: ask for purchases too if the owner wants prices and dates of paid games, accepting the
+  restriction.)
+- Auth: OAuth with an owner-created Google Cloud project (a setup step like Twitch for IGDB). The owner picks
+  one-time or time-based access (30 or 180 days) at consent. Time-based access lets the daily task re-export every
+  24 hours until it expires; then the plugin reports "consent expired, sign in again" and stops. Never loops.
+- Flow is asynchronous: `InitiatePortabilityArchive` (within 24 h of consent), then `GetPortabilityArchiveState`
+  until `COMPLETE` (minutes to hours), then download signed URLs. A scheduled task cannot wait hours, so the job
+  id is stored in settings and the next run (or a 15-minute follow-up) collects it. Two runs never start two
+  jobs: a pending job id blocks a new initiate.
+- Games versus apps: the library contains apps, books, music and movies. Whether the `doc` json carries a
+  category is **unverified**. Fallbacks, in order: the category in `doc`; the Play listing's category (a public page
+  that carries `applicationCategory` such as `GAME_STRATEGY`, measured on one title; scraping a store page is
+  fragile and the terms are a grey area, so it is off by default and the owner opts in); otherwise the item is
+  held in the plugin's "unclassified" list on its settings page. Nothing is thrown away and nothing non-game is put
+  in Video Games. The owner can promote an entry to a game by hand.
+- Matching: package name is the id (`play:com.example.game`); the title comes from `doc`. No metadata is invented:
+  an item from this plugin is a name, a package id, an install time and the raw record, and is complete at that.
+  IGDB enrichment, if installed, fills the rest by title search.
+- Region and eligibility are **unverified**: Google points to a help page for supported countries rather than listing
+  them, and the API excludes accounts under 18. The probe step settles this for the owner's account first.
+- Sensitive scopes need app verification for a published app. For one owner the app can stay in Google's "Testing"
+  or unverified mode. Known behaviour (unverified here): in Testing mode Google expires refresh tokens after 7
+  days, which would force a weekly re-consent. The probe records which applies; if weekly, the plugin is run on
+  demand rather than on a schedule.
+- Cost to the owner: a Google Cloud project, an OAuth consent screen with themselves as test user. About ten
+  minutes, once.
+
+Honest assessment: workable, but the weakest of the "real" integrations because of the consent-screen setup, the
+asynchronous job and the games-versus-apps classification. A Takeout `.zip` the owner exports by hand is an
+equivalent input (same data) and is supported as a fallback "import from file" mode: the plugin accepts either a
+Data Portability download or a Takeout folder, because both come from the same exporter.
+
+### 5.6 Apple (`Chronicle.Plugin.Apple`) — iOS games, file import only
+
+Apple has **no API** for a person's App Store purchases or Game Center games. Game Center has no endpoint that lists
+a player's games (the GameKit API is for the running game). The only route is the data download at
+privacy.apple.com: Apple verifies identity, prepares the files, then gives 14 days to download. Per Apple, it contains a
+record of items purchased or downloaded from the App Store, and Game Center activity (reported as a JSON file with
+achievements, their status and last-updated time, leaderboard scores, friends). The file layout is **unverified**
+here (sources are 2018 articles); it needs the owner's real export. Users in the EU, UK or Japan can schedule recurring
+downloads; elsewhere it is manual each time.
+
+So this plugin is a **file importer** by necessity: the owner points a setting at the unzipped folder (or the zip),
+and a task imports whatever is there. It works like the existing Goodreads CSV mode. It is optional and does
+nothing until a path is set. This is Apple's constraint, not a choice.
+
+Games versus apps is solvable and **measured**: Apple's public lookup (`itunes.apple.com/lookup?id=<trackId>`,
+no key) returned 44 fields for one game, with `primaryGenreName` "Games", `genres` and `genreIds` (6014 is Games).
+The same call for a non-game returned a different genre. Ten rapid calls all returned 200, and an unknown id returns
+`resultCount 0` rather than an error. So every purchased app id is looked up, and entries whose genres include Games
+(6014) are imported as games; the full lookup record is kept raw for each; non-games are held in the unclassified
+list, not dropped. Apps removed from the store return nothing; those stay unclassified with the name from the
+export.
+
+Game Center entries are games by definition and import as games without a lookup.
+
+Ids `apple:<trackId>`, platform "iOS". Platform is "iOS" even for Mac or Apple TV unless the record says so.
+Re-imports are idempotent by id.
+
 ## 6. Matching and de-duplication
 
 - One item per game. A game on Steam and PS5 is one item with two ownership rows. Matching order is the host's:
@@ -236,7 +334,7 @@ Taken from the IGDB design, which the owner approved:
 | HTTP 429, or no response | `HttpRequestException` with the status: the host pauses the pass and burns no retry |
 | 401/403 on credentials | `PluginAuthException`, one latch, cleared when settings change, health shows the reason |
 | 5xx | breaker opens 15 s, doubling |
-| Platform returns an empty list | never treated as deletion; a drop of more than half versus last run is reported, not applied |
+| Platform returns an empty or much smaller list | never treated as deletion and never applied as removal at any size; a drop versus the last stored count is reported in health. The last count is kept in the plugin's own sync-state setting |
 | Unknown field or shape change | tolerant JSON readers; the whole record is kept raw so nothing is lost |
 | A title that cannot be matched | imported as its own item from platform data (still complete), never dropped |
 | Token refresh | single-flight, immutable token record, refreshed tokens returned via `GetRefreshedSettings` so they survive restart |
@@ -264,22 +362,36 @@ today only because there are zero games.)
 
 1. Host change (section 4) and Steam. Fully testable today with the owner's key. Includes the probe step and recorded
    fixtures, exactly as IGDB did.
-2. Library UI for playtime and platforms.
-3. PlayStation, after a probe with the owner's old account says whether it is worth it.
-4. Xbox, after a probe says whether the account has title history.
-5. Nintendo: not built.
+2. Library UI for playtime and platforms (playtime is optional: names-only entries from Google and Apple show
+   without hours).
+3. Google Play: needs a probe of the owner's real export first (category in `doc`? layout?). Then the file mode,
+   then the API mode.
+4. Apple: needs the owner's real privacy.apple.com export to fix the layout; then built. File only.
+5. PlayStation, after a probe with the owner's old account says whether it is worth it.
+6. Xbox, after a probe says whether the account has title history.
+7. Nintendo: not built.
 
-## 11. Open decisions
+## 11. Decisions
 
-| # | Decision | Recommendation |
+Decided by the owner (2026-11-05): **D1 new ownership table; D2 Nintendo not built; D4 Steam imports everything it
+can reference, including everything listed in 5.1** (non-game apps, DLC, soundtracks, demos, achievements, wishlist,
+and the account-level extras: recently played, Steam level, badges). D5 follows from D4: achievements are on by
+default, not optional. Steam's `GetRecentlyPlayedGames` (last two weeks, separate from owned games) is also kept.
+The rest are recommendations awaiting the owner.
+
+| # | Decision | Status / recommendation |
 |---|---|---|
-| D1 | Ownership as a new table or columns on `UserLibrary` | New table |
-| D2 | Nintendo | Do not build |
+| D1 | Ownership as a new table or columns on `UserLibrary` | **Decided: new table** |
+| D2 | Nintendo | **Decided: not built** |
 | D3 | Owned-never-played games map to `Unwatched` | Yes |
-| D4 | Steam non-game apps (soundtracks, demos, DLC the owner owns) | Import, tagged by type (lossless rule) |
-| D5 | Steam achievements as a separate weekly task | Yes, off by default |
+| D4 | Steam non-game apps (soundtracks, demos, DLC the owner owns), and every other Steam reference | **Decided: import all of it** |
+| D5 | Steam achievements | **On by default** (follows D4); runs as its own task so the library lands first |
 | D6 | PSN and Xbox are built only after a live probe passes | Yes |
 | D7 | Shared text-normalising code copied per plugin versus a shared library | Copy, pinned by shared fixtures |
+| D8 | Google: also request the restricted `play.purchases` scope | No; library and installs already list what was acquired |
+| D9 | Items the plugin cannot classify as games (Google, Apple) | Hold in the plugin's unclassified list, promotable by hand; never dropped, never misfiled |
+| D10 | Google: scrape the Play listing page for a category | Off by default, opt-in |
+| D11 | Apple: file import only, because no API exists | Yes |
 
 ## 12. Review of this design (first pass)
 
@@ -305,6 +417,73 @@ Done against the Chronicle source and the IGDB plugin's lessons.
 10. **Not yet reviewed:** the shape of the Steam owned-games response and the private-profile behaviour are
     unverified; the PSN and Xbox endpoints are from community documentation. The probe steps exist for this.
 
+## 12a. Second review: independent reviewer, checked against the Chronicle source
+
+Eleven findings. Each was checked against the source (the wishlist drop and the inline metadata fetch were
+confirmed by reading `SyncOrchestrationService.cs` directly). Resolutions below are binding on the build; they
+supersede anything earlier in this document that disagrees.
+
+1. **Wishlist was silently dropped.** `UpsertWatchlistStatusAsync` only finds items by own external id and returns
+   if none exists. Resolution: wishlist entries go through the same library-entry path (match or create, status
+   `PlanToWatch`, no ownership row). `GetWishlist` returns appids only, so names come from `appdetails`.
+2. **One class implementing two interfaces becomes two instances** (the registry instantiates once per interface).
+   Resolution: the limiter, breaker, auth latch, token store and sync state live in one static hub owned by the
+   plugin assembly, shared by both roles. Applies to every plugin here, and to 5.1 and section 7.
+3. **"Library rows land first" was false**: `MatchOrCreateAsync` calls `GetItemMetadataAsync` inline for every new
+   item. Resolution: `GetItemMetadataAsync` returns a cheap record built from the library response (name, year from
+   the platform's own date, icon, ids). The full store record is fetched by the metadata role in the enrichment
+   task. A first import is then bounded by the library call, not by 300 rate-limited store calls. The "307
+   games" figure is the owner's IGDB list count, not a measured Steam count.
+4. **Status and events contradicted rule 3.** Reusing the watch-event path writes "marked as watched, 100%", gives a
+   1970 event when Steam says last played is 0, overwrites a user-set `PlanToWatch`, ignores `WatchResetAt`, and
+   recreates a deleted library row. Resolution: a dedicated `UpsertGameLibraryAsync`:
+   - status is set only when the row is created; an existing row's status is never touched by import
+   - `rtime_last_played` of 0 means null, never a date
+   - events are written with `MarkedAsWatched = false` and null progress, only for a last-played time newer than
+     the newest stored event, and never at or before `WatchResetAt`
+   - an item the owner deleted is remembered (a tombstone on the ownership key) and is not recreated
+   - `UserLibrary.UpdatedAt` is touched only on a real change, so other plugins' "nothing changed" gates still work
+5. **Names-only entries (Google, Apple) merge wrongly and duplicate.** With no year the matcher skips title matching,
+   and the stub race guard matches on "no year plus same name", which can graft two different packages together.
+   Resolution: year-less entries match by own id only and skip that guard; ownership rows are keyed by
+   (user, item, source id), not platform; stubs are tagged "year unknown" so enrichment can attach a year. A
+   year-less "Hades" will therefore not join Steam's "Hades (2020)" automatically; the duplicate scanner cannot offer
+   it either (it needs years on both sides), so a "same title, one has no year" suggestion is added to that scanner
+   as part of the host change. Same-id re-syncs still dedupe.
+6. **Host plumbing the first draft missed.** (a) There is no path for a raw record into item metadata: add a raw
+   blob field to the host contract, stored under a per-source key so sources do not overwrite each other. (b)
+   `MergeService` must re-point `user_game_ownership` or merging two games orphans or collides rows. (c) A plugin
+   task cannot call `SyncAsync`; the library import runs through the host's well-known import tasks, and the plugin's
+   own tasks (achievements, store metadata) work only on data they already hold.
+7. **Standalone and lossless contradictions.** "Hold unclassified items in settings" is not importing. Resolution:
+   unclassified Google and Apple entries are imported, with a tag "unclassified", under the `game` type but hidden
+   from the default Video Games view by a filter the owner can switch off; no data is held back. Settings that
+   exclude things ("include non-game apps", "include wishlist") are removed: everything imports. The test fixtures
+   are owned by each plugin repository; nothing is shared across repositories, accepting duplication. The extra
+   `steam:<appid>` additional id is dropped as redundant with the own id.
+8. **Section 7 contradicted 5.1**: fixed in place (nothing removed at any size; count kept in the plugin's own
+   setting).
+9. **Contract gaps.** `SyncAsync` throws when `IsAuthenticatedAsync` is false, which would turn "Apple has no path
+   set" into a daily scheduler error. Resolution: `IsAuthenticatedAsync` means "configured"; an unconfigured plugin
+   reports that in health and is skipped quietly. Interface members that do not apply (`StartAuthAsync`,
+   `PollAuthAsync`, history, ratings) are implemented as no-ops, and the capability record gets a "library" flag and
+   `RequiresDeviceAuth = false`. The browser flows (Google OAuth, PSN npsso, Xbox) need a host "sign in with a
+   link" step that the device/PIN contract lacks; until it exists, the owner pastes the token or code into the
+   plugin's settings. `GetLibraryAsync` takes no `since`: full pull each run, unchanged rows cost nothing.
+10. **Secrets and privacy.** The Steam key travels in the URL, so the HTTP layer must not log request URIs and
+    exception messages are redacted by a function applied at the one place requests are sent (as IGDB's `Redact`).
+    OAuth and refresh tokens are password-type settings. Apple's Game Center export lists friends and the purchase
+    record carries order data: the plugin keeps the title-level fields of each record whole but drops friend
+    and payment sections, and says so. This is the one deliberate exception to lossless, made to avoid storing other
+    people's personal data; it is flagged for the owner (decision D12).
+11. **Unverified facts stated as fact**: corrected in 3, 5.1 and the header.
+
+New open decision D12: Apple export friends and payment sections dropped (recommended) versus kept.
+
+**Sound as checked:** the post-import export step excludes game types and these plugins are not export providers, so
+it is skipped; the match order (own id, additional ids, title and year); the `GetAppList` correction; the Xbox and
+Nintendo scoping; the status enum values; IGDB's Fix Match accepts Steam ids; own-id re-sync idempotency.
+
 ## 13. Sources
 
 Steam partner docs (IPlayerService), live probes in section 3, the `psn-api` community library README and function
@@ -318,4 +497,8 @@ the `nxapi` project README. Community libraries are unofficial and not affiliate
 - **PlayStation (later):** whether the account still signs in at playstation.com; if so, the npsso value at
   probe time.
 - **Xbox (later):** whether a Microsoft account with an Xbox profile exists; if so, an Azure app registration.
+- **Google Play:** whether the Google account is an adult account in a supported region (the probe tells us); a
+  Google Cloud project and OAuth consent screen (a guided step); or simply a Takeout export of "Google Play Store".
+- **Apple:** an export from privacy.apple.com (request it now; it takes days) if there is an Apple account with
+  App Store history. Without one, nothing.
 - **Nintendo:** nothing.
