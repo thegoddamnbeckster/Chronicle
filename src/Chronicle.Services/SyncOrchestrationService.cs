@@ -186,6 +186,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         // What the user HAS (owned, wishlisted), as opposed to what they played. Filed by GameLibraryImporter; a library
         // pull failing is reported but does not undo the history, ratings and watchlist handled above.
+        Exception? libraryFailure = null;
         if (resolvedUserId > 0 && provider.GetCapabilities().SupportsLibrary)
         {
             try
@@ -205,6 +206,7 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             {
                 _log.LogWarning(ex, "Library import failed for {PluginId}", pluginId);
                 errors.Add($"library: {ex.Message}");
+                libraryFailure = ex;   // the import did not do what it was asked: the task must say so, not report success
             }
         }
 
@@ -222,6 +224,12 @@ public class SyncOrchestrationService : ISyncOrchestrationService
 
         if (stubsCreated > 0)
             TriggerEnrichmentInBackground();
+
+        // A library that could not be read is a failed import. Without this a wrong account or a rejected key left the task showing
+        // "completed successfully" with nothing imported and the reason only in the log. The rest of the sync (history, ratings, matched items)
+        // has already been saved above; the exception makes the task's last run say what went wrong.
+        if (libraryFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(libraryFailure).Throw();
 
         // Push what the service is missing back to it (Chronicle -> Trakt/Simkl). Automatic, after every import;
         // a plugin that cannot export, or has it switched off, is simply skipped. Never allowed to fail the import.
