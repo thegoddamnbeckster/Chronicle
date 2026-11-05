@@ -108,6 +108,15 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.igdb",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.IGDB",
+      "tags": [
+        "game",
+        "games",
+        "metadata"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.deezer",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Deezer",
       "tags": [

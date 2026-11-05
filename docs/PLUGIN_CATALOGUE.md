@@ -181,7 +181,7 @@ The rest of this document indexes planned future plugins.
 
 | Plugin | Directory | Scope | Auth | Status |
 |--------|-----------|-------|------|--------|
-| [IGDB](plugins/PLUGIN_IGDB.md) | `Chronicle.Plugin.IGDB` | 🎮 | Twitch client ID + secret | Scaffolded |
+| [IGDB](plugins/PLUGIN_IGDB.md) | `Chronicle.Plugin.IGDB` | 🎮 | Twitch client ID + secret | Implemented (1.0.0, built 2026-11-05, not yet released) |
 | [RAWG](plugins/PLUGIN_RAWG.md) | `Chronicle.Plugin.RAWG` | 🎮 | API key (free) | Scaffolded |
 | [Gameopedia](plugins/PLUGIN_GAMEOPEDIA.md) | `Chronicle.Plugin.Gameopedia` | 🎮 | API key (commercial) | Scaffolded |
 | [LaunchBox Games DB](plugins/PLUGIN_LAUNCHBOX.md) | `Chronicle.Plugin.LaunchBox` | 🎮 | API key | Scaffolded |

@@ -176,6 +176,8 @@ export function buildSlotLookup(
 const TYPE_TO_SLOT: Record<string, CanonicalSlot> = {
   poster: 'poster_url', posterurl: 'poster_url', front: 'poster_url',
   fanart: 'backdrop_url', backdrop: 'backdrop_url', backdropurl: 'backdrop_url',
+  // Game screenshots (IGDB): wide scenes, so they belong with the backdrops, not under Posters where they would bury the cover.
+  screenshot: 'backdrop_url',
   clearlogo: 'logo_url', logo: 'logo_url', logourl: 'logo_url',
   banner: 'banner_url', bannerurl: 'banner_url',
   thumb: 'thumb_url', thumburl: 'thumb_url', thumbnail: 'thumb_url', thumbnailurl: 'thumb_url',

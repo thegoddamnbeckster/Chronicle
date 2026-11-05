@@ -1,108 +1,32 @@
-# Chronicle.Plugin.IGDB — Design Document
+# Chronicle.Plugin.IGDB
 
 **Plugin ID:** `chronicle.plugin.igdb`
-**Version:** 1.0.0
-**Media Types:** Games (`game`)
-**Auth:** Twitch client ID + client secret (free at dev.twitch.tv)
-**API:** IGDB API v4 — `https://api.igdb.com/v4`
+**Version:** 1.0.0 (built 2026-11-05, not yet released)
+**Media Types:** Video Games (`game`), one level
+**Auth:** Twitch client ID + client secret (free at dev.twitch.tv; the Twitch account needs two-factor authentication)
+**API:** IGDB API v4, `https://api.igdb.com/v4`; tokens from `https://id.twitch.tv/oauth2/token`
 
----
+The first and primary source for Chronicle's games library. It keeps **everything IGDB has for a game** (no caps, no filtering), matches by exact title or alternative name before IGDB's fuzzy search, and tells Chronicle about each kind of failure in the way that does the least harm (an outage or rate limit pauses the queue; it never burns an item's retries).
 
-## Purpose
+This page replaces an earlier scaffold-era design that predated the plugin API and listed `POST /games search "{title}"` as the whole algorithm.
 
-[IGDB](https://www.igdb.com/) (Internet Game Database, owned by Twitch/Amazon)
-is the most comprehensive and well-structured public game database available.
-It covers games across all platforms with detailed metadata including genres,
-game modes, player perspectives, storylines, and aggregated critic/user ratings.
-IGDB is the primary recommended game metadata source for Chronicle.
+## Where the real documentation is
 
----
+* **Design, measurements and decisions:** [`docs/plans/2026-11-05-igdb-plugin-design.md`](../plans/2026-11-05-igdb-plugin-design.md). It records what the live service was measured to do (ranking, rate limit, error bodies, latency, payload sizes), what the host does with each exception the plugin can throw, an independent review, and section 21 on what building it changed (notably the type name).
+* **Using it:** the plugin's own README in the `Chronicle.Plugin.IGDB` repository (setup, settings, id forms, how a game is matched, what a failure does).
+* **Recorded responses and the probe scripts** that measured the service: `tests/fixtures/live-2026-11-05/` and `tools/` in that repository.
 
-## Supported Media Types
+## The facts that shape it
 
-| Media Type | Priority | Notes |
-|-----------|---------|-------|
-| `game` | 1 | All platforms, all genres |
+| | |
+|---|---|
+| Type | `game`, declared **identically to the IMDb plugin** ("Video Games", played, percent): Chronicle merges the declarations of every plugin that names a type, so they must agree. Also read as `games`, `videogame`, `video_game` from clients. |
+| Rate limit | 4 requests a second, 8 open (documented). A 150-request burst drew 429s with no `Retry-After`; IGDB answered again 0.6 s later. The plugin paces at 3 a second and backs off 2 s, doubling to 5 minutes. |
+| Search | IGDB's fuzzy `search` put the exact title first for 22 of 43 titles; an exact-name-or-alternative-name query fixes most misses, so it goes first. |
+| One game | `fields *` plus every expansion, its time to beat and its characters, in one multiquery: about 0.2 s, 30 to 120 KB. |
+| Ids | The bare IGDB game id. Fix match also takes an igdb.com game page address and `steam:<appid>`. No cross-reference ids are published. |
+| Not found | Permanent in Chronicle until a person resets it, so the plugin returns "not found" only for a genuine empty answer, never for a failure. |
 
----
+## Not covered
 
-## API Overview
-
-IGDB uses a proprietary query language (Apicalypse) via HTTP POST.
-
-| Operation | Endpoint | Query |
-|-----------|---------|-------|
-| Search | `POST /games` | `search "{title}"; fields *;` |
-| Game by ID | `POST /games` | `where id = {id}; fields *;` |
-| Cover art | `POST /covers` | `where game = {id}; fields url;` |
-| Screenshots | `POST /screenshots` | `where game = {id}; fields url;` |
-| Artworks | `POST /artworks` | `where game = {id}; fields url;` |
-| Platforms | `POST /platforms` | `where id = ({ids}); fields name;` |
-| Companies | `POST /companies` | `where id = ({ids}); fields name,url;` |
-| Age ratings | `POST /age_ratings` | `where id = ({ids}); fields rating;` |
-
-Auth: `Client-ID: {client_id}` + `Authorization: Bearer {access_token}` headers.
-Token obtained via: `POST https://id.twitch.tv/oauth2/token?client_id=...&client_secret=...&grant_type=client_credentials`
-
----
-
-## Settings Schema
-
-| Key | Label | Type | Required | Notes |
-|-----|-------|------|----------|-------|
-| `client_id` | Twitch Client ID | Text | Yes | dev.twitch.tv — free |
-| `client_secret` | Twitch Client Secret | Password | Yes | dev.twitch.tv |
-| `preferred_image_size` | Image Size | Dropdown | No | `t_cover_big`, `t_1080p`, `t_screenshot_big` |
-| `include_screenshots` | Fetch Screenshots | Boolean | No | Default: true |
-| `include_videos` | Fetch Videos | Boolean | No | Default: false |
-
----
-
-## Fields Populated
-
-```
-title, overview (summary/storyline), year (first_release_date),
-genres, cast (involved_companies), rating (aggregated_rating),
-poster_url (cover), backdrop_url (screenshots), platforms,
-game_modes, player_perspectives, themes, age_ratings,
-igdb_id, igdb_url, status, series, franchise
-```
-
----
-
-## Rate Limits
-
-- 4 req/sec, 500 req/month on free tier
-- Paid tiers available for higher volume
-- Cache all responses — game metadata changes rarely after release
-
----
-
-## Implementation Notes
-
-- IGDB cover image URLs follow the pattern
-  `//images.igdb.com/igdb/image/upload/t_{size}/{image_id}.jpg`
-  — prepend `https:` and choose a size modifier
-- `first_release_date` is a Unix timestamp — convert to year
-- `status` values: `0=Released`, `2=Alpha`, `3=Beta`, `4=Early Access`,
-  `5=Offline`, `6=Cancelled`, `7=Rumoured`
-- `aggregated_rating` (critic) and `rating` (user) are both available
-- Platform IDs reference the `/platforms` endpoint — cache the platform
-  list to avoid extra lookups
-- Store IGDB game ID in `media_external_ids` with source `igdb`
-
----
-
-## Scaffold Location
-
-```
-Chronicle.Plugin.IGDB/
-├── Chronicle.Plugin.IGDB.csproj
-├── README.md (this document)
-├── manifest.json
-├── IGDBPlugin.cs
-└── Models/
-    ├── IgdbGame.cs
-    ├── IgdbCover.cs
-    └── IgdbPlatform.cs
-```
+Importing play history (IGDB has no accounts: a Steam/GOG plugin does that), scanning game files (no scanner understands games; do not make a scan folder of type Video Games), and grouping a franchise into a Chronicle collection (collections are movie-only in the host; the series is a tag).

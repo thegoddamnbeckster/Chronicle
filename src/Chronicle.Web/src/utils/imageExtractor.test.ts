@@ -24,4 +24,19 @@ describe('extractSlottedImages', () => {
     })
     expect(imgs.map(i => i.slot)).toEqual(['disc_url', 'character_art_url', 'backdrop_url'])
   })
+
+  it('puts game screenshots with the backdrops, not under Posters where they would bury the cover (IGDB "Screenshot")', () => {
+    const imgs = extractSlottedImages('chronicle.plugin.igdb', {
+      posterUrl: 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/co1u60.jpg',
+      additionalImages: [
+        { url: 'https://images.igdb.com/igdb/image/upload/t_1080p/s1.jpg', type: 'Screenshot' },
+        { url: 'https://images.igdb.com/igdb/image/upload/t_1080p/a1.jpg', type: 'Fanart' },
+        { url: 'https://images.igdb.com/igdb/image/upload/t_1080p/c1.jpg', type: 'Front' },
+      ],
+    })
+    expect(imgs.find(i => i.url.endsWith('s1.jpg'))?.slot).toBe('backdrop_url')
+    expect(imgs.find(i => i.url.endsWith('a1.jpg'))?.slot).toBe('backdrop_url')
+    expect(imgs.find(i => i.url.endsWith('c1.jpg'))?.slot).toBe('poster_url')
+    expect(imgs.find(i => i.url.endsWith('co1u60.jpg'))?.slot).toBe('poster_url')
+  })
 })
