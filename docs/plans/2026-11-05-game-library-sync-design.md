@@ -59,8 +59,31 @@ Live probes run today with no credentials:
 | Google Play listing page for one game | 200, 1.3 MB, contains `applicationCategory: GAME_STRATEGY` | A category exists on the public page, but scraping it is fragile; opt-in only |
 | Google Play Games Services / Apple GameKit | no endpoint lists a player's games (docs) | Closed routes; see 5.5 and 5.6 |
 
-**Not measurable until the owner supplies credentials:** the Steam owned-games response, the private-profile
-response, every PlayStation call, every Xbox call, the Google archive contents (does `doc` carry a category, what
+### 3a. Steam, measured with the owner's key (2026-11-05)
+
+The owner supplied a Steam Web API key and their SteamID64. Read-only calls against their own profile, public
+visibility. The raw responses are kept out of the repository (they are personal data); the facts are:
+
+| Call | Result |
+|---|---|
+| `GetOwnedGames` (`include_appinfo`, `include_played_free_games`, `include_extended_appinfo`) | 200, 134 KB, **one response, no paging**, 316 games (the profile page says 315; the IGDB list said 307: three different counts, so the importer must never assume they agree) |
+| Fields on every game | `appid`, `name`, `playtime_forever`, `img_icon_url`, `playtime_windows/mac/linux/deck_forever`, `rtime_last_played`, `capsule_filename`, `has_workshop`, `has_market`, `has_dlc`, `playtime_disconnected` |
+| Fields on some games | `content_descriptorids` (84), `sort_as` (24), `has_community_visible_stats` (246), `has_leaderboards` (27), `playtime_2weeks` (3) |
+| Never played | **226 of 316** have `playtime_forever` 0 and `rtime_last_played` 0. This is the common case, so "0 means unknown/never, not 1970" is not an edge case. The library page for this owner is mostly unplayed games |
+| Names | present on all 316, so the import needs no store call to create an item |
+| `GetRecentlyPlayedGames` | 200, 806 B, 3 games with `playtime_2weeks` |
+| `GetSteamLevel` | `{"response":{"player_level":13}}` |
+| `GetBadges` | 200, 791 B: `badgeid`, `level`, `completion_time`, `xp`, `scarcity` per badge |
+| `GetWishlist` (key-less) | 26 items, each `{appid, priority, date_added}`: **appids only, as predicted; names need `appdetails`**. 26 matches the profile page |
+| `GetPlayerSummaries` | 200: `communityvisibilitystate` 3 (public), name, avatars, profile url |
+
+Consequences for the design: the first import is one 134 KB call plus a wishlist call, with no store call needed to
+create 316 named items; the private-profile response is still unmeasured because this profile is public (the
+importer reads `communityvisibilitystate` from `GetPlayerSummaries` first, so "private" is detected directly and
+not inferred from an empty body); all extended fields are kept raw in the ownership row.
+
+**Not measurable until the owner supplies credentials:** the Steam private-profile response, per-game achievements,
+every PlayStation call, every Xbox call, the Google archive contents (does `doc` carry a category, what
 is the file layout), and Apple's export layout. Section 14 lists what is needed. The design marks each such
 claim "unverified" and the build plan starts with a probe step, as IGDB did.
 
