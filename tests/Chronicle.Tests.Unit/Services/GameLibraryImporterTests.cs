@@ -230,4 +230,35 @@ public class GameLibraryImporterTests : IDisposable
         new ImportCapabilities(true, true, true).SupportsLibrary.Should().BeFalse();
         (new ImportCapabilities(false, false, false) { SupportsLibrary = true }).SupportsLibrary.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task A_game_added_by_hand_with_a_bare_steam_id_from_another_plugin_is_the_same_game()
+    {
+        // IGDB stores Steam's id as "32630"; the importer writes "steam:32630". Both are one game, so no second item is made.
+        var manual = new MediaItem { Name = "Delta Force 2", Year = 1999, NormalizedName = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName("Delta Force 2"),
+            MediaTypeId = 50, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(manual); _db.SaveChanges();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = manual.Id, Source = "steam", ExternalId = "32630" });
+        _db.SaveChanges();
+
+        var r = await Run(Steam, E("32630", "Delta Force 2", minutes: 4, lastPlayedUnix: 1700000000));
+
+        r.Created.Should().Be(0);
+        _db.MediaItems.Count().Should().Be(1);
+        _db.UserGameOwnerships.Single().MediaItemId.Should().Be(manual.Id);
+    }
+
+    [Fact]
+    public async Task A_bare_steam_id_that_is_a_different_app_still_keeps_two_games_apart()
+    {
+        var manual = new MediaItem { Name = "Counter-Strike: Condition Zero", Year = 2004, NormalizedName = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName("Counter-Strike: Condition Zero"),
+            MediaTypeId = 50, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(manual); _db.SaveChanges();
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = manual.Id, Source = "steam", ExternalId = "80" });
+        _db.SaveChanges();
+
+        await Run(Steam, E("100", "Counter-Strike: Condition Zero"));
+
+        _db.MediaItems.Count().Should().Be(2);
+    }
 }

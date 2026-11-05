@@ -54,7 +54,16 @@ public sealed class GameLibraryImporter
             ct.ThrowIfCancellationRequested();
             try
             {
-                var r = await ImportOneAsync(db, pluginId, providerName, userId, entry, ct);
+                One r;
+                try { r = await ImportOneAsync(db, pluginId, providerName, userId, entry, ct); }
+                catch (DbUpdateException)
+                {
+                    // Another writer (background enrichment, a second sync) saved the same row between the check and the insert: a unique key
+                    // refused it. Seen once in 342 entries on the first real import. The entry is complete once the tracker is cleared and the
+                    // rows are read again, so it is retried once rather than reported.
+                    db.ChangeTracker.Clear();
+                    r = await ImportOneAsync(db, pluginId, providerName, userId, entry, ct);
+                }
                 if (r.Skipped) skipped++;
                 else if (r.Created) created++;
                 else matched++;
@@ -226,8 +235,11 @@ public sealed class GameLibraryImporter
     {
         var source = PluginIdHelper.ToSource(pluginId);
 
+        // The same id is written two ways: "steam:32630" by the importer and a bare "32630" by a metadata plugin (IGDB stores Steam's id that way).
+        // Both mean one game, so both are looked for.
+        var bareOwn = Bare(entry.ExternalId);
         var byOwn = await db.MediaExternalIds
-            .Where(e => e.Source == source && e.ExternalId == entry.ExternalId)
+            .Where(e => e.Source == source && (e.ExternalId == entry.ExternalId || e.ExternalId == bareOwn))
             .Select(e => e.MediaItemId).FirstOrDefaultAsync(ct);
         if (byOwn != 0) return await db.MediaItems.FindAsync([byOwn], ct);
 
@@ -257,8 +269,8 @@ public sealed class GameLibraryImporter
         var free = new List<MediaItem>();
         foreach (var c in candidates)
         {
-            var hasOther = await db.MediaExternalIds
-                .AnyAsync(e => e.MediaItemId == c.Id && e.Source == source && e.ExternalId != entry.ExternalId, ct);
+            var theirs = await db.MediaExternalIds.Where(e => e.MediaItemId == c.Id && e.Source == source).Select(e => e.ExternalId).ToListAsync(ct);
+            var hasOther = theirs.Any(id => !string.Equals(Bare(id), bareOwn, StringComparison.OrdinalIgnoreCase));
             if (!hasOther) free.Add(c);
         }
         // Exactly one, or it is ambiguous and a new item is made rather than a guess merged.
@@ -339,6 +351,9 @@ public sealed class GameLibraryImporter
             existing.ExternalId = externalId;
         await db.SaveChangesAsync(ct);
     }
+
+    /// <summary>An id without its platform prefix: "steam:32630" and "32630" are the same id.</summary>
+    internal static string Bare(string externalId) => StripSource(externalId).Trim();
 
     private static string StripSource(string externalId)
     {
