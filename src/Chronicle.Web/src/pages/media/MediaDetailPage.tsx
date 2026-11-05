@@ -882,7 +882,8 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
             )}
             {/* A show/season usually has no library entry of its own -- only its episodes do --
                 so children alone must be enough to offer the reset (it cascades to them). */}
-            {(libraryEntry || children.length > 0) && !resetProgressConfirm && (
+            {/* A game has no watch progress to reset: its state is the status chosen and the hours the platform reports. */}
+            {(libraryEntry || children.length > 0) && !resetProgressConfirm && currentMediaType?.interactionVerb?.toLowerCase() !== 'played' && (
               <button
                 className={styles.changeTypeBtn}
                 onClick={() => setResetProgressConfirm(true)}

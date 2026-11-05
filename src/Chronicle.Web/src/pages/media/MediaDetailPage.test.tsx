@@ -310,6 +310,25 @@ describe('MediaDetailPage', () => {
     expect(mockedUpdateLibraryEntry).toHaveBeenCalledWith(777, { status: 'Completed', rating: undefined })
   })
 
+  it('offers no Reset Watch Progress on a game, which has no watch progress, but keeps it for a movie', async () => {
+    mockedGetLibraryEntryForMedia.mockResolvedValue(makeLibraryEntry(makeItem(), { status: 'Watching' }))
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+    expect(screen.getByRole('button', { name: 'Reset Watch Progress' })).toBeInTheDocument()
+  })
+
+  it('does not offer Reset Watch Progress for a type whose action word is played', async () => {
+    mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 78, mediaTypeName: 'Video Games', mediaTypeInternalName: 'game' }))
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 78, name: 'game', displayName: 'Video Games', hierarchyLevels: 1, interactionVerb: 'played', hierarchyLabels: ['Game'] },
+    ])
+    mockedGetLibraryEntryForMedia.mockResolvedValue(makeLibraryEntry(makeItem(), { status: 'Watching' }))
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+    await screen.findByText('Playing')
+    expect(screen.queryByRole('button', { name: 'Reset Watch Progress' })).not.toBeInTheDocument()
+  })
+
   it('words the library buttons from the type action word, not from what the type is called', async () => {
     const user = userEvent.setup()
     mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 77, mediaTypeName: 'Podcast Things', mediaTypeInternalName: 'podcast-things' }))
