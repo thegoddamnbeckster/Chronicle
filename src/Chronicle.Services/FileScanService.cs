@@ -541,6 +541,31 @@ namespace Chronicle.Services
         /// (e.g. TMDB) each contribute their best data to the same result card.
         /// Providers that throw (e.g. SIMKL/Trakt text-search not supported) are skipped.
         /// </summary>
+        /// <summary>Providers in the order the owner ranked them for the type's title field (Settings, Metadata Assignment); unranked providers follow, in their given order.</summary>
+        internal static IReadOnlyList<IMetadataProvider> OrderByAssignment(IReadOnlyList<IMetadataProvider> providers, string? configJson, string typeName)
+        {
+            if (string.IsNullOrWhiteSpace(configJson) || providers.Count < 2) return providers;
+            List<string> order = [];
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(configJson);
+                if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && doc.RootElement.EnumerateObject().FirstOrDefault(t => string.Equals(t.Name, typeName, StringComparison.OrdinalIgnoreCase)) is { Value.ValueKind: System.Text.Json.JsonValueKind.Object } type)
+                {
+                    foreach (var field in new[] { "title", "overview", "year" })
+                        if (type.Value.TryGetProperty(field, out var list) && list.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            foreach (var id in list.EnumerateArray())
+                                if (id.ValueKind == System.Text.Json.JsonValueKind.String && id.GetString() is { } pid && !order.Contains(pid, StringComparer.OrdinalIgnoreCase))
+                                    order.Add(pid);
+                }
+            }
+            catch (System.Text.Json.JsonException) { return providers; }
+            if (order.Count == 0) return providers;
+
+            int Rank(IMetadataProvider p) { var i = order.FindIndex(o => string.Equals(o, p.PluginId, StringComparison.OrdinalIgnoreCase)); return i < 0 ? int.MaxValue : i; }
+            return providers.Select((p, i) => (p, i)).OrderBy(x => Rank(x.p)).ThenBy(x => x.i).Select(x => x.p).ToList();
+        }
+
         public async Task<List<MetadataCandidate>> SearchMetadataAsync(
             string query, string mediaTypeHint, CancellationToken ct = default)
         {
@@ -548,6 +573,13 @@ namespace Chronicle.Services
             if (providers.Count == 0)
                 throw new InvalidOperationException(
                     "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
+
+            // The merge below keeps the FIRST provider's card as the primary identity and folds the others into it, so the order the
+            // providers are listed in decides which one a result is labelled with and which id Add Media files it under. Registry order is
+            // arbitrary; the owner's Metadata Assignment priority for the type is not, so follow it (a type the owner never configured keeps
+            // the old order).
+            var assignment = (await _context.AppSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == "metadata_assignment.config", ct))?.Value;
+            providers = OrderByAssignment(providers, assignment, MediaTypeRegistry.Canonical(mediaTypeHint));
 
             // Run all providers in parallel with a per-provider timeout so a slow or
             // unresponsive provider doesn't block results from fast ones. Shorter than
@@ -646,6 +678,7 @@ namespace Chronicle.Services
                 // Collect sources and external IDs from all providers that matched this result.
                 var sources              = new List<string>();
                 var contribExternalIds   = new List<ContributingExternalId>();
+                var bestScore            = r.Score;   // the card is as good a match as the best of the providers that agree on it
                 if (!string.IsNullOrEmpty(m.Source)) sources.Add(m.Source);
                 foreach (var (_, other) in allCandidates)
                 {
@@ -657,6 +690,7 @@ namespace Chronicle.Services
                     // BOTH the 1974 and 2005 films as contributing ids, so its "In Library" badge
                     // resolved onto the 1974 item. Different films share titles constantly.
                     if (!m.Year.HasValue || !other.Metadata.Year.HasValue) continue;
+                    bestScore = Math.Max(bestScore, other.Score);
                     if (!string.IsNullOrEmpty(other.Metadata.Source) && !sources.Contains(other.Metadata.Source))
                         sources.Add(other.Metadata.Source);
                     // Source is carried alongside the id itself -- not re-derived later from the
@@ -669,7 +703,7 @@ namespace Chronicle.Services
 
                 merged.Add(new MetadataCandidate(
                     m.ExternalId!, m.Title, m.Year, poster,
-                    m.Overview, m.Rating, 0,
+                    m.Overview, m.Rating, bestScore,
                     m.Source,
                     m.Genres.Count > 0           ? m.Genres           : null,
                     m.Cast.Count > 0             ? m.Cast.Select(c => c.Name).ToList() : null,
@@ -677,7 +711,30 @@ namespace Chronicle.Services
                     contribExternalIds.Count > 0 ? contribExternalIds : null));
             }
 
-            return merged;
+            return Rank(merged, query);
+        }
+
+        /// <summary>
+        /// Closest match first. How close a title is to what was typed is judged here, the same way for every provider (an exact title, then one
+        /// that starts with it, then one that contains it, then the rest); the providers' own scores break ties; and a tie on both keeps the
+        /// owner's provider ranking, because the merge already listed providers in that order.
+        /// </summary>
+        internal static List<MetadataCandidate> Rank(List<MetadataCandidate> merged, string query)
+        {
+            var q = MediaItemNormalizer.NormalizeName(query ?? string.Empty);
+            int Closeness(string title)
+            {
+                var t = MediaItemNormalizer.NormalizeName(title ?? string.Empty);
+                if (q.Length == 0 || t.Length == 0) return 0;
+                if (t == q) return 3;
+                if (t.StartsWith(q, StringComparison.Ordinal)) return 2;
+                return t.Contains(q, StringComparison.Ordinal) ? 1 : 0;
+            }
+            return merged.Select((m, i) => (m, i))
+                .OrderByDescending(x => Closeness(x.m.Title))
+                .ThenByDescending(x => x.m.MatchScore)
+                .ThenBy(x => x.i)
+                .Select(x => x.m).ToList();
         }
 
         public async Task<Chronicle.Core.Models.MediaItem> AddFromSearchAsync(
