@@ -187,7 +187,7 @@ The rest of this document indexes planned future plugins.
 | [LaunchBox Games DB](plugins/PLUGIN_LAUNCHBOX.md) | `Chronicle.Plugin.LaunchBox` | 🎮 | API key | Scaffolded |
 | [Metadata Games (Tiltfactor)](plugins/PLUGIN_TILTFACTOR.md) | `Chronicle.Plugin.TiltfactorGames` | 🎮 | None (public) | Scaffolded |
 | [Video Game Resources (AMIA)](plugins/PLUGIN_VIDEOGAMERESOURCES.md) | `Chronicle.Plugin.VideoGameResources` | 🎮 | None (GitHub) | Scaffolded |
-| [Steam](plugins/PLUGIN_STEAM.md) | `Chronicle.Plugin.Steam` | 🎮 | Steam API key (free) | Scaffolded |
+| [Steam](plugins/PLUGIN_STEAM.md) | `Chronicle.Plugin.Steam` | 🎮 | Steam API key (free) | Implemented (1.0.0, 2026-11-05): library import, wishlist, level, badges, store metadata, achievements |
 | [IsThereAnyDeal](plugins/PLUGIN_ISTHEREANYDEAL.md) | `Chronicle.Plugin.IsThereAnyDeal` | 🎮 | API key (free) | Scaffolded |
 
 ---

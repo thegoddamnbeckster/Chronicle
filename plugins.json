@@ -117,6 +117,16 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.steam",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Steam",
+      "tags": [
+        "game",
+        "games",
+        "metadata",
+        "import"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.deezer",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Deezer",
       "tags": [
