@@ -184,6 +184,30 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             }
         }
 
+        // What the user HAS (owned, wishlisted), as opposed to what they played. Filed by GameLibraryImporter; a library
+        // pull failing is reported but does not undo the history, ratings and watchlist handled above.
+        if (resolvedUserId > 0 && provider.GetCapabilities().SupportsLibrary)
+        {
+            try
+            {
+                var entries = await provider.GetLibraryAsync(ct);
+                var lib = await new GameLibraryImporter(_registry, _resolution, _log)
+                    .ImportAsync(db, pluginId, provider.Name, resolvedUserId.Value, entries, ct);
+                itemsMatched += lib.Matched; stubsCreated += lib.Created; watchEventsAdded += lib.Events;
+                errors.AddRange(lib.Errors);
+                var acct = await provider.GetAccountInfoAsync(ct);
+                if (acct is not null) await GameLibraryImporter.StoreAccountInfoAsync(db, pluginId, acct, ct);
+                _log.LogInformation("Library import for {PluginId}: {Entries} entries, {Created} new, {Matched} matched, {Skipped} skipped (removed by the user), {Errors} errors",
+                    pluginId, entries.Count, lib.Created, lib.Matched, lib.Skipped, lib.Errors.Count);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Library import failed for {PluginId}", pluginId);
+                errors.Add($"library: {ex.Message}");
+            }
+        }
+
         // Persist last-synced timestamp
         var setting = await db.AppSettings.FindAsync([syncKey], ct);
         if (setting is null)

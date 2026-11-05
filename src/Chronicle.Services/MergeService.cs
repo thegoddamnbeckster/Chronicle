@@ -289,6 +289,11 @@ public class MergeService(
             }
         }
 
+        // ── UserGameOwnership — re-point. Keyed on (user, source, source id), so a loser's rows never collide with the winner's;
+        // both stay, which is how a game held on two platforms looks after the two items are merged. ────────────────────────
+        var loserOwnership = await dbContext.UserGameOwnerships.Where(o => o.MediaItemId == loserId).ToListAsync(ct);
+        foreach (var o in loserOwnership) o.MediaItemId = winnerId;
+
         // ── MediaListItems ────────────────────────────────────────────────────
         var loserListItems = await dbContext.MediaListItems.Where(li => li.MediaItemId == loserId).ToListAsync(ct);
         foreach (var li in loserListItems) li.MediaItemId = winnerId;

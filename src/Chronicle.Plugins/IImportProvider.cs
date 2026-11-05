@@ -48,7 +48,13 @@ public record ImportCapabilities(
     /// False for providers that authenticate via a username or API key only (Letterboxd).
     /// </summary>
     bool RequiresDeviceAuth = true
-);
+)
+{
+    /// <summary>True when the provider implements <see cref="IImportProvider.GetLibraryAsync"/>: what the user has, not what they played.
+    /// An init property, not a constructor parameter: adding a parameter would change the constructor signature and break every plugin
+    /// already compiled against the four-argument form.</summary>
+    public bool SupportsLibrary { get; init; }
+}
 
 /// <summary>A single watch event imported from the tracking service.</summary>
 public record ImportedWatchEvent(
@@ -243,6 +249,19 @@ public interface IImportProvider
     /// </summary>
     Task<List<ImportedPlaybackProgress>> GetPlaybackProgressAsync(CancellationToken ct = default)
         => Task.FromResult(new List<ImportedPlaybackProgress>());
+
+    /// <summary>
+    /// Returns every title the user has on the platform (owned, wishlisted, subscribed), with whatever the platform
+    /// says about playtime, last played and acquisition. Default: empty (a watch-history provider has no library).
+    /// Always a full pull: a library has no "since", and an unchanged row costs nothing on import. An empty result is
+    /// never read as "the user removed everything"; the host never deletes because a title is absent.
+    /// </summary>
+    Task<List<ImportedLibraryEntry>> GetLibraryAsync(CancellationToken ct = default)
+        => Task.FromResult(new List<ImportedLibraryEntry>());
+
+    /// <summary>Account-level facts (level, badges ...) kept whole beside the library. Default: none.</summary>
+    Task<ImportedAccountInfo?> GetAccountInfoAsync(CancellationToken ct = default)
+        => Task.FromResult<ImportedAccountInfo?>(null);
 
     Task<bool> HealthCheckAsync(CancellationToken ct = default);
 
