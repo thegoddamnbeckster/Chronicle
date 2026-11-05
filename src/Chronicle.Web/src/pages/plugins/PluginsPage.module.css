@@ -668,6 +668,7 @@
 }
 
 .settingsNoticeText {
+  white-space: pre-line;   /* numbered steps keep their line breaks */
   font-size: 0.8rem;
   color: var(--text-primary);
   margin: 0;
