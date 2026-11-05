@@ -108,6 +108,11 @@ $PluginMap = @{
         DllName = "Chronicle.Plugin.IGDB.dll"
         OutDir  = Join-Path $PluginsDir "chronicle.plugin.igdb"
     }
+    "chronicle.plugin.steam"       = @{
+        Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Steam\Chronicle.Plugin.Steam.csproj"
+        DllName = "Chronicle.Plugin.Steam.dll"
+        OutDir  = Join-Path $PluginsDir "chronicle.plugin.steam"
+    }
 }
 
 if (-not $PluginMap.ContainsKey($PluginId)) {
