@@ -41,7 +41,8 @@ const STATUS_OPTIONS: LibraryStatus[] = [
  * or narrators go on top. the remaining cast, crew, whatever go below." A person with any of
  * these roles on this title (alongside possibly others, e.g. an actor who also wrote) lands in
  * the top group; everyone else (director, composer, gaffer, ...) goes in the group below. */
-const ON_SCREEN_ROLES = new Set(['actor', 'narrator', 'musician', 'vocals', 'playback singer'])
+// 'developer' is a game's cast: its type's cast heading is "Developers", so they go in that top group, not under Crew.
+const ON_SCREEN_ROLES = new Set(['actor', 'narrator', 'musician', 'vocals', 'playback singer', 'developer'])
 const isOnScreenRole = (roles: string[]) => roles.some(r => ON_SCREEN_ROLES.has(r.toLowerCase()))
 
 /**

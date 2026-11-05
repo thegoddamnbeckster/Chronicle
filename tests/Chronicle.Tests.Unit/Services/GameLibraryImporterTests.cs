@@ -261,4 +261,17 @@ public class GameLibraryImporterTests : IDisposable
 
         _db.MediaItems.Count().Should().Be(2);
     }
+
+    [Fact]
+    public async Task An_id_stored_without_the_steam_prefix_is_rewritten_to_the_prefixed_form()
+    {
+        // The Steam metadata half once stored the bare app id. An id that comes from Steam starts with "steam:", so the next import rewrites it.
+        await Run(Steam, E("77", "Quake") with { ExternalId = "77" });                // the old, bare form
+        _db.MediaExternalIds.Single(e => e.Source == "steam").ExternalId.Should().Be("77");
+
+        await Run(Steam, E("77", "Quake") with { ExternalId = "steam:77" });          // the form the plugin sends
+
+        _db.MediaItems.Count().Should().Be(1);
+        _db.MediaExternalIds.Single(e => e.Source == "steam").ExternalId.Should().Be("steam:77");
+    }
 }

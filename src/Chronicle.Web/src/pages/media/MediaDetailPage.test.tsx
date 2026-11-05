@@ -518,6 +518,23 @@ describe('MediaDetailPage', () => {
     expect(within(crewFold).queryByText('Onscreen Actor')).not.toBeInTheDocument()
   })
 
+  it('puts the developer of a game in the top cast group and its publisher under Crew', async () => {
+    mockedGetMediaPeople.mockResolvedValue([
+      makePerson({ id: 20, name: 'Novalogic', roles: ['Developer'] }),
+      makePerson({ id: 21, name: 'Some Publisher', roles: ['Publisher'] }),
+    ])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    // The developer sits in the open top group, headed "Cast" here (a game's type heads it "Developers").
+    expect(await screen.findByText('Novalogic')).toBeInTheDocument()
+    await openFold('Crew')
+    const crewFold = screen.getByText('Crew').closest('div') as HTMLElement
+    expect(within(crewFold).getByText('Some Publisher')).toBeInTheDocument()
+    expect(within(crewFold).queryByText('Novalogic')).not.toBeInTheDocument()
+  })
+
   it('shows an actor by the character they play (no "Actor"/"as" wording) and a crew member by their role', async () => {
     const actor = makePerson({ id: 10, name: 'Onscreen Actor', roles: ['Actor'], characterName: 'Roy Kent' })
     const director = makePerson({ id: 11, name: 'Behind Camera Director', roles: ['Director'], characterName: null })

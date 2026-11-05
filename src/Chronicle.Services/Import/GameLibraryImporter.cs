@@ -111,8 +111,10 @@ public sealed class GameLibraryImporter
             item = await CreateAsync(db, pluginId, entry, ct);
             isNew = true;
         }
-        else if (own is null)
+        else
         {
+            // Matched or already owned: make the stored id the form the platform sends now. An id written in an older form ("steam:1245620")
+            // is rewritten rather than left to disagree with the bare one the metadata half stores.
             await GraftAsync(db, item.Id, pluginId, entry.ExternalId, ct);
         }
 
