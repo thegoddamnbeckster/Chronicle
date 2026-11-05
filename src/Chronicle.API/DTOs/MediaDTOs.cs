@@ -220,6 +220,11 @@ namespace Chronicle.API.DTOs
         string? SourceType = null
     );
 
+    /// <summary>One platform's hold on a title for the signed-in user. PlaytimeMinutes null = the platform does not say; 0 = owned, never started.</summary>
+    public record MediaOwnershipDto(
+        string Source, string Platform, int? PlaytimeMinutes, DateTime? LastPlayedAt, DateTime? AcquiredAt,
+        bool OwnedViaSubscription, bool IsWishlist, List<string> Tags);
+
     public record MergeRequestDto(int TargetId, int WinnerId);
 
     public record DismissDuplicateDto(int ItemAId, int ItemBId);

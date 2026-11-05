@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCanDeleteMedia } from '@/hooks/useCanDeleteMedia'
-import { getMedia, getMediaChildren, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, unparentFromSeries, reparentToSeries, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
+import { getMedia, getMediaChildren, getMediaOwnership, getMediaPeople, refreshMedia, deleteMedia, changeMediaType, unparentFromCollection, reparentToCollection, unparentFromSeries, reparentToSeries, getCollections, clearAllMediaOverrides, setMediaOverride, clearMediaOverride, resetOverridesForSubtree, searchMedia } from '@/api/media'
 import { getMediaTypes } from '@/api/media'
 import { childrenLabel as childrenLabelFor, statusLabel } from '@/utils/typeWording'
 import { getLibraryEntryForMedia, getLibraryEntriesForMediaIds, getLibrarySectionIds, addToLibrary, updateLibraryEntry, resetWatchProgress } from '@/api/library'
 import { posterProgressPercent } from '@/utils/posterProgress'
+import { ownershipSummary } from '@/utils/ownership'
 import { sortChildItems } from '@/utils/childOrder'
 import { loadPrefs } from '@/utils/libraryPrefs'
 import { loadSortSettings } from '@/utils/sortSettings'
@@ -110,6 +111,13 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
   useEffect(() => {
     if (linkedPerson && !rawRecord && !embedded) navigate(`/people/${linkedPerson.itemId}`, { replace: true, state: location.state })
   }, [linkedPerson, rawRecord, embedded, navigate, location.state])
+
+  // What the user has of this title on each platform (Steam hours, a wishlist entry ...). Empty for most items.
+  const { data: ownership = [] } = useQuery({
+    queryKey: ['media', mediaId, 'ownership'],
+    queryFn: async () => (await getMediaOwnership(mediaId)) ?? [],
+    enabled: !isNaN(mediaId),
+  })
 
   const { data: children = [] } = useQuery({
     queryKey: ['media', mediaId, 'children'],
@@ -1323,6 +1331,12 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
                       </span>
                     ) : null
                   })()}
+                  {ownership.map(o => (
+                    <span key={`${o.source}:${o.platform}`} className={styles.stripStat}
+                      title={`${o.platform}${o.tags.length ? ` (${o.tags.join(', ')})` : ''}`}>
+                      <strong>{ownershipSummary(o)}</strong>
+                    </span>
+                  ))}
                 </div>
               ) : (
                 <div className={styles.addButtons}>

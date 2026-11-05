@@ -200,6 +200,35 @@ namespace Chronicle.API.Controllers
         /// role they're credited with on this title. Ordered by billing order (nulls -- crew
         /// roles typically have none -- sort after cast), same "unknown sorts last" convention
         /// used throughout PeopleController.</summary>
+        /// <summary>
+        /// What the signed-in user HAS of this title, one row per platform: owned or wishlisted, hours played, last played, acquired
+        /// (UserGameOwnership, filled by a library import). The platform's complete record stays in the database and is not sent here:
+        /// it can be large, and the page shows the summary.
+        /// </summary>
+        [HttpGet("{id:int}/ownership")]
+        public async Task<IActionResult> GetOwnership(int id, CancellationToken ct)
+        {
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "User identity could not be determined."));
+
+            var rows = await _context.UserGameOwnerships.AsNoTracking()
+                .Where(o => o.UserId == userId && o.MediaItemId == id)
+                .OrderBy(o => o.Source).ThenBy(o => o.Platform)
+                .ToListAsync(ct);
+
+            var dtos = rows.Select(o => new MediaOwnershipDto(
+                o.Source, o.Platform, o.PlaytimeMinutes, o.LastPlayedAt, o.AcquiredAt, o.OwnedViaSubscription, o.IsWishlist,
+                ParseTags(o.TagsJson))).ToList();
+            return Ok(ApiResponse<List<MediaOwnershipDto>>.Ok(dtos));
+        }
+
+        private static List<string> ParseTags(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return [];
+            try { return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? []; }
+            catch (System.Text.Json.JsonException) { return []; }
+        }
+
         [HttpGet("{id:int}/people")]
         public async Task<IActionResult> GetPeople(int id, CancellationToken ct)
         {

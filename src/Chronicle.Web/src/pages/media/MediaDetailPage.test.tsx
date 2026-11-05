@@ -29,6 +29,7 @@ vi.mock('@/hooks/useAuth')
 const mockedGetMedia = vi.mocked(mediaApi.getMedia)
 const mockedGetMediaChildren = vi.mocked(mediaApi.getMediaChildren)
 const mockedGetMediaPeople = vi.mocked(mediaApi.getMediaPeople)
+const mockedGetMediaOwnership = vi.mocked(mediaApi.getMediaOwnership)
 const mockedGetMediaTypes = vi.mocked(mediaApi.getMediaTypes)
 const mockedGetCollections = vi.mocked(mediaApi.getCollections)
 const mockedSearchMedia = vi.mocked(mediaApi.searchMedia)
@@ -145,6 +146,7 @@ beforeEach(() => {
   mockedGetMedia.mockResolvedValue(makeItem())
   mockedGetMediaChildren.mockResolvedValue([])
   mockedGetMediaPeople.mockResolvedValue([])
+  mockedGetMediaOwnership.mockResolvedValue([])
   mockedGetMediaTypes.mockResolvedValue([])
   mockedGetCollections.mockResolvedValue([])
   mockedSearchMedia.mockResolvedValue([])
@@ -516,6 +518,25 @@ describe('MediaDetailPage', () => {
     const crewFold = crewHeader.closest('div') as HTMLElement
     expect(within(crewFold).getByText('Behind Camera Director')).toBeInTheDocument()
     expect(within(crewFold).queryByText('Onscreen Actor')).not.toBeInTheDocument()
+  })
+
+  it('says what the user has of a title on each platform, beside its status', async () => {
+    mockedGetLibraryEntryForMedia.mockResolvedValue(makeLibraryEntry(makeItem(), { status: 'Watching' }))
+    mockedGetMediaOwnership.mockResolvedValue([
+      { source: 'steam', platform: 'PC', playtimeMinutes: 90, lastPlayedAt: '2026-11-04T12:00:00Z', acquiredAt: null, ownedViaSubscription: false, isWishlist: false, tags: [] },
+    ])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+
+    expect(await screen.findByText(/Steam: 1 h 30 min, last played/)).toBeInTheDocument()
+  })
+
+  it('shows nothing about ownership for an item no library import touched', async () => {
+    mockedGetLibraryEntryForMedia.mockResolvedValue(makeLibraryEntry(makeItem(), { status: 'Watching' }))
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Test Movie' })
+    expect(screen.queryByText(/Steam:/)).not.toBeInTheDocument()
   })
 
   it('puts the developer of a game in the top cast group and its publisher under Crew', async () => {

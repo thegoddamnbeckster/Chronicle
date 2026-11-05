@@ -1,5 +1,5 @@
 import client, { ApiError } from './client'
-import type { ApiResponse, MediaItem, MediaTypeOption, PersonListItem } from '@/types'
+import type { ApiResponse, MediaItem, MediaOwnership, MediaTypeOption, PersonListItem } from '@/types'
 
 export async function getMediaTypes(): Promise<MediaTypeOption[]> {
   const { data } = await client.get<ApiResponse<MediaTypeOption[]>>('/media/types')
@@ -32,6 +32,12 @@ export async function getMediaChildren(id: number): Promise<MediaItem[]> {
  * direction (title -> people rather than person -> titles). Only resolved credits come back. */
 export async function getMediaPeople(id: number): Promise<PersonListItem[]> {
   const { data } = await client.get<ApiResponse<PersonListItem[]>>(`/media/${id}/people`)
+  return data.data ?? []
+}
+
+/** What the signed-in user has of this title on each platform (hours played, wishlisted ...); empty for anything no library import touched. */
+export async function getMediaOwnership(id: number): Promise<MediaOwnership[]> {
+  const { data } = await client.get<ApiResponse<MediaOwnership[]>>(`/media/${id}/ownership`)
   return data.data ?? []
 }
 

@@ -176,6 +176,19 @@ export type LibraryStatus =
 // the generic MediaItem/MediaItemDto shape (fetched via the normal GET /media/:id endpoint);
 // these two types are only for the parts that ARE People-specific: the catalog list and the
 // role-grouped credits section on the detail page.
+/** One platform's hold on a title for the signed-in user (a library import fills it): owned or wishlisted, hours, last played. */
+export interface MediaOwnership {
+  source: string
+  platform: string
+  /** null = the platform does not say; 0 = owned and never started. */
+  playtimeMinutes: number | null
+  lastPlayedAt: string | null
+  acquiredAt: string | null
+  ownedViaSubscription: boolean
+  isWishlist: boolean
+  tags: string[]
+}
+
 export interface PersonListItem {
   id: number
   name: string
