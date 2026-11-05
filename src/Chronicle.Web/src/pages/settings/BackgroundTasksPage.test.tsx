@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import BackgroundTasksPage from './BackgroundTasksPage'
 import * as tasksApi from '@/api/backgroundTasks'
@@ -93,5 +93,22 @@ describe('BackgroundTasksPage -- enrichment started outside the scheduled task',
 
     await screen.findByText('4,420')
     expect(screen.getAllByText('Success').length).toBeGreaterThan(0)
+  })
+
+  it('a manual task queued behind a higher-priority job says Waiting, not Running', async () => {
+    vi.mocked(enrichmentApi.getEnrichmentStats).mockResolvedValue([])
+    vi.mocked(tasksApi.getBackgroundTasks).mockResolvedValue([task({
+      taskId: 'chronicle.plugin.steam:import-all', displayName: 'Import Everything from Steam', pluginId: 'chronicle.plugin.steam',
+      pluginName: 'Steam', cronExpression: '', isEnabled: false, schedulable: false, isRunnable: true, isRunning: true,
+      waitingFor: 'Fetch Missing Music Metadata',
+    })])
+    renderPage()
+
+    // the plugin's group starts folded
+    const group = (await screen.findAllByText('Steam')).map(e => e.closest('button')).filter((b): b is HTMLButtonElement => !!b).pop()!
+    fireEvent.click(group)
+    expect(await screen.findByRole('button', { name: 'Waiting…' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Running…' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Paused until Fetch Missing Music Metadata is done/)).toBeInTheDocument()
   })
 })

@@ -603,7 +603,7 @@ function TaskCard({ task, isRunning, isEditing, onRunNow, onEdit, onSave, onCanc
               onClick={() => task.runConfirmation ? setConfirmPending(true) : onRunNow()}
               disabled={isRunning}
             >
-              {isRunning ? 'Running…' : 'Run Now'}
+              {isRunning ? (task.waitingFor ? 'Waiting…' : 'Running…') : 'Run Now'}
             </button>
           )}
           {task.schedulable && (
