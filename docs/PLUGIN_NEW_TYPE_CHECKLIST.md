@@ -126,6 +126,32 @@ Also true at every place above: **the plugin stands alone.** Nothing in it requi
 build order, and each place still works when only this plugin is installed (check by reading the item with the other
 plugins' data absent).
 
+## 8a. Identity and branding (the manifest)
+
+| ID | Check | Where it shows | How it goes wrong |
+|---|---|---|---|
+| B1 | `iconUrl` is a real address that answers (a favicon or logo), loaded over HTTPS, and is legible at 16 to 20 px on **both a light and a dark card** | Plugins page card, the plugin fold and metadata box on every item page, Get Plugins list | A 404 hides the icon (the UI removes a broken image silently); a dark icon vanishes on a dark theme |
+| B2 | `brandColorLight` and `brandColorDark` are both set, each with at least 3:1 contrast against the card backgrounds of **every installed theme** it is meant for (compute it; do not eyeball) | Background Tasks card border and tint | Absent colour falls back to the default accent, so the plugin looks unbranded; a low-contrast colour makes the border invisible |
+| B3 | The host actually uses both colours: the Background Tasks card reads `brandColorDark` only today. Look at a light theme; if the dark colour is used there, that is a host gap to fix, not a plugin fault | Background Tasks page | `brandColorLight` is declared and never read |
+| B4 | `name`, `description` and `author` are the text the owner should read: what it imports, what it needs (a key, a public profile), that it works alone, and its main limit | Plugins page, Get Plugins | A description written for developers |
+| B5 | `fixMatchHint` names every form the plugin accepts | Fix Match panel | Owner cannot tell what to paste |
+| B6 | Every background task has a plain display name, a description of what it does and its cost or limit, a sensible default schedule and default on/off, a `run_confirmation` message for anything large, and `schedulable` set deliberately | Background Tasks page, Plugins page | A "Run now" that silently starts a 10-minute job |
+
+## 8b. Plugin-specific settings
+
+| ID | Check | How it goes wrong |
+|---|---|---|
+| X1 | Every setting is declared in `GetSettingsSchema` with key, label, type (`Text`, `Password`, `Number`, `Boolean`, `Dropdown`, `MultiSelect`, `Url`, `TextArea`, `Notice`), `Required`, and a `DefaultValue` for every optional one. The manifest's own `settings` list says the same or is empty on purpose | Two lists drift; a Required setting has no default and the first save fails |
+| X2 | Each setting's help text answers where, what, an example, and what not to enter (C2), and the field order reads top to bottom as the owner would do it | Owner enters the wrong thing |
+| X3 | Anything sensitive is `Password`; anything the owner should read first is a `Notice` | Secret shown in clear |
+| X4 | Values are validated when read (`Settings.From`): a bad value falls back to the default or is refused with a message, never crashes and never reaches the wire | A pasted newline in a key |
+| X5 | Advanced settings (regions, hashes, pacing) are labelled advanced, default to a working value, and say "leave blank unless told" | Owner tunes what they should not |
+| X6 | Saving settings, restarting, and saving again round-trips: a stored value comes back, a password is not echoed, an unchanged password is not wiped by a save | Saving the form clears the key |
+| X7 | `Configure` is idempotent and clears every latch and cached token (C4) | Old failure sticks after fixing the setting |
+| X8 | The **Test** action makes one safe, read-only call and reports in words: signed in as X, key rejected, profile private | A Test button that always says OK |
+| X9 | A setting that changes behaviour in the field (include wishlist, include non-game apps) states what changes and its default, and the default is the owner's stated preference (everything on) | Hidden filtering |
+| X10 | A test reads the schema and asserts: every key is read by `Settings.From`, every setting has help text, every secret is a `Password`, defaults parse | A declared setting nothing reads |
+
 ## 10. Packaging and release
 
 - `plugins.json` entry (tags include the type), embedded fallback copy, `RunTestEnvironment.ps1` build entry,
@@ -201,5 +227,21 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | P14 | Person pages, search, dashboard rows | | |
 | P15 | Background Tasks | | |
 | SA | Plugin stands alone at every place above | | |
+| B1 | Icon answers, legible on light and dark | | |
+| B2 | Brand colours light and dark, contrast computed | | |
+| B3 | Host reads both colours (look at a light theme) | | |
+| B4 | Name, description, author in the owner's words | | |
+| B5 | fixMatchHint lists every accepted form | | |
+| B6 | Background tasks: names, descriptions, schedule, confirmations | | |
+| X1 | Settings declared fully, schema and manifest agree | | |
+| X2 | Help text: where, what, example, what not | | |
+| X3 | Secrets are Password; Notice for the first read | | |
+| X4 | Values validated on read | | |
+| X5 | Advanced settings labelled, working defaults | | |
+| X6 | Save, restart, save round-trips; password not wiped | | |
+| X7 | Configure idempotent, clears latches | | |
+| X8 | Test action: one safe call, plain result | | |
+| X9 | Behaviour switches state what changes; defaults are "everything on" | | |
+| X10 | Schema test: keys read, help present, secrets typed, defaults parse | | |
 | PK | Packaging and release items | | |
 | VP | Verification pass done | | |

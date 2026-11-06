@@ -154,6 +154,39 @@ the merge. A wrong match can be undone with `DELETE /media/{id}/external-ids/chr
 5. Health messages: "signed in as <online id>", "Sony rejected the code, paste a new one", "purchases unavailable",
    "<n> titles have hidden trophies and were imported without them", "Sony returned nothing; nothing was removed".
 
+### 10a. Settings schema in full (checklist X1 to X10)
+
+| Order | Key | Type | Required | Default | Notes |
+|---|---|---|---|---|---|
+| 1 | (notice) terms | Notice | n/a | n/a | the unofficial-API notice above |
+| 2 | `npsso` | Password | yes | none | text as in item 2; trimmed; a value not 64 characters long is **accepted and tried** (C3), with a health note if Sony refuses it |
+| 3 | `region` | Dropdown | no | account's own | for store and title language only; never required to sign in |
+| 4 | `language` | Dropdown | no | `en-US` | validated against a list, falls back to default (X4) |
+| 5 | `include_trophies` | Boolean | no | on | on by the owner's everything rule (X9); text: "also read every trophy for every game: more calls, slower first run" |
+| 6 | `include_non_game_titles` | Boolean | no | on | apps, themes, demos kept and tagged (D3) |
+| 7 | `purchase_query_hash` (advanced) | Text | no | blank = built-in default | "Leave blank unless the plugin says Sony changed its purchase query" (X5) |
+
+`Settings.From` reads exactly these keys; a schema test asserts every key is read, has help text, secrets are `Password`,
+and defaults parse (X10). The manifest's `settings` list stays empty and the schema lives in code like Steam's (X1).
+Test action (X8): one token exchange plus one page of the game list; reports "signed in as <online id>, <n> titles",
+"Sony rejected the code, paste a new one", or "Sony is not answering, try again". Saving with the npsso box left
+unchanged keeps the stored value (X6); `Configure` clears the token cache and the rejection latch (X7).
+
+### 10b. Identity and branding (checklist B1 to B6), provisional until checked
+
+- `iconUrl`: PlayStation's favicon, **address to be confirmed to answer** at G2 (B1); it must read on a light and a dark card,
+  else a small PNG is bundled as a data address.
+- `brandColorLight` `#0070D1` (PlayStation blue) and `brandColorDark` a lighter blue chosen so its contrast is at least 3:1
+  on every installed theme's card; the numbers are computed and recorded at G2, not eyeballed (B2).
+- Host gap to confirm first (B3): the Background Tasks card reads `brandColorDark` only. If a light theme then shows the dark
+  colour, the host is fixed before this plugin ships (applies to Steam and IGDB too).
+- `description` in plain words: "Your PlayStation games with hours played, last played and every trophy. Needs a sign-in code
+  from playstation.com (unofficial, see the settings). Works on its own." (B4)
+- `fixMatchHint`: "Paste psn: followed by a PlayStation title id, a bare title id, or a store.playstation.com game address." (B5)
+- Tasks (B6): "Sync PlayStation Library" daily on, no confirmation; "Import Everything from PlayStation" manual, with a confirmation
+  that says it adds every title and reads every trophy; "Fetch Trophies" weekly on; "Fetch Missing PlayStation Metadata" daily on;
+  "Re-sync All PlayStation Metadata" off, with a warning that it is slow.
+
 ## 11. Tasks
 
 `import-library` (daily; titles, playtime, purchases), `fetch-trophies` (weekly, on by default per the owner's rule:
@@ -245,6 +278,22 @@ deps.json and manifest; hot deploy needs the owner's approval on the Plugins pag
 | P14 | Person pages, search, dashboard rows | Designed, gap | developer pages exist only if the probe shows developer data; search and dashboard rows are host behaviour for games already checked on Steam; G3 re-checks with a PlayStation-only game |
 | P15 | Background Tasks | Designed | section 11, checkpoints, visible failure; G3 |
 | SA | Stands alone at every place | Designed | section 7; G3 includes reading a PlayStation game with Steam and IGDB data absent |
+| B1 | Icon answers, legible light and dark | Designed, address unconfirmed | 10b |
+| B2 | Brand colours, contrast computed | Designed, values provisional | 10b; computed at G2 |
+| B3 | Host reads both colours | **Open host question** | 10b; check on a light theme before shipping |
+| B4 | Description in the owner's words | Designed | 10b |
+| B5 | fixMatchHint | Designed | 10b |
+| B6 | Background tasks described | Designed | 10b |
+| X1 | Settings declared fully | Designed | 10a |
+| X2 | Help text where/what/example/not | Designed | section 10 |
+| X3 | Secrets Password, Notice first | Designed | 10a |
+| X4 | Validated on read | Designed | 10a |
+| X5 | Advanced labelled | Designed | 10a (hash) |
+| X6 | Round-trip, password not wiped | Designed | 10a |
+| X7 | Configure clears latches | Designed | 10a |
+| X8 | Test action | Designed | 10a |
+| X9 | Switches state their effect, default on | Designed | 10a |
+| X10 | Schema test | Designed | 10a, section 12 |
 | PK | Packaging | Designed | section 13 |
 | VP | Verification pass | Not yet | G3, after build; needs the owner's sign-in |
 
