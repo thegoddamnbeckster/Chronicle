@@ -64,6 +64,13 @@ public class GameLibraryImporterTests : IDisposable
     }
 
     [Fact]
+    public void The_library_entry_keeps_its_earlier_constructor_for_plugins_built_before_alternate_names()
+    {
+        // A plugin compiled against the 17-argument shape resolves it by signature at load; losing it would throw MissingMethodException.
+        typeof(ImportedLibraryEntry).GetConstructors().Should().Contain(c => c.GetParameters().Length == 17);
+    }
+
+    [Fact]
     public void Only_a_container_type_or_a_collection_type_takes_aliases()
     {
         MetadataEnrichmentService.TypeTakesAliases(new MediaType { HierarchyLevels = 3 }).Should().BeTrue();

@@ -36,7 +36,16 @@ public record ImportedLibraryEntry(
     string? BackdropUrl = null,
     string? Overview = null,
     /// <summary>Other names people might type for this title (the name without trademark marks, a numeral written the other way). Become aliases the search matches. Optional.</summary>
-    IReadOnlyList<string>? AlternateNames = null);
+    IReadOnlyList<string>? AlternateNames = null)
+{
+    /// <summary>The shape before <c>AlternateNames</c> existed, kept so a plugin built against it still loads and runs unchanged.</summary>
+    public ImportedLibraryEntry(
+        string ExternalId, IReadOnlyDictionary<string, string> AdditionalIds, string MediaType, string Title, int? Year, string Platform,
+        string StoreSource, int? PlaytimeMinutes, DateTimeOffset? LastPlayedAt, DateTimeOffset? AcquiredAt, bool OwnedViaSubscription,
+        bool IsWishlist, string RawJson, IReadOnlyList<string>? Tags, string? PosterUrl, string? BackdropUrl, string? Overview)
+        : this(ExternalId, AdditionalIds, MediaType, Title, Year, Platform, StoreSource, PlaytimeMinutes, LastPlayedAt, AcquiredAt,
+               OwnedViaSubscription, IsWishlist, RawJson, Tags, PosterUrl, BackdropUrl, Overview, null) { }
+}
 
 /// <summary>Account-level facts a platform reports about the user (level, badges, display name). Kept whole.</summary>
 public record ImportedAccountInfo(string DisplayName, string RawJson);
