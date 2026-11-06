@@ -301,6 +301,18 @@ deps.json and manifest; hot deploy needs the owner's approval on the Plugins pag
 | P14 | Person pages, search, dashboard rows | Designed, gap | developer pages exist only if the probe shows developer data; search and dashboard rows are host behaviour for games already checked on Steam; G3 re-checks with a PlayStation-only game |
 | P15 | Background Tasks | Designed | section 11, checkpoints, visible failure; G3 |
 | SA | Stands alone at every place | Designed | section 7; G3 includes reading a PlayStation game with Steam and IGDB data absent |
+| K1 | Single version source | Designed | version read from the assembly; manifest test (section 12) |
+| K2 | Contract compatibility stated; loaded on previous host | Designed | release notes name the host build; the zip is loaded into the previous build before release |
+| K3 | Identity, catalogue, embedded copy, versions, tag agree | Designed | `chronicle.plugin.playstation`; section 13 |
+| K4 | Test floor | Designed | section 12 |
+| K5 | CI, licence, source terms | Designed, gap | CI workflow and LICENSE added with the repo; Sony's terms recorded in the doc page (section 4 states them) |
+| K6 | No scaffold left behind | N/A | the repo is created with working code, not a scaffold |
+| K7 | Secrets redacted, proved | Designed | section 4; a failing-call redaction test is in section 12 |
+| K8 | User-Agent sent | Designed | "Chronicle-PlayStation/<version>"; the mobile API may expect an app-like agent, which the probe settles |
+| K9 | Shared client, explicit timeout | Designed | section 9 (25 s) |
+| K10 | Documented rate limit honoured | Designed, unknown | Sony publishes none; the probe measures, then the doc page records it |
+| K11 | No empty catch | Designed | review rule at G2 |
+| K12 | Doc page and catalogue line | Designed | section 13 |
 | Q1 | Provider search within 4 s | Designed | 10c (index in the hub; cold start one 3 s call) |
 | Q2 | Empty list for unserved types, cheap failures | Designed | 10c, section 9 |
 | Q3 | Result fields, meaningful score | Designed | 10c |

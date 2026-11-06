@@ -61,7 +61,7 @@ and again at release, with evidence.
 | ID | Check | Why |
 |---|---|---|
 | M1 | Every image URL offered **exists** (verified by HEAD, or taken from the record's own path). A guessed URL is never offered unchecked | Guessed Steam art 404ed for some games |
-| M2 | The image host allowlist is exact and includes every host the record's own paths resolve to | A missing host silently drops images |
+| M2 | Images are loaded **by the browser straight from the address in the metadata** (the host never calls `GetImageAsync`), so every image address is `https`, hot-linkable without a referrer or login, and sends a CORS header if the card measures it (IGDB does). `GetImageAsync` is either a refusal with a reason (`NotSupportedException`, as IMDb and Fanart.tv do) or checks the host against an exact list and never sends the plugin's credentials to another host | A fetch method that takes any address and carries the plugin's bearer token is a leak waiting for a caller |
 | M3 | Every image kind returned maps to a slot in `imageExtractor.ts` | An unmapped kind is dropped silently |
 | M4 | A logo or wide image keeps transparency (PNG), is shown whole, and sits on a ground chosen by measuring its brightness | JPEG logo was solid black; light-on-light vanished |
 | M5 | Declared fields (`poster_url`, `backdrop_url`, `logo_url`, `banner_url`, `thumb_url`) are all filled when the source has the art | The owner asked why paths were left unresolved |
@@ -177,6 +177,25 @@ off by the page size. Each plugin affects both.
 | Q12 | The result row shows the type's display name, poster (or a deliberate fallback), year, and opens `/media/{id}`; a studio or developer is findable as a person where the plugin supplies them | Row looks wrong or opens the wrong page |
 | Q13 | The run record lists the queries actually typed and what each returned (position, or "not found"). Fewer than ten queries is not a search check | "Search works" with nothing behind it |
 
+## 9. Conventions across all plugins (found by the 2026-11-06 survey of 91 repos)
+
+See `docs/plans/2026-11-06-plugin-survey.md` for the evidence behind each.
+
+| ID | Check | How it goes wrong |
+|---|---|---|
+| K1 | One source of version: the manifest. `Version` in code is read from the assembly (`AssemblyInformationalVersion`), both halves of a two-interface plugin report the same value, and a test compares it to the manifest | 18 of 24 real plugins print a hand-typed version that has drifted |
+| K2 | **Contract compatibility is stated.** The plugin names the host contract it was built against and the host build it needs (commit or date). Before a release, load the zip into the **previous** host build and say whether it loads. A new optional member on a contract type keeps the old constructor or method for plugins already built | A plugin built on a newer contract fails to load on an older host; `min_chronicle_version` does not track it |
+| K3 | Identity is consistent: `plugin_id` is `chronicle.plugin.<name>`; the `plugins.json` entry, the embedded fallback copy (or a recorded reason there is none), the manifest version, the csproj version and the git tag all agree at release; each is compared by a script, not by eye | Install and "latest version" logic reads them |
+| K4 | Test floor: a contract test (every declared field is filled, `SearchAsync` never throws for an unserved type, `GetByIdAsync` accepts each id form), a test of each mapper against a recorded real response, a settings-schema test (X10), and a redaction test (K7). Zero tests is not releasable | 5 of 25 real plugins, two of them built in, have none |
+| K5 | Automation and terms: a CI workflow that builds and runs the tests on every push and builds the release zip from a tag; a LICENSE; the data source's own terms recorded in the plugin's doc page (attribution, caching limits, commercial use) | Releases are zipped by hand; terms are unstated |
+| K6 | A plugin that is not built is not left as a scaffold in the plugin repos: either it is deleted or it carries a visible "not implemented" status and the current interface. A new plugin starts from a **current** template | 66 scaffolds carry the old interface and 35 have invalid manifests |
+| K7 | Secrets: a key in a query string is redacted in every log line and exception text, proved by a test that makes the call fail on purpose and asserts the secret is absent from the message, the inner exception and the log | Only IGDB, Steam and TheAudioDB have redaction code |
+| K8 | Outgoing identity: every request sends a descriptive `User-Agent` naming Chronicle and the plugin version (never the owner's email or any personal detail) | Some services block an anonymous client |
+| K9 | HTTP hygiene: one shared `HttpClient` per plugin (not one per call), an explicit timeout no longer than the host's call limit, and nothing waiting on a call the host has abandoned | 11 real plugins set no timeout; 10 construct a client per use |
+| K10 | Rate limits: the service's documented limit is in the plugin's pacing, 429 and `Retry-After` are honoured, and the doc page says what the limit is | MusicBrainz limits to 1 a second and has no 429 handling |
+| K11 | No empty `catch {}`. A caught error is logged with the plugin's id and either rethrown, or returned as a stated degraded result | IMDb has 11, TMDB 4 |
+| K12 | Every real plugin has its `docs/plugins/PLUGIN_*.md` page and a `PLUGIN_CATALOGUE.md` line | 9 are missing |
+
 ## 10. Packaging and release
 
 - `plugins.json` entry (tags include the type), embedded fallback copy, `RunTestEnvironment.ps1` build entry,
@@ -216,7 +235,7 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | I6 | Editions never merge by name | | |
 | I7 | Wrong match can be undone | | |
 | M1 | Image URLs verified | | |
-| M2 | Image host allowlist | | |
+| M2 | Image addresses https and hot-linkable; `GetImageAsync` refuses or checks the host | | |
 | M3 | Image kinds map to slots | | |
 | M4 | Logos: PNG, whole, measured ground | | |
 | M5 | All art fields filled | | |
@@ -253,6 +272,18 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | P14 | Person pages, search, dashboard rows | | |
 | P15 | Background Tasks | | |
 | SA | Plugin stands alone at every place above | | |
+| K1 | Single version source, halves agree, test | | |
+| K2 | Contract compatibility stated; loaded on previous host | | |
+| K3 | Identity, catalogue, embedded copy, versions, tag agree | | |
+| K4 | Test floor met | | |
+| K5 | CI, licence, source terms recorded | | |
+| K6 | No scaffold left behind; current template | | |
+| K7 | Secrets redacted, proved by a failing-call test | | |
+| K8 | User-Agent sent | | |
+| K9 | Shared client, explicit timeout | | |
+| K10 | Documented rate limit honoured | | |
+| K11 | No empty catch | | |
+| K12 | Doc page and catalogue line | | |
 | Q1 | Provider search within 4 s | | |
 | Q2 | Empty list for unserved types; failures cheap | | |
 | Q3 | Result fields set; score means something | | |
