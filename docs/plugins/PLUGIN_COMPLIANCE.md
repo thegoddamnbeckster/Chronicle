@@ -15,9 +15,9 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 | FileScanner | ok | ok | ok | **XX** | . | . | . | . | ok | ok | ok | . | ok | . | . | ok | ok | ok | . | . | . |
 | Hardcover | ok | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
 | IGDB | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
-| IMDb | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
+| IMDb | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
 | LastFM | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| MoviesRemastered | ok | **XX** | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
+| MoviesRemastered | ok | **XX** | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
 | MusicBrainz | ok | ok | ok | **XX** | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
 | OMDb | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
 | OpenLibrary | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
@@ -29,7 +29,7 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 | TheTVDB | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
 | Themes.Default | ok | ok | ok | **XX** | . | . | . | . | ok | ok | . | . | ok | . | . | . | . | . | . | . | . |
 | Trakt | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| Wikipedia | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
+| Wikipedia | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
 
 | check | meaning |
 |---|---|
@@ -58,70 +58,69 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 ## Failures, with the reason the script found
 
 ### AniList
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### Deezer
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### FanEdit
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### FanartTV
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### FileScanner
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### Hardcover
 - **K3** (identity/catalogue/tag/embedded agree): plugin_id 'hardcover'
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### IGDB
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### IMDb
-- **K5** (CI and licence): license=True ci=False
+No static failures.
 
 ### LastFM
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### MoviesRemastered
 - **K3** (identity/catalogue/tag/embedded agree): tag '1.0.1' vs manifest '1.1.0'
-- **K5** (CI and licence): license=True ci=False
 
 ### MusicBrainz
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 - **K7** (secrets redacted): holds a secret, and no test proves a failing call keeps it out of errors
 
 ### OMDb
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### OpenLibrary
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### Simkl
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### Steam
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### TMDB
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### TVMaze
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### TheAudioDB
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### TheTVDB
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### Themes.Default
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### Trakt
-- **K5** (CI and licence): license=False ci=False
+- **K5** (CI and licence): license=False ci=True
 
 ### Wikipedia
-- **K5** (CI and licence): license=True ci=False
+No static failures.

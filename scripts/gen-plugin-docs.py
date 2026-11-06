@@ -9,12 +9,12 @@ docs = os.path.join(host, "docs")
 # What each service asks of the owner and what its terms say the plugin must respect. Only facts the plugin or the
 # service documents; anything not known here says "see the service's terms" rather than guessing.
 INFO = {
-    "AniList":          ("None. Public GraphQL API.", "Free for non-commercial use; be polite with the request rate.", "https://anilist.co"),
+    "AniList":          ("None. Public GraphQL API.", "Free API; see AniList's terms before any commercial use, and keep the request rate polite.", "https://anilist.co"),
     "Deezer":           ("None for public metadata.", "Public API; see Deezer's terms for artwork and previews.", "https://developers.deezer.com"),
     "FanEdit":          ("A free fanedit.org account (username and password).", "Reads the Fan Edit Database as the owner; do not redistribute its content.", "https://fanedit.org"),
     "FanartTV":         ("A Fanart.tv API key; an optional personal client key raises the limits.", "Artwork belongs to its uploaders; the project asks for attribution.", "https://fanart.tv"),
     "FileScanner":      ("None. Reads local folders only.", "Local files only; nothing is sent anywhere.", ""),
-    "Hardcover":        ("A Hardcover API token (Hardcover.app, Settings, API).", "Personal use of the owner's own account data; see Hardcover's API terms.", "https://hardcover.app"),
+    "Hardcover":        ("A Hardcover API token (Hardcover.app, Settings, API).", "Reads the owner's own Hardcover account; see Hardcover's API terms.", "https://hardcover.app"),
     "IGDB":             ("A Twitch developer Client ID and Client Secret.", "Subject to the Twitch Developer Services Agreement; IGDB asks for attribution.", "https://api-docs.igdb.com"),
     "IMDb":             ("None. Uses IMDb's published non-commercial datasets.", "Personal, non-commercial use only; the datasets must not be redistributed.", "https://developer.imdb.com/non-commercial-datasets/"),
     "LastFM":           ("A Last.fm API key; scrobble import also needs the owner's username.", "Last.fm API terms; keep to its rate limit.", "https://www.last.fm/api"),
