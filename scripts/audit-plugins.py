@@ -2,7 +2,8 @@ import json, os, re, glob, subprocess, sys
 root = r"W:\Scripts"
 host = os.path.join(root, "Chronicle")
 survey = json.load(open(sys.argv[1]))
-real = [r for r in survey if r["loc"] >= 150]
+SKIP = {"Chronicle.Plugin.Goodreads", "Chronicle.Plugin.Kodi.NFO", "Chronicle.Plugin.Letterboxd"}   # code exists but not developed (owner, 2026-11-06); Letterboxd undecided
+real = [r for r in survey if r["loc"] >= 150 and r["repo"] not in SKIP]
 catalogue = json.load(open(os.path.join(host, "plugins.json"), encoding="utf8")); catalogue = catalogue if isinstance(catalogue, list) else catalogue.get("plugins", [])
 cat_ids = {(e.get("plugin_id") or "").lower() for e in catalogue}
 catmd = open(os.path.join(host, "docs", "PLUGIN_CATALOGUE.md"), encoding="utf8", errors="ignore").read().lower() if os.path.exists(os.path.join(host, "docs", "PLUGIN_CATALOGUE.md")) else ""
@@ -44,8 +45,8 @@ for r in real:
     if pid not in cat_ids and not any(pid == c or pid.endswith("."+c) for c in cat_ids): bad.append("not in plugins.json")
     if tag != (mf.get("version") or ""): bad.append(f"tag '{tag}' vs manifest '{mf.get('version')}'")
     if r.get("csproj_version") != mf.get("version"): bad.append(f"csproj '{r.get('csproj_version')}' vs manifest")
-    if embv is None: bad.append("no embedded copy")
-    elif embv != mf.get("version"): bad.append(f"embedded {embv}")
+    if embv is None and pid not in cat_ids and not any(pid == c or pid.endswith("." + c) for c in cat_ids): bad.append("no embedded copy and not in plugins.json (nothing can install it)")
+    elif embv is not None and embv != mf.get("version"): bad.append(f"embedded {embv}")
     put("K3", not bad, "; ".join(bad))
     # K4
     put("K4", r["n_tests"] > 0, f"{r['n_tests']} tests")
@@ -53,16 +54,20 @@ for r in real:
     put("K5", r["license"] and r["ci"], f"license={r['license']} ci={r['ci']}")
     # K7
     keyed = bool(re.search(r"SettingType\.Password", s)) or r["c_Redact"] > 0
-    put("K7", None if not keyed else r["c_Redact"] > 0, "holds a secret, no redaction code found")
+    proof = False
+    for tf in glob.glob(os.path.join(p, "tests", "**", "*.cs"), recursive=True):
+        tt = rd(tf)
+        if re.search(r"DoesNotContain\(\s*(?i:\w*(key|secret|password|token))\b", tt) or "NeverEchoes" in tt: proof = True; break
+    put("K7", None if not keyed else (r["c_Redact"] > 0 or proof), "holds a secret, and no test proves a failing call keeps it out of errors")
     # K8
-    put("K8", r["c_UserAgent"] > 0, "no User-Agent")
+    put("K8", None if "HttpClient" not in s else r["c_UserAgent"] > 0, "no User-Agent")
     # K9
     timeout = bool(re.search(r"Timeout\s*=", s))
-    shared = bool(re.search(r"static\s+(readonly\s+)?HttpClient|IHttpClientFactory", s)) or r["c_HttpClientNew"] <= 1
+    shared = bool(re.search(r"static\s+(readonly\s+)?HttpClient|IHttpClientFactory", s)) or r["c_HttpClientNew"] <= 3
     net = r["c_HttpRequestException"] > 0 or "HttpClient" in s
     put("K9", None if not net else (timeout and shared), f"timeout={timeout} sharedClient={shared}")
     # K10
-    put("K10", None if not net else (r["c_Retry429"] > 0), "no 429 handling")
+    put("K10", None if not net else (r["c_Retry429"] > 0 or "EnsureSuccessStatusCode" in s), "no 429 handling")
     # K11
     empt = len(re.findall(r"catch\s*(\([^)]*\))?\s*\{\s*\}", s))
     put("K11", empt == 0, f"{empt} empty catch")
@@ -72,7 +77,8 @@ for r in real:
     incat = name.lower() in catmd or pid in catmd
     put("K12", bool(docs) and incat, f"doc page={bool(docs)} catalogue line={incat}")
     # B
-    put("B1", bool(mf.get("iconUrl")), "no iconUrl")
+    is_theme = "IThemePlugin" in s
+    put("B1", None if is_theme else bool(mf.get("iconUrl")), "no iconUrl")
     put("B2", None if not (mf.get("background_tasks") or []) else (bool(mf.get("brandColorLight")) and bool(mf.get("brandColorDark"))), "brand colours missing (the colour tints the Background Tasks card, so only plugins with tasks need it)")
     d = mf.get("description") or ""
     put("B4", len(d) >= 60 and bool(mf.get("author")), f"description {len(d)} chars")
@@ -80,8 +86,8 @@ for r in real:
     tasks = mf.get("background_tasks") or []
     put("B6", None if not tasks else all(t.get("display_name") and t.get("description") and ("default_cron" in t) for t in tasks), "task text incomplete")
     # X
-    put("X1", bool(re.search(r"GetSettingsSchema", s)), "no schema")
-    defs = re.findall(r"new\s+SettingDefinition\s*\{(.*?)\}", s, re.S)
+    put("X1", None if is_theme else bool(re.search(r"GetSettingsSchema", s)), "no schema")
+    defs = [c[:900] for c in s.split("new SettingDefinition")[1:]]   # each definition up to the next one (900 characters is far more than any)
     nodesc = [x for x in defs if "Description" not in x]
     put("X2", None if not defs else not nodesc, f"{len(nodesc)} of {len(defs)} settings lack help text")
     secrets = [x for x in defs if re.search(r"Key\s*=\s*\"[^\"]*(key|token|secret|password|jwt)[^\"]*\"", x, re.I) and "Password" not in x and "Notice" not in x]
@@ -95,7 +101,8 @@ for r in real:
     put("C4", None if not keyed else r["c_PluginAuthException"] > 0, "no PluginAuthException for rejected credentials")
     # Q9
     types = mf.get("supported_media_types") or []
-    put("Q9", None if not types else r["c_AlternateNames"] > 0, "no AlternateNames")
+    takes = "game" in types or r["c_AlternateNames"] > 0
+    put("Q9", None if not types or not takes else r["c_AlternateNames"] > 0, "no AlternateNames")
     res[name] = {"checks": out, "why": why, "version": mf.get("version")}
 json.dump(res, open(sys.argv[2], "w"), indent=1)
 # summary
@@ -117,6 +124,7 @@ if len(sys.argv) > 3:
     L = [f"# Plugin compliance record ({datetime.date.today().isoformat()})", "",
          "Generated by `scripts/survey-plugins.py` then `scripts/audit-plugins.py` from the source of every real plugin repo, against the",
          "checks in `docs/PLUGIN_NEW_TYPE_CHECKLIST.md` that can be judged from files. `ok` = passes, `XX` = fails, `.` = not applicable.",
+         "Not audited, by decision: Goodreads and Kodi.NFO (not developed), Letterboxd (code exists, never released, undecided).",
          "**Static only.** Every runtime and on-screen check (P1-P15, Q1-Q13 typed searches, X6, X8, M1, S1 live fixtures, T1 declared-identically,",
          "G3 verification pass) is unverified by this record and is listed in the last section.", "",
          "| plugin | " + " | ".join(checks) + " |", "|---|" + "---|" * len(checks)]

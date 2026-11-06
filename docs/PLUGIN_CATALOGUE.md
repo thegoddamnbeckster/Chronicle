@@ -1,6 +1,6 @@
 # Chronicle Plugin Catalogue
 
-**Last Updated:** 2026-06-06
+**Last Updated:** 2026-11-06
 **Author:** Chronicle Contributors with Anthropic Claude
 
 This document indexes every planned metadata provider plugin for Chronicle.
@@ -14,16 +14,32 @@ are noted accordingly.
 
 ## ✅ Already Built & Deployed
 
-These plugins are fully implemented and deployed. See their individual repositories for setup instructions.
+These plugins are implemented. Their status is audited by `scripts/audit-plugins.py` (`docs/plugins/PLUGIN_COMPLIANCE.md`). Goodreads, Kodi.NFO and Letterboxd have code but are **not developed** by decision (2026-11-06); every other repo named below the table is an unbuilt scaffold.
 
-| Plugin | Repository | Type | Media Types |
-|--------|-----------|------|-------------|
-| **TMDB** | [Chronicle.Plugin.TMDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TMDB) | `IMetadataProvider` | Movies, TV, Anime, Fan Edits, Seasons, Episodes |
-| **MusicBrainz** | [Chronicle.Plugin.MusicBrainz](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz) | `IMetadataProvider` | Music, Audiobooks |
-| **Trakt** | [Chronicle.Plugin.Trakt](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Trakt) | `IMetadataProvider` + `IImportProvider` | Movies, TV |
-| **SIMKL** | [Chronicle.Plugin.Simkl](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl) | `IMetadataProvider` + `IImportProvider` | Movies, TV, Anime |
-| **FanEdit (IFDB)** | [Chronicle.Plugin.FanEdit](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanEdit) | `IMetadataProvider` | Fan Edits |
-| **Hardcover** | [Chronicle.Plugin.Hardcover](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover) | `IMetadataProvider` + `IImportProvider` | Books, Audiobooks |
+| Plugin | Repository | Version | Interfaces | Media types | Needs | Source terms |
+|---|---|---|---|---|---|---|
+| **AniList** | [Chronicle.Plugin.AniList](https://github.com/thegoddamnbeckster/Chronicle.Plugin.AniList) | 1.0.5 | `IMetadataProvider` | anime, anime_movies | None. Public GraphQL API. | Free for non-commercial use; be polite with the request rate. |
+| **Deezer** | [Chronicle.Plugin.Deezer](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Deezer) | 1.0.2 | `IMetadataProvider` | music | None for public metadata. | Public API; see Deezer's terms for artwork and previews. |
+| **FanEdit** | [Chronicle.Plugin.FanEdit](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanEdit) | 1.0.2 | `IMetadataProvider` | n/a | A free fanedit.org account (username and password). | Reads the Fan Edit Database as the owner; do not redistribute its content. |
+| **Fanart.tv** | [Chronicle.Plugin.FanartTV](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FanartTV) | 1.1.3 | `IMetadataProvider` | n/a | A Fanart.tv API key; an optional personal client key raises the limits. | Artwork belongs to its uploaders; the project asks for attribution. |
+| **File Scanner** | [Chronicle.Plugin.FileScanner](https://github.com/thegoddamnbeckster/Chronicle.Plugin.FileScanner) | 1.3.1 | `IMetadataProvider` | n/a | None. Reads local folders only. | Local files only; nothing is sent anywhere. |
+| **Hardcover** | [Chronicle.Plugin.Hardcover](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover) | 1.6.0 | `IImportProvider + IMetadataProvider` | n/a | A Hardcover API token (Hardcover.app, Settings, API). | Personal use of the owner's own account data; see Hardcover's API terms. |
+| **IGDB** | [Chronicle.Plugin.IGDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.IGDB) | 1.1.2 | `IMetadataProvider` | game | A Twitch developer Client ID and Client Secret. | Subject to the Twitch Developer Services Agreement; IGDB asks for attribution. |
+| **IMDb** | [Chronicle.Plugin.IMDb](https://github.com/thegoddamnbeckster/Chronicle.Plugin.IMDb) | 1.2.1 | `IMetadataProvider` | n/a | None. Uses IMDb's published non-commercial datasets. | Personal, non-commercial use only; the datasets must not be redistributed. |
+| **Last.fm** | [Chronicle.Plugin.LastFM](https://github.com/thegoddamnbeckster/Chronicle.Plugin.LastFM) | 1.1.1 | `IImportProvider + IMetadataProvider` | n/a | A Last.fm API key; scrobble import also needs the owner's username. | Last.fm API terms; keep to its rate limit. |
+| **Movies Remastered (MRDb)** | [Chronicle.Plugin.MoviesRemastered](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered) | 1.1.0 | `IMetadataProvider` | n/a | None. Reads the public pages of moviesremastered.com. | A scraped site: the plugin paces itself and identifies itself; be gentle. |
+| **MusicBrainz** | [Chronicle.Plugin.MusicBrainz](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz) | 1.4.1 | `IMetadataProvider` | n/a | None. An optional MusicBrainz username and password are supported. | Core data is CC0. One request per second and a descriptive User-Agent are required. |
+| **OMDb** | [Chronicle.Plugin.OMDb](https://github.com/thegoddamnbeckster/Chronicle.Plugin.OMDb) | 1.0.2 | `IMetadataProvider` | movies, tv, anime, anime_movies | An OMDb API key (the free one allows 1,000 requests a day). | OMDb's terms; the daily limit is honoured and reported. |
+| **Open Library** | [Chronicle.Plugin.OpenLibrary](https://github.com/thegoddamnbeckster/Chronicle.Plugin.OpenLibrary) | 1.0.3 | `IMetadataProvider` | books, audiobooks | None. An optional contact address goes into the User-Agent. | Open data; Open Library asks heavy users to identify themselves. |
+| **SIMKL** | [Chronicle.Plugin.Simkl](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Simkl) | 1.7.0 | `IImportProvider + IMetadataProvider` | movie, movies, tv, anime | A SIMKL client ID, then a sign-in from the plugin settings. | SIMKL API terms; the plugin respects its rate limits. |
+| **Steam** | [Chronicle.Plugin.Steam](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Steam) | 1.1.1 | `IImportProvider + IMetadataProvider` | game | A Steam Web API key and the owner's Steam ID; the profile's game details must be public. | Steam Web API terms; the store is paced at about 200 requests per 5 minutes. |
+| **TMDB** | [Chronicle.Plugin.TMDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TMDB) | 1.9.1 | `IMetadataProvider` | n/a | A TMDB API key. | Free for non-commercial use; TMDB requires attribution and its logo where its data is shown. |
+| **TVMaze** | [Chronicle.Plugin.TVMaze](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TVMaze) | 1.0.5 | `IMetadataProvider` | n/a | None. Public REST API. | Data is CC BY-SA; the API allows 20 calls per 10 seconds. |
+| **TheAudioDB** | [Chronicle.Plugin.TheAudioDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TheAudioDB) | 1.0.0 | `IMetadataProvider` | music | A TheAudioDB API key (the free key 123 is the default; a premium key lifts the limits). | The free key returns one record per search and is rate limited; see TheAudioDB's terms. |
+| **TheTVDB** | [Chronicle.Plugin.TheTVDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.TheTVDB) | 1.0.0 | `IMetadataProvider` | n/a | A free TheTVDB API key from thetvdb.com/dashboard. | See TheTVDB's terms of use. |
+| **Default Themes** | [Chronicle.Plugin.Themes.Default](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Themes.Default) | 1.0.0 | `IMetadataProvider` | n/a | None. Four built-in colour themes. | Ships with Chronicle. |
+| **Trakt** | [Chronicle.Plugin.Trakt](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Trakt) | 1.2.1 | `IMetadataProvider` | n/a | A Trakt Client ID and Secret, then a sign-in from the plugin settings. | Trakt API terms; its rate limits are honoured. |
+| **Wikipedia** | [Chronicle.Plugin.Wikipedia](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Wikipedia) | 1.0.17 | `IMetadataProvider` | n/a | None. Public MediaWiki API. | Text is CC BY-SA; attribute it. Chronicle ranks it last because articles vary in quality. |
 
 ---
 
