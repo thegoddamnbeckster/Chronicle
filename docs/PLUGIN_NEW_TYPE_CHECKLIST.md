@@ -98,24 +98,33 @@ and again at release, with evidence.
 | T2 | The host was **restarted** after install | Types are created at startup |
 | T3 | `SupportsCollections`, `EnrichOnly`, `DefaultPriority` are deliberate, not defaulted | Games group into series |
 
-## 8. Metadata Assignment page
+## 8. Every place a media type or plugin must show up (one numbered check per place)
 
-- Every active type is listed, sorted by display name; check the page bottom and the "Choose a media type" dropdown.
-- A plugin appears on a field only if it **declares** a canonical field name (`MetadataResolutionService.FieldMap`).
-  `extended_data` is not resolvable.
-- **Declare every field the plugin really fills.** A mapper test asserts each declared field is filled and each filled
-  field is declared.
-- A saved assignment config predates the plugin: the page appends the plugin to the end of each field. Move it to the
-  front where an older plugin is weaker (IMDb for games). Do it, or tell the owner. Wikipedia goes last in every list.
-- **Plugins stand alone.** Nothing in the plugin requires another plugin's install, data or build order.
+Each row is looked at **in the running app** after the host restart (T2) and the first import. "Looked at" means the
+run record names what was seen: the text on screen, the count, the position in the list. The first three are the ones
+that have already been missed once.
 
-## 9. Library, Add Media, Fix Match, item page
+| ID | Place | What must be true | How it silently goes wrong |
+|---|---|---|---|
+| P1 | **Settings > Metadata Assignment**, the type list | The type is listed under its display name. The list is sorted by display name, so check the **bottom** of the page, and the "Choose a media type" dropdown at the top | A type starting with V sits below the fold and looks missing |
+| P2 | Metadata Assignment, each field of the type | The plugin appears under **every field it fills** and under none it does not (a mapper test asserts declared equals filled). Only canonical field names count (`MetadataResolutionService.FieldMap`); `extended_data` is not resolvable | A field not declared has no plugin to pick; IGDB declared no cast, so developers were empty |
+| P3 | Metadata Assignment, the order inside each field | A saved assignment config predates the plugin, so the page appends it last. Move it ahead of any weaker plugin (IMDb for games), Wikipedia last. Do it, or tell the owner it needs doing | The new plugin exists but never wins |
+| P4 | **Library**, the type section | The type appears after the first item exists (the Library hides empty types). Display name, hierarchy label, item count, sort and filters read sensibly. Collections are badged; items without a series are top level | New type invisible until an item exists; "Watching" on a game |
+| P5 | Library, an item tile | Poster, title, year, status and (for games) ownership read correctly; an item with no art shows a deliberate fallback, not a broken image | Missing or 404 art |
+| P6 | **Add Media**, the type picker | The type is offered, with the plugin's search results showing the plugin's key and cover, and the right candidate first (strongest match on top) | Type absent, or results from the wrong plugin |
+| P7 | Add Media, a result added | The new item lands in the Library under the type with the plugin's ids, prefixed | Bare ids collide across platforms |
+| P8 | Fix Match | Accepts the plugin's ids bare, prefixed and as URLs; the `fixMatchHint` says which | Owner cannot correct a bad match |
+| P9 | Add Collection, Scan (folders by type), Getting Started | The type is offered where types are chosen, or the check says why not (a library-import type has no folder to scan) | Type missing from a dropdown nobody thought of |
+| P10 | **Settings > Media Types** | One row for the type, unit, verb, labels, cast heading, aliases as declared; no duplicate type from a spelling variant | Two plugins declared it differently |
+| P11 | **Plugins** page | Card shows version, settings with their text, Save, Test, scheduled tasks seeded, and the type badge; changed files approved (integrity) | Old version still loaded |
+| P12 | Item page: cast, crew, box, images | Cast is headed by `CastHeading` and populated (developers with logos); crew populated; the plugin's metadata box shows its record; every image kind lands in a slot | Empty sections |
+| P13 | Item page: ownership, collection, status | Ownership line per platform (hours, last played, subscription), Collection badge where a series exists, no "Reset Watch Progress" for a "played" type | Wording for the wrong media kind |
+| P14 | Person pages, search, dashboard rows | A developer or studio page lists the plugin's items under the type; global search finds them; any "recent" or "continue" row treats the type correctly | Type works in the Library but nowhere else |
+| P15 | Background Tasks | The plugin's tasks ran, show "Waiting..." when paused and a visible error on failure | Silent failure |
 
-- The Library lists only types that have at least one item: import, then look. Status words must read sensibly
-  ("Unwatched" for a game is a UI note).
-- Add Media lists the type; a search returns results with the plugin's key and cover. Fix Match accepts the plugin's ids.
-- Item page: cast section headed by `CastHeading`, populated (developers with their logos); crew populated; the plugin's
-  metadata box shows its record; the ownership line; the Collection badge where a series exists.
+Also true at every place above: **the plugin stands alone.** Nothing in it requires another plugin's install, data or
+build order, and each place still works when only this plugin is installed (check by reading the item with the other
+plugins' data absent).
 
 ## 10. Packaging and release
 
@@ -130,9 +139,7 @@ and again at release, with evidence.
 ## 11. The verification pass (G3, do not skip)
 
 In the signed-in browser pane (the owner signs in; I do not enter their password), look at and report what is seen:
-Plugins page (card, settings text, Test, tasks, version); Metadata Assignment (type, fields, order); Library (the type
-appears after the import runs, collections badged); Add Media (search result with key and cover); one item's page
-(cast with logos, crew, metadata box, images, ownership line); Background Tasks (the import ran, no error). If the pane
+every row P1 to P15 of section 8, in that order, writing down what was seen for each. If the pane
 is signed out, say so and list what is therefore unverified; never write "verified".
 
 ## 12. Run record (copy into the plugin's design doc)
@@ -178,7 +185,21 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | T1 | Type declared identically | | |
 | T2 | Host restarted | | |
 | T3 | Type flags deliberate | | |
-| MA | Metadata Assignment: fields, order, standalone | | |
-| LB | Library, Add Media, Fix Match, item page | | |
+| P1 | Metadata Assignment: type listed (bottom of page, dropdown) | | |
+| P2 | Metadata Assignment: plugin under every field it fills, none it does not | | |
+| P3 | Metadata Assignment: order within each field | | |
+| P4 | Library: type section, labels, collections badged | | |
+| P5 | Library: item tile, art fallback | | |
+| P6 | Add Media: type offered, results with key and cover, best first | | |
+| P7 | Add Media: added item lands with prefixed ids | | |
+| P8 | Fix Match: ids and hint | | |
+| P9 | Add Collection, Scan, Getting Started | | |
+| P10 | Settings > Media Types: one row, no duplicate | | |
+| P11 | Plugins page: card, text, Test, tasks, approval | | |
+| P12 | Item page: cast, crew, box, images | | |
+| P13 | Item page: ownership, collection, status wording | | |
+| P14 | Person pages, search, dashboard rows | | |
+| P15 | Background Tasks | | |
+| SA | Plugin stands alone at every place above | | |
 | PK | Packaging and release items | | |
 | VP | Verification pass done | | |

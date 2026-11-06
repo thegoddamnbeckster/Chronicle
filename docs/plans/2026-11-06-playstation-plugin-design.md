@@ -229,8 +229,22 @@ deps.json and manifest; hot deploy needs the owner's approval on the Plugins pag
 | T1 | Type identical | Designed | section 7 |
 | T2 | Host restarted | Owner/me at deploy | G3 |
 | T3 | Type flags deliberate | Designed | copied from Steam |
-| MA | Metadata Assignment | Designed | section 7; ordering check at G3 |
-| LB | Library, Add Media, item page | Designed | G3 |
+| P1 | Metadata Assignment: type listed | Designed | `game` already exists via Steam/IGDB/IMDb; declaration copied verbatim (T1). G3: look at the page bottom and dropdown for "Video Games" |
+| P2 | Plugin under every field it fills | Designed | section 7 declares fields; test asserts declared equals filled. G3: open each field of Video Games and find "PlayStation" under exactly those |
+| P3 | Order within each field | Designed | New plugin lands last in saved configs. Decision for the owner: PlayStation ahead of IMDb, below IGDB for fields IGDB fills (IGDB is the richer source), above for trophy-only data. I will set it and say so, not leave it |
+| P4 | Library: section, labels, collections | Designed | Video Games section exists once any game is imported; PlayStation items join existing games by title and year; G3: look at the count after import and at badges |
+| P5 | Library: tile, art fallback | Designed | art verified by HEAD (M1); an item without art shows initials; G3 |
+| P6 | Add Media: type offered, results | Designed, with a limit | PlayStation appears in results only for games in the owner's own list (section 7); the hint says so; G3: search a game the owner has and one they do not |
+| P7 | Add Media: item lands with prefixed ids | Designed | `psn:` ids; G3 |
+| P8 | Fix Match: ids and hint | Designed | section 7 parsing; G3: paste `psn:<id>`, bare id and a store URL |
+| P9 | Add Collection, Scan, Getting Started | Designed | a library-import type has no folders to scan; G3 confirms no PlayStation entry is expected there |
+| P10 | Media Types: one row | Designed | identical declaration; G3: no second "game" type |
+| P11 | Plugins page | Designed | settings text section 10; Test button makes one safe call (token exchange plus one list page); tasks section 11; approval after deploy is an owner action |
+| P12 | Item page: cast, crew, box, images | Designed | cast/crew only if the probe shows developer data; the box shows the trophy record; trophy icons mapped (M3); G3 |
+| P13 | Item page: ownership, collection, status | Designed | ownership line per platform already built; PlayStation row shows hours, last played; G3 |
+| P14 | Person pages, search, dashboard rows | Designed, gap | developer pages exist only if the probe shows developer data; search and dashboard rows are host behaviour for games already checked on Steam; G3 re-checks with a PlayStation-only game |
+| P15 | Background Tasks | Designed | section 11, checkpoints, visible failure; G3 |
+| SA | Stands alone at every place | Designed | section 7; G3 includes reading a PlayStation game with Steam and IGDB data absent |
 | PK | Packaging | Designed | section 13 |
 | VP | Verification pass | Not yet | G3, after build; needs the owner's sign-in |
 
