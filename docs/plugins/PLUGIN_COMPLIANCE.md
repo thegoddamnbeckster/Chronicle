@@ -9,29 +9,29 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | AniList | ok | ok | ok | **XX** | . | ok | **XX** | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
 | Deezer | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
-| FanEdit | ok | **XX** | ok | **XX** | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | . | ok | ok | **XX** | ok | ok | ok | . |
-| FanartTV | ok | **XX** | ok | **XX** | **XX** | ok | **XX** | ok | ok | **XX** | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| FileScanner | ok | **XX** | ok | **XX** | . | **XX** | . | . | ok | **XX** | ok | . | ok | . | . | ok | **XX** | ok | . | . | . |
+| FanEdit | ok | ok | ok | **XX** | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | . | ok | ok | **XX** | ok | ok | ok | . |
+| FanartTV | ok | ok | ok | **XX** | **XX** | ok | **XX** | ok | ok | **XX** | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| FileScanner | ok | ok | ok | **XX** | . | **XX** | . | . | ok | **XX** | ok | . | ok | . | . | ok | **XX** | ok | . | . | . |
 | Goodreads | ok | **XX** | **XX** | **XX** | . | ok | ok | ok | ok | **XX** | ok | . | ok | . | . | ok | ok | ok | . | . | . |
 | Hardcover | ok | **XX** | ok | **XX** | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
 | IGDB | ok | ok | ok | **XX** | ok | ok | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
 | IMDb | ok | ok | ok | **XX** | . | ok | ok | **XX** | **XX** | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
 | Kodi.NFO | **XX** | **XX** | ok | **XX** | . | **XX** | . | . | ok | **XX** | ok | . | ok | . | . | ok | . | . | . | . | . |
-| LastFM | ok | **XX** | ok | **XX** | **XX** | ok | ok | **XX** | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| LastFM | ok | ok | ok | **XX** | **XX** | ok | ok | **XX** | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
 | Letterboxd | ok | **XX** | **XX** | **XX** | . | ok | **XX** | ok | ok | **XX** | ok | . | ok | . | . | ok | ok | ok | . | . | . |
 | MoviesRemastered | ok | **XX** | ok | **XX** | . | ok | **XX** | **XX** | ok | **XX** | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
-| MusicBrainz | ok | **XX** | ok | **XX** | **XX** | ok | ok | **XX** | ok | **XX** | ok | ok | ok | . | ok | ok | **XX** | ok | ok | **XX** | . |
+| MusicBrainz | ok | ok | ok | **XX** | **XX** | ok | ok | **XX** | ok | **XX** | ok | ok | ok | . | ok | ok | **XX** | ok | ok | **XX** | . |
 | OMDb | ok | ok | ok | **XX** | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
 | OpenLibrary | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
 | Simkl | ok | ok | ok | **XX** | **XX** | ok | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | **XX** | **XX** |
 | Steam | ok | ok | ok | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
-| TMDB | ok | **XX** | ok | **XX** | **XX** | **XX** | **XX** | ok | **XX** | **XX** | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| TMDB | ok | ok | ok | **XX** | **XX** | **XX** | **XX** | ok | **XX** | **XX** | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
 | TVMaze | ok | ok | **XX** | **XX** | . | ok | **XX** | ok | ok | **XX** | ok | ok | ok | . | ok | ok | . | . | ok | . | . |
 | TheAudioDB | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
 | TheTVDB | ok | **XX** | **XX** | **XX** | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | **XX** | . |
-| Themes.Default | ok | **XX** | **XX** | **XX** | . | **XX** | . | . | ok | **XX** | **XX** | . | ok | . | . | **XX** | . | . | . | . | . |
+| Themes.Default | ok | ok | **XX** | **XX** | . | **XX** | . | . | ok | **XX** | **XX** | . | ok | . | . | **XX** | . | . | . | . | . |
 | Trakt | ok | **XX** | ok | **XX** | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | **XX** | . |
-| Wikipedia | ok | **XX** | ok | **XX** | . | ok | ok | ok | ok | **XX** | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
+| Wikipedia | ok | ok | ok | **XX** | . | ok | ok | ok | ok | **XX** | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
 
 | check | meaning |
 |---|---|
@@ -68,21 +68,18 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 - **K5** (CI and licence): license=False ci=False
 
 ### FanEdit
-- **K3** (identity/catalogue/tag/embedded agree): csproj 'None' vs manifest
 - **K5** (CI and licence): license=False ci=False
 - **K7** (secrets redacted): holds a secret, no redaction code found
 - **K9** (timeout, shared client): timeout=False sharedClient=True
 - **X2** (setting help text): 2 of 4 settings lack help text
 
 ### FanartTV
-- **K3** (identity/catalogue/tag/embedded agree): csproj 'None' vs manifest
 - **K5** (CI and licence): license=False ci=False
 - **K7** (secrets redacted): holds a secret, no redaction code found
 - **K9** (timeout, shared client): timeout=False sharedClient=True
 - **K12** (doc page and catalogue line): doc page=False catalogue line=False
 
 ### FileScanner
-- **K3** (identity/catalogue/tag/embedded agree): csproj 'None' vs manifest
 - **K5** (CI and licence): license=False ci=False
 - **K8** (User-Agent): no User-Agent
 - **K12** (doc page and catalogue line): doc page=False catalogue line=False
@@ -118,7 +115,6 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 - **K12** (doc page and catalogue line): doc page=False catalogue line=False
 
 ### LastFM
-- **K3** (identity/catalogue/tag/embedded agree): csproj 'None' vs manifest
 - **K5** (CI and licence): license=False ci=False
 - **K7** (secrets redacted): holds a secret, no redaction code found
 - **K10** (429 handling): no 429 handling
@@ -131,14 +127,13 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 - **K12** (doc page and catalogue line): doc page=False catalogue line=False
 
 ### MoviesRemastered
-- **K3** (identity/catalogue/tag/embedded agree): tag '1.0.1' vs manifest '1.1.0'; csproj 'None' vs manifest
+- **K3** (identity/catalogue/tag/embedded agree): tag '1.0.1' vs manifest '1.1.0'
 - **K5** (CI and licence): license=True ci=False
 - **K9** (timeout, shared client): timeout=False sharedClient=False
 - **K10** (429 handling): no 429 handling
 - **K12** (doc page and catalogue line): doc page=False catalogue line=False
 
 ### MusicBrainz
-- **K3** (identity/catalogue/tag/embedded agree): csproj 'None' vs manifest
 - **K5** (CI and licence): license=False ci=False
 - **K7** (secrets redacted): holds a secret, no redaction code found
 - **K10** (429 handling): no 429 handling
@@ -166,7 +161,6 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 - **K8** (User-Agent): no User-Agent
 
 ### TMDB
-- **K3** (identity/catalogue/tag/embedded agree): csproj 'None' vs manifest
 - **K5** (CI and licence): license=False ci=False
 - **K7** (secrets redacted): holds a secret, no redaction code found
 - **K8** (User-Agent): no User-Agent
@@ -192,7 +186,6 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 - **C4** (auth exception): no PluginAuthException for rejected credentials
 
 ### Themes.Default
-- **K3** (identity/catalogue/tag/embedded agree): csproj 'None' vs manifest
 - **K4** (has tests): 0 tests
 - **K5** (CI and licence): license=False ci=False
 - **K8** (User-Agent): no User-Agent
@@ -208,6 +201,5 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 - **C4** (auth exception): no PluginAuthException for rejected credentials
 
 ### Wikipedia
-- **K3** (identity/catalogue/tag/embedded agree): csproj 'None' vs manifest
 - **K5** (CI and licence): license=True ci=False
 - **K12** (doc page and catalogue line): doc page=True catalogue line=False
