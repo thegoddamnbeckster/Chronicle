@@ -152,6 +152,31 @@ plugins' data absent).
 | X9 | A setting that changes behaviour in the field (include wishlist, include non-game apps) states what changes and its default, and the default is the owner's stated preference (everything on) | Hidden filtering |
 | X10 | A test reads the schema and asserts: every key is read by `Settings.From`, every setting has help text, every secret is a `Password`, defaults parse | A declared setting nothing reads |
 
+## 8c. Search: how things land (two different searches, both checked)
+
+**Provider search** is what Add Media and Fix Match run (`FileScanService`): every plugin for the type is asked in parallel,
+each with a **4 second** limit (a slow plugin is dropped silently, its results simply missing), results are merged into one
+card per game and ranked. **Local search** is the global search box, the Library search and list pickers
+(`MediaService.SearchAsync`): it matches the item's **name or any alias** (contains, case-folded) and orders exact, then
+starts-with, then word-start, then contains, then top-level before child items, then A to Z; exact matches are never cut
+off by the page size. Each plugin affects both.
+
+| ID | Check | How it goes wrong |
+|---|---|---|
+| Q1 | The interactive search answers within the 4 s guard from a cache, an index or one fast call. A plugin whose own pacing makes a search slower (Steam's store allows one call every 1.5 s) does at most one or two calls per search, or searches a local copy | The plugin never appears in results and nothing says why |
+| Q2 | Search returns an empty list (not an error) for a media type it does not serve and for "not supported"; a failure costs one call and is cached briefly | One bad plugin delays or breaks the dialog |
+| Q3 | Each result sets `ExternalId` (prefixed), `Source`, `Title`, `PosterUrl`, and `Year` whenever the source has it. The score means something: 100 only for an exact normalised title | Without `Source` the card cannot be filed; a score of 100 on loose matches puts the wrong game first |
+| Q4 | Results carry the other ids the source knows (`ids` in the extended data) and a year. Two plugins' results for one game are merged only when they share an id, or share a title **and** a year on both sides; a year-less result never merges | The same game shows as two cards, one per plugin, in Add Media |
+| Q5 | Which card wins is decided by the Metadata Assignment order for the type (the first plugin listed labels the card and supplies the id Add Media files it under), so P3 is a search check too | The weaker plugin's title and id win |
+| Q6 | Interactive search lists similar titles; automatic matching is exact or absent (I5). Both paths are tested | Add Media is useless, or enrichment mismatches |
+| Q7 | A known id, a prefixed id, a bare id or a pasted URL skips the search and returns that one item at 100 | Fix Match by id fails |
+| Q8 | Ranking is checked with real queries: the exact title is first, a title that starts with the query next, a sequel after its original, a DLC or soundtrack after the game | The thing typed is on page 2 |
+| Q9 | **Aliases.** Local search finds an item only by its name or its aliases, so the plugin returns `AlternateNames` for every other name the source or another store uses: the title without ™ and ®, without an edition suffix, subtitle-less and with the subtitle, Arabic for Roman numerals and back, the other platform's spelling | Typing "Spider-Man 2" does not find "Marvel's Spider-Man 2" |
+| Q10 | The imported item is found by local search with each of these typed, with the position recorded: exact title, lower case, no punctuation, subtitle only, the number written the other way, a partial word, an alias, and a title containing ™ | A game is in the Library and unfindable |
+| Q11 | Search results for a game on two platforms are one row, not two; an unmerged pair is offered by the duplicate scanner | Clutter, wrong ownership counts |
+| Q12 | The result row shows the type's display name, poster (or a deliberate fallback), year, and opens `/media/{id}`; a studio or developer is findable as a person where the plugin supplies them | Row looks wrong or opens the wrong page |
+| Q13 | The run record lists the queries actually typed and what each returned (position, or "not found"). Fewer than ten queries is not a search check | "Search works" with nothing behind it |
+
 ## 10. Packaging and release
 
 - `plugins.json` entry (tags include the type), embedded fallback copy, `RunTestEnvironment.ps1` build entry,
@@ -165,7 +190,8 @@ plugins' data absent).
 ## 11. The verification pass (G3, do not skip)
 
 In the signed-in browser pane (the owner signs in; I do not enter their password), look at and report what is seen:
-every row P1 to P15 of section 8, in that order, writing down what was seen for each. If the pane
+every row P1 to P15 of section 8, then B1 to B6, X1 to X10 and the Q1 to Q13 searches actually typed (section 8c), in that
+order, writing down what was seen for each. If the pane
 is signed out, say so and list what is therefore unverified; never write "verified".
 
 ## 12. Run record (copy into the plugin's design doc)
@@ -227,6 +253,19 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | P14 | Person pages, search, dashboard rows | | |
 | P15 | Background Tasks | | |
 | SA | Plugin stands alone at every place above | | |
+| Q1 | Provider search within 4 s | | |
+| Q2 | Empty list for unserved types; failures cheap | | |
+| Q3 | Result fields set; score means something | | |
+| Q4 | Ids and year carried so results merge | | |
+| Q5 | Assignment order decides the winning card | | |
+| Q6 | Interactive vs automatic both tested | | |
+| Q7 | Known id, prefixed, bare, URL skip the search | | |
+| Q8 | Ranking checked with real queries | | |
+| Q9 | AlternateNames supplied | | |
+| Q10 | Imported item found by each typed form | | |
+| Q11 | One row per game across platforms | | |
+| Q12 | Result row, display name, poster, link | | |
+| Q13 | Queries and positions recorded (at least ten) | | |
 | B1 | Icon answers, legible on light and dark | | |
 | B2 | Brand colours light and dark, contrast computed | | |
 | B3 | Host reads both colours (look at a light theme) | | |

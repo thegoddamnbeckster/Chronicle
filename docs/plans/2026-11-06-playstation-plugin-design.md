@@ -187,6 +187,29 @@ unchanged keeps the stored value (X6); `Configure` clears the token cache and th
   that says it adds every title and reads every trophy; "Fetch Trophies" weekly on; "Fetch Missing PlayStation Metadata" daily on;
   "Re-sync All PlayStation Metadata" off, with a warning that it is slow.
 
+### 10c. Search (checklist Q1 to Q13)
+
+- **Provider search (Add Media, Fix Match), 4 s limit (Q1).** The plugin searches an in-memory index of the owner's titles held
+  in the shared hub and refreshed by every library import. On a cold start (host restarted, no import yet) the first search
+  makes one list-page call with a 3 s budget and otherwise returns an empty list; it never makes a call per candidate. The
+  probe measures how long one list page takes, and this budget is revised from that number.
+- **What a result carries (Q3, Q4).** `psn:<titleId>`, `Source = "psn"`, title, poster from the record, score 100 only for an
+  exact normalised title. Sony's list probably has no release year [unverified], so these results have **no year and will not
+  merge** with an IGDB card in Add Media (a year-less result never merges). That is a stated limit, not hidden: the two cards
+  are both offered, and whichever the owner adds, the import's title-and-year matching joins the PlayStation row to it later.
+  If the probe shows a year, it is carried.
+- **Order (Q5).** Which card labels a merged result follows Metadata Assignment order, set per P3.
+- **Aliases (Q9, Q10).** Every entry returns `AlternateNames`: the title with ™ and ® removed; with the platform and edition
+  suffixes removed ("(PS5)", "PS4 & PS5", "Digital Edition", "- Standard"); the **concept name** when it differs from the title
+  name (Sony's concept name is usually the cleaner one); and the numeral written the other way (VI and 6). Edition words that
+  name a different product (Royal, Remastered, Director's Cut) are never stripped (I6).
+- **Ten typed queries at G3 (Q13),** chosen from the owner's real library: an exact title; the same in lower case; with the
+  punctuation removed; the subtitle alone; a number written the other way; a partial word; an alias; a title containing ™; a
+  game the owner also has on Steam (must be one row, Q11); a game the owner does not have (must say the limit in the hint, not
+  fail). Each result's position is written into the record.
+- **Local search (Q9 to Q12):** a PlayStation-only game is found by every one of those forms, shows "Video Games", a poster or
+  initials, and opens `/media/{id}`.
+
 ## 11. Tasks
 
 `import-library` (daily; titles, playtime, purchases), `fetch-trophies` (weekly, on by default per the owner's rule:
@@ -278,6 +301,19 @@ deps.json and manifest; hot deploy needs the owner's approval on the Plugins pag
 | P14 | Person pages, search, dashboard rows | Designed, gap | developer pages exist only if the probe shows developer data; search and dashboard rows are host behaviour for games already checked on Steam; G3 re-checks with a PlayStation-only game |
 | P15 | Background Tasks | Designed | section 11, checkpoints, visible failure; G3 |
 | SA | Stands alone at every place | Designed | section 7; G3 includes reading a PlayStation game with Steam and IGDB data absent |
+| Q1 | Provider search within 4 s | Designed | 10c (index in the hub; cold start one 3 s call) |
+| Q2 | Empty list for unserved types, cheap failures | Designed | 10c, section 9 |
+| Q3 | Result fields, meaningful score | Designed | 10c |
+| Q4 | Ids and year so results merge | Designed, **limit** | 10c: probably no year, so no merge with IGDB card in Add Media; stated |
+| Q5 | Assignment order decides the card | Designed | 10c, P3 |
+| Q6 | Interactive vs automatic | Designed | section 7 |
+| Q7 | Known id, prefixed, bare, URL | Designed | section 7 |
+| Q8 | Ranking with real queries | Designed | 10c, ten queries at G3 |
+| Q9 | AlternateNames | Designed | 10c |
+| Q10 | Found by each typed form | Designed | 10c; G3 |
+| Q11 | One row per game across platforms | Designed | 10c; G3 with a Steam-and-PlayStation game |
+| Q12 | Result row, poster, link | Designed | 10c; G3 |
+| Q13 | Queries and positions recorded | Designed | 10c; written at G3, not before |
 | B1 | Icon answers, legible light and dark | Designed, address unconfirmed | 10b |
 | B2 | Brand colours, contrast computed | Designed, values provisional | 10b; computed at G2 |
 | B3 | Host reads both colours | **Open host question** | 10b; check on a light theme before shipping |
@@ -309,5 +345,9 @@ deps.json and manifest; hot deploy needs the owner's approval on the Plugins pag
 6. **Store search was assumed.** Nothing says Sony offers a stable public search; the design restricts automatic matching to
    the owner's own list and states the limit in the Fix Match hint instead of promising a lookup.
 7. **Friends excluded.** That is the one exclusion; it is stated as an owner decision to confirm, not buried.
-8. **Not covered and why:** PlayStation Plus catalog membership (no known endpoint; only if the probe shows a flag),
+9. **Found while adding the search checks: the Steam plugin supplies no `AlternateNames`** (IGDB does). Local search matches
+   only name and aliases, so a Steam game named "Sid Meier's Civilization VI" is not found by typing "Civilization VI" unless
+   IGDB's names have also landed. That breaks the standalone rule for search. This is a Steam plugin fix (aliases from the
+   store name minus ™ and ®, edition suffixes and numeral variants), listed for the owner to approve, not done here.
+10. **Not covered and why:** PlayStation Plus catalog membership (no known endpoint; only if the probe shows a flag),
    PS3/Vita/PSP purchases (the community docs say unreachable), a wishlist (no known endpoint). Each is a stated limit.
