@@ -1,6 +1,6 @@
 # Steam plugin
 
-**Version:** 1.1.1  ·  **Repository:** `Chronicle.Plugin.Steam`  ·  **Media types:** game
+**Version:** 1.1.2  ·  **Repository:** `Chronicle.Plugin.Steam`  ·  **Media types:** game
 
 **What it needs from the owner:** A Steam Web API key and the owner's Steam ID; the profile's game details must be public.
 

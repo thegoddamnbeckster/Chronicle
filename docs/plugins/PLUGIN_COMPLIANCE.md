@@ -8,28 +8,28 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 
 | plugin | K1 | K3 | K4 | K5 | K7 | K8 | K9 | K10 | K11 | K12 | B1 | B2 | B4 | B5 | B6 | X1 | X2 | X3 | M2 | C4 | Q9 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| AniList | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
-| Deezer | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
-| FanEdit | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| FanartTV | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| FileScanner | ok | ok | ok | **XX** | . | . | . | . | ok | ok | ok | . | ok | . | . | ok | ok | ok | . | . | . |
-| Hardcover | ok | **XX** | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| IGDB | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
-| IMDb | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
-| LastFM | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| AniList | ok | **XX** | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
+| Deezer | ok | **XX** | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
+| FanEdit | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| FanartTV | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| FileScanner | ok | **XX** | ok | ok | . | . | . | . | ok | ok | ok | . | ok | . | . | ok | ok | ok | . | . | . |
+| Hardcover | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| IGDB | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
+| IMDb | ok | **XX** | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
+| LastFM | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
 | MoviesRemastered | ok | **XX** | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
-| MusicBrainz | ok | ok | ok | **XX** | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| OMDb | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
-| OpenLibrary | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
-| Simkl | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . |
-| Steam | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
-| TMDB | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| TVMaze | ok | ok | ok | **XX** | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | . | . | ok | . | . |
-| TheAudioDB | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
-| TheTVDB | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| Themes.Default | ok | ok | ok | **XX** | . | . | . | . | ok | ok | . | . | ok | . | . | . | . | . | . | . | . |
-| Trakt | ok | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
-| Wikipedia | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
+| MusicBrainz | ok | **XX** | ok | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| OMDb | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
+| OpenLibrary | ok | **XX** | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
+| Simkl | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . |
+| Steam | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
+| TMDB | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| TVMaze | ok | **XX** | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | . | . | ok | . | . |
+| TheAudioDB | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok |
+| TheTVDB | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| Themes.Default | ok | **XX** | ok | ok | . | . | . | . | ok | ok | . | . | ok | . | . | . | . | . | . | . | . |
+| Trakt | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
+| Wikipedia | ok | **XX** | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | . | . |
 
 | check | meaning |
 |---|---|
@@ -58,69 +58,68 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 ## Failures, with the reason the script found
 
 ### AniList
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.5
 
 ### Deezer
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.2
 
 ### FanEdit
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.2
 
 ### FanartTV
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.1.3
 
 ### FileScanner
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.3.1
 
 ### Hardcover
 - **K3** (identity/catalogue/tag/embedded agree): plugin_id 'hardcover'
-- **K5** (CI and licence): license=False ci=True
 
 ### IGDB
-- **K5** (CI and licence): license=False ci=True
-
-### IMDb
 No static failures.
 
+### IMDb
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.2.1
+
 ### LastFM
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.1.1
 
 ### MoviesRemastered
-- **K3** (identity/catalogue/tag/embedded agree): tag '1.0.1' vs manifest '1.1.0'
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.1.0
 
 ### MusicBrainz
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.4.1
 - **K7** (secrets redacted): holds a secret, and no test proves a failing call keeps it out of errors
 
 ### OMDb
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.2
 
 ### OpenLibrary
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.3
 
 ### Simkl
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.7.0
 
 ### Steam
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.1.1
 
 ### TMDB
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.9.1
 
 ### TVMaze
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.5
 
 ### TheAudioDB
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.0
 
 ### TheTVDB
-- **K5** (CI and licence): license=False ci=True
+No static failures.
 
 ### Themes.Default
-- **K5** (CI and licence): license=False ci=True
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.0
 
 ### Trakt
-- **K5** (CI and licence): license=False ci=True
+No static failures.
 
 ### Wikipedia
-No static failures.
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.17
