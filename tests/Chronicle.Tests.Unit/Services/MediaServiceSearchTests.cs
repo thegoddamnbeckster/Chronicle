@@ -169,4 +169,29 @@ public sealed class MediaServiceSearchTests : IDisposable
 
         (await _svc.SearchAsync("invincible")).Select(r => r.Id).Should().Equal(show.Id);
     }
+
+    [Fact]
+    public async Task A_title_typed_without_its_punctuation_is_found_and_ranked_as_exact()
+    {
+        // NormalizedName is what the importer and scanner store; search must use it too ("baldurs gate 3" finds "Baldur's Gate 3").
+        var game = Add("Baldur's Gate 3", "movies");
+        game.NormalizedName = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(game.Name);
+        var other = Add("Baldur's Gate 3 Soundtrack", "movies");
+        other.NormalizedName = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName(other.Name);
+        _db.SaveChanges();
+
+        var hits = (await _svc.SearchAsync("baldurs gate 3", null, 1, 10, true)).ToList();
+
+        hits.Select(h => h.Id).Should().Equal(game.Id, other.Id);
+    }
+
+    [Fact]
+    public async Task A_query_of_only_punctuation_does_not_match_everything()
+    {
+        var a = Add("Alpha", "movies");
+        a.NormalizedName = "alpha";
+        _db.SaveChanges();
+
+        (await _svc.SearchAsync("...", null, 1, 10, true)).Should().BeEmpty();
+    }
 }

@@ -27,7 +27,7 @@ public sealed class AlternateNameAliasService(
         {
             ct.ThrowIfCancellationRequested();
             var page = await db.MediaItems.Include(m => m.MediaType)
-                .Where(m => m.Id > lastId && m.HierarchyLevel == 0 && m.MediaType!.HierarchyLevels >= 2 &&
+                .Where(m => m.Id > lastId && m.HierarchyLevel == 0 && (m.MediaType!.HierarchyLevels >= 2 || m.MediaType.SupportsCollections) &&
                             m.MetadataJson != null && m.MetadataJson.Contains("\"alternateNames\":[\""))
                 .OrderBy(m => m.Id).Take(PageSize).ToListAsync(ct);
             if (page.Count == 0) break;

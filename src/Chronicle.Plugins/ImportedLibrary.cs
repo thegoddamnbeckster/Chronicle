@@ -34,7 +34,9 @@ public record ImportedLibraryEntry(
     IReadOnlyList<string>? Tags = null,
     string? PosterUrl = null,
     string? BackdropUrl = null,
-    string? Overview = null);
+    string? Overview = null,
+    /// <summary>Other names people might type for this title (the name without trademark marks, a numeral written the other way). Become aliases the search matches. Optional.</summary>
+    IReadOnlyList<string>? AlternateNames = null);
 
 /// <summary>Account-level facts a platform reports about the user (level, badges, display name). Kept whole.</summary>
 public record ImportedAccountInfo(string DisplayName, string RawJson);

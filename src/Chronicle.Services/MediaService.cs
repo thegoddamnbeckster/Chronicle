@@ -130,16 +130,28 @@ namespace Chronicle.Services
             var prefix   = $"{exact}%";
             var wordStart = $"% {exact}%";
 
+            // The stored NormalizedName drops punctuation, symbols (the (R) and (TM) a store puts inside a title), diacritics' case and spacing,
+            // so a title typed without them still finds the item: "dishonored death of the outsider" finds "Dishonored(R): Death of the Outsider(TM)".
+            // Skipped when the query has nothing left after normalising (all punctuation).
+            var nq       = MediaItemNormalizer.NormalizeName(query);
+            var hasNorm  = nq.Length > 0;
+            var nExact   = EscapeLike(nq);
+            var nContains = $"%{nExact}%";
+            var nPrefix  = $"{nExact}%";
+            var nWord    = $"% {nExact}%";
+
             q = q.Where(m =>
                 EF.Functions.Like(m.Name.ToLower(), contains, LikeEscape) ||
-                m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), contains, LikeEscape)));
+                m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), contains, LikeEscape)) ||
+                (hasNorm && EF.Functions.Like(m.NormalizedName, nContains, LikeEscape)));
 
             // Every exact match is always shown: when there are more of them than a page holds,
             // the first page grows to fit them all (per-user request, 2026-10-02: 11 exact
             // matches with room for 10 shows 11). Later pages continue right after it.
             var exactCount = await q.CountAsync(m =>
                 EF.Functions.Like(m.Name.ToLower(), exact, LikeEscape) ||
-                m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), exact, LikeEscape)), ct);
+                m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), exact, LikeEscape)) ||
+                (hasNorm && EF.Functions.Like(m.NormalizedName, nExact, LikeEscape)), ct);
             var firstPage = Math.Max(perPage, exactCount);
             var skip = page == 1 ? 0 : firstPage + (page - 2) * perPage;
             var take = page == 1 ? firstPage : perPage;
@@ -147,9 +159,12 @@ namespace Chronicle.Services
             var pageIds = await q
                 .OrderBy(m =>
                     EF.Functions.Like(m.Name.ToLower(), exact, LikeEscape) ||
-                    m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), exact, LikeEscape)) ? 0
-                    : EF.Functions.Like(m.Name.ToLower(), prefix, LikeEscape) ? 1
-                    : EF.Functions.Like(m.Name.ToLower(), wordStart, LikeEscape) ? 2
+                    m.Aliases.Any(a => EF.Functions.Like(a.Alias.ToLower(), exact, LikeEscape)) ||
+                    (hasNorm && EF.Functions.Like(m.NormalizedName, nExact, LikeEscape)) ? 0
+                    : EF.Functions.Like(m.Name.ToLower(), prefix, LikeEscape) ||
+                      (hasNorm && EF.Functions.Like(m.NormalizedName, nPrefix, LikeEscape)) ? 1
+                    : EF.Functions.Like(m.Name.ToLower(), wordStart, LikeEscape) ||
+                      (hasNorm && EF.Functions.Like(m.NormalizedName, nWord, LikeEscape)) ? 2
                     : 3)
                 .ThenBy(m => m.HierarchyLevel)
                 .ThenBy(m => m.Name.ToLower())

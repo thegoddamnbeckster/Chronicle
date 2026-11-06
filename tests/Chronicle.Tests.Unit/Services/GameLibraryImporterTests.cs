@@ -51,6 +51,28 @@ public class GameLibraryImporterTests : IDisposable
         _imp.ImportAsync(_db, plugin, "Steam", 1, e, default);
 
     [Fact]
+    public async Task A_games_other_names_become_aliases_once_and_never_twice()
+    {
+        _db.MediaTypes.Single(t => t.Name == "game").SupportsCollections = true;
+        _db.SaveChanges();
+        var withNames = E("289070", "Sid Meier's Civilization VI") with { AlternateNames = ["Sid Meier's Civilization 6"] };
+
+        await Run(Steam, withNames);
+        await Run(Steam, withNames);
+
+        _db.MediaItemAliases.Select(a => a.Alias).Should().Equal("Sid Meier's Civilization 6");
+    }
+
+    [Fact]
+    public void Only_a_container_type_or_a_collection_type_takes_aliases()
+    {
+        MetadataEnrichmentService.TypeTakesAliases(new MediaType { HierarchyLevels = 3 }).Should().BeTrue();
+        MetadataEnrichmentService.TypeTakesAliases(new MediaType { HierarchyLevels = 1, SupportsCollections = true }).Should().BeTrue();
+        MetadataEnrichmentService.TypeTakesAliases(new MediaType { HierarchyLevels = 1 }).Should().BeFalse();
+        MetadataEnrichmentService.TypeTakesAliases(null).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task An_unplayed_game_is_owned_not_started_with_no_invented_play()
     {
         var r = await Run(Steam, E("10", "Counter-Strike", minutes: 0, lastPlayedUnix: 0));

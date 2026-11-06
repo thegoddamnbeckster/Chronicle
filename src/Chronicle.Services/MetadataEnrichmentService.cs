@@ -3587,11 +3587,19 @@ public class MetadataEnrichmentService(
     /// person record is matched by credits and ids, where a shared alias would risk joining two different people. Aliases already there
     /// (a merge's, a rename's, a person's own) are never touched, and nothing here removes one.
     /// </summary>
+    /// <summary>
+    /// A container type (author, artist, show) takes aliases, and so does a one-level type whose items are standalone works that people look
+    /// for by title and that group into series (games: <c>SupportsCollections</c>). A one-level type with neither (a book) does not: an
+    /// alternate title of a book is not a name to find a folder by.
+    /// </summary>
+    internal static bool TypeTakesAliases(Chronicle.Core.Models.MediaType? type) =>
+        type is not null && (type.HierarchyLevels >= 2 || type.SupportsCollections);
+
     internal static async Task RecordAlternateNamesAsync(
         ChronicleDbContext db, MediaItem item, IEnumerable<string>? alternateNames, string pluginId, CancellationToken ct)
     {
         if (alternateNames is null || item.HierarchyLevel != 0) return;
-        if ((item.MediaType?.HierarchyLevels ?? 1) < 2) return;
+        if (!TypeTakesAliases(item.MediaType)) return;
 
         var candidates = alternateNames.Select(n => n?.Trim() ?? "")
             .Where(n => n.Length is >= 2 and <= 200 && MergeService.NamesRequireAka(n, item.Name))

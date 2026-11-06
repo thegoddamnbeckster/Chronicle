@@ -146,11 +146,22 @@ public sealed class GameLibraryImporter
         own.RawJson              = entry.RawJson;
         own.UpdatedAt            = now;
         await db.SaveChangesAsync(ct);
+        await RecordAliasesAsync(db, item, entry, pluginId, ct);
 
         var statusSet = await ApplyStatusAsync(db, userId, item.Id, own, entry, lastPlayed, now, ct);
         var events    = await AddPlayEventAsync(db, userId, item.Id, providerName, entry, lastPlayed, ct);
 
         return new One(false, isNew, events, statusSet);
+    }
+
+    /// <summary>The platform's other names for a title become aliases, so a title typed without its trademark marks or with its numeral the other way is found.</summary>
+    private static async Task RecordAliasesAsync(
+        ChronicleDbContext db, MediaItem item, ImportedLibraryEntry entry, string pluginId, CancellationToken ct)
+    {
+        if (entry.AlternateNames is not { Count: > 0 }) return;
+        item.MediaType ??= await db.MediaTypes.FirstAsync(t => t.Id == item.MediaTypeId, ct);
+        await MetadataEnrichmentService.RecordAlternateNamesAsync(db, item, entry.AlternateNames, pluginId, ct);
+        await db.SaveChangesAsync(ct);
     }
 
     // ── Status ────────────────────────────────────────────────────────────────
