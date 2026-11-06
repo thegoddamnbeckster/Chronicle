@@ -64,7 +64,7 @@
       ]
     },
     {
-      "plugin_id": "hardcover",
+      "plugin_id": "chronicle.plugin.hardcover",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Hardcover",
       "tags": [
         "books",

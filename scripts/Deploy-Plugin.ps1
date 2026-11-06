@@ -76,7 +76,7 @@ $PluginMap = @{
     "chronicle.plugin.hardcover"   = @{
         Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Hardcover\Chronicle.Plugin.Hardcover.csproj"
         DllName = "Chronicle.Plugin.Hardcover.dll"
-        OutDir  = Join-Path $PluginsDir "hardcover"
+        OutDir  = Join-Path $PluginsDir "chronicle.plugin.hardcover"
     }
     "chronicle.plugin.fanarttv"    = @{
         Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.FanartTV\Chronicle.Plugin.FanartTV.csproj"
