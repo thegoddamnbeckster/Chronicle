@@ -275,7 +275,7 @@ namespace Chronicle.API.Controllers
             {
                 if (e.MediaItem is null || e.MediaItem.HierarchyLevel != 0) continue;
                 if (!string.IsNullOrEmpty(e.MediaItem.PosterUrl)) continue;
-                if (!IsMovieLikeTypeName(e.MediaItem.MediaType?.Name)) continue;
+                if (!MediaTypeRegistry.CanGroupIntoCollections(e.MediaItem.MediaType?.Name)) continue;
                 if (!childFlags.TryGetValue(e.MediaItem.Id, out var flags) || !flags.HasChildren) continue;
                 fallbackPosterByRoot[e.MediaItem.Id] =
                     await _movieCollectionService.GetFallbackPosterAsync(_context, e.MediaItem.Id, ct);
@@ -490,7 +490,7 @@ namespace Chronicle.API.Controllers
         {
             if (item is null || item.HierarchyLevel != 0) return null;
             if (!string.IsNullOrEmpty(item.PosterUrl)) return null;
-            if (!IsMovieLikeTypeName(item.MediaType?.Name)) return null;
+            if (!MediaTypeRegistry.CanGroupIntoCollections(item.MediaType?.Name)) return null;
             var hasChildren = await _context.MediaItems.AnyAsync(m => m.ParentId == item.Id, ct);
             if (!hasChildren) return null;
             return await _movieCollectionService.GetFallbackPosterAsync(_context, item.Id, ct);

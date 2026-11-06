@@ -47,8 +47,9 @@ public class MovieCollectionService(
         if (movieItem.MediaType is null)
             await db.Entry(movieItem).Reference(m => m.MediaType).LoadAsync(ct);
 
-        // Only group movie-like types (movies, fanedits, anime) — not tv, not anything else
-        if (movieItem.MediaType is null || !IsMovieLikeTypeName(movieItem.MediaType.Name))
+        // Only group a type that can be grouped: movie-like (movies, fanedits, anime movies), or a flat type that declares collection support
+        // (games). Not tv, not anything else. An item with no collection data from any provider stays at the top level.
+        if (movieItem.MediaType is null || !MediaTypeRegistry.CanGroupIntoCollections(movieItem.MediaType.Name))
             return;
 
         // A user who manually placed this item into a collection (via ReparentIntoCollectionAsync)
@@ -260,6 +261,8 @@ public class MovieCollectionService(
     private async Task WriteLocalCollectionArtAsync(
         IServiceProvider services, MediaItem collection, List<AdditionalImage> additionalImages, CancellationToken ct)
     {
+        // Kodi's movie-set folder is for movie collections. A game collection must never write into it.
+        if (collection.MediaType is not null && !IsMovieLikeTypeName(collection.MediaType.Name)) return;
         var db = services.GetRequiredService<ChronicleDbContext>();
         var setting = await db.AppSettings.FindAsync([KodiCollectionFolderSettingKey], ct);
         var basePath = setting?.Value;
@@ -876,6 +879,11 @@ public class MovieCollectionService(
         // Derive the source key from the provider's full plugin ID (e.g. "chronicle.plugin.tmdb" → "tmdb").
         // allProviders carries the canonical plugin IDs; fall back to provider.Name for callers that
         // don't supply allProviders (comparison is OrdinalIgnoreCase so "TMDB" matches source "tmdb").
+        // Missing members are filled in as stubs only for movies (TMDB lists every film of a collection). A game collection holds the games the
+        // user has; what IGDB lists beyond them is not added, and the provider is never asked to fetch a collection it has no such call for.
+        if (!IsMovieLikeTypeName(collection.MediaType?.Name))
+            return true;
+
         var callerEntry  = allProviders?.FirstOrDefault(p => ReferenceEquals(p.Provider, provider));
         var providerSource = callerEntry.HasValue
             ? PluginIdHelper.ToSource(callerEntry.Value.PluginId)

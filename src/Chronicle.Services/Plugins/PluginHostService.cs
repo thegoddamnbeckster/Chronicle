@@ -163,6 +163,7 @@ public sealed class PluginHostService : IHostedService
                     ProviderFamily  = g.Select(s => s.ProviderFamily).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
                     CastHeading     = g.Select(s => s.CastHeading).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
                     CastAreActors   = g.Any(s => s.CastAreActors),
+                    SupportsCollections = g.Any(s => s.SupportsCollections),
                     IsPersonType    = g.Any(s => s.IsPersonType),
                     ImportShape     = g.Select(s => s.ImportShape).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
                     Aliases         = g.SelectMany(s => s.Aliases ?? []).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
@@ -201,6 +202,7 @@ public sealed class PluginHostService : IHostedService
                     ProviderFamily  = string.IsNullOrWhiteSpace(support.ProviderFamily) ? null : support.ProviderFamily.Trim().ToLowerInvariant(),
                     CastHeading     = string.IsNullOrWhiteSpace(support.CastHeading) ? null : support.CastHeading.Trim(),
                     CastAreActors   = support.CastAreActors,
+                    SupportsCollections = support.SupportsCollections,
                     IsPersonType    = support.IsPersonType,
                     ImportShape     = Chronicle.Core.Models.ImportShapes.IsKnown(support.ImportShape) ? support.ImportShape : null,
                     Aliases         = support.Aliases is { Length: > 0 }
@@ -247,6 +249,8 @@ public sealed class PluginHostService : IHostedService
                 { existing.ImportShape = support.ImportShape; changed = true; }
                 if (support.CastAreActors && !existing.CastAreActors)
                 { existing.CastAreActors = true; changed = true; }
+                if (support.SupportsCollections && !existing.SupportsCollections)
+                { existing.SupportsCollections = true; changed = true; }
                 if (support.IsPersonType && !existing.IsPersonType)
                 { existing.IsPersonType = true; changed = true; }
                 if (support.Aliases is { Length: > 0 })

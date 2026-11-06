@@ -81,7 +81,7 @@ namespace Chronicle.Services
                     //   Level 0 items WITH children are collection containers — skip them so they
                     //   don't generate spurious library rows in the flat view.
                     var moviesTypeIds = await _context.MediaTypes
-                        .Where(t => t.ProviderFamily == ProviderFamilies.Movie)
+                        .Where(t => t.ProviderFamily == ProviderFamilies.Movie || (t.SupportsCollections && t.HierarchyLevels == 1))
                         .Select(t => t.Id)
                         .ToListAsync(ct);
 

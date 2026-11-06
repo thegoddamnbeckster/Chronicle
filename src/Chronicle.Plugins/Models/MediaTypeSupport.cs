@@ -78,6 +78,12 @@ public class MediaTypeSupport
     /// </summary>
     public bool CastAreActors { get; set; }
 
+    /// <summary>
+    /// True when this plugin can say which collection (series) an item belongs to, so Chronicle may group the type's items under a
+    /// collection item. Only a flat type (one level) is grouped. An item whose providers name no collection stays at the top level.
+    /// </summary>
+    public bool SupportsCollections { get; set; }
+
     /// <summary>Optional. Other names this plugin's clients use for the type ("film" for movies). Only used when the type is created.</summary>
     public string[]? Aliases { get; set; }
 

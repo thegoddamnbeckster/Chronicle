@@ -262,7 +262,7 @@ public class MetadataResolutionService(
         // ResolveAsync_TitleAndYearNotPromotedAboveLevelZero for a level-1 type this must NOT
         // affect.
         var isEpisode          = MediaTypeRegistry.IsShowLike(mediaTypeName)  && item.HierarchyLevel == 2;
-        var isCollectionMember = MediaTypeRegistry.IsMovieLike(mediaTypeName) && item.HierarchyLevel == 1;
+        var isCollectionMember = MediaTypeRegistry.CanGroupIntoCollections(mediaTypeName) && item.HierarchyLevel == 1;
         if (item.HierarchyLevel == 0 || isEpisode || isCollectionMember)
         {
             if (resolved.TryGetValue("title", out var title) && HasValue(title))

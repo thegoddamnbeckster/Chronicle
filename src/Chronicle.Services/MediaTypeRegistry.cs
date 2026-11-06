@@ -7,7 +7,7 @@ namespace Chronicle.Services
     /// <summary>What Chronicle needs to know about one media type, read from <c>media_types</c>.</summary>
     public sealed record MediaTypeInfo(
         int Id, string Name, string? Family, string? ScanStrategy, bool IsPersonType, bool IsDefaultType, bool IsFamilyDefault,
-        bool CastAreActors, string[] Aliases, string? ImportShape = null);
+        bool CastAreActors, string[] Aliases, string? ImportShape = null, bool SupportsCollections = false, int HierarchyLevels = 1);
 
     /// <summary>
     /// Everything Chronicle knows about media types comes from the <c>media_types</c> table (edited on the Media Types page,
@@ -61,7 +61,7 @@ namespace Chronicle.Services
 
         public static MediaTypeInfo ToInfo(MediaType t) => new(
             t.Id, t.Name, t.ProviderFamily, t.ScanStrategy, t.IsPersonType, t.IsDefaultType, t.IsFamilyDefault, t.CastAreActors,
-            SplitAliases(t.Aliases), t.ImportShape);
+            SplitAliases(t.Aliases), t.ImportShape, t.SupportsCollections, t.HierarchyLevels);
 
         public static string[] SplitAliases(string? stored) =>
             string.IsNullOrWhiteSpace(stored)
@@ -142,6 +142,14 @@ namespace Chronicle.Services
         /// <summary>A type whose items are each one movie-like file on disk (family "movie").</summary>
         public static bool IsMovieLike(string? mediaTypeName) =>
             string.Equals(Family(mediaTypeName), ProviderFamilies.Movie, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// A type whose items may be grouped under a collection item: a movie-like type (collections from TMDB) or any other FLAT type
+        /// (one level) that declares it supports collections (games, from IGDB). A type with levels (a show, an author) is never grouped here:
+        /// its children are seasons or books, not members of a collection. An item with no collection data simply stays at the top level.
+        /// </summary>
+        public static bool CanGroupIntoCollections(string? mediaTypeName) =>
+            IsMovieLike(mediaTypeName) || (Find(mediaTypeName) is { SupportsCollections: true, HierarchyLevels: 1 });
 
         /// <summary>A hierarchical show type (family "tv").</summary>
         public static bool IsShowLike(string? mediaTypeName) =>
