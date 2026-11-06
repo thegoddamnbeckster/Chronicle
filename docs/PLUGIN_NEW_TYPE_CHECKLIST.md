@@ -21,7 +21,11 @@ and again at release, with evidence.
    was once said without looking and was wrong (Warcraft II; the Steam 403). Look first, then say.
 4. **The owner enters their own credentials.** Never ask for one in chat, never write one to a file, never type one
    into a form for them. Say where the box is.
-5. **Work only inside the plugin's repo** (`W:\Scripts\<repo>`), never the root of `W:\`. Throwaway build output goes in a
+5. **Existing plugins are held to the same list.** `scripts/survey-plugins.py` then `scripts/audit-plugins.py` read every plugin
+   repo and regenerate `docs/plugins/PLUGIN_COMPLIANCE.md`, a plugin-by-check matrix of what can be judged from files. It is rerun
+   whenever a plugin is added or changed, and a new `XX` there blocks a release. What it cannot judge (everything on screen, every
+   typed search, live fixtures, the declared-identically check T1) stays in that file's "unverified" list until someone looks.
+6. **Work only inside the plugin's repo** (`W:\Scripts\<repo>`), never the root of `W:\`. Throwaway build output goes in a
    git-ignored path inside the repo or the scratchpad.
 
 ## 1. Sources: measure before designing
@@ -195,6 +199,7 @@ See `docs/plans/2026-11-06-plugin-survey.md` for the evidence behind each.
 | K10 | Rate limits: the service's documented limit is in the plugin's pacing, 429 and `Retry-After` are honoured, and the doc page says what the limit is | MusicBrainz limits to 1 a second and has no 429 handling |
 | K11 | No empty `catch {}`. A caught error is logged with the plugin's id and either rethrown, or returned as a stated degraded result | IMDb has 11, TMDB 4 |
 | K12 | Every real plugin has its `docs/plugins/PLUGIN_*.md` page and a `PLUGIN_CATALOGUE.md` line | 9 are missing |
+| K13 | The compliance record (`docs/plugins/PLUGIN_COMPLIANCE.md`) is regenerated with the plugin and shows no static `XX` for it; each remaining unverified item has an owner and a date | A plugin passes review once and drifts |
 
 ## 10. Packaging and release
 
@@ -284,6 +289,7 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | K10 | Documented rate limit honoured | | |
 | K11 | No empty catch | | |
 | K12 | Doc page and catalogue line | | |
+| K13 | Compliance record regenerated, no static XX | | |
 | Q1 | Provider search within 4 s | | |
 | Q2 | Empty list for unserved types; failures cheap | | |
 | Q3 | Result fields set; score means something | | |

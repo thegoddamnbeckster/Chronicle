@@ -313,6 +313,7 @@ deps.json and manifest; hot deploy needs the owner's approval on the Plugins pag
 | K10 | Documented rate limit honoured | Designed, unknown | Sony publishes none; the probe measures, then the doc page records it |
 | K11 | No empty catch | Designed | review rule at G2 |
 | K12 | Doc page and catalogue line | Designed | section 13 |
+| K13 | Compliance record regenerated | Designed | the audit script runs before the release; the plugin's row must show no `XX` |
 | Q1 | Provider search within 4 s | Designed | 10c (index in the hub; cold start one 3 s call) |
 | Q2 | Empty list for unserved types, cheap failures | Designed | 10c, section 9 |
 | Q3 | Result fields, meaningful score | Designed | 10c |
