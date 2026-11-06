@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PosterImage } from '@/components/PosterImage'
 import { thumbnailUrl } from '@/utils/thumbnailUrl'
+import { measureGround, type LogoGround } from '@/utils/logoGround'
 import type { PersonListItem } from '@/types'
 import styles from './PersonCard.module.css'
 
@@ -49,6 +50,16 @@ export function PersonCard({
   // A portrait photo fills the tile. A picture that is wide or square (a company's logo) would be cropped to a slice of itself, so it is shown whole on a
   // light ground instead. Judged from the image once it has loaded; a person's photo is never that shape.
   const [roomy, setRoomy] = useState(false)
+  // ...and a logo is read against a ground that suits it: the picture's own brightness is measured and a light or a dark ground chosen, so a black logo
+  // is not lost on a dark tile or a white one on a light tile. Until it is measured (or if it cannot be) the light ground stays.
+  const [ground, setGround] = useState<LogoGround | null>(null)
+  const photo = thumbnailUrl(person.posterUrl)
+  useEffect(() => {
+    if (!roomy || !photo) return
+    let current = true
+    void measureGround(photo).then(g => { if (current) setGround(g) })
+    return () => { current = false }
+  }, [roomy, photo])
   const isActor = person.roles.some(r => r.toLowerCase() === 'actor')
   // On a title's own cast tile the position IS the point: an actor's is the character they play
   // (saying "Actor ... as" first is redundant), anyone else's is their role (Director, Composer).
@@ -59,13 +70,13 @@ export function PersonCard({
   return (
     <Link to={`/people/${person.id}`} state={navState} className={styles.personCard}>
       <div
-        className={`${styles.poster} ${roomy ? styles.posterContain : ''}`}
+        className={`${styles.poster} ${roomy ? styles.posterContain : ''} ${roomy && ground === 'dark' ? styles.posterContainDark : ''}`}
         onLoadCapture={e => {
           const img = e.target as HTMLImageElement
           if (img.naturalWidth > 0 && img.naturalHeight > 0 && img.naturalWidth / img.naturalHeight >= 0.9) setRoomy(true)
         }}
       >
-        <PosterImage posterUrl={thumbnailUrl(person.posterUrl)} name={person.name} lazy />
+        <PosterImage posterUrl={photo} name={person.name} lazy />
         {person.deathDate && (
           <div className={styles.deceasedBar} title={`Died ${formatYear(person.deathDate)}`} />
         )}

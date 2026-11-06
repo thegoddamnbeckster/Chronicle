@@ -45,6 +45,10 @@
   background: transparent;
 }
 
+.posterContainDark {
+  background: #0f1c1c;
+}
+
 .posterContain img {
   object-fit: contain;
   padding: 12px;

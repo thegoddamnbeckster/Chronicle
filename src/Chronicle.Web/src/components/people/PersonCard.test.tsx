@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest'
-import { fireEvent, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { PersonCard } from './PersonCard'
 import { renderWithProviders } from '@/test/test-utils'
 import type { PersonListItem } from '@/types'
+
+vi.mock('@/utils/logoGround', () => ({ measureGround: vi.fn() }))
+import { measureGround } from '@/utils/logoGround'
+
+beforeEach(() => { vi.mocked(measureGround).mockReset(); vi.mocked(measureGround).mockResolvedValue(null) })
 
 function makePerson(overrides: Partial<PersonListItem> = {}): PersonListItem {
   return {
@@ -52,6 +57,39 @@ describe('PersonCard', () => {
     const { container } = renderWithProviders(<PersonCard person={makePerson({ posterUrl: 'https://x.test/logo.png' })} fullName />)
     loadImage(1200, 1196)
     expect(container.querySelector('[class*="posterContain"]')).not.toBeNull()
+  })
+
+  it('puts a light logo on a dark ground, by measuring the picture', async () => {
+    vi.mocked(measureGround).mockResolvedValueOnce('dark')
+    const { container } = renderWithProviders(<PersonCard person={makePerson({ posterUrl: 'https://x.test/white-logo.png' })} fullName />)
+    loadImage(300, 150)
+    await waitFor(() => expect(container.querySelector('[class*="posterContainDark"]')).not.toBeNull())
+    expect(measureGround).toHaveBeenCalledWith('https://x.test/white-logo.png')
+  })
+
+  it('keeps a dark logo on the light ground', async () => {
+    vi.mocked(measureGround).mockResolvedValueOnce('light')
+    const { container } = renderWithProviders(<PersonCard person={makePerson({ posterUrl: 'https://x.test/black-logo.png' })} fullName />)
+    loadImage(300, 150)
+    await waitFor(() => expect(measureGround).toHaveBeenCalled())
+    expect(container.querySelector('[class*="posterContainDark"]')).toBeNull()
+    expect(container.querySelector('[class*="posterContain"]')).not.toBeNull()
+  })
+
+  it('keeps the light ground when the picture cannot be measured', async () => {
+    vi.mocked(measureGround).mockResolvedValueOnce(null)
+    const { container } = renderWithProviders(<PersonCard person={makePerson({ posterUrl: 'https://x.test/logo.png' })} fullName />)
+    loadImage(300, 150)
+    await waitFor(() => expect(measureGround).toHaveBeenCalled())
+    expect(container.querySelector('[class*="posterContainDark"]')).toBeNull()
+    expect(container.querySelector('[class*="posterContain"]')).not.toBeNull()
+  })
+
+  it('does not measure a portrait photo at all', () => {
+    vi.mocked(measureGround).mockClear()
+    renderWithProviders(<PersonCard person={makePerson({ posterUrl: 'https://x.test/face.jpg' })} fullName />)
+    loadImage(500, 750)
+    expect(measureGround).not.toHaveBeenCalled()
   })
 
   it('keeps a portrait photo filling the tile', () => {
