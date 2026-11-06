@@ -50,9 +50,8 @@
 }
 
 .posterContain img {
+  /* Edge to edge: the whole logo at the largest size the tile allows, no margin taken from it. */
   object-fit: contain;
-  padding: 12px;
-  box-sizing: border-box;
 }
 
 /* A thin diagonal sash spanning the photo corner to corner (bottom-left to top-right),
