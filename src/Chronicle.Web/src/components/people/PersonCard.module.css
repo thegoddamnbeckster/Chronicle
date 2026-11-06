@@ -94,14 +94,10 @@
 .name {
   font-weight: 600;
   line-height: 1.25;
-  /* Up to 2 lines before truncating -- per-user request (2026-08-30), long names ("'Fast'
-     Eddie Clark") were getting cut off after a few characters on a single forced line.
-     Row height in PeopleLibraryPage's virtualized grid (CARD_INFO_HEIGHT) accounts for
-     this being 2 lines now, not 1 -- keep the two in sync if this changes again. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  /* The whole name, however many lines it takes -- per-user request (2026-11-06): a clamp
+     at 2 lines cut "Eboni 'Chrystal' ..." short. PeopleLibraryPage measures each row's real
+     height, so a taller card no longer needs a fixed row height to be kept in sync. */
+  overflow-wrap: anywhere;
 }
 
 /* Unclamped variant (fullName prop) -- wraps to as many lines as the name needs instead of

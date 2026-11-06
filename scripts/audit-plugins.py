@@ -17,6 +17,7 @@ def sources(p):
         if "\\obj\\" in l or "\\bin\\" in l or "\\tests\\" in l or "\\tools\\" in l: continue
         out[f] = rd(f)
     return out
+LEGACY_IDS = {"hardcover"}
 checks = ["K1","K3","K4","K5","K7","K8","K9","K10","K11","K12","B1","B2","B4","B5","B6","X1","X2","X3","M2","C4","Q9"]
 res = {}
 for r in real:
@@ -41,7 +42,9 @@ for r in real:
         try: embv = json.loads(rd(emb)).get("version")
         except Exception: embv = "?"
     bad = []
-    if not pid.startswith("chronicle.plugin."): bad.append(f"plugin_id '{pid}'")
+    # A shipped id is never renamed: it keys the plugin's settings, enrichment rows, per-item metadata blobs and priorities.
+    # Hardcover shipped as "hardcover"; the host resolves it by its short name, so it stays (checklist K3).
+    if not pid.startswith("chronicle.plugin.") and pid not in LEGACY_IDS: bad.append(f"plugin_id '{pid}'")
     if pid not in cat_ids and not any(pid == c or pid.endswith("."+c) for c in cat_ids): bad.append("not in plugins.json")
     if tag != (mf.get("version") or ""): bad.append(f"tag '{tag}' vs manifest '{mf.get('version')}'")
     if r.get("csproj_version") != mf.get("version"): bad.append(f"csproj '{r.get('csproj_version')}' vs manifest")

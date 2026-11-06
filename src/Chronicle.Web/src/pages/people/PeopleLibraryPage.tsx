@@ -43,10 +43,9 @@ const GRID_GAP = 14
 // narrow screen instead, rather than ever going below 3 across.
 const MIN_COLUMNS = 3
 // Poster aspect-ratio 2:3 (see PersonCard.module.css) -> height = width * 1.5, plus the
-// text info block below it and its own padding. Name now wraps up to 2 lines (per-user
-// request 2026-08-30, PersonCard.module.css's -webkit-line-clamp: 2) instead of 1 -- roles
-// and dates stay single-line-truncated -- so this is one line-height (~20px) taller than a
-// strictly-single-line card would be. Keep in sync with PersonCard.module.css's own layout.
+// text info block below it and its own padding. This is only the virtualizer's FIRST ESTIMATE
+// for a row (a two-line name): names are shown in full, so each rendered row is measured
+// (virtualizer.measureElement below) and takes whatever height its tallest card needs.
 const CARD_INFO_HEIGHT = 84
 
 /** The virtualized row range currently backed by real data, derived from which pages
@@ -685,11 +684,19 @@ export default function PeopleLibraryPage() {
             return (
               <div
                 key={virtualRow.key}
+                // Measured, not fixed: a name is shown in full and may need 1, 2, 3 or more lines
+                // at a narrow width, so each row reports its real height to the virtualizer
+                // (CARD_INFO_HEIGHT is now only the first estimate). The padding carries the gap
+                // so the measured size includes it, matching the estimate's rowHeight + GRID_GAP.
+                ref={virtualizer.measureElement}
+                data-index={virtualRow.index}
                 style={{
                   position: 'absolute',
                   top: 0,
                   left: 0,
                   width: '100%',
+                  paddingBottom: GRID_GAP,
+                  boxSizing: 'border-box',
                   transform: `translateY(${virtualRow.start}px)`,
                   display: 'grid',
                   gridTemplateColumns: stretchMode
