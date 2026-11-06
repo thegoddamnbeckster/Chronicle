@@ -45,7 +45,7 @@ describe('Settings navigation', () => {
     for (const [fold, expected] of [
       ['Account', ['API Keys', 'Manage Users', 'My Profile', 'Preferences']],
       ['Metadata', ['Field Aliases', 'Media Types', 'Metadata Assignment']],
-      ['System', ['Database', 'Email', 'Service', 'Tuning']],
+      ['System', ['Database', 'Email', 'Service', 'Tuning', 'Watchdog']],
     ] as const) {
       const group = screen.getByRole('button', { name: fold }).parentElement!
       expect(labels(group)).toEqual(expected)

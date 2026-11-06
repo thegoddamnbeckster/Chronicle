@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { PersonCard } from './PersonCard'
 import { renderWithProviders } from '@/test/test-utils'
 import type { PersonListItem } from '@/types'
@@ -32,5 +32,31 @@ describe('PersonCard', () => {
 
     expect(screen.getByText('Actor')).toBeInTheDocument()
     expect(screen.getByText('1947')).toBeInTheDocument()
+  })
+
+  function loadImage(w: number, h: number) {
+    const img = document.querySelector('img') as HTMLImageElement   // hidden until it loads, so not found by role
+    Object.defineProperty(img, 'naturalWidth', { value: w, configurable: true })
+    Object.defineProperty(img, 'naturalHeight', { value: h, configurable: true })
+    fireEvent.load(img)
+    return img
+  }
+
+  it('shows a wide picture (a company logo) whole on a light ground instead of cropping it', () => {
+    const { container } = renderWithProviders(<PersonCard person={makePerson({ name: 'Gearbox Software', posterUrl: 'https://x.test/logo.png', roles: ['Developer'], characterName: null })} fullName />)
+    loadImage(213, 160)
+    expect(container.querySelector('[class*="posterContain"]')).not.toBeNull()
+  })
+
+  it('shows a square logo whole too, since cropping it to a portrait tile would cut it', () => {
+    const { container } = renderWithProviders(<PersonCard person={makePerson({ posterUrl: 'https://x.test/logo.png' })} fullName />)
+    loadImage(1200, 1196)
+    expect(container.querySelector('[class*="posterContain"]')).not.toBeNull()
+  })
+
+  it('keeps a portrait photo filling the tile', () => {
+    const { container } = renderWithProviders(<PersonCard person={makePerson({ posterUrl: 'https://x.test/face.jpg' })} fullName />)
+    loadImage(500, 750)
+    expect(container.querySelector('[class*="posterContain"]')).toBeNull()
   })
 })

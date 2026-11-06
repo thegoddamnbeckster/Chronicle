@@ -36,6 +36,21 @@
   display: block;
 }
 
+/* A wide or square picture (a company logo) shown whole on a light ground, not cropped. */
+.posterContain {
+  background: #f1f4f4;
+}
+
+.posterContain > div {
+  background: transparent;
+}
+
+.posterContain img {
+  object-fit: contain;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
 /* A thin diagonal sash spanning the photo corner to corner (bottom-left to top-right),
    clipped flush by .poster's own overflow:hidden -- it reads as sitting on top of the image,
    inside the tile, never crossing into the card's outer border/background.

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PosterImage } from '@/components/PosterImage'
 import { thumbnailUrl } from '@/utils/thumbnailUrl'
@@ -45,6 +46,9 @@ export function PersonCard({
   fullName?: boolean
 }) {
   const dates = formatDateRange(person.birthDate, person.deathDate)
+  // A portrait photo fills the tile. A picture that is wide or square (a company's logo) would be cropped to a slice of itself, so it is shown whole on a
+  // light ground instead. Judged from the image once it has loaded; a person's photo is never that shape.
+  const [roomy, setRoomy] = useState(false)
   const isActor = person.roles.some(r => r.toLowerCase() === 'actor')
   // On a title's own cast tile the position IS the point: an actor's is the character they play
   // (saying "Actor ... as" first is redundant), anyone else's is their role (Director, Composer).
@@ -54,7 +58,13 @@ export function PersonCard({
 
   return (
     <Link to={`/people/${person.id}`} state={navState} className={styles.personCard}>
-      <div className={styles.poster}>
+      <div
+        className={`${styles.poster} ${roomy ? styles.posterContain : ''}`}
+        onLoadCapture={e => {
+          const img = e.target as HTMLImageElement
+          if (img.naturalWidth > 0 && img.naturalHeight > 0 && img.naturalWidth / img.naturalHeight >= 0.9) setRoomy(true)
+        }}
+      >
         <PosterImage posterUrl={thumbnailUrl(person.posterUrl)} name={person.name} lazy />
         {person.deathDate && (
           <div className={styles.deceasedBar} title={`Died ${formatYear(person.deathDate)}`} />
