@@ -85,8 +85,8 @@ public sealed class PersonFullCreditsService(IPluginRegistry registry, ILogger<P
             .ToListAsync(ct);
         foreach (var c in await PersonCreditRollup.RollUpAsync(db, ownCredits, ct))
         {
-            // "Cast" and "Actor" are the same role spelled two ways across sources.
-            var role = c.Role == "Cast" ? "Actor" : c.Role;
+            // The rollup has already named the role for the kind of media ("Actor" only where cast act, "Artist" for music).
+            var role = c.Role;
             if (!seen.Add((c.MediaItemId, NormalizeRole(role)))) continue;
             result.Add(new PersonFullCredit(c.MediaItemId, c.Name, c.PosterUrl, c.Year, c.MediaTypeName, c.CharacterName, role));
         }

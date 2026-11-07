@@ -28,6 +28,7 @@ public class PersonFullCreditsServiceTests
 
         public Fixture()
         {
+            RegistryFixtures.LoadBuiltIns();   // whether a type's cast are actors comes from the registry
             Db.MediaTypes.AddRange(
                 new MediaType { Id = 1, Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow },
                 new MediaType { Id = 2, Name = "people", IsPersonType = true, DisplayName = "People", HierarchyLevels = 1, CreatedAt = DateTime.UtcNow });

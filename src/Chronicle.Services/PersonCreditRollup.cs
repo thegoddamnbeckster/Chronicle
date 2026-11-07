@@ -5,14 +5,47 @@ using Microsoft.EntityFrameworkCore;
 namespace Chronicle.Services;
 
 /// <summary>
-/// A person's credits as the person page lists them: one card per work. A provider that credits at episode level (IMDb lists
-/// an actor against each episode they were in) would otherwise bury a show under dozens of individual episode cards, so an
-/// episode (or season) of a show-like type is shown as its show. Movies, albums, books and everything else are left as they
-/// are, and the character names a person played across one show's episodes are merged onto that show's one card.
+/// A person's credits as the person page lists them: one card per WORK, and what a work is depends on the kind of media:
+///   - a show (TV, anime): the show. A provider that credits at episode level (IMDb lists an actor against each episode) would bury
+///     it under dozens of episode cards, so an episode or season is shown as its show;
+///   - music: the album. A band is credited on every track, so a track is shown as its album, not as 190 track cards;
+///   - everything else (movies, games, books, audiobooks, fan edits ...): the item credited, as it is. A book is the work, not its
+///     series or author; a game or film in a collection is itself the work.
+/// Character names a person played across one show's episodes are merged onto that show's one card, and the role is named for the
+/// kind of media (see <see cref="RoleLabel"/>): cast are "Actor" only where they act.
 /// </summary>
 public static class PersonCreditRollup
 {
     public sealed record Row(string Role, int MediaItemId, string Name, string? PosterUrl, int? Year, string MediaTypeName, string? CharacterName);
+
+    /// <summary>The hierarchy level at which one card stands for a work, or null when the item is itself the work.</summary>
+    internal static int? WorkLevel(MediaItem m)
+    {
+        var name = m.MediaType?.Name;
+        if (MediaTypeRegistry.IsShowLike(name)) return 0;
+        if (string.Equals(MediaTypeRegistry.Family(name), ProviderFamilies.Music, StringComparison.OrdinalIgnoreCase)
+            && (m.MediaType?.HierarchyLevels ?? 1) >= 3)
+            return 1;   // artist / album / track: the album (a flat music type, such as music videos, is its own work)
+        return null;
+    }
+
+    /// <summary>An item below its work's level shows as that work.</summary>
+    internal static bool Climbs(MediaItem m) => m.ParentId != null && WorkLevel(m) is { } work && m.HierarchyLevel > work;
+
+    /// <summary>
+    /// The role as the person page names it. "Cast" and "Actor" are the same role spelled two ways across sources, but only where cast
+    /// actually act; a band's credited artists are "Artist" (Deezer calls the main artist "Main", MusicBrainz "Cast", so both land on one
+    /// card); other kinds of media (games, audiobooks) keep "Cast" instead of calling a studio or a narrator an actor.
+    /// </summary>
+    internal static string RoleLabel(string role, MediaItem item)
+    {
+        var name = item.MediaType?.Name;
+        var music = string.Equals(MediaTypeRegistry.Family(name), ProviderFamilies.Music, StringComparison.OrdinalIgnoreCase);
+        if (role.Equals("Actor", StringComparison.OrdinalIgnoreCase) || role.Equals("Cast", StringComparison.OrdinalIgnoreCase))
+            return MediaTypeRegistry.CastAreActors(name) ? "Actor" : music ? "Artist" : role;
+        if (music && role.Equals("Main", StringComparison.OrdinalIgnoreCase)) return "Artist";
+        return role;
+    }
 
     public static async Task<List<Row>> RollUpAsync(ChronicleDbContext db, IEnumerable<MediaCredit> credits, CancellationToken ct = default)
     {
@@ -20,10 +53,8 @@ public static class PersonCreditRollup
         foreach (var c in credits)
             if (c.MediaItem is { } m) known[m.Id] = m;
 
-        // An episode or season climbs to its show. The parents are loaded a level at a time with one query per level
+        // An item below its work climbs to it (see WorkLevel). The parents are loaded a level at a time with one query per level
         // (an episode's season, then the season's show), not one query per credit.
-        static bool Climbs(MediaItem m) =>
-            m.HierarchyLevel > 0 && m.ParentId != null && MediaTypeRegistry.IsShowLike(m.MediaType?.Name);
 
         var frontier = known.Values.Where(Climbs).Select(m => m.ParentId!.Value).Where(id => !known.ContainsKey(id)).Distinct().ToList();
         for (var depth = 0; depth < 5 && frontier.Count > 0; depth++)
@@ -48,8 +79,7 @@ public static class PersonCreditRollup
         foreach (var c in credits)
         {
             if (c.MediaItem is null) continue;
-            // "Cast" and "Actor" are the same role spelled two ways across sources.
-            resolved.Add((c.Role == "Cast" ? "Actor" : c.Role, RootOf(c.MediaItem), c.CharacterName));
+            resolved.Add((RoleLabel(c.Role, c.MediaItem), RootOf(c.MediaItem), c.CharacterName));
         }
 
         return resolved
