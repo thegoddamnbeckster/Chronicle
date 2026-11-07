@@ -34,6 +34,26 @@ public static class ProviderCallGuard
 {
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(25);
 
+    // A plugin that must make many paced requests to describe one item completely declares a longer deadline in its manifest
+    // (call_timeout_seconds); the registry records it here when the plugin loads. Everything else keeps DefaultTimeout.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, TimeSpan> PluginTimeouts =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The longest deadline a plugin may declare: 24 hours.</summary>
+    public static readonly TimeSpan MaxPluginTimeout = TimeSpan.FromHours(24);
+
+    /// <summary>Records (or, with null or a value no longer than the default, clears) a plugin's own deadline.</summary>
+    public static void SetPluginTimeout(string pluginId, int? seconds)
+    {
+        if (seconds is { } s && s > DefaultTimeout.TotalSeconds)
+            PluginTimeouts[pluginId] = TimeSpan.FromSeconds(Math.Min(s, MaxPluginTimeout.TotalSeconds));
+        else
+            PluginTimeouts.TryRemove(pluginId, out _);
+    }
+
+    /// <summary>The deadline for one call into <paramref name="pluginId"/>: its own if it declared one, otherwise the default.</summary>
+    public static TimeSpan TimeoutFor(string pluginId) => PluginTimeouts.TryGetValue(pluginId, out var t) ? t : DefaultTimeout;
+
     // Short and bounded, not a SIMKL-style multi-hour cutoff -- same philosophy TmdbClient's
     // own single 429 retry already uses (see that class's own doc). A momentary DNS/connection
     // blip resolves within seconds; anything still failing after this many tries is a real
@@ -77,7 +97,7 @@ public static class ProviderCallGuard
         TimeSpan? timeout = null,
         TimeSpan? retryDelayOverride = null)
     {
-        var effectiveTimeout = timeout ?? DefaultTimeout;
+        var effectiveTimeout = timeout ?? TimeoutFor(pluginId);   // a caller's explicit (shorter) deadline wins, e.g. interactive search
         var retryBaseDelay = retryDelayOverride ?? TransientRetryBaseDelay;
 
         for (var attempt = 0; ; attempt++)

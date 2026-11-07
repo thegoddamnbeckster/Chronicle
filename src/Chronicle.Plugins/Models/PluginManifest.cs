@@ -29,6 +29,15 @@ public class PluginManifest
     public string MinChronicleVersion { get; set; } = "1.0.0";
 
     /// <summary>
+    /// How many seconds Chronicle lets ONE call into this plugin run before it gives up on it. Optional; absent or 25 or less means
+    /// the host's default of 25 seconds. For a source that must be asked many times, at a pace its service allows, to describe one item
+    /// completely (MusicBrainz: one request a second, a thousand release groups behind one artist), so that the complete answer can
+    /// finish instead of being cut off and lost. Capped at 24 hours. A host older than this field ignores it (and keeps 25 seconds).
+    /// </summary>
+    [JsonPropertyName("call_timeout_seconds")]
+    public int? CallTimeoutSeconds { get; set; }
+
+    /// <summary>
     /// Names of the media types this plugin handles (for example "movies", "tv", "music"), so the plugin catalog can be
     /// filtered to "plugins for this type". Optional; a plugin without it is listed under the tags it was catalogued with.
     /// </summary>

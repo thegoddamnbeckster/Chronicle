@@ -18,6 +18,8 @@ MusicBrainz metadata provider plugin for [Chronicle](https://github.com/thegodda
 
 Fetches music metadata — albums, artists, genres, track listings, and cover art — from [MusicBrainz](https://musicbrainz.org/) and the [Cover Art Archive](https://coverartarchive.org/). **No API key required.**
 
+**Everything MusicBrainz lists is fetched.** A MusicBrainz lookup shows only 25 of any list (Elvis Presley: 1,363 release groups, 2,122 releases, 869 works and 35,767 recordings behind a lookup that showed 25 of each). The plugin browses each list a hundred at a time until the count MusicBrainz reports is reached: an artist keeps every release group, release, work and recording (and the cover art of every release group), a release group keeps every release in full (track listings, labels, barcodes) and every release's cover art, and a recording keeps every release it appears on. Every tag is kept. This takes many requests at MusicBrainz's one-a-second pace, so one large artist can take most of an hour: the manifest declares `call_timeout_seconds` (4 hours; needs a Chronicle build that reads it, otherwise the host's 25 seconds applies), and every page and lookup is remembered for six hours so a fetch that fails near its end resumes instead of starting over. A busy or failing Cover Art Archive is retried, never recorded as "no cover art".
+
 ## Supported Media Types
 
 | Media Type | Fields |

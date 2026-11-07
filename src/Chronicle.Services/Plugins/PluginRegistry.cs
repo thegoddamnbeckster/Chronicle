@@ -172,6 +172,10 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             };
             _log.Warning("No manifest.json found alongside {DllPath} — using defaults", dllPath);
         }
+        // A plugin that must make many paced requests to describe one item declares a longer deadline for a call (null clears it).
+        ProviderCallGuard.SetPluginTimeout(manifest.PluginId, manifest.CallTimeoutSeconds);
+        if (manifest.CallTimeoutSeconds is > 25)
+            _log.Information("Plugin {PluginId} declares a call deadline of {Seconds} s (the default is 25 s)", manifest.PluginId, ProviderCallGuard.TimeoutFor(manifest.PluginId).TotalSeconds);
 
         // Load the DLL bytes into memory so no file handle is held by the ALC.
         // This allows the DLL to be overwritten on disk while the plugin is running,

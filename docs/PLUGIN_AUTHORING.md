@@ -655,7 +655,8 @@ Follow the same conventions used in Chronicle itself:
 - **Async everywhere** — all I/O operations use `async`/`await`; method names end in `Async`
 - **CancellationToken** — every async method accepts `CancellationToken ct = default` and passes it through
 - **Host validation in Fix Match** — when your `GetByIdAsync` normalises URLs, always validate the host before making HTTP calls (prevents open redirect / SSRF)
-- **Lossless ingestion** — store everything your API returns; unmapped fields go into `ExtendedData`
+- **Lossless ingestion** — store everything your API returns; unmapped fields go into `ExtendedData`. No cap on how many records you keep (a `limit`, a `Take(N)`, "the first 5 releases"): a service that pages is read page by page until a page comes back short, and a service whose lookup shows only part of a list (MusicBrainz shows 25 of any list) is browsed for the rest
+- **Long fetches** — the host gives one call into your plugin 25 seconds, then treats it as "no result". A source that needs many paced requests to describe one item completely declares `"call_timeout_seconds"` in `manifest.json` (for example `14400` for MusicBrainz; capped at 24 hours; a host older than the field ignores it). Remember what a long fetch has already been told (the MusicBrainz client keeps each page and lookup for six hours), so a fetch that fails near its end resumes instead of starting over, and never record a busy or failing service as "nothing there"
 - **Rate limiting** — always enforce rate limits; serialize outbound HTTP calls with a `SemaphoreSlim`
 - **Null safety** — enable `<Nullable>enable</Nullable>` in your `.csproj`
 

@@ -1373,7 +1373,10 @@ public class MetadataEnrichmentService(
     // How long a caller will wait to acquire the per-(item, plugin) lock below before giving up.
     // Must be longer than ProviderCallGuard.DefaultTimeout (the lock is held for the duration of
     // one provider call) with headroom for the rest of EnrichItemCoreLockedAsync's own DB work.
-    private static readonly TimeSpan ItemLockTimeout = TimeSpan.FromSeconds(40);
+    private static readonly TimeSpan ItemLockHeadroom = TimeSpan.FromSeconds(15);
+
+    /// <summary>The lock wait for one plugin: its own call deadline (25 s unless its manifest declares a longer one) plus headroom.</summary>
+    private static TimeSpan ItemLockTimeout(string pluginId) => ProviderCallGuard.TimeoutFor(pluginId) + ItemLockHeadroom;
 
     /// <summary>
     /// Enriches a single (item, plugin) enrichment row. This is the one canonical
@@ -1394,13 +1397,14 @@ public class MetadataEnrichmentService(
         // CancellationToken.None from fire-and-forget callers (EnrichPendingAsync's batch loop,
         // the enrichment controller's Task.Run) and would otherwise never expire on its own —
         // this is the second half of making sure nothing waiting on a plugin can hang forever.
-        var acquired = await itemSem.WaitAsync(ItemLockTimeout, ct);
+        var lockWait = ItemLockTimeout(pluginId);
+        var acquired = await itemSem.WaitAsync(lockWait, ct);
         if (!acquired)
         {
             logger.LogError(
                 "Couldn't acquire enrichment lock for item {ItemId} plugin {PluginId} within {TimeoutS}s " +
                 "— another enrichment for this exact (item, plugin) pair is still running or stuck; skipping this attempt",
-                row.MediaItemId, pluginId, ItemLockTimeout.TotalSeconds);
+                row.MediaItemId, pluginId, lockWait.TotalSeconds);
             return null;
         }
         try
