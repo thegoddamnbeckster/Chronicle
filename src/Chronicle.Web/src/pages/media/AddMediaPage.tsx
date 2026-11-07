@@ -6,6 +6,9 @@ import { searchMetadata, addFromSearch } from '@/api/scan'
 import type { MetadataSearchResult, MediaTypeOption } from '@/types'
 import styles from './AddMediaPage.module.css'
 
+/** How long the text must stay unchanged before the quota-limited sources (SIMKL) are searched. */
+const SETTLE_MS = 1200
+
 function toMediaTypeHint(mediaTypeName: string): string {
   return mediaTypeName.toLowerCase()
 }
@@ -153,32 +156,64 @@ export default function AddMediaPage() {
       return
     }
 
-    // Clear immediately so stale results don't linger while debounce is pending
-    setResults([])
     setSearchError(null)
 
     if (!query.trim() || !selectedType) {
+      setResults([])
+      setSearching(false)
       return
     }
 
+    // Show that something is happening on the first keystroke, not after the debounce, and keep the
+    // previous results on screen (dimmed) until the new ones arrive instead of blanking the page.
+    setSearching(true)
+
+    // A newer keystroke aborts the request still in flight, so a slow answer to an old query can never
+    // arrive late and overwrite the results for the current one.
+    const controller = new AbortController()
+    const started = Date.now()
+    let settleTimer: ReturnType<typeof setTimeout> | null = null
+    const text = query.trim()
+    const hint = toMediaTypeHint(selectedType.name)
+
+    // Two passes. The first runs the fast sources straight away. The sources with a small request quota
+    // (SIMKL) wait until the text has stopped changing for SETTLE_MS, so a half-typed string such as
+    // "TheGodfather" (before the space goes in) never spends one of their requests. The second pass
+    // runs every source and replaces the first pass's cards with the combined ones.
     debounceRef.current = setTimeout(async () => {
-      setSearching(true)
-      setSearchError(null)
       try {
-        const hint = toMediaTypeHint(selectedType.name)
-        const res = await searchMetadata(query.trim(), hint)
-        setResults(rankResults(res, query.trim()))
-        if (res.length === 0) setSearchError('No results found.')
+        const first = await searchMetadata(text, hint, controller.signal, false)
+        if (controller.signal.aborted) return
+        setResults(rankResults(first, text))
+        // An empty first pass is not "no results" yet: the held-back sources may still find it.
+        if (first.length > 0) setSearching(false)
+
+        settleTimer = setTimeout(async () => {
+          try {
+            const full = await searchMetadata(text, hint, controller.signal, true)
+            if (controller.signal.aborted) return
+            setResults(rankResults(full, text))
+            setSearchError(full.length === 0 ? 'No results found.' : null)
+          } catch {
+            // The first pass's cards stay; the held-back sources just did not answer.
+            if (controller.signal.aborted) return
+            if (first.length === 0) setSearchError('No results found.')
+          } finally {
+            if (!controller.signal.aborted) setSearching(false)
+          }
+        }, Math.max(0, SETTLE_MS - (Date.now() - started)))
       } catch (err) {
+        if (controller.signal.aborted) return
         setSearchError(err instanceof Error ? err.message : 'Search failed.')
         setResults([])
-      } finally {
         setSearching(false)
       }
-    }, 350)
+    }, 200)
 
     return () => {
+      controller.abort()
       if (debounceRef.current) clearTimeout(debounceRef.current)
+      if (settleTimer) clearTimeout(settleTimer)
     }
   }, [query, selectedType])
 
@@ -234,7 +269,7 @@ export default function AddMediaPage() {
       {addError && <p className={styles.error}>{addError}</p>}
 
       {results.length > 0 && (
-        <div className={styles.results}>
+        <div className={styles.results} style={searching ? { opacity: 0.5, transition: 'opacity 0.15s' } : undefined}>
           {results.map(r => {
             const libraryItemId = r.libraryItemId ?? null
             const isInLibrary = libraryItemId !== null || addedIds.has(r.externalId)

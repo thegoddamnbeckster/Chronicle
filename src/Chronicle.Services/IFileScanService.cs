@@ -31,7 +31,10 @@ namespace Chronicle.Services
         /// Queries the first available metadata provider for <paramref name="query"/> and
         /// returns raw search results. Use this to power the "Add Media" search UI.
         /// </summary>
-        Task<List<MetadataCandidate>> SearchMetadataAsync(string query, string mediaTypeHint, CancellationToken ct = default);
+        /// <param name="includeQuotaLimited">False leaves out the providers with a small request quota (see
+        /// FileScanService.QuotaLimitedSearchProviders) for the "still typing" pass of a search-as-you-type box; the caller
+        /// repeats the search with true once the text has settled.</param>
+        Task<List<MetadataCandidate>> SearchMetadataAsync(string query, string mediaTypeHint, CancellationToken ct = default, bool includeQuotaLimited = true);
 
         /// <summary>
         /// Fetches full metadata for <paramref name="externalId"/>, creates (or updates) a

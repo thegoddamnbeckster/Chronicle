@@ -65,6 +65,7 @@ public class FileScanController : ControllerBase
     public async Task<IActionResult> SearchMetadata(
         [FromQuery] string query,
         [FromQuery] string? mediaTypeHint = null,
+        [FromQuery] bool settled = true,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(query))
@@ -72,7 +73,9 @@ public class FileScanController : ControllerBase
 
         try
         {
-            var results = await _scanService.SearchMetadataAsync(query.Trim(), mediaTypeHint ?? MediaTypeRegistry.DefaultProviderName, ct);
+            // settled=false is the search box's "still typing" pass: it leaves out the quota-limited sources (SIMKL) so a half-typed
+            // string doesn't spend one of their requests; the box repeats the search with settled=true once typing stops.
+            var results = await _scanService.SearchMetadataAsync(query.Trim(), mediaTypeHint ?? MediaTypeRegistry.DefaultProviderName, ct, includeQuotaLimited: settled);
 
             // Check which results are already in the current user's library by matching external IDs.
             var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);

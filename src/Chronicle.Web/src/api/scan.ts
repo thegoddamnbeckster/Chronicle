@@ -106,9 +106,13 @@ export async function getImportProgress(): Promise<ImportProgressState> {
 export async function searchMetadata(
   query: string,
   mediaTypeHint: string,
+  signal?: AbortSignal,
+  /** false = the "still typing" pass: leaves out the quota-limited sources (SIMKL). */
+  settled = true,
 ): Promise<MetadataSearchResult[]> {
   const { data } = await client.get<ApiResponse<MetadataSearchResult[]>>('/scan/search', {
-    params: { query, mediaTypeHint },
+    params: { query, mediaTypeHint, settled },
+    signal,
   })
   return data.data ?? []
 }

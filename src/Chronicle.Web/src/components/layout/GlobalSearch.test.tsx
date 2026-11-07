@@ -25,6 +25,6 @@ describe('GlobalSearch', () => {
     await user.type(screen.getByLabelText('Search all media'), 'invincible')
 
     expect(await screen.findAllByRole('option')).toHaveLength(11)
-    expect(mediaApi.searchMedia).toHaveBeenLastCalledWith('invincible', undefined, 1, true, 10)
+    expect(mediaApi.searchMedia).toHaveBeenLastCalledWith('invincible', undefined, 1, true, 10, expect.any(AbortSignal))
   })
 })

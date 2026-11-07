@@ -362,6 +362,12 @@ export default function PeopleLibraryPage() {
     count: rowCount,
     getScrollElement,
     estimateSize: () => rowHeight + GRID_GAP,
+    // A row's real height (a long name wraps onto more lines, so rows differ). A reading of 0 means the row has no layout
+    // yet (hidden, or not rendered by a browser at all): it keeps the estimate instead of collapsing the row to nothing.
+    measureElement: (element) => {
+      const measured = Math.round(element.getBoundingClientRect().height)
+      return measured > 0 ? measured : rowHeight + GRID_GAP
+    },
     overscan: 4,
   })
 

@@ -111,9 +111,12 @@ namespace Chronicle.API.Controllers
             [FromQuery] int? mediaTypeId,
             [FromQuery] int page = 1,
             [FromQuery] int perPage = 20,
-            [FromQuery] bool allLevels = false)
+            [FromQuery] bool allLevels = false,
+            CancellationToken ct = default)
         {
-            var results = await _mediaService.SearchAsync(query ?? string.Empty, mediaTypeId, page, perPage, allLevels);
+            // ct: the page cancels the request when the next keystroke makes it stale, and the (slow, whole-library) query then stops
+            // instead of piling up behind the newer ones.
+            var results = await _mediaService.SearchAsync(query ?? string.Empty, mediaTypeId, page, perPage, allLevels, ct);
             var dtos = results.Select(m => ToDto(m)).ToList();
             return Ok(ApiResponse<List<MediaItemDto>>.Ok(dtos, new PaginationInfo(page, perPage, null)));
         }

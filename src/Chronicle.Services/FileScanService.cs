@@ -566,13 +566,32 @@ namespace Chronicle.Services
             return providers.Select((p, i) => (p, i)).OrderBy(x => Rank(x.p)).ThenBy(x => x.i).Select(x => x.p).ToList();
         }
 
+        /// <summary>
+        /// Providers whose search is held back while the owner is still typing: each search spends one of a small daily request quota
+        /// (SIMKL), and a search-as-you-type box fires one for every half-typed state ("TheGodfather" before the space goes in, seen live
+        /// 2026-11-07). The box runs the others straight away and these once the text has settled. Kept in the host, by plugin id,
+        /// because a flag on the plugin interface would stop an older host from loading a newer plugin.
+        /// </summary>
+        internal static readonly HashSet<string> QuotaLimitedSearchProviders =
+            new(StringComparer.OrdinalIgnoreCase) { "chronicle.plugin.simkl" };
+
+        /// <summary>The providers to search now: all of them, or without the quota-limited ones for a "still typing" pass. When nothing
+        /// else is installed the quota-limited ones run anyway, so the box is never empty for want of a fast source.</summary>
+        internal static IReadOnlyList<IMetadataProvider> ForSearchPass(IReadOnlyList<IMetadataProvider> providers, bool includeQuotaLimited)
+        {
+            if (includeQuotaLimited) return providers;
+            var fast = providers.Where(p => !QuotaLimitedSearchProviders.Contains(p.PluginId)).ToList();
+            return fast.Count > 0 ? fast : providers;
+        }
+
         public async Task<List<MetadataCandidate>> SearchMetadataAsync(
-            string query, string mediaTypeHint, CancellationToken ct = default)
+            string query, string mediaTypeHint, CancellationToken ct = default, bool includeQuotaLimited = true)
         {
             var providers = ProvidersForType(mediaTypeHint);
             if (providers.Count == 0)
                 throw new InvalidOperationException(
                     "No metadata provider is loaded. Install and configure a metadata plugin (e.g. TMDB).");
+            providers = ForSearchPass(providers, includeQuotaLimited);
 
             // The merge below keeps the FIRST provider's card as the primary identity and folds the others into it, so the order the
             // providers are listed in decides which one a result is labelled with and which id Add Media files it under. Registry order is
@@ -598,7 +617,7 @@ namespace Chronicle.Services
                 {
                     return await ProviderCallGuard.CallAsync(
                         t => p.SearchAsync(context, t), p.PluginId, "SearchAsync", (IReadOnlyList<ScoredCandidate>)[],
-                        msg => _log.Warning(msg), msg => _log.Error(msg), ct, TimeSpan.FromSeconds(4));
+                        msg => _log.Warning(msg), msg => _log.Error(msg), ct, TimeSpan.FromSeconds(2.5));
                 }
                 catch
                 {
@@ -635,7 +654,7 @@ namespace Chronicle.Services
             var seenTitleYear = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var merged        = new List<MetadataCandidate>();
 
-            foreach (var (_, r) in allCandidates)
+            foreach (var (selfProvider, r) in allCandidates)
             {
                 var m = r.Metadata;
 
@@ -679,8 +698,9 @@ namespace Chronicle.Services
                 var sources              = new List<string>();
                 var contribExternalIds   = new List<ContributingExternalId>();
                 var bestScore            = r.Score;   // the card is as good a match as the best of the providers that agree on it
+                var members              = new List<(IMetadataProvider Provider, ScoredCandidate Candidate)> { (selfProvider, r) };
                 if (!string.IsNullOrEmpty(m.Source)) sources.Add(m.Source);
-                foreach (var (_, other) in allCandidates)
+                foreach (var (otherProvider, other) in allCandidates)
                 {
                     if (other.Metadata.ExternalId == m.ExternalId) continue;
                     var otherTk = TitleYearKey(other.Metadata.Title, other.Metadata.Year);
@@ -691,6 +711,7 @@ namespace Chronicle.Services
                     // resolved onto the 1974 item. Different films share titles constantly.
                     if (!m.Year.HasValue || !other.Metadata.Year.HasValue) continue;
                     bestScore = Math.Max(bestScore, other.Score);
+                    members.Add((otherProvider, other));
                     if (!string.IsNullOrEmpty(other.Metadata.Source) && !sources.Contains(other.Metadata.Source))
                         sources.Add(other.Metadata.Source);
                     // Source is carried alongside the id itself -- not re-derived later from the
@@ -701,12 +722,25 @@ namespace Chronicle.Services
                         contribExternalIds.Add(new ContributingExternalId(other.Metadata.Source, other.Metadata.ExternalId));
                 }
 
+                // Each field of the card comes from the highest-ranked provider that has a value for it, by the owner's Metadata Assignment
+                // for this type (Settings, Metadata Assignment) -- the same precedence the item gets once added. The card's identity (the id
+                // Add Media files it under, its source label) stays with the provider the merge started from.
+                var order = FieldPrecedence.For(assignment, MediaTypeRegistry.Canonical(mediaTypeHint));
+                var title    = order.Pick(members, "title",      x => x.Metadata.Title,                              s => !string.IsNullOrWhiteSpace(s)) ?? m.Title;
+                var year     = order.Pick(members, "year",       x => x.Metadata.Year,                               y => y.HasValue) ?? m.Year;
+                var overview = order.Pick(members, "overview",   x => x.Metadata.Overview,                           s => !string.IsNullOrWhiteSpace(s)) ?? m.Overview;
+                var rating   = order.Pick(members, "rating",     x => x.Metadata.Rating,                             v => v.HasValue) ?? m.Rating;
+                var genres   = order.Pick(members, "genres",     x => x.Metadata.Genres,                             g => g is { Count: > 0 }) ?? m.Genres;
+                var cast     = order.Pick(members, "cast",       x => x.Metadata.Cast,                               c => c is { Count: > 0 }) ?? m.Cast;
+                // The poster keeps the cross-reference lookups above as its last resort, so a card whose own providers have none still gets one.
+                poster       = order.Pick(members, "poster_url", x => x.Metadata.PosterUrl,                          s => !string.IsNullOrEmpty(s)) ?? poster;
+
                 merged.Add(new MetadataCandidate(
-                    m.ExternalId!, m.Title, m.Year, poster,
-                    m.Overview, m.Rating, bestScore,
+                    m.ExternalId!, title, year, poster,
+                    overview, rating, bestScore,
                     m.Source,
-                    m.Genres.Count > 0           ? m.Genres           : null,
-                    m.Cast.Count > 0             ? m.Cast.Select(c => c.Name).ToList() : null,
+                    genres.Count > 0             ? genres             : null,
+                    cast.Count > 0               ? cast.Select(c => c.Name).ToList() : null,
                     sources.Count > 1            ? sources            : null,
                     contribExternalIds.Count > 0 ? contribExternalIds : null));
             }

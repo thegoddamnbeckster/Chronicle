@@ -235,7 +235,11 @@ namespace Chronicle.Data
                 entity.HasIndex(e => e.Name);
                 // Covers the title search ("level 0 whose lower(name) contains ..."): the scan reads this narrow index instead of every
                 // wide item row. Measured on a 150,000-row stand-in: 0.09 s -> 0.012 s; ~0.5 s -> ~0.07 s on the live table.
-                entity.HasIndex(e => new { e.HierarchyLevel, e.Name });
+                // It must hold EVERY column the search reads (name, normalized name, hierarchy level, media type): once the search also
+                // matched the normalized name this index stopped covering it, SQLite went back to reading every wide item row (~24 KB
+                // of metadata each, 410,000 rows), and a search took 1.2 s warm and minutes on a cold or busy database (2026-11-07).
+                // A narrow table with the same columns scans in 0.05 s.
+                entity.HasIndex(e => new { e.HierarchyLevel, e.Name, e.NormalizedName, e.MediaTypeId });
                 entity.HasIndex(e => e.ParentId);
                 entity.Property(e => e.Name).IsRequired();
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");

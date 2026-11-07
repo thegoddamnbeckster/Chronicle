@@ -18,18 +18,27 @@ export default function GlobalSearch() {
   const inputRef  = useRef<HTMLInputElement>(null)
   const navigate  = useNavigate()
 
+  const abortRef  = useRef<AbortController | null>(null)
+
   const runSearch = useCallback(async (q: string) => {
     if (!q.trim()) { setResults([]); setOpen(false); return }
+    // A newer search cancels the one still running, so a slow answer to an old query can't overwrite the current one
+    // and the server stops working on it.
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
     setLoading(true)
     try {
       // 10 rows normally; more when there are more exact title matches than that (the
       // server grows the page to fit them all), so an exact match is never cut off.
-      const hits = await searchMedia(q, undefined, 1, true, DROPDOWN_ROWS)
+      const hits = await searchMedia(q, undefined, 1, true, DROPDOWN_ROWS, controller.signal)
+      if (controller.signal.aborted) return
       setResults(hits)
       setOpen(hits.length > 0)
+      setLoading(false)
     } catch {
+      if (controller.signal.aborted) return
       setResults([])
-    } finally {
       setLoading(false)
     }
   }, [])
@@ -38,11 +47,13 @@ export default function GlobalSearch() {
     const q = e.target.value
     setQuery(q)
     if (timerRef.current) clearTimeout(timerRef.current)
-    if (!q.trim()) { setResults([]); setOpen(false); return }
+    if (!q.trim()) { abortRef.current?.abort(); setLoading(false); setResults([]); setOpen(false); return }
     timerRef.current = setTimeout(() => runSearch(q), 300)
   }
 
   function handleClear() {
+    abortRef.current?.abort()
+    setLoading(false)
     setQuery('')
     setResults([])
     setOpen(false)

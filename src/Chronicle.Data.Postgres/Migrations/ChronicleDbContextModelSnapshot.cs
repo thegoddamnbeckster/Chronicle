@@ -17,7 +17,7 @@ namespace Chronicle.Data.Postgres.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.22")
+                .HasAnnotation("ProductVersion", "9.0.20")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -553,8 +553,6 @@ namespace Chronicle.Data.Postgres.Migrations
 
                     b.HasIndex("ParentId");
 
-                    b.HasIndex("HierarchyLevel", "Name");
-
                     b.HasIndex("MediaTypeId", "UpdatedAt");
 
                     b.HasIndex("NormalizedName", "MediaTypeId")
@@ -564,6 +562,8 @@ namespace Chronicle.Data.Postgres.Migrations
                         .HasDatabaseName("idx_media_items_normalized_name_loose_mediatypeid");
 
                     b.HasIndex("MediaTypeId", "ParentId", "IsStub");
+
+                    b.HasIndex("HierarchyLevel", "Name", "NormalizedName", "MediaTypeId");
 
                     b.ToTable("media_items", (string)null);
                 });

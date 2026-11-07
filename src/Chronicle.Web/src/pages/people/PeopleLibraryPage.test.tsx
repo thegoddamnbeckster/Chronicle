@@ -113,7 +113,9 @@ describe('PeopleLibraryPage', () => {
     // never fires here): rowSpan = 170*1.5 + 84 + 14 = 353. Trigger fires once the last visible
     // row reaches row 10 (maxLoadedRow - 3); scrollTop 2900 puts it there while row 13 stays
     // within the overscan(4) window (rendered rows extend to ~14).
-    Object.defineProperty(main, 'scrollTop', { configurable: true, value: 2900 })
+    // Rows are now measured (so a long name can make one taller), and stubViewportGeometry makes every element report 700px: a
+    // row spans 700, not the 353 estimate above. Same landing row: 6600 puts the last visible row at 10 with row 13 in the overscan.
+    Object.defineProperty(main, 'scrollTop', { configurable: true, value: 6600 })
     main.dispatchEvent(new Event('scroll'))
 
     await waitFor(() => {
