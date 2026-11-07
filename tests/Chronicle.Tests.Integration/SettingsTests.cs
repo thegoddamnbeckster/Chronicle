@@ -93,6 +93,106 @@ public class SettingsTests : IClassFixture<ChronicleApiFactory>
             .Should().Contain("title");
     }
 
+    // ── collection cards: a movie collection and a game series are ordered separately ────────────────────────────
+
+    private async Task<string> AddCollectionTypeAsync(bool supportsCollections, int levels)
+    {
+        var name = "collcard_" + Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        db.MediaTypes.Add(new MediaType
+        {
+            Name = name, DisplayName = "Test " + name, HierarchyLevels = levels, HierarchyLabels = "Item", IsActive = true,
+            SupportsCollections = supportsCollections, InteractionVerb = "played", ProgressUnit = "percent", CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        return name;
+    }
+
+    [Fact]
+    public async Task MetadataAssignment_Get_GivesAFlatCollectionTypeACollectionCardRightAfterItsOwn()
+    {
+        var name = await AddCollectionTypeAsync(supportsCollections: true, levels: 1);
+        var client = await AdminClientAsync();
+
+        var data = (await (await client.GetAsync("/api/v1/settings/metadata-assignment")).Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data");
+
+        var keys = data.GetProperty("assignableFields").EnumerateObject().Select(p => p.Name).ToList();
+        keys.Should().Contain([name, $"{name}.collection"]);
+        keys.IndexOf($"{name}.collection").Should().Be(keys.IndexOf(name) + 1, "the collection card sits directly under its type's card");
+        data.GetProperty("mediaTypeDisplayNames").GetProperty($"{name}.collection").GetString().Should().Be($"Test {name} Collections");
+        data.GetProperty("availablePlugins").TryGetProperty($"{name}.collection", out _).Should().BeTrue();
+        data.GetProperty("fieldPlugins").TryGetProperty($"{name}.collection", out _).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(false, 1)]   // a flat type that does not group into collections (people)
+    [InlineData(true, 3)]    // a multi-level type: its series grouping is a level card already
+    [InlineData(false, 3)]
+    public async Task MetadataAssignment_Get_GivesOtherTypesNoCollectionCard(bool supportsCollections, int levels)
+    {
+        var name = await AddCollectionTypeAsync(supportsCollections, levels);
+        var client = await AdminClientAsync();
+
+        var data = (await (await client.GetAsync("/api/v1/settings/metadata-assignment")).Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data");
+
+        data.GetProperty("assignableFields").TryGetProperty($"{name}.collection", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MetadataAssignment_Put_SavesACollectionOrderAndTheTypesOwnOrderIsUnchanged()
+    {
+        var name = await AddCollectionTypeAsync(supportsCollections: true, levels: 1);
+        var client = await AdminClientAsync();
+        var config = new Dictionary<string, object>
+        {
+            ["assignments"] = new Dictionary<string, object>
+            {
+                [name] = new { title = new[] { "chronicle.plugin.igdb" } },
+                [$"{name}.collection"] = new { title = new[] { "chronicle.plugin.wikipedia", "chronicle.plugin.igdb" } },
+            },
+        };
+
+        (await client.PutAsJsonAsync("/api/v1/settings/metadata-assignment", config)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var saved = (await (await client.GetAsync("/api/v1/settings/metadata-assignment")).Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("assignments");
+        saved.GetProperty(name).GetProperty("title").EnumerateArray().Select(e => e.GetString()).Should().Equal("chronicle.plugin.igdb");
+        saved.GetProperty($"{name}.collection").GetProperty("title").EnumerateArray().Select(e => e.GetString())
+            .Should().Equal("chronicle.plugin.wikipedia", "chronicle.plugin.igdb");
+    }
+
+    [Fact]
+    public async Task MetadataAssignment_Put_RejectsAFieldACollectionCannotHave()
+    {
+        var name = await AddCollectionTypeAsync(supportsCollections: true, levels: 1);
+        var client = await AdminClientAsync();
+        var config = new Dictionary<string, object>
+        {
+            ["assignments"] = new Dictionary<string, object> { [$"{name}.collection"] = new { cast = new[] { "chronicle.plugin.igdb" } } },
+        };
+
+        (await client.PutAsJsonAsync("/api/v1/settings/metadata-assignment", config)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task MetadataAssignment_Get_ACollectionCardNobodySavedShowsTheTypesOrder()
+    {
+        var name = await AddCollectionTypeAsync(supportsCollections: true, levels: 1);
+        var client = await AdminClientAsync();
+        var put = new Dictionary<string, object>
+        {
+            ["assignments"] = new Dictionary<string, object> { [name] = new { title = new[] { "chronicle.plugin.igdb", "chronicle.plugin.imdb" } } },
+        };
+        (await client.PutAsJsonAsync("/api/v1/settings/metadata-assignment", put)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var saved = (await (await client.GetAsync("/api/v1/settings/metadata-assignment")).Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("assignments");
+
+        saved.GetProperty($"{name}.collection").GetProperty("title").EnumerateArray().Select(e => e.GetString())
+            .Should().Equal("chronicle.plugin.igdb", "chronicle.plugin.imdb");
+    }
+
     [Fact]
     public async Task MetadataAssignment_Put_RejectsBadMediaType()
     {

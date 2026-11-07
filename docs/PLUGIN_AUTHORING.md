@@ -233,6 +233,15 @@ bpm, isrc, ...`); a misspelt name makes the field invisible, and a plugin that l
 that can only fail. An empty list for a level (`LevelFields[2] = []`) means "nothing at this level": the host removes those
 rows from the queue and does not seed them. Add a test that every declared field is one of the host's names.
 
+**Collections have their own Metadata Assignment card.** A flat type that groups its items into collections (movies, anime movies,
+fan edits, games) gets a second card, "{Type} Collections", stored as `{type}.collection`, for the data of the *collections*
+themselves (title, overview, artwork): a movie collection and a game series come from different sources, and no source's order
+decides another's. A plugin is offered on that card when it declares the `collection` field in `SupportedFields` for the type (TMDB
+and IGDB do) or sets `MediaTypeSupport.SupportsCollections`. A collection follows its type's order for any field the collection card
+has not set, so nothing changes until the owner opens it. A source with no notion of a collection (IMDb) is not offered there, and
+the host clears its match from a collection-level item (see checklist T4). A new source of collection data only has to declare the
+`collection` field; the owner then orders it against the others on that card.
+
 **2. Assignment lists decide what is displayed, and installing a plugin does not add it to them.** For a field that has a saved
 list, only the plugins on it are consulted, in order. As of 2026-10-14 a plugin that is on no list is used as a **last resort**
 (when nothing on the list has a value), and the Assignment page appends it to each list it supports so an administrator can

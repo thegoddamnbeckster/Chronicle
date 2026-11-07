@@ -121,6 +121,7 @@ that have already been missed once.
 | P1 | **Settings > Metadata Assignment**, the type list | The type is listed under its display name. The list is sorted by display name, so check the **bottom** of the page, and the "Choose a media type" dropdown at the top | A type starting with V sits below the fold and looks missing |
 | P2 | Metadata Assignment, each field of the type | The plugin appears under **every field it fills** and under none it does not (a mapper test asserts declared equals filled). Only canonical field names count (`MetadataResolutionService.FieldMap`); `extended_data` is not resolvable | A field not declared has no plugin to pick; IGDB declared no cast, so developers were empty |
 | P3 | Metadata Assignment, the order inside each field | A saved assignment config predates the plugin, so the page appends it last. Move it ahead of any weaker plugin (IMDb for games), Wikipedia last. Do it, or tell the owner it needs doing | The new plugin exists but never wins |
+| P3b | Metadata Assignment, the **collection card** ("{Type} Collections", key `{type}.collection`): a plugin that describes collections declares the `collection` field and appears there; one that does not (IMDb) must not. Open the card and check who is listed and in what order | A movie collection (TMDB) and a game series (IGDB) are ordered separately; a new source of collection data is ordered against the others there |
 | P4 | **Library**, the type section | The type appears after the first item exists (the Library hides empty types). Display name, hierarchy label, item count, sort and filters read sensibly. Collections are badged; items without a series are top level | New type invisible until an item exists; "Watching" on a game |
 | P5 | Library, an item tile | Poster, title, year, status and (for games) ownership read correctly; an item with no art shows a deliberate fallback, not a broken image | Missing or 404 art |
 | P6 | **Add Media**, the type picker | The type is offered, with the plugin's search results showing the plugin's key and cover, and the right candidate first (strongest match on top) | Type absent, or results from the wrong plugin |
@@ -278,6 +279,7 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | P1 | Metadata Assignment: type listed (bottom of page, dropdown) | | |
 | P2 | Metadata Assignment: plugin under every field it fills, none it does not | | |
 | P3 | Metadata Assignment: order within each field | | |
+| P3b | Collection card: collection sources listed and ordered; IMDb not | | |
 | P4 | Library: type section, labels, collections badged | | |
 | P5 | Library: item tile, art fallback | | |
 | P6 | Add Media: type offered, results with key and cover, best first | | |

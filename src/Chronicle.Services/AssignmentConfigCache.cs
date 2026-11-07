@@ -31,6 +31,23 @@ public class AssignmentConfigCache(IServiceScopeFactory scopeFactory) : IDisposa
         return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The order for a COLLECTION of this type (see <see cref="CollectionAssignment"/>): the collection card's own order for each field
+    /// that has one, and the type's order for every field that does not, so a collection follows the type until its card is set.
+    /// </summary>
+    public async Task<Dictionary<string, List<string>>> GetForCollectionAsync(string mediaTypeName, CancellationToken ct = default)
+    {
+        var config = await LoadAsync(ct);
+        config.TryGetValue(mediaTypeName, out var typeOrder);
+        config.TryGetValue(CollectionAssignment.KeyFor(mediaTypeName), out var collectionOrder);
+
+        var merged = new Dictionary<string, List<string>>(typeOrder ?? [], StringComparer.OrdinalIgnoreCase);
+        if (collectionOrder is not null)
+            foreach (var (field, plugins) in collectionOrder)
+                if (plugins.Count > 0) merged[field] = plugins;
+        return merged;
+    }
+
     public void Invalidate()
     {
         CacheState old, updated;

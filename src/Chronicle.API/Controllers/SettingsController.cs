@@ -210,6 +210,9 @@ public class SettingsController : ControllerBase
                         .ToDictionary(f => f.Key, f => f.Value, StringComparer.OrdinalIgnoreCase);
                 });
 
+        // A collection card nobody has saved yet starts from the type's own order, which is what the resolver uses for it until then.
+        assignments = CollectionAssignment.SeedFromTypeOrder(assignments, assignableFields);
+
         // Load DB plugin records to map PluginId → DB id for the proxy URL.
         var dbPlugins  = await _db.Plugins.ToListAsync();
         var allEntries = _pluginRegistry.GetMetadataProviderEntries().ToList();
@@ -233,6 +236,7 @@ public class SettingsController : ControllerBase
 
                 // Providers of the type's family are offered too (Trakt supports "tv", so it appears for "anime").
                 var parentTypeName = MediaTypeRegistry.Family(rawTypeName);
+                var isCollectionKey = CollectionAssignment.IsKey(assignmentKey);   // "game.collection": only sources that describe collections
 
                 return assignableFields[assignmentKey].ToDictionary(
                     field => field,
@@ -249,6 +253,7 @@ public class SettingsController : ControllerBase
                                 });
 
                             if (support == null) return false;
+                            if (isCollectionKey && !CollectionAssignment.CanDescribeCollections(support)) return false;
 
                             // If the plugin declares no SupportedFields at all, treat it as
                             // supporting every field (generic / legacy provider).
@@ -315,6 +320,14 @@ public class SettingsController : ControllerBase
             k => k,
             k =>
             {
+                if (CollectionAssignment.IsKey(k))
+                {
+                    var typeName = CollectionAssignment.TypeOf(k);
+                    return CollectionAssignment.DisplayName(
+                        dbMediaTypes.FirstOrDefault(t => string.Equals(t.Name, typeName, StringComparison.OrdinalIgnoreCase))?.DisplayName
+                        ?? (typeName.Length > 0 ? char.ToUpper(typeName[0]) + typeName[1..] : typeName));
+                }
+
                 var dot = k.IndexOf('.');
                 if (dot < 0)
                 {
@@ -651,6 +664,12 @@ public class SettingsController : ControllerBase
                     ? levelFields
                     : DefaultFieldsForLevel(level);
             }
+
+            // A flat type that groups its items into collections (movies, anime movies, fan edits, games) gets a card of its own for the
+            // data of the COLLECTIONS: a movie collection and a game series come from different sources, and no source's order may
+            // decide another's (see CollectionAssignment).
+            if (CollectionAssignment.AppliesTo(dbType))
+                result[CollectionAssignment.KeyFor(dbType.Name)] = CollectionAssignment.FieldsFor(matchingSupport);
         }
 
         return result;

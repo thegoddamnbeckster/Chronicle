@@ -93,7 +93,11 @@ public class MetadataResolutionService(
     {
         var mediaTypeName = (item.MediaType?.Name ?? string.Empty).ToLowerInvariant();
 
-        var priorityMap  = await configCache.GetForTypeAsync(mediaTypeName, item.HierarchyLevel, ct);
+        // A collection (a movie collection, a game series) has its own order, per type: TMDB does not decide how IGDB's data is ranked, nor
+        // IGDB TMDB's. Its fields follow the type's order until the collection card has set them (see CollectionAssignment).
+        var priorityMap  = await CollectionAssignment.IsCollectionAsync(db, item, ct)
+            ? await configCache.GetForCollectionAsync(mediaTypeName, ct)
+            : await configCache.GetForTypeAsync(mediaTypeName, item.HierarchyLevel, ct);
         var extraAliases = await fieldAliasCache.GetAllAsync(ct);
 
         var blobs = ParsePluginBlobs(item.MetadataJson);
