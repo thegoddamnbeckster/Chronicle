@@ -242,6 +242,13 @@ has not set, so nothing changes until the owner opens it. A source with no notio
 the host clears its match from a collection-level item (see checklist T4). A new source of collection data only has to declare the
 `collection` field; the owner then orders it against the others on that card.
 
+**Credits are shown one card per work, named for the kind of media** (`PersonCreditRollup`). Return credits at whatever level your
+source has them: the host rolls them up. A show's episode or season credit is shown as the show; a music type with artist / album
+/ track levels shows a track credit as its album (a band is credited on every track); everything else (movies, games, books,
+audiobooks, fan edits) is its own work. Cast are labelled "Actor" only for kinds of media whose cast act (`CastAreActors`); for
+music "Cast" and "Main" both read "Artist", and games and audiobooks keep "Cast". A new type picks this up from its `ProviderFamily`
+and `HierarchyLevels`, so declare those correctly rather than naming roles in the plugin.
+
 **2. Assignment lists decide what is displayed, and installing a plugin does not add it to them.** For a field that has a saved
 list, only the plugins on it are consulted, in order. As of 2026-10-14 a plugin that is on no list is used as a **last resort**
 (when nothing on the list has a value), and the Assignment page appends it to each list it supports so an administrator can
