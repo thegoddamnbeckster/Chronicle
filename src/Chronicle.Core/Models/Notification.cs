@@ -36,6 +36,7 @@ public static class NotificationKinds
     public const string PluginUpdate = "plugin.update";
     public const string DatabaseSize = "database.size";
     public const string PluginIntegrity = "plugin.integrity";
+    public const string DeviceRejected = "device.rejected";
 
     public sealed record Info(string Kind, string Label, string Description);
 
@@ -46,6 +47,7 @@ public static class NotificationKinds
         new(TaskFailed, "A background task failed", "A scheduled task (backup, scan, refresh...) stopped with an error."),
         new(PluginUpdate, "A plugin has an update", "A newer version of an installed plugin is available."),
         new(PluginIntegrity, "A plugin was blocked", "A plugin's files changed on disk without being installed or updated through Chronicle, so it was not loaded."),
+        new(DeviceRejected, "A Kodi add-on was turned away", "A Kodi add-on (scraper, scrobbler or rating) sent an API key Chronicle does not accept, so it is not syncing until it is reconnected."),
         new(DatabaseSize, "The database is getting large", "The database has grown past the warning size."),
     ];
 

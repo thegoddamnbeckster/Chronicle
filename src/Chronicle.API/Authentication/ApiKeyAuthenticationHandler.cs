@@ -56,6 +56,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         if (token is null)
         {
             _audit.RejectedCredential(Context, "ApiKey", "invalid or expired API key", SessionStore.LogTag(rawKey));
+            await KodiRejectionAlert.RaiseAsync(Context, "invalid or expired", Context.RequestAborted);
             return AuthenticateResult.Fail("Invalid or expired API key.");
         }
 
