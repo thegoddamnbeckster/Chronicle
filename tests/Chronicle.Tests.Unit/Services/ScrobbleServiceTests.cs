@@ -749,6 +749,20 @@ namespace Chronicle.Tests.Unit.Services
         }
 
         [Fact]
+        public async Task GetActiveSessionsAsync_AKodiReconciliationEvent_IsHistory_NotLivePlayback()
+        {
+            // Regression (2026-11-07): "The War Below" stayed on the Now Playing banner for minutes after it ended, as "Now playing
+            // on Chronicle Scraper (reconciled from local Kodi playback)": the Scraper's reconcile pass records a watched event
+            // under that device name, which is what Kodi already played, not something playing now.
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 100.0, DateTime.UtcNow, ScrobbleService.ReconciliationDeviceName));
+
+            (await _service.GetActiveSessionsAsync(1)).Should().BeEmpty();
+
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 5.0, DateTime.UtcNow, "Kodi downstairs"));
+            (await _service.GetActiveSessionsAsync(1)).Should().ContainSingle().Which.DeviceName.Should().Be("Kodi downstairs");
+        }
+
+        [Fact]
         public async Task GetActiveSessionsAsync_ScrobbleOlderThanWindow_IsNotReturned()
         {
             // The service's staleness window is 90s — 5 minutes is unambiguously stale

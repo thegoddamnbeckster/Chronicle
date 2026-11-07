@@ -477,6 +477,9 @@ namespace Chronicle.Services
             var latestPerDevice = recentEvents
                 .Where(e => e.MediaItem != null)
                 .Where(e => e.DeviceName is null || !importSources.Contains(e.DeviceName))
+                // Reported 2026-11-07: the Scraper's reconcile pass records what Kodi already played (a watched event, or a resume
+                // position) under its own device name; that is history, and left in, a film that ended minutes ago stayed "playing".
+                .Where(e => e.DeviceName is null || !e.DeviceName.Contains(ReconciliationDeviceName, StringComparison.OrdinalIgnoreCase))
                 .GroupBy(e => e.DeviceName ?? "Unknown Device")
                 .Select(g => g.First()) // already ordered desc by Timestamp above
                 .ToList();
