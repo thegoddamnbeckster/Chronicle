@@ -112,7 +112,12 @@ public static class ProviderCallGuard
                     logWarning($"Provider {pluginId} {operation} took {sw.ElapsedMilliseconds}ms (slow, but completed)");
                 return result;
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            // cts.IsCancellationRequested is true only when OUR deadline fired (the caller's own token is checked separately). Any other
+            // cancellation is not a timeout and not "no result": the plugin's own HTTP client timing out, or the app shutting down in the
+            // middle of the call. Treated as "no result" it was recorded as "not found": two artists (Will Smith, 3 Doors Down) that had
+            // been Completed since September became NotFound when the app was restarted during their refresh (2026-11-07). It now
+            // propagates as the failure it is, so the host retries the item instead of recording it as not existing.
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && cts.IsCancellationRequested)
             {
                 // Our own CancelAfter fired, not the caller's own cancellation -- a genuine timeout.
                 logError($"Provider {pluginId} {operation} did not complete within " +

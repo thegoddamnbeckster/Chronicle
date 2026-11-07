@@ -70,6 +70,32 @@ public class PluginCallDeadlineTests
     }
 
     [Fact]
+    public async Task A_cancellation_that_is_not_the_guards_own_deadline_is_a_failure_not_no_result()
+    {
+        // The plugin's own HTTP client timing out, or the app shutting down mid-call, throws a cancellation the guard did not cause.
+        // As "no result" it was recorded as "not found": two artists Completed since September became NotFound (2026-11-07).
+        var errors = new List<string>();
+        var act = () => ProviderCallGuard.CallAsync<string?>(
+            _ => throw new TaskCanceledException("the plugin's own client gave up"),
+            Id, "GetByIdAsync", null, _ => { }, errors.Add, default);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        errors.Should().BeEmpty("nothing was described as a timeout, because it was not one");
+    }
+
+    [Fact]
+    public async Task The_guards_own_deadline_is_still_no_result()
+    {
+        var errors = new List<string>();
+        var result = await ProviderCallGuard.CallAsync<string?>(
+            async t => { await Task.Delay(TimeSpan.FromSeconds(30), t); return "late"; },
+            Id, "GetByIdAsync", null, _ => { }, errors.Add, default, timeout: TimeSpan.FromMilliseconds(50));
+
+        result.Should().BeNull();
+        errors.Should().ContainSingle().Which.Should().Contain("did not complete within");
+    }
+
+    [Fact]
     public void The_manifest_reads_call_timeout_seconds_and_an_old_manifest_without_it_is_unchanged()
     {
         var withIt = JsonSerializer.Deserialize<PluginManifest>("{\"plugin_id\":\"p\",\"call_timeout_seconds\":14400}")!;
