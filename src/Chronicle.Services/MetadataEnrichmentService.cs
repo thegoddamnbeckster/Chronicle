@@ -2649,6 +2649,8 @@ public class MetadataEnrichmentService(
         var collectionItemIds = await GetCollectionContainerIdsForExclusionAsync(db, ct);
         if (collectionItemIds.Count == 0) return;
 
+        await ClearMatchesThatCannotDescribeACollectionAsync(db, pluginId, collectionItemIds, ct);
+
         // ANY status, not just Pending/tagged-Skipped -- confirmed live (2026-09-09, per-user
         // report on "Black Sheep collection"): a row that reached NotFound (or Failed/Exhausted)
         // BEFORE this item was recognized as a container -- e.g. before GetCollectionContainer
@@ -2667,6 +2669,56 @@ public class MetadataEnrichmentService(
             "EnrichPendingAsync: removed {Count} items from the queue for {PluginId} -- known collection containers",
             toRemove.Count, pluginId);
         db.ChangeTracker.Clear();
+    }
+
+    /// <summary>
+    /// Sources with no notion of a collection at all: whatever they hold for a collection-level item is a single title that the item's
+    /// name happened to match, never the collection. (IMDb lists films, series, episodes and games, but has no "Battlestar Galactica
+    /// game collection".) Providers that do have collections (TMDB, IGDB) are not listed: their collection data is real.
+    /// </summary>
+    private static readonly HashSet<string> SourcesWithNoCollections = new(StringComparer.OrdinalIgnoreCase) { "imdb" };
+
+    /// <summary>
+    /// A series container is often named exactly like the series' first game ("Battlestar Galactica", "Armored Core", "Baldur's Gate"),
+    /// so before the sweep above existed a provider matched the CONTAINER to that single title. The sweep removed such a container's
+    /// queue rows but left the match itself behind, so the collection-level page kept showing a single game's entry (found 2026-11-07:
+    /// IMDb's video game on the Battlestar Galactica collection). For a source that cannot describe a collection, the match is
+    /// cleared exactly as Clear Match does: its external id, its stored data, the id its row remembers; then the item is re-resolved
+    /// from what remains.
+    /// </summary>
+    private async Task ClearMatchesThatCannotDescribeACollectionAsync(
+        ChronicleDbContext db, string pluginId, HashSet<int> collectionItemIds, CancellationToken ct)
+    {
+        var source = PluginIdHelper.ToSource(pluginId);
+        if (!SourcesWithNoCollections.Contains(source)) return;
+
+        var ids = collectionItemIds.ToList();
+        var items = await db.MediaItems
+            .Include(m => m.ExternalIds)
+            .Where(m => ids.Contains(m.Id)
+                        && (m.ExternalIds.Any(e => e.Source == source)
+                            || (m.MetadataJson != null && m.MetadataJson.Contains(pluginId))))
+            .ToListAsync(ct);
+
+        foreach (var item in items)
+        {
+            var staleIds = item.ExternalIds.Where(e => string.Equals(e.Source, source, StringComparison.OrdinalIgnoreCase)).ToList();
+            item.MetadataJson = PluginIdHelper.RemoveProviderBlob(item.MetadataJson, pluginId, out var blobRemoved);
+            if (staleIds.Count == 0 && !blobRemoved) continue;
+
+            db.MediaExternalIds.RemoveRange(staleIds);
+            var rows = await db.MediaEnrichments
+                .Where(e => e.MediaItemId == item.Id && e.PluginId == pluginId && e.ExternalId != null)
+                .ToListAsync(ct);
+            foreach (var row in rows) row.ExternalId = null;
+
+            item.UpdatedAt = DateTime.UtcNow;
+            await resolutionService.ResolveAsync(item, db, ct);
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation(
+                "EnrichPendingAsync: cleared the {Source} match ({Ids}) from collection-level item {ItemId} \"{Name}\" -- {Source} has no collections, so it was a single title the name matched",
+                source, string.Join(", ", staleIds.Select(e => e.ExternalId)), item.Id, item.Name);
+        }
     }
 
     /// <summary>

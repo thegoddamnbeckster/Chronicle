@@ -1312,6 +1312,93 @@ public class MetadataEnrichmentServiceTests : IDisposable
         updated!.Status.Should().Be(EnrichmentStatus.Completed);
     }
 
+    // ── a collection-level item never keeps a single title's IMDb entry (found 2026-11-07) ─────────────────────────
+    // A series container is often named exactly like the series' first game ("Battlestar Galactica"), so a provider matched the CONTAINER
+    // to that one game before the container sweep existed. The sweep removed the queue rows but left the match, so the collection page
+    // kept showing a single game's IMDb entry. IMDb has no collections: such a match is cleared the way Clear Match clears it.
+
+    private const string ImdbBlob = "{\"chronicle.plugin.imdb\":{\"source\":\"imdb\",\"title\":\"Battlestar Galactica\",\"year\":2003},\"chronicle.plugin.igdb\":{\"source\":\"igdb\",\"title\":\"Battlestar Galactica\"}}";
+
+    private async Task<MediaItem> GameWithImdbMatchAsync(string name, bool hasChild)
+    {
+        var mt = new MediaType
+        {
+            Name = "game", DisplayName = "Video Games", HierarchyLevels = 1, HierarchyLabels = "Game",
+            InteractionVerb = "played", ProgressUnit = "percent", SupportsCollections = true,
+        };
+        _db.MediaTypes.Add(mt);
+        await _db.SaveChangesAsync();
+        var item = new MediaItem { Name = name, MediaTypeId = mt.Id, HierarchyLevel = 0, MetadataJson = ImdbBlob, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(item);
+        await _db.SaveChangesAsync();
+        if (hasChild)
+            _db.MediaItems.Add(new MediaItem { Name = name + " Deadlock", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = item.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        _db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = item.Id, Source = "igdb", ExternalId = "5744" },
+            new MediaExternalId { MediaItemId = item.Id, Source = "imdb", ExternalId = "tt0368594" });
+        _db.MediaEnrichments.Add(new MediaItemEnrichment
+        {
+            MediaItemId = item.Id, PluginId = "chronicle.plugin.imdb", Status = EnrichmentStatus.Completed, ExternalId = "tt0368594", MaxRetries = 3,
+        });
+        await _db.SaveChangesAsync();
+        SetupProvider("chronicle.plugin.imdb", "game");
+        return item;
+    }
+
+    private (MetadataEnrichmentService Svc, Mock<IMetadataResolutionService> Resolution) ServiceWithResolutionMock()
+    {
+        var resolution = new Mock<IMetadataResolutionService>();
+        var svc = new MetadataEnrichmentService(BuildScopeFactory(_db, _registry.Object), resolution.Object, Mock.Of<IMovieCollectionService>(),
+            Mock.Of<IMetadataUrlValidator>(), Mock.Of<IPersonResolutionService>(), Mock.Of<ILogger<MetadataEnrichmentService>>());
+        return (svc, resolution);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ACollectionLevelItemLosesItsImdbMatch_ButKeepsEveryOtherProvidersData()
+    {
+        var item = await GameWithImdbMatchAsync("Battlestar Galactica", hasChild: true);
+        var (svc, resolution) = ServiceWithResolutionMock();
+
+        await svc.EnrichPendingAsync("chronicle.plugin.imdb");
+
+        _db.ChangeTracker.Clear();
+        var after = await _db.MediaItems.Include(m => m.ExternalIds).FirstAsync(m => m.Id == item.Id);
+        after.ExternalIds.Select(e => e.Source).Should().BeEquivalentTo(["igdb"], "IMDb's id goes, IGDB's stays");
+        after.MetadataJson.Should().NotContain("chronicle.plugin.imdb").And.Contain("chronicle.plugin.igdb");
+        (await _db.MediaEnrichments.AnyAsync(e => e.MediaItemId == item.Id && e.PluginId == "chronicle.plugin.imdb")).Should().BeFalse("its IMDb queue row is swept too");
+        resolution.Verify(r => r.ResolveAsync(It.Is<MediaItem>(m => m.Id == item.Id), It.IsAny<ChronicleDbContext>(), It.IsAny<CancellationToken>()), Times.Once,
+            "the item is re-resolved from what remains, as Clear Match does");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ARealGameWithNoChildrenKeepsItsImdbMatch()
+    {
+        var item = await GameWithImdbMatchAsync("Battlestar Galactica", hasChild: false);
+        var (svc, resolution) = ServiceWithResolutionMock();
+
+        await svc.EnrichPendingAsync("chronicle.plugin.imdb");
+
+        _db.ChangeTracker.Clear();
+        var after = await _db.MediaItems.Include(m => m.ExternalIds).FirstAsync(m => m.Id == item.Id);
+        after.ExternalIds.Select(e => e.Source).Should().BeEquivalentTo(["igdb", "imdb"]);
+        after.MetadataJson.Should().Contain("chronicle.plugin.imdb");
+        resolution.Verify(r => r.ResolveAsync(It.IsAny<MediaItem>(), It.IsAny<ChronicleDbContext>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AnotherProvidersPassDoesNotTouchACollectionsImdbMatch()
+    {
+        var item = await GameWithImdbMatchAsync("Battlestar Galactica", hasChild: true);
+        var (svc, resolution) = ServiceWithResolutionMock();
+        SetupProvider("chronicle.plugin.igdb", "game");
+
+        await svc.EnrichPendingAsync("chronicle.plugin.igdb");
+
+        _db.ChangeTracker.Clear();
+        (await _db.MediaExternalIds.AnyAsync(e => e.MediaItemId == item.Id && e.Source == "imdb")).Should().BeTrue("only IMDb's own pass clears IMDb's match");
+        resolution.Verify(r => r.ResolveAsync(It.IsAny<MediaItem>(), It.IsAny<ChronicleDbContext>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task GetStatsAsync_ReturnsCountsPerPlugin()
     {
