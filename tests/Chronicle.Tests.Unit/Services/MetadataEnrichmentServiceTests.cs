@@ -1312,6 +1312,99 @@ public class MetadataEnrichmentServiceTests : IDisposable
         updated!.Status.Should().Be(EnrichmentStatus.Completed);
     }
 
+    // ── a game with a child game is a game, not a collection container (found 2026-11-07) ─────────────────────────
+    // A game series is held with its first game at the top and the later games beneath it. The container rule was written for movie
+    // collection stubs (no identity of their own); a real game with a child shared its shape, so its IMDb and Wikipedia rows sat
+    // "Pending" for ever and its IGDB row was deleted whenever it was queued again.
+
+    private async Task<(MediaItem Item, MediaItemEnrichment Row)> GameRootWithAChildAsync(string name, string? igdbId)
+    {
+        var mt = new MediaType
+        {
+            Name = "game", DisplayName = "Video Games", HierarchyLevels = 1, HierarchyLabels = "Game",
+            InteractionVerb = "played", ProgressUnit = "percent", SupportsCollections = true,
+        };
+        _db.MediaTypes.Add(mt);
+        await _db.SaveChangesAsync();
+        var root = new MediaItem { Name = name, MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(root);
+        await _db.SaveChangesAsync();
+        _db.MediaItems.Add(new MediaItem { Name = name + " 2", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = root.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        if (igdbId is not null)
+            _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = root.Id, Source = "igdb", ExternalId = igdbId });
+        var row = new MediaItemEnrichment { MediaItemId = root.Id, PluginId = "chronicle.plugin.imdb", Status = EnrichmentStatus.Pending, MaxRetries = 3 };
+        _db.MediaEnrichments.Add(row);
+        await _db.SaveChangesAsync();
+        return (root, row);
+    }
+
+    private Mock<IMetadataProvider> ImdbForGames()
+    {
+        var provider = SetupProvider("chronicle.plugin.imdb", "game");
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new ScoredCandidate(new MediaMetadata { Title = "Battlestar Galactica", ExternalId = "tt0368594" }, Score: 95, ScoreReason: "exact")]);
+        provider.Setup(p => p.GetByIdAsync("tt0368594", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { Title = "Battlestar Galactica", ExternalId = "tt0368594" });
+        return provider;
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AGameWithAChildGameAndAnIgdbIdIsNotAContainer_SoItsRowIsKeptAndSearched()
+    {
+        var (_, row) = await GameRootWithAChildAsync("Battlestar Galactica", igdbId: "5744");
+        var provider = ImdbForGames();
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.imdb");
+
+        provider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce,
+            "a real game (it has an IGDB game id) must be enriched even though a later game sits beneath it");
+        (await _db.MediaEnrichments.FindAsync(row.Id)).Should().NotBeNull("its row must not be swept as a container");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ASeriesContainerHoldingAnIgdbCollectionIdIsStillSwept()
+    {
+        var (_, row) = await GameRootWithAChildAsync("Half-Life", igdbId: "collection:129");
+        var provider = ImdbForGames();
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.imdb");
+
+        provider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Never);
+        (await _db.MediaEnrichments.FindAsync(row.Id)).Should().BeNull("a series container is not a search target for any provider");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AGameRootWithChildrenAndNoIdAtAll_IsStillASeriesContainer()
+    {
+        var (_, row) = await GameRootWithAChildAsync("Counter-Strike", igdbId: null);
+        var provider = ImdbForGames();
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.imdb");
+
+        provider.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.Never);
+        (await _db.MediaEnrichments.FindAsync(row.Id)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ContainerIds_AMovieCollectionWithAMovieIdIsStillAContainer_OnlyGamesWithAnIgdbIdAreSpared()
+    {
+        var mt = new MediaType
+        {
+            Name = "movies", DisplayName = "Movies", HierarchyLevels = 1, HierarchyLabels = "Movie",
+            InteractionVerb = "watched", ProgressUnit = "minutes", SupportsCollections = true,
+        };
+        _db.MediaTypes.Add(mt);
+        await _db.SaveChangesAsync();
+        var root = new MediaItem { Name = "Robots Collection", MediaTypeId = mt.Id, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        _db.MediaItems.Add(root);
+        await _db.SaveChangesAsync();
+        _db.MediaItems.Add(new MediaItem { Name = "Robots", MediaTypeId = mt.Id, HierarchyLevel = 1, ParentId = root.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        _db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = root.Id, Source = "tmdb", ExternalId = "movie:1687875" });
+        await _db.SaveChangesAsync();
+
+        (await MetadataEnrichmentService.GetCollectionContainerIdsForExclusionAsync(_db, default)).Should().Contain(root.Id);
+    }
+
     [Fact]
     public async Task GetStatsAsync_ReturnsCountsPerPlugin()
     {

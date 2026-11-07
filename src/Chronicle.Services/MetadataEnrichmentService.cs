@@ -331,7 +331,10 @@ public class MetadataEnrichmentService(
                             !(x.MediaItem!.HierarchyLevel == 0 &&
                               x.MediaItem!.MediaType != null && x.MediaItem!.MediaType!.SupportsCollections &&
                               x.MediaItem!.MediaType!.HierarchyLevels == 1 &&
-                              db.MediaItems.Any(c => c.ParentId == x.MediaItemId)))
+                              db.MediaItems.Any(c => c.ParentId == x.MediaItemId) &&
+                              // same exception as GetCollectionContainerIdsForExclusionAsync: a real game with a child game is a game
+                              !db.MediaExternalIds.Any(e => e.MediaItemId == x.MediaItemId && e.Source == GameIdentitySource
+                                                            && !e.ExternalId.StartsWith("collection:"))))
                 .OrderBy(x => x.MediaItem!.HierarchyLevel)
                 .Take(500)
                 .ToListAsync(ct);
@@ -2693,7 +2696,18 @@ public class MetadataEnrichmentService(
     ///      2026-09-28: Isaac Asimov had zero Hardcover enrichment despite the plugin supporting
     ///      author lookups, while every one of his series and books enriched normally).
     /// </summary>
-    private static async Task<HashSet<int>> GetCollectionContainerIdsForExclusionAsync(
+    /// <summary>
+    /// The external-id source whose plain (non "collection:") ids mark a GAME as a real game. Arm 2 above was written for movie collection
+    /// stubs, which have no identity of their own. Games share the shape (a flat, collection-supporting type whose level-0 item has
+    /// children), but a game series is held with its first game at the top and the later games beneath it, so a level-0 game with a
+    /// child can be a real game: "Battlestar Galactica" (2003) with "Battlestar Galactica Deadlock" under it, "All Zombies Must Die!"
+    /// with "Scorepocalypse". Such a game was swept as a container: its IMDb and Wikipedia rows sat "Pending" for ever and its IGDB row
+    /// was deleted whenever it was queued again (found 2026-11-07). A real series container has no IGDB game id (it holds
+    /// "igdb:collection:N", or nothing), so it is still swept.
+    /// </summary>
+    internal const string GameIdentitySource = "igdb";
+
+    internal static async Task<HashSet<int>> GetCollectionContainerIdsForExclusionAsync(
         ChronicleDbContext db, CancellationToken ct)
     {
         var byExternalId = await db.MediaExternalIds
@@ -2704,7 +2718,10 @@ public class MetadataEnrichmentService(
         var byUnlinkedChildren = await db.MediaItems
             .Where(m => m.HierarchyLevel == 0
                      && m.MediaType != null && m.MediaType.SupportsCollections && m.MediaType.HierarchyLevels == 1
-                     && db.MediaItems.Any(c => c.ParentId == m.Id))
+                     && db.MediaItems.Any(c => c.ParentId == m.Id)
+                     // A real game that has a child game is a game, not a container (see GameIdentitySource).
+                     && !db.MediaExternalIds.Any(e => e.MediaItemId == m.Id && e.Source == GameIdentitySource
+                                                      && !e.ExternalId.StartsWith("collection:")))
             .Select(m => m.Id)
             .ToListAsync(ct);
 
