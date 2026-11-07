@@ -660,23 +660,12 @@ app.UseForwardedHeaders(forwardedHeadersOptions);
 app.Use(async (ctx, next) =>
 {
     ClientTimeZone.Capture(ctx);   // the caller's declared time zone, read by UtcDateTimeConverter both ways
-    try
-    {
-        await next(ctx);
-    }
-    catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
-    {
-        if (!ctx.Response.HasStarted)
-        {
-            Log.Warning(ex, "Request to {Path} was canceled (client disconnected or superseded it)", ctx.Request.Path);
-            ctx.Response.StatusCode = 499; // Client Closed Request
-        }
-        else
-        {
-            throw;
-        }
-    }
+    await next(ctx);
 });
+
+// The cancellation catch below is registered AFTER the request logger (further down), not here: the logger wraps everything after it,
+// so a catch placed before it never got the exception first and every disconnect was logged as a 500 with a stack trace
+// (seen 2026-11-07, GET /api/v1/library/section-ids from a phone).
 
 // Request logging must come before routing so it captures all requests.
 app.UseSerilogRequestLogging(options =>
@@ -698,6 +687,26 @@ app.UseSerilogRequestLogging(options =>
         diagnosticContext.Set("RemoteIp", httpContext.Connection.RemoteIpAddress?.ToString());
         diagnosticContext.Set("UserAgent", httpContext.Request.Headers.UserAgent.ToString());
     };
+});
+
+app.Use(async (ctx, next) =>
+{
+    try
+    {
+        await next(ctx);
+    }
+    catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException)
+    {
+        if (!ctx.Response.HasStarted)
+        {
+            Log.Warning("Request to {Path} was canceled (client disconnected or superseded it)", ctx.Request.Path);
+            ctx.Response.StatusCode = 499; // Client Closed Request
+        }
+        else
+        {
+            throw;
+        }
+    }
 });
 
 if (app.Environment.IsDevelopment())
