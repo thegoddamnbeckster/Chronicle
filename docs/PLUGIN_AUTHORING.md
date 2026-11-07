@@ -102,6 +102,7 @@ load time to register the plugin.
 | `author` | Yes | Author name or organisation. |
 | `description` | No | One or two sentences shown in the catalog and installed-plugins list. |
 | `min_chronicle_version` | Yes | Minimum Chronicle version your plugin requires. Use `"0.1.0"` if unsure. |
+| `call_timeout_seconds` | No | How many seconds Chronicle lets **one call** into your plugin run before it gives up and treats it as "no result". Default and minimum: 25. Declare a larger value (at most 86400) only for a source that needs many paced requests to describe one item completely, e.g. `14400` for MusicBrainz. Chronicle 0.20.66 or later reads it; an older host ignores it and keeps 25. Interactive search keeps its own short deadline whatever you declare. See "Long fetches" under Best Practices. |
 | `entry_type` | Yes | Fully-qualified class name of your plugin's main class, e.g. `"MyNamespace.MyPlugin"`. |
 | `iconUrl` | No | URL of an icon (the service's favicon works well). Shown on the Plugins page and Background Tasks cards. HTTPS recommended. |
 | `brandColorLight` | No | Hex colour (`#RRGGBB`) used for task card accents in light mode. |

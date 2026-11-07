@@ -27,6 +27,9 @@ and again at release, with evidence.
    typed search, live fixtures, the declared-identically check T1) stays in that file's "unverified" list until someone looks.
 6. **Work only inside the plugin's repo** (`W:\Scripts\<repo>`), never the root of `W:\`. Throwaway build output goes in a
    git-ignored path inside the repo or the scratchpad.
+7. **A problem found on the way is fixed, not reported.** Find the real cause, fix it, prove the test fails on the old code (with
+   the original failure's message) and passes on the fix, commit, push and read the CI result. A test that passes on the old code
+   proves nothing. A failure that will not reproduce on an idle machine is reproduced under CPU load before it is called flaky.
 
 ## 1. Sources: measure before designing
 
@@ -47,6 +50,10 @@ and again at release, with evidence.
 | D3 | Non-game or odd content (DLC, demos, soundtracks, themes, apps) is kept and tagged, not discarded; an exclusion needs an owner decision recorded in the design | Same rule |
 | D4 | Nothing is ever deleted because the source stopped returning it. A sudden drop is reported, never applied | Private profiles and outages return empty lists |
 | D5 | Account-level facts (level, trophies, badges, display name) are kept on the account record, not on an item | Steam level and badges |
+| D6 | **No record counts are limited, anywhere in what is stored.** Grep the plugin for `.Take(`, `limit`, `per_page`, `page_size`, `Substring`, `[..N]` and `Math.Min` and justify each: a cap on a *search candidate* list is fine, a cap on anything stored (cast, tags, ISBNs, releases, images, characters, a series' games) is not. A service that pages is read **page by page until a page comes back short** (an empty page also ends it, and guards a page that never advances); a failure on a later page fails the fetch, it never stores a partial list | IGDB's characters query was `limit 500` with no paging; TVMaze cast was cut to 20, OpenLibrary ISBNs to 30, MusicBrainz tags to 20 |
+| D7 | **A lookup that shows only part of a list is not the data.** Compare, for the largest record the source has, the count the lookup returns with the count the service reports (a browse or count endpoint) and read the rest. Record the two numbers in the design | MusicBrainz shows 25 of any list: Elvis Presley has 1,363 release groups, 2,122 releases, 869 works and 35,767 recordings behind lookups that returned 25 of each |
+| D8 | **A reference stored as a bare id is not stored.** Where the source returns an id for a type, a status, a member list or a related record, expand it (`type.*`, `games.name`) so the name, description and members are kept, in a group of their own so a renamed field loses that group and not the record. Check every field of the largest real record, by hand, against what the plugin keeps | IGDB's series came back as `"type": 1` and `"games": [9971, 9972]`: the type's name and every game in the series were not stored |
+| D9 | **A busy or failing service is never recorded as "nothing there".** Only the service's real "no such thing" (404, an empty list with a count of zero) is data; a 429, a 5xx or a timeout is retried a bounded number of times and then fails the fetch so the host tries the item again | MusicBrainz's cover art client recorded any non-success from the Cover Art Archive as "no cover art", for good |
 
 ## 3. Ids and matching
 
@@ -199,6 +206,7 @@ See `docs/plans/2026-11-06-plugin-survey.md` for the evidence behind each.
 | K10 | Rate limits: the service's documented limit is in the plugin's pacing; a 429 (or the service's own "slow down" signal, such as MusicBrainz's 503) is retried a **bounded** number of times honouring `Retry-After`, then thrown as `HttpRequestException` carrying `TooManyRequests` so the host pauses the pass; `EnsureSuccessStatusCode()` already carries the status and is enough where the service has no other signal; the doc page says what the limit is | MusicBrainz limits to 1 a second and has no 429 handling |
 | K11 | No empty `catch {}`. A caught error is logged with the plugin's id and either rethrown or returned as a stated degraded result. The one exception is a best-effort cleanup (deleting a temporary file, writing an advisory log) where the catch states its reason in a comment | IMDb has 11, TMDB 4 |
 | K12 | Every real plugin has its `docs/plugins/PLUGIN_*.md` page and a `PLUGIN_CATALOGUE.md` line | 9 are missing |
+| K13 | **Long fetches finish.** The host gives one call into a plugin **25 seconds** and then treats it as "no result". A source that needs many paced requests to describe one item completely (D6, D7) declares `"call_timeout_seconds"` in `manifest.json` (more than 25, at most 86400; MusicBrainz: 14400) and says in its doc page that it needs a Chronicle build that reads it (0.20.66 or later). Cutting what is stored to fit 25 seconds is not an option (D6). The plugin remembers what a long fetch has already been told (pages, lookups, in memory, for hours) so a fetch that fails near its end resumes instead of starting over. Interactive search keeps its own short deadline and is unaffected | MusicBrainz capped its fetches at 3 and 5 releases to fit 25 s, and still lost most of them to the deadline |
 | K13 | The compliance record (`docs/plugins/PLUGIN_COMPLIANCE.md`) is regenerated with the plugin and shows no static `XX` for it; each remaining unverified item has an owner and a date | A plugin passes review once and drifts |
 
 ## 10. Packaging and release
@@ -232,6 +240,10 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | D3 | Odd content kept and tagged | | |
 | D4 | Never delete on absence; drops reported | | |
 | D5 | Account-level facts kept | | |
+| D6 | No record count limited; paged until a short page | | |
+| D7 | Lookup count compared with the service's real count | | |
+| D8 | References expanded; every field of the largest record checked | | |
+| D9 | A busy or failing service is never "nothing there" | | |
 | I1 | Prefixed ids, both halves | | |
 | I2 | Accepts prefixed, bare and URLs | | |
 | I3 | Bare comparison | | |
@@ -289,6 +301,7 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | K10 | Documented rate limit honoured | | |
 | K11 | No empty catch | | |
 | K12 | Doc page and catalogue line | | |
+| K13 | Long fetches finish: call deadline declared, progress remembered | | |
 | K13 | Compliance record regenerated, no static XX | | |
 | Q1 | Provider search within 4 s | | |
 | Q2 | Empty list for unserved types; failures cheap | | |
