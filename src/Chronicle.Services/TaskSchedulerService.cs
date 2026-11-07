@@ -341,6 +341,7 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
             .Where(t => t.IsEnabled && t.NextRunAt != null && t.NextRunAt <= now)
             .ToListAsync(ct);
 
+        var toStart = new List<BackgroundTask>();
         foreach (var row in dueRows)
         {
             if (!_running.TryAdd(row.TaskId, true))
@@ -363,10 +364,25 @@ public sealed class TaskSchedulerService : BackgroundService, ITaskSchedulerServ
             }
 
             row.NextRunAt = GetNextOccurrence(row.CronExpression);
-            _ = Task.Run(() => RunTaskAsync(row, CancellationToken.None), CancellationToken.None);
+            toStart.Add(row);
         }
 
-        await db.SaveChangesAsync(ct);
+        // The next run times are saved BEFORE any task starts. Starting first meant a quick task could finish and record its own
+        // next run (e.g. "still pending, retry in 15 minutes") before this save, which then overwrote it with the next cron time:
+        // seen as a failing test on a slow CI runner (expected a 15-minute retry, got tomorrow's 06:00), and the same overwrite was
+        // possible live whenever a task ended within the moment between its start and this save.
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            foreach (var row in toStart) _running.TryRemove(row.TaskId, out _);   // never started: must not look like it is running
+            throw;
+        }
+
+        foreach (var row in toStart)
+            _ = Task.Run(() => RunTaskAsync(row, CancellationToken.None), CancellationToken.None);
     }
 
     private async Task RunTaskAsync(BackgroundTask row, CancellationToken ct)

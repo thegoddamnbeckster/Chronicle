@@ -4,6 +4,7 @@ using Chronicle.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.InMemory.Infrastructure.Internal;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -618,6 +619,74 @@ public class TaskSchedulerServiceTests
         row.NextRunAt.Should().NotBeNull();
         row.NextRunAt!.Value.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromSeconds(30),
             "still-Pending work should retry soon, not wait for tomorrow's 4am cron");
+    }
+
+    /// <summary>Holds the tick's own save of a task's next run time (the one that moves it to the next cron time) until the task has
+    /// recorded its own next run, which makes the order the scheduler's old code only hit on a slow machine happen every time.</summary>
+    private sealed class HoldTickSaveInterceptor : SaveChangesInterceptor
+    {
+        public readonly TaskCompletionSource TaskRecordedItsRetry = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool TickSaveWasHeld;
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            var movedToCron = eventData.Context!.ChangeTracker.Entries<BackgroundTask>()
+                .Any(e => e.State == EntityState.Modified && e.Property(nameof(BackgroundTask.NextRunAt)).IsModified
+                          && e.Entity.NextRunAt > DateTime.UtcNow.AddHours(1));
+            if (movedToCron)
+            {
+                TickSaveWasHeld = true;
+                // Old code: the task starts at once, finishes and records its retry, then this save goes on and overwrites it.
+                // Fixed code: the task cannot start until this save is done, so this simply times out and the save goes on first.
+                await Task.WhenAny(TaskRecordedItsRetry.Task, Task.Delay(1500, cancellationToken));
+            }
+            return result;
+        }
+
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<BackgroundTask>().Any(e => e.Entity.NextRunAt < DateTime.UtcNow.AddHours(1)))
+                TaskRecordedItsRetry.TrySetResult();
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    /// <summary>
+    /// The tick saves a due task's next run time BEFORE it starts the task. Started first, a quick task could finish and record its
+    /// own next run (here the 15-minute "still pending" retry) before the tick's save, which then overwrote it with the next cron
+    /// time: a CI run failed on exactly that (expected a 15-minute retry, got tomorrow's 06:00).
+    /// </summary>
+    [Fact]
+    public async Task TickAsync_SavesTheNextRunTimeBeforeTheTaskStarts_SoTheTasksOwnRetryIsNotOverwritten()
+    {
+        var db = MakeDb();
+        db.BackgroundTasks.Add(new BackgroundTask
+        {
+            TaskId = "chronicle.plugin.tmdb:fetch-missing-metadata", PluginId = "chronicle.plugin.tmdb", DisplayName = "Fetch Missing Metadata",
+            Description = "d", CronExpression = FarOffDailyCron(), IsEnabled = true, NextRunAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+        db.MediaEnrichments.Add(new MediaItemEnrichment { MediaItemId = 1, PluginId = "chronicle.plugin.tmdb", Status = EnrichmentStatus.Pending });
+        await db.SaveChangesAsync();
+
+        var hold = new HoldTickSaveInterceptor();
+#pragma warning disable EF1001
+        var storeName = db.GetService<IDbContextOptions>().FindExtension<InMemoryOptionsExtension>()!.StoreName;
+#pragma warning restore EF1001
+        var services = new ServiceCollection();
+        services.AddDbContext<ChronicleDbContext>(o => o.UseInMemoryDatabase(storeName).AddInterceptors(hold));
+        var runner = new Mock<IPluginTaskRunner>();
+        runner.Setup(r => r.RunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        services.AddSingleton<IPluginTaskRunner>(runner.Object);
+        var svc = new TaskSchedulerService(Array.Empty<IScheduledTask>(), services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
+
+        await svc.TickAsync(CancellationToken.None);
+        await WaitForAsync(() => !svc.IsRunning("chronicle.plugin.tmdb:fetch-missing-metadata"), timeoutMs: 8000);
+
+        hold.TickSaveWasHeld.Should().BeTrue("the tick must have saved the next cron time (otherwise this test proves nothing)");
+        var row = await db.BackgroundTasks.AsNoTracking().FirstAsync(t => t.TaskId == "chronicle.plugin.tmdb:fetch-missing-metadata");
+        row.NextRunAt!.Value.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromSeconds(30),
+            "the task's own soon-retry is the last write, not the tick's cron time");
     }
 
     [Fact]
