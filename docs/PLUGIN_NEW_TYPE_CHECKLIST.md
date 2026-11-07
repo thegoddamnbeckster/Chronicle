@@ -108,6 +108,7 @@ and again at release, with evidence.
 | T1 | The type is declared with the same name, display name, verb, unit, labels, cast heading and aliases as every other plugin that declares it | Merged by name at host startup; a mismatch depends on load order |
 | T2 | The host was **restarted** after install | Types are created at startup |
 | T3 | `SupportsCollections`, `EnrichOnly`, `DefaultPriority` are deliberate, not defaulted | Games group into series |
+| T4 | **A collection-level item (a series container) never holds a single title's entry from a source that has no collections.** A container is often named exactly like the series' first game ("Battlestar Galactica", "Armored Core"), so a name match lands the container on one game. For each source, say whether it has a collection concept (TMDB and IGDB do, IMDb does not) and look at a real container's page: a source without collections must show nothing there, not one game's entry. A source without collections is listed in the host's `SourcesWithNoCollections`, and the container sweep clears its matches the way Clear Match does | IMDb's video game showed on the Battlestar Galactica collection page; four containers (Battlestar Galactica, Armored Core, Baldur's Gate, All Zombies Must Die!) carried a single game's IMDb match |
 
 ## 8. Every place a media type or plugin must show up (one numbered check per place)
 
@@ -273,6 +274,7 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | T1 | Type declared identically | | |
 | T2 | Host restarted | | |
 | T3 | Type flags deliberate | | |
+| T4 | No single-title match from a source without collections on a collection-level item | | |
 | P1 | Metadata Assignment: type listed (bottom of page, dropdown) | | |
 | P2 | Metadata Assignment: plugin under every field it fills, none it does not | | |
 | P3 | Metadata Assignment: order within each field | | |
