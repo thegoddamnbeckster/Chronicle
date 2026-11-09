@@ -631,6 +631,8 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
   // the wrong direction -- instead of "Add to Collection" (add movies into this one).
   const isKnownCollection = children.length > 0
     || item.externalIds.some(e => e.externalId?.toLowerCase().startsWith('collection:'))
+  // A collection container isn't watched or rated as a whole, only the movies inside it.
+  const showWatchControls = !(item.hierarchyLevel === 0 && item.parentId == null && isFlatCollectionType && isKnownCollection)
 
   const joinCollectionResults = allCollections
     .filter(c => c.mediaTypeId === item.mediaTypeId
@@ -699,24 +701,28 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
             className={styles.upBtn}
           >↑ Library</Link>
         )}
-        {listIds.length > 0 && (
-          <div className={styles.listNav}>
-            {prevId != null ? (
-              <Link to={`/media/${prevId}`} state={effectiveNavState} className={styles.navBtn}>‹ Prev</Link>
-            ) : (
-              <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>‹ Prev</span>
+        {/* Always shown, never hidden: an item with nothing to step to (alone in its collection) gets both buttons disabled. */}
+        <div className={styles.listNav}>
+          {prevId != null ? (
+            <Link to={`/media/${prevId}`} state={effectiveNavState} className={styles.navBtn}>‹ Prev</Link>
+          ) : (
+            <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>‹ Prev</span>
+          )}
+          {/* Always rendered (empty with no list) so Prev and Next keep their distance apart. */}
+          <span className={styles.navPos}>
+            {listIds.length > 0 && (
+              <>
+                {effectiveNavState?.listLabel && <span className={styles.navLabel}>{effectiveNavState.listLabel} · </span>}
+                {currentIndex + 1} / {listIds.length}
+              </>
             )}
-            <span className={styles.navPos}>
-              {effectiveNavState?.listLabel && <span className={styles.navLabel}>{effectiveNavState.listLabel} · </span>}
-              {currentIndex + 1} / {listIds.length}
-            </span>
-            {nextId != null ? (
-              <Link to={`/media/${nextId}`} state={effectiveNavState} className={styles.navBtn}>Next ›</Link>
-            ) : (
-              <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>Next ›</span>
-            )}
-          </div>
-        )}
+          </span>
+          {nextId != null ? (
+            <Link to={`/media/${nextId}`} state={effectiveNavState} className={styles.navBtn}>Next ›</Link>
+          ) : (
+            <span className={`${styles.navBtn} ${styles.navBtnDisabled}`}>Next ›</span>
+          )}
+        </div>
       </div>
       )}
 
@@ -771,6 +777,14 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
           )}
 
           <div className={styles.deleteArea}>
+            {/* Global refresh — always shown so all media types can trigger enrichment */}
+            <button
+              className={styles.changeTypeBtn}
+              onClick={() => refreshMut.mutate()}
+              disabled={refreshMut.isPending}
+            >
+              {refreshMut.isPending ? 'Refreshing all…' : '↻ Refresh All'}
+            </button>
             {isAdmin && item.parentId == null && (
               <button
                 className={styles.changeTypeBtn}
@@ -1224,16 +1238,6 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
             )}
           </div>
 
-          {onScreenPeople.length > 0 && (
-            <PluginFold foldKey={`media.${mediaId}.cast`} label={castLabel} defaultOpen>
-              <div className={styles.peopleRow}>
-                {onScreenPeople.map(person => (
-                  <PersonCard key={person.id} person={person} fullName />
-                ))}
-              </div>
-            </PluginFold>
-          )}
-
           {(item.overview || fanartThumb || fanartDisc) && (
             <div className={styles.descriptionRow}>
               {fanartThumb && (
@@ -1260,13 +1264,8 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
 
           {/* Global refresh strip — always shown so all media types can trigger enrichment */}
           <div className={styles.refreshStrip}>
-            <button
-              className={styles.refreshBtn}
-              onClick={() => refreshMut.mutate()}
-              disabled={refreshMut.isPending}
-            >
-              {refreshMut.isPending ? 'Refreshing all…' : '↻ Refresh All'}
-            </button>
+            {/* Every button lives in this one row; the status/rating controls sit below it. */}
+            <div className={styles.stripButtons}>
             {item.overrides && Object.keys(item.overrides).length > 0 && (
               <button
                 className={styles.refreshBtn}
@@ -1289,11 +1288,21 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
                 {resetSubtreeMut.isPending ? 'Resetting…' : '↺ Reset Image Overrides (incl. contents)'}
               </button>
             )}
-            {/* Watch controls live on the refresh row (per-user request): status, rating, how many
+            {showWatchControls && !libraryEntry && (
+              <>
+                <button className={styles.primaryBtn} onClick={() => addMut.mutate('Watching')} disabled={addMut.isPending}>
+                  + Add to Library
+                </button>
+                <button className={styles.secondaryBtn} onClick={() => addMut.mutate('PlanToWatch')} disabled={addMut.isPending}>
+                  {statusLabel('PlanToWatch', currentMediaType?.interactionVerb)}
+                </button>
+              </>
+            )}
+            </div>
+            {/* Watch controls live on the refresh strip (per-user request): status, rating, how many
                 times it has been watched, and how far along it is. Hidden for a collection container
                 itself -- a collection isn't watched or rated as a whole, only the movies inside it. */}
-            {!(item.hierarchyLevel === 0 && item.parentId == null && isFlatCollectionType && isKnownCollection) && (
-              libraryEntry ? (
+            {showWatchControls && libraryEntry && (
                 <div className={styles.stripLibrary}>
                   <label className={styles.stripLabel}>Status</label>
                   <select
@@ -1339,16 +1348,6 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
                     </span>
                   ))}
                 </div>
-              ) : (
-                <div className={styles.addButtons}>
-                  <button className={styles.primaryBtn} onClick={() => addMut.mutate('Watching')} disabled={addMut.isPending}>
-                    + Add to Library
-                  </button>
-                  <button className={styles.secondaryBtn} onClick={() => addMut.mutate('PlanToWatch')} disabled={addMut.isPending}>
-                    {statusLabel('PlanToWatch', currentMediaType?.interactionVerb)}
-                  </button>
-                </div>
-              )
             )}
             {refreshMut.isError && (
               <span className={styles.refreshError}>
@@ -1378,6 +1377,16 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
               grid is shown. */}
           {isFlatCollectionType && (
             <CollectionMetadataBox mediaItemId={mediaId} compact={item.hierarchyLevel === 1} />
+          )}
+
+          {onScreenPeople.length > 0 && (
+            <PluginFold foldKey={`media.${mediaId}.cast`} label={castLabel} defaultOpen>
+              <div className={styles.peopleRow}>
+                {onScreenPeople.map(person => (
+                  <PersonCard key={person.id} person={person} fullName />
+                ))}
+              </div>
+            </PluginFold>
           )}
 
       {/* Children (seasons, episodes, tracks, etc.) — sorted by number, then filename.

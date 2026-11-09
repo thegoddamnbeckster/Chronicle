@@ -229,6 +229,27 @@ describe('MediaDetailPage', () => {
     expect(screen.getByRole('link', { name: /Next/ })).toHaveAttribute('href', '/media/303')
   })
 
+  it('shows Previous/Next disabled, not hidden, for an item alone in its collection', async () => {
+    sessionStorage.clear()
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 1, name: 'movies', displayName: 'Movies', hierarchyLevels: 1, hierarchyLabels: ['Movie'] },
+    ])
+    mockedGetMedia.mockImplementation(async id => id === MEDIA_ID
+      ? makeItem({ mediaTypeId: 1, mediaTypeName: 'Movies', hierarchyLevel: 1, parentId: 900, name: 'Only Child', ancestors: [{ id: 900, name: 'A Collection' }] })
+      : makeItem({ id }))
+    mockedGetMediaChildren.mockImplementation(async id => id === 900
+      ? [makeItem({ id: MEDIA_ID, name: 'Only Child', mediaTypeId: 1, hierarchyLevel: 1, parentId: 900 })]
+      : [])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'Only Child' })
+
+    expect(screen.getByText(/Prev/)).toBeInTheDocument()
+    expect(screen.getByText(/Next/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Prev/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Next/ })).not.toBeInTheDocument()
+  })
+
   it('offers no Delete to an ordinary user once an administrator has reserved deletion', async () => {
     vi.mocked(rightsApi.getMediaRights).mockResolvedValue({ deleteAdminOnly: true })
     renderWithProviders(

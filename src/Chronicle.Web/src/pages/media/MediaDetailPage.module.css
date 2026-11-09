@@ -174,13 +174,12 @@
 /* ── Top navigation bar ── */
 
 .topNav {
-  display: flex;
+  /* Three lines: Back (top left) with the breadcrumb centred beside it; the "up" link centred below; Prev / position / Next
+   * on the last line, centred under it. Grid placement is by class (backBtn, breadcrumb, upBtn, listNav), so the JSX order
+   * does not matter. minmax(0, ...) lets a long breadcrumb shrink and wrap instead of widening the page on a phone. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  /* On a phone the Back button, the breadcrumb, the "up" link and the Prev / position / Next group do not fit on one line:
-   * the row used to run off the screen, taking Next with it, and squeezed the "up" link down to a bare arrow. Wrapping lets
-   * the Prev / Next group take a line of its own. */
-  flex-wrap: wrap;
   margin-bottom: 24px;
   gap: 10px 16px;
 }
@@ -194,6 +193,9 @@
   padding: 0;
   transition: color 0.15s;
   flex-shrink: 0;
+  grid-row: 1;
+  grid-column: 1;
+  justify-self: start;
 }
 
 .backBtn:hover { color: var(--text-primary); }
@@ -201,9 +203,12 @@
 .listNav {
   display: flex;
   align-items: center;
+  /* Prev / position / Next sit together in the middle of the last line, under the "up" link. The position block keeps a
+   * fixed width, so Prev and Next stay the same distance apart when the position text is absent (nothing to step to). */
+  grid-row: 3;
+  grid-column: 1 / -1;
+  justify-self: center;
   gap: 12px;
-  flex-shrink: 0;
-  margin-left: auto;   /* stays on the right whether it shares a line or has its own */
 }
 
 .navBtn {
@@ -262,11 +267,16 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
    * instead, which degrades far more gracefully under it (flex-wrap: wrap already lets it drop
    * to a second line instead of losing legibility). */
   min-width: 32px;
+  grid-row: 2;
+  grid-column: 2;
+  justify-self: center;
 }
 
 .upBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .navPos {
+  min-width: 130px;
+  text-align: center;
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
@@ -578,10 +588,18 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 .refreshStrip {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+/* Every action button on one row, above the status/rating controls. */
+.stripButtons {
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-bottom: 8px;
 }
 
 /* Watch controls sitting on the same row as the refresh buttons. */
@@ -1219,6 +1237,9 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 /* ── Breadcrumb ───────────────────────────────────────────────────────────── */
 .breadcrumb {
+  grid-row: 1;
+  grid-column: 2;
+  justify-self: center;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
