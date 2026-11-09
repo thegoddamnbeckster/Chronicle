@@ -74,6 +74,7 @@ The rest of this document indexes planned future plugins.
 | [IMDb](plugins/PLUGIN_IMDB.md) | `Chronicle.Plugin.IMDb` | 📺🎬👤 | None (official non-commercial datasets) | Designed |
 | [JustWatch](plugins/PLUGIN_JUSTWATCH.md) | `Chronicle.Plugin.JustWatch` | 📺🎬 | None (public GraphQL) | Scaffolded |
 | [Rotten Tomatoes](plugins/PLUGIN_ROTTENTOMATOES.md) | `Chronicle.Plugin.RottenTomatoes` | 📺🎬 | n/a | ❌ Rejected (Terms of Use forbid automated access) |
+| Letterboxd | `Chronicle.Plugin.Letterboxd` | 🎬 | None (public RSS, import only) | ⛔ Not developed (2026-11-09). Code exists (RSS diary/ratings/watchlist import), never released. Not a metadata source: no public API (access by request only, personal projects not granted), Terms of Use forbid scraping, and its film data is TMDB's. Revisit only if API access is granted. |
 | [PA TV Metadata](plugins/PLUGIN_PATVMETADATA.md) | `Chronicle.Plugin.PATVMetadata` | 📺📡 | API key | Scaffolded |
 | [InforPortugal](plugins/PLUGIN_INFORPORTUGAL.md) | `Chronicle.Plugin.InforPortugal` | 📺📡 | API key | Scaffolded |
 | [EPGdata.tv](plugins/PLUGIN_EPGDATA.md) | `Chronicle.Plugin.EPGData` | 📺📡 | API key | Scaffolded |
