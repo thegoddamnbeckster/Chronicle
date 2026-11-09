@@ -139,7 +139,7 @@ public class MetadataResolutionService(
                 // name-matched Wikipedia photo shared with a different real person of the same
                 // name) kept showing that same wrong photo no matter how many times resolution
                 // re-ran afterward.
-                var headshotUrl = await GetLatestHeadshotUrlAsync(db, item.Id, ct);
+                var headshotUrl = await GetLatestHeadshotUrlAsync(db, item.Id, item.PosterUrl, ct);
                 resolved[canonicalKey] = headshotUrl is not null
                     ? JsonSerializer.SerializeToElement(headshotUrl)
                     : JsonSerializer.SerializeToElement((string?)null);
@@ -321,7 +321,8 @@ public class MetadataResolutionService(
     /// <summary>Most-recently-discovered headshot for a person (see PersonHeadshot's own doc for
     /// why "most recent" means discovery order, not the photo's real-world date). Null if none
     /// have been recorded yet -- resolution falls through with no poster_url for this field.</summary>
-    private static async Task<string?> GetLatestHeadshotUrlAsync(ChronicleDbContext db, int personMediaItemId, CancellationToken ct)
+    private static async Task<string?> GetLatestHeadshotUrlAsync(
+        ChronicleDbContext db, int personMediaItemId, string? currentPosterUrl, CancellationToken ct)
     {
         var urls = await db.PersonHeadshots
             .Where(h => h.PersonMediaItemId == personMediaItemId && !h.IsHidden)
@@ -331,7 +332,19 @@ public class MetadataResolutionService(
         // Wikipedia's page image for a person is sometimes their signature or a flag (an SVG), which Kodi cannot
         // draw and which is no picture of them: the newest headshot that is a real image wins. The SVGs stay
         // stored, just never chosen.
-        return urls.FirstOrDefault(u => !IsVectorImageUrl(u));
+        var usable = urls.Where(u => !IsVectorImageUrl(u)).ToList();
+
+        // "Newest wins" applies only when the photos are first added. Once the person has a photo that is still one
+        // of their visible headshots, it stays: a photo discovered later must not replace it. (A photo the user
+        // picked is a pin and is handled before this is reached; this keeps the unpinned choice stable too.)
+        var currentKey = HeadshotImageKey.Of(currentPosterUrl);
+        if (currentKey.Length > 0)
+        {
+            var kept = usable.FirstOrDefault(u => string.Equals(u, currentPosterUrl, StringComparison.Ordinal))
+                       ?? usable.FirstOrDefault(u => HeadshotImageKey.Of(u) == currentKey);
+            if (kept is not null) return kept;
+        }
+        return usable.FirstOrDefault();
     }
 
     public async Task SetOverrideAsync(MediaItem item, ChronicleDbContext db, string field, string url,
@@ -360,6 +373,7 @@ public class MetadataResolutionService(
         if (root["_overrides"] is JsonObject overridesObj)
             overridesObj.Remove(field);
         item.MetadataJson = root.ToJsonString();
+        if (field == "poster_url") RestartAutomaticPersonPhoto(item);
         await ResolveAsync(item, db, ct);
     }
 
@@ -368,7 +382,18 @@ public class MetadataResolutionService(
         var root = ParseRootObject(item.MetadataJson);
         root.Remove("_overrides");
         item.MetadataJson = root.ToJsonString();
+        RestartAutomaticPersonPhoto(item);
         await ResolveAsync(item, db, ct);
+    }
+
+    /// <summary>
+    /// A person's automatic photo is sticky (see GetLatestHeadshotUrlAsync), and a pinned photo is also the person's
+    /// current PosterUrl, so un-pinning would otherwise leave that same photo in place as the sticky one. Clearing the
+    /// current photo lets resolution start over and pick the newest visible headshot, which is what "reset" means.
+    /// </summary>
+    private static void RestartAutomaticPersonPhoto(MediaItem item)
+    {
+        if (item.MediaType?.IsPersonType == true) item.PosterUrl = null;
     }
 
     public Task<int> ClearOverridesForMediaTypeAsync(string mediaTypeName, Action<int, int>? onBatch = null, CancellationToken ct = default) =>
@@ -451,6 +476,7 @@ public class MetadataResolutionService(
                         totalCleared++;
                         root.Remove("_overrides");
                         item.MetadataJson = root.ToJsonString();
+                        RestartAutomaticPersonPhoto(item);
                         await ResolveAsync(item, db, ct);
                     }
                 }

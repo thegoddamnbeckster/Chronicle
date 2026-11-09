@@ -571,6 +571,89 @@ public class MetadataResolutionServiceTests
     }
 
     [Fact]
+    public async Task ResolveAsync_PersonWithAPhotoAlready_KeepsItWhenANewerHeadshotArrives()
+    {
+        // Newest-wins is only for when photos are first added. A photo discovered later must not replace the current one.
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = new MediaItem
+        {
+            Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
+            MediaType = new MediaType { Id = 9, Name = "people", IsPersonType = true, DisplayName = "People" },
+        };
+        db.MediaItems.Add(item);
+        db.PersonHeadshots.AddRange(
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/old.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow.AddDays(-2) },
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/newer.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow.AddDays(-1) });
+        await db.SaveChangesAsync();
+
+        var svc = BuildService("people", 0, new() { ["title"] = ["tmdb"] });
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+        item.PosterUrl.Should().Be("https://example/newer.jpg"); // first add: newest wins
+
+        db.PersonHeadshots.Add(new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/newest.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+
+        item.PosterUrl.Should().Be("https://example/newer.jpg");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PersonWithAPinnedPhoto_KeepsItWhenANewerHeadshotArrives()
+    {
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = new MediaItem
+        {
+            Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
+            MediaType = new MediaType { Id = 9, Name = "people", IsPersonType = true, DisplayName = "People" },
+        };
+        db.MediaItems.Add(item);
+        db.PersonHeadshots.AddRange(
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/old.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow.AddDays(-2) },
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/newer.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow.AddDays(-1) });
+        await db.SaveChangesAsync();
+
+        var svc = BuildService("people", 0, new() { ["title"] = ["tmdb"] });
+        await svc.SetOverrideAsync(item, db, "poster_url", "https://example/old.jpg", null, null, null);
+
+        db.PersonHeadshots.Add(new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/newest.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        await svc.ResolveAsync(item, db, CancellationToken.None);
+
+        item.PosterUrl.Should().Be("https://example/old.jpg");
+    }
+
+    [Fact]
+    public async Task ClearOverrideAsync_PersonPhoto_ReturnsToTheNewestVisibleHeadshot()
+    {
+        // Un-pinning must not leave the formerly pinned photo in place as the sticky automatic one.
+        var options = new DbContextOptionsBuilder<ChronicleDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ChronicleDbContext(options);
+        var item = new MediaItem
+        {
+            Id = 1, Name = "Some Person", MediaTypeId = 9, HierarchyLevel = 0,
+            MediaType = new MediaType { Id = 9, Name = "people", IsPersonType = true, DisplayName = "People" },
+        };
+        db.MediaItems.Add(item);
+        db.PersonHeadshots.AddRange(
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/old.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow.AddDays(-2) },
+            new PersonHeadshot { PersonMediaItemId = 1, Url = "https://example/newest.jpg", Source = "tmdb", FirstSeenAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        var svc = BuildService("people", 0, new() { ["title"] = ["tmdb"] });
+        await svc.SetOverrideAsync(item, db, "poster_url", "https://example/old.jpg", null, null, null);
+        item.PosterUrl.Should().Be("https://example/old.jpg");
+
+        await svc.ClearOverrideAsync(item, db, "poster_url");
+
+        item.PosterUrl.Should().Be("https://example/newest.jpg");
+    }
+
+    [Fact]
     public async Task ResolveAsync_PersonWhoseNewestHeadshotIsHidden_FallsBackToTheNewestVisibleOne()
     {
         // TMDB's gallery for a person can carry a stranger's photo. Once hidden, it must never be the automatic pick,
