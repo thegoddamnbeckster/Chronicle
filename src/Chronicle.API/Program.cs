@@ -303,6 +303,7 @@ builder.Services.AddSingleton<SeriesFragmentRepairService>();
 builder.Services.AddSingleton<UnknownSeriesRepairService>();
 builder.Services.AddSingleton<BookTitleFragmentRepairService>();
 builder.Services.AddSingleton<LegacyNfoPurgeService>();
+builder.Services.AddSingleton<NormalizedNameLooseBackfillService>();
 builder.Services.AddSingleton<SeriesNameFragmentRepairService>();
 builder.Services.AddSingleton<PersonFullCreditsService>();
 builder.Services.AddSingleton<MovieExternalIdRepairService>();
@@ -549,6 +550,10 @@ using (var scope = app.Services.CreateScope())
         // must run before PluginHostService (a hosted service, started at app.Run) would
         // otherwise auto-register that plugin's folder again. No-op after the first run.
         await app.Services.GetRequiredService<LegacyNfoPurgeService>().RunOnceAsync();
+
+        // One-time recompute of the loose name key for rows saved before it folded diacritics, so
+        // "Córdova"/"Cordova" duplicates become visible to the duplicate scan. No-op after the first run.
+        await app.Services.GetRequiredService<NormalizedNameLooseBackfillService>().RunOnceAsync();
 
         // NOTE: media_enrichment seeding from external IDs (SeedEnrichmentRowsFromExternalIdsAsync)
         // deliberately does NOT run here. Its per-plugin media-type filter depends on
