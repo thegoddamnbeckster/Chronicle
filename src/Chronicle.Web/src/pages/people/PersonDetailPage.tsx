@@ -356,6 +356,11 @@ export default function PersonDetailPage() {
           {bio && <p className={styles.bio}>{bio}</p>}
 
           <div className={styles.actionsRow}>
+            {/* Refresh All covers the person AND every linked author record: they are one entity here. */}
+            <button className={styles.actionBtn} onClick={() => refreshAllMut.mutate()} disabled={refreshAllMut.isPending}>
+              {refreshAllMut.isPending ? 'Refreshing all…' : '↻ Refresh All'}
+            </button>
+            {refreshAllMut.isError && <span role="alert" className={styles.empty}>Refresh failed.</span>}
             {/* Same toolbar and button style as Merge/Remove; the pressed state shows which view is on. */}
             <button
               type="button"
@@ -568,13 +573,6 @@ export default function PersonDetailPage() {
             )}
           </div>
 
-          {/* Refresh All covers the person AND every linked author record: they are one entity here. */}
-          <div className={styles.refreshStrip}>
-            <button className={styles.refreshBtn} onClick={() => refreshAllMut.mutate()} disabled={refreshAllMut.isPending}>
-              {refreshAllMut.isPending ? 'Refreshing all…' : '↻ Refresh All'}
-            </button>
-            {refreshAllMut.isError && <span role="alert" className={styles.empty}>Refresh failed.</span>}
-          </div>
           <ItemPluginPanels item={person} />
         </div>
       </div>
