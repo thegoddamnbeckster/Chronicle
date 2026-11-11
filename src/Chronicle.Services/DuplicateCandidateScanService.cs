@@ -251,6 +251,35 @@ public sealed class DuplicateCandidateScanService(
         }
         AddCrossTypeCandidates();
 
+        // Same-type pass for PEOPLE on the loose name key. The first pass above groups by the exact NormalizedName, which
+        // keeps an accent, a space or a punctuation mark: "Ismael Cruz Cordova" (TMDB) and "Ismael Cruz Córdova" (Wikipedia)
+        // are one actor but never met in it. PersonResolutionService already matches people loosely when it creates them, so
+        // the same equivalence belongs here for the pairs that predate it. Restricted to person types: for books or films a
+        // loose match ("Foo Bar" / "Foobar") is a much weaker sign. Same-name pairs are skipped (the first pass has them),
+        // and DuplicatePersonAutoResolveService decides what is merged, dismissed or left for review.
+        var personTypeIds = (await db.MediaTypes.Where(t => t.IsPersonType).Select(t => t.Id).ToListAsync(ct)).ToHashSet();
+        if (personTypeIds.Count > 0)
+        {
+            foreach (var group in items
+                         .Where(m => m.HierarchyLevel == 0 && personTypeIds.Contains(m.MediaTypeId)
+                                     && !string.IsNullOrEmpty(m.NormalizedNameLoose))
+                         .GroupBy(m => (m.MediaTypeId, m.NormalizedNameLoose)))
+            {
+                var list = group.ToList();
+                for (int i = 0; i < list.Count - 1; i++)
+                for (int j = i + 1; j < list.Count; j++)
+                {
+                    if (list[i].NormalizedName == list[j].NormalizedName) continue;
+                    if (ExternalIdsConflict(list[i].Id, list[j].Id)) continue;
+
+                    var a = Math.Min(list[i].Id, list[j].Id);
+                    var b = Math.Max(list[i].Id, list[j].Id);
+                    if (!dismissedSet.Contains((a, b)))
+                        newCandidates.Add((a, b));
+                }
+            }
+        }
+
         // Same-parent, same-Number CONTAINER pass -- see this class's own doc for the
         // 2026-08-03 incident this closes the gap for. Deliberately restricted to non-leaf
         // levels (a container's Number is its whole identity under its parent) so this can

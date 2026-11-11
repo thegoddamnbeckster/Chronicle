@@ -75,6 +75,55 @@ public class DuplicateCandidateScanServiceTests : IDisposable
         return pairs.Select(p => (p.ItemAId, p.ItemBId)).ToHashSet();
     }
 
+    // ── People: accent/spacing variants of one name (Cordova / Córdova) ──────────────────────
+
+    private MediaType AddPeopleType()
+    {
+        var t = new MediaType { Name = "people", DisplayName = "People", HierarchyLevels = 1, IsPersonType = true, IsTrackable = false };
+        _db.MediaTypes.Add(t);
+        _db.SaveChanges();
+        return t;
+    }
+
+    [Fact]
+    public async Task People_AccentVariantsOfOneName_AreFlagged()
+    {
+        var people = AddPeopleType();
+        var tmdb = MakeItem("Ismael Cruz Cordova", people);
+        var wiki = MakeItem("Ismael Cruz Córdova", people);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().Contain((Math.Min(tmdb.Id, wiki.Id), Math.Max(tmdb.Id, wiki.Id)));
+    }
+
+    [Fact]
+    public async Task People_AccentVariants_WithDifferentIdsFromOneSource_AreNotFlagged()
+    {
+        var people = AddPeopleType();
+        var a = MakeItem("Zoë Kravitz", people);
+        var b = MakeItem("Zoe Kravitz", people);
+        await _db.SaveChangesAsync();
+        _db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = a.Id, Source = "tmdb", ExternalId = "tmdb:1" },
+            new MediaExternalId { MediaItemId = b.Id, Source = "tmdb", ExternalId = "tmdb:2" });
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().BeEmpty("two different ids from one provider are two people sharing a name");
+    }
+
+    [Fact]
+    public async Task NonPeople_AccentVariants_AreNotFlaggedByTheLooseKey()
+    {
+        var a = MakeItem("Amélie", _moviesType);
+        var b = MakeItem("Amelie", _moviesType);
+
+        var candidates = await RunAndGetCandidatesAsync();
+
+        candidates.Should().BeEmpty("the loose pass is people-only; a loose title match is a weak sign");
+    }
+
     // ── Same-type pass (pre-existing behavior, now under test for the first time) ──────────
 
     [Fact]
