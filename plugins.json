@@ -206,6 +206,15 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.listenbrainz",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.ListenBrainz",
+      "tags": [
+        "music",
+        "metadata",
+        "sync"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.themes.default",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Themes.Default",
       "tags": [
