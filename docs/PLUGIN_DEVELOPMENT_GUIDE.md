@@ -206,6 +206,11 @@ Things worth knowing:
   `AdditionalImages`, `AlternateNames`, `Cast`, `Crew`, `Tags`) are stored, not dropped. Do not trim data to be tidy.
 * **Throw `PluginAuthException`** when credentials are wrong or expired; Chronicle then shows the plugin as needing
   attention instead of retrying forever.
+* **What you throw decides what happens to the item.** An empty result is NotFound for good; `InvalidOperationException` is
+  Skipped for good; most other exceptions, a timeout or a 5xx included, burn a retry and end Exhausted at 3; only a 429 or an
+  `HttpRequestException` with no status code pauses the pass without penalty. The host's call guard also gives every call 25
+  seconds and reads a timeout as "no result". Before writing any error handling, read section 6a of
+  [PLUGIN_NEW_TYPE_CHECKLIST.md](PLUGIN_NEW_TYPE_CHECKLIST.md), which lays out the host's behaviour per caller.
 * **Respect `CancellationToken`**, and use one long-lived `HttpClient` (not one per call). Be polite to the service:
   honour its rate limits; Chronicle may call you thousands of times on a first import.
 * **Log through `Microsoft.Extensions.Logging`.** Each plugin gets its own log file. Never log secrets.

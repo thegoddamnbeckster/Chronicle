@@ -1,7 +1,8 @@
 # The Chronicle plugin checklist: design, build, release, verify
 
 Started 2026-11-05 after the IGDB plugin shipped with its type present but its pages unchecked. Extended 2026-11-06 with
-everything the Steam and IGDB work taught. **This is the one checklist for any new plugin or media type.** The owner
+everything the Steam and IGDB work taught, and 2026-11-16 with section 6a (the host's error contract, from the IGDB design
+review and the ListenBrainz build). **This is the one checklist for any new plugin or media type.** The owner
 should never have to find out what was missed: every line below is answered, in writing, in the plugin's design doc
 and again at release, with evidence.
 
@@ -100,6 +101,30 @@ and again at release, with evidence.
 | H5 | Playtime and ownership appear on the item page (`/media/{id}/ownership`) with the right wording for the type | Done once, reused |
 | H6 | Series information (`belongsToCollection {id, name, url}`) is supplied when the source has it; with none, the item stays top level. A one-item collection is still a collection | Owner decisions |
 | H7 | Pacing: shared limiter and breaker in a static hub (one plugin class is two registry instances), 429 opens the breaker, 5xx backs off | One state for both halves |
+
+## 6a. The host contract: what the host does with each error and each caller
+
+Found reading the host source for the IGDB design (`docs/plans/2026-11-05-igdb-plugin-design.md`, sections 9, 17, 20 and 21) and
+confirmed again building ListenBrainz. **None of this was in the plugin guide.** The design review found three blockers in it:
+returning an empty list on a 400 would have turned a whole library permanently NotFound the day IGDB retired a field; a rejected
+secret cost two failing calls for every item in the queue; and a timeout was read as "no result". Read the host before designing
+(`MetadataEnrichmentService`, `ProviderCallGuard`, `FileScanService.SearchMetadataAsync`, `MediaController.RefreshMetadata`) and
+copy the per-caller table into the design doc; line numbers move, so re-check behaviour, not line numbers.
+
+| ID | Check | How it goes wrong |
+|---|---|---|
+| E1 | **Every failure is mapped on purpose to what the enrichment pass does with it.** An empty result is **NotFound, terminal** (only a manual reset undoes it). `InvalidOperationException` is **Skipped, terminal**. Any other exception, including a 5xx and a timeout, is `RetryCount++` and **Exhausted at 3**. `PluginAuthException` is `AuthFailed` and **the pass carries on** with the next item. Only `HttpRequestException` with status 429 **or a null status** leaves the row Pending, spends no retry, and stops that plugin's pass. So a pause (429, outage, timeout, a body that is not the expected shape) is an `HttpRequestException` with a null status or 429; a real "no such thing" is an empty list or a 404; nothing else is thrown by habit | A 5xx thrown as itself exhausted a library in three bad minutes; an `InvalidOperationException` from a JSON reader skipped items for good |
+| E2 | **A rejected request is never an empty result.** A 400 on a search (a retired field, a changed query syntax) is a pause, not "no results". Empty is returned only for a genuine empty 200 | The whole library goes NotFound, permanently, the day a field is deprecated |
+| E3 | **`GetByIdAsync` says "no such id" in the one way the host acts on.** `KeyNotFoundException` or `ArgumentException` clears the stored id and runs a fresh search; an HTTP 404 marks NotFound. Any other exception is handled as in E1, so a JSON reader that throws `InvalidOperationException` on a missing property gets the item Skipped for good (use tolerant readers) | A stored id that never resolved stayed forever; a thrown parser exception skipped the item for good |
+| E4 | **A call finishes inside the plugin's own deadline, which is below the host's.** The guard gives every call **25 s** (more only if the manifest declares `call_timeout_seconds`, K13) and when **its own** deadline fires returns the fallback, **which enrichment reads as NotFound**. Any other cancellation (the plugin's own `HttpClient` timing out, the app shutting down mid-call) propagates as a failure, so the host retries the item instead of recording it as not existing (changed 2026-11-07 after two artists became NotFound on a restart). The plugin sets its own request timeout and a whole-call deadline (IGDB: 8 s and 20 s) and, when that passes, throws the pause form (E1); it never lets the guard fire. The guard also retries null-status, 429, 502, 503 and 504 **twice**, sleeping 2 s then 4 s, so even a fast failure costs a caller about 6 s; the plugin therefore **never retries on its own** what the guard will retry (K10's bounded retries are for the service's own 429 and "slow down" signals inside one call) | A slow service turned every item NotFound; the plugin's own retries multiplied the host's |
+| E5 | **Every caller behaves differently; design for each.** Interactive search (Add Media, scan search; **2.5 s** per provider, all providers in parallel, `FileScanService.SearchMetadataAsync`) swallows every exception as an empty list, so auth failure, outage and breaker all look like "no results": the plugin returns an empty list itself and logs why. The follow-up `GetByIdAsync` after a search swallows **every** exception ("keeping search result"): the item is saved with the search record and never revisited, so `SearchAsync` must fetch the full record itself (lean candidates, the winner in full) or the item stays thin. Add Media's add path calls any failure "could not find {id}". Refresh and Fix Match return `ex.Message` to the user, so **every message a plugin throws is user-grade and carries no secret**. Resync-all has no catch: the first pause aborts the task and the next run starts again from item one, so it is off by default and the doc says so. The per-item lock is the plugin's call deadline plus 15 s (`ItemLockTimeout`), held across search, follow-up and guard retries, so a Refresh on a busy item can answer "lock timeout, skipping" | An item enriched thin forever because the follow-up failed silently; an exception message carrying a key reached the screen |
+| E6 | **A bad credential costs one call, not two per item.** The host does not stop the pass on `AuthFailed`, so a missing or rejected secret is a `PluginAuthException`, and an in-memory latch keyed by a hash of the credentials makes every later call fail instantly, without a request, until `Configure` receives different values. The latch expires (IGDB: 15 minutes, one probe) so a corrected credential can recover; a request in flight when settings change is judged against the credentials it used. The host does not requeue `AuthFailed` rows after a fix (the only way back is the Enrichment page's reset for Authentication Failed, `ResetScope.AllAuthFailed`), so the doc tells the owner to use it (C4) | 10,000 `AuthFailed` rows and 20,000 failing calls from one wrong secret |
+| E7 | **One item that always fails cannot block the queue.** A pause stops the pass, rows are ordered by hierarchy level only, and a pause is retried 15 minutes later from the same place, so an item that deterministically fails (a record that always returns a 500 or malformed JSON) would be first again each time. Keep a bounded in-memory counter per id or query for per-item failures only (not 429, not transport errors, which are not about the item); at the third, throw `InvalidDataException` so the host counts it toward Exhausted. A failure counts against an item only if the service answered other requests since | One bad record stalled an entire plugin for days |
+| E8 | **A retired field loses one group, not the record.** Ask for fields in groups (core, media, companies, names, releases, commerce, classification, ratings, related, languages) so that on a 400 the plugin reads the offending field out of the error, drops exactly that group, retries once, remembers it for a while (IGDB: an hour), says so in the health check, and marks any record fetched while a group was off as degraded and partial so a re-sync replaces it. A test greps every request body for a deprecated name | A deprecated field disabled every expansion for the life of the process |
+| E9 | **A busy service can answer 200.** ListenBrainz, after bulk traffic, answers **HTTP 200 with an HTML "Verifying your browser" page**, not a 429. A plugin that parses first and asks later reports "invalid JSON" and burns retries. Check the content type and the first byte before parsing; an HTML answer from a JSON service is a block: stop, say so in plain words, hold **every** caller of that service (shared state, H7) for a stated time, and **never try to pass the check**. A plugin's own bulk reads are paced (a page every several seconds) so it never causes one | Live testing triggered the check twice; the failure read as a parser error |
+| E10 | **Measure ranking and bursts, not only whether a call works.** A service's search can put the exact title first for barely half of real queries (IGDB: 22 of 43), so run a sample (include the collision-prone names) and add an exact-name query where it fails (I5). A documented limit may really be a bucket with a burst (IGDB: 150 requests at 80 a second drew 32 429s, no `Retry-After`, recovered in 0.6 s) or a floor the service enforces with headers (ListenBrainz: one a second, `X-RateLimit-*`); measure which, then pace for the real one with margin | A design built on the documented limit; a search trusted without a sample |
+| E11 | **An independent review is a scheduled step, twice.** Once on the design, read against the host source and the service's own documentation (IGDB: three blockers), once on the built code (IGDB: field drift, latch recovery, matching, Add Media). The reviewer is told to try to break it, and every finding is fixed with a test that fails on the old code | Every plugin that skipped it had at least one of E1 to E8 |
+| E12 | **The host will not load a plugin its hosted catalogue does not list.** `PluginIntegrity.IsAllowedAsync` reads the hosted `plugins.json` on GitHub `main` (cached in `app_settings.plugins.catalog_cache`; the embedded copy is only the fallback), so a freshly built plugin folder is ignored ("not in the plugin catalog") by any dev database that already has a cache. Add the entry, commit and push (the owner approves the push), wait out raw.githubusercontent's 5-minute cache, then restart: registration happens only at startup. Each restart signs the browser pane out, so batch restarts and plan the sign-in. To prove a plugin works alone, copy the build output to a scratch directory with only that plugin in `plugins/`, an empty database and its own port | The plugin built, deployed and never appeared; hours were lost to "why is it not loading" |
 
 ## 7. The type
 
@@ -209,10 +234,11 @@ See `docs/plans/2026-11-06-plugin-survey.md` for the evidence behind each.
 | K11 | No empty `catch {}`. A caught error is logged with the plugin's id and either rethrown or returned as a stated degraded result. The one exception is a best-effort cleanup (deleting a temporary file, writing an advisory log) where the catch states its reason in a comment | IMDb has 11, TMDB 4 |
 | K12 | Every real plugin has its `docs/plugins/PLUGIN_*.md` page and a `PLUGIN_CATALOGUE.md` line | 9 are missing |
 | K13 | **Long fetches finish.** The host gives one call into a plugin **25 seconds** and then treats it as "no result". A source that needs many paced requests to describe one item completely (D6, D7) declares `"call_timeout_seconds"` in `manifest.json` (more than 25, at most 86400; MusicBrainz: 14400) and says in its doc page that it needs a Chronicle build that reads it (0.20.66 or later). Cutting what is stored to fit 25 seconds is not an option (D6). The plugin remembers what a long fetch has already been told (pages, lookups, in memory, for hours) so a fetch that fails near its end resumes instead of starting over. Interactive search keeps its own short deadline and is unaffected | MusicBrainz capped its fetches at 3 and 5 releases to fit 25 s, and still lost most of them to the deadline |
-| K13 | The compliance record (`docs/plugins/PLUGIN_COMPLIANCE.md`) is regenerated with the plugin and shows no static `XX` for it; each remaining unverified item has an owner and a date | A plugin passes review once and drifts |
+| K14 | The compliance record (`docs/plugins/PLUGIN_COMPLIANCE.md`) is regenerated with the plugin and shows no static `XX` for it; each remaining unverified item has an owner and a date | A plugin passes review once and drifts |
 
 ## 10. Packaging and release
 
+- A new plugin is not loaded by the dev app until its `plugins.json` entry is on GitHub `main` (E12).
 - `plugins.json` entry (tags include the type), embedded fallback copy, `RunTestEnvironment.ps1` build entry,
   `Deploy-Plugin.ps1` entry, `docs/plugins/PLUGIN_*.md`, `docs/PLUGIN_CATALOGUE.md`, `BACKLOG.md`.
 - Version bumped in manifest and csproj together; `Version` is read from the assembly; a test compares it to the manifest.
@@ -272,6 +298,18 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | H5 | Ownership shown on the item | | |
 | H6 | Series info; top level when none | | |
 | H7 | Shared limiter and breaker | | |
+| E1 | Failures mapped to the enrichment pass (pause, NotFound, Skipped, Exhausted, AuthFailed) | | |
+| E2 | A rejected request is never an empty result | | |
+| E3 | `GetByIdAsync` not-found in the form the host acts on | | |
+| E4 | Plugin deadline below the host's 25 s; no own retry of what the guard retries | | |
+| E5 | Per-caller behaviour designed (interactive, follow-up, add, refresh, resync) | | |
+| E6 | Bad credential: one call, latch that expires | | |
+| E7 | Poison-item counter | | |
+| E8 | Retired field loses one group, not the record | | |
+| E9 | A 200 block page is detected, held for everyone, never bypassed | | |
+| E10 | Ranking sampled; burst and limit measured | | |
+| E11 | Independent review of the design and of the code | | |
+| E12 | Hosted catalogue entry pushed before the plugin is expected to load | | |
 | T1 | Type declared identically | | |
 | T2 | Host restarted | | |
 | T3 | Type flags deliberate | | |
@@ -306,7 +344,7 @@ is signed out, say so and list what is therefore unverified; never write "verifi
 | K11 | No empty catch | | |
 | K12 | Doc page and catalogue line | | |
 | K13 | Long fetches finish: call deadline declared, progress remembered | | |
-| K13 | Compliance record regenerated, no static XX | | |
+| K14 | Compliance record regenerated, no static XX | | |
 | Q1 | Provider search within 4 s | | |
 | Q2 | Empty list for unserved types; failures cheap | | |
 | Q3 | Result fields set; score means something | | |
