@@ -124,6 +124,9 @@ namespace Chronicle.API.DTOs
         /// <summary>True when Timestamp is a borrowed fallback (e.g. a SIMKL-imported
         /// episode stamped with its show's last-watched date), not this item's own real
         /// watch time -- the UI should mark it as approximate rather than exact.</summary>
-        bool IsApproximateTimestamp = false
+        bool IsApproximateTimestamp = false,
+        /// <summary>The item's media type, so the UI can word the activity with that type's own
+        /// verb ("Played" for a game, "Listened" for music) instead of a bare timestamp.</summary>
+        int? MediaTypeId = null
     );
 }

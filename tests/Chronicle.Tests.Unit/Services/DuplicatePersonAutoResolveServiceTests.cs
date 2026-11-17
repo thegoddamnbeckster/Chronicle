@@ -297,6 +297,141 @@ public class DuplicatePersonAutoResolveServiceTests : IDisposable
         Assert.Equal(0, await _db.MediaItemDuplicateDismissals.CountAsync());
     }
 
+    // ── the one-time review of earlier dismissals ─────────────────────────────
+
+    private async Task<(MediaItem Movie, MediaItem A, MediaItem B)> DismissedPairOnOneTitleAsync(
+        string nameA, string nameB, string characterA = "Marty McFly", string characterB = "Marty McFly")
+    {
+        var movieType = new MediaType { Name = "movies", DisplayName = "Movies", HierarchyLevels = 1 };
+        _db.MediaTypes.Add(movieType);
+        _db.SaveChanges();
+        var movie = new MediaItem
+        {
+            Name = "Back to the Future", NormalizedName = "back to the future", MediaTypeId = movieType.Id,
+            HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+        };
+        _db.MediaItems.Add(movie);
+        var a = MakePerson(nameA);
+        var b = MakePerson(nameB);
+        _db.SaveChanges();
+
+        _db.MediaExternalIds.AddRange(
+            new MediaExternalId { MediaItemId = a.Id, Source = "imdb", ExternalId = "imdb:nm0000150" },
+            new MediaExternalId { MediaItemId = a.Id, Source = "tmdb", ExternalId = "tmdb:1399286" },
+            new MediaExternalId { MediaItemId = b.Id, Source = "tmdb", ExternalId = "tmdb:521" });
+        _db.MediaCredits.AddRange(
+            new MediaCredit { MediaItemId = movie.Id, PersonMediaItemId = a.Id, PersonName = nameA, Role = "Actor", CharacterName = characterA, Source = "imdb", CreatedAt = DateTime.UtcNow },
+            new MediaCredit { MediaItemId = movie.Id, PersonMediaItemId = b.Id, PersonName = nameB, Role = "Actor", CharacterName = characterB, Source = "tmdb", CreatedAt = DateTime.UtcNow });
+        // Dismissed earlier: a pair is never a candidate again once it has a dismissal.
+        _db.MediaItemDuplicateDismissals.Add(new MediaItemDuplicateDismissal
+        {
+            ItemAId = Math.Min(a.Id, b.Id), ItemBId = Math.Max(a.Id, b.Id), DismissedAt = DateTime.UtcNow.AddDays(-30),
+        });
+        return (movie, a, b);
+    }
+
+    /// <summary>
+    /// Root-caused live (2026-11-16): Back to the Future showed Michael J. Fox twice. One person came from TMDB, one from IMDb (which
+    /// also held a second TMDB id), and the pair had been dismissed on 2026-09-09. Both credit "Marty McFly" on the same film, which the
+    /// fresh-candidate rules treat as conclusive, but a dismissal is permanent so the pair was never looked at again.
+    /// </summary>
+    [Fact]
+    public async Task EarlierDismissal_SameNameSameCharacterOnSameTitle_IsReopenedAndMerged()
+    {
+        await DismissedPairOnOneTitleAsync("Michael J. Fox", "Michael J. Fox");
+
+        await RunAsync();
+
+        Assert.Equal(1, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(0, await _db.MediaItemDuplicateDismissals.CountAsync());
+        var survivor = await _db.MediaItems.SingleAsync(m => m.MediaTypeId == _peopleType.Id);
+        var ids = await _db.MediaExternalIds.Where(e => e.MediaItemId == survivor.Id).Select(e => e.ExternalId).ToListAsync();
+        Assert.Contains("imdb:nm0000150", ids);          // one person now holds both people's ids and credits
+        Assert.Contains("tmdb:521", ids);
+        // Both credited "Marty McFly" on the one film: the merge leaves one credit, which is the point (the cast list shows him once).
+        Assert.Equal(1, await _db.MediaCredits.CountAsync(c => c.PersonMediaItemId == survivor.Id));
+        Assert.Equal(0, await _db.MediaCredits.CountAsync(c => c.PersonMediaItemId != survivor.Id));
+        Assert.True(await _db.AppSettings.AnyAsync(x => x.Key == DuplicatePersonAutoResolveService.DismissalReviewKey));
+    }
+
+    [Fact]
+    public async Task EarlierDismissal_OnlyAVeryLikeNameButNotTheSame_IsLeftAlone()
+    {
+        // "only if the actor has the same name": an accent or spacing variant is not the same name here.
+        await DismissedPairOnOneTitleAsync("Zoe Saldana", "Zoë Saldaña", "Neytiri", "Neytiri");
+
+        await RunAsync();
+
+        Assert.Equal(2, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(1, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
+    [Fact]
+    public async Task EarlierDismissal_SameNameWithDifferentCharacters_StaysDismissed()
+    {
+        await DismissedPairOnOneTitleAsync("Chris Evans", "Chris Evans", "Steve Rogers", "Curt");
+
+        await RunAsync();
+
+        Assert.Equal(2, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(1, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
+    [Fact]
+    public async Task EarlierDismissal_ConflictingBirthDates_StaysDismissedEvenWithASharedCharacter()
+    {
+        var (_, a, b) = await DismissedPairOnOneTitleAsync("Henry Kingi", "Henry Kingi", "Wally", "Wally");
+        a.BirthDate = new DateTime(1943, 1, 1);
+        b.BirthDate = new DateTime(1970, 1, 1);
+
+        await RunAsync();
+
+        Assert.Equal(2, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(1, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
+    [Fact]
+    public async Task EarlierDismissal_ReviewRunsOnce_ADismissalAfterItIsNeverRevisited()
+    {
+        await DismissedPairOnOneTitleAsync("Michael J. Fox", "Michael J. Fox");
+        await RunAsync();                                     // the review runs and merges the pair above
+
+        // Someone dismisses another corroborated pair afterwards: that is a decision, not an old mistake.
+        var c = MakePerson("Brett Goldstein");
+        var d = MakePerson("Brett Goldstein");
+        _db.SaveChanges();
+        var movieId = (await _db.MediaItems.FirstAsync(m => m.Name == "Back to the Future")).Id;
+        _db.MediaCredits.AddRange(
+            new MediaCredit { MediaItemId = movieId, PersonMediaItemId = c.Id, PersonName = "Brett Goldstein", Role = "Actor", CharacterName = "Roy Kent", Source = "x", CreatedAt = DateTime.UtcNow },
+            new MediaCredit { MediaItemId = movieId, PersonMediaItemId = d.Id, PersonName = "Brett Goldstein", Role = "Actor", CharacterName = "Roy Kent", Source = "y", CreatedAt = DateTime.UtcNow });
+        _db.MediaItemDuplicateDismissals.Add(new MediaItemDuplicateDismissal
+        {
+            ItemAId = Math.Min(c.Id, d.Id), ItemBId = Math.Max(c.Id, d.Id), DismissedAt = DateTime.UtcNow.AddDays(-1),
+        });
+
+        await RunAsync();
+
+        Assert.Equal(3, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));   // the survivor and Brett twice
+        Assert.Equal(1, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
+    [Fact]
+    public async Task EarlierDismissal_AThreeWayDuplicate_MergesIntoOne()
+    {
+        var (movie, a, b) = await DismissedPairOnOneTitleAsync("Michael J. Fox", "Michael J. Fox");
+        var c = MakePerson("Michael J. Fox");
+        _db.SaveChanges();
+        _db.MediaCredits.Add(new MediaCredit { MediaItemId = movie.Id, PersonMediaItemId = c.Id, PersonName = "Michael J. Fox", Role = "Actor", CharacterName = "Marty McFly", Source = "z", CreatedAt = DateTime.UtcNow });
+        _db.MediaItemDuplicateDismissals.AddRange(
+            new MediaItemDuplicateDismissal { ItemAId = Math.Min(a.Id, c.Id), ItemBId = Math.Max(a.Id, c.Id), DismissedAt = DateTime.UtcNow.AddDays(-30) },
+            new MediaItemDuplicateDismissal { ItemAId = Math.Min(b.Id, c.Id), ItemBId = Math.Max(b.Id, c.Id), DismissedAt = DateTime.UtcNow.AddDays(-30) });
+
+        await RunAsync();
+
+        Assert.Equal(1, await _db.MediaItems.CountAsync(m => m.MediaTypeId == _peopleType.Id));
+        Assert.Equal(0, await _db.MediaItemDuplicateDismissals.CountAsync());
+    }
+
     private sealed class DirectScopeFactory(ChronicleDbContext ctx) : IServiceScopeFactory
     {
         public IServiceScope CreateScope() => new DirectScope(ctx);

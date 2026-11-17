@@ -21,8 +21,193 @@ public class MetadataEnrichmentService(
     IMetadataUrlValidator urlValidator,
     IPersonResolutionService personResolutionService,
     ILogger<MetadataEnrichmentService> logger,
-    EnrichmentStatsCache? statsCache = null) : IMetadataEnrichmentService
+    EnrichmentStatsCache? statsCache = null,
+    Func<TimeSpan, CancellationToken, Task>? pauseDelay = null) : IMetadataEnrichmentService
 {
+    // How a queue waits for a provider that stopped answering. A test hands in one that returns at once.
+    private readonly Func<TimeSpan, CancellationToken, Task> _pauseDelay = pauseDelay ?? ((d, t) => Task.Delay(d, t));
+
+    /// <summary>An item sent to the back of the queue this many times in one run is left for the next run instead.</summary>
+    private const int MaxDeferrals = 3;
+
+    /// <summary>This many different items paused in a row, with nothing answered in between: it is the connection, not an item.</summary>
+    private const int ItemsThatMeanTheConnection = 3;
+
+    /// <summary>
+    /// What one run of a plugin's pending queue remembers: the items it has moved past for good (left Pending for the next run), the
+    /// items it sent to the back of the queue, which items have paused since the provider last answered, and how long it has been
+    /// waiting for a provider that was silent.
+    /// </summary>
+    private sealed class PassState
+    {
+        private readonly object _lock = new();
+        private readonly HashSet<int> _skipped = [];
+        private readonly HashSet<int> _deferred = [];
+        private readonly Dictionary<int, int> _deferrals = [];
+        private readonly Dictionary<int, DateTime> _holdUntil = [];
+        private readonly HashSet<int> _pausedRows = [];
+        private bool _answeredSincePromote;
+        public TimeSpan OutageWaited;
+        public int Waits;
+
+        public bool IsSkipped(int rowId) { lock (_lock) return _skipped.Contains(rowId); }
+        public void Skip(int rowId) { lock (_lock) { _skipped.Add(rowId); _deferred.Remove(rowId); } }
+        public int[] SkippedSnapshot() { lock (_lock) return [.. _skipped]; }
+        public int[] DeferredSnapshot() { lock (_lock) return [.. _deferred]; }
+        public bool HasDeferred { get { lock (_lock) return _deferred.Count > 0; } }
+        public bool AnsweredSincePromote { get { lock (_lock) return _answeredSincePromote; } }
+
+        /// <summary>This item paused. Returns how many different items have paused since the provider last answered anything.</summary>
+        public int AddPausedRow(int rowId) { lock (_lock) { _pausedRows.Add(rowId); return _pausedRows.Count; } }
+        public int PausedRowCount { get { lock (_lock) return _pausedRows.Count; } }
+
+        /// <summary>
+        /// Sends the item to the back of the queue; the third time in one run it is left for the next run instead. When the provider said
+        /// how long to wait, the item is not tried again before that.
+        /// </summary>
+        public void Defer(int rowId, TimeSpan? hold = null)
+        {
+            lock (_lock)
+            {
+                var n = _deferrals[rowId] = _deferrals.GetValueOrDefault(rowId) + 1;
+                if (n >= MaxDeferrals) { _skipped.Add(rowId); _deferred.Remove(rowId); _holdUntil.Remove(rowId); return; }
+                _deferred.Add(rowId);
+                if (hold is { } h) _holdUntil[rowId] = DateTime.UtcNow + h; else _holdUntil.Remove(rowId);
+            }
+        }
+
+        /// <summary>How long until the first of the items at the back of the queue may be tried again (zero when one already may).</summary>
+        public TimeSpan EarliestRelease()
+        {
+            lock (_lock)
+            {
+                var now = DateTime.UtcNow;
+                var soonest = TimeSpan.Zero;
+                var any = false;
+                foreach (var id in _deferred)
+                {
+                    var left = _holdUntil.TryGetValue(id, out var until) ? until - now : TimeSpan.Zero;
+                    if (left < TimeSpan.Zero) left = TimeSpan.Zero;
+                    if (!any || left < soonest) { soonest = left; any = true; }
+                }
+                return soonest;
+            }
+        }
+
+        /// <summary>
+        /// The rest of the queue is done and the queue has waited <paramref name="waited"/>: the items at the back whose hold has ended come
+        /// round again; the others stay at the back until theirs does.
+        /// </summary>
+        public void PromoteDeferred(TimeSpan waited)
+        {
+            lock (_lock)
+            {
+                var now = DateTime.UtcNow;
+                foreach (var id in _deferred.ToArray())
+                {
+                    var left = _holdUntil.TryGetValue(id, out var until) ? until - now : TimeSpan.Zero;
+                    if (left <= waited + TimeSpan.FromSeconds(1)) { _deferred.Remove(id); _holdUntil.Remove(id); }
+                }
+                _answeredSincePromote = false;
+            }
+        }
+
+        /// <summary>The provider answered something: it is up, and the outage clock restarts.</summary>
+        public void NoteSuccess()
+        {
+            lock (_lock)
+            {
+                _pausedRows.Clear();
+                _answeredSincePromote = true;
+                OutageWaited = TimeSpan.Zero;
+                Waits = 0;
+            }
+        }
+    }
+
+    /// <summary>The wait the next pause would cost: a minute, then doubling, no single wait over fifteen minutes.</summary>
+    private static TimeSpan NextBackoff(PassState st)
+    {
+        var first = Tunables.Seconds(Tunables.EnrichmentPauseWaitSeconds);
+        var longest = Tunables.Minutes(Tunables.EnrichmentPauseWaitMaxMinutes);
+        return TimeSpan.FromTicks(Math.Min((long)(first.Ticks * Math.Pow(2, Math.Min(st.Waits, 20))), longest.Ticks));
+    }
+
+    /// <summary>The longest time a provider asked us to wait (<c>Data["RetryAfter"]</c> on its exception: a TimeSpan or seconds), if it said.</summary>
+    private static TimeSpan? RetryAfterOf(Exception ex)
+    {
+        if (!ex.Data.Contains("RetryAfter")) return null;
+        return ex.Data["RetryAfter"] switch
+        {
+            TimeSpan t when t > TimeSpan.Zero => t,
+            int n when n > 0 => TimeSpan.FromSeconds(n),
+            long n when n > 0 => TimeSpan.FromSeconds(n),
+            double n when n > 0 => TimeSpan.FromSeconds(n),
+            _ => null,
+        };
+    }
+
+    /// <summary>The longest a provider's own "try again after" is believed: past this the plain backoff and the outage allowance take over.</summary>
+    private static readonly TimeSpan LongestRetryAfter = TimeSpan.FromHours(2);
+
+    /// <summary>
+    /// The queue never stops because a provider did: it waits (a minute, then doubling, no single wait over fifteen minutes, or as long as
+    /// the provider itself asked for) and carries on from where it was. A run can take days and that is fine; it ends when nothing is
+    /// pending. Only a provider silent for the whole outage allowance (twelve hours without one answer) ends the run, and the schedule
+    /// starts the next one, so nothing is lost. Returns false when the allowance is used up.
+    /// </summary>
+    private async Task<bool> WaitForRecoveryAsync(string pluginId, string why, PassState st, CancellationToken ct, TimeSpan? retryAfter = null)
+    {
+        var allowance = Tunables.Hours(Tunables.EnrichmentOutageHours);
+        if (st.OutageWaited >= allowance)
+        {
+            logger.LogWarning(
+                "EnrichPendingAsync: ending this run for plugin {PluginId} after waiting {Waited} without an answer ({Why}); the next scheduled run carries on with what is still pending",
+                pluginId, st.OutageWaited, why);
+            return false;
+        }
+
+        var wait = NextBackoff(st);
+        if (retryAfter is { } asked && asked > wait) wait = asked > LongestRetryAfter ? LongestRetryAfter : asked;   // never less than the provider asked
+        st.Waits++;
+        st.OutageWaited += wait;
+
+        logger.LogInformation(
+            "EnrichPendingAsync: plugin {PluginId} is held up ({Why}); waiting {Wait}, then carrying on with the queue (waited {Waited} so far; this run gives up only after {Allowance})",
+            pluginId, why, wait, st.OutageWaited, allowance);
+        await _pauseDelay(wait, ct);
+        return true;
+    }
+
+    private enum PauseAction { RetryInPlace, SpinToEnd, EndRun }
+
+    /// <summary>
+    /// One item was held up (rate limit, no response). Three different items in a row with no answer in between mean the connection:
+    /// the queue waits as long as it takes and probes again, one request per wait, not one per item. Otherwise it is this item: a
+    /// short wait in place once; a second pause, or any wait longer than a few minutes (including a provider's own long "try again
+    /// after"), sends the item to the back of the queue and carries on with the rest rather than sitting on it.
+    /// </summary>
+    private async Task<PauseAction> OnPauseAsync(string pluginId, int rowId, int pausesThisVisit, TimeSpan? retryAfter, PassState st, CancellationToken ct)
+    {
+        var rows = st.AddPausedRow(rowId);
+        if (rows >= ItemsThatMeanTheConnection)
+            return await WaitForRecoveryAsync(pluginId, "the provider is rate-limited or unreachable", st, ct, retryAfter)
+                ? PauseAction.RetryInPlace : PauseAction.EndRun;
+
+        var needed = retryAfter is { } asked && asked > NextBackoff(st) ? asked : NextBackoff(st);
+        if (pausesThisVisit >= 2 || needed > Tunables.Minutes(Tunables.EnrichmentInPlaceWaitMinutes))
+        {
+            logger.LogInformation(
+                "EnrichPendingAsync: plugin {PluginId} item row {RowId} is held up (wait would be {Wait}); sending it to the back of the queue and carrying on",
+                pluginId, rowId, needed);
+            st.Defer(rowId, retryAfter);
+            return PauseAction.SpinToEnd;
+        }
+
+        return await WaitForRecoveryAsync(pluginId, "the provider is rate-limited or unreachable", st, ct, retryAfter)
+            ? PauseAction.RetryInPlace : PauseAction.EndRun;
+    }
+
     private static TimeSpan RetryWindow => Tunables.Hours(Tunables.EnrichmentRetryHours);
     private static readonly System.Text.Json.JsonSerializerOptions CaseInsensitiveOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -271,9 +456,15 @@ public class MetadataEnrichmentService(
         // their children in the next pass without waiting for a separate ID-list query per row.
         int passNumber = 0;
         int idleRetries = 0;
+        var st = new PassState();
         while (true)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Items this run has moved past (left Pending for the next run) are neither queried again nor allowed to hold their children
+            // back. Items sent to the back of the queue are not queried until everything else has had its turn.
+            var skippedIds = st.SkippedSnapshot();
+            var notYetIds = skippedIds.Concat(st.DeferredSnapshot()).ToArray();
 
             // Pre-fetch the set of item IDs whose enrichment row is still Pending (not yet
             // attempted this run). Child items whose parent is in this set are deferred —
@@ -291,7 +482,7 @@ public class MetadataEnrichmentService(
             // runs to fully drain a large music library.
             var blockedParentIds = (await db.MediaEnrichments
                 .Where(e => e.PluginId == pluginId &&
-                            e.Status == EnrichmentStatus.Pending)
+                            e.Status == EnrichmentStatus.Pending && !skippedIds.Contains(e.Id))
                 .Select(e => e.MediaItemId)
                 .ToListAsync(ct))
                 .ToHashSet();
@@ -302,7 +493,7 @@ public class MetadataEnrichmentService(
                 .Include(x => x.MediaItem)
                     .ThenInclude(m => m!.Parent)
                         .ThenInclude(p => p!.Parent)
-                .Where(x => x.PluginId == pluginId &&
+                .Where(x => x.PluginId == pluginId && !notYetIds.Contains(x.Id) &&
                             (x.Status == EnrichmentStatus.Pending ||
                              (x.Status == EnrichmentStatus.Failed &&
                               (x.LastAttemptedAt == null || x.LastAttemptedAt < cutoff))) &&
@@ -358,9 +549,27 @@ public class MetadataEnrichmentService(
                 // way rows.Count can be 0 here is if there truly are no Pending items left, or
                 // if new rows were added concurrently right as the last pass completed.
                 // If any Pending rows remain, do one more pass to catch them.
+                // The rest of the queue is done: the items sent to the back come round again. If nothing at all was answered since they were
+                // sent back it is the connection, so wait before the next go (one wait, then a go, not a go per item).
+                if (st.HasDeferred)
+                {
+                    // Wait for what the provider asked for (an item's hold), and, if nothing at all was answered meanwhile, for the connection.
+                    var hold = st.EarliestRelease();
+                    var waited = TimeSpan.Zero;
+                    if (hold > TimeSpan.Zero || !st.AnsweredSincePromote)
+                    {
+                        var before = st.OutageWaited;
+                        if (!await WaitForRecoveryAsync(pluginId, "the items left are being held up", st, ct, hold > TimeSpan.Zero ? hold : null))
+                            break;
+                        waited = st.OutageWaited - before;
+                    }
+                    st.PromoteDeferred(waited);
+                    continue;
+                }
+
                 var anyRemainingPending = await db.MediaEnrichments
                     .AnyAsync(x => x.PluginId == pluginId &&
-                                   x.Status == EnrichmentStatus.Pending, ct);
+                                   x.Status == EnrichmentStatus.Pending && !skippedIds.Contains(x.Id), ct);
                 if (!anyRemainingPending) break; // Truly done.
 
                 // Pending rows exist yet nothing is eligible. A concurrent insert settles within a pass or two; if it
@@ -391,10 +600,8 @@ public class MetadataEnrichmentService(
                 "(concurrency {Concurrency})",
                 passNumber, rows.Count, pluginId, itemConcurrency);
 
-            // Set by either loop below when EnrichItemCoreLockedAsync signals the provider is
-            // currently rate-limited (see ProviderUnavailableException's own doc). Checked after
-            // both branches to break the outer while(true) instead of starting another pass that
-            // would just hit the same wall for every remaining item.
+            // Set when this run has to end: the provider stayed silent for the whole outage allowance, or the database stayed busy that long.
+            // A pause alone no longer ends a run: the queue waits and carries on (WaitForRecoveryAsync).
             bool providerUnavailable = false;
             bool databaseBusy = false;
 
@@ -410,53 +617,85 @@ public class MetadataEnrichmentService(
                     // Safe point: a higher-ranked job that cannot share the database (the backup, duplicate cleanup...)
                     // makes this one wait here, between items, until it is done. See TaskPriorityGate.
                     await TaskGate.CheckpointAsync(ct);
-                    try
+                    if (st.IsSkipped(row.Id)) continue;
+
+                    var pauses = 0;
+                    var again = true;
+                    while (again)
                     {
-                        // Cascade: false — this loop already walks the full hierarchy itself via
-                        // its own parent-then-child ordered passes, so recursing into cascade too
-                        // would process every child twice.
-                        await EnrichItemCoreAsync(db, provider, pluginId, row,
-                            new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
-                        consecutiveBusy = 0;
-                    }
-                    catch (ProviderUnavailableException)
-                    {
-                        // Every remaining row in `rows` would hit this exact same wall -- stop
-                        // burning through them one doomed call at a time.
-                        providerUnavailable = true;
-                        break;
-                    }
-                    catch (DbUpdateException ex) when (!IsDatabaseBusy(ex))
-                    {
-                        // The item may have been merged into another or deleted while this run held it in memory (the duplicate cleanup runs
-                        // ahead of the plugin tasks, and this one paused behind it): then there is nothing to save for it, and on to the next.
-                        // This used to fail the plugin's whole run -- MusicBrainz, after 87 minutes. Any other failed save still ends the run.
-                        DiscardPendingChanges(db);
-                        if (!await ItemVanishedAsync(db, row.MediaItemId, ct)) throw;
-                        logger.LogInformation(
-                            "EnrichPendingAsync: item {ItemId} no longer exists (merged or deleted meanwhile); skipped for plugin {PluginId}",
-                            row.MediaItemId, pluginId);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException && IsDatabaseBusy(ex))
-                    {
-                        // SQLite has one writer at a time and gave up waiting for it (the nightly tasks all start
-                        // together). That says nothing about this item, and used to end the plugin's whole pass --
-                        // MusicBrainz and TheAudioDB showed "Failed" nightly with tens of thousands still pending.
-                        // The failed save is thrown away (a failed SaveChanges leaves its changes pending, and the
-                        // next item's save would try them again), the item is retried once the other writer has had
-                        // time to finish, and only a database that stays busy ends the run.
-                        DiscardPendingChanges(db);
-                        if (await RetryItemWhenDatabaseFreesAsync(pluginId, provider, row.Id, allProviders, ct))
-                            consecutiveBusy = 0;
-                        else if (++consecutiveBusy >= 3)
+                        again = false;   // one go at the item, unless the provider asks the queue to wait and try it again
+                        try
                         {
-                            logger.LogWarning(
-                                "EnrichPendingAsync: stopping for plugin {PluginId} this run -- the database stayed busy for {Count} items in a row; the rest stay Pending for the next run",
-                                pluginId, consecutiveBusy);
-                            databaseBusy = true;
-                            break;
+                            // Cascade: false -- this loop already walks the full hierarchy itself via
+                            // its own parent-then-child ordered passes, so recursing into cascade too
+                            // would process every child twice.
+                            await EnrichItemCoreAsync(db, provider, pluginId, row,
+                                new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                            consecutiveBusy = 0;
+                            st.NoteSuccess();
+                        }
+                        catch (ProviderUnavailableException held)
+                        {
+                            // The provider is rate-limited or unreachable. The queue does NOT stop: a short wait for one item, the back of the
+                            // queue for an item held up longer, a patient wait only when the whole connection is down (OnPauseAsync).
+                            switch (await OnPauseAsync(pluginId, row.Id, ++pauses, held.RetryAfter, st, ct))
+                            {
+                                case PauseAction.RetryInPlace: again = true; break;
+                                case PauseAction.EndRun: providerUnavailable = true; break;
+                                // SpinToEnd: on to the next item
+                            }
+                        }
+                        catch (DbUpdateException ex) when (!IsDatabaseBusy(ex))
+                        {
+                            // The item may have been merged into another or deleted while this run held it in memory (the duplicate cleanup runs
+                            // ahead of the plugin tasks, and this one paused behind it): then there is nothing to save for it, and on to the next.
+                            DiscardPendingChanges(db);
+                            if (await ItemVanishedAsync(db, row.MediaItemId, ct))
+                                logger.LogInformation(
+                                    "EnrichPendingAsync: item {ItemId} no longer exists (merged or deleted meanwhile); skipped for plugin {PluginId}",
+                                    row.MediaItemId, pluginId);
+                            else
+                            {
+                                // Some other failed save. That is this item's problem, not the queue's: it is left for the next run and the run goes on
+                                // (this used to end the plugin's whole run).
+                                logger.LogError(ex,
+                                    "EnrichPendingAsync: saving item {ItemId} failed for plugin {PluginId}; moving on to the next item",
+                                    row.MediaItemId, pluginId);
+                                st.Skip(row.Id);
+                            }
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException && IsDatabaseBusy(ex))
+                        {
+                            // SQLite has one writer at a time and gave up waiting for it (the nightly tasks all start
+                            // together). That says nothing about this item, and used to end the plugin's whole pass --
+                            // MusicBrainz and TheAudioDB showed "Failed" nightly with tens of thousands still pending.
+                            // The failed save is thrown away (a failed SaveChanges leaves its changes pending, and the
+                            // next item's save would try them again), the item is retried once the other writer has had
+                            // time to finish; a database that stays busy makes the queue wait and carry on.
+                            DiscardPendingChanges(db);
+                            if (await RetryItemWhenDatabaseFreesAsync(pluginId, provider, row.Id, allProviders, ct))
+                            {
+                                consecutiveBusy = 0;
+                                st.NoteSuccess();
+                            }
+                            else if (++consecutiveBusy >= 3)
+                            {
+                                if (await WaitForRecoveryAsync(pluginId, "the database stayed busy", st, ct)) consecutiveBusy = 0;
+                                else databaseBusy = true;
+                            }
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            // Nothing one item does may stop the queue. Whatever this was, it is the item's problem: log it, throw away what it
+                            // left half-done, leave it for the next run and go on to the next item.
+                            DiscardPendingChanges(db);
+                            logger.LogError(ex,
+                                "EnrichPendingAsync: item {ItemId} failed unexpectedly for plugin {PluginId}; moving on to the next item",
+                                row.MediaItemId, pluginId);
+                            st.Skip(row.Id);
                         }
                     }
+                    if (providerUnavailable || databaseBusy) break;
                 }
             }
             else
@@ -466,11 +705,14 @@ public class MetadataEnrichmentService(
                 // above is tracked by the OUTER db, not safe to hand to a different context)
                 // rather than sharing the outer `db` used for this pass's own queries.
                 var gate = new SemaphoreSlim(itemConcurrency);
+                var providerPaused = false;
+                var succeededInPass = false;
                 var tasks = rows.Select(async row =>
                 {
                     await gate.WaitAsync(ct);
                     try
                     {
+                        if (st.IsSkipped(row.Id)) return;
                         await TaskGate.CheckpointAsync(ct);
                         await using var itemScope = scopeFactory.CreateAsyncScope();
                         var itemDb = itemScope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
@@ -487,22 +729,26 @@ public class MetadataEnrichmentService(
 
                         await EnrichItemCoreAsync(itemDb, provider, pluginId, freshRow,
                             new EnrichmentOptions(EnrichmentMode.FillGaps, Cascade: false), ct, allProviders);
+                        succeededInPass = true;
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (ProviderUnavailableException)
                     {
-                        // Benign race if more than one concurrent worker hits this in the same
-                        // instant -- they all agree on the same outcome, so a plain bool is fine.
-                        providerUnavailable = true;
+                        // Benign race if more than one concurrent worker hits this in the same instant: they agree on the outcome.
+                        // The item goes to the back of the queue; whether it is the item or the connection is decided after the pass.
+                        providerPaused = true;
+                        st.AddPausedRow(row.Id);
+                        st.Defer(row.Id);
                     }
                     catch (Exception ex)
                     {
                         // Matches EnrichItemCoreLockedAsync's own per-item failure handling --
                         // one item's exception must not take down the other in-flight workers
-                        // or the rest of this pass.
+                        // or the rest of this run: it is left for the next run and the queue goes on.
                         logger.LogWarning(ex,
-                            "EnrichPendingAsync (concurrent): item {ItemId} failed for plugin {PluginId}",
+                            "EnrichPendingAsync (concurrent): item {ItemId} failed for plugin {PluginId}; moving on to the next item",
                             row.MediaItemId, pluginId);
+                        st.Skip(row.Id);
                     }
                     finally
                     {
@@ -510,6 +756,11 @@ public class MetadataEnrichmentService(
                     }
                 });
                 await Task.WhenAll(tasks);
+
+                if (succeededInPass) st.NoteSuccess();
+                else if (providerPaused && st.PausedRowCount >= ItemsThatMeanTheConnection &&
+                         !await WaitForRecoveryAsync(pluginId, "the provider is rate-limited or unreachable", st, ct))
+                    providerUnavailable = true;
             }
 
             // All items in this pass have been saved. Clear the change tracker so that
@@ -524,14 +775,10 @@ public class MetadataEnrichmentService(
 
             if (providerUnavailable)
             {
-                // Stop this whole run for this plugin rather than looping back into another
-                // pass that would just re-query the same still-Pending rows and hit the same
-                // wall again (rate limit or network outage). The next scheduled
-                // EnrichPendingAsync invocation for this plugin (or a manual retry) picks these
-                // rows back up once the provider's cooldown clears or connectivity returns --
-                // nothing was marked Failed/Exhausted, so nothing was lost.
+                // The provider stayed silent for the whole outage allowance (WaitForRecoveryAsync has already said so). The next scheduled
+                // run for this plugin picks these rows back up; nothing was marked Failed/Exhausted, so nothing was lost.
                 logger.LogInformation(
-                    "EnrichPendingAsync: stopping for plugin {PluginId} this run — provider is unavailable (rate-limited or unreachable)",
+                    "EnrichPendingAsync: ending this run for plugin {PluginId} — the provider never came back within the allowance",
                     pluginId);
                 break;
             }
@@ -622,11 +869,42 @@ public class MetadataEnrichmentService(
             "ResyncAllForPlugin {PluginId}: force-refreshing {Count} root items",
             pluginId, rootIds.Count);
 
-        foreach (var id in rootIds)
+        // The same rule as the pending queue: a problem item is moved past, a provider that stops answering is waited for, and a resync
+        // never starts over from the first item because one call failed (it used to end at the first pause).
+        var st = new PassState();
+        var queue = new Queue<int>(rootIds);
+        while (queue.Count > 0)
         {
             ct.ThrowIfCancellationRequested();
-            await EnrichItemAsync(id, pluginId,
-                new EnrichmentOptions(EnrichmentMode.Force, Cascade: true), ct);
+            var id = queue.Dequeue();
+            var pauses = 0;
+            var again = true;
+            while (again)
+            {
+                again = false;
+                try
+                {
+                    await EnrichItemAsync(id, pluginId, new EnrichmentOptions(EnrichmentMode.Force, Cascade: true), ct);
+                    st.NoteSuccess();
+                }
+                catch (ProviderUnavailableException held)
+                {
+                    switch (await OnPauseAsync(pluginId, id, ++pauses, held.RetryAfter, st, ct))
+                    {
+                        case PauseAction.RetryInPlace: again = true; break;
+                        case PauseAction.EndRun: return;
+                        case PauseAction.SpinToEnd:
+                            // Back of the queue; the third time it is left for the next resync.
+                            if (!st.IsSkipped(id)) queue.Enqueue(id);
+                            else logger.LogWarning("ResyncAllForPlugin {PluginId}: item {ItemId} kept being held up; left for the next resync", pluginId, id);
+                            break;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogError(ex, "ResyncAllForPlugin {PluginId}: item {ItemId} failed; moving on to the next item", pluginId, id);
+                }
+            }
         }
     }
 
@@ -2311,7 +2589,7 @@ public class MetadataEnrichmentService(
                     "item {ItemId} left as Pending, stopping this pass",
                     row.PluginId, ex.Message, row.MediaItemId);
                 row.LastAttemptedAt = null;
-                throw new ProviderUnavailableException(row.PluginId, ex.Message);
+                throw new ProviderUnavailableException(row.PluginId, ex.Message, RetryAfterOf(ex));
             }
             else if (ex is HttpRequestException networkEx && networkEx.StatusCode is null)
             {
@@ -2335,7 +2613,7 @@ public class MetadataEnrichmentService(
                     "({ErrorMessage}) -- item {ItemId} left as Pending, stopping this pass",
                     row.PluginId, ex.Message, row.MediaItemId);
                 row.LastAttemptedAt = null;
-                throw new ProviderUnavailableException(row.PluginId, ex.Message);
+                throw new ProviderUnavailableException(row.PluginId, ex.Message, RetryAfterOf(ex));
             }
             else
             {
@@ -2477,9 +2755,12 @@ public class MetadataEnrichmentService(
     private sealed class ProviderUnavailableException : Exception
     {
         public string PluginId { get; }
-        public ProviderUnavailableException(string pluginId, string message) : base(message)
+        /// <summary>How long the provider itself asked us to wait, when it said (<c>Data["RetryAfter"]</c> on the plugin's exception).</summary>
+        public TimeSpan? RetryAfter { get; }
+        public ProviderUnavailableException(string pluginId, string message, TimeSpan? retryAfter = null) : base(message)
         {
             PluginId = pluginId;
+            RetryAfter = retryAfter;
         }
     }
 

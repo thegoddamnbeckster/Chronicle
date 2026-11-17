@@ -249,7 +249,12 @@ function ItemCard({ item, pluginId, onChanged }: ItemCardProps) {
           )}
           <button
             className={styles.actionBtn}
-            onClick={() => navigate(`/library#media-${item.mediaItemId}`)}
+            // The library grid only lists top-level items (artists, shows, movies); an album, track, season or episode has no card
+            // there, so "#media-<id>" just landed on the top of the library. Open those on their own page, whose breadcrumb walks
+            // up the hierarchy (and from there back to the library).
+            onClick={() => navigate(item.hierarchyLevel > 0
+              ? `/media/${item.mediaItemId}`
+              : `/library#media-${item.mediaItemId}`)}
           >
             View in Library →
           </button>

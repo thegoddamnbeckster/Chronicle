@@ -119,8 +119,8 @@ The rest of this document indexes planned future plugins.
 | [AllMusic](plugins/PLUGIN_ALLMUSIC.md) | `Chronicle.Plugin.AllMusic` | 🎵 | None (scraping) | Scaffolded |
 | [Last.fm](plugins/PLUGIN_LASTFM.md) | `Chronicle.Plugin.LastFM` | 🎵 | API key (free) | Scaffolded |
 | [RateYourMusic](plugins/PLUGIN_RATEYOURMUSIC.md) | `Chronicle.Plugin.RateYourMusic` | 🎵 | None (scraping) | Scaffolded |
-| [Wikidata](plugins/PLUGIN_WIKIDATA.md) | `Chronicle.Plugin.Wikidata` | 🎵 | None (public SPARQL) | Scaffolded |
-| [ListenBrainz](plugins/PLUGIN_LISTENBRAINZ.md) | `Chronicle.Plugin.ListenBrainz` | 🎵 | API token (free) | Scaffolded |
+| [Wikidata](plugins/PLUGIN_WIKIDATA.md) | `Chronicle.Plugin.Wikidata` | 🎬📺🎵📚🎮👤 | None | v1.1.0 built 2026-11-16 (people and game makers added), 189 tests green, live-checked against the public API and run alone in an isolated host; released as v1.1.0; **not yet verified in the dev app** ([design and run record](plans/2026-11-16-wikidata-plugin-design.md)) |
+| [ListenBrainz](plugins/PLUGIN_LISTENBRAINZ.md) | `Chronicle.Plugin.ListenBrainz` | 🎵 | None (username for history import; token optional) | Built 2026-11-12, 152 tests green, live-checked against the public API; **not yet released or verified in the app** ([design and run record](plans/2026-11-12-listenbrainz-plugin-design.md)) |
 | [Setlist.fm](plugins/PLUGIN_SETLISTFM.md) | `Chronicle.Plugin.Setlistfm` | 🎵 | API key (free) | Scaffolded |
 | [SoundCloud](plugins/PLUGIN_SOUNDCLOUD.md) | `Chronicle.Plugin.SoundCloud` | 🎵 | OAuth 2.0 | Scaffolded |
 | [Bandcamp](plugins/PLUGIN_BANDCAMP.md) | `Chronicle.Plugin.Bandcamp` | 🎵 | None (scraping) | Scaffolded |

@@ -103,6 +103,7 @@ public sealed class DuplicatePersonAutoResolveService(
         var candidateIds = await db.MediaItemDuplicateCandidates.Select(c => c.Id).ToListAsync(ct);
 
         int merged = 0, dismissed = 0, leftForReview = 0, stale = 0;
+        var runStarted = DateTime.UtcNow;
 
         foreach (var candidateId in candidateIds)
         {
@@ -172,10 +173,99 @@ public sealed class DuplicatePersonAutoResolveService(
             }
         }
 
+        var reopened = await ReviewEarlierDismissalsAsync(db, mergeService, peopleTypeId.Value, runStarted, ct);
+
         logger.LogInformation(
             "Duplicate person auto-resolve complete: {Merged} merged, {Dismissed} dismissed as different " +
-            "people, {LeftForReview} left for manual review, {Stale} already resolved earlier this run",
-            merged, dismissed, leftForReview, stale);
+            "people, {LeftForReview} left for manual review, {Stale} already resolved earlier this run, " +
+            "{Reopened} earlier dismissals found to be the same person and merged",
+            merged, dismissed, leftForReview, stale, reopened);
+    }
+
+    /// <summary>
+    /// The app setting that records the one-time review below as done.
+    /// </summary>
+    internal const string DismissalReviewKey = "duplicates.person_dismissals_reviewed";
+
+    /// <summary>
+    /// One-time review of dismissals made before this class checked corroboration ahead of conflict. A dismissal is permanent: the
+    /// pair never comes back as a candidate, so a pair dismissed while the order was wrong stayed two people for good, however
+    /// strong the evidence. Root-caused live (2026-11-16): Back to the Future listed Michael J. Fox twice (one person from TMDB, one
+    /// from IMDb, which also held a second TMDB id), dismissed on 2026-09-09; 279 same-name pairs credited the same character on the
+    /// same title yet were dismissed, 249 of them in the 2026-09-20 automatic sweep.
+    ///
+    /// Every dismissed pair of "people" items with EXACTLY the same name (not a loose or accent-folded match) is evaluated again
+    /// with the same rules as a fresh candidate, and merged only when <see cref="EvaluateAsync"/> says Corroborated (a conflicting
+    /// birth or death date still wins and keeps them apart). A pair that stays Conflicting or Unverified keeps its dismissal.
+    /// Runs once: the setting above is written when it finishes, so later runs do not re-evaluate thousands of pairs, and a
+    /// dismissal a person makes after this is never revisited. Dismissals made during the current run are skipped.
+    /// </summary>
+    private async Task<int> ReviewEarlierDismissalsAsync(
+        ChronicleDbContext db, IMergeService mergeService, int peopleTypeId, DateTime runStarted, CancellationToken ct)
+    {
+        if (await db.AppSettings.AnyAsync(x => x.Key == DismissalReviewKey, ct)) return 0;
+
+        var dismissed = await (
+            from d in db.MediaItemDuplicateDismissals
+            join a in db.MediaItems on d.ItemAId equals a.Id
+            join b in db.MediaItems on d.ItemBId equals b.Id
+            where a.MediaTypeId == peopleTypeId && b.MediaTypeId == peopleTypeId && d.DismissedAt < runStarted
+            select new { d.Id, AId = a.Id, BId = b.Id, NameA = a.Name, NameB = b.Name }).ToListAsync(ct);
+
+        var sameName = dismissed
+            .Where(p => string.Equals(p.NameA.Trim(), p.NameB.Trim(), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        int merged = 0, kept = 0, skipped = 0;
+        foreach (var pair in sameName)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // An earlier merge in this loop may have absorbed one of the two (a three-way duplicate).
+            var a = await db.MediaItems.AsNoTracking().FirstOrDefaultAsync(m => m.Id == pair.AId, ct);
+            var b = await db.MediaItems.AsNoTracking().FirstOrDefaultAsync(m => m.Id == pair.BId, ct);
+            if (a is null || b is null) { skipped++; continue; }
+
+            if (await EvaluateAsync(db, a.Id, b.Id, ct) != Verdict.Corroborated) { kept++; continue; }
+
+            var aExt = await db.MediaExternalIds.CountAsync(e => e.MediaItemId == a.Id, ct);
+            var bExt = await db.MediaExternalIds.CountAsync(e => e.MediaItemId == b.Id, ct);
+            var (winnerId, loserId) = aExt >= bExt ? (a.Id, b.Id) : (b.Id, a.Id);
+            try
+            {
+                await mergeService.MergeAsync(winnerId, loserId, mergedByUserId: null, ct);
+                merged++;
+                logger.LogInformation(
+                    "Duplicate person auto-resolve: reopened an earlier dismissal and merged {Name} ({LoserId} into {WinnerId})",
+                    pair.NameA, loserId, winnerId);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // The dismissal stays exactly as it was.
+                logger.LogWarning(ex,
+                    "Duplicate person auto-resolve: merge of {WinnerId}/{LoserId} was rejected, the earlier dismissal stays",
+                    winnerId, loserId);
+                kept++;
+                continue;
+            }
+
+            // The merge removes the pair's rows as it goes; make sure no dismissal is left pointing at the pair.
+            var leftover = await db.MediaItemDuplicateDismissals.FirstOrDefaultAsync(x => x.Id == pair.Id, ct);
+            if (leftover is not null)
+            {
+                db.MediaItemDuplicateDismissals.Remove(leftover);
+                await db.SaveChangesAsync(ct);
+            }
+        }
+
+        db.AppSettings.Add(new Core.Models.AppSetting { Key = DismissalReviewKey, Value = DateTime.UtcNow.ToString("O") });
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation(
+            "Duplicate person auto-resolve: reviewed {Total} earlier dismissals of people ({SameName} with exactly the same name): " +
+            "{Merged} merged, {Kept} kept as different people, {Skipped} no longer both present",
+            dismissed.Count, sameName.Count, merged, kept, skipped);
+        return merged;
     }
 
     private enum Verdict { Corroborated, Conflicting, Unverified }

@@ -94,7 +94,8 @@ namespace Chronicle.API.Controllers
                     e.MarkedAsWatched,
                     e.DeviceName,
                     Ancestors: ancestors is { Count: > 0 } ? ancestors : null,
-                    IsApproximateTimestamp: e.IsApproximateTimestamp
+                    IsApproximateTimestamp: e.IsApproximateTimestamp,
+                    MediaTypeId: e.MediaItem?.MediaTypeId
                 );
             }).ToList();
 

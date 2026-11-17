@@ -346,7 +346,7 @@ describe('MediaDetailPage', () => {
     mockedGetLibraryEntryForMedia.mockResolvedValue(makeLibraryEntry(makeItem(), { status: 'Watching' }))
     renderMediaDetailPage()
     await screen.findByRole('heading', { name: 'Test Movie' })
-    await screen.findByText('Playing')
+    await screen.findByText('In progress')
     expect(screen.queryByRole('button', { name: 'Reset Watch Progress' })).not.toBeInTheDocument()
   })
 

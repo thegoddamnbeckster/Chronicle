@@ -166,6 +166,7 @@ public sealed class GameLibraryImporter
 
     // ── Status ────────────────────────────────────────────────────────────────
 
+    /// <summary>Any recorded playtime means the game has been started: in progress. Never played is owned, not started.</summary>
     private static LibraryStatus Wanted(ImportedLibraryEntry e) =>
         e.IsWishlist ? LibraryStatus.PlanToWatch
         : e.PlaytimeMinutes is > 0 ? LibraryStatus.Watching

@@ -34,6 +34,25 @@ public static class Tunables
         "tuning.enrichment.retry_hours", "Metadata", "Retry a failed lookup after",
         "How long a provider lookup that failed or found nothing rests before it is tried again.", 24, 1, 720, "hours");
 
+    public static readonly TunableDefinition EnrichmentPauseWaitSeconds = new(
+        "tuning.enrichment.pause_wait_seconds", "Metadata", "First wait when a provider stops answering",
+        "When a provider is rate-limited or unreachable the queue waits this long and carries on; each further wait doubles, up to the longest wait below.",
+        60, 1, 3600, "seconds");
+
+    public static readonly TunableDefinition EnrichmentPauseWaitMaxMinutes = new(
+        "tuning.enrichment.pause_wait_max_minutes", "Metadata", "Longest single wait",
+        "No single wait for a provider that stopped answering is longer than this.", 15, 1, 240, "minutes");
+
+    public static readonly TunableDefinition EnrichmentInPlaceWaitMinutes = new(
+        "tuning.enrichment.in_place_wait_minutes", "Metadata", "Longest wait for one item before it goes to the back of the queue",
+        "When only one item is being held up and the wait would be longer than this, the queue does not sit and wait: it sends that item to the back of the queue and carries on with the rest.",
+        3, 1, 60, "minutes");
+
+    public static readonly TunableDefinition EnrichmentOutageHours = new(
+        "tuning.enrichment.outage_hours", "Metadata", "Give up a run after a provider has been silent for",
+        "The queue keeps waiting for a provider that stopped answering and carries on when it returns. Only after this long without a single answer does the run end; " +
+        "the schedule then starts the next one and nothing is lost.", 12, 1, 720, "hours");
+
     public static readonly TunableDefinition ConfidenceThreshold = new(
         "tuning.enrichment.confidence_threshold", "Metadata", "Minimum match confidence",
         "A best search candidate scoring below this is not accepted automatically.", 50, 1, 100, "points");
@@ -90,7 +109,7 @@ public static class Tunables
     public static readonly IReadOnlyList<TunableDefinition> All =
     [
         WatchedPercent, ActiveSessionSeconds, HistorySessionGapSeconds,
-        EnrichmentRetryHours, ConfidenceThreshold, FullCreditsDays,
+        EnrichmentRetryHours, EnrichmentPauseWaitSeconds, EnrichmentPauseWaitMaxMinutes, EnrichmentInPlaceWaitMinutes, EnrichmentOutageHours, ConfidenceThreshold, FullCreditsDays,
         YearConflictGap, SeriesRecheckDays, SeriesChecksPerRun, SeriesFailureRetryDays, SeriesFailuresToStop,
         FetchMissingRetryMinutes, ImageCheckValidHours, ImageCheckInvalidMinutes, DeviceScanActiveMinutes,
         TypeMismatchMajorityPercent, TypeMismatchMinorityPercent,

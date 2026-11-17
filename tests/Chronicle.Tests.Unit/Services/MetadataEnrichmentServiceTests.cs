@@ -20,10 +20,15 @@ public class MetadataEnrichmentServiceTests : IDisposable
     private readonly MetadataEnrichmentService _svc;
     private User _user = null!;
     private MediaType _mediaType = null!;
+    // How long the queue was asked to wait for a provider that stopped answering. The waits themselves return at once.
+    private readonly List<TimeSpan> _waits = [];
+    private readonly List<int> _completedWhenWaiting = [];
 
     public MetadataEnrichmentServiceTests()
     {
         RegistryFixtures.LoadBuiltIns();
+        // The host's own call guard retries a pause twice with 2 s and 4 s sleeps; here those take no time.
+        ProviderCallGuard.SetRetryDelayForCurrentContext(TimeSpan.Zero);
         var opts = new DbContextOptionsBuilder<ChronicleDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
         _db = new ChronicleDbContext(opts);
@@ -35,7 +40,13 @@ public class MetadataEnrichmentServiceTests : IDisposable
         _db.SaveChanges();
         _registry = new Mock<IPluginRegistry>();
         var scopeFactory = BuildScopeFactory(_db, _registry.Object);
-        _svc = new MetadataEnrichmentService(scopeFactory, Mock.Of<IMetadataResolutionService>(), Mock.Of<IMovieCollectionService>(), Mock.Of<IMetadataUrlValidator>(), Mock.Of<IPersonResolutionService>(), Mock.Of<ILogger<MetadataEnrichmentService>>());
+        _svc = new MetadataEnrichmentService(scopeFactory, Mock.Of<IMetadataResolutionService>(), Mock.Of<IMovieCollectionService>(), Mock.Of<IMetadataUrlValidator>(), Mock.Of<IPersonResolutionService>(), Mock.Of<ILogger<MetadataEnrichmentService>>(),
+            pauseDelay: (d, _) =>
+            {
+                _waits.Add(d);
+                _completedWhenWaiting.Add(_db.MediaEnrichments.AsNoTracking().Count(e => e.Status == EnrichmentStatus.Completed));
+                return Task.CompletedTask;
+            });
     }
 
     [Fact]
@@ -769,6 +780,198 @@ public class MetadataEnrichmentServiceTests : IDisposable
         updated.LastAttemptedAt.Should().BeNull();
     }
 
+
+    // ── The queue keeps running until nothing is pending (owner, 2026-11-16) ──
+
+    private Mock<IMetadataProvider> MusicSearchProvider(Func<MediaSearchContext, int, ScoredCandidate[]> answer)
+    {
+        var calls = 0;
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.musicbrainz");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([new MediaTypeSupport { MediaTypeName = "music" }]);
+        provider.Setup(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()))
+            .Returns((MediaSearchContext c, CancellationToken _) =>
+            {
+                Interlocked.Increment(ref _searches);
+                return Task.FromResult<IReadOnlyList<ScoredCandidate>>(answer(c, ++calls));
+            });
+        _registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.musicbrainz")).Returns(provider.Object);
+        return provider;
+    }
+
+    private static ScoredCandidate[] Found(string title) =>
+        [new ScoredCandidate(new MediaMetadata { Title = title, ExternalId = "artist:" + title }, 95, "test")];
+
+    private static HttpRequestException RateLimited(TimeSpan? retryAfter = null)
+    {
+        var ex = new HttpRequestException("Too many requests.", null, System.Net.HttpStatusCode.TooManyRequests);
+        if (retryAfter is { } after) ex.Data["RetryAfter"] = after;     // how a plugin says how long the provider asked for
+        return ex;
+    }
+
+    private int _searches;
+
+    [Fact]
+    public async Task EnrichPendingAsync_AProviderThatStopsAnsweringIsWaitedFor_AndTheQueueCarriesOn()
+    {
+        // It used to END the plugin's run at the first rate limit or lost connection, leaving everything else pending until the next
+        // scheduled run. Now the queue waits (a minute, then doubling) and goes on from the same item.
+        var (_, row) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Radiohead");
+        MusicSearchProvider((c, n) => n <= 3 + 3 ? throw RateLimited() : Found("Radiohead"));
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        (await _db.MediaEnrichments.FindAsync(row.Id))!.Status.Should().Be(EnrichmentStatus.Completed);
+        _waits.Should().Equal(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(120));
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AnItemThatKeepsPausing_IsMovedPast_AndEveryOtherItemIsStillEnriched()
+    {
+        // One item whose lookups always fail must not hold the queue: the run goes on to the others, then leaves it for the next run.
+        var (_, poison) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Poison");
+        var (_, fine1) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Fine One");
+        var (_, fine2) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Fine Two");
+        MusicSearchProvider((c, n) => c.Name.Contains("poison", StringComparison.OrdinalIgnoreCase)
+            ? throw RateLimited()
+            : Found(c.Name));
+
+        var run = _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+        (await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30)))).Should().BeSameAs(run, "the run ends when only the problem item is left");
+        await run;
+
+        (await _db.MediaEnrichments.FindAsync(fine1.Id))!.Status.Should().Be(EnrichmentStatus.Completed);
+        (await _db.MediaEnrichments.FindAsync(fine2.Id))!.Status.Should().Be(EnrichmentStatus.Completed);
+        var left = (await _db.MediaEnrichments.FindAsync(poison.Id))!;
+        left.Status.Should().Be(EnrichmentStatus.Pending);      // left for the next run, not failed
+        left.RetryCount.Should().Be(0);                          // and no retry spent on it
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AProviderThatNeverReturns_EndsTheRunOnlyAfterTheWholeOutageAllowance()
+    {
+        // Several items, so it is the connection and not one item: the queue waits as long as it takes.
+        var rows = new List<MediaItemEnrichment>();
+        foreach (var name in new[] { "One", "Two", "Three", "Four" })
+            rows.Add((await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: name)).Item2);
+        MusicSearchProvider((c, n) => throw RateLimited());
+
+        var run = _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+        (await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30)))).Should().BeSameAs(run, "even a dead provider must not hold the task forever");
+        await run;
+
+        // It waited the full twelve hours (60 s doubling, no single wait over fifteen minutes) before giving up; every item is untouched.
+        _waits.Aggregate(TimeSpan.Zero, (a, b) => a + b).Should().BeGreaterThanOrEqualTo(TimeSpan.FromHours(12));
+        _waits.Max().Should().Be(TimeSpan.FromMinutes(15));
+        foreach (var r in rows)
+        {
+            var left = (await _db.MediaEnrichments.FindAsync(r.Id))!;
+            left.Status.Should().Be(EnrichmentStatus.Pending);
+            left.RetryCount.Should().Be(0);
+        }
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ADeadProvider_IsProbedOncePerWait_NotOncePerItem()
+    {
+        // Thirty items and a provider that does not answer: the queue must not try each item in turn (that would hammer a service
+        // that is already down); once three different items in a row get no answer it waits and probes again, one item per wait.
+        for (var i = 0; i < 30; i++) await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Item " + i);
+        MusicSearchProvider((c, n) => throw RateLimited());
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        var attempts = _searches / 3;      // the host's own guard makes three calls per attempt
+        attempts.Should().BeLessThanOrEqualTo(_waits.Count + 6, "about one attempt per wait, plus the first few items");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_ASingleItemThatNeverAnswers_IsLeftForTheNextRun_NotWaitedForTwelveHours()
+    {
+        var (_, row) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Radiohead");
+        MusicSearchProvider((c, n) => throw RateLimited());
+
+        var run = _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+        (await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30)))).Should().BeSameAs(run);
+        await run;
+
+        // With one item there is no telling an outage from a bad item, so it goes to the back of the queue three times and is then left
+        // for the next scheduled run: a few minutes of waiting, not half a day.
+        _waits.Aggregate(TimeSpan.Zero, (a, b) => a + b).Should().BeLessThan(TimeSpan.FromHours(1));
+        var left = (await _db.MediaEnrichments.FindAsync(row.Id))!;
+        left.Status.Should().Be(EnrichmentStatus.Pending);
+        left.RetryCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AWaitLongerThanAFewMinutesForOneItem_SendsItToTheBackOfTheQueue_AndDoesTheRestFirst()
+    {
+        // The provider tells us to wait half an hour for ONE item. The queue does not sit there: it goes on with every other item.
+        var (_, held) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Held");
+        var (_, fine1) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Fine One");
+        var (_, fine2) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Fine Two");
+        MusicSearchProvider((c, n) => c.Name.Contains("held", StringComparison.OrdinalIgnoreCase)
+            ? throw RateLimited(TimeSpan.FromMinutes(30))
+            : Found(c.Name));
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        (await _db.MediaEnrichments.FindAsync(fine1.Id))!.Status.Should().Be(EnrichmentStatus.Completed);
+        (await _db.MediaEnrichments.FindAsync(fine2.Id))!.Status.Should().Be(EnrichmentStatus.Completed);
+        var left = (await _db.MediaEnrichments.FindAsync(held.Id))!;
+        left.Status.Should().Be(EnrichmentStatus.Pending);       // left for a later run
+        left.RetryCount.Should().Be(0);
+        // The long wait is only ever taken once nothing else is left to do: both other items were finished before the queue first waited.
+        _waits.Should().NotBeEmpty();
+        _waits.Should().OnlyContain(w => w >= TimeSpan.FromMinutes(29.9) && w <= TimeSpan.FromMinutes(30), "what the provider asked for (less the moments already spent), and no shorter wait before it");
+        _completedWhenWaiting.Should().OnlyContain(n => n == 2, "the queue did the rest of its work before it waited");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AProvidersOwnLongWait_IsHonoured_WhenItIsTheWholeConnection()
+    {
+        // Every item is told to wait twenty minutes: that is the connection, so the queue waits at least that long, once, and not per item.
+        for (var i = 0; i < 6; i++) await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Item " + i);
+        MusicSearchProvider((c, n) => throw RateLimited(TimeSpan.FromMinutes(20)));
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        _waits.Should().NotBeEmpty();
+        _waits.Should().OnlyContain(w => w >= TimeSpan.FromMinutes(20), "the provider asked for twenty minutes and is given them, with no shorter wait");
+    }
+
+    [Fact]
+    public async Task EnrichPendingAsync_AProblemItemThatFailsOutright_DoesNotStopTheNextOne()
+    {
+        // An ordinary per-item failure: marked Failed (a retry spent), and the queue goes on to the next item.
+        var (_, bad) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Broken");
+        var (_, good) = await SeedItemWithStatus(null, EnrichmentStatus.Pending, name: "Fine");
+        MusicSearchProvider((c, n) => c.Name.Contains("broken", StringComparison.OrdinalIgnoreCase)
+            ? throw new HttpRequestException("Internal server error.", null, System.Net.HttpStatusCode.InternalServerError)
+            : Found(c.Name));
+
+        await _svc.EnrichPendingAsync("chronicle.plugin.musicbrainz");
+
+        (await _db.MediaEnrichments.FindAsync(bad.Id))!.Status.Should().Be(EnrichmentStatus.Failed);
+        (await _db.MediaEnrichments.FindAsync(good.Id))!.Status.Should().Be(EnrichmentStatus.Completed);
+    }
+
+    [Fact]
+    public async Task ResyncAllForPluginAsync_WaitsForAProviderThatStopsAnswering_InsteadOfEndingAtTheFirstPause()
+    {
+        // It used to end the whole task at the first pause, and the next run began again from the first item.
+        var (item, _) = await SeedItemWithStatus(null, EnrichmentStatus.Completed, name: "Radiohead");
+        _db.UserLibraries.Add(new UserLibrary { UserId = _user.Id, MediaItemId = item.Id, Status = LibraryStatus.Unwatched, AddedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        await _db.SaveChangesAsync();
+        var searches = MusicSearchProvider((c, n) => n <= 3 + 3 ? throw RateLimited() : Found("Radiohead"));
+        _registry.Setup(r => r.GetMetadataProviderEntries()).Returns([("chronicle.plugin.musicbrainz", searches.Object, (string?)null)]);
+
+        await _svc.ResyncAllForPluginAsync("chronicle.plugin.musicbrainz");
+
+        _waits.Should().Equal(TimeSpan.FromSeconds(60));       // one short wait; the second pause sends the item to the back and the next go succeeds
+        searches.Verify(p => p.SearchAsync(It.IsAny<MediaSearchContext>(), It.IsAny<CancellationToken>()), Times.AtLeast(3));
+    }
+
     [Fact]
     public async Task EnrichPendingAsync_SetsExhaustedWhenRetriesExceeded()
     {
@@ -1349,7 +1552,8 @@ public class MetadataEnrichmentServiceTests : IDisposable
     {
         var resolution = new Mock<IMetadataResolutionService>();
         var svc = new MetadataEnrichmentService(BuildScopeFactory(_db, _registry.Object), resolution.Object, Mock.Of<IMovieCollectionService>(),
-            Mock.Of<IMetadataUrlValidator>(), Mock.Of<IPersonResolutionService>(), Mock.Of<ILogger<MetadataEnrichmentService>>());
+            Mock.Of<IMetadataUrlValidator>(), Mock.Of<IPersonResolutionService>(), Mock.Of<ILogger<MetadataEnrichmentService>>(),
+            pauseDelay: (d, _) => { _waits.Add(d); return Task.CompletedTask; });
         return (svc, resolution);
     }
 

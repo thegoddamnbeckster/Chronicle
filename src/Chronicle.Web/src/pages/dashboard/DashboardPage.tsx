@@ -13,6 +13,8 @@ import { getStats } from '@/api/stats'
 import { listPlugins } from '@/api/plugins'
 import { useAuth } from '@/hooks/useAuth'
 import { getLibrary } from '@/api/library'
+import { getMediaTypes } from '@/api/media'
+import { activityLabel, statusLabel } from '@/utils/typeWording'
 import { ancestorBreadcrumb, buildWeeklyActivity, dedupeHistoryByMediaItem, getHistoryPage } from '@/api/reports'
 import styles from './DashboardPage.module.css'
 
@@ -44,6 +46,9 @@ export default function DashboardPage() {
     queryKey: ['library', 'Watching'],
     queryFn: () => getLibrary('Watching'),
   })
+
+  // Each type words its own statuses ("Playing" for a game, "Listening" for music), so the badges follow the item's type.
+  const { data: mediaTypes = [] } = useQuery({ queryKey: ['media-types'], queryFn: getMediaTypes, staleTime: 5 * 60 * 1000 })
 
   // A fresh install has no plugins at all, and nothing can be scanned or looked up until some are added.
   const { user } = useAuth()
@@ -140,7 +145,9 @@ export default function DashboardPage() {
                       {context && <span className={styles.itemContext}>{context}</span>}
                     </div>
                     <div className={styles.rightCol}>
-                      <span className={styles.badge}>{e.status}</span>
+                      <span className={styles.badge}>
+                        {statusLabel(e.status, mediaTypes.find(t => t.id === e.mediaItem.mediaTypeId)?.interactionVerb)}
+                      </span>
                       <span className={styles.timestamp}>
                         {new Date(e.updatedAt).toLocaleString(undefined, {
                           dateStyle: 'short', timeStyle: 'short',
@@ -171,6 +178,10 @@ export default function DashboardPage() {
                       </Link>
                       {context && <span className={styles.itemContext}>{context}</span>}
                     </div>
+                    <div className={styles.rightCol}>
+                    <span className={styles.badge}>
+                      {activityLabel(h.markedAsWatched, mediaTypes.find(t => t.id === h.mediaTypeId)?.interactionVerb)}
+                    </span>
                     <span
                       className={styles.meta}
                       title={h.isApproximateTimestamp
@@ -183,6 +194,7 @@ export default function DashboardPage() {
                       })}
                       {h.progressPercent != null && ` · ${Math.round(h.progressPercent)}%`}
                     </span>
+                    </div>
                   </li>
                 )
               })}

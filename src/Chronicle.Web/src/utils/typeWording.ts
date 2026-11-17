@@ -12,7 +12,7 @@ const KNOWN_VERBS: Record<string, VerbWords> = {
   watched:  { act: 'Watch',  doing: 'Watching',  again: 'Rewatching',   not: 'Unwatched' },
   listened: { act: 'Listen', doing: 'Listening', again: 'Re-listening', not: 'Unlistened' },
   read:     { act: 'Read',   doing: 'Reading',   again: 'Re-reading',   not: 'Unread' },
-  played:   { act: 'Play',   doing: 'Playing',   again: 'Replaying',    not: 'Unplayed' },
+  played:   { act: 'Play',   doing: 'In progress', again: 'Replaying',    not: 'Unplayed' },
 }
 
 /** Does the interface have specific wording for this action word? */
@@ -34,6 +34,17 @@ export function statusLabel(status: LibraryStatus, verb: string | undefined): st
     case 'OnHold':      return 'On Hold'
     default:            return status
   }
+}
+
+/**
+ * What an event was, worded with its type's action word: "Played" / "Watched" / "Listened" when it finished the item,
+ * "Playing" / "Watching" when it was partway. A verb the interface has no wording for gets "Completed" / "In progress".
+ */
+export function activityLabel(finished: boolean, verb: string | undefined): string {
+  if (!finished) return statusLabel('Watching', verb)
+  const v = (verb ?? 'watched').toLowerCase()
+  if (!(v in KNOWN_VERBS)) return 'Completed'
+  return v.charAt(0).toUpperCase() + v.slice(1)
 }
 
 /** A status worded for views that mix every type (filters, settings, dashboards): no action word at all. */

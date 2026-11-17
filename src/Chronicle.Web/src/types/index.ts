@@ -285,6 +285,8 @@ export interface HistoryItem {
   /** True when `timestamp` is a borrowed fallback (e.g. a SIMKL-imported episode
    *  stamped with its show's last-watched date), not this item's own real watch time. */
   isApproximateTimestamp: boolean
+  /** The item's media type: its interaction verb words the activity ("Played", "Listened"). */
+  mediaTypeId?: number | null
 }
 
 /** One currently-live playback session, for the "Now Playing" banner. "Actively playing"

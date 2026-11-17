@@ -1,120 +1,61 @@
-# Chronicle.Plugin.Wikidata — Design Document
+# Chronicle.Plugin.Wikidata
 
 **Plugin ID:** `chronicle.plugin.wikidata`
-**Version:** 1.0.0
-**Media Types:** Music (`music`), Albums (`album`), Artists (`artist`)
-**Auth:** None (fully public SPARQL endpoint)
-**API:** Wikidata SPARQL — `https://query.wikidata.org/sparql`
+**Source name:** `wikidata`
+**Media types:** movies, TV, music, books, games, people (it never owns a type)
+**Auth:** none: no key, no account, no other plugin
+**API:** Wikidata Action API, read only: `https://www.wikidata.org/w/api.php`
+**Repository:** `thegoddamnbeckster/Chronicle.Plugin.Wikidata`
+**Design and run record:** [2026-11-16-wikidata-plugin-design.md](../plans/2026-11-16-wikidata-plugin-design.md)
 
----
+The first design of this page assumed a SPARQL endpoint and a music-only plugin. Measuring the service showed the Action API is the right
+tool (a reverse lookup by another service's id is one cheap request, and the query service lags), so this page replaces it.
 
-## Purpose
+## What it does
 
-[Wikidata](https://www.wikidata.org/) is the free, open knowledge base
-maintained by the Wikimedia Foundation. It contains structured data about
-virtually every notable musical artist, album, and track — including
-authoritative identifiers that cross-reference ISNI, ISRC, MusicBrainz,
-Discogs, Spotify, and dozens of other services. This plugin uses the Wikidata
-SPARQL endpoint to query music entities and harvest cross-reference IDs.
+Three jobs, all by exact id:
 
----
+1. **Cross-reference hub.** An item found by an id Chronicle already holds (IMDb `tt…`, TMDB movie or TV id, TheTVDB, TVmaze, MusicBrainz
+   artist / release group / recording, Steam, IGDB slug, Open Library) publishes the other ids Wikidata knows in `ExtendedData.ids`, which the
+   host reads to seed enrichment rows for the other plugins without a text search.
+2. **Structured facts.** Names in every language, year, genres, credits (companies with a logo where Wikidata has one), image, logo and
+   poster, official websites, sitelinks, and the whole entity raw. For a game also platforms, game modes and engine (as tags) and its
+   designers, programmers, creators and art directors (as crew).
+3. **People, completely.** Every person in a cast or crew list, every voice actor and every band member is looked up in full, so each credit
+   carries the person's portrait when Wikidata has one (D10: nothing is left out to save requests). And a person Chronicle already has is found by IMDb name id or TMDB person id (never by name) and filled in: birth and death date
+   (only when known to the day), the portrait, occupations, other-language names. Only the IMDb name id and the TMDB person id are passed
+   on for a person.
 
-## Supported Media Types
+Automatic matching is by id or absent. The interactive search (Add Media, Fix Match) looks by name and keeps only results whose one-line
+description names the right kind of thing (a heuristic used for the interactive list only).
 
-| Media Type | Priority | Notes |
-|-----------|---------|-------|
-| `music` | 6 | Track and release cross-reference IDs |
-| `album` | 5 | Album metadata and external IDs |
-| `artist` | 5 | Artist biography and external IDs |
+## Ids
 
----
+`wikidata:Q<number>` always. Accepted: `Q42`, `wikidata:Q42`, `wikidata.org` addresses (https, exact hosts); anything after the number is refused.
 
-## API Overview
+## Measured (2026-11-16)
 
-All requests to: `GET https://query.wikidata.org/sparql?query={sparql}&format=json`
+- Reverse lookup by id (`haswbstatement:P1733=553850`) answers in about 0.3 s; **a quoted value matches nothing** (found by the live test).
+- One full entity: 127 to 247 KB (Helldivers 2, The Matrix, Radiohead), 0.3 to 0.6 s per request; a whole fetch with references resolved takes 4 to 5 s.
+- **Most labels are in the language-neutral `mul` code, not `en`.**
+- **Errors arrive as HTTP 200** with an `error` object (`no-such-entity`, `maxlag`).
+- **Wikidata has no logo for Arrowhead Game Studios** (and none for most companies); where one exists it is a single image.
+- No rate-limit headers and no 429 in the measurement; Wikimedia's policy asks for serial requests and a descriptive User-Agent, so the plugin
+  keeps 1.2 s between requests (never under 1 s), shared by everything it does.
 
-**Example — Artist lookup by name:**
-```sparql
-SELECT ?item ?itemLabel ?mbid ?discogsId ?spotifyId ?description WHERE {
-  ?item wdt:P31 wd:Q5;         # instance of: human
-        wdt:P106 wd:Q177220;   # occupation: singer
-        rdfs:label "{name}"@en .
-  OPTIONAL { ?item wdt:P434 ?mbid. }        # MusicBrainz artist ID
-  OPTIONAL { ?item wdt:P1953 ?discogsId. }  # Discogs artist ID
-  OPTIONAL { ?item wdt:P1902 ?spotifyId. }  # Spotify artist ID
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
-}
-LIMIT 5
-```
+## Settings
 
-**Example — Album lookup:**
-```sparql
-SELECT ?item ?itemLabel ?mbAlbumId ?year WHERE {
-  ?item wdt:P31 wd:Q482994;    # instance of: album
-        rdfs:label "{title}"@en .
-  OPTIONAL { ?item wdt:P435 ?mbAlbumId. }   # MusicBrainz release group ID
-  OPTIONAL { ?item wdt:P577 ?year. }         # publication date
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
-}
-LIMIT 5
-```
+None required. Optional: a contact detail (sent to Wikimedia only, in the User-Agent) and the request interval (1000 ms or more).
 
----
+## Tasks
 
-## Settings Schema
+`fetch-missing-metadata` (on, `22,52 * * * *`) and `resync-all-metadata` (off, Sunday 03:52).
 
-| Key | Label | Type | Required | Notes |
-|-----|-------|------|----------|-------|
-| `language` | Label Language | Dropdown | No | Default: `en` |
-| `include_cross_refs` | Harvest External IDs | Boolean | No | Default: true |
-| `timeout_seconds` | SPARQL Timeout | Number | No | Default: 30 |
+## Terms
 
----
+Wikidata's structured data is CC0. Commons images carry their own licences. A descriptive User-Agent and polite pacing are required and done.
 
-## Fields Populated
+## Not done in v1
 
-```
-title, overview (description), year, genres, cast (artists), poster_url,
-wikidata_qid,
-metadata_json: { musicbrainz_id, discogs_id, spotify_id, isni,
-                 viaf_id, isrc, wikidata_url, wikipedia_url }
-```
-
----
-
-## Rate Limits
-
-- Wikidata SPARQL: 60 req/min (soft limit), 300 req/5 min (hard limit)
-- Requests taking > 60 s are killed — keep SPARQL queries simple
-- Add `User-Agent` header: `Chronicle/{version} (contact@example.com)`
-- Cache SPARQL responses for 7 days
-
----
-
-## Implementation Notes
-
-- Wikidata's primary value for music is as a **cross-reference hub**: use it
-  to look up a known MusicBrainz ID and get back Discogs, Spotify, ISNI, etc.
-- Key Wikidata music properties (P-numbers):
-  - `P434` MusicBrainz artist ID, `P435` release group ID, `P436` release ID
-  - `P1953` Discogs artist ID, `P1954` Discogs release ID
-  - `P1902` Spotify artist ID, `P2205` Spotify album ID
-  - `P213` ISNI, `P214` VIAF, `P1284` Musicbrainz label ID
-- QID (e.g. `Q5656`) is the Wikidata entity ID — store as `wikidata_qid`
-  in `media_external_ids` with source `wikidata`
-- Use the Wikidata REST API (`/w/rest.php/wikibase/v0/entities/items/{QID}`)
-  for direct item lookups once the QID is known — faster than SPARQL
-
----
-
-## Scaffold Location
-
-```
-Chronicle.Plugin.Wikidata/
-├── Chronicle.Plugin.Wikidata.csproj
-├── README.md
-├── manifest.json
-├── WikidataPlugin.cs
-└── Models/
-    └── WikidataMusicEntity.cs
-```
+TV seasons and episodes by name, a numeric-id lookup for IGDB (Wikidata holds IGDB's slug only), AniList lookups (published only), a game's series as a
+collection (Wikidata's "part of the series" is not consistent enough to group by).

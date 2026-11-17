@@ -59,6 +59,13 @@ public static class ProviderCallGuard
     // blip resolves within seconds; anything still failing after this many tries is a real
     // outage, which MetadataEnrichmentService's own "provider unavailable, stop this pass"
     // handling is what should take over from there, not an ever-longer local retry loop.
+    // Tests run in parallel; one can give its own flow of execution short retry sleeps (a provider that always fails otherwise costs
+    // six real seconds per call) without touching the others.
+    private static readonly AsyncLocal<TimeSpan?> _scopedRetryDelay = new();
+
+    /// <summary>Test-only: the base retry sleep for calls made from the current flow of execution (null restores the default).</summary>
+    public static void SetRetryDelayForCurrentContext(TimeSpan? delay) => _scopedRetryDelay.Value = delay;
+
     private const int MaxTransientRetries = 2;
     private static readonly TimeSpan TransientRetryBaseDelay = TimeSpan.FromSeconds(2);
 
@@ -98,7 +105,7 @@ public static class ProviderCallGuard
         TimeSpan? retryDelayOverride = null)
     {
         var effectiveTimeout = timeout ?? TimeoutFor(pluginId);   // a caller's explicit (shorter) deadline wins, e.g. interactive search
-        var retryBaseDelay = retryDelayOverride ?? TransientRetryBaseDelay;
+        var retryBaseDelay = retryDelayOverride ?? _scopedRetryDelay.Value ?? TransientRetryBaseDelay;
 
         for (var attempt = 0; ; attempt++)
         {

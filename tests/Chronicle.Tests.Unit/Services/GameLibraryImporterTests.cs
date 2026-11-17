@@ -47,6 +47,8 @@ public class GameLibraryImporterTests : IDisposable
         LastPlayedAt: lastPlayedUnix > 0 ? DateTimeOffset.FromUnixTimeSeconds(lastPlayedUnix) : null,
         AcquiredAt: null, OwnedViaSubscription: false, IsWishlist: wishlist, RawJson: "{\"appid\":" + id + "}");
 
+    private static long DaysAgo(int d) => DateTimeOffset.UtcNow.AddDays(-d).ToUnixTimeSeconds();
+
     private Task<GameLibraryResult> Run(string plugin, params ImportedLibraryEntry[] e) =>
         _imp.ImportAsync(_db, plugin, "Steam", 1, e, default);
 
@@ -96,8 +98,8 @@ public class GameLibraryImporterTests : IDisposable
     [Fact]
     public async Task A_played_game_is_Watching_with_an_unmarked_play_and_a_second_run_changes_nothing()
     {
-        await Run(Steam, E("1245620", "ELDEN RING", minutes: 600, lastPlayedUnix: 1700000000));
-        var again = await Run(Steam, E("1245620", "ELDEN RING", minutes: 600, lastPlayedUnix: 1700000000));
+        await Run(Steam, E("1245620", "ELDEN RING", minutes: 600, lastPlayedUnix: DaysAgo(1)));
+        var again = await Run(Steam, E("1245620", "ELDEN RING", minutes: 600, lastPlayedUnix: DaysAgo(1)));
 
         again.Created.Should().Be(0); again.Matched.Should().Be(1); again.Events.Should().Be(0);
         _db.MediaItems.Count().Should().Be(1);
@@ -137,9 +139,18 @@ public class GameLibraryImporterTests : IDisposable
         await Run(Steam, E("8", "Celeste", minutes: 0));
         _db.UserLibraries.Single().Status.Should().Be(LibraryStatus.Unwatched);
 
-        await Run(Steam, E("8", "Celeste", minutes: 30, lastPlayedUnix: 1700000000));
+        await Run(Steam, E("8", "Celeste", minutes: 30, lastPlayedUnix: DaysAgo(1)));
 
         _db.UserLibraries.Single().Status.Should().Be(LibraryStatus.Watching);
+    }
+
+    [Fact]
+    public async Task Any_playtime_at_all_means_in_progress_however_long_ago()
+    {
+        await Run(Steam, E("11", "Old Favourite", minutes: 4000, lastPlayedUnix: DaysAgo(900)));
+        await Run(Steam, E("14", "Tried Once", minutes: 12, lastPlayedUnix: DaysAgo(400)));
+
+        _db.UserLibraries.Select(l => l.Status).Should().OnlyContain(st => st == LibraryStatus.Watching);
     }
 
     [Fact]

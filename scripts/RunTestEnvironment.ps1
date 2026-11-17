@@ -247,6 +247,16 @@ $PluginProjects = @(
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.lastfm"
     },
     @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.ListenBrainz\Chronicle.Plugin.ListenBrainz.csproj"
+        DllName    = "Chronicle.Plugin.ListenBrainz.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.listenbrainz"
+    },
+    @{
+        Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Wikidata\Chronicle.Plugin.Wikidata.csproj"
+        DllName    = "Chronicle.Plugin.Wikidata.dll"
+        OutputDir  = Join-Path $PluginsDir "chronicle.plugin.wikidata"
+    },
+    @{
         Project    = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.IGDB\Chronicle.Plugin.IGDB.csproj"
         DllName    = "Chronicle.Plugin.IGDB.dll"
         OutputDir  = Join-Path $PluginsDir "chronicle.plugin.igdb"

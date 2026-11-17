@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { childrenLabel, isKnownVerb, neutralStatusLabel, pluralise, statusLabel } from './typeWording'
+import { activityLabel, childrenLabel, isKnownVerb, neutralStatusLabel, pluralise, statusLabel } from './typeWording'
 import type { LibraryStatus, MediaTypeOption } from '@/types'
 
 const type = (over: Partial<MediaTypeOption>): MediaTypeOption => ({ id: 1, name: 'x', displayName: 'X', hierarchyLevels: 3, ...over })
@@ -9,7 +9,7 @@ describe('statusLabel', () => {
     ['watched', 'Plan to Watch', 'Watching', 'Rewatching', 'Unwatched'],
     ['listened', 'Plan to Listen', 'Listening', 'Re-listening', 'Unlistened'],
     ['read', 'Plan to Read', 'Reading', 'Re-reading', 'Unread'],
-    ['played', 'Plan to Play', 'Playing', 'Replaying', 'Unplayed'],
+    ['played', 'Plan to Play', 'In progress', 'Replaying', 'Unplayed'],
   ])('%s', (verb, plan, doing, again, not) => {
     expect(statusLabel('PlanToWatch', verb)).toBe(plan)
     expect(statusLabel('Watching', verb)).toBe(doing)
@@ -84,5 +84,23 @@ describe('childrenLabel', () => {
 
   it('works for a type nobody wrote code for', () => {
     expect(childrenLabel(type({ hierarchyLabels: ['Series', 'Volume', 'Issue'] }), 0)).toBe('Volumes')
+  })
+})
+
+describe('activityLabel', () => {
+  it.each([
+    ['played', 'Played', 'In progress'],
+    ['watched', 'Watched', 'Watching'],
+    ['listened', 'Listened', 'Listening'],
+    ['read', 'Read', 'Reading'],
+  ])('words a %s event by what happened', (verb, finished, partway) => {
+    expect(activityLabel(true, verb)).toBe(finished)
+    expect(activityLabel(false, verb)).toBe(partway)
+  })
+
+  it('stays neutral for a verb it has no wording for, and defaults to watching', () => {
+    expect(activityLabel(true, 'tasted')).toBe('Completed')
+    expect(activityLabel(false, 'tasted')).toBe('In progress')
+    expect(activityLabel(false, undefined)).toBe('Watching')
   })
 })

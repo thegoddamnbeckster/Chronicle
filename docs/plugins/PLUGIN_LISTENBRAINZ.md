@@ -1,103 +1,32 @@
-# Chronicle.Plugin.ListenBrainz — Design Document
+# ListenBrainz plugin
 
-**Plugin ID:** `chronicle.plugin.listenbrainz`
-**Version:** 1.0.0
-**Media Types:** Music (`music`), Artists (`artist`)
-**Auth:** API token (free — listenbrainz.org)
-**API:** ListenBrainz API v1 — `https://api.listenbrainz.org/1`
+**Version:** 1.0.0 (built 2026-11-12, not yet released)  ·  **Repository:** `Chronicle.Plugin.ListenBrainz`  ·  **Media types:** music
 
----
+**What it needs from the owner:** Nothing for metadata. Your ListenBrainz **username** to import your history (your listens must be public, the default). A user token is optional and not needed for anything the plugin does today.
 
-## Purpose
+**The source's terms and limits:** ListenBrainz (MetaBrainz Foundation). documented limit one call per second per client (the live window measured 30; the service reports it in `X-RateLimit-*` headers and the plugin follows both). A `User-Agent` with name, version and contact URL is required and sent. The pages read for this record state no data licence or commercial-use terms: confirm them yourself before any commercial use. (https://listenbrainz.org)
 
-[ListenBrainz](https://listenbrainz.org/) is MetaBrainz Foundation's
-open-source, privacy-respecting scrobbling service — a free alternative
-to Last.fm. It stores listening history, generates personalised
-recommendations, and provides community listening statistics for any track
-with a MusicBrainz ID. This plugin both enriches music metadata with
-community stats and imports a user's listening history.
+**Design and run record:** [plans/2026-11-12-listenbrainz-plugin-design.md](../plans/2026-11-12-listenbrainz-plugin-design.md)
+
+The plugin's own README follows; the repository is the source of truth.
 
 ---
 
-## Supported Media Types
+# Chronicle.Plugin.ListenBrainz
 
-| Media Type | Priority | Notes |
-|-----------|---------|-------|
-| `music` | 5 | Track listening stats |
-| `artist` | 6 | Artist listening popularity |
+[ListenBrainz](https://listenbrainz.org/) plugin for Chronicle.
 
----
+- **Imports your listening history** (`GET /user/{name}/listens`, newest first, 1000 per page until a short page).
+- **Adds ListenBrainz data to music items that already carry a MusicBrainz id:** listen and listener counts, tags and genres,
+  credits, links, ISRCs, release years, cover art.
 
-## API Overview
+It works on its own: no key, no account, and no other plugin required.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/user/{user}/listens` | GET | User's listen history |
-| `/user/{user}/playing-now` | GET | Currently playing track |
-| `/user/{user}/stats/artists` | GET | Top artists (week/month/all) |
-| `/user/{user}/stats/releases` | GET | Top albums |
-| `/user/{user}/stats/recordings` | GET | Top tracks |
-| `/user/{user}/similar-users` | GET | Similar listeners |
-| `/metadata/lookup` | GET | Lookup by artist+recording name |
-| `/metadata/recording` | GET | Track metadata by MBID |
-| `/stats/sitewide/artists` | GET | Global top artists |
+Ids, each `listenbrainz:` + one kind + one uuid (never two ids in one): `artist`, `releasegroup`, `recording`, `track` (a MusicBrainz track,
+not a recording) and `msid` (ListenBrainz's own id for a listen it could not map to MusicBrainz). See the README for what each means.
 
-Token header: `Authorization: Token {token}`
+Not done on purpose: lookup by name (ListenBrainz's `/metadata/lookup` needs a token and is unmeasured), artist pictures
+(ListenBrainz has none).
 
----
-
-## Settings Schema
-
-| Key | Label | Type | Required | Notes |
-|-----|-------|------|----------|-------|
-| `user_token` | ListenBrainz Token | Password | Yes | listenbrainz.org/profile/ |
-| `username` | ListenBrainz Username | Text | Yes | For history import |
-| `stats_period` | Stats Period | Dropdown | No | `week`, `month`, `year`, `all_time` |
-| `import_history` | Import Listen History | Boolean | No | Default: false |
-
----
-
-## Fields Populated
-
-```
-title, cast (artists), musicbrainz_recording_id,
-metadata_json: { listen_count, global_listen_count,
-                 listenbrainz_username, similar_users }
-```
-
----
-
-## Rate Limits
-
-- 50 req/sec without token; higher with token
-- History endpoint paginates at 100 listens per page
-
----
-
-## Implementation Notes
-
-- ListenBrainz uses MusicBrainz Recording IDs (MBIDs) as its primary
-  identifiers — cross-reference perfectly with MusicBrainz plugin
-- For scrobble import, implement `IImportProvider` alongside
-  `IMetadataProvider`; use the `/listens` endpoint with timestamp pagination
-- The `metadata/lookup` endpoint accepts artist name + recording name and
-  returns the MBID — useful for fuzzy matching
-- ListenBrainz's recommendation engine (`/user/{user}/recommendations/`) is
-  a future enhancement for a "Discovery" feature in Chronicle
-- Store the MBID from ListenBrainz responses in `media_external_ids` with
-  source `musicbrainz`
-
----
-
-## Scaffold Location
-
-```
-Chronicle.Plugin.ListenBrainz/
-├── Chronicle.Plugin.ListenBrainz.csproj
-├── README.md
-├── manifest.json
-├── ListenBrainzPlugin.cs
-└── Models/
-    ├── LbListen.cs
-    └── LbUserStats.cs
-```
+Note for whoever reads the older version of this page: its "50 requests a second" and "token required" were wrong. Measured on
+the live API on 2026-11-12, listens, MusicBrainz-sourced metadata and popularity counts are public, and the documented limit is one call per second (30 per window measured).
