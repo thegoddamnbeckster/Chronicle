@@ -183,6 +183,44 @@ describe('PluginsPage catalog source', () => {
   })
 })
 
+describe('PluginsPage update all', () => {
+  const withUpdate = (id: number, name: string, latest: string | null): pluginsApi.PluginDto =>
+    ({ ...IMDB, id, pluginId: `chronicle.plugin.${name.toLowerCase()}`, name, latestVersionAvailable: latest })
+
+  it('updates every plugin that has an update waiting, and no others', async () => {
+    const user = userEvent.setup()
+    vi.mocked(pluginsApi.listPlugins).mockResolvedValue([withUpdate(1, 'AniList', '1.0.8'), withUpdate(2, 'Deezer', null), withUpdate(3, 'IGDB', '1.1.5')])
+    vi.mocked(pluginsApi.updatePluginFromCatalog).mockImplementation(async id => ({ ...withUpdate(id === 'chronicle.plugin.anilist' ? 1 : 3, id.endsWith('anilist') ? 'AniList' : 'IGDB', null) }))
+    renderWithProviders(<PluginsPage />)
+
+    await user.click(await screen.findByRole('button', { name: 'Update all plugins (2)' }))
+
+    await vi.waitFor(() => expect(pluginsApi.updatePluginFromCatalog).toHaveBeenCalledTimes(2))
+    expect(pluginsApi.updatePluginFromCatalog).toHaveBeenCalledWith('chronicle.plugin.anilist')
+    expect(pluginsApi.updatePluginFromCatalog).toHaveBeenCalledWith('chronicle.plugin.igdb')
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: /Update all plugins/ })).toBeNull())
+  })
+
+  it('offers "Update all themes" only for plugins that provide themes', async () => {
+    vi.mocked(pluginsApi.updatePluginFromCatalog).mockClear()
+    vi.mocked(pluginsApi.listPlugins).mockResolvedValue([withUpdate(1, 'AniList', '1.0.8'), withUpdate(2, 'Themes', '1.0.2')])
+    vi.mocked(useTheme).mockReturnValue({
+      themes: [{ pluginId: 'chronicle.plugin.themes', key: 'dark', label: 'Dark', description: '', swatches: [] }],
+      activeKey: '', loading: false, setTheme: vi.fn(),
+    } as unknown as ReturnType<typeof useTheme>)
+    renderWithProviders(<PluginsPage />)
+
+    expect(await screen.findByRole('button', { name: 'Update all themes (1)' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Update all plugins (2)' })).toBeEnabled()
+  })
+
+  it('shows neither button when nothing has an update', async () => {
+    renderWithProviders(<PluginsPage />)
+    await screen.findByText('IMDb')
+    expect(screen.queryByRole('button', { name: /Update all/ })).toBeNull()
+  })
+})
+
 describe('PluginsPage alphabetical order', () => {
   const entry = (id: string, name: string, tags: string[] = []): pluginsApi.PluginCatalogEntry => ({
     pluginId: id, name, description: '', author: 'a', iconUrl: null, githubRepo: 'o/r', assetName: 'r.zip',

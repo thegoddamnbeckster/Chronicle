@@ -361,6 +361,24 @@ export default function PluginsPage() {
     }
   }
 
+  // "Update all": the same as pressing every visible "Update to vX" button, one after another (each plugin
+  // swaps its own files, so they run in sequence). A failure doesn't stop the rest; they're reported together.
+  async function handleUpdateMany(targets: PluginDto[]) {
+    const failures: string[] = []
+    for (const p of targets) {
+      setBusy(p.id, true)
+      try {
+        const updated = await updatePluginFromCatalog(p.pluginId)
+        setPlugins(prev => prev.map(x => x.id === p.id ? updated : x))
+      } catch (err: unknown) {
+        failures.push(`${p.name}: ${err instanceof Error ? err.message : 'failed to update'}`)
+      } finally {
+        setBusy(p.id, false)
+      }
+    }
+    if (failures.length) alert(`Some plugins could not be updated:\n${failures.join('\n')}`)
+  }
+
   async function handleAcceptFiles(pluginId: string, dbId: number, name: string) {
     if (!confirm(`Approve the files of "${name}" as they are on disk now? Only do this if you put them there yourself.`)) return
     setBusy(dbId, true)
@@ -467,6 +485,14 @@ export default function PluginsPage() {
   const sortedCatalog = useMemo(() => [...catalog].sort((a, b) => alpha(a.name, b.name)), [catalog])
   const sortedCatalogTypes = useMemo(() => [...catalogTypes].sort((a, b) => alpha(a.displayName, b.displayName)), [catalogTypes])
   const sortedThemes = useMemo(() => [...availableThemes].sort((a, b) => alpha(a.label, b.label)), [availableThemes])
+
+  // Plugins with an update waiting: all of them, and just the ones that provide themes.
+  const updatablePlugins = useMemo(() => sortedPlugins.filter(p => p.latestVersionAvailable), [sortedPlugins])
+  const updatableThemePlugins = useMemo(() => {
+    const themeIds = new Set(availableThemes.map(t => t.pluginId))
+    return updatablePlugins.filter(p => themeIds.has(p.pluginId))
+  }, [updatablePlugins, availableThemes])
+  const anyBusy = busyIds.size > 0
 
   function formatDate(iso: string): string {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -610,7 +636,18 @@ export default function PluginsPage() {
 
       {/* ── Themes section ────────────────────────────────────────── */}
       <div className={styles.section}>
-        <h2 className={styles.sectionTitle}>Themes</h2>
+        <div className={styles.sectionHead}>
+          <h2 className={styles.sectionTitle}>Themes</h2>
+          {isAdmin && updatableThemePlugins.length > 0 && (
+            <button
+              className={`${styles.actionBtn} ${styles.enableBtn}`}
+              onClick={() => handleUpdateMany(updatableThemePlugins)}
+              disabled={anyBusy}
+            >
+              Update all themes ({updatableThemePlugins.length})
+            </button>
+          )}
+        </div>
         <div className={styles.themeGrid}>
           {themesLoading && (
             <p className={styles.loading}>Loading themes…</p>
@@ -659,7 +696,18 @@ export default function PluginsPage() {
 
       {/* ── Plugin list ────────────────────────────────────────────── */}
       <div className={styles.section}>
-        <h2 className={styles.sectionTitle}>Installed Plugins</h2>
+        <div className={styles.sectionHead}>
+          <h2 className={styles.sectionTitle}>Installed Plugins</h2>
+          {isAdmin && updatablePlugins.length > 0 && (
+            <button
+              className={`${styles.actionBtn} ${styles.enableBtn}`}
+              onClick={() => handleUpdateMany(updatablePlugins)}
+              disabled={anyBusy}
+            >
+              Update all plugins ({updatablePlugins.length})
+            </button>
+          )}
+        </div>
         {loading ? (
           <p className={styles.loading}>Loading plugins…</p>
         ) : (

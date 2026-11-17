@@ -152,6 +152,23 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* Section title with a button on its right ("Update all …") */
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionHead .sectionTitle {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 /* Theme cards */
 .themeGrid {
   display: flex;
