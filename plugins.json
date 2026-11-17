@@ -215,6 +215,19 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.wikidata",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Wikidata",
+      "tags": [
+        "metadata",
+        "movies",
+        "tv",
+        "music",
+        "books",
+        "game",
+        "games"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.themes.default",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Themes.Default",
       "tags": [
