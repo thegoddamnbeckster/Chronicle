@@ -14,7 +14,7 @@ are noted accordingly.
 
 ## ✅ Already Built & Deployed
 
-These plugins are implemented. Their status is audited by `scripts/audit-plugins.py` (`docs/plugins/PLUGIN_COMPLIANCE.md`). Goodreads, Kodi.NFO and Letterboxd have code but are **not developed** by decision (2026-11-06); every other repo named below the table is an unbuilt scaffold.
+These plugins are implemented. Their status is audited by `scripts/audit-plugins.py` (`docs/plugins/PLUGIN_COMPLIANCE.md`). Kodi.NFO has code but is **not developed** by decision (2026-11-06). Goodreads and Letterboxd were **deleted** (repos and local folders, 2026-11-17); every other repo named below the table is an unbuilt scaffold.
 
 | Plugin | Repository | Version | Interfaces | Media types | Needs | Source terms |
 |---|---|---|---|---|---|---|
@@ -74,7 +74,7 @@ The rest of this document indexes planned future plugins.
 | [IMDb](plugins/PLUGIN_IMDB.md) | `Chronicle.Plugin.IMDb` | 📺🎬👤 | None (official non-commercial datasets) | Designed |
 | [JustWatch](plugins/PLUGIN_JUSTWATCH.md) | `Chronicle.Plugin.JustWatch` | 📺🎬 | None (public GraphQL) | Scaffolded |
 | [Rotten Tomatoes](plugins/PLUGIN_ROTTENTOMATOES.md) | `Chronicle.Plugin.RottenTomatoes` | 📺🎬 | n/a | ❌ Rejected (Terms of Use forbid automated access) |
-| Letterboxd | `Chronicle.Plugin.Letterboxd` | 🎬 | None (public RSS, import only) | ⛔ Not developed (2026-11-09). Code exists (RSS diary/ratings/watchlist import), never released. Not a metadata source: no public API (access by request only, personal projects not granted), Terms of Use forbid scraping, and its film data is TMDB's. Revisit only if API access is granted. |
+| Letterboxd | `Chronicle.Plugin.Letterboxd` | 🎬 | None (public RSS, import only) | ⛔ Deleted 2026-11-17 (repo and releases removed). Was not developed (2026-11-09). Not a metadata source: no public API (access by request only, personal projects not granted), Terms of Use forbid scraping, and its film data is TMDB's. Revisit only if API access is granted. |
 | [PA TV Metadata](plugins/PLUGIN_PATVMETADATA.md) | `Chronicle.Plugin.PATVMetadata` | 📺📡 | API key | Scaffolded |
 | [InforPortugal](plugins/PLUGIN_INFORPORTUGAL.md) | `Chronicle.Plugin.InforPortugal` | 📺📡 | API key | Scaffolded |
 | [EPGdata.tv](plugins/PLUGIN_EPGDATA.md) | `Chronicle.Plugin.EPGData` | 📺📡 | API key | Scaffolded |
