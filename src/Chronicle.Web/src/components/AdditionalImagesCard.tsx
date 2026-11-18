@@ -46,7 +46,14 @@ export function AdditionalImagesCard({ item, onOpenGallery }: AdditionalImagesCa
     return map
   }, [item.pluginMetadata])
 
-  if (bySlot.size === 0) return null
+  // Shown even when empty: a fold that renders nothing looks broken.
+  if (bySlot.size === 0) {
+    return (
+      <div className={boxStyles.box}>
+        <p className={boxStyles.timestamp}>No source has supplied any images for this item yet.</p>
+      </div>
+    )
+  }
 
   return (
     <div className={boxStyles.box}>

@@ -11,6 +11,9 @@ import { loadPrefs } from '@/utils/libraryPrefs'
 import { loadSortSettings } from '@/utils/sortSettings'
 import { PluginFold } from '@/components/PluginFold'
 import { ItemPluginPanels } from '@/components/ItemPluginPanels'
+import { AdditionalImagesCard } from '@/components/AdditionalImagesCard'
+import { SlotGalleryModal } from '@/components/SlotGalleryModal'
+import type { CanonicalSlot, SlottedImageEntry } from '@/utils/imageExtractor'
 import { LinkedAuthorSection } from '@/components/LinkedAuthorSection'
 import { PosterImage } from '@/components/PosterImage'
 import { useAuth } from '@/hooks/useAuth'
@@ -218,6 +221,30 @@ export default function PersonDetailPage() {
       qc.setQueryData(['media', personId], updated)
       qc.invalidateQueries({ queryKey: ['person-headshots', personId] })
     },
+  })
+
+  // Additional Images: the same browse-and-assign surface the media page has (any image from any source can be pinned into any slot).
+  const [gallerySlot, setGallerySlot] = useState<{
+    slot: CanonicalSlot; slotLabel: string; images: SlottedImageEntry[]; startIndex: number
+  } | null>(null)
+  const [pendingSlot, setPendingSlot] = useState<CanonicalSlot | null>(null)
+
+  const overrideSetMut = useMutation({
+    mutationFn: (p: { slot: CanonicalSlot; url: string; pluginId?: string; sourceType?: string }) => {
+      setPendingSlot(p.slot)
+      return setMediaOverride(personId, p.slot, p.url, p.pluginId, p.sourceType)
+    },
+    onSuccess: updated => { qc.setQueryData(['media', personId], updated) },
+    onSettled: () => setPendingSlot(null),
+  })
+
+  const overrideClearMut = useMutation({
+    mutationFn: (slot: CanonicalSlot) => {
+      setPendingSlot(slot)
+      return clearMediaOverride(personId, slot)
+    },
+    onSuccess: updated => { qc.setQueryData(['media', personId], updated) },
+    onSettled: () => setPendingSlot(null),
   })
 
   const resetMut = useMutation({
@@ -574,6 +601,14 @@ export default function PersonDetailPage() {
           </div>
 
           <ItemPluginPanels item={person} />
+
+          {/* Additional Images: every image any source supplied for this person, shown even when there are none. */}
+          <PluginFold foldKey={`person.${personId}.additionalImages`} label="Additional Images" defaultOpen={false}>
+            <AdditionalImagesCard
+              item={person}
+              onOpenGallery={(slot, slotLabel, images, startIndex) => setGallerySlot({ slot, slotLabel, images, startIndex })}
+            />
+          </PluginFold>
         </div>
       </div>
         </div>
@@ -584,6 +619,19 @@ export default function PersonDetailPage() {
       {(person.linkedItems ?? []).filter(l => !l.isPerson).map(author => (
         <LinkedAuthorSection key={author.itemId} author={author} />
       ))}
+
+      {gallerySlot && (
+        <SlotGalleryModal
+          slotLabel={gallerySlot.slotLabel}
+          images={gallerySlot.images}
+          startIndex={gallerySlot.startIndex}
+          onClose={() => setGallerySlot(null)}
+          overrides={person.overrides}
+          onSet={(slot, img) => overrideSetMut.mutate({ slot, url: img.url, pluginId: img.pluginId, sourceType: img.slot })}
+          onClear={slot => overrideClearMut.mutate(slot)}
+          pendingSlot={pendingSlot}
+        />
+      )}
 
       {mergeTarget && (
         <MergeModal

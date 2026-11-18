@@ -141,6 +141,12 @@ describe('PersonDetailPage photo gallery: hiding a wrong photo', () => {
     expect(screen.queryByRole('button', { name: /restore hidden/i })).not.toBeInTheDocument()
   })
 
+  it('always has an Additional Images fold, even when no source supplied any image', async () => {
+    vi.mocked(peopleApi.getPersonHeadshots).mockResolvedValue([])
+    renderPage()
+    expect(await screen.findByText('Additional Images')).toBeInTheDocument()
+  })
+
   it('asks for hidden photos too, so it can offer to bring them back', async () => {
     vi.mocked(peopleApi.getPersonHeadshots).mockResolvedValue([photo(1, { isCurrent: true }), photo(2)])
     renderPage()
