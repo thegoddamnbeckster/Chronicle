@@ -81,8 +81,8 @@ user who has installed nothing else.
 ## Checklist run record (`docs/PLUGIN_NEW_TYPE_CHECKLIST.md`)
 
 Status words as the checklist defines them. This plugin supplies no metadata, images, people or credits and adds no media type,
-so the sections for those are N/A with that reason. **Nothing below is "Verified in app" yet:** the plugin is built and tested,
-not yet released, and has not been shown to the real Radarr or Sonarr.
+so the sections for those are N/A with that reason. **Nothing below is "Verified in app" yet:** the plugin is built, tested and
+released (v1.0.0), and has not yet been shown to the real Radarr or Sonarr.
 
 | Rows | Status | Where / evidence |
 |---|---|---|
@@ -100,12 +100,12 @@ not yet released, and has not been shown to the real Radarr or Sonarr.
 | C2, C7 | Built | Each setting says where to find the value, an example and what not to enter; the rejected-key message names the application and what to do. To be read aloud before release (G2). |
 | K1 | Built | `Version` read from the assembly; the manifest is compared to it in `ManifestAgreesWithThePlugin`. |
 | K2 | Designed | See "Contract compatibility". |
-| K3 | Built at release | `plugins.json` entry and `RunTestEnvironment.ps1` entry exist; the git tag exists only once released. The embedded fallback is the repository's `plugins.json`. |
+| K3 | Built | `plugins.json` entry, `RunTestEnvironment.ps1` entry, manifest 1.0.0, project 1.0.0 and tag `v1.0.0` agree (checked by `scripts/audit-plugins.py`); the embedded fallback is the repository's `plugins.json`. |
 | K4 | Built | 49 tests: matching, each application, settings schema, redaction, rate limit, latch, cache, user-agent, manifest. |
-| K5 | Built | `.github/workflows/build.yml` (build and test on push) and `release.yml` (zip from a tag); LICENSE (MIT); terms above. **The workflows have not run yet.** |
+| K5 | Built | `.github/workflows/build.yml` (build and test on push) ran green on GitHub, and `release.yml` built and published `chronicle.plugin.arr-v1.0.0.zip` (DLL, deps.json, manifest.json) from the tag, 2026-11-18; LICENSE (MIT); terms above. |
 | K7 to K11 | Built | See the tests named above; no empty `catch`; one shared `HttpClient`, 20 s timeout. |
 | K12 | Built | This page and the catalogue line. |
 | K13 | N/A | Reads one list per application in well under 25 seconds. |
-| K14 | Regenerate at release | `docs/plugins/PLUGIN_COMPLIANCE.md`; K3 shows `XX` until the tag exists. |
-| PK | Partly | `plugins.json`, `RunTestEnvironment.ps1` and `Deploy-Plugin.ps1` entries done; the hosted `plugins.json` on `main` is a push the owner approves. |
+| K14 | Built | `docs/plugins/PLUGIN_COMPLIANCE.md` regenerated 2026-11-18 after the tag: no static `XX` for any plugin. |
+| PK | Built | `plugins.json`, `RunTestEnvironment.ps1` and `Deploy-Plugin.ps1` entries; the hosted `plugins.json` on `main` carries it (Chronicle v0.20.75); GitHub release `v1.0.0` with the zip. |
 | G3 (verification pass) | **Not done** | Owner enters each application's address and key; then the Plugins page, Test button and a real scrape of a Radarr-managed file are checked on screen. |
