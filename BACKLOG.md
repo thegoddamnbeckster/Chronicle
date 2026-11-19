@@ -34,6 +34,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ---
 
+- **LibraryThing plugin — WON'T DO (2026-11-19).** Needs a developer key and the Developer Hub offers no way to request one; the site is also behind Cloudflare bot protection. Not to be developed unless LibraryThing opens access. Chronicle keeps the `librarything` ids Open Library supplies. See `docs/plans/2026-11-18-librarything-plugin-investigation.md`.
 - **Arr Apps plugin (Radarr, Sonarr, Lidarr, Readarr) — DONE (1.1.0, Chronicle 0.20.76).** `Chronicle.Plugin.Arr` implements `IMediaLocator`: Kodi movie and TV scraping ask Radarr and Sonarr, and music and book enrichment ask Lidarr (artists, albums) and Readarr (authors, books) before searching by name. Read-only reference. Still to do: record real responses as fixtures once an API key is entered (checklist S1) and the on-screen verification pass (G3). Tracks and chapters are not asked about (derived from their album or book). See `docs/plugins/PLUGIN_ARR.md`.
 
 ---

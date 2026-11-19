@@ -1,7 +1,17 @@
 # LibraryThing plugin: investigation (2026-11-18)
 
-**Status:** investigation only. Nothing is built. **Recommendation: do not build yet.** The first step is for the owner to prove
-the API can be reached from the Chronicle server with a developer key (see "Blocker" and "Next steps").
+**Status: NOT TO BE DEVELOPED (decision 2026-11-19).** Nothing is built. The owner tried to request API access on the Developer Hub
+(`librarything.com/developer`) and the page offers no way to request it, so no key can be obtained and access from the Chronicle
+server can never be proven. Reopen only if LibraryThing opens key requests again or grants access when asked directly.
+
+**What LibraryThing requires (so a future reader need not repeat this):**
+- A developer key tied to a LibraryThing account, issued through the Developer Hub. As of 2026-11-19 the hub offers no request option.
+- Its site and API sit behind Cloudflare bot protection (HTTP 403 "One moment" page to a plain client), so even a key may not be
+  enough from a server. Chronicle never bypasses bot checks.
+- Terms (old, unverified today): non-commercial use, one request per second, about 1,000 requests a day, access at LibraryThing's
+  discretion; Common Knowledge data is CC BY.
+
+The original investigation follows, unchanged.
 
 ## What prompted it
 
