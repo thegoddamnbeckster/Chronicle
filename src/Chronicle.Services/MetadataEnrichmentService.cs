@@ -1695,6 +1695,88 @@ public class MetadataEnrichmentService(
         }
     }
 
+    /// <summary>How long a locator is given for one item: it is an application on the owner's network, and enrichment must not wait on it.</summary>
+    private static readonly TimeSpan LocatorTimeout = TimeSpan.FromSeconds(4);
+
+    /// <summary>
+    /// Asks the configured media locators (see <see cref="IMediaLocator.LocateItemAsync"/>) which item this is. Every id they report is
+    /// kept on the item as a hint (a source the item already has, or an id another item already holds, is left alone); the one under
+    /// this provider's own source, if any, is returned for the caller to fetch directly. Never throws.
+    /// </summary>
+    private async Task<string?> TryLocatedIdAsync(
+        ChronicleDbContext db, string pluginId, MediaItemEnrichment row, string mediaTypeName, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var locators = scope.ServiceProvider.GetRequiredService<IPluginRegistry>().GetMediaLocators();
+            var item = row.MediaItem!;
+            var query = new LocatorQuery(item.Name, ValidateYear(item.Year))
+            {
+                MediaTypeName = mediaTypeName,
+                ParentName = item.Parent?.Name,
+                HierarchyLevel = item.HierarchyLevel,
+            };
+
+            LocatedMedia? found = null;
+            foreach (var locator in locators)
+            {
+                if (!locator.SupportedMediaTypes.Any(t => MediaTypeRegistry.ProviderName(t) == MediaTypeRegistry.ProviderName(mediaTypeName)))
+                    continue;
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(LocatorTimeout);
+                    found = await locator.LocateItemAsync(query, cts.Token);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    logger.LogWarning("Enrichment: {Locator} did not answer in time for item {ItemId} \"{Name}\"; searching by name instead", locator.Name, item.Id, item.Name);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Enrichment: {Locator} failed for item {ItemId} \"{Name}\"; searching by name instead", locator.Name, item.Id, item.Name);
+                }
+                if (found is not null) break;
+            }
+            if (found is null || found.ExternalIds.Count == 0) return null;
+
+            logger.LogInformation("Enrichment: item {ItemId} \"{Name}\" identified by a media locator: {Reason} [{Ids}]",
+                item.Id, item.Name, found.Reason ?? "match", string.Join(", ", found.ExternalIds.Select(kv => $"{kv.Key}={kv.Value}")));
+
+            var held = await db.MediaExternalIds.Where(e => e.MediaItemId == item.Id).Select(e => e.Source).ToListAsync(ct);
+            var added = false;
+            foreach (var (source, externalId) in found.ExternalIds)
+            {
+                var src = source.ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(externalId) || held.Contains(src)) continue;
+                if (await db.MediaExternalIds.AnyAsync(e => e.Source == src && e.ExternalId == externalId, ct)) continue;   // one id, one item
+                db.MediaExternalIds.Add(new MediaExternalId { MediaItemId = item.Id, Source = src, ExternalId = externalId });
+                added = true;
+            }
+            if (added)
+            {
+                try { await db.SaveChangesAsync(ct); }
+                catch (DbUpdateException ex)
+                {
+                    // A hint is never worth failing the enrichment for: another run may have stored the same id first.
+                    logger.LogWarning(ex, "Enrichment: could not keep the ids a media locator reported for item {ItemId}", item.Id);
+                    foreach (var e in db.ChangeTracker.Entries<MediaExternalId>().Where(e => e.State == EntityState.Added).ToList())
+                        e.State = EntityState.Detached;
+                }
+            }
+
+            var ownSource = PluginIdHelper.ToSource(pluginId);
+            return found.ExternalIds.FirstOrDefault(kv => string.Equals(kv.Key, ownSource, StringComparison.OrdinalIgnoreCase)).Value is { Length: > 0 } own ? own : null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Enrichment: asking the media locators about item {ItemId} failed; searching by name instead", row.MediaItemId);
+            return null;
+        }
+    }
+
     private async Task<MediaMetadata?> EnrichItemCoreLockedAsync(
         ChronicleDbContext db, IMetadataProvider provider, string pluginId,
         MediaItemEnrichment row, EnrichmentOptions options, CancellationToken ct,
@@ -2047,7 +2129,25 @@ public class MetadataEnrichmentService(
                         row.MediaItemId, row.MediaItem.Name, mediaTypeName ?? "(unresolved)", provider.PluginId,
                         string.Join(", ", supportedTypes));
 
-                if (typeIsSupported)
+                // An application the owner runs (Lidarr for music, Readarr for books) may know exactly which item this is. Ask it
+                // BEFORE searching by name, and when it names this provider's own id, fetch that directly instead of guessing from the
+                // name. Anything it reports is also kept on the item as a hint other providers can read. No answer, no locator, a slow
+                // or failing one, or an id the provider cannot fetch, all fall through to the name search below, exactly as before.
+                if (typeIsSupported && mediaTypeName is not null)
+                {
+                    var locatedId = await TryLocatedIdAsync(db, pluginId, row, mediaTypeName, ct);
+                    if (locatedId is not null)
+                    {
+                        row.ExternalId = locatedId;
+                        result = await ProviderCallGuard.CallAsync<MediaMetadata?>(
+                            async t => (MediaMetadata?)await provider.GetByIdAsync(locatedId, t), provider.PluginId, "GetByIdAsync", null,
+                            msg => logger.LogWarning("{Msg}", msg), msg => logger.LogError("{Msg}", msg), ct);
+                        if (result is null)
+                            row.ExternalId = null;
+                    }
+                }
+
+                if (typeIsSupported && result is null)
                 {
                     searchQuery = row.MediaItem.Name;
 

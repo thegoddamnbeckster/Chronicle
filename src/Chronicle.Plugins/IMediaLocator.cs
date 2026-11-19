@@ -10,7 +10,21 @@ public enum LocatorFamily { Movie, Tv, Music, Book }
 /// <param name="Year">Release year when known.</param>
 /// <param name="FileName">File name including its extension, when the caller has one (movies scraped by Kodi do).</param>
 /// <param name="FolderName">Name of the folder holding the file, when known.</param>
-public sealed record LocatorQuery(string Title, int? Year = null, string? FileName = null, string? FolderName = null);
+public sealed record LocatorQuery(string Title, int? Year = null, string? FileName = null, string? FolderName = null)
+{
+    // Init properties, not constructor parameters: adding a parameter would change the constructor signature and break every
+    // plugin already compiled against the four-argument form.
+
+    /// <summary>The item's media type by name ("music", "books"), set when Chronicle asks about a library item (see
+    /// <see cref="IMediaLocator.LocateItemAsync"/>).</summary>
+    public string? MediaTypeName { get; init; }
+
+    /// <summary>The name of the item's parent: an album's artist, a book's author. Null for a top-level item.</summary>
+    public string? ParentName { get; init; }
+
+    /// <summary>0 for an artist or author, 1 for an album or book, 2 for a track or chapter.</summary>
+    public int HierarchyLevel { get; init; }
+}
 
 /// <summary>
 /// What a locator found. <see cref="ExternalIds"/> uses Chronicle's own stored forms: "tmdb" as "movie:123" or "tv:123",
@@ -50,4 +64,19 @@ public interface IMediaLocator
 
     /// <summary>Verifies the connection to every application this locator is configured for.</summary>
     Task<bool> HealthCheckAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// The media types (by name, as plugins declare them: "music", "books") this locator can identify library items of, one at a time
+    /// as Chronicle enriches them. Chronicle asks <see cref="LocateItemAsync"/> only for these. Default: none, so a locator written
+    /// before this member existed (it answers Kodi's scrapers only) is never asked.
+    /// </summary>
+    IReadOnlyList<string> SupportedMediaTypes => [];
+
+    /// <summary>
+    /// Identifies one library item (an artist, album, author or book Chronicle holds) before Chronicle searches providers by its name.
+    /// <see cref="LocatedMedia.ExternalIds"/> are in Chronicle's stored forms; an id under the same source key as a metadata provider
+    /// (for example "musicbrainz") is given to that provider directly, and every id is kept on the item as a hint other providers may
+    /// read. Returns null when the application does not know the item. Default: null.
+    /// </summary>
+    Task<LocatedMedia?> LocateItemAsync(LocatorQuery query, CancellationToken ct = default) => Task.FromResult<LocatedMedia?>(null);
 }
