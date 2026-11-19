@@ -87,6 +87,13 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
     }
 
     /// <inheritdoc/>
+    public IReadOnlyList<IMediaLocator> GetMediaLocators()
+    {
+        lock (_lock)
+            return _plugins.Values.SelectMany(p => p.MediaLocators).ToList();
+    }
+
+    /// <inheritdoc/>
     public IReadOnlyList<IFileScannerPlugin> GetFileScannerPlugins()
     {
         lock (_lock)
@@ -195,6 +202,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         var fileScanners    = DiscoverAndInstantiate<IFileScannerPlugin>(assembly, _log);
         var themePlugins    = DiscoverAndInstantiate<IThemePlugin>(assembly, _log);
         var pluginTasks     = DiscoverAndInstantiate<IPluginTask>(assembly, _log);
+        var mediaLocators   = DiscoverAndInstantiate<IMediaLocator>(assembly, _log);
 
         // A stream-loaded assembly reports an empty Assembly.Location, so a plugin has no
         // way to find its own directory on disk. Hand it one explicitly: a "data" folder next
@@ -251,6 +259,19 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
             }
         }
 
+        foreach (var ml in mediaLocators)
+        {
+            try
+            {
+                ml.Configure(settingsWithDataDir);
+                _log.Information("Configured media locator {PluginId}", ml.PluginId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error(ex, "Failed to configure media locator {PluginId}", ml.PluginId);
+            }
+        }
+
         foreach (var task in pluginTasks)
         {
             try
@@ -265,7 +286,7 @@ public sealed class PluginRegistry : IPluginRegistry, IDisposable
         }
 
         var loaded = new LoadedPlugin(loadContext, dbId, manifest, providers, widgets,
-            importProviders, reportPlugins, fileScanners, themePlugins, pluginTasks);
+            importProviders, reportPlugins, fileScanners, themePlugins, pluginTasks, mediaLocators);
 
         LoadedPlugin? evicted;
         lock (_lock)

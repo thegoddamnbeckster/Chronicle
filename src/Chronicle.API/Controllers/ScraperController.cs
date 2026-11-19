@@ -189,6 +189,26 @@ public class ScraperController : ControllerBase
             }
         }
 
+        // Reference data first: if an application the user runs (Radarr) manages this file or title, it knows exactly which
+        // film it is, by id. That settles identity before any name guessing and is what keeps "The Beast" from being read
+        // as "Heart of the Beast". Nothing found, or the plugin absent or failing, leaves everything below as it was.
+        //
+        // It is asked even when a recorded file name already matched an item, because a recorded file name can itself be wrong
+        // (a file attached to the wrong film by an earlier mistake): the id the managing application reports outranks it.
+        var located = await LocateAsync(LocatorFamily.Movie, new LocatorQuery(title, year ?? fileYear, fileName), ct);
+        if (located is not null)
+        {
+            if (existing is not null && await ConflictsWithLocatedIdsAsync(existing, located, ct))
+            {
+                _logger.LogWarning(
+                    "scraper/movies/search: title={Title} year={Year} fileName={FileName} -- the recorded file name points at item {ItemId}, " +
+                    "which holds a different id than the managing application reports; not using it",
+                    title, year, fileName, existing.Id);
+                existing = null;
+            }
+            existing ??= await FindItemByLocatedIdsAsync(located, movieLikeTypeIds, maxHierarchyLevel: 1, ct);
+        }
+
         if (existing is null)
         {
             stepSw.Restart();
@@ -210,16 +230,27 @@ public class ScraperController : ControllerBase
             if (containerIds.Count > 0)
                 candidates = candidates.Where(c => !containerIds.Contains(c.Id)).ToList();
 
-            existing = FindByNormalizedTitle(candidates, title, year)
-                ?? (fileYear.HasValue && fileYear != year ? FindByNormalizedTitle(candidates, title, fileYear) : null);
+            var matchTitle = located?.Title ?? title;
+            var matchYear = located?.Year ?? year;
+            existing = FindByNormalizedTitle(candidates, matchTitle, matchYear)
+                ?? (fileYear.HasValue && fileYear != matchYear ? FindByNormalizedTitle(candidates, matchTitle, fileYear) : null);
+            // A name match that carries a different film's id than the one the managing application reports is a
+            // look-alike, not the film: leave it and create the right one.
+            if (existing is not null && located is not null && await ConflictsWithLocatedIdsAsync(existing, located, ct))
+            {
+                _logger.LogInformation(
+                    "scraper/movies/search: title={Title} year={Year} -- name match {ItemId} has a different id than the managing application reports; not using it",
+                    title, year, existing.Id);
+                existing = null;
+            }
             _logger.LogInformation(
                 "scraper/movies/search: title={Title} year={Year} -- title matching: {Result} in {Ms}ms",
                 title, year, existing is null ? "no match" : $"matched item {existing.Id}", stepSw.ElapsedMilliseconds);
         }
 
         stepSw.Restart();
-        var item = await ResolveOrCreateAsync(existing, movieTypeId, title, fileYear ?? year, fileName, ct,
-            oppositeFamilyTypeIds: await GetShowLikeTypeIdsAsync(ct));
+        var item = await ResolveOrCreateAsync(existing, movieTypeId, located?.Title ?? title, located?.Year ?? fileYear ?? year, fileName, ct,
+            oppositeFamilyTypeIds: await GetShowLikeTypeIdsAsync(ct), seedExternalIds: located?.ExternalIds);
         _logger.LogInformation(
             "scraper/movies/search: title={Title} year={Year} -- resolve-or-create: {Ms}ms (total request: {TotalMs}ms)",
             title, year, stepSw.ElapsedMilliseconds, totalSw.ElapsedMilliseconds);
@@ -626,13 +657,18 @@ public class ScraperController : ControllerBase
         var showCandidates = await _context.MediaItems
             .Where(m => showLikeTypeIds.Contains(m.MediaTypeId) && m.HierarchyLevel == 0)
             .ToListAsync(ct);
-        var item = FindByNormalizedTitle(showCandidates, title, year);
+        // Reference data first (Sonarr), as for movies: an id settles identity before any name guessing.
+        var locatedShow = await LocateAsync(LocatorFamily.Tv, new LocatorQuery(title, year), ct);
+        var item = locatedShow is null ? null : await FindItemByLocatedIdsAsync(locatedShow, showLikeTypeIds, maxHierarchyLevel: 0, ct);
+        item ??= FindByNormalizedTitle(showCandidates, locatedShow?.Title ?? title, locatedShow?.Year ?? year);
+        if (item is not null && locatedShow is not null && await ConflictsWithLocatedIdsAsync(item, locatedShow, ct))
+            item = null;
 
         // TV shows have no filename-confirmation signal from Kodi's find step (that feature
         // is movies-only, per SearchMovies's fileName parameter) -- explicit null, not an
         // oversight.
-        item = await ResolveOrCreateAsync(item, tvTypeId, title, year, fileName: null, ct,
-            oppositeFamilyTypeIds: await GetMovieLikeTypeIdsAsync(ct));
+        item = await ResolveOrCreateAsync(item, tvTypeId, locatedShow?.Title ?? title, locatedShow?.Year ?? year, fileName: null, ct,
+            oppositeFamilyTypeIds: await GetMovieLikeTypeIdsAsync(ct), seedExternalIds: locatedShow?.ExternalIds);
         if (item is null)
             return NotFound(ApiResponse<object>.Fail("RESOLVE_FAILED", "Could not resolve or create this show."));
 
@@ -1259,15 +1295,101 @@ public class ScraperController : ControllerBase
 
     // ── Shared resolve-or-create ────────────────────────────────────────────
 
+    /// <summary>Asks every configured locator (Radarr, Sonarr, ...) about a title or file. Never throws and never waits long:
+    /// a slow or broken one is skipped so the scraper request is not held up by someone else's server.</summary>
+    private async Task<LocatedMedia?> LocateAsync(LocatorFamily family, LocatorQuery query, CancellationToken ct)
+    {
+        IReadOnlyList<IMediaLocator> locators;
+        try { locators = _registry.GetMediaLocators() ?? []; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "scraper: the media locators could not be listed; matching by name instead");
+            return null;
+        }
+
+        foreach (var locator in locators)
+        {
+            try
+            {
+                if (!locator.Handles(family)) continue;
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(4));
+                var found = await locator.LocateAsync(family, query, cts.Token);
+                if (found is null) continue;
+                _logger.LogInformation(
+                    "scraper: {Family} \"{Title}\" ({Year}) identified by {Locator}: {Reason} [{Ids}]",
+                    family, query.Title, query.Year, locator.Name, found.Reason ?? "match",
+                    string.Join(", ", found.ExternalIds.Select(kv => $"{kv.Key}={kv.Value}")));
+                return found;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning("scraper: {Locator} did not answer in time for \"{Title}\"; matching by name instead", locator.Name, query.Title);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "scraper: {Locator} failed for \"{Title}\"; matching by name instead", locator.Name, query.Title);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Finds the item already holding one of the ids a locator reported (tmdb, then imdb, tvdb, ...), within the
+    /// given types and no deeper than <paramref name="maxHierarchyLevel"/>.</summary>
+    private async Task<MediaItem?> FindItemByLocatedIdsAsync(
+        LocatedMedia located, List<int> typeIds, int maxHierarchyLevel, CancellationToken ct)
+    {
+        foreach (var (source, externalId) in located.ExternalIds)
+        {
+            var src = source.ToLowerInvariant();
+            var hit = await _context.MediaExternalIds
+                .Where(x => x.Source == src && x.ExternalId == externalId
+                         && typeIds.Contains(x.MediaItem!.MediaTypeId) && x.MediaItem.HierarchyLevel <= maxHierarchyLevel)
+                .Select(x => x.MediaItem)
+                .FirstOrDefaultAsync(ct);
+            if (hit is not null) return hit;
+        }
+        return null;
+    }
+
+    /// <summary>True when the item already holds a different id for a source the locator also reported, which makes it a
+    /// different work that merely shares a name.</summary>
+    private async Task<bool> ConflictsWithLocatedIdsAsync(MediaItem item, LocatedMedia located, CancellationToken ct)
+    {
+        var mine = await _context.MediaExternalIds.Where(x => x.MediaItemId == item.Id)
+            .Select(x => new { x.Source, x.ExternalId }).ToListAsync(ct);
+        foreach (var (source, externalId) in located.ExternalIds)
+        {
+            var src = source.ToLowerInvariant();
+            var same = mine.Where(m => m.Source == src).ToList();
+            if (same.Count > 0 && !same.Any(m => m.ExternalId == externalId)) return true;
+        }
+        return false;
+    }
+
     private async Task<MediaItem?> ResolveOrCreateAsync(
         MediaItem? existing, int mediaTypeId, string title, int? year, string? fileName, CancellationToken ct,
-        List<int>? oppositeFamilyTypeIds = null)
+        List<int>? oppositeFamilyTypeIds = null, IReadOnlyDictionary<string, string>? seedExternalIds = null)
     {
         var item = existing;
         if (item is null)
         {
             item = await _mediaService.CreateAsync(new CreateMediaRequest(
                 mediaTypeId, null, title, year, null, null, null, 0, null), ct);
+
+            // Ids a managing application (Radarr, Sonarr) reported seed enrichment, so the providers are asked about
+            // exactly that film or show instead of searching its name again.
+            if (seedExternalIds is { Count: > 0 })
+            {
+                foreach (var (source, externalId) in seedExternalIds)
+                {
+                    if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(externalId)) continue;
+                    var src = source.ToLowerInvariant();
+                    if (await _context.MediaExternalIds.AnyAsync(x => x.Source == src && x.ExternalId == externalId, ct)) continue;
+                    _context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = item.Id, Source = src, ExternalId = externalId });
+                }
+                await _context.SaveChangesAsync(ct);
+            }
 
             // Stamp + save BEFORE enrichment, not after: a caller with a filename already knows
             // a real physical file exists for whatever's about to be created, and losing that

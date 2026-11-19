@@ -224,6 +224,21 @@ public class PluginService : IPluginService
                         plugin.PluginId);
                 }
             }
+
+            foreach (var locator in _registry.GetMediaLocators().Where(l => l.PluginId == plugin.PluginId))
+            {
+                try
+                {
+                    locator.Configure(settings);
+                    _log.Information("Reconfigured live media locator {PluginId}", plugin.PluginId);
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex,
+                        "Settings saved for {PluginId}, but reconfiguring the live media locator failed",
+                        plugin.PluginId);
+                }
+            }
         }
     }
 
@@ -490,6 +505,10 @@ public class PluginService : IPluginService
                 result = await ProviderCallGuard.CallAsync(
                     t => loaded.ImportProviders[0].HealthCheckAsync(t), plugin.PluginId, "HealthCheckAsync", false,
                     msg => _log.Warning(msg), msg => _log.Error(msg), ct);
+            else if (loaded.MediaLocators.Count > 0)
+                result = await ProviderCallGuard.CallAsync(
+                    t => loaded.MediaLocators[0].HealthCheckAsync(t), plugin.PluginId, "HealthCheckAsync", false,
+                    msg => _log.Warning(msg), msg => _log.Error(msg), ct);
             else
                 return null;
 
@@ -612,10 +631,15 @@ public class PluginService : IPluginService
     /// </summary>
     private List<string> GetMissingRequiredSettings(LoadedPlugin loaded, string? settingsJson)
     {
-        if (loaded.MetadataProviders.Count == 0) return [];
+        if (loaded.MetadataProviders.Count == 0 && loaded.MediaLocators.Count == 0) return [];
 
         PluginSettingsSchema? schema;
-        try { schema = loaded.MetadataProviders[0].GetSettingsSchema(); }
+        try
+        {
+            schema = loaded.MetadataProviders.Count > 0
+                ? loaded.MetadataProviders[0].GetSettingsSchema()
+                : loaded.MediaLocators[0].GetSettingsSchema();
+        }
         catch { return []; }
 
         if (schema is null || schema.Settings.Count == 0) return [];

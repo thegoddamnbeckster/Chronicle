@@ -345,6 +345,7 @@ public sealed class FakeSingleProviderPluginRegistry(FakeEpisodeListProvider pro
     public IImportProvider? GetImportProvider(string pluginId) => null;
     public IReadOnlyList<IReportPlugin> GetReportPlugins() => [];
     public IReadOnlyList<IFileScannerPlugin> GetFileScannerPlugins() => [];
+    public IReadOnlyList<IMediaLocator> GetMediaLocators() => [];
     public IReadOnlyList<IThemePlugin> GetThemePlugins() => [];
     public IReadOnlyList<IPluginTask> GetPluginTasks() => [];
     public IPluginTask? GetPluginTask(string pluginId, string taskId) => null;

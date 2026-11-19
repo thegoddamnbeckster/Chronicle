@@ -584,6 +584,7 @@ public class PluginsController : ControllerBase
 
         foreach (var p in loaded.MetadataProviders)  try { MergeSchema(p.GetSettingsSchema()); } catch (Exception ex) { _logger.LogWarning(ex, "GetSettingsSchema failed for metadata provider in plugin {PluginId}", id); }
         foreach (var p in loaded.FileScannerPlugins) try { MergeSchema(p.GetSettingsSchema()); } catch (Exception ex) { _logger.LogWarning(ex, "GetSettingsSchema failed for file scanner in plugin {PluginId}", id); }
+        foreach (var p in loaded.MediaLocators)      try { MergeSchema(p.GetSettingsSchema()); } catch (Exception ex) { _logger.LogWarning(ex, "GetSettingsSchema failed for media locator in plugin {PluginId}", id); }
         foreach (var p in loaded.ImportProviders)    try { MergeSchema(p.GetSettingsSchema()); } catch (Exception ex) { _logger.LogWarning(ex, "GetSettingsSchema failed for import provider in plugin {PluginId}", id); }
 
         if (merged.Count > 0)
