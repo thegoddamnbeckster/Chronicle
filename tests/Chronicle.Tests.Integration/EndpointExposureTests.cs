@@ -50,6 +50,27 @@ namespace Chronicle.Tests.Integration
         // ── F-1 diagnostics ───────────────────────────────────────────────────
 
         [Fact]
+        public async Task EveryResponse_CarriesTheBrowserHardeningHeaders()
+        {
+            var response = await _factory.CreateClient().GetAsync("/api/health");
+
+            response.Headers.GetValues("X-Content-Type-Options").Should().Contain("nosniff");
+            response.Headers.GetValues("X-Frame-Options").Should().Contain("DENY");
+            response.Headers.GetValues("Referrer-Policy").Should().Contain("no-referrer");
+            response.Headers.GetValues("Content-Security-Policy").Single().Should().Contain("frame-ancestors 'none'");
+        }
+
+        [Fact]
+        public async Task TheUrlCheckClient_RefusesToConnectToThisMachine()
+        {
+            // What the metadata URL validator uses: an address a provider supplies must never reach loopback or the LAN.
+            using var client = new HttpClient(SafeImageFetcher.CreateGuardedHandler());
+            var act = () => client.GetAsync("http://127.0.0.1:1/");
+
+            (await act.Should().ThrowAsync<HttpRequestException>()).WithMessage("*not permitted*");
+        }
+
+        [Fact]
         public async Task Diagnostics_RequiresASession()
         {
             (await _factory.CreateClient().GetAsync("/api/v1/diagnostics"))

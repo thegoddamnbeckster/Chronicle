@@ -226,11 +226,13 @@ builder.Services.AddMemoryCache();
 // How Chronicle introduces itself to the sites it calls. The project address is the one in plugins.json's default catalog URL.
 const string userAgent = "Chronicle/1.0 (+https://github.com/thegoddamnbeckster/Chronicle)";
 
+// The addresses it checks come from provider responses, so it only connects to public addresses: a provider (or a response
+// tampered with in transit) must not be able to aim the server at its own network.
 builder.Services.AddHttpClient("url-validation", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(8);
     c.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
-});
+}).ConfigurePrimaryHttpMessageHandler(() => Chronicle.API.Helpers.SafeImageFetcher.CreateGuardedHandler());
 
 // ── Named HttpClient for GitHub API (plugin catalog downloads) ─────────────────
 builder.Services.AddHttpClient("github", c =>
@@ -720,6 +722,26 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Chronicle API v1"));
     app.UseCors("Dev");
 }
+
+// Browser hardening for every response: no content-type guessing, no framing (clickjacking), no referrer leaking, and
+// nothing a stray base tag, object tag or form post can redirect. The CSP is deliberately limited to those directives:
+// the built page carries an inline theme script, and Swagger (development only) needs its own inline scripts.
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.OnStarting(() =>
+    {
+        var h = ctx.Response.Headers;
+        h.TryAdd("X-Content-Type-Options", "nosniff");
+        h.TryAdd("X-Frame-Options", "DENY");
+        h.TryAdd("Referrer-Policy", "no-referrer");
+        h.TryAdd("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+        h.TryAdd("Cross-Origin-Opener-Policy", "same-origin");
+        if (!ctx.Request.Path.StartsWithSegments("/swagger"))
+            h.TryAdd("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'");
+        return Task.CompletedTask;
+    });
+    await next(ctx);
+});
 
 app.UseAuthentication();
 app.UseAuthorization();

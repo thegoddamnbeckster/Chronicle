@@ -53,6 +53,14 @@ public class CatalogEntryGuardTests
         CatalogEntryGuard.IsGitHubApiUrl(url).Should().Be(expected);
 
     [Fact]
+    public void AnArchiveThatUnpacksToTooMuch_IsRefused()
+    {
+        CatalogEntryGuard.ArchiveTooLarge([1_000_000, 2_000_000]).Should().BeFalse();
+        CatalogEntryGuard.ArchiveTooLarge([CatalogEntryGuard.MaxUnpackedBytes, 1]).Should().BeTrue("a zip bomb is tiny compressed and huge unpacked");
+        CatalogEntryGuard.ArchiveTooLarge(Enumerable.Repeat(1L, CatalogEntryGuard.MaxArchiveEntries + 1)).Should().BeTrue();
+    }
+
+    [Fact]
     public void EveryBuiltInCatalogEntry_Passes()
     {
         PluginCatalogSeeds.Entries.Should().NotBeEmpty("plugins.json is embedded in the build");

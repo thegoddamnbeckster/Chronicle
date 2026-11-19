@@ -13,6 +13,23 @@ public static partial class CatalogEntryGuard
     /// <summary>Largest plugin archive Chronicle will download.</summary>
     public const long MaxArchiveBytes = 200L * 1024 * 1024;
 
+    /// <summary>Most a plugin archive may unpack to, and most files it may hold.</summary>
+    public const long MaxUnpackedBytes = 500L * 1024 * 1024;
+    public const int MaxArchiveEntries = 2000;
+
+    /// <summary>True when the declared sizes of an archive's entries add up to more than Chronicle will extract.</summary>
+    public static bool ArchiveTooLarge(IEnumerable<long> entrySizes)
+    {
+        long total = 0; var count = 0;
+        foreach (var size in entrySizes)
+        {
+            if (++count > MaxArchiveEntries) return true;
+            total += size;
+            if (total > MaxUnpackedBytes) return true;
+        }
+        return false;
+    }
+
     [GeneratedRegex(@"^[a-z0-9][a-z0-9._-]{0,99}$", RegexOptions.CultureInvariant)]
     private static partial Regex PluginIdPattern();
 

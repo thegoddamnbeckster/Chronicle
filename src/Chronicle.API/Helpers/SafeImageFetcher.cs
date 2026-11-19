@@ -122,19 +122,38 @@ public sealed class SafeImageFetcher
         }
     }
 
-    private async ValueTask<Stream> ConnectToAllowedAddressAsync(
-        SocketsHttpConnectionContext context, CancellationToken ct)
+    /// <summary>
+    /// A handler for any client that fetches an address someone else supplied (a provider's image URL, say): it will only
+    /// connect to globally routable addresses, checked at connect time so DNS rebinding and redirects are covered too, and it
+    /// ignores any system proxy (which would open the connection itself and skip the check).
+    /// </summary>
+    public static SocketsHttpHandler CreateGuardedHandler() => new()
+    {
+        UseProxy = false,
+        AllowAutoRedirect = true,
+        MaxAutomaticRedirections = 3,
+        ConnectTimeout = TimeSpan.FromSeconds(5),
+        ConnectCallback = (context, ct) =>
+            ConnectGuardedAsync(context, IsPublicAddress, (host, token) => Dns.GetHostAddressesAsync(host, token), ct),
+    };
+
+    private ValueTask<Stream> ConnectToAllowedAddressAsync(SocketsHttpConnectionContext context, CancellationToken ct) =>
+        ConnectGuardedAsync(context, _isAllowed, _resolve, ct);
+
+    private static async ValueTask<Stream> ConnectGuardedAsync(
+        SocketsHttpConnectionContext context, Func<IPAddress, bool> isAllowed,
+        Func<string, CancellationToken, Task<IPAddress[]>> resolve, CancellationToken ct)
     {
         var host = context.DnsEndPoint.Host;
         var port = context.DnsEndPoint.Port;
 
         var addresses = IPAddress.TryParse(host, out var literal)
             ? new[] { literal }
-            : await _resolve(host, ct);
+            : await resolve(host, ct);
 
         // Refuse the whole request if ANY resolved address is non-public, rather than quietly
         // picking a public one: a host that mixes public and private records is an attack shape.
-        if (addresses.Length == 0 || addresses.Any(a => !_isAllowed(a)))
+        if (addresses.Length == 0 || addresses.Any(a => !isAllowed(a)))
             throw new HttpRequestException("Destination address is not permitted.");
 
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };

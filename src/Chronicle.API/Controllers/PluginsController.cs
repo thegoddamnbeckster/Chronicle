@@ -942,6 +942,10 @@ public class PluginsController : ControllerBase
         using (var zipStream = new MemoryStream(zipBytes))
         using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read))
         {
+            // The download limit is on the compressed size; a tiny archive can unpack to gigabytes (a zip bomb).
+            if (CatalogEntryGuard.ArchiveTooLarge(archive.Entries.Select(e => e.Length)))
+                return (null, StatusCode(502, ApiResponse<object>.Fail("ARCHIVE_TOO_LARGE",
+                    "The plugin archive unpacks to more than Chronicle will extract.")));
             archive.ExtractToDirectory(pluginDir, overwriteFiles: true);
         }
 
