@@ -9,7 +9,7 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 | plugin | K1 | K3 | K4 | K5 | K7 | K8 | K9 | K10 | K11 | K12 | B1 | B2 | B4 | B5 | B6 | X1 | X2 | X3 | M2 | C4 | Q9 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | AniList | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
-| Arr | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | . | ok | ok | ok | . | ok | . |
+| Arr | ok | **XX** | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | . | ok | ok | ok | . | ok | . |
 | Deezer | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok |
 | FanEdit | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
 | FanartTV | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | ok | . | ok | ok | ok | ok | ok | ok | . |
@@ -64,7 +64,7 @@ G3 verification pass) is unverified by this record and is listed in the last sec
 No static failures.
 
 ### Arr
-No static failures.
+- **K3** (identity/catalogue/tag/embedded agree): embedded 1.0.0
 
 ### Deezer
 No static failures.
