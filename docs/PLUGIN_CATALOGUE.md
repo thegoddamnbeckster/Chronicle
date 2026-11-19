@@ -14,7 +14,7 @@ are noted accordingly.
 
 ## ✅ Already Built & Deployed
 
-These plugins are implemented. Their status is audited by `scripts/audit-plugins.py` (`docs/plugins/PLUGIN_COMPLIANCE.md`). Kodi.NFO has code but is **not developed** by decision (2026-11-06). Goodreads and Letterboxd were **deleted** (repos and local folders, 2026-11-17); every other repo named below the table is an unbuilt scaffold.
+These plugins are implemented. Their status is audited by `scripts/audit-plugins.py` (`docs/plugins/PLUGIN_COMPLIANCE.md`). Kodi.NFO has code but is **not developed** by decision (2026-11-06). Last.fm is **no longer developed** (2026-11-18): from 1 December 2026 Last.fm requires a paid pro licence for API access, so it is no longer built by `RunTestEnvironment.ps1`; the existing 1.1.2 release is frozen. Goodreads and Letterboxd were **deleted** (repos and local folders, 2026-11-17); every other repo named below the table is an unbuilt scaffold.
 
 | Plugin | Repository | Version | Interfaces | Media types | Needs | Source terms |
 |---|---|---|---|---|---|---|
@@ -26,7 +26,7 @@ These plugins are implemented. Their status is audited by `scripts/audit-plugins
 | **Hardcover** | [Chronicle.Plugin.Hardcover](https://github.com/thegoddamnbeckster/Chronicle.Plugin.Hardcover) | 1.7.0 | `IImportProvider + IMetadataProvider` | n/a | A Hardcover API token (Hardcover.app, Settings, API). | Reads the owner's own Hardcover account; see Hardcover's API terms. |
 | **IGDB** | [Chronicle.Plugin.IGDB](https://github.com/thegoddamnbeckster/Chronicle.Plugin.IGDB) | 1.1.2 | `IMetadataProvider` | game | A Twitch developer Client ID and Client Secret. | Subject to the Twitch Developer Services Agreement; IGDB asks for attribution. |
 | **IMDb** | [Chronicle.Plugin.IMDb](https://github.com/thegoddamnbeckster/Chronicle.Plugin.IMDb) | 1.2.2 | `IMetadataProvider` | n/a | None. Uses IMDb's published non-commercial datasets. | Personal, non-commercial use only; the datasets must not be redistributed. |
-| **Last.fm** | [Chronicle.Plugin.LastFM](https://github.com/thegoddamnbeckster/Chronicle.Plugin.LastFM) | 1.1.2 | `IImportProvider + IMetadataProvider` | n/a | A Last.fm API key; scrobble import also needs the owner's username. | Last.fm API terms; keep to its rate limit. |
+| **Last.fm** | [Chronicle.Plugin.LastFM](https://github.com/thegoddamnbeckster/Chronicle.Plugin.LastFM) | 1.1.2 | `IImportProvider + IMetadataProvider` | n/a | A Last.fm API key; scrobble import also needs the owner's username. | ⛔ Not developed from 2026-12-01: Last.fm requires a paid pro licence for API access. |
 | **Movies Remastered (MRDb)** | [Chronicle.Plugin.MoviesRemastered](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MoviesRemastered) | 1.1.1 | `IMetadataProvider` | n/a | None. Reads the public pages of moviesremastered.com. | A scraped site: the plugin paces itself and identifies itself; be gentle. |
 | **MusicBrainz** | [Chronicle.Plugin.MusicBrainz](https://github.com/thegoddamnbeckster/Chronicle.Plugin.MusicBrainz) | 1.4.2 | `IMetadataProvider` | n/a | None. An optional MusicBrainz username and password are supported. | Core data is CC0. One request per second and a descriptive User-Agent are required. |
 | **OMDb** | [Chronicle.Plugin.OMDb](https://github.com/thegoddamnbeckster/Chronicle.Plugin.OMDb) | 1.0.3 | `IMetadataProvider` | movies, tv, anime, anime_movies | An OMDb API key (the free one allows 1,000 requests a day). | OMDb's terms; the daily limit is honoured and reported. |
