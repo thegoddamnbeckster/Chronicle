@@ -2,7 +2,7 @@
 
 **Plugin ID:** `chronicle.plugin.arr`
 **Repository:** `thegoddamnbeckster/Chronicle.Plugin.Arr`
-**Interface:** `IMediaLocator` (new in Chronicle 0.20.75; see "Contract compatibility")
+**Interface:** `IMediaLocator` (new in Chronicle 0.20.75, extended for music and books in 0.20.76; see "Contract compatibility")
 **Applications:** Radarr, Sonarr, Lidarr, Readarr (each optional)
 **Auth:** an address and an API key per application, both entered by the owner
 
@@ -18,12 +18,18 @@ broken or slow application changes nothing.
 
 ## What is asked, and what comes back
 
-| Application | Asked | Call | Gives | Used today |
+| Application | Asked | Call | Gives | Used when |
 |---|---|---|---|---|
-| Radarr | the file Kodi is scraping, else title and year | `GET /api/v3/movie` | TMDB (`movie:N`) and IMDb ids | Yes, Kodi movie scraping |
-| Sonarr | title and year | `GET /api/v3/series` | TMDB (`tv:N`) and IMDb ids | Yes, Kodi TV scraping |
-| Lidarr | artist name | `GET /api/v1/artist` | MusicBrainz id (`artist:{mbid}`) | **No.** Read and tested; Chronicle's music matching does not consult a locator yet |
-| Readarr | author name | `GET /api/v1/author` | Goodreads author id | **No.** Same. Readarr's own project is retired; it is still the best tool for the job and is supported as it is |
+| Radarr | the file Kodi is scraping, else title and year | `GET /api/v3/movie` | TMDB (`movie:N`) and IMDb ids | Kodi movie scraping |
+| Sonarr | title and year | `GET /api/v3/series` | TMDB (`tv:N`) and IMDb ids | Kodi TV scraping |
+| Lidarr, artist | artist name | `GET /api/v1/artist` | MusicBrainz id (`artist:{mbid}`) | Chronicle enriches a music artist |
+| Lidarr, album | album title within its artist | `GET /api/v1/album` | MusicBrainz release-group id (`release-group:{mbid}`) | Chronicle enriches a music album |
+| Readarr, author | author name | `GET /api/v1/author` | Goodreads author id | Chronicle enriches an author |
+| Readarr, book | book title within its author | `GET /api/v1/book` | the monitored edition's Goodreads id and ISBN-13 (`goodreads`, `isbn13`) | Chronicle enriches a book |
+
+Readarr's own project is retired; it is still the best tool for the job and is supported as it is. A Readarr book's `foreignBookId`
+is a Goodreads *work* id, which Open Library does not index, so the edition's `foreignEditionId` (the Goodreads *book* id) is used.
+Tracks and chapters are never asked about: Chronicle derives them from their album or book.
 
 `GET /api/v{3,1}/system/status` is the one call the health check makes. Each application's whole list is read once and kept for
 five minutes, so a scan of thousands of files costs a handful of requests.
@@ -38,7 +44,17 @@ A wrong answer overrides Chronicle's own matching, while a miss costs nothing, s
    a trailing "(year)" is dropped, and the year agrees when both sides have one. Two equal titles with no year to separate them
    is a miss. "Beast" is not "The Beast", and "The Beast" is not "Heart of the Beast".
 
-### What Chronicle does with an answer (`ScraperController`)
+### What Chronicle does with an answer for music and books (`MetadataEnrichmentService`)
+
+Before a provider is searched by name for an item, Chronicle asks the locators whose `SupportedMediaTypes` include the item's type
+(`LocateItemAsync`, given the item's name, its parent's name, its level and its type). If the answer names an id under the same source
+as the provider being run (`musicbrainz`), the provider is asked for that id directly. Every id reported is kept on the item as a hint
+(`media_external_ids`), except a source the item already has and an id another item already holds, so Open Library, which reads a
+book's `goodreads` id, finds it. No answer, a locator that is slow (4 seconds) or failing, or an id the provider cannot fetch all fall
+through to the name search, exactly as before. Album and book matching requires the artist or author's name as well: a title alone
+is never matched.
+
+### What Chronicle does with an answer for Kodi (`ScraperController`)
 
 0. The locator is asked even when a recorded file name already matched an item: a recorded file name can itself be wrong (live
    2026-11-18: `11 Flowers (2012).mkv` was recorded against "11/11/11"), so a recorded file name that points at an item holding a
@@ -73,8 +89,10 @@ an address a metadata provider supplied, which Chronicle refuses to connect to. 
 
 ## Contract compatibility (K2)
 
-Built against the `IMediaLocator` contract added in Chronicle **0.20.75**; the manifest says `min_chronicle_version` 0.20.75. A
-host older than that has no `IMediaLocator` and will fail to load the plugin's assembly (the type is missing); this is stated
+Built against the `IMediaLocator` contract as extended in Chronicle **0.20.76** (the interface itself arrived in 0.20.75; 0.20.76 added
+`SupportedMediaTypes`, `LocateItemAsync` and the `MediaTypeName`, `ParentName` and `HierarchyLevel` fields of the query, all optional
+members with defaults); the manifest says `min_chronicle_version` 0.20.76. A host older than 0.20.75 has no `IMediaLocator` and will
+fail to load the plugin's assembly (the type is missing), and one older than 0.20.76 loads it but never asks about music or books; this is stated
 rather than tested, because no release of the host without the interface can be loaded here. The plugin installs and works for a
 user who has installed nothing else.
 
@@ -82,7 +100,7 @@ user who has installed nothing else.
 
 Status words as the checklist defines them. This plugin supplies no metadata, images, people or credits and adds no media type,
 so the sections for those are N/A with that reason. **Nothing below is "Verified in app" yet:** the plugin is built, tested and
-released (v1.0.0), and has not yet been shown to the real Radarr or Sonarr.
+released, and has not yet been shown to the real Radarr or Sonarr.
 
 | Rows | Status | Where / evidence |
 |---|---|---|
@@ -101,7 +119,7 @@ released (v1.0.0), and has not yet been shown to the real Radarr or Sonarr.
 | K1 | Built | `Version` read from the assembly; the manifest is compared to it in `ManifestAgreesWithThePlugin`. |
 | K2 | Designed | See "Contract compatibility". |
 | K3 | Built | `plugins.json` entry, `RunTestEnvironment.ps1` entry, manifest 1.0.0, project 1.0.0 and tag `v1.0.0` agree (checked by `scripts/audit-plugins.py`); the embedded fallback is the repository's `plugins.json`. |
-| K4 | Built | 49 tests: matching, each application, settings schema, redaction, rate limit, latch, cache, user-agent, manifest. |
+| K4 | Built | 63 tests (plus 7 in Chronicle that drive the real enrichment path with a stand-in locator): matching, each application, albums and books, settings schema, redaction, rate limit, latch, cache, user-agent, manifest. |
 | K5 | Built | `.github/workflows/build.yml` (build and test on push) ran green on GitHub, and `release.yml` built and published `chronicle.plugin.arr-v1.0.0.zip` (DLL, deps.json, manifest.json) from the tag, 2026-11-18; LICENSE (MIT); terms above. |
 | K7 to K11 | Built | See the tests named above; no empty `catch`; one shared `HttpClient`, 20 s timeout. |
 | K12 | Built | This page and the catalogue line. |

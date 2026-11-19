@@ -34,7 +34,7 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ---
 
-- **Arr Apps plugin (Radarr, Sonarr, Lidarr, Readarr) — built, not yet released.** `Chronicle.Plugin.Arr` implements the new `IMediaLocator` interface; Kodi movie and TV scraping ask it first, so a file Radarr or Sonarr manages is identified by id. Read-only reference. Still to do: release it (the hosted `plugins.json` push), record real responses as fixtures once an API key is entered (checklist S1), the on-screen verification pass (G3), and teach music and book matching to consult a locator so Lidarr and Readarr are used (today they are read and tested only). See `docs/plugins/PLUGIN_ARR.md`.
+- **Arr Apps plugin (Radarr, Sonarr, Lidarr, Readarr) — DONE (1.1.0, Chronicle 0.20.76).** `Chronicle.Plugin.Arr` implements `IMediaLocator`: Kodi movie and TV scraping ask Radarr and Sonarr, and music and book enrichment ask Lidarr (artists, albums) and Readarr (authors, books) before searching by name. Read-only reference. Still to do: record real responses as fixtures once an API key is entered (checklist S1) and the on-screen verification pass (G3). Tracks and chapters are not asked about (derived from their album or book). See `docs/plugins/PLUGIN_ARR.md`.
 
 ---
 
