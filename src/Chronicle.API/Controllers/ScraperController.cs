@@ -1490,6 +1490,12 @@ public class ScraperController : ControllerBase
             var mTokens = NormalizeTitle(m.Name).Split(' ', StringSplitOptions.RemoveEmptyEntries)
                 .Select(DestemPlural).ToHashSet(StringComparer.Ordinal);
             if (mTokens.Count == 0) return false;
+            // One missing or extra word, on titles of at least two words each. Any wider and it stops being the same
+            // film: "The Beast" ({the, beast}) is a subset of "Heart of the Beast" but is a different movie, and a lone
+            // word like "Beast" is inside dozens of titles. The point of this tier is a single descriptive word.
+            var smaller = Math.Min(targetTokens.Count, mTokens.Count);
+            var larger = Math.Max(targetTokens.Count, mTokens.Count);
+            if (smaller < 2 || larger - smaller != 1) return false;
             return targetTokens.IsProperSubsetOf(mTokens) || mTokens.IsProperSubsetOf(targetTokens);
         });
 

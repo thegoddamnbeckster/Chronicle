@@ -327,6 +327,43 @@ public class ScraperMovieFilenameYearMismatchTests : IClassFixture<ChronicleApiF
             "a same-year title differing only by pluralizing the final word (no extra word) must not reuse a different, unrelated item");
     }
 
+    /// <summary>
+    /// Live 2026-11-18: "The Beast (2026)" was matched to the unrelated "Heart of the Beast" (2026) because the words of
+    /// "The Beast" are a subset of "Heart of the Beast". The subset fallback is for ONE missing or extra word; two extra
+    /// words (or a one-word title) is a different film.
+    /// </summary>
+    [Fact]
+    public async Task MovieSearch_TitleIsASubsetOfALongerTitleByMoreThanOneWord_DoesNotMatchTheLongerFilm()
+    {
+        var movieTypeId = EnsureMovieType();
+        const string longerTitle = "Scraper Heart of the Quokka";
+        const string shorterSearch = "The Quokka"; // {the, quokka} sits inside {scraper, heart, of, the, quokka}
+        int longerItemId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+            var item = new MediaItem
+            {
+                MediaTypeId = movieTypeId, Name = longerTitle, Year = 2026,
+                HierarchyLevel = 0,
+                NormalizedName = MediaItemNormalizer.NormalizeName(longerTitle),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            };
+            db.MediaItems.Add(item);
+            db.SaveChanges();
+            longerItemId = item.Id;
+        }
+
+        var client = await AuthClientAsync();
+        var resp = await client.GetAsync(
+            $"/api/v1/scraper/movies/search?title={Uri.EscapeDataString(shorterSearch)}&year=2026");
+
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().NotContain($"\"id\":{longerItemId}",
+            "a title that is only a subset of a longer one by several words is a different film and must get its own item");
+    }
+
     // ── Kodi's request year a year off the year in the file's own name (live 2026-10-02/03: Flight Risk (2025).mkv ──
     // ── requested as 2024, Coherence (2014).mkv as 2013 -- each minted a duplicate item with the wrong year) ───────
 
