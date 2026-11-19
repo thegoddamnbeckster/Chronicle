@@ -14,6 +14,7 @@ context at start. One plugin implements one (occasionally more) of these interfa
 |---|---|
 | `IMetadataProvider` | look up titles, people, artwork and episode lists from a service (TMDB, TVMaze, MusicBrainz...) |
 | `IFileScannerPlugin` | read files on disk and report what they are (the FileScanner plugin) |
+| `IMediaLocator` | answer "which film, show, artist or author is this file or title?" from another application the owner runs (the Arr plugin). Read-only reference data; a miss or failure leaves Chronicle matching by name |
 | `IImportProvider` | import a user's history or lists from a service (Trakt, Simkl, LastFM...) |
 | `IWidgetPlugin` | add a dashboard widget |
 | `IReportPlugin` | add a report |

@@ -98,6 +98,11 @@ $PluginMap = @{
         DllName = "Chronicle.Plugin.Deezer.dll"
         OutDir  = Join-Path $PluginsDir "chronicle.plugin.deezer"
     }
+    "chronicle.plugin.arr"         = @{
+        Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.Arr\Chronicle.Plugin.Arr.csproj"
+        DllName = "Chronicle.Plugin.Arr.dll"
+        OutDir  = Join-Path $PluginsDir "chronicle.plugin.arr"
+    }
     "chronicle.plugin.theaudiodb"  = @{
         Project = Join-Path (Split-Path $RepoRoot -Parent) "Chronicle.Plugin.TheAudioDB\Chronicle.Plugin.TheAudioDB.csproj"
         DllName = "Chronicle.Plugin.TheAudioDB.dll"

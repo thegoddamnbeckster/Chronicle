@@ -31,7 +31,9 @@ for r in real:
         if note and ok is not True: why[k] = note
     # K1
     vers = re.findall(r"string\s+Version\s*(?:=>|\{\s*get;\s*\}\s*=)\s*([^;]+);", s)
-    allasm = bool(vers) and all("Assembly" in v for v in vers)
+    # A Version that hands over to a helper (`=> WdSettings.Version`) is fine when the source reads the assembly's version somewhere.
+    reads_assembly = "AssemblyInformationalVersion" in s
+    allasm = bool(vers) and all("Assembly" in v or (reads_assembly and re.fullmatch(r"\w+\.Version", v.strip())) for v in vers)
     put("K1", allasm, f"Version literal(s) {[v.strip() for v in vers]} vs manifest {mf.get('version')}")
     # K3
     tag = subprocess.run(["git","-C",p,"describe","--tags","--abbrev=0"],capture_output=True,text=True).stdout.strip().lstrip("v")

@@ -12,6 +12,7 @@ you need to know to build, package, and publish a plugin.
 | `IMetadataProvider` | Fetch metadata (title, poster, ratings) from an external service |
 | `IImportProvider` | Import watch/read history, ratings, and watchlist from an external account |
 | `IFileScannerPlugin` | Scan local directories for media files |
+| `IMediaLocator` | Tell Chronicle exactly which film, show, artist or author a file or title is, from an application that already knows (Radarr, Sonarr, Lidarr, Readarr). Reference data only: Chronicle asks, it never writes back |
 | `IWidgetPlugin` | Provide a dashboard widget |
 | `IPluginTask` | Provide a custom background task (beyond the built-in well-known types) |
 

@@ -34,6 +34,10 @@ Items collected from dev sessions. Roughly priority-ordered within each section.
 
 ---
 
+- **Arr Apps plugin (Radarr, Sonarr, Lidarr, Readarr) — built, not yet released.** `Chronicle.Plugin.Arr` implements the new `IMediaLocator` interface; Kodi movie and TV scraping ask it first, so a file Radarr or Sonarr manages is identified by id. Read-only reference. Still to do: release it (the hosted `plugins.json` push), record real responses as fixtures once an API key is entered (checklist S1), the on-screen verification pass (G3), and teach music and book matching to consult a locator so Lidarr and Readarr are used (today they are read and tested only). See `docs/plugins/PLUGIN_ARR.md`.
+
+---
+
 ## Database
 
 - **Backups and maintenance — DONE (Settings -> Database).** Nightly + on-demand zipped backups, retention, download/upload/validate/restore (type RESTORE; safety backup; restart swaps the file in), quick/full maintenance as scheduled tasks, size reporting and warning, SQLite scratch files kept beside the database. Remaining: backups are SQLite-only; very large downloads go through the browser's memory (a streamed/signed download link would fix it); the restart relies on Docker / the service manager / the dev script to start Chronicle again.

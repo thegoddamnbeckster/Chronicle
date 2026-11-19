@@ -215,6 +215,17 @@
       ]
     },
     {
+      "plugin_id": "chronicle.plugin.arr",
+      "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Arr",
+      "tags": [
+        "movies",
+        "tv",
+        "music",
+        "books",
+        "reference"
+      ]
+    },
+    {
       "plugin_id": "chronicle.plugin.wikidata",
       "github_repo": "thegoddamnbeckster/Chronicle.Plugin.Wikidata",
       "tags": [
