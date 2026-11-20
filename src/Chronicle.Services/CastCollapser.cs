@@ -59,9 +59,18 @@ public static class CastCollapser
 
     private static bool SamePerson(Group a, Group b)
     {
-        if (a.LooseName.Length == 0 || a.LooseName != b.LooseName) return false;
-        return a.Characters.Overlaps(b.Characters) || !a.Sources.Overlaps(b.Sources);
+        if (a.LooseName.Length == 0 || b.LooseName.Length == 0) return false;
+        if (a.LooseName == b.LooseName)
+            return a.Characters.Overlaps(b.Characters) || !a.Sources.Overlaps(b.Sources);
+
+        // A shortened given name ("Thomas F. Wilson" from TMDB, "Tom Wilson" from IMDb): the same surname, the same character, and
+        // no provider on both records. The three together are what make it safe; any one alone is not.
+        return LastWord(a.Person.Name) == LastWord(b.Person.Name) && LastWord(a.Person.Name).Length > 1
+            && a.Characters.Overlaps(b.Characters) && !a.Sources.Overlaps(b.Sources);
     }
+
+    private static string LastWord(string name) =>
+        MediaItemNormalizer.NormalizeName(name).Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "";
 
     private static CastEntry Build(List<Group> members)
     {
