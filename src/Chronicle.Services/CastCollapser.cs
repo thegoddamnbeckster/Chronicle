@@ -57,17 +57,32 @@ public static class CastCollapser
 
     private static bool IsActor(MediaCredit c) => string.Equals(c.Role, "Actor", StringComparison.OrdinalIgnoreCase);
 
-    private static bool SamePerson(Group a, Group b)
+    private static bool SamePerson(Group a, Group b) =>
+        SameOnTitle(a.Person.Name, a.Characters, a.Sources, b.Person.Name, b.Characters, b.Sources);
+
+    /// <summary>
+    /// The rule above, on plain values so the cleanup of the person records themselves (PersonCreditConsolidationService) uses
+    /// exactly the evidence the cast list does. Names are compared loosely; <paramref name="charsA"/> are normalized character
+    /// names and <paramref name="srcsA"/> the lowercase providers that credited the person on this one title.
+    /// </summary>
+    internal static bool SameOnTitle(
+        string nameA, ISet<string> charsA, ISet<string> srcsA, string nameB, ISet<string> charsB, ISet<string> srcsB)
     {
-        if (a.LooseName.Length == 0 || b.LooseName.Length == 0) return false;
-        if (a.LooseName == b.LooseName)
-            return a.Characters.Overlaps(b.Characters) || !a.Sources.Overlaps(b.Sources);
+        var looseA = MediaItemNormalizer.NormalizeNameLoose(nameA);
+        var looseB = MediaItemNormalizer.NormalizeNameLoose(nameB);
+        if (looseA.Length == 0 || looseB.Length == 0) return false;
+        if (looseA == looseB)
+            return charsA.Overlaps(charsB) || !srcsA.Overlaps(srcsB);
 
         // A shortened given name ("Thomas F. Wilson" from TMDB, "Tom Wilson" from IMDb): the same surname, the same character, and
         // no provider on both records. The three together are what make it safe; any one alone is not.
-        return LastWord(a.Person.Name) == LastWord(b.Person.Name) && LastWord(a.Person.Name).Length > 1
-            && a.Characters.Overlaps(b.Characters) && !a.Sources.Overlaps(b.Sources);
+        return LastWord(nameA) == LastWord(nameB) && LastWord(nameA).Length > 1
+            && charsA.Overlaps(charsB) && !srcsA.Overlaps(srcsB);
     }
+
+    internal static HashSet<string> NormalizedCharacters(IEnumerable<(string Role, string? Character)> credits) =>
+        credits.Where(c => string.Equals(c.Role, "Actor", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(c => Parts(c.Character)).Select(MediaItemNormalizer.NormalizeName).Where(n => n.Length > 0).ToHashSet();
 
     private static string LastWord(string name) =>
         MediaItemNormalizer.NormalizeName(name).Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "";

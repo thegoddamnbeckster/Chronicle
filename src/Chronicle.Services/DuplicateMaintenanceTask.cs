@@ -3,16 +3,18 @@ using Microsoft.Extensions.Logging;
 namespace Chronicle.Services;
 
 /// <summary>
-/// The one nightly task for duplicates. The three passes depend on each other, so they run together in order
+/// The one nightly task for duplicates. The passes depend on each other, so they run together in order
 /// rather than as three jobs whose start times had to be staggered by hand:
 ///   1. Duplicate Candidate Scan    -- finds probable duplicate items and caches them for the Duplicates page.
-///   2. Duplicate Person Auto-Resolve -- merges or dismisses the people candidates step 1 just produced when the
+///   2. Person Consolidation        -- splits a stranger off a person record and merges records that titles prove are one person.
+///   3. Duplicate Person Auto-Resolve -- merges or dismisses the people candidates step 1 just produced when the
 ///                                     evidence is strong; the rest stay for manual review.
-///   3. Duplicate Cleanup           -- removes items that share the same file path, keeping the best copy.
+///   4. Duplicate Cleanup           -- removes items that share the same file path, keeping the best copy.
 /// A failing pass is logged and never stops the ones after it; the task still fails at the end (see PassFailures).
 /// </summary>
 public sealed class DuplicateMaintenanceTask(
     DuplicateCandidateScanService candidateScan,
+    PersonCreditConsolidationService personConsolidation,
     DuplicatePersonAutoResolveService personAutoResolve,
     DuplicateCleanupService cleanup,
     ILogger<DuplicateMaintenanceTask> logger) : IScheduledTask
@@ -28,6 +30,7 @@ public sealed class DuplicateMaintenanceTask(
     {
         var passes = new PassFailures(logger, "Duplicate maintenance");
         await passes.RunAsync("duplicate candidate scan", candidateScan.ExecuteAsync, ct);
+        await passes.RunAsync("person consolidation", personConsolidation.ExecuteAsync, ct);
         await passes.RunAsync("duplicate person auto-resolve", personAutoResolve.ExecuteAsync, ct);
         await passes.RunAsync("duplicate cleanup", cleanup.ExecuteAsync, ct);
         passes.ThrowIfAny();
