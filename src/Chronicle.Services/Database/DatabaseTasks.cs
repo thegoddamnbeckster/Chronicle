@@ -28,7 +28,7 @@ namespace Chronicle.Services.Database
 
         public string TaskId => "database_backup";
         public string DisplayName => "Database Backup & Maintenance";
-        public string Description => "Nightly: takes a zipped backup (removing the oldest beyond the retention count), warns if the database has grown large, refreshes query statistics and trims the write-ahead log, and removes notifications older than the retention period.";
+        public string Description => "Nightly: takes a zipped backup (removing the oldest beyond the retention count), refreshes query statistics and trims the write-ahead log, and removes notifications older than the retention period.";
         public string DefaultCron => "0 2 * * *";
         public bool Exclusive => true; // a heavy database writer: conflicts with every other task (see TaskPriorityGate)
 
@@ -41,7 +41,6 @@ namespace Chronicle.Services.Database
             await steps.RunAsync("backup", async t => backedUp = await BackUpAsync(t), ct);
             if (backedUp)
             {
-                await steps.RunAsync("size check", CheckSizeAsync, ct);
                 await steps.RunAsync("maintenance", RunLightMaintenanceAsync, ct);
             }
             await steps.RunAsync("notification purge", PurgeNotificationsAsync, ct);
@@ -65,22 +64,6 @@ namespace Chronicle.Services.Database
             {
                 _log.Information("Database backup skipped: {Reason}", ex.Message);
                 return false;
-            }
-        }
-
-        // The nightly run is also the daily check on how big the database has become.
-        private async Task CheckSizeAsync(CancellationToken ct)
-        {
-            if (_scopes is null) return;
-            var status = await _db.GetStatusAsync(ct);
-            if (status.Supported && status.OverWarnSize)
-            {
-                using var scope = _scopes.CreateScope();
-                await (scope.ServiceProvider.GetService<Notifications.INotificationService>()?.NotifyAdminsAsync(
-                    NotificationKinds.DatabaseSize,
-                    $"The database is {DatabaseAdminService.Format(status.DatabaseBytes + status.WalBytes)}",
-                    $"That is over the {DatabaseAdminService.Format(status.WarnSizeBytes)} warning size. A full rebuild can reclaim free space.",
-                    "/settings/database", dedupeKey: "database-size", ct: ct) ?? Task.FromResult(0));
             }
         }
 

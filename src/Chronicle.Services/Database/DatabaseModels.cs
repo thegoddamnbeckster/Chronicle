@@ -54,8 +54,6 @@ namespace Chronicle.Services.Database
         int BackupCount,
         int RetainCount,
         DateTime? LastBackupAtUtc,
-        long WarnSizeBytes,
-        bool OverWarnSize,
         IReadOnlyList<TableSize> LargestTables);
 
     public sealed record MaintenanceResult(string Summary, TimeSpan Elapsed, long BytesBefore, long BytesAfter);

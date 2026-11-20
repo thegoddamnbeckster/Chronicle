@@ -758,21 +758,6 @@ namespace Chronicle.Tests.Unit.Services
             status.LastBackupAtUtc.Should().NotBeNull();
             status.RetainCount.Should().Be(DatabaseAdminService.DefaultRetain);
             status.BackupDirectory.Should().Be(BackupDir);
-            status.OverWarnSize.Should().BeFalse();
-        }
-
-        [Fact]
-        public async Task Status_FlagsADatabaseOverTheConfiguredWarningSize()
-        {
-            using (var scope = _services.CreateScope())
-            {
-                var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
-                db.Database.ExecuteSqlRaw("CREATE TABLE junk (id INTEGER PRIMARY KEY, blob BLOB)");
-                for (var i = 0; i < 120; i++) db.Database.ExecuteSqlRaw("INSERT INTO junk (blob) VALUES (randomblob(20000))");
-            }
-            SetSetting(DatabaseAdminService.WarnSizeMbKey, "1");
-
-            (await _admin.GetStatusAsync()).OverWarnSize.Should().BeTrue();
         }
 
         [Fact]

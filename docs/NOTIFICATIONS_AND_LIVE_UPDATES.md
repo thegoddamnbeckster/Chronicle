@@ -32,7 +32,6 @@ is about. Notices older than `notifications.retain_days` (default 90) are remove
 | `scan.imported` | the nightly scheduled scan, per folder that imported something | administrators |
 | `task.failed` | a background task that ends with an error an administrator can act on (one unread notice per task) | administrators |
 | `plugin.update` | the plugin update check, once per new version | administrators |
-| `database.size` | the nightly backup, when the database is over its warning size | administrators |
 
 Each person can switch kinds off under Preferences -> Notifications (`mutedNotificationKinds`). A producer can also give a
 *dedupe key*: the same thing is not announced again while the earlier notice is unread (or, for "announce once" things such

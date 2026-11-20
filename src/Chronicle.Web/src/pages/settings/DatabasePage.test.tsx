@@ -27,8 +27,7 @@ const STATUS: api.DatabaseStatus = {
   databaseFile: 'D:\\data\\chronicle.db', databaseBytes: 250 * MB, walBytes: 4 * MB,
   pageSize: 4096, pageCount: 64000, freePages: 2560, reclaimableBytes: 10 * MB, freeDiskBytes: 50 * 1024 * MB,
   latestMigration: '20261007194413_AddApiTokenScope', backupDirectory: 'D:\\data\\backups', backupCount: 2, retainCount: 10,
-  lastBackupAtUtc: '2026-10-07T02:00:00Z', warnSizeBytes: 5120 * MB, overWarnSize: false,
-  largestTables: [{ name: 'media_items', bytes: 90 * MB, rows: null }],
+  lastBackupAtUtc: '2026-10-07T02:00:00Z',  largestTables: [{ name: 'media_items', bytes: 90 * MB, rows: null }],
 }
 
 const BACKUPS: api.BackupInfo[] = [
@@ -71,13 +70,6 @@ describe('DatabasePage', () => {
     expect(screen.queryByRole('button', { name: /Back up now/ })).not.toBeInTheDocument()
   })
 
-  it('raises an alert when the database is over its warning size', async () => {
-    vi.mocked(api.getDatabaseStatus).mockResolvedValue({ ...STATUS, overWarnSize: true })
-    render(<DatabasePage />)
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(/over the 5\.0 GB warning size|over the 5 GB warning size/)
-  })
-
   it('backs up on request and says where it went', async () => {
     vi.mocked(api.createBackup).mockResolvedValue({ ...BACKUPS[0], fileName: 'chronicle-new-manual.zip', sizeBytes: 41 * MB })
     render(<DatabasePage />)
@@ -97,7 +89,7 @@ describe('DatabasePage', () => {
     expect(await screen.findByText('Another database operation is already running.')).toBeInTheDocument()
   })
 
-  it('saves the retention and warning settings as numbers', async () => {
+  it('saves the retention setting as a number', async () => {
     vi.mocked(api.saveDatabaseSettings).mockResolvedValue(STATUS)
     render(<DatabasePage />)
     const keep = await screen.findByLabelText('Backups to keep')
@@ -106,7 +98,7 @@ describe('DatabasePage', () => {
     await userEvent.type(keep, '4')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    await waitFor(() => expect(api.saveDatabaseSettings).toHaveBeenCalledWith({ backupsToKeep: 4, warnSizeMb: 5120 }))
+    await waitFor(() => expect(api.saveDatabaseSettings).toHaveBeenCalledWith({ backupsToKeep: 4 }))
   })
 
   it('deletes only after confirmation', async () => {

@@ -65,8 +65,8 @@ first and refuses with a clear message if short.
 
 ### Size monitoring
 - Page shows file size, WAL size, free pages (reclaimable by VACUUM), and the largest tables.
-- Warning thresholds are `app_settings` (`db.warn_size_mb`), shown as a banner on the Database
-  page and as a notification (section 4).
+- There is deliberately no size warning (removed 2026-11-19): SQLite's limit is terabytes, so file
+  size alone is not actionable.
 - SQLite itself is not near a hard limit at Chronicle's scale; the practical limits are VACUUM
   space and query time. So "free space" tools (VACUUM, purge old logs/refresh-log rows) come
   first.

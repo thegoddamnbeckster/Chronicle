@@ -59,9 +59,9 @@ public class DatabaseController : ControllerBase
 
     // ── settings ──────────────────────────────────────────────────────────────
 
-    public sealed record DatabaseSettingsRequest(int? BackupsToKeep, int? WarnSizeMb);
+    public sealed record DatabaseSettingsRequest(int? BackupsToKeep);
 
-    /// <summary>How many scheduled/manual backups to keep, and the size at which the Database page warns.</summary>
+    /// <summary>How many scheduled/manual backups to keep.</summary>
     [HttpPut("settings")]
     public async Task<IActionResult> PutSettings([FromBody] DatabaseSettingsRequest req, CancellationToken ct)
     {
@@ -70,12 +70,6 @@ public class DatabaseController : ControllerBase
             if (keep < 1 || keep > 365)
                 return BadRequest(ApiResponse<object>.Fail("INVALID_SETTING", "Keep between 1 and 365 backups."));
             await UpsertAsync(DatabaseAdminService.RetainKey, keep.ToString(), ct);
-        }
-        if (req.WarnSizeMb is { } warn)
-        {
-            if (warn < 1 || warn > 100_000_000)
-                return BadRequest(ApiResponse<object>.Fail("INVALID_SETTING", "Enter a size in megabytes of at least 1."));
-            await UpsertAsync(DatabaseAdminService.WarnSizeMbKey, warn.ToString(), ct);
         }
         return Ok(ApiResponse<DatabaseStatus>.Ok(await _admin.GetStatusAsync(ct)));
     }

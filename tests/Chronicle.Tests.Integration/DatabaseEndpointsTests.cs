@@ -261,16 +261,14 @@ namespace Chronicle.Tests.Integration
 
             (await admin.PutAsJsonAsync("/api/v1/database/settings", new { backupsToKeep = 0 })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
             (await admin.PutAsJsonAsync("/api/v1/database/settings", new { backupsToKeep = 9999 })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
-            (await admin.PutAsJsonAsync("/api/v1/database/settings", new { warnSizeMb = -5 })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
-            var ok = await admin.PutAsJsonAsync("/api/v1/database/settings", new { backupsToKeep = 4, warnSizeMb = 2048 });
+            var ok = await admin.PutAsJsonAsync("/api/v1/database/settings", new { backupsToKeep = 4 });
             ok.StatusCode.Should().Be(HttpStatusCode.OK);
             var data = (await Json(ok)).GetProperty("data");
             data.GetProperty("retainCount").GetInt32().Should().Be(4);
-            data.GetProperty("warnSizeBytes").GetInt64().Should().Be(2048L * 1024 * 1024);
 
-            // Put the defaults back for the other tests sharing this database.
-            await admin.PutAsJsonAsync("/api/v1/database/settings", new { backupsToKeep = 10, warnSizeMb = 5120 });
+            // Put the default back for the other tests sharing this database.
+            await admin.PutAsJsonAsync("/api/v1/database/settings", new { backupsToKeep = 10 });
         }
 
         // ══ the scheduled tasks are registered ════════════════════════════════

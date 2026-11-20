@@ -24,8 +24,6 @@ export interface DatabaseStatus {
   backupCount: number
   retainCount: number
   lastBackupAtUtc: string | null
-  warnSizeBytes: number
-  overWarnSize: boolean
   largestTables: TableSize[]
 }
 
@@ -57,7 +55,7 @@ export async function getDatabaseStatus(): Promise<DatabaseStatus> {
   return data.data!
 }
 
-export async function saveDatabaseSettings(settings: { backupsToKeep?: number; warnSizeMb?: number }): Promise<DatabaseStatus> {
+export async function saveDatabaseSettings(settings: { backupsToKeep?: number }): Promise<DatabaseStatus> {
   const { data } = await client.put<ApiResponse<DatabaseStatus>>('/database/settings', settings)
   return data.data!
 }

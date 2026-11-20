@@ -55,10 +55,8 @@ namespace Chronicle.Services.Database
         public const string DbEntryName = "chronicle.db";
         public const string ManifestEntryName = "manifest.json";
         public const string RetainKey = "backup.retain";
-        public const string WarnSizeMbKey = "db.warn_size_mb";
         public const int DefaultRetain = 10;
         public const int PreRestoreRetain = 3;
-        public const long DefaultWarnSizeMb = 5 * 1024;
 
         private static readonly Regex SafeName = new(@"^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.zip$", RegexOptions.Compiled);
         private static readonly string[] CountedTables = ["users", "media_items", "interaction_events", "user_libraries"];
@@ -148,12 +146,10 @@ namespace Chronicle.Services.Database
             using var scope = _scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
             var loc = Locate(db);
-            var warnMb = (long)await GetSettingAsync(db, WarnSizeMbKey, DefaultWarnSizeMb);
             var retain = (int)await GetSettingAsync(db, RetainKey, DefaultRetain);
 
             if (!loc.Supported)
-                return new DatabaseStatus(false, loc.Provider, loc.Note, null, 0, 0, 0, 0, 0, 0, 0, null, null, 0, retain, null,
-                    warnMb * 1024 * 1024, false, []);
+                return new DatabaseStatus(false, loc.Provider, loc.Note, null, 0, 0, 0, 0, 0, 0, 0, null, null, 0, retain, null, []);
 
             long dbBytes = FileLength(loc.DbFile!);
             long walBytes = FileLength(loc.DbFile + "-wal");
@@ -192,7 +188,6 @@ namespace Chronicle.Services.Database
                 ReclaimableBytes: freePages * pageSize, FreeDiskBytes: _freeDisk(loc.Dir!), LatestMigration: latest,
                 BackupDirectory: loc.BackupDir, BackupCount: backups.Count, RetainCount: retain,
                 LastBackupAtUtc: regular.Count == 0 ? null : regular.Max(b => b.CreatedAtUtc),
-                WarnSizeBytes: warnMb * 1024 * 1024, OverWarnSize: dbBytes + walBytes > warnMb * 1024 * 1024,
                 LargestTables: tables);
         }
 

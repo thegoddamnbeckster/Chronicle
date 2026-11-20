@@ -57,7 +57,6 @@ export default function DatabasePage() {
   const [busy, setBusy] = useState('')
 
   const [keep, setKeep] = useState('')
-  const [warnMb, setWarnMb] = useState('')
 
   const [restoring, setRestoring] = useState<BackupInfo | null>(null)
   const [typed, setTyped] = useState('')
@@ -72,7 +71,6 @@ export default function DatabasePage() {
       setStatus(s)
       setBackups(b)
       setKeep(String(s.retainCount))
-      setWarnMb(String(Math.round(s.warnSizeBytes / 1024 / 1024)))
       setError('')
     } catch (err) {
       setError(message(err, 'Could not load the database status.'))
@@ -163,13 +161,6 @@ export default function DatabasePage() {
         </div>
       ) : (
         <>
-          {status.overWarnSize && (
-            <p className={styles.error} role="alert">
-              The database is {formatBytes(status.databaseBytes + status.walBytes)}, over the {formatBytes(status.warnSizeBytes)} warning
-              size. Run a full rebuild to reclaim free space, or consider moving to PostgreSQL.
-            </p>
-          )}
-
           <div className={styles.card}>
             <h2 className={styles.cardTitle}>Status</h2>
             <dl>
@@ -205,14 +196,9 @@ export default function DatabasePage() {
                 <input id="db-keep" type="number" min={1} max={365} className={styles.textInput}
                        value={keep} onChange={e => setKeep(e.target.value)} />
               </div>
-              <div className={styles.formGroup}>
-                <label className={styles.label} htmlFor="db-warn">Warn when larger than (MB)</label>
-                <input id="db-warn" type="number" min={1} className={styles.textInput}
-                       value={warnMb} onChange={e => setWarnMb(e.target.value)} />
-              </div>
               <button className={styles.createBtn} disabled={!!busy}
                       onClick={() => void run('Save', async () => {
-                        await saveDatabaseSettings({ backupsToKeep: Number(keep), warnSizeMb: Number(warnMb) })
+                        await saveDatabaseSettings({ backupsToKeep: Number(keep) })
                         return 'Settings saved.'
                       })}>
                 Save

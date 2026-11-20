@@ -252,43 +252,6 @@ public class NotificationProducersTests : IDisposable
         await PluginUpdateCheckService.AnnounceUpdatesAsync(null, [new Plugin { PluginId = "x", Name = "X", Version = "1", LatestVersionAvailable = "2" }], default);
     }
 
-    // ══ the database is getting big ═══════════════════════════════════════════
-
-    private static DatabaseStatus Status(bool over) =>
-        new(true, "Sqlite", null, "d.db", 6_000_000_000, 0, 4096, 1, 0, 0, 1, "m", "b", 1, 10, null, 5_000_000_000, over, []);
-
-    [Fact]
-    public async Task ANightlyBackup_RaisesTheSizeWarning_OnlyWhenOverTheThreshold_AndNotEveryNight()
-    {
-        var admin = new Mock<IDatabaseAdminService>();
-        admin.Setup(a => a.CreateBackupAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BackupInfo("b.zip", "scheduled", 1, DateTime.UtcNow, null, null, null));
-        var task = new DatabaseBackupTask(admin.Object, Scopes());
-
-        admin.Setup(a => a.GetStatusAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Status(over: false));
-        await task.ExecuteAsync(default);
-        _db.Notifications.Should().BeEmpty();
-
-        admin.Setup(a => a.GetStatusAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Status(over: true));
-        await task.ExecuteAsync(default);
-        await task.ExecuteAsync(default);
-
-        var n = Notices(NotificationKinds.DatabaseSize).Should().ContainSingle().Subject;
-        n.Title.Should().Contain("5.6 GB");
-        n.Link.Should().Be("/settings/database");
-    }
-
-    [Fact]
-    public async Task AnUnsupportedDatabase_SkipsTheBackupAndTheSizeCheck()
-    {
-        var admin = new Mock<IDatabaseAdminService>();
-        admin.Setup(a => a.CreateBackupAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new DatabaseAdminException("UNSUPPORTED", "no"));
-
-        await new DatabaseBackupTask(admin.Object, Scopes()).ExecuteAsync(default);
-
-        admin.Verify(a => a.GetStatusAsync(It.IsAny<CancellationToken>()), Times.Never);
-    }
-
     // ══ a scheduled scan found something ══════════════════════════════════════
 
     [Fact]
