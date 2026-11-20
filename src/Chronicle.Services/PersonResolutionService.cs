@@ -50,30 +50,13 @@ public class PersonResolutionService(
         int? billingOrder,
         CancellationToken ct = default)
     {
+        // One credit is a list of one: the same rules apply whichever way a credit arrives, including the title evidence that
+        // decides whether a name match is the same person (see ResolveAndRecordCreditsAsync).
         if (string.IsNullOrWhiteSpace(personName))
             return;
 
-        var person = await ResolvePersonOnlyAsync(db, personName, externalPersonId, source, ct);
-
-        // Step 5: accumulate the headshot, if supplied (feed path 2 of Section 1.5 -- a credit
-        // on someone else's title).
-        if (!string.IsNullOrWhiteSpace(profileImageUrl))
-            await RecordHeadshotsIfNewAsync(db, person, [(profileImageUrl, null)], source, ct);
-
-        // Step 6: write the credit row itself -- one row per call; the caller owns clearing any
-        // prior rows for (titleMediaItemId, source) before looping, same delete-and-reinsert
-        // pattern SyncOrchestrationService.FetchAndStoreCreditsAsync already uses.
-        db.MediaCredits.Add(new MediaCredit
-        {
-            MediaItemId       = titleMediaItemId,
-            PersonName        = personName,
-            Role              = role,
-            CharacterName     = characterName,
-            BillingOrder      = billingOrder,
-            Source            = source,
-            ExternalPersonId  = externalPersonId,
-            PersonMediaItemId = person.Id,
-        });
+        await ResolveAndRecordCreditsAsync(db, titleMediaItemId,
+            [new CreditToRecord(personName, externalPersonId, profileImageUrl, role, characterName, billingOrder)], source, ct);
     }
 
     /// <summary>
@@ -213,6 +196,27 @@ public class PersonResolutionService(
                 return ids is not null && ids.Any(x => x != extId);
             }
 
+            // What other providers already credited on THIS title: the evidence that decides whether a name match is the same person.
+            // Only needed when some credit carries an id (a credit with no id can only ever be matched by name, as before).
+            var onTitle = new List<TitleCredit>();
+            if (list.Any(c => Id(c) is not null))
+            {
+                onTitle = await (from k in db.MediaCredits.AsNoTracking()
+                                 where k.MediaItemId == titleMediaItemId && k.PersonMediaItemId != null && k.Source != source
+                                 select new TitleCredit(k.PersonMediaItemId!.Value, k.PersonName, k.Role, k.CharacterName, k.Source ?? ""))
+                    .ToListAsync(ct);
+                var missing = onTitle.Select(t => t.PersonId).Distinct().Where(id => !recordsById.ContainsKey(id)).ToList();
+                foreach (var chunk in missing.Chunk(500))
+                    foreach (var m in await db.MediaItems.Where(m => chunk.Contains(m.Id) && m.MediaTypeId == peopleTypeId).ToListAsync(ct))
+                        recordsById[m.Id] = m;
+                var evidenceIds = onTitle.Select(t => t.PersonId).Distinct().Where(recordsById.ContainsKey).ToList();
+                foreach (var chunk in evidenceIds.Where(id => !extIdsOf.ContainsKey(id)).Chunk(500))
+                    foreach (var x in await db.MediaExternalIds
+                                 .Where(x => x.Source == source && chunk.Contains(x.MediaItemId))
+                                 .Select(x => new { x.MediaItemId, x.ExternalId }).ToListAsync(ct))
+                        (extIdsOf.TryGetValue(x.MediaItemId, out var s2) ? s2 : extIdsOf[x.MediaItemId] = new HashSet<string>(StringComparer.Ordinal)).Add(x.ExternalId);
+            }
+
             for (var i = 0; i < list.Count; i++)
             {
                 var c = list[i];
@@ -225,12 +229,25 @@ public class PersonResolutionService(
                     var loose = MediaItemNormalizer.NormalizeNameLoose(c.PersonName);
                     if (loose.Length > 0)
                     {
+                        // A credit that carries an id is matched to an existing person only when something proves it: the title
+                        // already credits that person under another provider. A name alone is how a different real person
+                        // with the same name got welded onto a record (live, 2026-11-19: a sound editor's TMDB id attached to
+                        // the IMDb record of Michael J. Fox, a film editor's to Tom Wilson's, and the real TMDB credit then
+                        // refused that record and made a second one). A credit with no id keeps matching by name: there is
+                        // nothing else to go on.
+                        var proven = extId is null ? null : ProvenOnTitle(c, onTitle, recordsById, p => !Conflicts(p, extId));
+
                         var nameMatch = dbByNorm.GetValueOrDefault(norm) ?? newByNorm.GetValueOrDefault(norm);
-                        if (nameMatch is not null && !Conflicts(nameMatch, extId)) person = nameMatch;
+                        if (extId is null && nameMatch is not null && !Conflicts(nameMatch, extId)) person = nameMatch;
+                        else if (extId is not null && nameMatch is not null && (proven?.Id == nameMatch.Id || nameMatch.Id == 0) && !Conflicts(nameMatch, extId))
+                            person = nameMatch;   // (Id 0: a person created earlier in this same batch, so already on this title)
+                        if (person is null && extId is not null) person = proven;
                         if (person is null)
                         {
                             var looseMatch = dbByLoose.GetValueOrDefault(loose) ?? newByLoose.GetValueOrDefault(loose);
-                            if (looseMatch is not null && !Conflicts(looseMatch, extId)) person = looseMatch;
+                            if (looseMatch is not null && !Conflicts(looseMatch, extId) &&
+                                (extId is null || proven?.Id == looseMatch.Id || looseMatch.Id == 0))
+                                person = looseMatch;
                         }
                     }
 
@@ -316,6 +333,30 @@ public class PersonResolutionService(
             var urls = group.Select(x => (x.ProfileImageUrl!, (string?)null)).Distinct().ToList();
             await RecordHeadshotsIfNewAsync(db, group.First().Person, urls, source, ct);
         }
+    }
+
+    private sealed record TitleCredit(int PersonId, string Name, string Role, string? Character, string Source);
+
+    /// <summary>
+    /// The person another provider already credited on this title as the same one as <paramref name="c"/>: the same role, and the
+    /// rule the cast list uses (<see cref="CastCollapser.SameOnTitle"/>) - the same name, or a shortened first name with the same
+    /// surname and character. Null when nothing on the title proves it. <paramref name="usable"/> rejects a person who already holds
+    /// a different id from this credit's source.
+    /// </summary>
+    private static MediaItem? ProvenOnTitle(
+        CreditToRecord c, List<TitleCredit> onTitle, Dictionary<int, MediaItem> records, Func<MediaItem, bool> usable)
+    {
+        if (onTitle.Count == 0) return null;
+        var mine = CastCollapser.NormalizedCharacters([(c.Role, c.CharacterName)]);
+        foreach (var t in onTitle.OrderBy(t => t.PersonId))
+        {
+            if (!string.Equals(t.Role, c.Role, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!records.TryGetValue(t.PersonId, out var p) || !usable(p)) continue;
+            var theirs = CastCollapser.NormalizedCharacters([(t.Role, t.Character)]);
+            if (CastCollapser.SameOnTitle(c.PersonName, mine, new HashSet<string>(), t.Name, theirs, new HashSet<string> { t.Source.ToLowerInvariant() }))
+                return p;
+        }
+        return null;
     }
 
     /// <summary>

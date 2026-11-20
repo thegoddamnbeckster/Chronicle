@@ -284,7 +284,6 @@ builder.Services.AddHostedService<PluginHostService>();
 builder.Services.AddSingleton<DuplicateCleanupService>();
 builder.Services.AddSingleton<DuplicateCandidateScanService>();
 builder.Services.AddSingleton<DuplicatePersonAutoResolveService>();
-builder.Services.AddSingleton<PersonCreditConsolidationService>();
 builder.Services.AddSingleton<IScheduledTask, DuplicateMaintenanceTask>();
 
 // The three repair passes are plain singletons; ONE scheduled task runs them all in order.
