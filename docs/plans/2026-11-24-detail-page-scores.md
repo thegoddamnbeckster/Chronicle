@@ -53,6 +53,35 @@ A plugin declares its source's style and star (3.2). With no declaration the sco
 star. Rounding: `outOf` keeps at most one decimal and drops a trailing `.0` (`8/10`); `percent` rounds to a whole number. Next to the
 score, small and muted: the vote count when known (`788K votes`; the exact number in the tooltip).
 
+### 2.1 Mimicking the source (widget looks) and sources with more than one score
+
+"Make it look like the score came from the source's site" is data, not code: a manifest declares a `look` for a source, and the host has a
+small set of generic renderers that any plugin can pick (no renderer or manifest names a plugin):
+
+| `look` | Renders | Example source |
+|--------|---------|----------------|
+| `plain` (default) | mark, then the score in the section 2 style | most sources |
+| `star-text` | one filled star, the score in bold, `/10` smaller and muted, the vote count under it in grey | IMDb |
+| `ring` | a circular progress ring with the whole-number percent inside, ring colour chosen by `thresholds` | TMDB |
+| `icon-percent` | a state icon followed by a percent | Rotten Tomatoes (both scores) |
+| `badge` | a coloured square holding the number, colour chosen by `thresholds` | Metacritic (green / yellow / red) |
+
+Parameters live in the manifest beside it: `thresholds` (`[{ min, color, icon }]`, so one rule picks both colour and the state icon),
+`font_family`, brand colours. Fonts: only open-licence fonts are bundled; where a site's typeface is proprietary the nearest system or
+open font is used and a manifest may name a `font_url` the host fetches and caches at runtime like logos (decision 5). Before any source's
+`look` is written its real widget is inspected (structure, colours, thresholds); until then it gets `plain`.
+
+**More than one score from one source.** The collector's `variant` (design 5) is the answer, and each variant has its own mark and its own
+state icon. Rotten Tomatoes has two: **Tomatometer** (critics; a fresh tomato at 60% or more, a splat when rotten, a certified-fresh seal only
+if the source supplies that flag) and **Popcornmeter** (audience; a full bucket at 60% or more, a tipped bucket below). Metacritic likewise has the
+**Metascore** (critics) and the **user score**. So a source declares `variants: [{ variant, label, look, thresholds }]`, and the badge
+chosen is by `(key, variant)`. TMDB and IMDb are single-variant.
+
+**What data exists.** Showing these needs a plugin that supplies them. OMDb relays only RT's critics Tomatometer and the Metascore, and
+shows nothing for the two audience scores. Rotten Tomatoes has no free API, so a dedicated plugin was rejected. **Any plugin that
+supplies RT or Metacritic scores in the contract shape (`key: rottentomatoes`, `variant: critics|audience`) is shown with no change to the host**,
+whether it is OMDb, a future plugin, or a user-supplied one; and the display is ready for the audience scores the moment one exists.
+
 ## 3. Design
 
 ### 3.1 One collector, on the server
@@ -156,8 +185,7 @@ Required for correct display (without them the result is wrong or bare, section 
 ## 5. Out of scope
 
 The `media_ratings` table; library sort/filter by score; Kodi changes; rating history; a Settings -> Ratings page; the user's own
-rating (unchanged); Rotten Tomatoes as a *plugin* (rejected earlier; OMDb relaying its score is a different thing and is only shown
-once OMDb emits the contract shape).
+rating (unchanged); Building a Rotten Tomatoes *plugin* (no free API; rejected). Its scores are shown whenever any plugin supplies them (2.1).
 
 ## 6. Risks
 
@@ -181,6 +209,8 @@ once OMDb emits the contract shape).
    typeface and colour is used.
 6. **Which other sources show a star?** You gave IMDb (star) and TMDB (none). For every other plugin I will look at its site before
    declaring anything, and a source I could not verify gets no star (the safe default). Tell me if you already know any.
+
+7a. **Look fidelity (2.1):** the widget kinds above are built generically; each source's exact look needs its site inspected first, which the built-in browser could not open (TMDB was refused). May I use Claude in Chrome, or will you allow the site, to inspect them?
 
 ## 8. Order of work
 
