@@ -295,6 +295,24 @@ Key invariants (see `DescendantsService`, `ShowStructureService`, `FileScanServi
 - Restarting the API signs every browser session out (sessions are in memory). A job of more than a few minutes belongs on the
   server (set the rows Pending and `POST /api/v1/enrichment/{pluginId}/run`), never in a browser tab.
 
+## Removing a plugin
+
+One process, always (`PluginService.UninstallPluginAsync` / `CompleteRemovalAsync`): a plugin is removed together with everything it
+put in Chronicle, never merely hidden or disabled. Do not delete a plugin's folder or row by hand.
+
+- It is **recorded first** (an `app_settings` marker `plugin_removal.{pluginId}`, the plugin disabled and unloaded), done in **small
+  atomic steps** (chunks of rows, batches of items; no single huge transaction, because SQLite's write lock would block every other
+  task), and the plugin's own record and the marker are deleted **last**. A removal cut short stays visibly "being removed" and
+  `PluginHostService` finishes it at the next start. Every step removes only what is left, so running it again is harmless.
+- It removes: `media_enrichment` rows, `media_external_ids`, `media_credits`, `person_headshots` and `person_provider_credits` for the
+  plugin's source, its background tasks, notifications keyed by its id, its top-level key in every item's `MetadataJson` (each such
+  item is re-resolved so nothing it supplied lingers in `_resolved`), its entries in `metadata_assignment.config`,
+  `plugin_display_order.config` and `scheduler.task_priority_order`, any setting keyed by its id, and finally its own folder inside
+  the plugins folder (a folder outside it is never deleted). It leaves the user's own data: library entries, ratings, watch history.
+- An enabled plugin whose files are **missing at startup** is not purged on a guess (an unmounted drive looks the same): administrators
+  get a one-time `plugin.missing` notification, and removing it on the Plugins page removes its data with it.
+- Disabling a plugin is not removing it: its data stays so it can be switched back on.
+
 ## Documentation Reference
 
 Full specs live in `docs/` — consult before implementing any feature:

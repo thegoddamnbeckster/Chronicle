@@ -38,10 +38,18 @@ public interface IPluginService
     Task DisablePluginAsync(int id);
 
     /// <summary>
-    /// Removes the plugin record from the database and unloads it from the registry.
-    /// Does NOT delete the DLL from disk.
+    /// The one process for removing a plugin, always followed: records the removal, unloads the plugin, removes everything it put
+    /// in Chronicle (enrichment rows, external ids, credits, headshots, person credits, background tasks, notifications, its data
+    /// on every item with the resolved values recomputed, and its entries in the settings that name plugins), then its record,
+    /// and last its own folder. Safe to run again after an interruption (see <see cref="CompleteRemovalAsync"/>).
     /// </summary>
     Task UninstallPluginAsync(int id);
+
+    /// <summary>
+    /// Finishes a removal that was begun and not completed (a marker exists in app_settings), or removes the leftovers of a plugin
+    /// whose record is already gone. Idempotent: each step removes only what is still there.
+    /// </summary>
+    Task CompleteRemovalAsync(string pluginId, CancellationToken ct = default);
 
     /// <summary>
     /// Unloads the plugin assembly from the registry, releasing the file lock on its DLL,

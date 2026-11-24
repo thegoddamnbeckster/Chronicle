@@ -2,6 +2,7 @@ using System.Text.Json;
 using Chronicle.Core.Models;
 using Chronicle.Data;
 using Chronicle.Plugins.Models;
+using Chronicle.Services.Notifications;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -67,6 +68,15 @@ public sealed class PluginHostService : IHostedService
                 _log.Warning(
                     "Plugin {PluginId} DLL not found at {DllPath} — skipping",
                     plugin.PluginId, plugin.DllPath);
+
+                // Its files may have been deleted outside Chronicle. Its data is NOT removed on a guess (a drive that is not mounted
+                // looks the same); an administrator is told once, and removing it through Chronicle removes the data with it.
+                var notifications = scope.ServiceProvider.GetService<INotificationService>();
+                if (notifications is not null)
+                    await notifications.NotifyAdminsAsync(NotificationKinds.PluginMissing,
+                        $"{plugin.Name}'s files are missing",
+                        "Chronicle cannot run it. If you removed it on purpose, remove it on the Plugins page so its data goes with it.",
+                        "/plugins", dedupeKey: $"plugin.missing:{plugin.PluginId}", once: true, ct: cancellationToken);
                 continue;
             }
 
@@ -87,6 +97,11 @@ public sealed class PluginHostService : IHostedService
                     plugin.PluginId, plugin.DllPath);
             }
         }
+
+        // A removal that was begun and not finished (the app stopped, the database was busy) is finished now, in the background:
+        // a plugin is never left half-removed.
+        QueueUnfinishedRemovals(await db.AppSettings.AsNoTracking()
+            .Where(s => s.Key.StartsWith(PluginService.RemovalMarkerPrefix)).Select(s => s.Key).ToListAsync(cancellationToken));
 
         // Sync media types declared by loaded plugins into the media_types table.
         // This makes the type list fully plugin-driven: installing a new plugin that
@@ -109,6 +124,27 @@ public sealed class PluginHostService : IHostedService
         QueueCachedCreditsBackfill();
 
         _log.Information("PluginHostService startup complete");
+    }
+
+    private void QueueUnfinishedRemovals(List<string> markerKeys)
+    {
+        if (markerKeys.Count == 0) return;
+        _ = Task.Run(async () =>
+        {
+            foreach (var pluginId in markerKeys.Select(k => k[PluginService.RemovalMarkerPrefix.Length..]))
+            {
+                try
+                {
+                    _log.Information("Finishing the unfinished removal of plugin {PluginId}", pluginId);
+                    await using var scope = _scopeFactory.CreateAsyncScope();
+                    await scope.ServiceProvider.GetRequiredService<IPluginService>().CompleteRemovalAsync(pluginId);
+                }
+                catch (Exception ex)
+                {
+                    _log.Error(ex, "Could not finish removing plugin {PluginId}; it will be tried again at the next start", pluginId);
+                }
+            }
+        });
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

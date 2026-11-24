@@ -17,6 +17,7 @@ public class PluginService : IPluginService
     private readonly IPluginRegistry   _registry;
     private readonly IPluginSettingsProtector _protector;
     private readonly IPluginIntegrity? _integrity;
+    private readonly IMetadataResolutionService? _resolver;
     private readonly ILogger _log = Log.ForContext<PluginService>();
 
     // Per-plugin semaphore: serialises concurrent MergeSettingsAsync calls so that two
@@ -27,12 +28,13 @@ public class PluginService : IPluginService
         _settingsLocks.GetOrAdd(pluginId, _ => new SemaphoreSlim(1, 1));
 
     public PluginService(ChronicleDbContext db, IPluginRegistry registry, IPluginSettingsProtector protector,
-        IPluginIntegrity? integrity = null)
+        IPluginIntegrity? integrity = null, IMetadataResolutionService? resolver = null)
     {
         _db = db;
         _registry = registry;
         _protector = protector;
         _integrity = integrity;
+        _resolver = resolver;
     }
 
     public async Task<List<Plugin>> GetAllPluginsAsync() =>
@@ -302,110 +304,197 @@ public class PluginService : IPluginService
         _log.Information("Disabled plugin {PluginId}", plugin.PluginId);
     }
 
+    // ── Removing a plugin ─────────────────────────────────────────────────────
+    //
+    // One process, always: a plugin is removed together with everything it put in Chronicle -- never merely hidden. Removal is
+    // recorded first (a marker in app_settings, the plugin disabled and unloaded), then done in small atomic steps, and the
+    // plugin's own record is deleted LAST. A removal cut short (a crash, a restart, a locked database) therefore leaves the
+    // plugin visibly "being removed" and is finished on the next start (PluginHostService); it is never half-removed in a way
+    // nobody can tell. One enormous transaction would hold SQLite's write lock for minutes, blocking every other task, for a
+    // plugin that touched tens of thousands of items.
+
+    /// <summary>The app_settings key that marks a plugin's removal as begun and not yet finished.</summary>
+    public const string RemovalMarkerPrefix = "plugin_removal.";
+    public static string RemovalMarkerKey(string pluginId) => RemovalMarkerPrefix + pluginId;
+
+    private const int PurgeChunk = 2000;
+    private const int PartitionBatch = 200;
+
     public async Task UninstallPluginAsync(int id)
     {
         var plugin = await _db.Plugins.FindAsync(id)
             ?? throw new InvalidOperationException($"Plugin with id {id} not found.");
 
-        _registry.UnloadPlugin(id);
-
-        // Purge every holdover this plugin left behind -- per-user request (2026-08-30):
-        // "if it's uninstalled, it means there are no holdovers allowed." Previously
-        // media_enrichment/media_external_ids rows and the plugin's own MetadataJson
-        // partition were deliberately kept "for a future reinstall" -- but that meant a
-        // fully-removed plugin's data (and its per-item metadata box on MediaDetailPage)
-        // lingered forever, indistinguishable from a still-installed plugin's data. A
-        // reinstall now just re-seeds from scratch like installing a brand-new plugin would.
-        var enrichmentRows = await _db.MediaEnrichments
-            .Where(e => e.PluginId == plugin.PluginId)
-            .ToListAsync();
-        if (enrichmentRows.Count > 0)
-            _db.MediaEnrichments.RemoveRange(enrichmentRows);
-
-        // MediaExternalIds, MediaCredits, and PersonHeadshots are all keyed by the SHORT source
-        // form (PluginIdHelper.ToSource), not the full plugin id -- confirmed against every
-        // write site (MetadataEnrichmentService's UpsertExternalIdForEnrichmentAsync call,
-        // ResolveCreditsAsync, and PersonResolutionService.RecordOwnPortraitAsync/
-        // RecordHeadshotsIfNewAsync all pass PluginIdHelper.ToSource(pluginId) through, never
-        // the full id) -- PersonHeadshot's own doc comment gives a full-id example ("chronicle.
-        // plugin.tmdb") but that's stale; the actual column value is short form ("tmdb"). Found
-        // 2026-09-14 as a real gap: chronicle.plugin.thetvdb had been uninstalled well before
-        // this predates, but only its MediaEnrichment rows had ever been purged (by hand, since
-        // this method didn't exist yet) -- had it had any MediaCredit/PersonHeadshot rows, those
-        // would have kept dangling here too, same as MediaEnrichment did.
-        var sourceKey = PluginIdHelper.ToSource(plugin.PluginId);
-        var externalIdRows = await _db.MediaExternalIds
-            .Where(e => e.Source == sourceKey)
-            .ToListAsync();
-        if (externalIdRows.Count > 0)
-            _db.MediaExternalIds.RemoveRange(externalIdRows);
-
-        var creditRows = await _db.MediaCredits
-            .Where(c => c.Source == sourceKey)
-            .ToListAsync();
-        if (creditRows.Count > 0)
-            _db.MediaCredits.RemoveRange(creditRows);
-
-        // INSERT-only and never overwritten (see PersonHeadshot's own doc) -- so unlike
-        // MediaCredit (rewritten wholesale on every enrichment run), a headshot this plugin
-        // discovered has no other path that would ever naturally clear it out.
-        var headshotRows = await _db.PersonHeadshots
-            .Where(h => h.Source == sourceKey)
-            .ToListAsync();
-        if (headshotRows.Count > 0)
-            _db.PersonHeadshots.RemoveRange(headshotRows);
-
-        // Strip this plugin's own top-level key from MetadataJson on every item that has one.
-        // Deliberately NOT scoped to items with a MediaEnrichment row for this plugin: a
-        // movie-collection CONTAINER's own MetadataJson partition is written directly by
-        // MovieCollectionService.PersistCollectionMetadataAsync with no corresponding
-        // MediaEnrichment row at all -- collections can't go through the normal enrichment
-        // pipeline in the first place (see that method's own doc) -- so scoping this to
-        // enrichment-linked items only would leave a stale metadata box on every collection
-        // this plugin ever enriched, forever: the exact "phantom metadata box" symptom the
-        // 2026-08-30 fix was supposed to kill. A plain string Contains() candidate filter is
-        // cheap and sufficient here (this codebase already does the same substring-over-
-        // MetadataJson pattern elsewhere, e.g. MovieCollectionService's own belongsToCollection
-        // check) -- the actual removal below only acts on an exact top-level JSON key match, so
-        // a substring false positive just costs one harmless no-op parse.
-        var items = await _db.MediaItems
-            .Where(m => m.MetadataJson != null && m.MetadataJson.Contains(plugin.PluginId))
-            .ToListAsync();
-        var strippedItemCount = 0;
-        foreach (var item in items)
-        {
-            try
-            {
-                var root = JsonNode.Parse(item.MetadataJson!)?.AsObject();
-                if (root is not null && root.Remove(plugin.PluginId))
-                {
-                    item.MetadataJson = root.ToJsonString();
-                    strippedItemCount++;
-                }
-            }
-            catch (JsonException)
-            {
-                // Malformed JSON on this row predates this cleanup -- leave it alone
-                // rather than risk losing whatever else is in it.
-            }
-        }
-
-        _db.Plugins.Remove(plugin);
-
-        var tasks = await _db.BackgroundTasks
-            .Where(t => t.PluginId == plugin.PluginId)
-            .ToListAsync();
-        if (tasks.Count > 0)
-            _db.BackgroundTasks.RemoveRange(tasks);
-
+        plugin.IsEnabled = false;
+        plugin.UpdatedAt = DateTime.UtcNow;
+        var key = RemovalMarkerKey(plugin.PluginId);
+        var marker = await _db.AppSettings.FindAsync(key);
+        if (marker is null) _db.AppSettings.Add(new AppSetting { Key = key, Value = DateTimeOffset.UtcNow.ToString("O") });
         await _db.SaveChangesAsync();
 
+        await CompleteRemovalAsync(plugin.PluginId);
+    }
+
+    public async Task CompleteRemovalAsync(string pluginId, CancellationToken ct = default)
+    {
+        var plugin = await _db.Plugins.AsNoTracking().FirstOrDefaultAsync(p => p.PluginId == pluginId, ct);
+        if (plugin is not null) _registry.UnloadPlugin(plugin.Id);   // a no-op when it is not loaded
+        var folder = plugin is null ? null : Path.GetDirectoryName(Path.GetFullPath(plugin.DllPath));
+        var sourceKey = PluginIdHelper.ToSource(pluginId);
+
+        // Every step removes only what is still there, so a run cut short is simply run again.
+        var enrichment = await RemoveInChunksAsync(() => _db.MediaEnrichments.Where(e => e.PluginId == pluginId), ct);
+
+        // MediaExternalIds, MediaCredits, PersonHeadshots and PersonProviderCredits are all keyed by the SHORT source form
+        // (PluginIdHelper.ToSource), not the full plugin id: confirmed against every write site.
+        var externalIds = await RemoveInChunksAsync(() => _db.MediaExternalIds.Where(e => e.Source == sourceKey), ct);
+        var credits     = await RemoveInChunksAsync(() => _db.MediaCredits.Where(c => c.Source == sourceKey), ct);
+        var headshots   = await RemoveInChunksAsync(() => _db.PersonHeadshots.Where(h => h.Source == sourceKey), ct);
+        var personCredits = await RemoveInChunksAsync(() => _db.PersonProviderCredits.Where(c => c.Source == sourceKey), ct);
+        var tasks       = await RemoveInChunksAsync(() => _db.BackgroundTasks.Where(t => t.PluginId == pluginId), ct);
+        var notices     = await RemoveInChunksAsync(() => _db.Notifications.Where(n => n.DedupeKey != null && n.DedupeKey.Contains(pluginId)), ct);
+
+        var items = await StripPluginDataFromItemsAsync(pluginId, ct);
+        var settings = await ScrubPluginFromSettingsAsync(pluginId, ct);
+
+        // The plugin's own record and the marker go together, last: until this commits the plugin is still listed, as being removed.
+        _db.ChangeTracker.Clear();
+        var row = await _db.Plugins.FirstOrDefaultAsync(p => p.PluginId == pluginId, ct);
+        if (row is not null) _db.Plugins.Remove(row);
+        var marker = await _db.AppSettings.FindAsync([RemovalMarkerKey(pluginId)], ct);
+        if (marker is not null) _db.AppSettings.Remove(marker);
+        await _db.SaveChangesAsync(ct);
+
+        // Files last, and never inside the database work: they cannot be rolled back. Only the plugin's own folder inside the
+        // plugins folder is removed (its DLL, its manifest, and whatever data it kept there).
+        var files = RemovePluginFolder(folder);
+
         _log.Information(
-            "Uninstalled plugin {PluginId} (db id {Id}) -- purged {EnrichmentCount} enrichment rows, " +
-            "{ExternalIdCount} external ids, {CreditCount} credits, {HeadshotCount} headshots, " +
-            "metadata JSON on {ItemCount} items, {TaskCount} background tasks",
-            plugin.PluginId, id, enrichmentRows.Count, externalIdRows.Count, creditRows.Count,
-            headshotRows.Count, strippedItemCount, tasks.Count);
+            "Removed plugin {PluginId} -- {EnrichmentCount} enrichment rows, {ExternalIdCount} external ids, {CreditCount} credits, " +
+            "{HeadshotCount} headshots, {PersonCreditCount} person credits, {TaskCount} background tasks, {NoticeCount} notifications, " +
+            "data on {ItemCount} items re-resolved, {SettingCount} settings cleaned, folder {Files}",
+            pluginId, enrichment, externalIds, credits, headshots, personCredits, tasks, notices, items, settings, files);
+    }
+
+    /// <summary>Deletes every row the query returns, a chunk at a time (each chunk atomic), and returns how many there were.</summary>
+    private async Task<int> RemoveInChunksAsync<T>(Func<IQueryable<T>> query, CancellationToken ct) where T : class
+    {
+        var total = 0;
+        while (true)
+        {
+            var chunk = await query().Take(PurgeChunk).ToListAsync(ct);
+            if (chunk.Count == 0) return total;
+            _db.RemoveRange(chunk);
+            await _db.SaveChangesAsync(ct);
+            _db.ChangeTracker.Clear();
+            total += chunk.Count;
+        }
+    }
+
+    /// <summary>
+    /// Removes the plugin's own top-level key from MetadataJson on every item that has one and re-resolves each such item, so
+    /// nothing the plugin supplied lingers in the resolved values either. Deliberately NOT scoped to items with an enrichment row:
+    /// a movie-collection container's partition is written directly with none. In id order, a small batch at a time (each
+    /// atomic); an item already stripped no longer matches, so a run cut short continues where it stopped.
+    /// </summary>
+    private async Task<int> StripPluginDataFromItemsAsync(string pluginId, CancellationToken ct)
+    {
+        var stripped = 0;
+        var lastId = 0;
+        while (true)
+        {
+            var batch = await _db.MediaItems.Include(m => m.MediaType)
+                .Where(m => m.Id > lastId && m.MetadataJson != null && m.MetadataJson.Contains(pluginId))
+                .OrderBy(m => m.Id).Take(PartitionBatch).ToListAsync(ct);
+            if (batch.Count == 0) return stripped;
+            lastId = batch[^1].Id;
+
+            foreach (var item in batch)
+            {
+                try
+                {
+                    var root = JsonNode.Parse(item.MetadataJson!)?.AsObject();
+                    if (root is null || !root.Remove(pluginId)) continue;   // a substring match only: nothing to remove
+                    item.MetadataJson = root.ToJsonString();
+                    if (_resolver is not null) await _resolver.ResolveAsync(item, _db, ct);
+                    stripped++;
+                }
+                catch (JsonException)
+                {
+                    // Malformed JSON on this row predates this cleanup -- leave it alone rather than risk losing whatever else is in it.
+                }
+            }
+            await _db.SaveChangesAsync(ct);
+            _db.ChangeTracker.Clear();
+        }
+    }
+
+    /// <summary>Takes the plugin out of the settings that name plugins: the per-field priority lists (Metadata Assignment), the
+    /// display order, the task order, and any setting keyed by the plugin's id. Returns how many settings changed.</summary>
+    private async Task<int> ScrubPluginFromSettingsAsync(string pluginId, CancellationToken ct)
+    {
+        var changed = 0;
+        var settings = await _db.AppSettings
+            .Where(s => s.Key == "metadata_assignment.config" || s.Key == "plugin_display_order.config" || s.Key == "scheduler.task_priority_order"
+                     || (s.Key.Contains(pluginId) && s.Key != RemovalMarkerKey(pluginId) && s.Key != "plugins.catalog_cache"))
+            .ToListAsync(ct);
+        foreach (var s in settings)
+        {
+            if (s.Key.Contains(pluginId)) { _db.AppSettings.Remove(s); changed++; continue; }
+            try
+            {
+                var node = JsonNode.Parse(s.Value);
+                if (node is not null && RemovePluginReferences(node, pluginId)) { s.Value = node.ToJsonString(); changed++; }
+            }
+            catch (JsonException) { /* not JSON: leave it */ }
+        }
+        if (changed > 0) await _db.SaveChangesAsync(ct);
+        _db.ChangeTracker.Clear();
+        return changed;
+    }
+
+    /// <summary>Removes the plugin from every array of ids ("pluginId" or "pluginId:task") and every property named for it. True when anything changed.</summary>
+    internal static bool RemovePluginReferences(JsonNode node, string pluginId)
+    {
+        var changed = false;
+        switch (node)
+        {
+            case JsonArray array:
+                for (var i = array.Count - 1; i >= 0; i--)
+                {
+                    if (array[i] is JsonValue v && v.TryGetValue<string>(out var s)
+                        && (string.Equals(s, pluginId, StringComparison.OrdinalIgnoreCase) || s.StartsWith(pluginId + ":", StringComparison.OrdinalIgnoreCase)))
+                    { array.RemoveAt(i); changed = true; }
+                    else if (array[i] is { } child) changed |= RemovePluginReferences(child, pluginId);
+                }
+                break;
+            case JsonObject obj:
+                foreach (var name in obj.Select(p => p.Key).ToList())
+                {
+                    if (string.Equals(name, pluginId, StringComparison.OrdinalIgnoreCase)) { obj.Remove(name); changed = true; }
+                    else if (obj[name] is { } child) changed |= RemovePluginReferences(child, pluginId);
+                }
+                break;
+        }
+        return changed;
+    }
+
+    /// <summary>Deletes the plugin's own folder, only when it is inside the plugins folder and is not the plugins folder itself.
+    /// Returns what happened, in words, for the log.</summary>
+    private string RemovePluginFolder(string? folder)
+    {
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return "already gone";
+        if (_integrity is null) return "left (no plugins folder known)";
+        var trim = new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
+        if (!_integrity.IsInsidePluginsDirectory(folder)
+            || string.Equals(Path.GetFullPath(folder).TrimEnd(trim), Path.GetFullPath(_integrity.PluginsDirectory).TrimEnd(trim), StringComparison.OrdinalIgnoreCase))
+            return "left (not inside the plugins folder)";
+        try { Directory.Delete(folder, recursive: true); return "deleted"; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.Warning(ex, "Could not delete the folder of a removed plugin: {Folder}", folder);
+            return "left (could not be deleted)";
+        }
     }
 
     public Task<bool> UnloadFromRegistryAsync(string pluginId)
