@@ -166,6 +166,11 @@ public class PluginRatingSource
     [JsonPropertyName("display")]
     public string Display { get; set; } = "outOf";
 
+    /// <summary>Name of the field in the plugin's <c>extendedData</c> holding the number of ratings behind the plain <c>rating</c>
+    /// (for example "ratings_count"); lets the page show a vote count for data already stored. Optional.</summary>
+    [JsonPropertyName("votes_field")]
+    public string? VotesField { get; set; }
+
     /// <summary>"single" or "row" only when the source's own site shows stars; absent means no star.</summary>
     [JsonPropertyName("star")]
     public string? Star { get; set; }

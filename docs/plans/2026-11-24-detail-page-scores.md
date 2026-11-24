@@ -330,10 +330,12 @@ What each source's own site shows (checked 2026-11-24) and what its manifest now
 | TVmaze | a row of **ten** stars and `8.9 (1225 votes)` | /10, star row (one star per point of the scale) |
 | AniList | `85%`, no star | percent, no star |
 | Hardcover | `Average 4.3` with one star | /5, star single |
-| Open Library | **not checked**: its site asks for human verification, which is not bypassed | /5, no star until looked at by hand |
+| Open Library | five-star row with `4.3 (510 ratings)` (checked once its page loaded without a verification step) | /5, star row |
 | MusicBrainz | five-star row (e.g. 4.75 of 5) | /5, star row |
 | TheAudioDB | one star with the score | /10, star single |
 | IGDB | single green star, **user 9.4 and critic 9.2 out of 10** (not /100; no combined total) | /10, star single; the plugin now reports `users` and `critics` out of 10 and no `total` |
 | Rotten Tomatoes, Metacritic | see 2.2 | A2 |
 
 Built in A1: `PluginManifest.RatingSources`, `ItemScores.Collect` (opt-in rule, plugin-order precedence, variants, votes), `ratings` on the detail endpoints, `ScoresPanel` (plain look, plugin icon or letter mark, star single/row, votes, variant, each source's required attribution **inside its own pill**), and the manifest declarations above (eleven plugins, each its own release). Steam, TheTVDB and OMDb changes (3.5) and the wordmark/logo/fonts/looks (A2) are not built.
+
+After A1: a manifest `votes_field` names the extendedData field holding a plain rating's vote count (Hardcover and Open Library use `ratings_count`), so stored data shows votes without a re-enrichment. Games already in the library were re-enriched so IGDB reports user and critic scores out of 10.

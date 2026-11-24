@@ -60,8 +60,9 @@ public static class ItemScores
                 {
                     var stored = plain.StoredScale > 0 ? plain.StoredScale : 10;
                     var scale = plain.Scale > 0 ? plain.Scale : 10;
+                    var declaredVotes = !string.IsNullOrWhiteSpace(plain.VotesField) && ext is { } xv ? Int(xv, plain.VotesField) : null;
                     Add(candidates, plugin, idx, plain, plain.Key, plain.Variant, rating / stored * scale,
-                        scale, extVotes ?? Int(part, "votes"), null);
+                        scale, declaredVotes ?? extVotes ?? Int(part, "votes"), null);
                 }
             }
 

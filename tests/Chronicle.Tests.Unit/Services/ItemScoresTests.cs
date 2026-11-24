@@ -112,6 +112,15 @@ public class ItemScoresTests
     }
 
     [Fact]
+    public void PlainRating_TakesItsVoteCountFromTheFieldTheManifestNames()
+    {
+        var src = Src("h", stored: 5, scale: 5); src.VotesField = "ratings_count";
+        var json = """{"chronicle.plugin.p":{"rating":4.3,"extendedData":{"ratings_count":7609}}}""";
+        ItemScores.Collect(json, [Plugin("chronicle.plugin.p", src)]).Single().Votes.Should().Be(7609);
+        ItemScores.Collect(json, [Plugin("chronicle.plugin.p", Src("h", stored: 5, scale: 5))]).Single().Votes.Should().BeNull();
+    }
+
+    [Fact]
     public void SameMeasurementFromSeveralPlugins_ShowsOnce_FromTheHighestPrecedencePlugin_AndNamesTheOthers()
     {
         var plugins = new[]
