@@ -232,6 +232,41 @@ Things worth knowing:
 Settings types: `Text`, `Password`, `Number`, `Boolean`, `Dropdown`, `MultiSelect`, `Url`, `FilePath`, `TextArea`, and
 `Notice` (a read-only callout, saved as nothing). Passwords are stored encrypted.
 
+## Reporting scores
+
+> **Status: arrives with the detail-page scores feature** (plan: `docs/plans/2026-11-24-detail-page-scores.md`). Until then, write your plugin to this contract; Chronicle ignores what it does not yet read.
+
+If your source has a **score** (a rating a person or critic gave), Chronicle shows it on the item's detail page, in a badge that looks like your source's own. Nothing in Chronicle names your plugin: you describe your source in `manifest.json` and report the number.
+
+**Report the number in the source's own scale**, in `extendedData.ratings[]`:
+
+```json
+"ratings": [ { "key": "imdb", "variant": null, "value": 8.2, "scale": 10, "votes": 787753, "url": "https://www.imdb.com/title/tt8579674/" } ]
+```
+
+* `key` names what is measured (`imdb`, `tmdb`, `rottentomatoes`, `metacritic`, or your own source). The same key from several plugins is shown once.
+* `variant` separates two scores from one source (`critics` / `audience`; Rotten Tomatoes and Metacritic each have two). Leave it null otherwise.
+* `value` and `scale` are the source's own (`4.2` of `5`, `82` of `100`). Never convert to /10 yourself, and never send a bare number from an unknown scale.
+* If you only set the plain `rating` field, say its scale in the manifest (`stored_scale`).
+* **A score is not a rank, popularity, play count or follower count.** Report those elsewhere (`popularity`), never as a rating.
+
+**Declare your source in the manifest:**
+
+```json
+"rating_sources": [
+  { "key": "tmdb", "display_name": "TMDB", "stored_scale": 10, "scale": 100, "display": "percent",
+    "look": "ring", "logo_url": "https://...", "attribution": "optional required sentence" }
+]
+```
+
+* `display`: `outOf` (the default, `8.2/10`) or `percent`. Use whatever your site shows; a bare `4` is never shown.
+* `star`: `single` or `row` **only if your site shows stars**; otherwise leave it out (no star is drawn).
+* `look`: how the badge is drawn so it resembles your site: `plain` (default), `star-text`, `ring`, `icon-percent` or `badge`, with `thresholds` for colours and state icons and `variants` for sources with two scores. Open the site and copy its real widget; do not guess.
+* `logo_url`: your source's official logo (fetched and cached by Chronicle, never hot-linked); `wordmark` is the fallback. Do not bundle a logo or font you may not redistribute.
+* `attribution`: a sentence the source's terms require, shown under the badges.
+
+Everything is optional: with none of it your score still shows, in its native scale, plain, with no star.
+
 ## 7. Build and run it in your Chronicle
 
 ```powershell
@@ -294,6 +329,7 @@ If you only want the plugin for yourself, skip steps 3-5 and use `plugins.allow_
 ## 10. Checklist before you call it done
 
 - [ ] `plugin_id` identical in `manifest.json` and in code; `entry_type` correct; version bumped
+- [ ] If the source has a score: reported in its own scale with `rating_sources` declared (see "Reporting scores"); a rank or popularity is never reported as a rating
 - [ ] Only your DLL, `manifest.json` and third-party dependencies in the folder (no `Chronicle.*`, `Microsoft.*`, `System.*`)
 - [ ] `Configure` tolerates missing settings; `HealthCheckAsync` returns false (not an exception) when unconfigured
 - [ ] Every field the service gives you is returned, not trimmed

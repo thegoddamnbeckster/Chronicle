@@ -175,6 +175,39 @@ Required for correct display (without them the result is wrong or bare, section 
 | IMDb, Simkl, TVMaze, Trakt, TheAudioDB | manifest only (native /10, default style) |
 | OMDb | emit contract-shaped `ratings[]` (keys `imdb`, `rottentomatoes`, `metacritic`; `icon_url` for the relayed two); keep the original list as `ratings_raw` |
 
+### 3.5a Plugin audit (every plugin read, 2026-11-24)
+
+About 22 of the 77 plugin folders have real code; the other 55 are one-file stubs (ASCAP, AllMusic, Bandcamp, Discogs, RAWG, Rotten Tomatoes, RateYourMusic, Spotify and so on) with no data to score, so they are untouched until built. They will follow the guide section (3.7) when they are. Of the real ones:
+
+| Plugin | Has a score? | What the code stores | Action |
+|--------|-------------|----------------------|--------|
+| IMDb | yes | `rating` /10, votes from its dataset | manifest only (star single) |
+| TMDB | yes | `vote_average` /10 (+ `vote_count`) | manifest: percent, no star |
+| Simkl | yes | `rating` /10 | manifest only |
+| Trakt | yes | `rating` /10 | manifest only |
+| TVMaze | yes | `rating.average` /10 | manifest only |
+| TheTVDB | **no, wrong** | `score` is popularity, stored as a rating | stop mapping it; keep as `popularity` |
+| AniList | yes | `averageScore` /100, stored /10 | manifest: percent |
+| Hardcover | yes | `rating` /5, `ratings_count` | manifest scale 5; emit `ratings[]` |
+| Open Library | yes | `rating` /5, `ratings_count` | same |
+| MusicBrainz | yes | rating stored /10 (x2 of its /5) | manifest scale 5; native `ratings[]` later |
+| TheAudioDB | yes | `intScore` /10 with `intScoreVotes` (a minimum-votes setting already gates it) | manifest only; votes already stored |
+| IGDB | yes | user, critic or total score /100 (setting), stored /10, votes known | manifest scale 100; `key` follows the setting (users / critics / total) |
+| Steam | mislabelled | Metacritic /100, stored as Steam's own /10 | emit as `metacritic` /100 |
+| OMDb | yes, relayed | IMDb value, Rotten Tomatoes (critics) and Metacritic in `ratings[]` as strings plus `imdb_rating`, `imdb_votes`, `metacritic_score` | emit contract-shaped entries (critics variant) |
+| FanEdit | yes | the fan-edit site's own user rating (`ratingValue`, vote count) | manifest only (scale of that site to be confirmed from a real page; hidden until confirmed) |
+| Movies Remastered | yes | a star-rated value scraped from its listing | scale to be confirmed from a real page; hidden until confirmed |
+| Kodi NFO | ambiguous | the NFO's default `<rating>` (source named in the file, e.g. imdb) | shown only when the NFO names its source and scale; otherwise hidden (a bare number is not shown) |
+| Deezer | no | `rank` is popularity | none; never shown as a score |
+| Last.fm (removed), ListenBrainz | no | listens, not ratings | none |
+| FanartTV, Wikipedia, Wikidata, Audiobookshelf, Arr, FileScanner, Themes | no | no score | none |
+
+Two of these (FanEdit, Movies Remastered) cannot be declared correctly until a real page is looked at for the scale; that is part of phase B, and until then they are hidden rather than guessed.
+
+### 3.7 Plugin development guide
+
+`docs/PLUGIN_DEVELOPMENT_GUIDE.md` gets a new section, "Reporting scores", written with this feature (it is in the guide now, marked as arriving with it): the `rating_sources` manifest fields, the `extendedData.ratings[]` entry shape, `variant`, how to declare scale, `display`, `star`, `look` and `logo_url`, the rules (a score is a number in the source's own scale, never a rank or popularity, never a bare number from an unknown scale), and a checklist line. The generic plugin template and the PLUGIN_CATALOGUE page link to it. It is a required part of the release (section 8, step 7).
+
 ### 3.6 Phases
 
 - **A (this plan):** `ItemScores`, the manifest model field, the DTO field, `ScoresPanel`, tests; the manifest declarations in 3.5.
