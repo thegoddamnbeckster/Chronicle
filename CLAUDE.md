@@ -271,6 +271,30 @@ Windows (EF9 takes an exclusive SQLite lock — see the comment in `Program.cs`)
 it. `Program.cs` applies pending migrations at API startup, so just run
 `RunTestEnvironment.ps1`.
 
+## Adding by hand
+
+Key invariants (see `DescendantsService`, `ShowStructureService`, `FileScanService.AddFromSearchAsync`):
+
+- **Everything beneath what is added comes with it.** `QueueDescendants` (FileScanController) runs `IDescendantsService` in the
+  background after an add, for any media type whose `HierarchyLevels` > 1 (never a list of type names): providers answer
+  `GetChildrenAsync` one level at a time; an episodic type goes through `ShowStructureService` (the Kodi scraper's episode guide).
+  It only creates what is missing. Refreshing an item with no children does the same.
+- **An item below the top of its hierarchy is filed under its ancestors.** A provider names them in `MediaMetadata.Lineage`
+  (book: author, series; album: artist; track: artist, album); `FileUnderLineageAsync` finds or creates them with the scanner's
+  `UpsertGroupItemAsync`. Adding a misplaced top-level item again files it. Never create a book, album or track at level 0.
+- **A search for one media type returns that type's results only.** `LibraryItemResolver.BelongsInSearchOf` drops a result the
+  library holds solely under another type, for every type (a TV show never shows in an Anime search; a Fan Edit never among Movies).
+  Types are never merged by id or title at add time.
+- **Fix Match on an id another item already owns drops the item's own link** and leaves the row NotFound. Check
+  `media_external_ids` for the target id first; an "id differs from Sonarr/Lidarr" result where the arr id is already held by another
+  item is a duplicate (merge it), not a wrong id. Merge moves children across without merging same-named ones, so merge duplicate
+  tracks under the survivor too.
+- **`GET /api/v1/scraper/arr-compare`** (admin, read-only) compares shows, films, music and books with Sonarr, Radarr, Lidarr and
+  Readarr (`family=tv|movie|music|books`). Readarr entries carry no nested author and its unfiltered book list is monitored editions
+  only, so the Arr plugin reads books author by author.
+- Restarting the API signs every browser session out (sessions are in memory). A job of more than a few minutes belongs on the
+  server (set the rows Pending and `POST /api/v1/enrichment/{pluginId}/run`), never in a browser tab.
+
 ## Documentation Reference
 
 Full specs live in `docs/` — consult before implementing any feature:

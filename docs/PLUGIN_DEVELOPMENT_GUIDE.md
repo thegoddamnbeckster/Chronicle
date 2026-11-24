@@ -217,6 +217,17 @@ Things worth knowing:
 * **Log through `Microsoft.Extensions.Logging`.** Each plugin gets its own log file. Never log secrets.
 * **Never hard-code anything about one person's setup** (paths, addresses, names). Take it from the settings schema.
 * Episode lists and person credits are optional overrides (`GetEpisodeListAsync`, `GetPersonCreditsAsync`).
+* **What is beneath an item, and where an item sits.** Whatever the user adds by hand is added with everything beneath it, and an
+  item added below the top of its hierarchy is filed under its ancestors. Two optional pieces support that, both defaulting to
+  "nothing", so a plugin that implements neither is unaffected (a plugin that does needs Chronicle 0.20.82 or later in its
+  manifest's `min_chronicle_version`):
+  * `GetChildrenAsync(externalId, hierarchyLevel)` returns the items one level beneath the item the id names, as
+    `ProviderChild` (title, position, the child's own id when it can be asked about in turn, year ...): an artist's albums, an
+    album's tracks, an author's series and standalone books, a series' books. Chronicle calls it again for each child that carries
+    an id, so a provider only ever answers for one level. A TV show's episodes go through `GetEpisodeListAsync`, one season at a time.
+  * `MediaMetadata.Lineage` lists the ancestors of the item a fetch returns, top first (`ProviderAncestor`: name and, when it has
+    one, id): a book's author and, when it has one, its series; an album's artist; a track's artist and album. Leave it empty for
+    a top-level item, and for a track whose album you cannot name (the artist alone would file it one level too high).
 
 Settings types: `Text`, `Password`, `Number`, `Boolean`, `Dropdown`, `MultiSelect`, `Url`, `FilePath`, `TextArea`, and
 `Notice` (a read-only callout, saved as nothing). Passwords are stored encrypted.
