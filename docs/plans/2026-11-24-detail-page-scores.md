@@ -37,13 +37,17 @@ Each source is shown in **its own scale and style**, never a bare number:
 
 | Style | Looks like | When |
 |-------|-----------|------|
-| `outOf` | `8.2/10` | the source's scale is 10 (IMDb, Simkl, TVMaze) or any scale not covered below |
-| `percent` | `80%` | the source shows a percentage (TMDB, AniList; scale 100) |
-| `stars` | `★★★★☆ 4.2` | the source is a five-star scale (Hardcover, Open Library, MusicBrainz): the **star icon**, five stars with the last one filled in proportion, then the number |
+| `outOf` (the default) | `8.2/10`, `4.2/5`, `83/100` | whatever the source's scale is |
+| `percent` | `80%` | only a source whose site shows a percentage (TMDB) says so |
+
+**A star icon is shown only where the source's own site shows one**, and is declared per source, never inferred from the scale or the style.
+IMDb is out of 10 and its site shows a star, so it is `8.2/10` with a star; TMDB shows no star, so it gets none. A source declares `star:
+"single"` (one star icon before the number, as IMDb) or `star: "row"` (five stars, the last one filled in proportion, then the number, for a
+site that shows a star row). With no declaration there is no star. Before a plugin declares one, its site is looked at.
 
 **Looks like the source.** Each badge uses the source's own mark and colours: its logo image when one can be had (SVG preferred), else its
-wordmark set in the source's typeface (or the nearest system font) on its brand colour; never a generic icon. A star-scale source always
-uses the star icon. A source whose logo cannot be sourced legitimately (below) falls back to its wordmark, then to a letter badge.
+wordmark set in the source's typeface (or the nearest system font) on its brand colour; never a generic icon. A source whose logo cannot be
+sourced legitimately (below) falls back to its wordmark, then to a letter badge.
 
 A plugin declares its source's style (3.2). With no declaration the style follows the scale (100 -> percent, 5 -> stars, else
 out-of). Rounding: `outOf` and `stars` keep at most one decimal and drop a trailing `.0` (`8/10`); `percent` rounds to a whole
@@ -82,9 +86,10 @@ The design's optional manifest array, trimmed to what the strip needs; read thro
 ```
 
 Fields: `key` (what is measured), `display_name`, `stored_scale` (the scale of this plugin's plain `rating`; default 10), `scale` and
-`display` (the source's own presentation), optional `logo_url` (the source's official logo, an SVG or PNG on the source's own site;
+`display` and `star` (the source's own presentation, above), optional `logo_url` (the source's official logo, an SVG or PNG on the source's own site;
 for a relayed source with no plugin of its own, this is its only mark), `wordmark` (`{ text, font_family, color, background }`, the
-fallback: the source's name in its typeface and brand colour), `url_template`, `attribution`. A manifest without it still works (3.1 defaults). No `min_chronicle_version` bump is needed: an
+fallback: the source's name in its typeface and brand colour), `url_template`, `attribution`. `display` is `outOf` (default) or `percent`; `star` is `single`, `row` or absent (no star). A manifest without any of it still works
+(3.1 defaults: native scale, `outOf`, no star). No `min_chronicle_version` bump is needed: an
 older host ignores the unknown property.
 
 ### 3.3 API
@@ -101,8 +106,8 @@ is `value / scale * 100`. Detail only; the library list endpoints are untouched.
 - One badge per score. **Mark:** the source's `logo_url` (fetched and cached by the host through the same mechanism that already serves
   `iconUrl` as `/api/v1/plugins/{id}/icon`, so the browser never hot-links a third-party site and a blocked or offline source cannot
   break the page), else its `wordmark`, else the plugin's `iconUrl`, else a letter badge in the brand colour. **Score:** in the
-  section 2 style; a star source draws the star icon as inline SVG (five stars, the last partly filled, with `aria-hidden`; the number
-  carries the meaning). Vote count small and muted; the badge links to the source's page when it has a
+  section 2 style; a star is drawn only for a source that declares one: `single` is one inline-SVG star before the number, `row` is five
+  stars with the last partly filled (both `aria-hidden`; the number carries the meaning). Vote count small and muted; the badge links to the source's page when it has a
   `url`; tooltip: reporting plugin, scale, fetched date, other reporters.
 - Hidden entirely when there is nothing to show (collections, people, items no plugin scored): no empty box.
 - Accessible: each badge has an `aria-label` such as "IMDb score 8.2 out of 10, 787,753 votes". Theme tokens only (light and dark).
@@ -115,12 +120,13 @@ Required for correct display (without them the result is wrong or bare, section 
 
 | Plugin | Change |
 |--------|--------|
-| Hardcover | manifest: `stored_scale 5`, `scale 5`, `display stars`; also emit `ratings[]` with `ratings_count` |
+| IMDb | manifest: `scale 10`, `star: single` (its site shows a star) |
+| TMDB | manifest: `stored_scale 10`, `scale 100`, `display percent`, **no star** (its site shows none); keep `vote_count` as `ratings[].votes` |
+| Hardcover | manifest: `stored_scale 5`, `scale 5`; also emit `ratings[]` with `ratings_count`; `star: row` only after its site is checked |
 | Open Library | same (`ratings_count` is already parsed) |
-| MusicBrainz | manifest: `stored_scale 10`, `scale 5`, `display stars`; emit native `ratings[]` (`value/5`, `votes-count`) and stop the x2 in a later release |
-| TMDB | manifest: `scale 100`, `display percent`; keep `vote_count` as `ratings[].votes` |
-| AniList | manifest: `stored_scale 10`, `scale 100`, `display percent` |
-| IGDB | manifest: `scale 100`, `display percent`; its `ratings[]` already has the native values |
+| MusicBrainz | manifest: `stored_scale 10`, `scale 5`; emit native `ratings[]` (`value/5`, `votes-count`) and stop the x2 in a later release; `star` after its site is checked |
+| AniList | manifest: `stored_scale 10`, `scale 100`, `display percent` (star only if its site shows one) |
+| IGDB | manifest: `scale 100`; its `ratings[]` already has the native values; style and star after its site is checked |
 | Steam | emit `ratings[]` with `key: metacritic`, `scale 100` (today its `rating` is Metacritic/10 labelled as Steam's own) |
 | TheTVDB | stop mapping `score` (popularity) to a rating; keep it as `popularity` |
 | IMDb, Simkl, TVMaze, Trakt, TheAudioDB | manifest only (native /10, default style) |
@@ -140,7 +146,8 @@ Required for correct display (without them the result is wrong or bare, section 
   votes in each of the three places; de-duplication and the "alsoFrom" list; ordering; a disabled plugin's score hidden; a removed
   plugin's absent.
 - **Golden test from real data:** the recorded 1917 partitions -> `IMDb 8.2/10 (787,753 votes)`, `TMDB 80%`, `Simkl 6.5/10`.
-- **Formatting (frontend):** every style and the rounding rules; the star row's fill widths (4.2 -> four full stars and a fifth filled 20%; 5.0 -> five
+- **Formatting (frontend):** every style and the rounding rules; **no star unless declared** (an IMDb-like source gets one single star, a TMDB-like
+  source none, a five-point source with no declaration none); the star row's fill widths (4.2 -> four full stars and a fifth filled 20%; 5.0 -> five
   full; 0.4 -> 40% of the first); the mark fallback chain (logo -> wordmark -> icon -> letter badge); the vote-count abbreviations; the hidden state.
 - **Integration:** `GET /api/v1/media/{id}` includes `ratings` and an older shape still deserialises.
 - **Plugin tests:** each updated plugin's manifest declarations are valid, and each emitted `ratings[]` entry is in contract shape.
@@ -172,8 +179,8 @@ once OMDb emits the contract shape).
    source's own usage terms are followed), or do you want the logos downloaded once and committed? Downloading is something I will not do
    without your say-so (I would state each file name, source and size first). Where no logo can be had, the wordmark in the source's
    typeface and colour is used.
-6. **Star icon:** five stars with the last one filled in proportion (planned; what Hardcover and Open Library show), or a single star
-   (`★ 4.2/5`).
+6. **Which other sources show a star?** You gave IMDb (star) and TMDB (none). For every other plugin I will look at its site before
+   declaring anything, and a source I could not verify gets no star (the safe default). Tell me if you already know any.
 
 ## 8. Order of work
 
@@ -203,7 +210,7 @@ Reviewed against the code and the library data, trying to break the plan. Findin
 | R14 | Low | The layout beside the status controls could overflow on narrow screens or with many sources | One wrapping row; the panel wraps below (3.4) |
 | R15 | High | "Same font or image as the source" cannot be met by hot-linking favicons (16-32 px, blurry, blocked offline) or by bundling proprietary typefaces (licence) | Logos come from the source's own `logo_url`, fetched and cached by the host through the existing icon path; the typeface is reproduced only as a *wordmark fallback* with the source's `font_family` as a system-font stack, never a bundled font file (2, 3.2, 3.4) |
 | R16 | Medium | Official logos have usage terms (TMDB requires its attribution notice and prescribes logo use; IMDb restricts its mark) | Fetched at runtime and cached, not committed; the manifest `attribution` is shown; each source's terms are checked at build time and a source whose terms forbid the use falls back to its wordmark (decision 5) |
-| R17 | Medium | A star scale drawn as text (`4.2/5`) is the "bare number" the owner ruled out; a naive star row also misreads fractions (4.2 shows five full stars) | Inline-SVG star row with the last star filled in proportion, number beside it, `aria-label` carrying the meaning; unit test for the fill widths (2, 3.4) |
+| R17 | Medium | An earlier draft derived the star style from a five-point scale. Wrong: IMDb is out of 10 and shows a star; TMDB shows none; a five-point source need not show stars | A star is **declared per source** (`star: single` / `row`), never inferred; no declaration means no star; sources are checked against their sites before declaring (2, 3.2, decision 6). A star row's fractional fill is unit-tested (4.2 -> four full stars and a fifth 20% filled) |
 | R18 | Low | Logo images need light and dark variants and a fixed box, or the row jumps as they load | Fixed-height badge box (no layout shift), an optional dark-theme `logo_url`, and the wordmark shown until the image loads |
 
 Checked and found sound: the data needed is already in the item (no new fetch, no migration); computing on the detail request only has
