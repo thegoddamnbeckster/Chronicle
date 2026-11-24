@@ -604,16 +604,21 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
 
 /* Status/rating controls and, to their right, every plugin's score for the item; the scores wrap below on a narrow window. */
 .statusAndScores {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(200px, 340px) minmax(0, 1fr);
+  align-items: start;
   align-self: stretch;
   gap: 8px 24px;
 }
 
-/* Scores stay on the right of the row; they drop below (still on the right) only when the window is too narrow for both. */
-.statusAndScores > :last-child {
-  margin-left: auto;
+/* Two columns: the status/rating controls on the left, every plugin's score on the right. The scores stay in the right column
+   (alone, when there are no controls) and stack under the controls only when the window is too narrow for two columns. */
+.statusAndScores > :first-child:not(:last-child) { grid-column: 1; }
+.statusAndScores > :last-child { grid-column: 2; justify-self: end; }
+
+@media (max-width: 760px) {
+  .statusAndScores { grid-template-columns: minmax(0, 1fr); }
+  .statusAndScores > :last-child { grid-column: 1; }
 }
 
 /* Watch controls sitting on the same row as the refresh buttons. */
