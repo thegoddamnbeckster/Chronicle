@@ -68,8 +68,7 @@ small set of generic renderers that any plugin can pick (no renderer or manifest
 
 Parameters live in the manifest beside it: `thresholds` (`[{ min, color, icon }]`, so one rule picks both colour and the state icon),
 `font_family`, brand colours. Fonts: only open-licence fonts are bundled; where a site's typeface is proprietary the nearest system or
-open font is used and a manifest may name a `font_url` the host fetches and caches at runtime like logos (decision 5). Before any source's
-`look` is written its real widget is inspected (structure, colours, thresholds); until then it gets `plain`.
+open font is used and a manifest may name a `font_url` the host fetches and caches at runtime like logos (decision 5). The four above were inspected (2.2); any other source gets `plain` until its site is inspected.
 
 **More than one score from one source.** The collector's `variant` (design 5) is the answer, and each variant has its own mark and its own
 state icon. Rotten Tomatoes has two: **Tomatometer** (critics; a fresh tomato at 60% or more, a splat when rotten, a certified-fresh seal only
@@ -81,6 +80,21 @@ chosen is by `(key, variant)`. TMDB and IMDb are single-variant.
 shows nothing for the two audience scores. Rotten Tomatoes has no free API, so a dedicated plugin was rejected. **Any plugin that
 supplies RT or Metacritic scores in the contract shape (`key: rottentomatoes`, `variant: critics|audience`) is shown with no change to the host**,
 whether it is OMDb, a future plugin, or a user-supplied one; and the display is ready for the audience scores the moment one exists.
+
+### 2.2 What each source's real widget is (inspected 2026-11-24 on the 1917 pages)
+
+Measured in the owner's Chrome from the sites' own pages (computed styles), so the `look` parameters are real, not guessed:
+
+| Source | Widget | Measured detail |
+|--------|--------|-----------------|
+| **IMDb** | single yellow star, score in semi-bold, `/10` in regular and 70% white, votes under it in small muted text (`793K`) | star `#F5C518`, path is a 24-unit Material star; score Roboto 600 18px white; `/10` Roboto 400 16px at 70% opacity; votes Roboto 12px at 70% opacity; label `IMDb RATING` above in small caps |
+| **TMDB** | dark circle holding a whole-number percent with a small `%`, a progress ring around it, no star | 60px; ring `#21D07A` on track `#204529` at 80 (the site's tiers: 70+ green `#21D07A`/`#204529`, 40-69 yellow `#D2D531`/`#423D0F`, under 40 red `#DB2360`/`#571435`); the circle fill is dark navy; the number is white in TMDB's proprietary "Consensus" face (replaced by Source Sans Pro, the page's own body font, which is open licence); label "User Score" beside it |
+| **Rotten Tomatoes** | two side-by-side items, each: a state icon, the percent large, the label under it (`Tomatometer`, `Popcornmeter`), a grey link line (`474 Reviews`, `25,000+ Verified Ratings`) | icon state comes from a `sentiment` attribute: critics = certified fresh (seal) / fresh tomato / rotten splat; audience = full bucket / tipped bucket; font "Franklin Gothic" (proprietary: nearest system face, `Libre Franklin` is open licence and close); percent 22px |
+| **Metacritic** | a square badge (Metascore) and a round badge (user score), each a coloured block with a bold number, the label beside it (`Metascore`, `User Score`) | badges 64px at the site, `6px` radius (square) or full circle (user); green `#00CE7A`, yellow `#FFBD3F`, red `#FF6874`, text `#262626` bold 32px ProximaNova (proprietary: Nunito Sans is the open stand-in); Metascore tiers green 61+, yellow 40-60, red under 40; user score tiers green 7.5+, yellow 5.0-7.4, red under 5.0 |
+
+All four are expressed with the generic looks in 2.1 plus manifest parameters (`ring`, `star-text`, `icon-percent`, `badge` with `shape: square|circle`).
+The `Consensus`, `Franklin Gothic` and `ProximaNova` faces are the sites' proprietary fonts: they are **not** bundled or fetched; the nearest open
+font is used, and the logo, colours, geometry and state icons carry the resemblance.
 
 ## 3. Design
 
@@ -210,7 +224,7 @@ rating (unchanged); Building a Rotten Tomatoes *plugin* (no free API; rejected).
 6. **Which other sources show a star?** You gave IMDb (star) and TMDB (none). For every other plugin I will look at its site before
    declaring anything, and a source I could not verify gets no star (the safe default). Tell me if you already know any.
 
-7a. **Look fidelity (2.1):** the widget kinds above are built generically; each source's exact look needs its site inspected first, which the built-in browser could not open (TMDB was refused). May I use Claude in Chrome, or will you allow the site, to inspect them?
+7a. **Proprietary fonts:** the sites' own typefaces (Consensus, Franklin Gothic, ProximaNova) cannot be redistributed; I plan to use the closest open fonts (2.2). Say if you would rather use plain system fonts.
 
 ## 8. Order of work
 
