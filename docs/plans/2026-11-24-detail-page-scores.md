@@ -49,9 +49,9 @@ site that shows a star row). With no declaration there is no star. Before a plug
 wordmark set in the source's typeface (or the nearest system font) on its brand colour; never a generic icon. A source whose logo cannot be
 sourced legitimately (below) falls back to its wordmark, then to a letter badge.
 
-A plugin declares its source's style (3.2). With no declaration the style follows the scale (100 -> percent, 5 -> stars, else
-out-of). Rounding: `outOf` and `stars` keep at most one decimal and drop a trailing `.0` (`8/10`); `percent` rounds to a whole
-number. Next to the score, small and muted: the vote count when known (`788K votes`; the exact number in the tooltip).
+A plugin declares its source's style and star (3.2). With no declaration the score is `outOf` in the source's native scale and has no
+star. Rounding: `outOf` keeps at most one decimal and drops a trailing `.0` (`8/10`); `percent` rounds to a whole number. Next to the
+score, small and muted: the vote count when known (`788K votes`; the exact number in the tooltip).
 
 ## 3. Design
 
