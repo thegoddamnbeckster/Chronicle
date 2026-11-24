@@ -607,7 +607,13 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  align-self: stretch;
   gap: 8px 24px;
+}
+
+/* Scores stay on the right of the row; they drop below (still on the right) only when the window is too narrow for both. */
+.statusAndScores > :last-child {
+  margin-left: auto;
 }
 
 /* Watch controls sitting on the same row as the refresh buttons. */

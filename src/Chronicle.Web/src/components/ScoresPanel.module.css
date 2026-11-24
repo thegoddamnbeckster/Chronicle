@@ -8,6 +8,7 @@
 .row {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: flex-start;
   gap: 8px 14px;
 }
