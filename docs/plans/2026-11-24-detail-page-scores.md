@@ -197,12 +197,11 @@ About 22 of the 77 plugin folders have real code; the other 55 are one-file stub
 | OMDb | yes, relayed | IMDb value, Rotten Tomatoes (critics) and Metacritic in `ratings[]` as strings plus `imdb_rating`, `imdb_votes`, `metacritic_score` | emit contract-shaped entries (critics variant) |
 | FanEdit | yes | the fan-edit site's own user rating (`ratingValue`, vote count) | manifest only (scale of that site to be confirmed from a real page; hidden until confirmed) |
 | Movies Remastered | yes | a star-rated value scraped from its listing | scale to be confirmed from a real page; hidden until confirmed |
-| Kodi NFO | ambiguous | the NFO's default `<rating>` (source named in the file, e.g. imdb) | shown only when the NFO names its source and scale; otherwise hidden (a bare number is not shown) |
 | Deezer | no | `rank` is popularity | none; never shown as a score |
 | Last.fm (removed), ListenBrainz | no | listens, not ratings | none |
 | FanartTV, Wikipedia, Wikidata, Audiobookshelf, Arr, FileScanner, Themes | no | no score | none |
 
-Two of these (FanEdit, Movies Remastered) cannot be declared correctly until a real page is looked at for the scale; that is part of phase B, and until then they are hidden rather than guessed.
+Kodi NFO is not used and nothing is built for it. Two of the others (FanEdit, Movies Remastered) cannot be declared correctly until a real page is looked at for the scale; that is part of phase B, and until then they are hidden rather than guessed.
 
 ### 3.7 Plugin development guide
 
