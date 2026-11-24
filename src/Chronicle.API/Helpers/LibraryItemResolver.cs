@@ -42,21 +42,45 @@ public static class LibraryItemResolver
         string? primarySource,
         IReadOnlyList<ContributingExternalId>? contributing)
     {
+        var all = ResolveAll(libraryByExternalId, primaryId, primarySource, contributing);
+        return all.Count > 0 ? all[0] : null;
+    }
+
+    /// <summary>Every library item the candidate matches, the candidate's own id first. The same show can be held under more than
+    /// one media type, which <see cref="Resolve"/> alone cannot tell.</summary>
+    public static IReadOnlyList<int> ResolveAll(
+        IReadOnlyDictionary<string, List<MediaExternalId>> libraryByExternalId,
+        string primaryId,
+        string? primarySource,
+        IReadOnlyList<ContributingExternalId>? contributing)
+    {
+        var found = new List<int>();
+
         if (libraryByExternalId.TryGetValue(primaryId, out var rows))
-        {
-            var sourceMatch = rows.FirstOrDefault(
-                r => string.Equals(r.Source, primarySource, StringComparison.OrdinalIgnoreCase));
-            if (sourceMatch is not null) return sourceMatch.MediaItemId;
-        }
+            found.AddRange(rows.Where(r => string.Equals(r.Source, primarySource, StringComparison.OrdinalIgnoreCase)).Select(r => r.MediaItemId));
 
         foreach (var c in contributing ?? [])
         {
             if (!libraryByExternalId.TryGetValue(c.ExternalId, out var cRows)) continue;
-            var sourceMatch = cRows.FirstOrDefault(
-                r => string.Equals(r.Source, c.Source, StringComparison.OrdinalIgnoreCase));
-            if (sourceMatch is not null) return sourceMatch.MediaItemId;
+            found.AddRange(cRows.Where(r => string.Equals(r.Source, c.Source, StringComparison.OrdinalIgnoreCase)).Select(r => r.MediaItemId));
         }
 
-        return null;
+        return found.Distinct().ToList();
     }
+
+    /// <summary>
+    /// Whether a result belongs in a search for one media type. A result the library already holds ONLY under other types (The
+    /// Daily Show, which is a TV show, found from the Anime tab) is not a result for this type and is left out, whatever the
+    /// types are: each is its own, so a Fan Edit never turns up among Movies nor a Movie among Anime Movies. A result the library
+    /// does not hold, or holds under this type too, stays.
+    /// </summary>
+    /// <param name="matchedItemIds">The library items the result matches (<see cref="ResolveAll"/>).</param>
+    /// <param name="typeNameByItemId">The media type name of each library item.</param>
+    /// <param name="searchedTypeNames">The database names of the type being searched.</param>
+    public static bool BelongsInSearchOf(
+        IReadOnlyList<int> matchedItemIds,
+        IReadOnlyDictionary<int, string> typeNameByItemId,
+        IReadOnlySet<string> searchedTypeNames) =>
+        matchedItemIds.Count == 0
+        || matchedItemIds.Any(id => !typeNameByItemId.TryGetValue(id, out var type) || searchedTypeNames.Contains(type));
 }

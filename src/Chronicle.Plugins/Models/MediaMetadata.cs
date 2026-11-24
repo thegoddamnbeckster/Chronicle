@@ -82,6 +82,16 @@ public class MediaMetadata
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? ExtendedData { get; set; }
 
+    // ── Place in the hierarchy ────────────────────────────────────────────────
+
+    /// <summary>
+    /// The items this one sits beneath, top first: a book's author and, when it has one, its series; an album's artist; a track's
+    /// artist and album. Empty for a top-level item (an artist, an author, a show, a film) and for a provider that does not know.
+    /// Chronicle files an item added by hand under these, so a book never lands without its author. The item's own level is the
+    /// number of entries here.
+    /// </summary>
+    public List<ProviderAncestor> Lineage { get; set; } = [];
+
     // ── Search-mode fields (populated when returning a list of results) ────────
 
     /// <summary>Multiple results returned from a search query. Null when serializing a single item to avoid circular references.</summary>
@@ -127,6 +137,24 @@ public record ProviderEpisodeSummary(
     string? Overview = null,
     string? StillUrl = null,
     string? AirDate = null);
+
+/// <summary>One level of a <see cref="MediaMetadata.Lineage"/>: the provider's own name for it and, when it has one, its id.</summary>
+public record ProviderAncestor(string Name, string? ExternalId = null);
+
+/// <summary>
+/// One item beneath another, as returned by <see cref="IMetadataProvider.GetChildrenAsync"/>. <c>Number</c> is its position
+/// (episode, track, season or series number); <c>ExternalId</c> is the provider's id for the child when it can be asked
+/// about in turn (an album's id, a series' id), null for a leaf such as a track.
+/// </summary>
+public record ProviderChild(
+    string Title,
+    int? Number = null,
+    string? ExternalId = null,
+    int? Year = null,
+    string? Overview = null,
+    string? PosterUrl = null,
+    int? RuntimeMinutes = null,
+    double? SeriesPosition = null);
 
 /// <summary>
 /// One title a person is credited on, as reported by a provider's own filmography (see

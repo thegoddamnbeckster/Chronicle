@@ -83,6 +83,21 @@ public interface IMetadataProvider
         string showExternalId, int seasonNumber, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<ProviderEpisodeSummary>>([]);
 
+    /// <summary>
+    /// Returns the items one level beneath the item identified by <paramref name="externalId"/> (this provider's own id for it):
+    /// an artist's albums, an album's tracks, an author's series and standalone books, a series' books, a season's episodes.
+    /// <paramref name="hierarchyLevel"/> is the level of the item asked about (0 = the root), so a provider that serves
+    /// several levels knows which kind of id it was handed. Chronicle calls this when the user adds an item by hand, so that
+    /// everything beneath it is added with it, and then calls it again for each child that carries its own
+    /// <see cref="ProviderChild.ExternalId"/>.
+    ///
+    /// Return an empty list (the default) when the provider has no children for that kind of item; never throw for
+    /// "not supported". Chronicle moves on to the next provider that holds an id for the item.
+    /// </summary>
+    Task<IReadOnlyList<ProviderChild>> GetChildrenAsync(
+        string externalId, int hierarchyLevel, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ProviderChild>>([]);
+
     /// <summary>Downloads an image from the given URL and returns the raw bytes.</summary>
     /// <summary>
     /// Every credit this provider knows for a person (acting and crew), including titles that are

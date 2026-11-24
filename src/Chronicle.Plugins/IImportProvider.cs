@@ -54,6 +54,12 @@ public record ImportCapabilities(
     /// An init property, not a constructor parameter: adding a parameter would change the constructor signature and break every plugin
     /// already compiled against the four-argument form.</summary>
     public bool SupportsLibrary { get; init; }
+
+    /// <summary>True when the provider implements <see cref="IImportProvider.GetShowWatchHistoryAsync"/>. The host only asks
+    /// (and only records that a show was looked at) when this is set: the interface default returns an empty list, which
+    /// must not be mistaken for "the service has nothing on this show". An init property for the same reason as
+    /// <see cref="SupportsLibrary"/>.</summary>
+    public bool SupportsShowHistory { get; init; }
 }
 
 /// <summary>A single watch event imported from the tracking service.</summary>
@@ -258,6 +264,19 @@ public interface IImportProvider
     /// </summary>
     Task<List<ImportedLibraryEntry>> GetLibraryAsync(CancellationToken ct = default)
         => Task.FromResult(new List<ImportedLibraryEntry>());
+
+    /// <summary>
+    /// Returns the full watch history of ONE show, however long ago it was watched, for a show Chronicle already has.
+    /// <paramref name="knownIds"/> is every external id the host holds for the show, keyed by source ("simkl", "tmdb", "imdb",
+    /// "tvdb", ...) with the value exactly as stored; the provider matches the show in the user's own list by any of them and
+    /// returns an empty list when it is not there (or when the service has no per-show data). Unlike
+    /// <see cref="GetWatchHistoryAsync"/> there is no "since": the periodic sync only reports episodes watched after its last
+    /// run, so a show added afterwards would never receive the episodes watched before it. Default: empty.
+    /// </summary>
+    Task<List<ImportedWatchEvent>> GetShowWatchHistoryAsync(
+        IReadOnlyDictionary<string, string> knownIds,
+        CancellationToken ct = default)
+        => Task.FromResult(new List<ImportedWatchEvent>());
 
     /// <summary>Account-level facts (level, badges ...) kept whole beside the library. Default: none.</summary>
     Task<ImportedAccountInfo?> GetAccountInfoAsync(CancellationToken ct = default)

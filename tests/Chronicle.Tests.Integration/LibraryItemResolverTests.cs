@@ -125,5 +125,75 @@ namespace Chronicle.Tests.Integration
 
             result.Should().BeNull();
         }
+
+        // ── A search for one type returns that type's results only ────────────────────
+
+        private static readonly Dictionary<string, List<MediaExternalId>> DailyShow = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["tt0115147"] = [Row(mediaItemId: 433690, source: "imdb", externalId: "tt0115147")],
+        };
+
+        private static IReadOnlySet<string> Searched(params string[] names) => new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+
+        [Fact]
+        public void BelongsInSearchOf_AShowTheLibraryHoldsOnlyAsTv_IsNotAnAnimeResult()
+        {
+            var ids = LibraryItemResolver.ResolveAll(DailyShow, "tt0115147", "imdb", contributing: null);
+
+            LibraryItemResolver.BelongsInSearchOf(ids, new Dictionary<int, string> { [433690] = "tv" }, Searched("anime")).Should().BeFalse();
+            LibraryItemResolver.BelongsInSearchOf(ids, new Dictionary<int, string> { [433690] = "tv" }, Searched("tv")).Should().BeTrue();
+        }
+
+        [Theory]
+        [InlineData("movies", "fanedits")]
+        [InlineData("fanedits", "movies")]
+        [InlineData("movies", "anime_movies")]
+        [InlineData("anime_movies", "music_videos")]
+        [InlineData("books", "audiobooks")]
+        [InlineData("audiobooks", "books")]
+        [InlineData("tv", "anime")]
+        public void BelongsInSearchOf_EveryTypeKeepsToItsOwnResults(string heldAs, string searched)
+        {
+            var ids = LibraryItemResolver.ResolveAll(DailyShow, "tt0115147", "imdb", contributing: null);
+            var types = new Dictionary<int, string> { [433690] = heldAs };
+
+            LibraryItemResolver.BelongsInSearchOf(ids, types, Searched(searched)).Should().BeFalse();
+            LibraryItemResolver.BelongsInSearchOf(ids, types, Searched(heldAs)).Should().BeTrue();
+        }
+
+        [Fact]
+        public void BelongsInSearchOf_AResultTheLibraryDoesNotHold_Stays()
+        {
+            var ids = LibraryItemResolver.ResolveAll(DailyShow, "tt9999999", "imdb", contributing: null);
+
+            LibraryItemResolver.BelongsInSearchOf(ids, new Dictionary<int, string>(), Searched("anime")).Should().BeTrue();
+        }
+
+        [Fact]
+        public void BelongsInSearchOf_AResultHeldUnderThisTypeToo_Stays()
+        {
+            var both = new Dictionary<string, List<MediaExternalId>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["tt1"] = [Row(1, "imdb", "tt1"), Row(2, "imdb", "tt1")],
+            };
+            var ids = LibraryItemResolver.ResolveAll(both, "tt1", "imdb", contributing: null);
+
+            ids.Should().BeEquivalentTo([1, 2]);
+            LibraryItemResolver.BelongsInSearchOf(ids, new Dictionary<int, string> { [1] = "tv", [2] = "anime" }, Searched("anime")).Should().BeTrue();
+        }
+
+        [Fact]
+        public void ResolveAll_CollectsTheOwnIdAndEveryContributingId_AndResolveStillReturnsTheFirst()
+        {
+            var rows = new Dictionary<string, List<MediaExternalId>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["tv:1"] = [Row(10, "tmdb", "tv:1")],
+                ["show:9"] = [Row(11, "tvmaze", "show:9")],
+            };
+            var contributing = new List<ContributingExternalId> { new("tvmaze", "show:9") };
+
+            LibraryItemResolver.ResolveAll(rows, "tv:1", "tmdb", contributing).Should().Equal(10, 11);
+            LibraryItemResolver.Resolve(rows, "tv:1", "tmdb", contributing).Should().Be(10);
+        }
     }
 }

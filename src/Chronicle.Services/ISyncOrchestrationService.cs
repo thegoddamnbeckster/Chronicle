@@ -28,6 +28,14 @@ public interface ISyncOrchestrationService
     /// When null (e.g. background task), the first registered user in the DB is used as a fallback.
     /// </param>
     Task<SyncSummary> SyncAsync(string pluginId, bool fullSync = false, int? userId = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Pulls the complete watch history of ONE show Chronicle already has from every import provider that can supply it,
+    /// creating the show's seasons and episodes from it. A show added by hand has no files and no watch events of its own,
+    /// and the periodic sync only reports what was watched after its last run, so without this a show watched before it
+    /// was added would stay empty. Does nothing for a non-episodic item, or when no provider has the show.
+    /// </summary>
+    Task<SyncSummary> SyncShowAsync(int mediaItemId, int? userId = null, CancellationToken ct = default);
 }
 
 /// <summary>

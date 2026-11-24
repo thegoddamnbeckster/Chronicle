@@ -218,6 +218,15 @@ public class SyncOrchestrationService : ISyncOrchestrationService
             setting.Value = DateTimeOffset.UtcNow.ToString("O");
         await db.SaveChangesAsync(ct);
 
+        // A show that has no seasons yet (added by hand, or whose first pull found nothing) gets its full history here:
+        // the delta above only sees episodes watched after the last run. Never allowed to fail the sync.
+        if (!fullSync && provider.GetCapabilities() is { SupportsHistory: true, SupportsShowHistory: true })
+        {
+            try { await BackfillChildlessShowsAsync(provider, resolvedUserId > 0 ? resolvedUserId : null, ct); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { _log.LogWarning(ex, "Backfill of shows without seasons failed for {PluginId}", pluginId); }
+        }
+
         _log.LogInformation(
             "Sync complete for {PluginId}: {Matched} matched, {Created} stubs, {Events} events, {Credits} credits, {Progress} progress updates, {Errors} errors",
             pluginId, itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, progressUpdated, errors.Count);
@@ -246,6 +255,145 @@ public class SyncOrchestrationService : ISyncOrchestrationService
         }
 
         return new SyncSummary(itemsMatched, stubsCreated, watchEventsAdded, creditsAdded, errors, progressUpdated);
+    }
+
+    // -- Single-show history ------------------------------------------------------------------------------------------
+
+    private const string ShowHistoryCheckedKeyPrefix = "sync_state.show_history_checked.";
+    private const int    BackfillShowsPerRun         = 15;
+    private static readonly TimeSpan NewShowRecheck  = TimeSpan.FromHours(12);   // shows added in the last two weeks
+    private static readonly TimeSpan OldShowRecheck  = TimeSpan.FromDays(7);
+
+    public async Task<SyncSummary> SyncShowAsync(int mediaItemId, int? userId = null, CancellationToken ct = default)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+        var providers = _registry.GetImportProviders()
+            .Where(p => p.GetCapabilities() is { SupportsHistory: true, SupportsShowHistory: true }).ToList();
+        return await SyncShowCoreAsync(db, mediaItemId, userId, providers, ct);
+    }
+
+    private async Task<SyncSummary> SyncShowCoreAsync(
+        ChronicleDbContext db, int mediaItemId, int? userId,
+        IReadOnlyList<IImportProvider> providers, CancellationToken ct)
+    {
+        var errors = new List<string>();
+        int matched = 0, created = 0, events = 0;
+        var empty = new SyncSummary(0, 0, 0, 0, errors);
+
+        var show = await db.MediaItems.AsNoTracking()
+            .Include(i => i.MediaType)
+            .FirstOrDefaultAsync(i => i.Id == mediaItemId, ct);
+        if (show is null || show.ParentId.HasValue || show.HierarchyLevel != 0 || show.MediaType is null
+            || !MediaTypeRegistry.HasImportShape(show.MediaType.Name, ImportShapes.Episodic))
+            return empty;
+
+        var knownIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in await db.MediaExternalIds.AsNoTracking().Where(x => x.MediaItemId == mediaItemId).ToListAsync(ct))
+            knownIds.TryAdd(e.Source, e.ExternalId);
+        if (knownIds.Count == 0) return empty;
+
+        var resolvedUserId = userId
+            ?? await db.Users.OrderBy(u => u.Id).Select(u => (int?)u.Id).FirstOrDefaultAsync(ct)
+            ?? 0;
+
+        var asked = false;
+        foreach (var provider in providers)
+        {
+            try
+            {
+                if (!await provider.IsAuthenticatedAsync(ct)) continue;
+                var history = await provider.GetShowWatchHistoryAsync(knownIds, ct);
+                asked = true;
+
+                foreach (var evt in history)
+                {
+                    try
+                    {
+                        var (item, isNew) = await MatchOrCreateAsync(db, evt, provider.PluginId, ct);
+                        if (isNew) created++; else matched++;
+                        if (resolvedUserId > 0)
+                        {
+                            events += await UpsertWatchEventAsync(db, item.Id, resolvedUserId, evt, provider.Name, ct);
+                            var libraryItemId = item.ParentId.HasValue ? await GetRootItemIdAsync(db, item, ct) : item.Id;
+                            await UpsertLibraryStatusAsync(db, libraryItemId, resolvedUserId, evt, ct);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Show history error for item {ItemId}, event {ExternalId}", mediaItemId, evt.ExternalId);
+                        errors.Add($"{evt.ExternalId}: {ex.Message}");
+                    }
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Show history pull from {PluginId} failed for item {ItemId}", provider.PluginId, mediaItemId);
+                errors.Add($"{provider.PluginId}: {ex.Message}");
+            }
+        }
+
+        // Remember that this show was looked at, so a show the services do not have is not asked about every 15 minutes.
+        if (asked)
+        {
+            var key = ShowHistoryCheckedKeyPrefix + mediaItemId;
+            var setting = await db.AppSettings.FindAsync([key], ct);
+            if (setting is null) db.AppSettings.Add(new AppSetting { Key = key, Value = DateTimeOffset.UtcNow.ToString("O") });
+            else setting.Value = DateTimeOffset.UtcNow.ToString("O");
+            await db.SaveChangesAsync(ct);
+        }
+
+        _log.LogInformation(
+            "Show history for item {ItemId} \"{Name}\": {Matched} matched, {Created} created, {Events} watch events, {Errors} errors",
+            mediaItemId, show.Name, matched, created, events, errors.Count);
+
+        if (created > 0) TriggerEnrichmentInBackground();
+        return new SyncSummary(matched, created, events, 0, errors);
+    }
+
+    /// <summary>
+    /// Gives every episodic root item that has no seasons yet its full history from <paramref name="provider"/>, a few per run.
+    /// A show is asked about again after 12 hours (added in the last two weeks) or 7 days, whatever the answer was.
+    /// </summary>
+    private async Task BackfillChildlessShowsAsync(IImportProvider provider, int? userId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ChronicleDbContext>();
+
+        var episodicTypeIds = (await db.MediaTypes.AsNoTracking().Select(t => new { t.Id, t.Name }).ToListAsync(ct))
+            .Where(t => MediaTypeRegistry.HasImportShape(t.Name, ImportShapes.Episodic))
+            .Select(t => t.Id).ToList();
+        if (episodicTypeIds.Count == 0) return;
+
+        var candidates = await db.MediaItems.AsNoTracking()
+            .Where(m => m.ParentId == null && m.HierarchyLevel == 0 && episodicTypeIds.Contains(m.MediaTypeId)
+                        && !db.MediaItems.Any(k => k.ParentId == m.Id))
+            .OrderByDescending(m => m.CreatedAt)
+            .Select(m => new { m.Id, m.CreatedAt })
+            .Take(200)
+            .ToListAsync(ct);
+        if (candidates.Count == 0) return;
+
+        var keys = candidates.Select(c => ShowHistoryCheckedKeyPrefix + c.Id).ToList();
+        var checkedAt = await db.AppSettings.AsNoTracking()
+            .Where(s => keys.Contains(s.Key))
+            .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
+
+        var now = DateTimeOffset.UtcNow;
+        var due = candidates.Where(c =>
+        {
+            if (!checkedAt.TryGetValue(ShowHistoryCheckedKeyPrefix + c.Id, out var raw)
+                || !DateTimeOffset.TryParse(raw, out var last)) return true;
+            var recheck = now - new DateTimeOffset(DateTime.SpecifyKind(c.CreatedAt, DateTimeKind.Utc)) < TimeSpan.FromDays(14)
+                ? NewShowRecheck : OldShowRecheck;
+            return now - last >= recheck;
+        }).Take(BackfillShowsPerRun).ToList();
+        if (due.Count == 0) return;
+
+        _log.LogInformation("Backfilling history for {Count} show(s) without seasons from {PluginId}", due.Count, provider.PluginId);
+        foreach (var c in due)
+            await SyncShowCoreAsync(db, c.Id, userId, [provider], ct);
     }
 
     // ── Item matching ─────────────────────────────────────────────────────────

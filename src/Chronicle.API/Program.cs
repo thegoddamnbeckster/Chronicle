@@ -205,6 +205,8 @@ builder.Services.AddScoped<IPersonResolutionService, PersonResolutionService>();
 builder.Services.AddScoped<IMetadataEnrichmentService, MetadataEnrichmentService>();
 builder.Services.AddSingleton<EnrichmentStatsCache>();
 builder.Services.AddSingleton<EpisodeTopUpThrottle>();
+builder.Services.AddScoped<IShowStructureService, ShowStructureService>();
+builder.Services.AddScoped<IDescendantsService, DescendantsService>();
 builder.Services.AddScoped<IMetadataResolutionService, MetadataResolutionService>();
 builder.Services.AddScoped<IMetadataContributionService, MetadataContributionService>();
 builder.Services.AddSingleton<TagMismatchRematchQueue>();

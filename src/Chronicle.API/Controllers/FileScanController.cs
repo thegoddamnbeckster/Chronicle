@@ -7,6 +7,7 @@ using Chronicle.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Chronicle.API.Controllers;
 
@@ -21,11 +22,13 @@ public class FileScanController : ControllerBase
     private readonly IScanFolderService _scanFolderService;
     private readonly ChronicleDbContext _context;
     private readonly ILogger<FileScanController> _logger;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     public FileScanController(IFileScanService scanService, ScanProgressService progress,
         ImportProgressService importProgress, IScanFolderService scanFolderService,
-        ChronicleDbContext context, ILogger<FileScanController> logger)
+        ChronicleDbContext context, ILogger<FileScanController> logger, IServiceScopeFactory scopeFactory)
     {
+        _scopeFactory = scopeFactory;
         _scanService = scanService;
         _progress = progress;
         _importProgress = importProgress;
@@ -109,6 +112,21 @@ public class FileScanController : ControllerBase
                 libraryByExternalId = byExternalId;
             }
 
+            // A search for one media type returns that type's results only: what the library already holds solely under another
+            // type is not one of them (The Daily Show is a TV show, so it never turns up in an Anime search).
+            if (libraryByExternalId.Count > 0)
+            {
+                var withMatches = results.Select(r => (Result: r, Ids: LibraryItemResolver.ResolveAll(libraryByExternalId, r.ExternalId, r.Source, r.ContributingExternalIds))).ToList();
+                var matchedIds = withMatches.SelectMany(x => x.Ids).Distinct().ToList();
+                var typeNameByItemId = await _context.MediaItems.AsNoTracking()
+                    .Where(m => matchedIds.Contains(m.Id) && m.MediaType != null)
+                    .Select(m => new { m.Id, TypeName = m.MediaType!.Name })
+                    .ToDictionaryAsync(m => m.Id, m => m.TypeName, ct);
+                var searchedTypes = MediaTypeRegistry.DatabaseNamesFor(mediaTypeHint ?? MediaTypeRegistry.DefaultProviderName)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                results = withMatches.Where(x => LibraryItemResolver.BelongsInSearchOf(x.Ids, typeNameByItemId, searchedTypes)).Select(x => x.Result).ToList();
+            }
+
             var dtos = results
                 .Select(r => new MetadataCandidateDto(r.ExternalId, r.Title, r.Year, r.PosterUrl, r.Overview, r.Rating, r.MatchScore, r.Source, r.Genres, r.Cast, r.Sources,
                     r.ContributingExternalIds?.Select(x => new ContributingExternalIdDto(x.Source, x.ExternalId)).ToList(),
@@ -154,12 +172,37 @@ public class FileScanController : ControllerBase
                 ResolvedMetadata: null,
                 SeriesPosition: item.SeriesPosition);
 
+            QueueDescendants(item.Id, userId);
             return Ok(ApiResponse<MediaItemDto>.Ok(itemDto));
         }
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResponse<MediaItemDto>.Fail("ADD_ERROR", ex.Message));
         }
+    }
+
+    /// <summary>
+    /// Whatever the user adds by hand is added with everything beneath it, in the background so the add itself returns at once.
+    /// Which types have anything beneath them comes from the media type's own hierarchy, so every such type is covered. A show's
+    /// watch history is then pulled from the tracking service (Simkl ...) onto its episodes; that is a no-op for anything else.
+    /// </summary>
+    private void QueueDescendants(int mediaItemId, int userId)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<IDescendantsService>()
+                    .EnsureDescendantsAsync(mediaItemId, CancellationToken.None);
+                await scope.ServiceProvider.GetRequiredService<ISyncOrchestrationService>()
+                    .SyncShowAsync(mediaItemId, userId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Adding everything beneath newly added item {ItemId} failed", mediaItemId);
+            }
+        });
     }
 
     /// <summary>

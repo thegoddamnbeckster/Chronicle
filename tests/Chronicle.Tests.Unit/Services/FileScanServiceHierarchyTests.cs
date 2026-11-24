@@ -1243,4 +1243,124 @@ public class FileScanServiceHierarchyTests
 
         Assert.Equal(2, Assert.Single(result).EpisodeNumber);
     }
+
+    // ── AddFromSearchAsync: never mix types, never file a lower item at the top ───────────
+
+    private static (ChronicleDbContext Context, FileScanService Service, Mock<IMetadataProvider> Provider) AddFixture(
+        params MediaType[] types)
+    {
+        RegistryFixtures.LoadBuiltIns();
+        var context = NewInMemoryContext();
+        context.MediaTypes.AddRange(types);
+        context.SaveChanges();
+
+        var provider = new Mock<IMetadataProvider>();
+        provider.Setup(p => p.PluginId).Returns("chronicle.plugin.fake");
+        provider.Setup(p => p.GetSupportedMediaTypes()).Returns([]);
+
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProvider("chronicle.plugin.fake")).Returns(provider.Object);
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([("chronicle.plugin.fake", provider.Object, (string?)null)]);
+
+        return (context, new FileScanService(context, registry.Object, null!, null!, new ImportProgressService(), null!), provider);
+    }
+
+    private static MediaType Type(int id, string name, int levels) =>
+        new() { Id = id, Name = name, DisplayName = name, HierarchyLevels = levels, CreatedAt = DateTime.UtcNow };
+
+    [Fact]
+    public async Task AddFromSearchAsync_AFanEditSharingAFilmsId_IsStillItsOwnEntry()
+    {
+        var (context, service, provider) = AddFixture(Type(1, "movies", 1), Type(2, "fanedits", 1));
+        await using var _ = context;
+        var film = new MediaItem { MediaTypeId = 1, Name = "Blade Runner", Year = 1982, HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        context.MediaItems.Add(film);
+        await context.SaveChangesAsync();
+        context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = film.Id, Source = "fake", ExternalId = "fake:movie:78" });
+        await context.SaveChangesAsync();
+        provider.Setup(p => p.GetByIdAsync("fake:movie:78", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { ExternalId = "movie:78", Source = "fake", Title = "Blade Runner", Year = 1982 });
+
+        var added = await service.AddFromSearchAsync("fake:movie:78", mediaTypeId: 2, userId: 1, resultSource: "fake");
+
+        Assert.NotEqual(film.Id, added.Id);
+        Assert.Equal(2, added.MediaTypeId);
+    }
+
+    [Fact]
+    public async Task AddFromSearchAsync_ABookWithAnAuthorAndSeries_IsFiledUnderBoth()
+    {
+        var (context, service, provider) = AddFixture(Type(1, "books", 3));
+        await using var _ = context;
+        provider.Setup(p => p.GetByIdAsync("fake:11", It.IsAny<CancellationToken>())).ReturnsAsync(new MediaMetadata
+        {
+            ExternalId = "fake:11", Source = "fake", Title = "Book One", Year = 2012,
+            Lineage = [new("An Author", "fake:author:1"), new("The Series", "fake:series:9")],
+        });
+
+        var book = await service.AddFromSearchAsync("fake:11", mediaTypeId: 1, userId: 1, resultSource: "fake");
+
+        Assert.Equal(2, book.HierarchyLevel);
+        var series = await context.MediaItems.SingleAsync(m => m.Id == book.ParentId);
+        Assert.Equal(("The Series", 1), (series.Name, series.HierarchyLevel));
+        var author = await context.MediaItems.SingleAsync(m => m.Id == series.ParentId);
+        Assert.Equal(("An Author", 0, (int?)null), (author.Name, author.HierarchyLevel, author.ParentId));
+        Assert.Contains(context.MediaExternalIds, e => e.MediaItemId == author.Id && e.ExternalId.Contains("author:1"));
+    }
+
+    [Fact]
+    public async Task AddFromSearchAsync_ABookByAnAuthorAlreadyInTheLibrary_JoinsThatAuthor_NoSecondOne()
+    {
+        var (context, service, provider) = AddFixture(Type(1, "books", 3));
+        await using var _ = context;
+        var author = new MediaItem { MediaTypeId = 1, Name = "An Author", HierarchyLevel = 0, NormalizedName = Chronicle.Core.Helpers.MediaItemNormalizer.NormalizeName("An Author"), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        context.MediaItems.Add(author);
+        await context.SaveChangesAsync();
+        provider.Setup(p => p.GetByIdAsync("fake:12", It.IsAny<CancellationToken>())).ReturnsAsync(new MediaMetadata
+        {
+            ExternalId = "fake:12", Source = "fake", Title = "Standalone", Year = 2020, Lineage = [new("An Author", "fake:author:1")],
+        });
+
+        var book = await service.AddFromSearchAsync("fake:12", mediaTypeId: 1, userId: 1, resultSource: "fake");
+
+        Assert.Equal(author.Id, book.ParentId);
+        Assert.Equal(1, book.HierarchyLevel);
+        Assert.Equal(1, await context.MediaItems.CountAsync(m => m.HierarchyLevel == 0));
+    }
+
+    [Fact]
+    public async Task AddFromSearchAsync_AddingAMisplacedTopLevelBookAgain_FilesItUnderItsAuthor_WithoutADuplicate()
+    {
+        var (context, service, provider) = AddFixture(Type(1, "books", 3));
+        await using var _ = context;
+        var stray = new MediaItem { MediaTypeId = 1, Name = "Kill Switch", HierarchyLevel = 0, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        context.MediaItems.Add(stray);
+        await context.SaveChangesAsync();
+        context.MediaExternalIds.Add(new MediaExternalId { MediaItemId = stray.Id, Source = "fake", ExternalId = "fake:13" });
+        await context.SaveChangesAsync();
+        provider.Setup(p => p.GetByIdAsync("fake:13", It.IsAny<CancellationToken>())).ReturnsAsync(new MediaMetadata
+        {
+            ExternalId = "fake:13", Source = "fake", Title = "Kill Switch", Year = 2021, Lineage = [new("An Author", "fake:author:1")],
+        });
+
+        var book = await service.AddFromSearchAsync("fake:13", mediaTypeId: 1, userId: 1, resultSource: "fake");
+
+        Assert.Equal(stray.Id, book.Id);
+        Assert.Equal(1, book.HierarchyLevel);
+        Assert.Equal("An Author", (await context.MediaItems.SingleAsync(m => m.Id == book.ParentId)).Name);
+        Assert.Equal(2, await context.MediaItems.CountAsync());
+    }
+
+    [Fact]
+    public async Task AddFromSearchAsync_AProviderThatNamesNoAncestors_AddsATopLevelItem_AsBefore()
+    {
+        var (context, service, provider) = AddFixture(Type(1, "music", 3));
+        await using var _ = context;
+        provider.Setup(p => p.GetByIdAsync("fake:artist:1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MediaMetadata { ExternalId = "fake:artist:1", Source = "fake", Title = "An Artist" });
+
+        var artist = await service.AddFromSearchAsync("fake:artist:1", mediaTypeId: 1, userId: 1, resultSource: "fake");
+
+        Assert.Equal((0, (int?)null), (artist.HierarchyLevel, artist.ParentId));
+    }
 }

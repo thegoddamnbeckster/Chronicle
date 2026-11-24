@@ -28,14 +28,18 @@ namespace Chronicle.API.Controllers
         private readonly IMetadataResolutionService _resolutionService;
         private readonly OverrideResetProgressService _overrideResetProgress;
 
+        private readonly IDescendantsService _descendants;
+
         public MediaController(IMediaService mediaService, IFileScanService fileScanService,
             IMetadataEnrichmentService enrichment, IMetadataContributionService contributionService,
             ChronicleDbContext context,
             IMergeService mergeService, IMovieCollectionService movieCollectionService,
             IBookSeriesService bookSeriesService,
             IPluginRegistry pluginRegistry,
-            IMetadataResolutionService resolutionService, OverrideResetProgressService overrideResetProgress)
+            IMetadataResolutionService resolutionService, OverrideResetProgressService overrideResetProgress,
+            IDescendantsService descendants)
         {
+            _descendants             = descendants;
             _mediaService            = mediaService;
             _fileScanService         = fileScanService;
             _enrichment              = enrichment;
@@ -274,6 +278,12 @@ namespace Chronicle.API.Controllers
             {
                 await _enrichment.EnrichItemAsync(id,
                     new EnrichmentOptions(EnrichmentMode.Force, Cascade: true), ct);
+
+                // An item with nothing beneath it yet (added before everything beneath an added item came with it) gets
+                // it now. One that already has children is left alone: refreshing a large catalogue must stay cheap.
+                if (!await _context.MediaItems.AnyAsync(m => m.ParentId == id, ct))
+                    await _descendants.EnsureDescendantsAsync(id, ct);
+
                 var item = await _mediaService.GetByIdAsync(id, ct);
                 if (item == null)
                     return NotFound(ApiResponse<MediaItemDto>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));

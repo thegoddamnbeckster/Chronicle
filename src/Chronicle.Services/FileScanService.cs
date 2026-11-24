@@ -850,6 +850,14 @@ namespace Chronicle.Services
             if (existing?.MediaItem is not null)
             {
                 item = existing.MediaItem;
+
+                // An item added by hand before items were filed under their ancestors sits at the top with nothing above it;
+                // adding it again files it where it belongs. A placed item, and one the provider names no ancestors for, stay put.
+                if (item.ParentId is null && item.HierarchyLevel == 0 && item.MediaTypeId == mediaTypeId && meta.Lineage.Count > 0)
+                {
+                    var (placedUnder, placedLevel) = await FileUnderLineageAsync(meta, mediaType, idSource, ct);
+                    if (placedUnder is not null) { item.ParentId = placedUnder; item.HierarchyLevel = placedLevel; }
+                }
                 item.Name           = meta.Title;
                 item.Year           = meta.Year;
                 item.Overview       = meta.Overview;
@@ -886,16 +894,22 @@ namespace Chronicle.Services
                 }
                 else
                 {
+                    // An item below the top of its hierarchy (a book, an album, a track) is filed under the ancestors its
+                    // provider names, found or created the way the scanner finds or creates a folder's author/series/album,
+                    // so it never lands at the top with nothing above it.
+                    var (parentId, level) = await FileUnderLineageAsync(meta, mediaType, idSource, ct);
+
                     item = new Chronicle.Core.Models.MediaItem
                     {
                         MediaTypeId    = mediaTypeId,
+                        ParentId       = parentId,
                         Name           = meta.Title,
                         Year           = meta.Year,
                         Overview       = meta.Overview,
                         PosterUrl      = meta.PosterUrl,
                         RuntimeMinutes = meta.RuntimeMinutes,
                         MetadataJson   = initialMetaJson,
-                        HierarchyLevel = 0,
+                        HierarchyLevel = level,
                         CreatedAt      = DateTime.UtcNow,
                         UpdatedAt      = DateTime.UtcNow,
                     };
@@ -1080,6 +1094,30 @@ namespace Chronicle.Services
                 .Include(m => m.MediaType)
                 .Include(m => m.ExternalIds)
                 .FirstAsync(m => m.Id == item.Id, ct);
+        }
+
+        /// <summary>
+        /// Finds or creates the ancestors a provider named for an item (<see cref="MediaMetadata.Lineage"/>, top first), the way the
+        /// scanner finds or creates a folder's author, series or album, and returns the closest one with the level the item takes.
+        /// A type with fewer levels than the lineage names keeps only the levels it has.
+        /// </summary>
+        private async Task<(int? ParentId, int Level)> FileUnderLineageAsync(
+            MediaMetadata meta, Chronicle.Core.Models.MediaType type, string idSource, CancellationToken ct)
+        {
+            int? parentId = null;
+            var level = 0;
+            var created = new List<int>();
+            foreach (var a in meta.Lineage.Where(a => !string.IsNullOrWhiteSpace(a.Name)).Take(Math.Max(0, type.HierarchyLevels - 1)))
+            {
+                var (ancestor, isNew) = await UpsertGroupItemAsync(
+                    new ScanGroupImport(a.Name, null, null, [], []), type.Id, parentId, level, type.HierarchyLevels, [], [], ct);
+                if (!string.IsNullOrWhiteSpace(a.ExternalId)) await UpsertExternalIdAsync(ancestor.Id, a.ExternalId!, ct, idSource);
+                if (isNew) created.Add(ancestor.Id);
+                parentId = ancestor.Id;
+                level++;
+            }
+            if (created.Count > 0) await SeedEnrichmentRowsForNewItemsAsync(created, type.Name, ct);
+            return (parentId, level);
         }
 
         /// <summary>

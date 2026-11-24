@@ -332,6 +332,9 @@ public sealed class FakeEpisodeListProvider : IMetadataProvider
 /// rather than silently returning plausible-looking fake data.</summary>
 public sealed class FakeSingleProviderPluginRegistry(FakeEpisodeListProvider provider) : IPluginRegistry
 {
+    /// <summary>The media locators (Radarr, Sonarr ...) a test wants the host to see.</summary>
+    public List<IMediaLocator> Locators { get; } = [];
+
     public IReadOnlyList<IMetadataProvider> GetMetadataProviders() => [provider];
 
     public IReadOnlyList<(string PluginId, IMetadataProvider Provider, string? IconUrl)> GetMetadataProviderEntries() =>
@@ -345,7 +348,7 @@ public sealed class FakeSingleProviderPluginRegistry(FakeEpisodeListProvider pro
     public IImportProvider? GetImportProvider(string pluginId) => null;
     public IReadOnlyList<IReportPlugin> GetReportPlugins() => [];
     public IReadOnlyList<IFileScannerPlugin> GetFileScannerPlugins() => [];
-    public IReadOnlyList<IMediaLocator> GetMediaLocators() => [];
+    public IReadOnlyList<IMediaLocator> GetMediaLocators() => Locators;
     public IReadOnlyList<IThemePlugin> GetThemePlugins() => [];
     public IReadOnlyList<IPluginTask> GetPluginTasks() => [];
     public IPluginTask? GetPluginTask(string pluginId, string taskId) => null;
@@ -366,6 +369,9 @@ public sealed class EpisodeProviderTestFactory : ChronicleApiFactory
     public const string FakePluginId = "chronicle.plugin.fakeepisodeprovider";
 
     public FakeEpisodeListProvider Provider { get; } = new();
+    public FakeSingleProviderPluginRegistry Registry { get; }
+
+    public EpisodeProviderTestFactory() => Registry = new FakeSingleProviderPluginRegistry(Provider);
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -373,7 +379,7 @@ public sealed class EpisodeProviderTestFactory : ChronicleApiFactory
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IPluginRegistry>();
-            services.AddSingleton<IPluginRegistry>(new FakeSingleProviderPluginRegistry(Provider));
+            services.AddSingleton<IPluginRegistry>(Registry);
         });
     }
 }
