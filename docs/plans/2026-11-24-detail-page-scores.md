@@ -1,7 +1,7 @@
 # Scores on the media detail page — plan
 
 **Date:** 2026-11-24
-**Status:** Plan written and reviewed (section 9). Not started.
+**Status:** Plan written and reviewed twice (section 9, second review R19-R27). Not started.
 **Request:** On an item's page, in the empty space beside the Status / Rating controls, show every score a plugin has for the
 item: the plugin's logo, then its score the way the plugin's own site shows it (IMDb `8.2/10`, TMDB `80%`, a five-star source
 `4.2/5 ★`). Any plugin that can supply a score, for any media type.
@@ -49,7 +49,7 @@ site that shows a star row). With no declaration there is no star. Before a plug
 wordmark set in the source's typeface (or the nearest system font) on its brand colour; never a generic icon. A source whose logo cannot be
 sourced legitimately (below) falls back to its wordmark, then to a letter badge.
 
-A plugin declares its source's style and star (3.2). With no declaration the score is `outOf` in the source's native scale and has no
+A plugin declares its source's style and star (3.2). A declared source with no presentation fields is `outOf` in its native scale with no
 star. Rounding: `outOf` keeps at most one decimal and drops a trailing `.0` (`8/10`); `percent` rounds to a whole number. Next to the
 score, small and muted: the vote count when known (`788K votes`; the exact number in the tooltip).
 
@@ -66,9 +66,10 @@ small set of generic renderers that any plugin can pick (no renderer or manifest
 | `icon-percent` | a state icon followed by a percent | Rotten Tomatoes (both scores) |
 | `badge` | a coloured square holding the number, colour chosen by `thresholds` | Metacritic (green / yellow / red) |
 
-Parameters live in the manifest beside it: `thresholds` (`[{ min, color, icon }]`, so one rule picks both colour and the state icon),
-`font_family`, brand colours. Fonts: only open-licence fonts are bundled; where a site's typeface is proprietary the nearest system or
-open font is used and a manifest may name a `font_url` the host fetches and caches at runtime like logos (decision 5). The four above were inspected (2.2); any other source gets `plain` until its site is inspected.
+Parameters live in the manifest beside it: `thresholds` (`[{ min, color, icon }]` against the **normalized** value 0-100, so one rule picks both colour and state icon and a /10 source like Metacritic's user score uses 75 for 7.5),
+`font_family`, brand colours. Fonts: the host bundles a small fixed set of **open-licence** faces (Roboto, Source Sans 3, Libre Franklin, Nunito Sans; licences checked and recorded in the repo), and a manifest picks one by name; it cannot supply a font file or URL (R20). A site's proprietary face is never bundled. The four above were inspected (2.2); any other source gets `plain` until its site is inspected.
+
+A variant's `look` and `thresholds` override the source's. State icons come from the same fetched-and-cached path as logos; where one cannot be had the renderer draws a plain state glyph in the brand colour, never a missing image.
 
 **More than one score from one source.** The collector's `variant` (design 5) is the answer, and each variant has its own mark and its own
 state icon. Rotten Tomatoes has two: **Tomatometer** (critics; a fresh tomato at 60% or more, a splat when rotten, a certified-fresh seal only
@@ -105,9 +106,9 @@ plugin:
 
 1. **Contract entries first.** Every `extendedData.ratings[]` entry with a finite numeric `value > 0` and `scale > 0` becomes a
    score. Entries of any other shape (OMDb's strings today) are skipped, never guessed at.
-2. **Else the plain `rating`.** If it is a finite number `> 0`, it becomes one score for that plugin's own source, converted from
-   the scale the plugin *stores* to the scale it *shows*: `native = rating / stored_scale * scale`, both from the plugin's manifest
-   (default 10 and 10). This is what keeps Hardcover's raw `4.2` from showing as `4.2/10`.
+2. **Else the plain `rating`, only for a plugin that declares `rating_sources` in its manifest.** If it is a finite number `> 0`, it becomes one score for that plugin's own source, converted from
+   the scale the plugin *stores* to the scale it *shows*: `native = rating / stored_scale * scale`, both from the manifest. **A plugin with no declaration shows no plain rating at all** (a bare number of unknown scale is exactly the "4 is not fine" case, and
+   FanEdit and Movies Remastered rely on this); only contract entries, which carry their own scale, always show. This is what keeps Hardcover's raw `4.2` from showing as `4.2/10`.
 3. **Votes:** `entry.votes` -> `extendedData.votes` -> partition `votes`.
 4. A value above its scale (beyond rounding) is dropped, not clamped.
 5. **De-duplicate by `(key, variant)`:** the same measurement relayed by several plugins is shown once, from the plugin that owns
@@ -131,8 +132,7 @@ The design's optional manifest array, trimmed to what the strip needs; read thro
 Fields: `key` (what is measured), `display_name`, `stored_scale` (the scale of this plugin's plain `rating`; default 10), `scale` and
 `display` and `star` (the source's own presentation, above), optional `logo_url` (the source's official logo, an SVG or PNG on the source's own site;
 for a relayed source with no plugin of its own, this is its only mark), `wordmark` (`{ text, font_family, color, background }`, the
-fallback: the source's name in its typeface and brand colour), `url_template`, `attribution`. `display` is `outOf` (default) or `percent`; `star` is `single`, `row` or absent (no star). A manifest without any of it still works
-(3.1 defaults: native scale, `outOf`, no star). No `min_chronicle_version` bump is needed: an
+fallback: the source's name in its typeface and brand colour), `url_template`, `attribution`. `display` is `outOf` (default) or `percent`; `star` is `single`, `row` or absent (no star). A manifest that declares a source but omits the presentation fields gets native scale, `outOf` and no star. No `min_chronicle_version` bump is needed: an
 older host ignores the unknown property.
 
 ### 3.3 API
@@ -169,8 +169,8 @@ Required for correct display (without them the result is wrong or bare, section 
 | Open Library | same (`ratings_count` is already parsed) |
 | MusicBrainz | manifest: `stored_scale 10`, `scale 5`; emit native `ratings[]` (`value/5`, `votes-count`) and stop the x2 in a later release; `star` after its site is checked |
 | AniList | manifest: `stored_scale 10`, `scale 100`, `display percent` (star only if its site shows one) |
-| IGDB | manifest: `scale 100`; its `ratings[]` already has the native values; style and star after its site is checked |
-| Steam | emit `ratings[]` with `key: metacritic`, `scale 100` (today its `rating` is Metacritic/10 labelled as Steam's own) |
+| IGDB | manifest: `scale 100`; `key: igdb` with `variant` users / critics / total following its setting (so changing the setting never mislabels old data); its `ratings[]` already has the native values; style and star after its site is checked |
+| Steam | emit `ratings[]` with `key: metacritic`, `variant: critics`, `scale 100` (today its `rating` is Metacritic/10 labelled as Steam's own) |
 | TheTVDB | stop mapping `score` (popularity) to a rating; keep it as `popularity` |
 | IMDb, Simkl, TVMaze, Trakt, TheAudioDB | manifest only (native /10, default style) |
 | OMDb | emit contract-shaped `ratings[]` (keys `imdb`, `rottentomatoes`, `metacritic`; `icon_url` for the relayed two); keep the original list as `ratings_raw` |
@@ -209,7 +209,8 @@ Kodi NFO is not used and nothing is built for it. Two of the others (FanEdit, Mo
 
 ### 3.6 Phases
 
-- **A (this plan):** `ItemScores`, the manifest model field, the DTO field, `ScoresPanel`, tests; the manifest declarations in 3.5.
+- **A1 (first release, useful alone):** `ItemScores`, the manifest model field, the DTO field, `ScoresPanel` with the `plain` look and wordmark marks, tests; the manifest declarations in 3.5. No logos, fonts or special looks.
+- **A2 (second release):** the host logo/icon cache, bundled open fonts, the `star-text`, `ring`, `icon-percent` and `badge` looks, per-source `look` declarations. Split so the risky parts (third-party fetches, SVG) do not hold up the data work.
 - **B (separate releases):** the remaining plugin changes in 3.5 (native `ratings[]`, votes).
 - **C (later, not built now):** `media_ratings` table, library sort and filter, Kodi `CollectRatings` reading the same collector,
   history, Settings -> Ratings (design sections 3, 5-7).
@@ -226,6 +227,8 @@ Kodi NFO is not used and nothing is built for it. Two of the others (FanEdit, Mo
   full; 0.4 -> 40% of the first); the mark fallback chain (logo -> wordmark -> icon -> letter badge); the vote-count abbreviations; the hidden state.
 - **Integration:** `GET /api/v1/media/{id}` includes `ratings` and an older shape still deserialises.
 - **Plugin tests:** each updated plugin's manifest declarations are valid, and each emitted `ratings[]` entry is in contract shape.
+- **Opt-in rule:** a plugin with a plain `rating` and no `rating_sources` shows nothing; a contract entry always shows.
+- **Security (A2):** logo/icon fetch refuses non-https, private and loopback addresses, redirects to them, oversize bodies and non-image types; SVG is served only as an image (never inline) with a sandboxing CSP, or sanitised; manifest colours must be hex, font names must be in the bundled set.
 - **Rule check:** a test that no host source file under `Chronicle.Services/Scores` names a plugin.
 
 ## 5. Out of scope
@@ -295,3 +298,19 @@ design's later phases are unaffected.
 
 **Verdict:** approved to build once the decisions in section 7 are answered (defaults are marked "planned" if the owner has no preference). Decision 5 (how logos
 are sourced) is the only one that blocks a *part* of the work: everything else can start, with the wordmark fallback in place, while it is open.
+
+### Second review (after the source-look, variants and plugin-audit additions)
+
+| # | Severity | Finding | Change |
+|---|----------|---------|--------|
+| R19 | High | A manifest with no declaration still showed a plain `rating` at a default /10, which contradicts the owner's "4 is not fine" and would show FanEdit and Movies Remastered numbers of unknown scale (and any third-party plugin's) | 3.1 step 2: a plain `rating` shows only for a plugin that declares `rating_sources`; contract entries (own scale) always show; test added |
+| R20 | High | Host fetches of manifest-supplied URLs (`logo_url`, state icons) are an SSRF and, for SVG served from the API origin, a script-injection risk; a manifest `font_url` and free-text colours add the same class (CSS injection) and conflicted with R15 | `font_url` removed (fonts come from a bundled open set picked by name); fetch limits (https only, no private/loopback, no redirect into them, size and type caps); SVG only as an image with a sandboxing CSP or sanitised; hex-only colours; tests in section 4 |
+| R21 | Medium | Rotten Tomatoes' state icons (fresh/rotten/certified, bucket full/tipped) are trademarked and have no stable public URLs; a missing icon would break the badge | State icons use the same fetch/cache path; when absent the renderer draws a plain glyph in the brand colour; certified-fresh is shown only if a source supplies the flag (none does) |
+| R22 | Medium | `thresholds` mixed scales (Metacritic's user score tiers are /10, the Metascore /100) | Thresholds are against the normalized 0-100 value |
+| R23 | Medium | Two sources reporting Metacritic (OMDb, Steam) with different variants would not de-duplicate | Both emit `variant: critics`; Steam's added to 3.5 |
+| R24 | Medium | IGDB's `key` followed a user setting, so changing it would leave old partitions under a different key | One key (`igdb`) with `variant` users/critics/total |
+| R25 | Low | `look` on a source and on its variants could conflict | A variant's `look`/`thresholds` override the source's |
+| R26 | Medium | Phase A had grown (looks, fonts, logo cache, SVG handling), so the useful data work would wait on the risky parts | Split into A1 (data, panel, plain look) and A2 (logos, fonts, looks) |
+| R27 | Low | Test list had no security or opt-in-rule cases | Added to section 4 |
+
+**Verdict (second review):** approved to build, A1 first. Decisions in section 7 still apply; none blocks A1.
