@@ -602,6 +602,14 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   gap: 10px;
 }
 
+/* Status/rating controls and, to their right, every plugin's score for the item; the scores wrap below on a narrow window. */
+.statusAndScores {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
 /* Watch controls sitting on the same row as the refresh buttons. */
 .stripLibrary {
   display: flex;

@@ -93,6 +93,14 @@ public class PluginManifest
     public List<PluginSourceUrlRule>? SourceUrls { get; set; }
 
     /// <summary>
+    /// The scores this plugin's source has and how that source presents them, so the detail page can show each in the source's
+    /// own terms (IMDb "8.2/10", TMDB "80%"). Optional. A plugin that sets only the plain <c>rating</c> field shows no score unless
+    /// it declares a source here, because a bare number of unknown scale is never shown. See docs/PLUGIN_DEVELOPMENT_GUIDE.md.
+    /// </summary>
+    [JsonPropertyName("rating_sources")]
+    public List<PluginRatingSource>? RatingSources { get; set; }
+
+    /// <summary>
     /// Background tasks this plugin wants Chronicle to schedule.
     /// Omit entirely if the plugin has no scheduled work.
     /// </summary>
@@ -125,4 +133,44 @@ public class PluginSourceUrlRule
     /// <summary>Address template; $0 is the whole id, $1..$n are the regex's capture groups.</summary>
     [JsonPropertyName("url")]
     public string Url { get; set; } = string.Empty;
+}
+
+/// <summary>One score a plugin's source has, and how its own site presents it (manifest <c>rating_sources</c>).</summary>
+public class PluginRatingSource
+{
+    /// <summary>What is measured: "imdb", "tmdb", "metacritic"... The same key from several plugins is one measurement.</summary>
+    [JsonPropertyName("key")]
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>Second score from the same source ("critics" / "audience"); absent for a source with one score.</summary>
+    [JsonPropertyName("variant")]
+    public string? Variant { get; set; }
+
+    /// <summary>Name shown for the source; defaults to the key.</summary>
+    [JsonPropertyName("display_name")]
+    public string? DisplayName { get; set; }
+
+    /// <summary>True when the plugin's plain <c>rating</c> field is this source's score (default: the first entry is).</summary>
+    [JsonPropertyName("plain_rating")]
+    public bool PlainRating { get; set; }
+
+    /// <summary>The scale the plugin <i>stores</i> its plain <c>rating</c> in (default 10).</summary>
+    [JsonPropertyName("stored_scale")]
+    public double StoredScale { get; set; } = 10;
+
+    /// <summary>The scale the source's own site shows (default 10).</summary>
+    [JsonPropertyName("scale")]
+    public double Scale { get; set; } = 10;
+
+    /// <summary>"outOf" (default, 8.2/10) or "percent" (80%).</summary>
+    [JsonPropertyName("display")]
+    public string Display { get; set; } = "outOf";
+
+    /// <summary>"single" or "row" only when the source's own site shows stars; absent means no star.</summary>
+    [JsonPropertyName("star")]
+    public string? Star { get; set; }
+
+    /// <summary>A sentence the source's terms require near its scores.</summary>
+    [JsonPropertyName("attribution")]
+    public string? Attribution { get; set; }
 }

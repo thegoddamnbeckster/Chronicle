@@ -313,6 +313,20 @@ put in Chronicle, never merely hidden or disabled. Do not delete a plugin's fold
   get a one-time `plugin.missing` notification, and removing it on the Plugins page removes its data with it.
 - Disabling a plugin is not removing it: its data stays so it can be switched back on.
 
+## Scores on the detail page
+
+Every score a plugin has is shown beside the status controls, in its source's own terms (`ItemScores.Collect`, `ScoresPanel`;
+plan `docs/plans/2026-11-24-detail-page-scores.md`, plugin author side in `PLUGIN_DEVELOPMENT_GUIDE.md`). Key invariants:
+
+- **Chronicle names no plugin.** Scale, `percent` vs `outOf`, and whether a star is drawn all come from the plugin's manifest
+  `rating_sources`; a test fails if a score source file names one.
+- **A plain `rating` shows only for a plugin that declares `rating_sources`** (a bare number of unknown scale is never shown); scores in
+  `extendedData.ratings[]` carry their own scale and always show. A value above its scale is dropped, never clamped.
+- **A star only where the source's own site shows one** (`single`, or `row` = one star per scale point). Check the site; do not guess.
+- The same measurement from several plugins is shown once, from the plugin highest in the type's saved plugin order; the others are
+  named in the tooltip. A source's required attribution sits inside its own pill.
+- A rank, popularity or listener count is never reported as a score.
+
 ## Documentation Reference
 
 Full specs live in `docs/` — consult before implementing any feature:

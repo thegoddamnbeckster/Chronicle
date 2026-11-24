@@ -195,8 +195,18 @@ namespace Chronicle.API.DTOs
         /// The other record(s) holding the same real-world entity: an author's People record, or a person's author record(s)
         /// in the book/audiobook libraries. The page shows them together as one. Null when there is no unambiguous partner.
         /// </summary>
-        List<LinkedItemDto>? LinkedItems = null
+        List<LinkedItemDto>? LinkedItems = null,
+        /// <summary>
+        /// Every score the enabled plugins hold for this item, each in its source's own scale and style (detail endpoints only).
+        /// Null when no plugin has one. See Chronicle.Services.Scores.ItemScores.
+        /// </summary>
+        List<ItemScoreDto>? Ratings = null
     );
+
+    /// <summary>One score on an item's page: the source's own value and scale, how its site presents it, and who reported it.</summary>
+    public record ItemScoreDto(
+        string Key, string? Variant, string DisplayName, double Value, double Scale, string Display, string? Star,
+        double Normalized, int? Votes, string? Url, string Source, string PluginId, string? Attribution, IReadOnlyList<string> AlsoFrom);
 
     /// <summary>A record that is the same real-world entity as the item it is attached to. See MediaItemDto.LinkedItems.</summary>
     public record LinkedItemDto(int ItemId, string Name, string MediaTypeName, bool IsPerson);

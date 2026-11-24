@@ -95,6 +95,8 @@ export interface MediaItem {
   enrichmentConflicts?: Record<string, EnrichmentConflict>
   /** The other record(s) for the same real-world entity: an author's person, or a person's author(s). */
   linkedItems?: LinkedItem[]
+  /** Every score the enabled plugins hold for this item, in each source's own scale and style (detail endpoints only). */
+  ratings?: ItemScore[] | null
   enrichmentStatuses?: Record<string, string> | null
   /** Canonical internal media type name (e.g. "tv", "movies", "music").
    *  Used for plugin compatibility checks. mediaTypeName is the user-facing display
@@ -489,4 +491,26 @@ export interface ApiResponse<T> {
   data?: T
   error?: { code: string; message: string }
   pagination?: { page: number; perPage: number; total: number | null }
+}
+
+/** One score on an item's page: the source's own value and scale and how its site presents it. */
+export interface ItemScore {
+  key: string
+  variant?: string | null
+  displayName: string
+  value: number
+  scale: number
+  display: 'outOf' | 'percent'
+  /** Only set when the source's own site shows stars. */
+  star?: 'single' | 'row' | null
+  /** value / scale * 100 */
+  normalized: number
+  votes?: number | null
+  url?: string | null
+  /** Name of the reporting plugin. */
+  source: string
+  pluginId: string
+  attribution?: string | null
+  /** Other plugins that reported the same measurement. */
+  alsoFrom: string[]
 }

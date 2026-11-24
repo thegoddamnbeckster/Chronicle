@@ -234,7 +234,7 @@ Settings types: `Text`, `Password`, `Number`, `Boolean`, `Dropdown`, `MultiSelec
 
 ## Reporting scores
 
-> **Status: arrives with the detail-page scores feature** (plan: `docs/plans/2026-11-24-detail-page-scores.md`). Until then, write your plugin to this contract; Chronicle ignores what it does not yet read.
+> **Status:** the score badges (value, scale, percent, star, votes, variant, attribution) are built; the logo, font and site-style `look` fields below arrive later (plan: `docs/plans/2026-11-24-detail-page-scores.md`) and Chronicle ignores them until then.
 
 If your source has a **score** (a rating a person or critic gave), Chronicle shows it on the item's detail page, in a badge that looks like your source's own. Nothing in Chronicle names your plugin: you describe your source in `manifest.json` and report the number.
 
@@ -259,10 +259,11 @@ If your source has a **score** (a rating a person or critic gave), Chronicle sho
 ]
 ```
 
+* **A plain `rating` shows only if you declare your source here** (a bare number of unknown scale is never shown); `stored_scale` is the scale you store it in, `scale` the scale your site shows, `plain_rating: true` marks which entry the plain rating belongs to (default: the first). Scores you report in `extendedData.ratings[]` carry their own scale and always show.
 * `display`: `outOf` (the default, `8.2/10`) or `percent`. Use whatever your site shows; a bare `4` is never shown.
-* `star`: `single` or `row` **only if your site shows stars**; otherwise leave it out (no star is drawn).
-* `look`: how the badge is drawn so it resembles your site: `plain` (default), `star-text`, `ring`, `icon-percent` or `badge`, with `thresholds` for colours and state icons and `variants` for sources with two scores. Open the site and copy its real widget; do not guess.
-* `logo_url`: your source's official logo (fetched and cached by Chronicle, never hot-linked); `wordmark` is the fallback. Do not bundle a logo or font you may not redistribute.
+* `star`: `single` (one star) or `row` (one star per point of the scale: five or ten) **only if your site shows stars**; otherwise leave it out (no star is drawn). **Open your site and check; do not guess.**
+* *(arrives later)* `look`: how the badge is drawn so it resembles your site: `plain` (default), `star-text`, `ring`, `icon-percent` or `badge`, with `thresholds` for colours and state icons and `variants` for sources with two scores. Open the site and copy its real widget; do not guess.
+* *(arrives later)* `logo_url`: your source's official logo (fetched and cached by Chronicle, never hot-linked); `wordmark` is the fallback. Do not bundle a logo or font you may not redistribute.
 * `attribution`: a sentence the source's terms require, shown under the badges.
 
 Everything is optional: with none of it your score still shows, in its native scale, plain, with no star.

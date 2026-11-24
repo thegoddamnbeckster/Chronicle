@@ -106,7 +106,33 @@ namespace Chronicle.API.Controllers
             // (Show→Season→Episode or Artist→Album→Track), so two levels covers all cases.
             var (directChildrenMeta, grandchildrenMeta) = await GetDescendantMetaAsync(id, ct);
 
-            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict, directChildrenMeta, grandchildrenMeta, enrichmentConflicts, linkedItems)));
+            return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatusDict, directChildrenMeta, grandchildrenMeta, enrichmentConflicts, linkedItems) with { Ratings = await BuildRatingsAsync(item, ct) }));
+        }
+
+        /// <summary>The item's scores from every enabled plugin, in the saved plugin order for its type (null when none).</summary>
+        private async Task<List<ItemScoreDto>?> BuildRatingsAsync(Chronicle.Core.Models.MediaItem item, CancellationToken ct)
+        {
+            if (string.IsNullOrEmpty(item.MetadataJson)) return null;
+            var plugins = _pluginRegistry.GetLoadedPlugins()
+                .Where(lp => lp.Manifest.RatingSources is { Count: > 0 })
+                .Select(lp => new Chronicle.Services.Scores.ScorePlugin(lp.Manifest.PluginId, lp.Manifest.Name, lp.Manifest.RatingSources!))
+                .ToList();
+            if (plugins.Count == 0) return null;
+            IReadOnlyList<string>? order = null;
+            var setting = await _context.AppSettings.AsNoTracking().FirstOrDefaultAsync(a => a.Key == "plugin_display_order.config", ct);
+            if (setting?.Value is not null)
+            {
+                try
+                {
+                    var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string[]>>(setting.Value);
+                    var typeKey = (item.MediaType?.Name ?? string.Empty).ToLowerInvariant();
+                    if (map is not null && map.TryGetValue(typeKey, out var o)) order = o;
+                }
+                catch (System.Text.Json.JsonException) { /* a malformed order only loses ordering */ }
+            }
+            var scores = Chronicle.Services.Scores.ItemScores.Collect(item.MetadataJson, plugins, order);
+            return scores.Count == 0 ? null : scores.Select(x => new ItemScoreDto(x.Key, x.Variant, x.DisplayName, x.Value, x.Scale, x.Display,
+                x.Star, x.Normalized, x.Votes, x.Url, x.Source, x.PluginId, x.Attribution, x.AlsoFrom)).ToList();
         }
 
         [HttpGet("search")]
@@ -293,7 +319,7 @@ namespace Chronicle.API.Controllers
                 var enrichmentConflicts = await GetEnrichmentConflictsAsync(id, ct);
                 var linkedItems = await GetLinkedItemsAsync(item, ct);
                 var (directChildrenMeta, grandchildrenMeta) = await GetDescendantMetaAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, directChildrenMeta, grandchildrenMeta, enrichmentConflicts, linkedItems)));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, directChildrenMeta, grandchildrenMeta, enrichmentConflicts, linkedItems) with { Ratings = await BuildRatingsAsync(item, ct) }));
             }
             catch (Exception ex)
             {
@@ -333,7 +359,7 @@ namespace Chronicle.API.Controllers
                 var enrichmentConflicts = await GetEnrichmentConflictsAsync(id, ct);
                 var linkedItems = await GetLinkedItemsAsync(item, ct);
                 var (refreshedDirectMeta, refreshedGrandchildMeta) = await GetDescendantMetaAsync(id, ct);
-                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, refreshedDirectMeta, refreshedGrandchildMeta, enrichmentConflicts, linkedItems)));
+                return Ok(ApiResponse<MediaItemDto>.Ok(ToDto(item, enrichmentRecords, ancestors.Count > 0 ? ancestors : null, enrichmentStatuses, refreshedDirectMeta, refreshedGrandchildMeta, enrichmentConflicts, linkedItems) with { Ratings = await BuildRatingsAsync(item, ct) }));
             }
             catch (MediaNotFoundException ex)
             {

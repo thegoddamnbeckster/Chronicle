@@ -1,0 +1,105 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 14px;
+}
+
+/* A fixed-height line of mark, score and votes so the row does not jump as marks load; a source's required attribution sits inside
+   its own badge, under that line. */
+.badge {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-card, transparent);
+  color: var(--text-primary, inherit);
+  text-decoration: none;
+}
+
+a.badge:hover { border-color: var(--text-muted); }
+
+.main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+}
+
+.mark {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--text-muted);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  font-size: 14px;
+}
+
+.score strong { font-weight: 600; }
+
+.suffix, .votes {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.votes { margin-left: 2px; }
+
+/* A star the source's own site shows: yellow, filled in proportion for a row of five. */
+.star {
+  position: relative;
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+}
+
+.starBase, .starOn {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.starBase { fill: var(--border); }
+.starOn { fill: #f5c518; }
+
+.starFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.attribution {
+  max-width: 280px;
+  padding: 0 0 5px 2px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--text-muted);
+}

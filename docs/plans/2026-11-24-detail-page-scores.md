@@ -1,7 +1,7 @@
 # Scores on the media detail page — plan
 
 **Date:** 2026-11-24
-**Status:** Plan written and reviewed twice (section 9, second review R19-R27). Not started.
+**Status:** Phase A1 built and verified on real items (2026-11-24); A2 (logos, fonts, site-style looks) not started. Owner decisions in section 7 are answered (below each).
 **Request:** On an item's page, in the empty space beside the Status / Rating controls, show every score a plugin has for the
 item: the plugin's logo, then its score the way the plugin's own site shows it (IMDb `8.2/10`, TMDB `80%`, a five-star source
 `4.2/5 ★`). Any plugin that can supply a score, for any media type.
@@ -314,3 +314,26 @@ are sourced) is the only one that blocks a *part* of the work: everything else c
 | R27 | Low | Test list had no security or opt-in-rule cases | Added to section 4 |
 
 **Verdict (second review):** approved to build, A1 first. Decisions in section 7 still apply; none blocks A1.
+
+## 10. Owner decisions and what A1 built (2026-11-24)
+
+Answers to section 7: **1** TMDB `80%` (agreed). **2** Show the score from the plugin with the **highest precedence** (the type's saved plugin order); not "owner first", so the collector no longer prefers the source's own plugin. **3** Votes beside the score (agreed). **4** Plugin releases one at a time (ok). **5** Logos: whatever makes most sense (A2: runtime fetch and cache). **6** Stars: **check each source's own site and match it**; done for the sources below.
+
+What each source's own site shows (checked 2026-11-24) and what its manifest now declares:
+
+| Source | Site shows | Declared |
+|--------|-----------|----------|
+| IMDb | star + `8.2/10` + votes | /10, star single |
+| TMDB | ring with `80%`, no star | percent, no star |
+| Simkl | `2.7/10` with votes, no star | /10, no star |
+| Trakt | `84%` with a purple Trakt mark | percent, no star (the mark is Trakt's logo, not a rating star) |
+| TVmaze | a row of **ten** stars and `8.9 (1225 votes)` | /10, star row (one star per point of the scale) |
+| AniList | `85%`, no star | percent, no star |
+| Hardcover | `Average 4.3` with one star | /5, star single |
+| Open Library | **not checked**: its site asks for human verification, which is not bypassed | /5, no star until looked at by hand |
+| MusicBrainz | five-star row (e.g. 4.75 of 5) | /5, star row |
+| TheAudioDB | one star with the score | /10, star single |
+| IGDB | single green star, **user 9.4 and critic 9.2 out of 10** (not /100; no combined total) | /10, star single; the plugin now reports `users` and `critics` out of 10 and no `total` |
+| Rotten Tomatoes, Metacritic | see 2.2 | A2 |
+
+Built in A1: `PluginManifest.RatingSources`, `ItemScores.Collect` (opt-in rule, plugin-order precedence, variants, votes), `ratings` on the detail endpoints, `ScoresPanel` (plain look, plugin icon or letter mark, star single/row, votes, variant, each source's required attribution **inside its own pill**), and the manifest declarations above (eleven plugins, each its own release). Steam, TheTVDB and OMDb changes (3.5) and the wordmark/logo/fonts/looks (A2) are not built.

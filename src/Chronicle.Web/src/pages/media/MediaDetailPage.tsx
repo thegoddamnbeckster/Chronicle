@@ -1,3 +1,4 @@
+import { ScoresPanel } from '@/components/ScoresPanel'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
@@ -1302,6 +1303,7 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
             {/* Watch controls live on the refresh strip (per-user request): status, rating, how many
                 times it has been watched, and how far along it is. Hidden for a collection container
                 itself -- a collection isn't watched or rated as a whole, only the movies inside it. */}
+            <div className={styles.statusAndScores}>
             {showWatchControls && libraryEntry && (
                 <div className={styles.stripLibrary}>
                   <label className={styles.stripLabel}>Status</label>
@@ -1349,6 +1351,8 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
                   ))}
                 </div>
             )}
+            <ScoresPanel scores={item.ratings} />
+            </div>
             {refreshMut.isError && (
               <span className={styles.refreshError}>
                 {`Refresh failed: ${(refreshMut.error as Error).message}`}
