@@ -8,7 +8,7 @@ so the browser never fetches a font from anywhere else.
 | Face | Package (version) | Licence | Copyright |
 |------|-------------------|---------|-----------|
 | Roboto | `@fontsource/roboto` 5.3.0 | SIL Open Font License 1.1 | 2011 The Roboto Project Authors (github.com/googlefonts/roboto-classic) |
-| Source Sans 3 | `@fontsource/source-sans-3` 5.3.1 | SIL Open Font License 1.1 | Adobe (Source Sans is an Adobe open-source family) |
+| Source Sans 3 | `@fontsource/source-sans-3` 5.3.1 | SIL Open Font License 1.1 | Google Inc. (as named in the package's LICENSE file, which carries no fuller notice) |
 | Libre Franklin | `@fontsource/libre-franklin` 5.3.0 | SIL Open Font License 1.1 | 2020 The Libre Franklin Project Authors (github.com/googlefonts/Libre-Franklin) |
 | Nunito Sans | `@fontsource/nunito-sans` 5.3.0 | SIL Open Font License 1.1 | 2016 The Nunito Sans Project Authors (github.com/Fonthausen/NunitoSans) |
 

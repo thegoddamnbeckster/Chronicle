@@ -48,6 +48,9 @@ public class PluginsController : ControllerBase
     /// <summary>How long to cache a fetched favicon before re-fetching.</summary>
     private static readonly TimeSpan IconCacheDuration = TimeSpan.FromHours(24);
 
+    /// <summary>How long a failed image fetch is remembered before the source is tried again.</summary>
+    private static readonly TimeSpan FailedFetchCacheDuration = TimeSpan.FromMinutes(5);
+
     /// <summary>
     /// Magic byte signatures for permitted raster image formats.
     /// Used as a second validation layer after the Content-Type check.
@@ -208,6 +211,11 @@ public class PluginsController : ControllerBase
         if (_cache.TryGetValue(cacheKey, out (byte[] Data, string ContentType) cached))
             return File(cached.Data, cached.ContentType);
 
+        // A source that refused or could not be reached is not asked again for a few minutes: without this every page view that shows
+        // the image would repeat the outbound request and wait for it.
+        var failKey = cacheKey + ":failed";
+        if (_cache.TryGetValue(failKey, out _)) return NotFound();
+
         // Fetch through the shared filtered fetcher: it refuses private, loopback and cloud-metadata
         // destinations (also on redirects and after DNS), non-image content and oversize bodies. The
         // URL comes from a plugin manifest, which is vetted, but a compromised or careless manifest
@@ -222,12 +230,15 @@ public class PluginsController : ControllerBase
                 rawContentType = fetched.ContentType!;
                 break;
             case Helpers.SafeImageFetcher.FetchStatus.UnsupportedType:
+                _cache.Set(failKey, true, FailedFetchCacheDuration);
                 return StatusCode(415, ApiResponse<object>.Fail(
                     "INVALID_ICON_TYPE", "Remote server returned an unsupported content type for the plugin icon."));
             case Helpers.SafeImageFetcher.FetchStatus.TooLarge:
+                _cache.Set(failKey, true, FailedFetchCacheDuration);
                 return StatusCode(502, ApiResponse<object>.Fail(
                     "ICON_TOO_LARGE", $"Plugin icon exceeds the {MaxIconBytes / 1024} KB limit."));
             default:
+                _cache.Set(failKey, true, FailedFetchCacheDuration);
                 return NotFound();
         }
 

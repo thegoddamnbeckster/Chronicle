@@ -130,9 +130,20 @@ public static class ItemScores
         return list.Count == 0 ? null : list;
     }
 
-    private static PluginRatingSource? Declared(ScorePlugin p, string key, string? variant) =>
-        p.Sources.FirstOrDefault(s => Same(s.Key, key) && Same(s.Variant, variant))
-        ?? p.Sources.FirstOrDefault(s => Same(s.Key, key) && string.IsNullOrEmpty(s.Variant));
+    private static PluginRatingSource? Declared(ScorePlugin p, string key, string? variant)
+    {
+        var exact = p.Sources.FirstOrDefault(s => Same(s.Key, key) && Same(s.Variant, variant));
+        if (exact is not null) return exact;
+        var general = p.Sources.FirstOrDefault(s => Same(s.Key, key) && string.IsNullOrEmpty(s.Variant));
+        if (general is null || string.IsNullOrEmpty(variant)) return general;
+        // A variant nobody declared takes the source's name, scale style, star, attribution, font and logo, but not another score's
+        // look, caption, shape, colours or tiers: those describe one specific score and would mislabel this one.
+        return new PluginRatingSource
+        {
+            Key = general.Key, DisplayName = general.DisplayName, Display = general.Display, Star = general.Star, Attribution = general.Attribution,
+            FontFamily = general.FontFamily, LogoUrl = general.LogoUrl, Scale = general.Scale, StoredScale = general.StoredScale,
+        };
+    }
 
     private static bool Same(string? a, string? b) => string.Equals(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase);
 

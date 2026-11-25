@@ -34,10 +34,11 @@ function Star({ fill }: { fill: number }) {
 
 /** The mark: the source's own logo when the plugin declared one, else the plugin's icon, else a letter badge. */
 function Mark({ score, iconUrl }: { score: ItemScore; iconUrl?: string | null }) {
-  const [failed, setFailed] = useState(false)
   const src = score.logoUrl ?? iconUrl
+  // Remember which address failed, not that something did: a different item or a retry that works must show its image.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
   // An image the server could not fetch must not leave a broken-image glyph: fall back to the letter.
-  if (src && !failed) return <img className={styles.mark} src={src} alt="" onError={() => setFailed(true)} />
+  if (src && src !== failedSrc) return <img className={styles.mark} src={src} alt="" onError={() => setFailedSrc(src)} />
   return <span className={styles.letter} aria-hidden="true">{score.displayName.slice(0, 1).toUpperCase()}</span>
 }
 
@@ -56,7 +57,7 @@ function StateIcon({ icon, color }: { icon?: ScoreTier['icon']; color: string })
 }
 
 /** A circular progress ring around the whole-number percent (TMDB's own widget). */
-function Ring({ percent, tier }: { percent: number; tier?: ScoreTier }) {
+function Ring({ percent, tier, text, unit }: { percent: number; tier?: ScoreTier; text: string; unit: string }) {
   const r = 18
   const c = 2 * Math.PI * r
   const clamped = Math.max(0, Math.min(100, percent))
@@ -68,7 +69,7 @@ function Ring({ percent, tier }: { percent: number; tier?: ScoreTier }) {
         <circle cx="22" cy="22" r={r} fill="none" strokeWidth="3" strokeLinecap="round" stroke={tier?.color ?? 'var(--text-muted)'}
           strokeDasharray={`${(c * clamped) / 100} ${c}`} transform="rotate(-90 22 22)" />
       </svg>
-      <span className={styles.ringNumber}>{Math.round(clamped)}<sup>%</sup></span>
+      <span className={styles.ringNumber}>{text}{unit ? <sup>{unit}</sup> : null}</span>
     </span>
   )
 }
@@ -87,7 +88,7 @@ function Badge({ score, iconUrl }: { score: ItemScore; iconUrl?: string | null }
 
   let main: React.ReactNode
   if (look === 'ring') {
-    main = (<><Ring percent={score.normalized} tier={tier} />{caption ? <span className={styles.caption}>{caption}</span> : null}{votes}</>)
+    main = (<><Ring percent={score.normalized} tier={tier} text={f.value} unit={score.display === 'percent' ? '%' : f.suffix} />{caption ? <span className={styles.caption}>{caption}</span> : null}{votes}</>)
   } else if (look === 'badge') {
     main = (
       <>

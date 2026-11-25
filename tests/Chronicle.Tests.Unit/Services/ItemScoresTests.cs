@@ -254,6 +254,24 @@ public class ItemScoresTests
     }
 
     [Fact]
+    public void AVariantNobodyDeclared_KeepsTheSourceName_ButNotAnotherScoresLookOrCaption()
+    {
+        var general = new PluginRatingSource { Key = "m", DisplayName = "Meta", Look = "badge", Label = "Metascore", Shape = "circle", Star = "single", FontFamily = "Roboto",
+            Thresholds = [new PluginScoreThreshold { Min = 0, Color = "#FF0000" }] };
+        var json = """
+            {"chronicle.plugin.p":{"extendedData":{"ratings":[{"key":"m","variant":"users","value":7.8,"scale":10}]}}}
+            """;
+        var s = ItemScores.Collect(json, [Plugin("chronicle.plugin.p", general)]).Single();
+        s.DisplayName.Should().Be("Meta");
+        s.Star.Should().Be("single");
+        s.FontFamily.Should().Be("Roboto");
+        s.Look.Should().Be("plain");
+        s.Label.Should().BeNull();
+        s.Shape.Should().BeNull();
+        s.Tiers.Should().BeNull();
+    }
+
+    [Fact]
     public void TheCollector_NamesNoPlugin()
     {
         var dir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Chronicle.Services", "Scores"));

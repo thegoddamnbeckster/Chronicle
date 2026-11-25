@@ -116,4 +116,20 @@ describe('ScoresPanel', () => {
     ])
     expect(Array.from(container.querySelectorAll('svg[data-icon]')).map(e => e.getAttribute('data-icon'))).toEqual(['certified', 'bucket-full', 'bucket-tipped'])
   })
+
+  it('writes a ring in the declared terms, not always as a percent', () => {
+    const { container } = renderPanel([score({ look: 'ring', value: 8.2, scale: 10, normalized: 82, display: 'outOf' })])
+    expect(container.querySelector('[class*="ringNumber"]')?.textContent).toBe('8.2/10')
+  })
+
+  it('a failed mark does not stick: a different address shows its image again', async () => {
+    vi.mocked(pluginsApi.listPlugins).mockResolvedValue([])
+    const { container, rerender } = render(
+      <QueryClientProvider client={new QueryClient()}><ScoresPanel scores={[score({ logoUrl: '/a.png' })]} /></QueryClientProvider>,
+    )
+    fireEvent.error(container.querySelector('img')!)
+    expect(container.querySelector('img')).toBeNull()
+    rerender(<QueryClientProvider client={new QueryClient()}><ScoresPanel scores={[score({ logoUrl: '/b.png' })]} /></QueryClientProvider>)
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('/b.png')
+  })
 })
