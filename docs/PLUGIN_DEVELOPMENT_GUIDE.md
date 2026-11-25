@@ -234,7 +234,7 @@ Settings types: `Text`, `Password`, `Number`, `Boolean`, `Dropdown`, `MultiSelec
 
 ## Reporting scores
 
-> **Status:** built: the score badges (value, scale, percent, star, votes, variant, attribution) and the site-style `look`, `thresholds`, `label`, `shape`, `font_family`, `text_color` and `logo_url` fields below (plan: `docs/plans/2026-11-24-detail-page-scores.md`). Not built: bundled font files (a named face is used if the browser has it, else a system face).
+> **Status:** built: the score badges (value, scale, percent, star, votes, variant, attribution) and the site-style `look`, `thresholds`, `label`, `shape`, `font_family`, `text_color` and `logo_url` fields below (plan: `docs/plans/2026-11-24-detail-page-scores.md`).
 
 If your source has a **score** (a rating a person or critic gave), Chronicle shows it on the item's detail page, in a badge that looks like your source's own. Nothing in Chronicle names your plugin: you describe your source in `manifest.json` and report the number.
 
@@ -266,7 +266,7 @@ If your source has a **score** (a rating a person or critic gave), Chronicle sho
 * `label`: the name your site gives the score ("User Score", "Tomatometer", "Metascore"), shown beside it.
 * `thresholds`: `[{ "min": 61, "color": "#00CE7A", "track": "#204529", "icon": "fresh" }]`, tiers against the score's value as 0-100; the highest `min` not above it wins. `color` and `track` must be plain hex (`#rgb`, `#rrggbb`, `#rrggbbaa`; anything else drops the tier). `icon` is `fresh`, `rotten`, `certified`, `bucket-full` or `bucket-tipped`, drawn by Chronicle in the tier's colour (any other name is no icon). `ring` uses colour and track, `badge` the block colour, `icon-percent` colour and icon.
 * `shape`: `circle` for a round `badge` (default square); `text_color`: the number's colour on a `badge` (hex).
-* `font_family`: one of `Roboto`, `Source Sans 3`, `Libre Franklin`, `Nunito Sans` (open licences). A manifest cannot supply a font file or address, and a proprietary face is never bundled: pick the nearest open one.
+* `font_family`: one of `Roboto`, `Source Sans 3`, `Libre Franklin`, `Nunito Sans` (open licences, bundled with Chronicle; see `THIRD_PARTY_FONTS.md`). A manifest cannot supply a font file or address, and a proprietary face is never bundled: pick the nearest open one.
 * `logo_url`: your source's logo (an image or SVG on its site, or a `data:` URI), used as the badge's mark in place of the plugin icon. Chronicle fetches it, converts SVG to PNG, caches it for a day and serves it from its own address, so the browser never contacts your site; a logo that cannot be fetched falls back to the plugin icon, then to a letter. Do not declare a logo you may not use.
 * `attribution`: a sentence the source's terms require, shown under the badges.
 
