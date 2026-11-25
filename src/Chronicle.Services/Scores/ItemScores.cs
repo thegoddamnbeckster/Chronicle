@@ -14,7 +14,7 @@ public sealed record ItemScore(
     string Key, string? Variant, string DisplayName, double Value, double Scale, string Display, string? Star,
     double Normalized, int? Votes, string? Url, string Source, string PluginId, string? Attribution, IReadOnlyList<string> AlsoFrom,
     string Look = "plain", string? Label = null, string? Shape = null, string? FontFamily = null, string? TextColor = null,
-    IReadOnlyList<ScoreTier>? Tiers = null, bool HasLogo = false, int PluginDbId = 0);
+    IReadOnlyList<ScoreTier>? Tiers = null, bool HasLogo = false, int PluginDbId = 0, string? State = null);
 
 /// <summary>
 /// Collects every score the plugins hold for one item (pure; no database). Names no plugin: every presentation choice comes
@@ -56,7 +56,7 @@ public static class ItemScores
                     if (string.IsNullOrWhiteSpace(key) || Num(e, "value") is not { } value || Num(e, "scale") is not { } scale) continue;
                     var variant = Str(e, "variant");
                     Add(candidates, plugin, idx, Declared(plugin, key, variant), key, variant, value, scale,
-                        Int(e, "votes") ?? extVotes ?? Int(part, "votes"), Str(e, "url"));
+                        Int(e, "votes") ?? extVotes ?? Int(part, "votes"), Str(e, "url"), Str(e, "state"));
                 }
 
                 // The plain rating: only for a plugin that declared its source, and not when a contract entry already gave that source's score (in any variant).
@@ -89,7 +89,7 @@ public static class ItemScores
     }
 
     private static void Add(List<Candidate> list, ScorePlugin plugin, int order, PluginRatingSource? decl, string key, string? variant,
-        double value, double scale, int? votes, string? url)
+        double value, double scale, int? votes, string? url, string? state = null)
     {
         // A value above its scale (beyond rounding) is a wrong scale, not a score; it is dropped rather than clamped.
         if (!double.IsFinite(value) || !double.IsFinite(scale) || value <= 0 || scale <= 0 || value > scale * 1.0001) return;
@@ -102,7 +102,8 @@ public static class ItemScores
             decl?.Attribution, [],
             LookOf(decl?.Look), Clean(decl?.Label, 40), decl?.Shape is { } sh && sh.Equals("circle", StringComparison.OrdinalIgnoreCase) ? "circle" : null,
             Fonts.FirstOrDefault(f => f.Equals(decl?.FontFamily?.Trim(), StringComparison.OrdinalIgnoreCase)), HexOf(decl?.TextColor),
-            TiersOf(decl?.Thresholds), !string.IsNullOrWhiteSpace(decl?.LogoUrl), plugin.DbId)));
+            TiersOf(decl?.Thresholds), !string.IsNullOrWhiteSpace(decl?.LogoUrl), plugin.DbId,
+            Icons.FirstOrDefault(i => i.Equals(state?.Trim(), StringComparison.OrdinalIgnoreCase)))));
     }
 
     /// <summary>The renderers the page has. A manifest picks one by name; any other word is plain.</summary>

@@ -268,6 +268,22 @@ If your source has a **score** (a rating a person or critic gave), Chronicle sho
 * `shape`: `circle` for a round `badge` (default square); `text_color`: the number's colour on a `badge` (hex).
 * `font_family`: one of `Roboto`, `Source Sans 3`, `Libre Franklin`, `Nunito Sans` (open licences, bundled with Chronicle; see `THIRD_PARTY_FONTS.md`). A manifest cannot supply a font file or address, and a proprietary face is never bundled: pick the nearest open one.
 * `logo_url`: your source's logo (an image or SVG on its site, or a `data:` URI), used as the badge's mark in place of the plugin icon. Chronicle fetches it, converts SVG to PNG, caches it for a day and serves it from its own address, so the browser never contacts your site; a logo that cannot be fetched falls back to the plugin icon, then to a letter. Do not declare a logo you may not use.
+* `state` (on a score entry in `extendedData.ratings[]`, optional): a state the source itself reported, one of the icon names above (for Rotten Tomatoes, `certified` for a Certified Fresh score). It picks the icon in place of the tier's. Any other value is ignored.
+* **A source with two scores** declares one `rating_sources` entry per `variant`; each has its own look, label and thresholds, and a variant nobody declared is drawn plain. Rotten Tomatoes and Metacritic, as their sites draw them (copy these, and report the score under the same `key` and `variant`):
+
+```json
+{ "key": "rottentomatoes", "variant": "critics",  "display_name": "Rotten Tomatoes", "scale": 100, "display": "percent", "look": "icon-percent",
+  "label": "Tomatometer",   "font_family": "Libre Franklin",
+  "thresholds": [ { "min": 0, "color": "#0AC855", "icon": "rotten" }, { "min": 60, "color": "#FA320A", "icon": "fresh" } ] },
+{ "key": "rottentomatoes", "variant": "audience", "display_name": "Rotten Tomatoes", "scale": 100, "display": "percent", "look": "icon-percent",
+  "label": "Popcornmeter",  "font_family": "Libre Franklin",
+  "thresholds": [ { "min": 0, "color": "#0AC855", "icon": "bucket-tipped" }, { "min": 60, "color": "#FA320A", "icon": "bucket-full" } ] },
+{ "key": "metacritic", "variant": "critics", "display_name": "Metacritic", "scale": 100, "look": "badge", "label": "Metascore", "font_family": "Nunito Sans",
+  "thresholds": [ { "min": 0, "color": "#FF6874" }, { "min": 40, "color": "#FFBD3F" }, { "min": 61, "color": "#00CE7A" } ] },
+{ "key": "metacritic", "variant": "users", "display_name": "Metacritic", "scale": 10, "look": "badge", "shape": "circle", "label": "User Score", "font_family": "Nunito Sans",
+  "thresholds": [ { "min": 0, "color": "#FF6874" }, { "min": 50, "color": "#FFBD3F" }, { "min": 75, "color": "#00CE7A" } ] }
+```
+
 * `attribution`: a sentence the source's terms require, shown under the badges.
 
 Everything is optional: with none of it your score still shows, in its native scale, plain, with no star.

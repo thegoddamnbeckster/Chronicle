@@ -135,7 +135,7 @@ namespace Chronicle.API.Controllers
             return scores.Count == 0 ? null : scores.Select(x => new ItemScoreDto(x.Key, x.Variant, x.DisplayName, x.Value, x.Scale, x.Display,
                 x.Star, x.Normalized, x.Votes, x.Url, x.Source, x.PluginId, x.Attribution, x.AlsoFrom,
                 x.Look, x.Label, x.Shape, x.FontFamily, x.TextColor, x.Tiers?.Select(t => new ScoreTierDto(t.Min, t.Color, t.Track, t.Icon)).ToList(),
-                x.HasLogo ? $"/api/v1/plugins/{x.PluginDbId}/rating-logo?key={Uri.EscapeDataString(x.Key)}" + (x.Variant is null ? "" : $"&variant={Uri.EscapeDataString(x.Variant)}") : null)).ToList();
+                x.HasLogo ? $"/api/v1/plugins/{x.PluginDbId}/rating-logo?key={Uri.EscapeDataString(x.Key)}" + (x.Variant is null ? "" : $"&variant={Uri.EscapeDataString(x.Variant)}") : null, x.State)).ToList();
         }
 
         [HttpGet("search")]

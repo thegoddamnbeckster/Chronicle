@@ -99,7 +99,7 @@ function Badge({ score, iconUrl }: { score: ItemScore; iconUrl?: string | null }
   } else if (look === 'icon-percent') {
     main = (
       <>
-        <StateIcon icon={tier?.icon} color={tier?.color ?? 'var(--text-muted)'} />
+        <StateIcon icon={score.state ?? tier?.icon} color={tier?.color ?? 'var(--text-muted)'} />
         <span className={styles.big}>{score.display === 'percent' ? `${f.value}%` : f.value}</span>
         {caption ? <span className={styles.caption}>{caption}</span> : null}{votes}
       </>

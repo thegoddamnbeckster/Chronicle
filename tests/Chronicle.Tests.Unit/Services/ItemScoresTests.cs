@@ -231,6 +231,29 @@ public class ItemScoresTests
     }
 
     [Fact]
+    public void EachVariantOfASource_UsesItsOwnLookAndTiers_AndASourceReportedStateIsKeptWhenKnown()
+    {
+        var critics = new PluginRatingSource { Key = "m", Variant = "critics", Look = "badge", Label = "Metascore" };
+        var users = new PluginRatingSource { Key = "m", Variant = "users", Look = "badge", Shape = "circle", Label = "User Score", Scale = 10 };
+        var rt = new PluginRatingSource { Key = "r", Variant = "critics", Look = "icon-percent", Display = "percent", Scale = 100 };
+        var json = """
+            {"chronicle.plugin.p":{"extendedData":{"ratings":[
+            {"key":"m","variant":"critics","value":73,"scale":100},
+            {"key":"m","variant":"users","value":8.1,"scale":10},
+            {"key":"r","variant":"critics","value":95,"scale":100,"state":"certified"},
+            {"key":"r","variant":"audience","value":90,"scale":100,"state":"<img onerror=x>"}]}}}
+            """;
+        var by = ItemScores.Collect(json, [Plugin("chronicle.plugin.p", critics, users, rt)]).ToDictionary(x => $"{x.Key}:{x.Variant}");
+        by["m:critics"].Shape.Should().BeNull();
+        by["m:critics"].Label.Should().Be("Metascore");
+        by["m:users"].Shape.Should().Be("circle");
+        by["m:users"].Label.Should().Be("User Score");
+        by["r:critics"].State.Should().Be("certified");
+        by["r:audience"].State.Should().BeNull();           // an unknown state is dropped
+        by["r:audience"].Look.Should().Be("plain");         // a variant nobody declared gets no other variant's look
+    }
+
+    [Fact]
     public void TheCollector_NamesNoPlugin()
     {
         var dir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Chronicle.Services", "Scores"));

@@ -208,7 +208,7 @@ namespace Chronicle.API.DTOs
         string Key, string? Variant, string DisplayName, double Value, double Scale, string Display, string? Star,
         double Normalized, int? Votes, string? Url, string Source, string PluginId, string? Attribution, IReadOnlyList<string> AlsoFrom,
         string Look = "plain", string? Label = null, string? Shape = null, string? FontFamily = null, string? TextColor = null,
-        IReadOnlyList<ScoreTierDto>? Tiers = null, string? LogoUrl = null);
+        IReadOnlyList<ScoreTierDto>? Tiers = null, string? LogoUrl = null, string? State = null);
 
     /// <summary>One tier of a source's colour scale (see ItemScoreDto.Tiers).</summary>
     public record ScoreTierDto(double Min, string Color, string? Track, string? Icon);

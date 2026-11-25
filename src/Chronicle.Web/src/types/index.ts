@@ -524,6 +524,8 @@ export interface ItemScore {
   tiers?: ScoreTier[] | null
   /** The source's own logo, served by Chronicle (never the source's site). */
   logoUrl?: string | null
+  /** A state the source itself reported for this score ("certified"); it picks the state icon in place of the tier's. */
+  state?: ScoreTier['icon']
 }
 
 export interface ScoreTier {

@@ -105,4 +105,15 @@ describe('ScoresPanel', () => {
     expect(container.querySelector('[data-look="sparkle"]')).not.toBeNull()
     expect(screen.getByText('8.2')).toBeTruthy()
   })
+
+  it('shows the state the source reported in place of the tier icon, and draws the audience buckets', () => {
+    const tiers = [{ min: 0, color: '#0AC855', icon: 'bucket-tipped' as const }, { min: 60, color: '#FA320A', icon: 'bucket-full' as const }]
+    const { container } = renderPanel([
+      score({ key: 'rt', displayName: 'Rotten Tomatoes', variant: 'critics', display: 'percent', value: 95, scale: 100, normalized: 95, look: 'icon-percent', state: 'certified',
+        tiers: [{ min: 0, color: '#FA320A', icon: 'fresh' as const }] }),
+      score({ key: 'rt', displayName: 'Rotten Tomatoes', variant: 'audience', display: 'percent', value: 90, scale: 100, normalized: 90, look: 'icon-percent', label: 'Popcornmeter', tiers }),
+      score({ key: 'rt', displayName: 'Rotten Tomatoes', variant: 'other', display: 'percent', value: 20, scale: 100, normalized: 20, look: 'icon-percent', tiers }),
+    ])
+    expect(Array.from(container.querySelectorAll('svg[data-icon]')).map(e => e.getAttribute('data-icon'))).toEqual(['certified', 'bucket-full', 'bucket-tipped'])
+  })
 })
