@@ -113,9 +113,10 @@ namespace Chronicle.API.Controllers
         private async Task<List<ItemScoreDto>?> BuildRatingsAsync(Chronicle.Core.Models.MediaItem item, CancellationToken ct)
         {
             if (string.IsNullOrEmpty(item.MetadataJson)) return null;
+            // Every enabled plugin, whether or not it declared rating_sources: a score a plugin reports in the ratings contract carries its own
+            // scale and shows regardless; the declaration only adds style, and is what lets a bare `rating` show.
             var plugins = _pluginRegistry.GetLoadedPlugins()
-                .Where(lp => lp.Manifest.RatingSources is { Count: > 0 })
-                .Select(lp => new Chronicle.Services.Scores.ScorePlugin(lp.Manifest.PluginId, lp.Manifest.Name, lp.Manifest.RatingSources!))
+                .Select(lp => new Chronicle.Services.Scores.ScorePlugin(lp.Manifest.PluginId, lp.Manifest.Name, lp.Manifest.RatingSources ?? []))
                 .ToList();
             if (plugins.Count == 0) return null;
             IReadOnlyList<string>? order = null;
