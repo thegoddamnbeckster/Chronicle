@@ -206,7 +206,12 @@ namespace Chronicle.API.DTOs
     /// <summary>One score on an item's page: the source's own value and scale, how its site presents it, and who reported it.</summary>
     public record ItemScoreDto(
         string Key, string? Variant, string DisplayName, double Value, double Scale, string Display, string? Star,
-        double Normalized, int? Votes, string? Url, string Source, string PluginId, string? Attribution, IReadOnlyList<string> AlsoFrom);
+        double Normalized, int? Votes, string? Url, string Source, string PluginId, string? Attribution, IReadOnlyList<string> AlsoFrom,
+        string Look = "plain", string? Label = null, string? Shape = null, string? FontFamily = null, string? TextColor = null,
+        IReadOnlyList<ScoreTierDto>? Tiers = null, string? LogoUrl = null);
+
+    /// <summary>One tier of a source's colour scale (see ItemScoreDto.Tiers).</summary>
+    public record ScoreTierDto(double Min, string Color, string? Track, string? Icon);
 
     /// <summary>A record that is the same real-world entity as the item it is attached to. See MediaItemDto.LinkedItems.</summary>
     public record LinkedItemDto(int ItemId, string Name, string MediaTypeName, bool IsPerson);

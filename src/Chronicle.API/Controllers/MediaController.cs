@@ -116,7 +116,7 @@ namespace Chronicle.API.Controllers
             // Every enabled plugin, whether or not it declared rating_sources: a score a plugin reports in the ratings contract carries its own
             // scale and shows regardless; the declaration only adds style, and is what lets a bare `rating` show.
             var plugins = _pluginRegistry.GetLoadedPlugins()
-                .Select(lp => new Chronicle.Services.Scores.ScorePlugin(lp.Manifest.PluginId, lp.Manifest.Name, lp.Manifest.RatingSources ?? []))
+                .Select(lp => new Chronicle.Services.Scores.ScorePlugin(lp.Manifest.PluginId, lp.Manifest.Name, lp.Manifest.RatingSources ?? [], lp.DbId))
                 .ToList();
             if (plugins.Count == 0) return null;
             IReadOnlyList<string>? order = null;
@@ -133,7 +133,9 @@ namespace Chronicle.API.Controllers
             }
             var scores = Chronicle.Services.Scores.ItemScores.Collect(item.MetadataJson, plugins, order);
             return scores.Count == 0 ? null : scores.Select(x => new ItemScoreDto(x.Key, x.Variant, x.DisplayName, x.Value, x.Scale, x.Display,
-                x.Star, x.Normalized, x.Votes, x.Url, x.Source, x.PluginId, x.Attribution, x.AlsoFrom)).ToList();
+                x.Star, x.Normalized, x.Votes, x.Url, x.Source, x.PluginId, x.Attribution, x.AlsoFrom,
+                x.Look, x.Label, x.Shape, x.FontFamily, x.TextColor, x.Tiers?.Select(t => new ScoreTierDto(t.Min, t.Color, t.Track, t.Icon)).ToList(),
+                x.HasLogo ? $"/api/v1/plugins/{x.PluginDbId}/rating-logo?key={Uri.EscapeDataString(x.Key)}" + (x.Variant is null ? "" : $"&variant={Uri.EscapeDataString(x.Variant)}") : null)).ToList();
         }
 
         [HttpGet("search")]

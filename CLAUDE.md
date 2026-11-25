@@ -326,6 +326,11 @@ plan `docs/plans/2026-11-24-detail-page-scores.md`, plugin author side in `PLUGI
 - The same measurement from several plugins is shown once, from the plugin highest in the type's saved plugin order; the others are
   named in the tooltip. A source's required attribution sits inside its own pill.
 - A rank, popularity or listener count is never reported as a score.
+- **Looks are data, renderers are Chronicle's.** A manifest picks one of five looks (`plain`, `star-text`, `ring`, `icon-percent`, `badge`) and gives `thresholds`,
+  `label`, `shape`, `font_family`, `logo_url`; `ItemScores` checks every value (unknown look = plain, colours plain hex only, icons and fonts from fixed
+  lists), so a manifest can never put anything else into a style. State icons are drawn inline, never fetched. Logos go through
+  `GET /api/v1/plugins/{id}/rating-logo` (same filtered fetch and cache as the plugin icon; the address comes only from the loaded manifest).
+- **Contract scores show for every enabled plugin**, declared or not; only a bare `rating` needs `rating_sources`.
 
 ## Documentation Reference
 

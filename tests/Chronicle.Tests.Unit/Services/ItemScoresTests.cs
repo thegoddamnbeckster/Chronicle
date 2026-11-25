@@ -187,6 +187,49 @@ public class ItemScoresTests
         s.Star.Should().BeNull();
     }
 
+    private const string OneScore = """{"chronicle.plugin.p":{"extendedData":{"ratings":[{"key":"a","value":80,"scale":100}]}}}""";
+
+    [Fact]
+    public void ALookIsOnlyOneTheHostHas_AndAnythingElseIsPlain()
+    {
+        ItemScores.Collect(OneScore, [Plugin("chronicle.plugin.p", new PluginRatingSource { Key = "a", Look = "ring" })]).Single().Look.Should().Be("ring");
+        ItemScores.Collect(OneScore, [Plugin("chronicle.plugin.p", new PluginRatingSource { Key = "a", Look = "BADGE" })]).Single().Look.Should().Be("badge");
+        ItemScores.Collect(OneScore, [Plugin("chronicle.plugin.p", new PluginRatingSource { Key = "a", Look = "<script>" })]).Single().Look.Should().Be("plain");
+        ItemScores.Collect(OneScore, [Plugin("chronicle.plugin.p", new PluginRatingSource { Key = "a" })]).Single().Look.Should().Be("plain");
+    }
+
+    [Fact]
+    public void OnlyPlainHexColoursAndKnownIconsAndFontsReachThePage()
+    {
+        var src = new PluginRatingSource
+        {
+            Key = "a", Look = "badge", TextColor = "red; background:url(x)", FontFamily = "Comic Sans", Shape = "circle", Label = new string('x', 100),
+            Thresholds =
+            [
+                new() { Min = 60, Color = "#00CE7A", Track = "#204529", Icon = "fresh" },
+                new() { Min = 0, Color = "expression(alert(1))", Icon = "rotten" },
+                new() { Min = 30, Color = "#FFBD3F", Icon = "../../evil" },
+            ],
+        };
+        var s = ItemScores.Collect(OneScore, [Plugin("chronicle.plugin.p", src)]).Single();
+        s.TextColor.Should().BeNull();
+        s.FontFamily.Should().BeNull();
+        s.Shape.Should().Be("circle");
+        s.Label!.Length.Should().Be(40);
+        s.Tiers!.Select(t => t.Min).Should().Equal(30, 60);          // the tier with a bad colour is dropped, the rest ordered
+        s.Tiers[0].Icon.Should().BeNull();
+        s.Tiers[1].Should().Be(new ScoreTier(60, "#00CE7A", "#204529", "fresh"));
+    }
+
+    [Fact]
+    public void AKnownFontIsKept_AndALogoIsOnlyFlagged_NeverCarriedToThePage()
+    {
+        var src = new PluginRatingSource { Key = "a", FontFamily = "source sans 3", LogoUrl = "https://example.com/logo.svg" };
+        var s = ItemScores.Collect(OneScore, [Plugin("chronicle.plugin.p", src)]).Single();
+        s.FontFamily.Should().Be("Source Sans 3");
+        s.HasLogo.Should().BeTrue();
+    }
+
     [Fact]
     public void TheCollector_NamesNoPlugin()
     {

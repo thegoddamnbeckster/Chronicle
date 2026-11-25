@@ -4,12 +4,17 @@ using Chronicle.Plugins.Models;
 namespace Chronicle.Services.Scores;
 
 /// <summary>An enabled plugin as the score collector needs to see it.</summary>
-public sealed record ScorePlugin(string PluginId, string PluginName, IReadOnlyList<PluginRatingSource> Sources);
+public sealed record ScorePlugin(string PluginId, string PluginName, IReadOnlyList<PluginRatingSource> Sources, int DbId = 0);
+
+/// <summary>One tier of a source's colour scale, already checked: <c>Color</c> and <c>Track</c> are plain hex colours, <c>Icon</c> a name the page draws.</summary>
+public sealed record ScoreTier(double Min, string Color, string? Track, string? Icon);
 
 /// <summary>One score to show on an item's page, in its source's own terms.</summary>
 public sealed record ItemScore(
     string Key, string? Variant, string DisplayName, double Value, double Scale, string Display, string? Star,
-    double Normalized, int? Votes, string? Url, string Source, string PluginId, string? Attribution, IReadOnlyList<string> AlsoFrom);
+    double Normalized, int? Votes, string? Url, string Source, string PluginId, string? Attribution, IReadOnlyList<string> AlsoFrom,
+    string Look = "plain", string? Label = null, string? Shape = null, string? FontFamily = null, string? TextColor = null,
+    IReadOnlyList<ScoreTier>? Tiers = null, bool HasLogo = false, int PluginDbId = 0);
 
 /// <summary>
 /// Collects every score the plugins hold for one item (pure; no database). Names no plugin: every presentation choice comes
@@ -94,7 +99,34 @@ public static class ItemScores
         list.Add(new Candidate(plugin, order, new ItemScore(
             key, string.IsNullOrWhiteSpace(variant) ? null : variant, name,
             value, scale, display, star, value / scale * 100, votes is > 0 ? votes : null, SafeUrl(url), plugin.PluginName, plugin.PluginId,
-            decl?.Attribution, [])));
+            decl?.Attribution, [],
+            LookOf(decl?.Look), Clean(decl?.Label, 40), decl?.Shape is { } sh && sh.Equals("circle", StringComparison.OrdinalIgnoreCase) ? "circle" : null,
+            Fonts.FirstOrDefault(f => f.Equals(decl?.FontFamily?.Trim(), StringComparison.OrdinalIgnoreCase)), HexOf(decl?.TextColor),
+            TiersOf(decl?.Thresholds), !string.IsNullOrWhiteSpace(decl?.LogoUrl), plugin.DbId)));
+    }
+
+    /// <summary>The renderers the page has. A manifest picks one by name; any other word is plain.</summary>
+    private static readonly string[] Looks = ["plain", "star-text", "ring", "icon-percent", "badge"];
+    /// <summary>The open-licence faces the page knows; a manifest can name one, never supply a file.</summary>
+    private static readonly string[] Fonts = ["Roboto", "Source Sans 3", "Libre Franklin", "Nunito Sans"];
+    private static readonly string[] Icons = ["fresh", "rotten", "certified", "bucket-full", "bucket-tipped"];
+
+    private static string LookOf(string? look) => Looks.FirstOrDefault(l => l.Equals(look?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? "plain";
+
+    // Only plain hex colours reach the page, so a manifest can never put anything else into a style.
+    private static string? HexOf(string? c) =>
+        c is not null && System.Text.RegularExpressions.Regex.IsMatch(c.Trim(), "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$") ? c.Trim() : null;
+
+    private static string? Clean(string? text, int max) =>
+        string.IsNullOrWhiteSpace(text) ? null : text.Trim().Length <= max ? text.Trim() : text.Trim()[..max];
+
+    private static IReadOnlyList<ScoreTier>? TiersOf(List<PluginScoreThreshold>? tiers)
+    {
+        if (tiers is not { Count: > 0 }) return null;
+        var list = tiers.Where(t => double.IsFinite(t.Min) && HexOf(t.Color) is not null)
+            .Select(t => new ScoreTier(t.Min, HexOf(t.Color)!, HexOf(t.Track), Icons.FirstOrDefault(i => i.Equals(t.Icon?.Trim(), StringComparison.OrdinalIgnoreCase))))
+            .OrderBy(t => t.Min).Take(8).ToList();
+        return list.Count == 0 ? null : list;
     }
 
     private static PluginRatingSource? Declared(ScorePlugin p, string key, string? variant) =>

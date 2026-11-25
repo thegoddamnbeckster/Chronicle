@@ -492,7 +492,10 @@ namespace Chronicle.Tests.Integration
             (await host.CreateClient().GetAsync("/api/v1/plugins/999999/icon")).StatusCode
                 .Should().Be(HttpStatusCode.Unauthorized);
 
-            foreach (var url in new[] { "/api/v1/media/999999/local-poster", "/api/v1/plugins/999999/icon" })
+            (await host.CreateClient().GetAsync("/api/v1/plugins/999999/rating-logo?key=x")).StatusCode
+                .Should().Be(HttpStatusCode.Unauthorized);
+
+            foreach (var url in new[] { "/api/v1/media/999999/local-poster", "/api/v1/plugins/999999/icon", "/api/v1/plugins/999999/rating-logo?key=x" })
             {
                 var req = new HttpRequestMessage(HttpMethod.Get, url);
                 req.Headers.Add("Cookie", $"{SessionCookie.Name}={cookie}");

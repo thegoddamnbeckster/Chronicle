@@ -1,4 +1,4 @@
-import type { ItemScore } from '@/types'
+import type { ItemScore, ScoreTier } from '@/types'
 
 /** At most one decimal, a trailing ".0" dropped: 8 -> "8", 8.24 -> "8.2", 4.25 -> "4.3". */
 export function formatNumber(n: number): string {
@@ -37,4 +37,16 @@ export function scoreLabel(s: ItemScore): string {
   const f = formatScore(s)
   const body = s.display === 'percent' ? `${f.value} percent` : `${f.value} out of ${formatNumber(s.scale)}`
   return `${name} score ${body}${s.votes ? `, ${s.votes.toLocaleString('en-US')} votes` : ''}`
+}
+
+/** The tier a normalized 0-100 value falls in: the highest `min` not above it, else the lowest tier. Undefined when there are none. */
+export function tierFor(tiers: ScoreTier[] | null | undefined, normalized: number): ScoreTier | undefined {
+  if (!tiers?.length) return undefined
+  const sorted = [...tiers].sort((a, b) => a.min - b.min)
+  return [...sorted].reverse().find(t => normalized >= t.min) ?? sorted[0]
+}
+
+/** The font stack for a face the server has already checked against its fixed list. */
+export function fontStack(face?: string | null): string | undefined {
+  return face ? `'${face}', system-ui, -apple-system, 'Segoe UI', sans-serif` : undefined
 }

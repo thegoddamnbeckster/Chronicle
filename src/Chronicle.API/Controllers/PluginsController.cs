@@ -166,9 +166,34 @@ public class PluginsController : ControllerBase
         if (string.IsNullOrWhiteSpace(iconUrl))
             return NotFound();
 
+        return await ServeImageAsync($"plugin_icon:{id}", iconUrl, ct);
+    }
+
+    // ── GET /api/v1/plugins/{id}/rating-logo ──────────────────────────────────
+
+    /// <summary>
+    /// The logo a plugin's manifest declares for one of its score sources (<c>rating_sources[].logo_url</c>), served through the same
+    /// filtered fetch, SVG-to-PNG conversion and cache as the plugin icon, so the browser never contacts the source's site and a
+    /// blocked or offline source cannot break the page. The address comes only from the loaded manifest, never from the request.
+    /// </summary>
+    [HttpGet("{id:int}/rating-logo")]
+    [Authorize(Policy = Chronicle.API.Authentication.AuthPolicies.ImageRead)]
+    public async Task<IActionResult> GetRatingLogo(int id, [FromQuery] string key, [FromQuery] string? variant, CancellationToken ct)
+    {
+        var sources = _registry.GetLoadedPlugins().FirstOrDefault(lp => lp.DbId == id)?.Manifest.RatingSources;
+        var source = sources?.FirstOrDefault(s => string.Equals(s.Key, key, StringComparison.OrdinalIgnoreCase)
+                                               && string.Equals(s.Variant ?? "", variant ?? "", StringComparison.OrdinalIgnoreCase))
+                  ?? sources?.FirstOrDefault(s => string.Equals(s.Key, key, StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(s.Variant));
+        if (string.IsNullOrWhiteSpace(source?.LogoUrl)) return NotFound();
+        return await ServeImageAsync($"rating_logo:{id}:{key}:{variant}", source.LogoUrl, ct);
+    }
+
+    /// <summary>Fetches (or decodes), validates, converts if SVG, caches and serves one remote or data: image; see <see cref="GetPluginIcon"/>.</summary>
+    private async Task<IActionResult> ServeImageAsync(string cachePrefix, string iconUrl, CancellationToken ct)
+    {
         // data: URIs are self-contained — decode and serve without any external fetch.
         if (iconUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-            return ServeDataUri(id, iconUrl);
+            return ServeDataUri(cachePrefix, iconUrl);
 
         // https only (the fetcher also enforces this, including across redirects)
         if (!Uri.TryCreate(iconUrl, UriKind.Absolute, out var uri) ||
@@ -177,7 +202,7 @@ public class PluginsController : ControllerBase
             return NotFound();
         }
 
-        var cacheKey = $"plugin_icon:{id}:{iconUrl}";
+        var cacheKey = $"{cachePrefix}:{iconUrl}";
 
         // Return cached bytes if available
         if (_cache.TryGetValue(cacheKey, out (byte[] Data, string ContentType) cached))
@@ -250,9 +275,9 @@ public class PluginsController : ControllerBase
     /// Decodes a <c>data:</c> URI and serves the embedded bytes, rasterising SVG to PNG.
     /// Format: <c>data:[&lt;mediatype&gt;][;base64],&lt;data&gt;</c>
     /// </summary>
-    private IActionResult ServeDataUri(int id, string dataUri)
+    private IActionResult ServeDataUri(string cachePrefix, string dataUri)
     {
-        var cacheKey = $"plugin_icon:{id}:data";
+        var cacheKey = $"{cachePrefix}:data";
         if (_cache.TryGetValue(cacheKey, out (byte[] Data, string ContentType) cached))
             return File(cached.Data, cached.ContentType);
 

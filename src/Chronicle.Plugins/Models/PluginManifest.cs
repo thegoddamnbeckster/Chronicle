@@ -178,4 +178,53 @@ public class PluginRatingSource
     /// <summary>A sentence the source's terms require near its scores.</summary>
     [JsonPropertyName("attribution")]
     public string? Attribution { get; set; }
+
+    /// <summary>How the source's own site draws the score: "plain" (default), "star-text", "ring", "icon-percent" or "badge". Any other
+    /// value is treated as plain. The host owns the renderers; a manifest only picks one.</summary>
+    [JsonPropertyName("look")]
+    public string? Look { get; set; }
+
+    /// <summary>The name the source's site gives this score ("Tomatometer", "Metascore"); shown beside it. Optional.</summary>
+    [JsonPropertyName("label")]
+    public string? Label { get; set; }
+
+    /// <summary>"square" (default) or "circle" for a <c>badge</c> look.</summary>
+    [JsonPropertyName("shape")]
+    public string? Shape { get; set; }
+
+    /// <summary>One of the open-licence faces the host knows ("Roboto", "Source Sans 3", "Libre Franklin", "Nunito Sans"); anything else is ignored.
+    /// A manifest cannot supply a font file or address.</summary>
+    [JsonPropertyName("font_family")]
+    public string? FontFamily { get; set; }
+
+    /// <summary>Text colour on a <c>badge</c> (a CSS hex colour); optional.</summary>
+    [JsonPropertyName("text_color")]
+    public string? TextColor { get; set; }
+
+    /// <summary>The source's own logo (an SVG or raster image on its site, or a data: URI). The host fetches and caches it; the browser never does.</summary>
+    [JsonPropertyName("logo_url")]
+    public string? LogoUrl { get; set; }
+
+    /// <summary>Colour (and state icon) chosen by the score's normalized value 0-100: the entry with the highest <c>min</c> not above it wins.</summary>
+    [JsonPropertyName("thresholds")]
+    public List<PluginScoreThreshold>? Thresholds { get; set; }
+}
+
+/// <summary>One tier of a source's colour scale: from <c>Min</c> (against the normalized 0-100 value) upward.</summary>
+public class PluginScoreThreshold
+{
+    [JsonPropertyName("min")]
+    public double Min { get; set; }
+
+    /// <summary>A CSS hex colour (#rgb, #rrggbb or #rrggbbaa); anything else drops the tier.</summary>
+    [JsonPropertyName("color")]
+    public string? Color { get; set; }
+
+    /// <summary>The unfilled part of a <c>ring</c>, a hex colour; optional.</summary>
+    [JsonPropertyName("track")]
+    public string? Track { get; set; }
+
+    /// <summary>A state icon the host draws: "fresh", "rotten", "certified", "bucket-full", "bucket-tipped"; anything else is no icon.</summary>
+    [JsonPropertyName("icon")]
+    public string? Icon { get; set; }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatNumber, formatScore, formatVotes, scoreLabel, starFills } from './scores'
+import { fontStack, formatNumber, formatScore, formatVotes, scoreLabel, starFills, tierFor } from './scores'
 import type { ItemScore } from '@/types'
 
 const base: ItemScore = {
@@ -49,5 +49,27 @@ describe('scoreLabel', () => {
     expect(scoreLabel({ ...base, votes: 787753 })).toBe('IMDb score 8.2 out of 10, 787,753 votes')
     expect(scoreLabel({ ...base, display: 'percent', normalized: 80, displayName: 'TMDB' })).toBe('TMDB score 80 percent')
     expect(scoreLabel({ ...base, displayName: 'Rotten Tomatoes', variant: 'audience', value: 88, scale: 100 })).toBe('Rotten Tomatoes audience score 88 out of 100')
+  })
+})
+
+describe('tierFor', () => {
+  const tiers = [{ min: 70, color: 'g' }, { min: 0, color: 'r' }, { min: 40, color: 'y' }]
+  it('picks the highest tier not above the value, whatever the order given', () => {
+    expect(tierFor(tiers, 80)?.color).toBe('g')
+    expect(tierFor(tiers, 70)?.color).toBe('g')
+    expect(tierFor(tiers, 69.9)?.color).toBe('y')
+    expect(tierFor(tiers, 0)?.color).toBe('r')
+  })
+  it('falls back to the lowest tier below every minimum, and to nothing without tiers', () => {
+    expect(tierFor([{ min: 40, color: 'y' }, { min: 70, color: 'g' }], 10)?.color).toBe('y')
+    expect(tierFor(undefined, 50)).toBeUndefined()
+    expect(tierFor([], 50)).toBeUndefined()
+  })
+})
+
+describe('fontStack', () => {
+  it('names the face first with system fallbacks, and nothing when none is declared', () => {
+    expect(fontStack('Roboto')).toMatch(/^'Roboto', system-ui/)
+    expect(fontStack(null)).toBeUndefined()
   })
 })

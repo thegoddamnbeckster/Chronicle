@@ -62,4 +62,47 @@ describe('ScoresPanel', () => {
     const { container } = renderPanel([score({ key: 'h', displayName: 'Hardcover', value: 4.2, scale: 5, normalized: 84, star: 'row' })])
     expect(container.querySelectorAll('svg').length).toBe(10)
   })
+
+  it('draws a ring with the whole-number percent, coloured by the tier the value falls in', () => {
+    const { container } = renderPanel([score({
+      key: 'tmdb', displayName: 'TMDB', display: 'percent', value: 79.84, scale: 100, normalized: 79.84, look: 'ring', label: 'User Score',
+      tiers: [{ min: 0, color: '#DB2360' }, { min: 40, color: '#D2D531' }, { min: 70, color: '#21D07A', track: '#204529' }],
+    })])
+    const arcs = container.querySelectorAll('circle[stroke-linecap="round"]')
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].getAttribute('stroke')).toBe('#21D07A')
+    expect(container.querySelector('[class*="ringNumber"]')?.textContent).toBe('80%')
+    expect(screen.getByText('User Score')).toBeTruthy()
+  })
+
+  it('draws a coloured block (square or round) holding the number for the badge look', () => {
+    const tiers = [{ min: 0, color: '#FF6874' }, { min: 40, color: '#FFBD3F' }, { min: 61, color: '#00CE7A' }]
+    const { container } = renderPanel([
+      score({ key: 'm', displayName: 'Metacritic', value: 73, scale: 100, normalized: 73, look: 'badge', label: 'Metascore', tiers }),
+      score({ key: 'u', displayName: 'Metacritic', variant: 'users', value: 4, scale: 10, normalized: 40, look: 'badge', shape: 'circle', tiers }),
+    ])
+    const blocks = container.querySelectorAll('[class*="block"]')
+    expect(blocks).toHaveLength(2)
+    expect((blocks[0] as HTMLElement).style.background).toBe('rgb(0, 206, 122)')
+    expect((blocks[1] as HTMLElement).className).toContain('circle')
+    expect((blocks[1] as HTMLElement).style.background).toBe('rgb(255, 189, 63)')
+  })
+
+  it('draws a state icon beside the percent for the icon-percent look, and none when the tier names none', () => {
+    const tiers = [{ min: 0, color: '#0AC855', icon: 'rotten' as const }, { min: 60, color: '#FA320A', icon: 'fresh' as const }]
+    const { container } = renderPanel([
+      score({ key: 'rt', displayName: 'Rotten Tomatoes', variant: 'critics', display: 'percent', value: 83, scale: 100, normalized: 83, look: 'icon-percent', label: 'Tomatometer', tiers }),
+      score({ key: 'rt2', displayName: 'RT', display: 'percent', value: 30, scale: 100, normalized: 30, look: 'icon-percent', tiers }),
+      score({ key: 'rt3', displayName: 'RT3', display: 'percent', value: 30, scale: 100, normalized: 30, look: 'icon-percent', tiers: [{ min: 0, color: '#111111' }] }),
+    ])
+    const icons = Array.from(container.querySelectorAll('svg[data-icon]')).map(e => e.getAttribute('data-icon'))
+    expect(icons).toEqual(['fresh', 'rotten'])
+    expect(screen.getByText('83%')).toBeTruthy()
+  })
+
+  it('treats an unknown look as plain and uses the declared logo as the mark', () => {
+    const { container } = renderPanel([score({ look: 'sparkle' as never, logoUrl: '/api/v1/plugins/1/rating-logo?key=imdb' })])
+    expect(container.querySelector('[data-look="sparkle"]')).not.toBeNull()
+    expect(screen.getByText('8.2')).toBeTruthy()
+  })
 })

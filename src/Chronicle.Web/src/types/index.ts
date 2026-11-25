@@ -513,4 +513,22 @@ export interface ItemScore {
   attribution?: string | null
   /** Other plugins that reported the same measurement. */
   alsoFrom: string[]
+  /** How the source's own site draws the score; absent or unknown means plain. */
+  look?: 'plain' | 'star-text' | 'ring' | 'icon-percent' | 'badge' | null
+  /** The name the source's site gives the score ("Tomatometer", "Metascore"). */
+  label?: string | null
+  shape?: 'circle' | null
+  fontFamily?: string | null
+  textColor?: string | null
+  /** Colour (and state icon) tiers against `normalized`; the server has already checked every colour is plain hex. */
+  tiers?: ScoreTier[] | null
+  /** The source's own logo, served by Chronicle (never the source's site). */
+  logoUrl?: string | null
+}
+
+export interface ScoreTier {
+  min: number
+  color: string
+  track?: string | null
+  icon?: 'fresh' | 'rotten' | 'certified' | 'bucket-full' | 'bucket-tipped' | null
 }
