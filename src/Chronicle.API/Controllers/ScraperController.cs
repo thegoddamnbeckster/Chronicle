@@ -288,12 +288,44 @@ public class ScraperController : ControllerBase
     /// </summary>
     public sealed record ResolvedFileRequest(string FileName);
 
+    /// <summary>
+    /// A Kodi library keeps the Chronicle id it was given when an item was first scraped, in the item's own lookup string, and asks
+    /// for that id on every later refresh. A merge deletes the losing item, so that stored id then names nothing and every
+    /// request answered 404 for good ("No information found ... it won't be added to the library"). This follows the merge
+    /// record(s) from an id that no longer exists to the item that took its place. An id that still exists is returned as it is, and
+    /// an id with no merge record comes back unchanged (it is genuinely unknown). A chain (merged into something later merged into
+    /// something else) is followed, bounded.
+    /// </summary>
+    private async Task<int> ResolveMergedIdAsync(int id, CancellationToken ct)
+    {
+        if (await _context.MediaItems.AnyAsync(m => m.Id == id, ct)) return id;
+
+        var current = id;
+        for (var hop = 0; hop < 10; hop++)
+        {
+            var winner = await _context.MediaItemMerges
+                .Where(m => m.LoserOriginalId == current)
+                .OrderByDescending(m => m.MergedAt)
+                .Select(m => (int?)m.WinnerId)
+                .FirstOrDefaultAsync(ct);
+            if (winner is null || winner == current) return id;
+            current = winner.Value;
+            if (await _context.MediaItems.AnyAsync(m => m.Id == current, ct))
+            {
+                _logger.LogInformation("scraper: item {OldId} was merged away; answering with the item that replaced it, {NewId}", id, current);
+                return current;
+            }
+        }
+        return id;
+    }
+
     [HttpPost("movies/{id:int}/resolved-file")]
     public async Task<IActionResult> ReportResolvedFile(int id, [FromBody] ResolvedFileRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.FileName))
             return BadRequest(ApiResponse<object>.Fail("FILENAME_REQUIRED", "fileName is required."));
 
+        id = await ResolveMergedIdAsync(id, ct);
         var item = await _context.MediaItems.FindAsync([id], ct);
         if (item is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
@@ -331,6 +363,7 @@ public class ScraperController : ControllerBase
     [HttpGet("movies/details")]
     public async Task<IActionResult> GetMovieDetails([FromQuery] int id, CancellationToken ct)
     {
+        id = await ResolveMergedIdAsync(id, ct);
         var dto = await BuildMovieDetailsDtoAsync(id, ct);
         if (dto is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
@@ -746,6 +779,7 @@ public class ScraperController : ControllerBase
     [HttpGet("tv/details")]
     public async Task<IActionResult> GetShowDetails([FromQuery] int id, CancellationToken ct)
     {
+        id = await ResolveMergedIdAsync(id, ct);
         var dto = await BuildShowDetailsDtoAsync(id, ct);
         if (dto is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {id} not found."));
@@ -804,6 +838,7 @@ public class ScraperController : ControllerBase
     [HttpGet("tv/episodes")]
     public async Task<IActionResult> GetEpisodes([FromQuery] int showId, CancellationToken ct)
     {
+        showId = await ResolveMergedIdAsync(showId, ct);
         var show = await _context.MediaItems.FindAsync([showId], ct);
         if (show is null)
             return NotFound(ApiResponse<object>.Fail("MEDIA_NOT_FOUND", $"Media item {showId} not found."));
@@ -857,6 +892,7 @@ public class ScraperController : ControllerBase
     [HttpGet("tv/episode-details")]
     public async Task<IActionResult> GetEpisodeDetails([FromQuery] int id, CancellationToken ct)
     {
+        id = await ResolveMergedIdAsync(id, ct);
         var dto = await BuildEpisodeDetailsDtoAsync(id, ct);
         if (dto is null)
         {
