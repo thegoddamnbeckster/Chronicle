@@ -1251,6 +1251,46 @@ namespace Chronicle.Tests.Unit.Services
             (await _context.UserLibraries.SingleAsync()).Status.Should().Be(LibraryStatus.Completed);
         }
 
+        [Fact]
+        public async Task ScrobbleAsync_FinishOlderThanTheStoredPosition_KeepsTheRewatchPosition()
+        {
+            // Finished earlier, then a rewatch on another device left a position at 75.86%. A device
+            // reporting its own older finish must not erase that position.
+            var finished = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc);
+            var resumed  = new DateTime(2026, 11, 23, 18, 57, 35, DateTimeKind.Utc);
+            _context.UserLibraries.Add(new UserLibrary
+            {
+                UserId = 1, MediaItemId = 1, Status = LibraryStatus.Completed, CompletedAt = finished,
+                ResumePositionPercent = 75.86, ResumeUpdatedAt = resumed, AddedAt = finished, UpdatedAt = resumed,
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 100.0, new DateTime(2026, 11, 10, 20, 0, 0, DateTimeKind.Utc), "Kodi"));
+
+            var entry = await _context.UserLibraries.SingleAsync();
+            entry.ResumePositionPercent.Should().Be(75.86);
+            entry.ResumeUpdatedAt.Should().Be(resumed);
+        }
+
+        [Fact]
+        public async Task ScrobbleAsync_FinishNewerThanTheStoredPosition_ClearsIt()
+        {
+            var resumed = new DateTime(2026, 11, 23, 18, 0, 0, DateTimeKind.Utc);
+            _context.UserLibraries.Add(new UserLibrary
+            {
+                UserId = 1, MediaItemId = 1, Status = LibraryStatus.Watching,
+                ResumePositionPercent = 75.86, ResumeUpdatedAt = resumed, AddedAt = resumed, UpdatedAt = resumed,
+            });
+            await _context.SaveChangesAsync();
+
+            await _service.ScrobbleAsync(1, new ScrobbleRequest(1, 100.0, new DateTime(2026, 11, 23, 19, 30, 0, DateTimeKind.Utc), "Kodi"));
+
+            var entry = await _context.UserLibraries.SingleAsync();
+            entry.Status.Should().Be(LibraryStatus.Completed);
+            entry.ResumePositionPercent.Should().BeNull();
+            entry.ResumeUpdatedAt.Should().BeNull();
+        }
+
         public void Dispose() => _context.Dispose();
     }
 }

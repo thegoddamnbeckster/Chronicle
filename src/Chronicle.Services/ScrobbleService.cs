@@ -746,8 +746,14 @@ namespace Chronicle.Services
             // start with a bogus seek-ahead on whatever device picks it up next.
             if (markedAsWatched)
             {
-                entry.ResumePositionPercent = null;
-                entry.ResumeUpdatedAt       = null;
+                // Only a finish at least as recent as the stored position clears it. A late or replayed
+                // finish older than a position recorded since (a rewatch in progress on another device)
+                // must not erase it: every device syncs whichever status is most recent.
+                if (priorResumeUpdatedAt is not DateTime storedAt || timestamp >= storedAt)
+                {
+                    entry.ResumePositionPercent = null;
+                    entry.ResumeUpdatedAt       = null;
+                }
             }
             // A resume position is only ever overwritten by a scrobble at least as recent
             // as the one that set it -- otherwise a delayed/out-of-order scrobble (an
