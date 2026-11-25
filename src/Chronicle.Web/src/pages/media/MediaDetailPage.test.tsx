@@ -493,6 +493,24 @@ describe('MediaDetailPage', () => {
     expect(screen.queryByText('Season', { selector: 'div' })).not.toBeInTheDocument()
   })
 
+  it('shows the watched episodes of each season, counted from the episodes beneath it', async () => {
+    mockedGetMediaTypes.mockResolvedValue([
+      { id: 1, name: 'tv', displayName: 'TV Shows', hierarchyLevels: 3, hierarchyLabels: ['Show', 'Season', 'Episode'], interactionVerb: 'watched' },
+    ])
+    mockedGetMedia.mockResolvedValue(makeItem({ mediaTypeId: 1, mediaTypeName: 'TV Shows', hierarchyLevel: 0, name: 'A Show' }))
+    mockedGetMediaChildren.mockResolvedValue([
+      makeItem({ id: 21, name: 'Season 1', mediaTypeId: 1, hierarchyLevel: 1, number: 1, parentId: MEDIA_ID, childCount: 10, leafCount: 10, watchedLeafCount: 8 }),
+      makeItem({ id: 22, name: 'Season 2', mediaTypeId: 1, hierarchyLevel: 1, number: 2, parentId: MEDIA_ID, childCount: 10, leafCount: 10, watchedLeafCount: 0 }),
+    ])
+
+    renderMediaDetailPage()
+    await screen.findByRole('heading', { name: 'A Show' })
+    await openFold('Seasons (2)')
+
+    expect(screen.getByText('8 of 10 watched')).toBeInTheDocument()
+    expect(screen.getByText('0 of 10 watched')).toBeInTheDocument()
+  })
+
   // --- Author -> Series -> Book membership: mirrors the two collection tests above exactly,
   // scoped to a 3-level type instead of a flat one. ---
 

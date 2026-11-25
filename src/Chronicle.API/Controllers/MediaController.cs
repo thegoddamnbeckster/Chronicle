@@ -218,14 +218,61 @@ namespace Chronicle.API.Controllers
                 .Select(g => new { ParentId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(g => g.ParentId, g => g.Count, ct);
 
+            var leafProgress = await GetLeafProgressAsync(
+                children.Where(c => childCounts.GetValueOrDefault(c.Id) > 0).Select(c => c.Id).ToList(),
+                GetCurrentUserId(), ct);
+
             var dtos = children.Select(m =>
             {
                 enrichmentByChild.TryGetValue(m.Id, out var statuses);
-                return ToDto(m, enrichmentStatuses: statuses?.Count > 0 ? statuses : null)
+                var dto = ToDto(m, enrichmentStatuses: statuses?.Count > 0 ? statuses : null)
                     with { ChildCount = childCounts.GetValueOrDefault(m.Id) };
+                return leafProgress.TryGetValue(m.Id, out var p)
+                    ? dto with { LeafCount = p.Leaves, WatchedLeafCount = p.Watched }
+                    : dto;
             }).ToList();
 
             return Ok(ApiResponse<List<MediaItemDto>>.Ok(dtos));
+        }
+
+        /// <summary>
+        /// For each of <paramref name="containerIds"/> (items that hold others, e.g. seasons): how many leaf items (those with no
+        /// children of their own -- episodes, tracks) sit anywhere beneath it, and how many of them <paramref name="userId"/> has
+        /// Completed. Walks the tree one level at a time, so it costs one query per level, not one per container.
+        /// </summary>
+        private async Task<Dictionary<int, (int Leaves, int Watched)>> GetLeafProgressAsync(
+            List<int> containerIds, int? userId, CancellationToken ct)
+        {
+            var result = new Dictionary<int, (int, int)>();
+            if (containerIds.Count == 0) return result;
+
+            var rootOf = containerIds.ToDictionary(id => id, id => id);   // descendant (or the container itself) -> its container
+            var frontier = containerIds;
+            var leaves = new List<(int Id, int Root)>();
+            while (frontier.Count > 0)
+            {
+                var kids = await _context.MediaItems
+                    .Where(m => m.ParentId != null && frontier.Contains(m.ParentId.Value))
+                    .Select(m => new { m.Id, ParentId = m.ParentId!.Value })
+                    .ToListAsync(ct);
+                var parentsWithKids = kids.Select(k => k.ParentId).ToHashSet();
+                // A frontier item that had no children is itself a leaf (a container reaches here only when it has kids).
+                foreach (var id in frontier.Where(f => !parentsWithKids.Contains(f) && !containerIds.Contains(f)))
+                    leaves.Add((id, rootOf[id]));
+                foreach (var k in kids) rootOf[k.Id] = rootOf[k.ParentId];
+                frontier = kids.Select(k => k.Id).ToList();
+            }
+
+            var leafIds = leaves.Select(l => l.Id).ToList();
+            var watched = userId is null || leafIds.Count == 0
+                ? new HashSet<int>()
+                : (await _context.UserLibraries
+                    .Where(l => l.UserId == userId && l.Status == LibraryStatus.Completed && leafIds.Contains(l.MediaItemId))
+                    .Select(l => l.MediaItemId).ToListAsync(ct)).ToHashSet();
+
+            foreach (var g in leaves.GroupBy(l => l.Root))
+                result[g.Key] = (g.Count(), g.Count(l => watched.Contains(l.Id)));
+            return result;
         }
 
         /// <summary>People credited on this title -- the mirror of PeopleController.GetCredits

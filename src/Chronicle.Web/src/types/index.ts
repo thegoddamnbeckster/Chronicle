@@ -80,6 +80,10 @@ export interface MediaItem {
   seriesPosition?: number | null
   /** How many items sit directly under this one; set only when listing an item's children. */
   childCount?: number | null
+  /** Set only on a child that holds others (a season), when listing an item's children: how many leaf items
+   *  (episodes, tracks) sit beneath it, and how many of them the signed-in user has finished. */
+  leafCount?: number | null
+  watchedLeafCount?: number | null
   createdAt: string
   updatedAt: string
   externalIds: ExternalId[]

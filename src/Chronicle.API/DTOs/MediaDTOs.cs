@@ -186,6 +186,13 @@ namespace Chronicle.API.DTOs
         /// </summary>
         int? ChildCount = null,
         /// <summary>
+        /// Set only when listing an item's children, and only on a child that holds others (a season): how many leaf items
+        /// (episodes, tracks) sit anywhere beneath it, and how many of those the signed-in user has finished. Lets the page
+        /// show a season's watched progress without fetching every episode.
+        /// </summary>
+        int? LeafCount = null,
+        int? WatchedLeafCount = null,
+        /// <summary>
         /// For a plugin whose match was refused because a DIFFERENT item in Chronicle already holds that provider id
         /// (a genuine duplicate), keyed by full plugin ID: which item it is. Lets the page say "already in Chronicle as
         /// ..." with a link, instead of only reporting that nothing matched. Absent when no match was refused that way.

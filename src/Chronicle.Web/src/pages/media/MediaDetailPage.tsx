@@ -1428,7 +1428,13 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
                   const enriched = child.enrichmentStatuses != null &&
                     Object.values(child.enrichmentStatuses).some(s => s === 'Completed')
                   const childEntry = childLibraryEntries.find(e => e.mediaItem.id === child.id)
-                  const childProgress = posterProgressPercent(childEntry?.status, childEntry?.resumePositionPercent, childEntry?.lastKnownProgressPercent)
+                  // A season has no progress of its own: its bar and its "N of M watched" line come from the episodes
+                  // beneath it. Anything else (an episode, a movie) keeps its own entry's progress.
+                  const leafCount = child.leafCount ?? 0
+                  const watchedLeaves = child.watchedLeafCount ?? 0
+                  const childProgress = leafCount > 0
+                    ? (watchedLeaves > 0 ? Math.round((watchedLeaves / leafCount) * 100) : null)
+                    : posterProgressPercent(childEntry?.status, childEntry?.resumePositionPercent, childEntry?.lastKnownProgressPercent)
                   const childPosition = formatChildPosition(child.number, child.seriesPosition)
                   return (
                     <>
@@ -1452,6 +1458,11 @@ export default function MediaDetailPage({ embeddedId }: { embeddedId?: number } 
                           {childPosition != null && `#${childPosition}`}
                           {childPosition != null && child.year ? ' · ' : ''}
                           {child.year}
+                        </div>
+                      )}
+                      {leafCount > 0 && (
+                        <div className={styles.childWatched} data-testid="child-watched">
+                          {watchedLeaves} of {leafCount} {(currentMediaType?.interactionVerb ?? 'watched').toLowerCase()}
                         </div>
                       )}
                     </>

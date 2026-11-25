@@ -1254,6 +1254,11 @@ a.navBtn:hover { color: var(--text-primary); border-color: var(--accent); }
   color: var(--text-muted);
 }
 
+.childWatched {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* ── Breadcrumb ───────────────────────────────────────────────────────────── */
 .breadcrumb {
   grid-row: 1;
