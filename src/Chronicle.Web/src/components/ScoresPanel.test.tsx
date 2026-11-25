@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 import { ScoresPanel } from './ScoresPanel'
@@ -45,6 +45,17 @@ describe('ScoresPanel', () => {
     expect(screen.getAllByRole('link')).toHaveLength(1)
     // the attribution sits inside the badge that owns it, not beside or under the row
     expect(screen.getByText('Ratings from IMDb.').closest('a')).toBe(screen.getAllByRole('link')[0])
+  })
+
+  it('falls back to a letter when the plugin icon fails to load', async () => {
+    vi.mocked(pluginsApi.listPlugins).mockResolvedValue([{ pluginId: 'chronicle.plugin.imdb', iconUrl: '/api/v1/plugins/1/icon' } as never])
+    const { container } = render(
+      <QueryClientProvider client={new QueryClient()}><ScoresPanel scores={[score({})]} /></QueryClientProvider>,
+    )
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+    fireEvent.error(container.querySelector('img')!)
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('I')).toBeTruthy()
   })
 
   it('draws a row of five stars for a source that declares one', () => {

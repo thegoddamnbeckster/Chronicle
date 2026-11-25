@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { listPlugins } from '@/api/plugins'
 import type { ItemScore } from '@/types'
@@ -20,7 +21,9 @@ function Star({ fill }: { fill: number }) {
 
 /** The mark: the plugin's own icon when it has one, else a letter badge. */
 function Mark({ score, iconUrl }: { score: ItemScore; iconUrl?: string | null }) {
-  if (iconUrl) return <img className={styles.mark} src={iconUrl} alt="" />
+  const [failed, setFailed] = useState(false)
+  // An icon the server could not fetch must not leave a broken-image glyph: fall back to the letter.
+  if (iconUrl && !failed) return <img className={styles.mark} src={iconUrl} alt="" onError={() => setFailed(true)} />
   return <span className={styles.letter} aria-hidden="true">{score.displayName.slice(0, 1).toUpperCase()}</span>
 }
 
