@@ -2575,6 +2575,16 @@ namespace Chronicle.Services
                     // the file between the two items. Drop the stale claim and let the name and year decide.
                     if (filePathIndex.TryGetValue(f, out var match) && !YearsConflict(group.Year, match.Year))
                     {
+                        // The same goes for an episode or track filed under another show or artist than the one whose folder
+                        // holds the file: "Worst Cooks in America - S29E03" was an episode of The Voice, so every later scan put
+                        // the file back there and Kodi's two passes kept swapping the episode's title (2026-11-26). The stale
+                        // claim is released, so the item that really is this file can take it below.
+                        if (hierarchyLevel > 0 && match.ParentId != parentId &&
+                            await RootIdAsync(match.ParentId, ct) != await RootIdAsync(parentId, ct))
+                        {
+                            await ReleaseFileClaimAsync(match, f, filePathIndex, ct);
+                            continue;
+                        }
                         existing = match;
                         break;
                     }
@@ -2599,6 +2609,11 @@ namespace Chronicle.Services
             if (existing is null && group.Files.Count == 0 && !string.IsNullOrEmpty(group.FolderPath))
             {
                 folderPathIndex.TryGetValue(FolderPathKey(hierarchyLevel, group.FolderPath), out existing);
+                // A season (or album) is only ever its own parent's: The Voice's "Season 29" had once been given Worst Cooks in
+                // America's "Season 29" folder, and from then on every Worst Cooks episode of that season was filed under The
+                // Voice (2026-11-26). The number and name tiers below already require the same parent.
+                if (existing is not null && hierarchyLevel > 0 && existing.ParentId != parentId)
+                    existing = null;
             }
 
             // Tertiary-and-a-half: match a sync-created STUB by season/episode/track Number
@@ -2841,6 +2856,38 @@ namespace Chronicle.Services
         }
 
         /// <summary>Size, modified time and the combined fingerprint of a group's first file, or null when it cannot be read.</summary>
+        /// <summary>The top of an item's hierarchy (a show, an artist, an author), or null for no item.</summary>
+        private async Task<int?> RootIdAsync(int? id, CancellationToken ct)
+        {
+            for (var depth = 0; id.HasValue && depth < 8; depth++)
+            {
+                var parent = await _context.MediaItems.Where(m => m.Id == id.Value).Select(m => m.ParentId).FirstOrDefaultAsync(ct);
+                if (parent is null) return id;
+                id = parent;
+            }
+            return id;
+        }
+
+        /// <summary>Takes one file away from an item that wrongly holds it: out of its fileScanner.filePaths, its known file names
+        /// and this run's index. Everything else the item has (its provider data, watch history) stays with it.</summary>
+        private async Task ReleaseFileClaimAsync(MediaItem item, string filePath, Dictionary<string, MediaItem> filePathIndex, CancellationToken ct)
+        {
+            var root = System.Text.Json.Nodes.JsonNode.Parse(item.MetadataJson ?? "{}") as System.Text.Json.Nodes.JsonObject;
+            if (root?["fileScanner"] is not System.Text.Json.Nodes.JsonObject scanner) return;
+            var remaining = Chronicle.Services.Scan.FileIdentityJson.ExtractFilePaths(item.MetadataJson)
+                .Where(p => !string.Equals(p, filePath, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            scanner["filePaths"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(remaining));
+            item.MetadataJson = root.ToJsonString();
+            item.UpdatedAt = DateTime.UtcNow;
+            await SyncKnownFileNamesAsync(item, remaining, ct);
+            if (filePathIndex.TryGetValue(filePath, out var holder) && ReferenceEquals(holder, item))
+                filePathIndex.Remove(filePath);
+            _log.Information(
+                "UpsertGroupItemAsync: item {Id} ('{Name}') held {File}, which lies in another show's or artist's folder -- released it",
+                item.Id, item.Name, filePath);
+        }
+
         private static (string Fingerprint, long SizeBytes, DateTime ModifiedUtc)? FingerprintOf(IReadOnlyList<string> files)
         {
             if (files.Count == 0) return null;

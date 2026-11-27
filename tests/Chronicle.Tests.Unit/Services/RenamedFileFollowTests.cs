@@ -128,6 +128,106 @@ public sealed class RenamedFileFollowTests : IDisposable
     }
 }
 
+/// <summary>
+/// An episode is always filed under the show whose folder holds its file (2026-11-26: The Voice's "Season 29" held Worst Cooks in
+/// America's season folder and episode files, so every scan filed Worst Cooks episodes under The Voice).
+/// </summary>
+public sealed class EpisodeFiledUnderItsOwnShowTests
+{
+    private static ChronicleDbContext NewContext() =>
+        new(new DbContextOptionsBuilder<ChronicleDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+
+    private static FileScanService Service(ChronicleDbContext db)
+    {
+        var registry = new Mock<IPluginRegistry>();
+        registry.Setup(r => r.GetMetadataProviderEntries()).Returns([]);
+        return new FileScanService(db, registry.Object, null!, null!, new ImportProgressService(), null!);
+    }
+
+    private const string Voice = "D:/TV/The Voice (2011)";
+    private const string Cooks = "D:/TV/Worst Cooks in America (2010)";
+    private const string CooksFile = Cooks + "/Season 29/Worst Cooks in America - S29E03 - Da Vinci.mkv";
+
+    private static ScanGroupImport Show(string name, string folder, string episodeName, string file) =>
+        new(name, null, null,
+        [
+            new ScanGroupImport("Season 29", null, null, [new ScanGroupImport(episodeName, null, null, [], [file], null, 3)], [], folder + "/Season 29", 29),
+        ], [], folder);
+
+    /// <summary>The Voice's season 29 holding Worst Cooks' season folder, and a Worst Cooks episode filed under it with its file.</summary>
+    private static async Task<ChronicleDbContext> TheMixUpAsync()
+    {
+        var db = NewContext();
+        var now = DateTime.UtcNow;
+        db.MediaTypes.Add(new MediaType { Id = 1, Name = "tv", DisplayName = "TV", HierarchyLevels = 3, CreatedAt = now });
+        db.MediaItems.AddRange(
+            new MediaItem { Id = 1, MediaTypeId = 1, Name = "The Voice", HierarchyLevel = 0, CreatedAt = now, UpdatedAt = now,
+                MetadataJson = "{\"fileScanner\":{\"folderPath\":\"" + Voice + "\"}}" },
+            new MediaItem { Id = 2, MediaTypeId = 1, ParentId = 1, Name = "Season 29", Number = 29, HierarchyLevel = 1, CreatedAt = now, UpdatedAt = now,
+                MetadataJson = "{\"fileScanner\":{\"folderPath\":\"" + Cooks + "/Season 29\"}}" },
+            new MediaItem { Id = 3, MediaTypeId = 1, ParentId = 2, Name = "Worst Cooks in America - S29E03 - Da Vinci", Number = 3, HierarchyLevel = 2,
+                CreatedAt = now, UpdatedAt = now, MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"" + CooksFile + "\"]}}" },
+            new MediaItem { Id = 10, MediaTypeId = 1, Name = "Worst Cooks in America", HierarchyLevel = 0, CreatedAt = now, UpdatedAt = now,
+                MetadataJson = "{\"fileScanner\":{\"folderPath\":\"" + Cooks + "\"}}" },
+            new MediaItem { Id = 11, MediaTypeId = 1, ParentId = 10, Name = "Season 29", Number = 29, HierarchyLevel = 1, CreatedAt = now, UpdatedAt = now },
+            new MediaItem { Id = 12, MediaTypeId = 1, ParentId = 11, Name = "The Da Vinci Cook", Number = 3, HierarchyLevel = 2, CreatedAt = now, UpdatedAt = now });
+        db.MediaItemKnownFileNames.Add(new MediaItemKnownFileName { MediaItemId = 3, FileName = "Worst Cooks in America - S29E03 - Da Vinci.mkv" });
+        await db.SaveChangesAsync();
+        return db;
+    }
+
+    [Fact]
+    public async Task AnotherShowsSeasonHoldingThisSeasonsFolder_IsNotWhereItsEpisodesGo()
+    {
+        await using var db = await TheMixUpAsync();
+
+        await Service(db).ImportGroupsAsync(
+            new ImportGroupsRequest([Show("Worst Cooks in America", Cooks, "Worst Cooks in America - S29E03 - Da Vinci", CooksFile)], 1),
+            [1], manageProgress: false);
+
+        var real = await db.MediaItems.SingleAsync(m => m.Id == 12);
+        Assert.Contains("Da Vinci.mkv", real.MetadataJson!);                         // the show's own episode now has its file
+        var stale = await db.MediaItems.SingleAsync(m => m.Id == 3);
+        Assert.DoesNotContain("Da Vinci.mkv", stale.MetadataJson!);                  // and The Voice's entry no longer claims it
+        Assert.Equal(2, stale.ParentId);                                              // left where it was, for a merge to settle
+        Assert.False(await db.MediaItemKnownFileNames.AnyAsync(k => k.MediaItemId == 3));
+        Assert.Equal(0, await db.MediaItems.CountAsync(m => m.ParentId == 2 && m.Id != 3)); // nothing new filed under The Voice
+    }
+
+    [Fact]
+    public async Task TheOtherShowsOwnScan_StillFindsItsOwnSeason()
+    {
+        await using var db = await TheMixUpAsync();
+        const string voiceFile = Voice + "/Season 29/The Voice - S29E03 - The Blinds (3).mkv";
+
+        await Service(db).ImportGroupsAsync(new ImportGroupsRequest([Show("The Voice", Voice, "The Blinds (3)", voiceFile)], 1),
+            [1], manageProgress: false);
+
+        Assert.Equal(1, await db.MediaItems.CountAsync(m => m.ParentId == 1 && m.HierarchyLevel == 1)); // no second season 29
+        Assert.True(await db.MediaItems.AnyAsync(m => m.ParentId == 2 && m.MetadataJson!.Contains("The Blinds (3).mkv")));
+    }
+
+    [Fact]
+    public async Task AFileMovedBetweenSeasonsOfTheSameShow_StaysWithItsItem()
+    {
+        await using var db = await TheMixUpAsync();
+        db.MediaItems.Add(new MediaItem { Id = 13, MediaTypeId = 1, ParentId = 10, Name = "Season 30", Number = 30, HierarchyLevel = 1,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        var item = await db.MediaItems.SingleAsync(m => m.Id == 12);
+        const string file = Cooks + "/Season 30/Worst Cooks in America - S30E03 - Moved.mkv";
+        item.MetadataJson = "{\"fileScanner\":{\"filePaths\":[\"" + file + "\"]}}";
+        await db.SaveChangesAsync();
+        var group = new ScanGroupImport("Worst Cooks in America", null, null,
+        [
+            new ScanGroupImport("Season 30", null, null, [new ScanGroupImport("Moved", null, null, [], [file], null, 3)], [], Cooks + "/Season 30", 30),
+        ], [], Cooks);
+
+        await Service(db).ImportGroupsAsync(new ImportGroupsRequest([group], 1), [1], manageProgress: false);
+
+        Assert.Contains("Moved.mkv", (await db.MediaItems.SingleAsync(m => m.Id == 12)).MetadataJson!); // same show: still its item
+    }
+}
+
 /// <summary>Two films with the same title and different years in different folders must stay two items.</summary>
 public sealed class SameTitleDifferentYearTests
 {
